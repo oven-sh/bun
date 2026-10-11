@@ -6,7 +6,6 @@ use crate::ast::{
     StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
-use crate::literal::Literal;
 use crate::rule::{Meta, NodeTags, On, Rule, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
@@ -230,6 +229,7 @@ pub(crate) struct ByKind {
     export_specs: OnceCell<Vec<u32>>,
     pub(crate) nearby_line: crate::source::NearbyLine,
     pub(crate) string_literals: OnceCell<Vec<crate::literal::RawLiteral>>,
+    pub(crate) number_literals: OnceCell<Vec<crate::literal::RawLiteral>>,
 }
 
 impl File<'_> {
@@ -740,9 +740,7 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
         file.every_string_literal(|it| rule.string_literal(it, cx));
     }
     if on.has(On::NUMBER_LITERALS) {
-        for it in number_literals(file) {
-            rule.number_literal(it, cx);
-        }
+        file.every_number_literal(|it| rule.number_literal(it, cx));
     }
     if !on.nodes.is_empty() {
         for node in nodes_of(file, on.nodes) {
@@ -792,13 +790,6 @@ impl RuleEntry {
     pub const fn of<R: Rule>() -> RuleEntry {
         RuleEntry { meta: &R::META }
     }
-}
-
-#[inline(never)]
-fn number_literals<'a>(file: &'a File<'a>) -> Vec<Literal<'a>> {
-    let mut all = Vec::new();
-    file.every_number_literal(&mut |it| all.push(it));
-    all
 }
 
 #[inline(never)]

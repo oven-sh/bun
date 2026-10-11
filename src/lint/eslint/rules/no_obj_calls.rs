@@ -24,6 +24,10 @@ const TRACE_MAP: TraceMap<'static, ()> = TraceMap::new(&[
     ("Temporal", NOT_CALLABLE),
 ]);
 
+/// The global variables that `ReferenceTracker` starts from: those of `TRACE_MAP`, and the global object.
+const TRACKED_FROM: [&str; 10] =
+    ["Atomics", "JSON", "Math", "Reflect", "Intl", "Temporal", "global", "globalThis", "self", "window"];
+
 /// ESLint's `getReportNodeName`. Where that has no name, the message has JavaScript's `null` or
 /// `undefined`.
 fn get_report_node_name(callee: Expr<'_>) -> Cow<'_, [u8]> {
@@ -39,52 +43,69 @@ fn get_report_node_name(callee: Expr<'_>) -> Cow<'_, [u8]> {
 /// The objects that oxlint knows.
 const OXLINT_GLOBAL_OBJECTS: [&str; 5] = ["Atomics", "Intl", "JSON", "Math", "Reflect"];
 
-/// oxlint's `global_this_member`: the `a` of `globalThis.a`.
-fn global_this_member(member: Expr<'_>) -> Option<Name<'_>> {
-    let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = member.kind() else {
-        return None;
-    };
-    static_property_name(member).filter(|_| is_specific_id(obj, "globalThis"))
+/// What is asked of every call with a configuration of oxlint.
+pub struct Oxlint<'a> {
+    /// `OXLINT_GLOBAL_OBJECTS`
+    objects: [Name<'a>; 5],
+    mentions_global_this: bool,
 }
 
-/// oxlint's `resolve_global_binding`: the name of the global variable that `ident` has the value of, through variables
-/// that are declared with nothing but a name or `globalThis.a` as their value. What a pattern declares stands for its own
-/// name.
-fn resolve_global_binding(mut ident: Expr<'_>) -> Option<Name<'_>> {
-    // `var a = b, b = a;` has no end.
-    let mut seen = rustc_hash::FxHashSet::default();
-    while seen.insert(ident) {
-        let name = ident.as_ident()?;
-        let Some(declaration) = get_declaration_of_variable(ident) else {
-            return is_reference_to_global_variable(ident).then_some(name);
-        };
-        let Some(Node::VarDecl(declarator)) = declaration.node().filter(|_| !declaration.is_catch_parameter()) else {
+impl<'a> Oxlint<'a> {
+    /// oxlint's `global_this_member`: the `a` of `globalThis.a`.
+    fn global_this_member(&self, member: Expr<'a>) -> Option<Name<'a>> {
+        if !self.mentions_global_this || !is_specific_id(member.object()?, "globalThis") {
             return None;
-        };
-        if declarator.pat().tag() != PatTag::Ident {
-            return Some(name);
         }
-        let init = declarator.init().filter(|it| !it.is_parenthesized())?;
-        match init.kind() {
-            ExprKind::Ident(next) if next != name => ident = init,
-            _ if init.is_chain_root() => return None,
-            _ => return global_this_member(init),
+        static_property_name(member)
+    }
+
+    /// oxlint's `resolve_global_binding`: the name of the global variable that `ident` has the value of, through variables
+    /// that are declared with nothing but a name or `globalThis.a` as their value. What a pattern declares stands for its own
+    /// name. Of the global variables only `objects` are told.
+    fn resolve_global_binding(&self, mut ident: Expr<'a>) -> Option<Name<'a>> {
+        // `var a = b, b = a;` has no end.
+        let mut seen = rustc_hash::FxHashSet::default();
+        loop {
+            let name = ident.as_ident()?;
+            let Some(declaration) = get_declaration_of_variable(ident) else {
+                return (self.objects.contains(&name) && is_reference_to_global_variable(ident)).then_some(name);
+            };
+            if !matches!(declaration, Declaration::Var(_)) || declaration.is_catch_parameter() {
+                return None;
+            }
+            let Some(Node::VarDecl(declarator)) = declaration.node() else {
+                return None;
+            };
+            if declarator.pat().tag() != PatTag::Ident {
+                return Some(name);
+            }
+            let init = declarator.init().filter(|it| !it.is_parenthesized())?;
+            match init.as_ident() {
+                Some(next) if next != name => {
+                    if !seen.insert(init) {
+                        return None;
+                    }
+                    ident = init;
+                }
+                _ if init.is_chain_root() => return None,
+                _ => return self.global_this_member(init),
+            }
         }
     }
-    None
 }
 
 impl NoObjCalls {
     fn check_as_oxlint<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(callee) = e.as_call_like().map(|it| it.callee()).filter(|it| !it.is_parenthesized()) else {
+        let (Some(callee), Some(oxlint)) = (e.as_call_like().map(|it| it.callee()), &cx.state) else {
             return;
         };
-        let (name, global) = match callee.as_ident() {
-            Some(name) => (Some(name), resolve_global_binding(callee)),
-            None => (global_this_member(callee), global_this_member(callee)),
+        let found = match callee.as_ident() {
+            Some(name) if !callee.is_parenthesized() => oxlint.resolve_global_binding(callee).map(|global| (name, global)),
+            Some(_) => None,
+            None => oxlint.global_this_member(callee).filter(|_| !callee.is_parenthesized()).map(|name| (name, name)),
         };
-        if let (Some(name), Some(global)) = (name, global)
-            && OXLINT_GLOBAL_OBJECTS.iter().any(|it| global.is(it))
+        if let Some((name, global)) = found
+            && oxlint.objects.contains(&global)
         {
             cx.report(e, UNEXPECTED_CALL).data("name", name);
         }
@@ -105,7 +126,8 @@ impl NoObjCalls {
 impl Rule for NoObjCalls {
     const META: Meta = Meta::eslint("no-obj-calls", Kind::Problem).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]).finish();
-    type State<'a> = ();
+    /// `None` with a configuration of ESLint.
+    type State<'a> = Option<Oxlint<'a>>;
 
     fn new(_: &Options) -> Self {
         NoObjCalls
@@ -118,14 +140,16 @@ impl Rule for NoObjCalls {
         On::new().finish()
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if file.language().is_oxlint {
-            return OXLINT_GLOBAL_OBJECTS
-                .iter()
-                .any(|it| file.mentions(it))
-                .then_some(());
+            return file.mentions_any(&OXLINT_GLOBAL_OBJECTS).then(|| {
+                Some(Oxlint {
+                    objects: OXLINT_GLOBAL_OBJECTS.map(|it| file.name_of(it)),
+                    mentions_global_this: file.mentions("globalThis"),
+                })
+            });
         }
-        file.has_exprs([ExprTag::Call, ExprTag::New]).then_some(())
+        (file.has_exprs([ExprTag::Call, ExprTag::New]) && file.mentions_any(&TRACKED_FROM)).then_some(None)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_member_expr, is_import_from_module, is_method_call, static_property_name};
+use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr, is_import_from_module, static_property_name};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
@@ -26,28 +26,38 @@ const METHODS: [&str; 12] = [
 impl Rule for NoArrayCallbackReference {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-callback-reference", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// Those of `METHODS` that the file mentions.
+    type State<'a> = SmallVec<[Name<'a>; 12]>;
 
     fn new(_: &Options) -> Self {
         NoArrayCallbackReference
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&METHODS).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let methods: Self::State<'a> = METHODS.iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect();
+        (!methods.is_empty()).then_some(methods)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        // Most callbacks are functions.
-        let Some(callback_expr) = call_expr.args().first().filter(|it| !matches!(it.tag(), ExprTag::Fn | ExprTag::Spread)) else {
-            return;
+        let callee = call_expr.callee();
+        let member = match callee.tag() {
+            ExprTag::Dot => callee,
+            ExprTag::Ident => return,
+            _ => get_inner_expression(callee),
         };
-        if !is_method_call(call_expr, None, Some(&METHODS), Some(1), Some(2)) {
+        if !member.member_name().is_some_and(|it| cx.state.contains(&it.name())) {
             return;
         }
-        let Some(ExprKind::Dot { obj: object, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind) else {
+        let args = call_expr.args();
+        // Most callbacks are functions.
+        let Some(callback_expr) = args.first().filter(|it| args.len() <= 2 && !matches!(it.tag(), ExprTag::Fn | ExprTag::Spread))
+        else {
+            return;
+        };
+        let Some(object) = member.object() else {
             return;
         };
         if !is_ignored_object(object) && should_wrap_callback(callback_expr) {

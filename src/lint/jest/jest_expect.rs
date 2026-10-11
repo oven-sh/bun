@@ -435,7 +435,7 @@ pub(crate) mod valid_expect_in_promise {
                 continue;
             }
             match statement.kind() {
-                StmtKind::Var(declarations) => {
+                StmtKind::Var(declarations) if scanner.found_expect_in_promise => {
                     for declarator in declarations {
                         if let (Some(init), Some(name)) =
                             (declarator.init(), declarator.pat().as_ident())
@@ -655,18 +655,27 @@ pub(crate) mod expect_expect {
             }
         }
 
-        /// `name`: the names of a chain, with dots. It can go on after what is expected.
-        fn is_match(&self, name: &[u8]) -> bool {
+        /// `names`: the names of a chain, which are compared with dots between them. It can go on after what is expected.
+        fn is_match(&self, names: &[&[u8]]) -> bool {
             match self {
-                AssertFunctionMatcher::Pattern(pattern) => pattern.test(name),
+                AssertFunctionMatcher::Pattern(pattern) => pattern.test(&names.join(&b"."[..])),
                 AssertFunctionMatcher::Exact(expected) => {
-                    matches!(name.get(expected.len()), None | Some(b'.'))
-                        && name
-                            .get(..expected.len())
-                            .is_some_and(|it| it.eq_ignore_ascii_case(expected.as_bytes()))
+                    let mut name = names.iter().enumerate().flat_map(|(i, part)| {
+                        let dot = (i > 0).then_some(b'.');
+                        dot.into_iter().chain(part.iter().copied())
+                    });
+                    expected.bytes().all(|it| {
+                        name.next()
+                            .is_some_and(|byte| byte.eq_ignore_ascii_case(&it))
+                    }) && matches!(name.next(), None | Some(b'.'))
                 }
             }
         }
+    }
+
+    fn is_assertion(matchers: &[AssertFunctionMatcher], call_expr: Call) -> bool {
+        let names = get_node_name_vec(call_expr.callee());
+        matchers.iter().any(|matcher| matcher.is_match(&names))
     }
 
     pub(crate) struct ExpectExpectConfig {
@@ -747,7 +756,7 @@ pub(crate) mod expect_expect {
             {
                 return;
             }
-            if !visitor.finds_assertion(call_expr.args().iter().map(Task::Check)) {
+            if !visitor.finds_assertion(ctx.file, call_expr.args().iter().map(Task::Check)) {
                 ctx.report(callee, EXPECT_EXPECT);
             }
         }
@@ -776,6 +785,8 @@ pub(crate) mod expect_expect {
     /// is how the strongly connected components of a graph are found.
     struct AssertionVisitor<'a, 'm> {
         assert_function_matchers: &'m [AssertFunctionMatcher],
+        /// Whether the file has an assertion at all, once that is asked.
+        has_assertion: Option<bool>,
         pending: Vec<Task<'a>>,
         /// Whether an assertion is found from it.
         known: FxHashMap<Place<'a>, bool>,
@@ -791,6 +802,7 @@ pub(crate) mod expect_expect {
         fn new(assert_function_matchers: &'m [AssertFunctionMatcher]) -> Self {
             AssertionVisitor {
                 assert_function_matchers,
+                has_assertion: None,
                 pending: Vec::new(),
                 known: FxHashMap::default(),
                 unknown: Vec::new(),
@@ -799,7 +811,20 @@ pub(crate) mod expect_expect {
             }
         }
 
-        fn finds_assertion(&mut self, tasks: impl Iterator<Item = Task<'a>>) -> bool {
+        fn finds_assertion(
+            &mut self,
+            file: &'a File<'a>,
+            tasks: impl Iterator<Item = Task<'a>>,
+        ) -> bool {
+            let matchers = self.assert_function_matchers;
+            let has_assertion = *self.has_assertion.get_or_insert_with(|| {
+                file.exprs_of_kind(ExprTag::Call)
+                    .filter_map(Expr::as_call)
+                    .any(|it| is_assertion(matchers, it))
+            });
+            if !has_assertion {
+                return false;
+            }
             self.pending.extend(tasks);
             let mut is_found = false;
             while !is_found && let Some(task) = self.pending.pop() {
@@ -910,16 +935,11 @@ pub(crate) mod expect_expect {
             match node {
                 Node::Expr(e) => match e.kind() {
                     ExprKind::Call(call_expr) => {
+                        if is_assertion(self.assert_function_matchers, call_expr) {
+                            return true;
+                        }
                         if let Some(known) = self.enter((false, node)) {
                             return known;
-                        }
-                        let name = get_node_name(call_expr.callee());
-                        if self
-                            .assert_function_matchers
-                            .iter()
-                            .any(|matcher| matcher.is_match(&name))
-                        {
-                            return true;
                         }
                         self.pending
                             .extend(call_expr.args().iter().map(Task::Check));

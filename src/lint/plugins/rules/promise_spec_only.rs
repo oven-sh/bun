@@ -13,18 +13,20 @@ const SPEC_ONLY: Message = Message::new("", "Avoid using non-standard `Promise.{
 impl Rule for SpecOnly {
     const META: Meta = Meta::oxlint(Plugin::Promise, "spec-only", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
-    type State<'a> = ();
+    /// `Promise`
+    type State<'a> = Name<'a>;
 
     fn new(options: &Options) -> Self {
         SpecOnly { allowed_methods: options.object(0).strings("allowedMethods").into_iter().map(String::from).collect() }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("Promise").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions("Promise").then(|| file.name_of("Promise"))
     }
 
     fn expr<'a>(&self, member_expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !member_expr.object().is_some_and(|object| get_inner_expression(object).is_ident("Promise")) {
+        let promise = cx.state;
+        if !member_expr.object().is_some_and(|object| get_inner_expression(object).as_ident() == Some(promise)) {
             return;
         }
         let prop_name = match (static_property_name(member_expr), member_expr.index()) {

@@ -100,17 +100,23 @@ impl NoAsyncEndpointHandlers {
     }
 }
 
-/// Sorted.
-const ROUTER_HANDLER_METHOD_NAMES: [&[u8]; 9] = [b"all", b"delete", b"get", b"head", b"options", b"patch", b"post", b"put", b"use"];
-
 /// Whether the call registers an endpoint handler or middleware to a route or an Express application object: the path, if it is
 /// written there, and the arguments after it.
 fn as_endpoint_registration(call: Call<'_>) -> Option<(Option<Name<'_>>, ListIter<'_, Expr<'_>>)> {
-    let callee = call.callee();
-    let method_name = static_property_name(callee).filter(|_| !callee.is_parenthesized())?;
-    ROUTER_HANDLER_METHOD_NAMES.binary_search(&method_name.bytes()).ok()?;
-    let mut args = call.args().iter();
     let first = call.args().first().filter(|it| it.tag() != ExprTag::Spread)?;
+    let callee = call.callee();
+    // The name of `a.#b` starts with the `#`.
+    let method_name = match callee.member_name() {
+        Some(name) => name.name(),
+        None if callee.tag() == ExprTag::Index => static_property_name(callee)?,
+        None => return None,
+    };
+    if !matches!(method_name.bytes(), b"all" | b"delete" | b"get" | b"head" | b"options" | b"patch" | b"post" | b"put" | b"use")
+        || callee.is_parenthesized()
+    {
+        return None;
+    }
+    let mut args = call.args().iter();
     let path = match first.kind() {
         _ if first.is_parenthesized() => None,
         ExprKind::String(path) => Some(path),

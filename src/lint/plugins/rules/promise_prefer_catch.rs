@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_member_expr, static_property_name};
+use crate::oxlint::promise::method_of;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -24,7 +24,7 @@ impl Rule for PreferCatch {
         // Only a call that is a statement. What is in parentheses, and an optional chain, is not a call for oxlint.
         if let Some(call_expr) = e.as_call()
             && call_expr.args().len() >= 2
-            && get_member_expr(call_expr.callee()).and_then(static_property_name).is_some_and(|name| name.is("then"))
+            && method_of(call_expr).is_some_and(|it| it.1.is("then"))
             && matches!(e.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
             && !e.is_parenthesized()
             && e.chain() == Chain::No

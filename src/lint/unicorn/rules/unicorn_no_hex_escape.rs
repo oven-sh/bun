@@ -11,10 +11,14 @@ const NO_HEX_ESCAPE: Message = Message::new("", "Use Unicode escapes instead of 
 impl Rule for NoHexEscape {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-hex-escape", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Template, ExprTag::Regex]).string_literals();
-    no_state!();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoHexEscape
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        strings::contains(file.text(), b"\\x").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

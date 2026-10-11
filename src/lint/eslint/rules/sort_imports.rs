@@ -102,13 +102,46 @@ impl SortImports {
             *specifier = next;
         }
     }
+
+    /// How the import declaration `statement` is placed after the one before it in the source.
+    fn check_declaration<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Import(import) = statement.kind() else {
+            return;
+        };
+        if import.span().start >= cx.state.1 {
+            return;
+        }
+        let Some(previous) = cx.state.0.replace(import) else {
+            return;
+        };
+        if self.allow_separated_groups
+            && cx.line_of(import.span().start) > cx.line_of(previous.span().end) + 1
+        {
+            return;
+        }
+        let (syntax, previous_syntax) = (used_member_syntax(import), used_member_syntax(previous));
+        if syntax != previous_syntax {
+            if self.rank[syntax as usize] < self.rank[previous_syntax as usize] {
+                let name: fn(Syntax) -> &'static str = match cx.language().is_oxlint {
+                    true => Syntax::capitalized_name,
+                    false => Syntax::name,
+                };
+                cx.report(statement, UNEXPECTED_SYNTAX_ORDER)
+                    .data("syntaxA", name(syntax))
+                    .data("syntaxB", name(previous_syntax));
+            }
+        } else if let Some(name) = get_first_local_member_name(import)
+            && let Some(previous_name) = get_first_local_member_name(previous)
+            && self.compare(name, previous_name) == Ordering::Less
+        {
+            cx.report(statement, SORT_IMPORTS_ALPHABETICALLY);
+        }
+    }
 }
 
 impl Rule for SortImports {
     const META: Meta = Meta::eslint("sort-imports", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new()
-        .enter(NodeTags::new().stmts(&[StmtTag::Import]))
-        .stmts(&[StmtTag::Import]);
+    const ON: On = On::new().stmts(&[StmtTag::Import]).finish();
     /// The import declaration before, and where those end that are looked at.
     type State<'a> = (Option<Import<'a>>, u32);
 
@@ -132,7 +165,7 @@ impl Rule for SortImports {
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         let mut on = On::new();
         if !self.ignore_declaration_sort {
-            on = on.enter(NodeTags::new().stmts(&[StmtTag::Import]));
+            on = on.finish();
         }
         if !self.ignore_member_sort {
             on = on.stmts(&[StmtTag::Import]);
@@ -141,47 +174,28 @@ impl Rule for SortImports {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.has_stmts([StmtTag::Import]) {
+            return None;
+        }
         // oxlint stops at the first statement that is no import declaration.
         let first = file.body().iter().skip_while(|it| it.directive().is_some());
         let end = match file.language().is_oxlint {
             true => first.take_while(|it| it.tag() == StmtTag::Import).last().map_or(0, |it| it.span().end),
             false => u32::MAX,
         };
-        Some((None, end))
+        (end > 0).then_some((None, end))
     }
 
-    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(StmtKind::Import(import)) = node.as_stmt().map(Stmt::kind) else {
-            return;
-        };
-        if import.span().start >= cx.state.1 {
-            return;
-        }
-        let Some(previous) = cx.state.0.replace(import) else {
-            return;
-        };
-        if self.allow_separated_groups
-            && cx.line_of(import.span().start) > cx.line_of(previous.span().end) + 1
-        {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        let start = |it: &Stmt| it.span().start;
+        if file.stmts_of_kind(StmtTag::Import).is_sorted_by_key(|it| start(&it)) {
+            file.stmts_of_kind(StmtTag::Import).for_each(|it| self.check_declaration(it, cx));
             return;
         }
-        let (syntax, previous_syntax) = (used_member_syntax(import), used_member_syntax(previous));
-        if syntax != previous_syntax {
-            if self.rank[syntax as usize] < self.rank[previous_syntax as usize] {
-                let name: fn(Syntax) -> &'static str = match cx.language().is_oxlint {
-                    true => Syntax::capitalized_name,
-                    false => Syntax::name,
-                };
-                cx.report(node, UNEXPECTED_SYNTAX_ORDER)
-                    .data("syntaxA", name(syntax))
-                    .data("syntaxB", name(previous_syntax));
-            }
-        } else if let Some(name) = get_first_local_member_name(import)
-            && let Some(previous_name) = get_first_local_member_name(previous)
-            && self.compare(name, previous_name) == Ordering::Less
-        {
-            cx.report(node, SORT_IMPORTS_ALPHABETICALLY);
-        }
+        let mut sorted: Vec<Stmt> = file.stmts_of_kind(StmtTag::Import).collect();
+        sorted.sort_by_key(start);
+        sorted.into_iter().for_each(|it| self.check_declaration(it, cx));
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -192,10 +206,15 @@ impl Rule for SortImports {
             return;
         }
         let specifiers = import.named();
-        let is_unsorted = |(before, specifier): &(ImportSpec<'a>, ImportSpec<'a>)| {
-            self.compare(before.local().bytes(), specifier.local().bytes()) == Ordering::Greater
+        let mut rest = specifiers.iter();
+        let Some(mut before) = rest.next().map(|it| it.local().bytes()) else {
+            return;
         };
-        let Some((_, first_unsorted)) = specifiers.iter().zip(specifiers.iter().skip(1)).find(is_unsorted) else {
+        let is_unsorted = |specifier: &ImportSpec<'a>| {
+            let name = specifier.local().bytes();
+            self.compare(std::mem::replace(&mut before, name), name) == Ordering::Greater
+        };
+        let Some(first_unsorted) = rest.find(is_unsorted) else {
             return;
         };
         cx.report(first_unsorted, SORT_MEMBERS_ALPHABETICALLY)

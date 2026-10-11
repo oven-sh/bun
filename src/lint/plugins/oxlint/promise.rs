@@ -16,12 +16,25 @@ pub(crate) const PROMISE_STATIC_METHODS: [&str; 8] = [
 
 /// The name of the method, if `hello.then()`, `hello.catch()`, `hello.finally()` or a static method of `Promise` is called.
 pub(crate) fn is_promise(call_expr: Call<'_>) -> Option<Name<'_>> {
-    let member_expr = get_member_expr(call_expr.callee())?;
-    let prop_name = static_property_name(member_expr)?;
-    let is_promise = prop_name.is_any(&["then", "catch", "finally"])
-        || prop_name.is_any(&PROMISE_STATIC_METHODS)
+    let (member_expr, prop_name) = method_of(call_expr)?;
+    let name = prop_name.bytes();
+    let is_promise = matches!(name, b"then" | b"catch" | b"finally")
+        || PROMISE_STATIC_METHODS.iter().any(|it| it.as_bytes() == name)
             && get_inner_expression(member_expr.object()?).is_ident("Promise");
     is_promise.then_some(prop_name)
+}
+
+/// `get_member_expr` of the callee, and its `static_property_name`.
+pub(crate) fn method_of(call_expr: Call<'_>) -> Option<(Expr<'_>, Name<'_>)> {
+    let callee = call_expr.callee();
+    match callee.tag() {
+        ExprTag::Dot if !callee.is_private_member() => Some((callee, callee.member_name()?.name())),
+        ExprTag::Dot | ExprTag::Ident => None,
+        _ => {
+            let member_expr = get_member_expr(callee)?;
+            Some((member_expr, static_property_name(member_expr)?))
+        }
+    }
 }
 
 /// Like [`is_promise`], but not for a receiver that is known to be no promise.

@@ -57,6 +57,12 @@ pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32,
     counts.collect()
 }
 
+/// Whether `text` plainly has fewer than `max` line breaks. If not, the lines tell.
+fn has_fewer_line_breaks(text: &[u8], max: u32) -> bool {
+    let max = max as usize;
+    text.len() < max || strings::count_char(text, b'\n') < max && strings::index_of_any(text, b"\r\xE2").is_none()
+}
+
 /// What is counted once in a file, when it is needed.
 #[derive(Default)]
 pub struct Counts {
@@ -113,17 +119,20 @@ impl Rule for MaxLinesPerFunction {
         if !ast_utils::is_function_with_body(func) && !is_method_without_body() {
             return;
         }
-        // A method or an accessor counts from its first modifier or its name.
+        // A method or an accessor counts from its first modifier or its name. oxlint counts from where the function starts,
+        // which is after the name of a method.
+        let is_oxlint = cx.language().is_oxlint;
         let span = match (func.owner(), func.kind()) {
-            (Node::Member(member), _) => member.span(),
-            (Node::Expr(e), FnKind::Method | FnKind::Getter | FnKind::Setter) => e.parent().span(),
+            (Node::Member(member), _) if !is_oxlint => member.span(),
+            (Node::Expr(e), FnKind::Method | FnKind::Getter | FnKind::Setter) if !is_oxlint => e.parent().span(),
+            (Node::Expr(_), FnKind::Method | FnKind::Getter | FnKind::Setter) => func.estree_span(),
             (Node::Expr(e), _) if !self.counts_iifes && ast_utils::is_callee(e) => return,
             _ => func.estree_span(),
         };
-        // oxlint counts from where the function starts, which is after the name of a method.
-        let is_oxlint = cx.language().is_oxlint;
-        let span = if is_oxlint { func.estree_span() } else { span };
         let file = cx.file();
+        if has_fewer_line_breaks(file.slice(span), self.max) {
+            return;
+        }
         let (first, last) = (file.line_of(span.start), file.line_of(span.end));
         if last - first < self.max {
             return;

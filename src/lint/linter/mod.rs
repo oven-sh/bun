@@ -95,6 +95,9 @@ pub struct LintOptions<'o> {
     pub wants_texts_of_fixes: bool,
     /// Whether anything reads [`LintMessage::help`].
     pub wants_help: bool,
+    /// Whether anything reads [`LintMessage::message`] of what the rules here report, and [`Suggestion::message`]. If not, they are
+    /// empty.
+    pub wants_messages: bool,
     /// Whether anything reads what is in [`LintMessage::suppressions`]. If not, a message that comments suppress has one of
     /// them, not one for each comment that is in effect: n comments that disable and n messages make n² of them.
     pub wants_suppressions: bool,
@@ -129,6 +132,7 @@ impl Default for LintOptions<'_> {
             wants_fixes: true,
             wants_texts_of_fixes: true,
             wants_help: true,
+            wants_messages: true,
             wants_suppressions: true,
             rule_filter: None,
             js_plugins: None,
@@ -670,6 +674,7 @@ impl<S: RuleSet> Linter<S> {
         }
         let of_js = problems.len() - before_js;
         file.sink.wants_help.set(options.wants_help);
+        file.sink.drops_messages.set(!options.wants_messages);
         (file.sink.drops_texts_of_fixes).set(!options.wants_texts_of_fixes);
         let when: Vec<When> = match file.language().is_oxlint {
             true => running.iter().map(|it| it.when).collect(),

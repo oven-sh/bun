@@ -115,43 +115,42 @@ pub enum ExprKind<'a> {
 impl<'a> Expr<'a> {
     #[inline]
     pub fn kind(self) -> ExprKind<'a> {
-        match self.try_raw() {
-            None => ExprKind::Missing,
-            Some(raw) if self.file.hides_casts => self.kind_without_casts(raw),
-            Some(raw) => self.kind_of::<false>(raw),
+        match self.file.plain_exprs.get(self.id.idx()) {
+            Some(raw) => self.kind_of::<true>(raw),
+            None => self.kind_in_general(),
         }
     }
 
     #[inline(never)]
-    fn kind_without_casts(self, raw: &hir::Expr) -> ExprKind<'a> {
-        self.kind_of::<true>(raw)
+    fn kind_in_general(self) -> ExprKind<'a> {
+        match self.try_raw() {
+            Some(raw) => self.kind_of::<false>(raw),
+            None => ExprKind::Missing,
+        }
     }
 
-    /// `HIDES_CASTS`: an operand can be a cast that is synthesized from a JSDoc comment. What few
-    /// expressions need is not in here but in functions of its own, so that this one calls nothing.
+    /// `PLAIN`: it is one of `File::plain_exprs`. What few expressions need is not in here but in
+    /// functions of its own, so that this one calls nothing.
     #[inline(always)]
-    fn kind_of<const HIDES_CASTS: bool>(self, raw: &hir::Expr) -> ExprKind<'a> {
+    fn kind_of<const PLAIN: bool>(self, raw: &hir::Expr) -> ExprKind<'a> {
         let file = self.file;
-        let e = |id| match HIDES_CASTS {
-            true => Expr::new(file, id),
-            false => Expr { file, id },
+        let e = |id| match PLAIN {
+            true => Expr { file, id },
+            false => Expr::new(file, id),
         };
         match raw.kind {
             hir::ExprKind::Missing => ExprKind::Missing,
             hir::ExprKind::Ident(name) => ExprKind::Ident(file.name(name)),
-            hir::ExprKind::PrivateIdentifier(name) => self.kind_of_private_identifier(name),
+            hir::ExprKind::PrivateIdentifier(name) => match PLAIN {
+                true => ExprKind::PrivateIdentifier(file.name(name)),
+                false => self.kind_of_private_identifier(name),
+            },
             hir::ExprKind::This => ExprKind::This,
             hir::ExprKind::Super => ExprKind::Super,
             hir::ExprKind::Null => ExprKind::Null,
             hir::ExprKind::True => ExprKind::True,
             hir::ExprKind::False => ExprKind::False,
-            hir::ExprKind::Number(at) => ExprKind::Number(
-                file.hir
-                    .numbers
-                    .get(at as usize)
-                    .copied()
-                    .unwrap_or(f64::NAN),
-            ),
+            hir::ExprKind::Number(at) => ExprKind::Number(file.number(at)),
             hir::ExprKind::String(text) => match file.hir.text.get(raw.pos as usize) {
                 Some(b'"' | b'\'') if file.hir.jsx.is_empty() => ExprKind::String(file.name(text)),
                 _ => self.kind_of_string(raw, text),
@@ -173,15 +172,13 @@ impl<'a> Expr<'a> {
                 name,
                 name_pos,
                 chain,
-            } => match file.spells_private_names_apart()
-                && file.hir.text.get(name_pos as usize) == Some(&b'#')
-            {
-                true => self.kind_of_private_member(obj, name, name_pos, chain),
-                false => ExprKind::Dot {
-                    obj: e(obj),
-                    name: file.ident(name, name_pos),
-                    chain,
+            } => ExprKind::Dot {
+                obj: e(obj),
+                name: match PLAIN {
+                    true => file.ident(name, name_pos),
+                    false => file.member_name(name, name_pos),
                 },
+                chain,
             },
             hir::ExprKind::Index { obj, index, chain } => ExprKind::Index {
                 obj: e(obj),
@@ -241,23 +238,6 @@ impl<'a> Expr<'a> {
     #[inline(never)]
     fn kind_of_private_identifier(self, name: Atom) -> ExprKind<'a> {
         ExprKind::PrivateIdentifier(self.file.private_name(name))
-    }
-
-    #[inline(never)]
-    fn kind_of_private_member(
-        self,
-        obj: hir::ExprId,
-        name: Atom,
-        name_pos: u32,
-        chain: Chain,
-    ) -> ExprKind<'a> {
-        ExprKind::Dot {
-            obj: Expr::new(self.file, obj),
-            name: self
-                .file
-                .ident(self.file.private_name(name).atom(), name_pos),
-            chain,
-        }
     }
 
     /// The kind of what the HIR has as the string `text` and is not plainly one.
@@ -492,11 +472,20 @@ impl<'a> Expr<'a> {
     /// The value, if it is a string literal.
     #[inline]
     pub fn as_string(self) -> Option<Name<'a>> {
-        match self.try_raw()?.kind {
-            hir::ExprKind::String(_) => match self.kind() {
-                ExprKind::String(value) => Some(value),
-                _ => None,
+        let (file, raw) = (self.file, self.try_raw()?);
+        match raw.kind {
+            hir::ExprKind::String(text) => match file.hir.text.get(raw.pos as usize) {
+                Some(b'"' | b'\'') if file.hir.jsx.is_empty() => Some(file.name(text)),
+                _ => self.as_string_that_is_not_plainly_one(raw, text),
             },
+            _ => None,
+        }
+    }
+
+    #[inline(never)]
+    fn as_string_that_is_not_plainly_one(self, raw: &hir::Expr, text: Atom) -> Option<Name<'a>> {
+        match self.kind_of_string(raw, text) {
+            ExprKind::String(value) => Some(value),
             _ => None,
         }
     }
@@ -521,6 +510,169 @@ impl<'a> Expr<'a> {
     pub fn as_class(self) -> Option<Class<'a>> {
         match self.try_raw()?.kind {
             hir::ExprKind::Class(class) => Some(Class::new(self.file, class)),
+            _ => None,
+        }
+    }
+
+    /// The call of a `New`.
+    #[inline]
+    pub fn as_new(self) -> Option<Call<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::New(call) => Some(Call::new(self.file, call)),
+            _ => None,
+        }
+    }
+
+    /// The call of a `TaggedTemplate`.
+    #[inline]
+    pub fn as_tagged_template(self) -> Option<Call<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::TaggedTemplate(call) => Some(Call::new(self.file, call)),
+            _ => None,
+        }
+    }
+
+    /// The `obj`, the `name` and the `chain` of a `Dot`.
+    #[inline]
+    pub fn as_dot(self) -> Option<(Expr<'a>, Ident<'a>, Chain)> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Dot {
+                obj,
+                name,
+                name_pos,
+                chain,
+            } => Some((
+                Expr::new(self.file, obj),
+                self.file.member_name(name, name_pos),
+                chain,
+            )),
+            _ => None,
+        }
+    }
+
+    /// The `obj`, the `index` and the `chain` of an `Index`.
+    #[inline]
+    pub fn as_index(self) -> Option<(Expr<'a>, Expr<'a>, Chain)> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Index { obj, index, chain } => Some((
+                Expr::new(self.file, obj),
+                Expr::new(self.file, index),
+                chain,
+            )),
+            _ => None,
+        }
+    }
+
+    /// The `op` and the `operand` of a `Unary`.
+    #[inline]
+    pub fn as_unary(self) -> Option<(UnOp, Expr<'a>)> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Unary { op, operand } => Some((op, Expr::new(self.file, operand))),
+            _ => None,
+        }
+    }
+
+    /// The `op`, the `left` and the `right` of a `Binary`.
+    #[inline]
+    pub fn as_binary(self) -> Option<(BinOp, Expr<'a>, Expr<'a>)> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Binary { op, left, right } => {
+                Some((op, Expr::new(self.file, left), Expr::new(self.file, right)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `op`, the `target` and the `value` of an `Assign`.
+    #[inline]
+    pub fn as_assign(self) -> Option<(Option<BinOp>, Expr<'a>, Expr<'a>)> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Assign { op, target, value } => Some((
+                op,
+                Expr::new(self.file, target),
+                Expr::new(self.file, value),
+            )),
+            _ => None,
+        }
+    }
+
+    /// The `test`, the `yes` and the `no` of a `Cond`.
+    #[inline]
+    pub fn as_cond(self) -> Option<(Expr<'a>, Expr<'a>, Expr<'a>)> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Cond { test, yes, no } => Some((
+                Expr::new(self.file, test),
+                Expr::new(self.file, yes),
+                Expr::new(self.file, no),
+            )),
+            _ => None,
+        }
+    }
+
+    /// The elements of an `Array`.
+    #[inline]
+    pub fn as_array(self) -> Option<List<'a, Expr<'a>>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Array(elements) => Some(List::ids(self.file, elements)),
+            _ => None,
+        }
+    }
+
+    /// The properties of an `Object`.
+    #[inline]
+    pub fn as_object(self) -> Option<List<'a, Prop<'a>>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Object(props) => Some(List::run(self.file, props)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_jsx(self) -> Option<Jsx<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Jsx(jsx) => Some(Jsx::new(self.file, jsx, self)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_template(self) -> Option<Template<'a>> {
+        let raw = self.try_raw()?;
+        let (exprs, only_text) = match raw.kind {
+            hir::ExprKind::Template { exprs } => (exprs, None),
+            hir::ExprKind::String(text) if self.file.is_backtick_string(self.id, raw) => {
+                (hir::IdList::EMPTY, Some(text))
+            }
+            _ => return None,
+        };
+        Some(Template {
+            expr: self,
+            exprs,
+            only_text,
+        })
+    }
+
+    #[inline]
+    pub fn as_number(self) -> Option<f64> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Number(at) => Some(self.file.number(at)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_regex(self) -> Option<Regex<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Regex => Some(Regex { expr: self }),
+            _ => None,
+        }
+    }
+
+    /// The `args` of an `ImportCall`.
+    #[inline]
+    pub fn as_import_call(self) -> Option<List<'a, Expr<'a>>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::ImportCall { args } => Some(List::ids(self.file, args)),
             _ => None,
         }
     }
@@ -572,12 +724,7 @@ impl<'a> Expr<'a> {
     pub fn member_name(self) -> Option<Ident<'a>> {
         match self.try_raw()?.kind {
             hir::ExprKind::Dot { name, name_pos, .. } => {
-                Some(match self.file.spells_private_names_apart() {
-                    true if self.is_private_member() => self
-                        .file
-                        .ident(self.file.private_name(name).atom(), name_pos),
-                    _ => self.file.ident(name, name_pos),
-                })
+                Some(self.file.member_name(name, name_pos))
             }
             _ => None,
         }
@@ -926,6 +1073,25 @@ impl<'a> Expr<'a> {
     }
 }
 
+impl<'a> File<'a> {
+    /// The `name` of a `Dot`, which is written at `start`.
+    #[inline]
+    fn member_name(&'a self, name: Atom, start: u32) -> Ident<'a> {
+        match self.spells_private_names_apart() {
+            true => self.member_name_that_may_be_private(name, start),
+            false => self.ident(name, start),
+        }
+    }
+
+    #[inline(never)]
+    fn member_name_that_may_be_private(&'a self, name: Atom, start: u32) -> Ident<'a> {
+        match self.hir.text.get(start as usize) {
+            Some(b'#') => self.ident(self.private_name(name).atom(), start),
+            _ => self.ident(name, start),
+        }
+    }
+}
+
 impl File<'_> {
     /// The HIR has one flag for the phases of an import. The word at `pos` tells which it is.
     pub(super) fn phase_at(&self, pos: u32) -> &'static str {
@@ -934,6 +1100,12 @@ impl File<'_> {
             Some(b"source") => "source",
             _ => "defer",
         }
+    }
+
+    /// The number at `at` of the HIR.
+    #[inline]
+    fn number(&self, at: u32) -> f64 {
+        (self.hir.numbers.get(at as usize).copied()).unwrap_or(f64::NAN)
     }
 
     /// The kind of the expression `id`, which is `raw`.

@@ -12,10 +12,7 @@ impl Rule for ClassMethodsUseThis {
     const META: Meta = Meta::typescript("class-methods-use-this", Kind::Suggestion)
         .extends_base_rule("class-methods-use-this")
         .reports_on_exit();
-    const ON: On = On::new()
-        .exprs(&[ExprTag::This, ExprTag::Super])
-        .members()
-        .finish();
+    const ON: On = On::new().members().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -38,15 +35,12 @@ impl Rule for ClassMethodsUseThis {
         file.has_classes().then(State::default)
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.checker.mark_this_used(e, &mut cx.state);
-    }
-
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         self.checker.check_member(member, &mut cx.state);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.checker.mark_this_used(cx.file(), &mut cx.state);
         for func in cx.state.methods_without_this() {
             // oxlint points at the key.
             let key = match func.owner() {

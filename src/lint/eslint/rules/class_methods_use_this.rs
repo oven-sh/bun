@@ -84,11 +84,50 @@ impl Checker {
         }
     }
 
-    /// `e` is a `this` or a `super`: notes which function it belongs to.
-    pub fn mark_this_used<'a>(&self, e: Expr<'a>, state: &mut State<'a>) {
+    /// Notes which functions of class members the `this` and the `super` of `file` belong to, once the functions that have to use
+    /// `this` are known.
+    pub fn mark_this_used<'a>(&self, file: &'a File<'a>, state: &mut State<'a>) {
+        if state.methods.is_empty() {
+            return;
+        }
+        // For each: where a `this` belongs to it or to what is in it, and whether one of its own has been found.
+        let inside = |func: Func<'a>| {
+            let whole = func.span();
+            let start = match func.open_paren() {
+                Some(open) => func.type_params().first().map_or(open, |it| it.span().start),
+                None => whole.start,
+            };
+            Span::new(start, whole.end)
+        };
+        let mut methods: Vec<_> = state.methods.iter().map(|&func| (inside(func), func, false)).collect();
+        methods.sort_unstable_by_key(|it| it.0.start);
+        // The last that starts before the `this`.
+        let mut at = 0;
+        for e in file.exprs_of_kind(ExprTag::This).chain(file.exprs_of_kind(ExprTag::Super)) {
+            let start = e.span().start;
+            let is_at = methods.get(at).is_some_and(|it| it.0.start <= start)
+                && methods.get(at + 1).is_none_or(|it| start < it.0.start);
+            if !is_at {
+                at = methods.partition_point(|it| it.0.start <= start).wrapping_sub(1);
+            }
+            let around = methods.get_mut(at).filter(|it| start < it.0.end);
+            if around.as_ref().is_some_and(|it| it.2) {
+                continue;
+            }
+            if let Some(owner) = self.owner_of_this(e, state) {
+                state.uses_this.insert(owner);
+                if let Some(around) = around {
+                    around.2 = around.1 == owner;
+                }
+            }
+        }
+    }
+
+    /// The function of a class member that `e`, a `this` or a `super`, counts for.
+    fn owner_of_this<'a>(&self, e: Expr<'a>, state: &mut State<'a>) -> Option<Func<'a>> {
         let is_oxlint = e.file().language().is_oxlint;
         if e.is_jsx_tag_name() && !is_oxlint {
-            return;
+            return None;
         }
         let owner = state.owners_of_this.find(Node::Expr(e), |child, ancestor| match ancestor {
             Node::Func(func) => match func.kind() {
@@ -122,11 +161,7 @@ impl Checker {
             _ => None,
         });
         // oxlint looks at the body alone.
-        if let Some(Some(func)) = owner
-            && !(is_oxlint && func.params_span().is_some_and(|it| it.contains(e.span())))
-        {
-            state.uses_this.insert(func);
-        }
+        owner.flatten().filter(|func| !(is_oxlint && func.params_span().is_some_and(|it| it.contains(e.span()))))
     }
 
     /// Notes the functions of `member` that have to use `this`.
@@ -186,7 +221,7 @@ impl Checker {
 
 impl Rule for ClassMethodsUseThis {
     const META: Meta = Meta::eslint("class-methods-use-this", Kind::Suggestion).reports_on_exit();
-    const ON: On = On::new().exprs(&[ExprTag::This, ExprTag::Super]).members().finish();
+    const ON: On = On::new().members().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -205,15 +240,12 @@ impl Rule for ClassMethodsUseThis {
         file.has_classes().then(State::default)
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.checker.mark_this_used(e, &mut cx.state);
-    }
-
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         self.checker.check_member(member, &mut cx.state);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.checker.mark_this_used(cx.file(), &mut cx.state);
         for func in cx.state.methods_without_this() {
             cx.report(ast_utils::get_function_head_loc(func), MISSING_THIS)
                 .data("name", ast_utils::get_function_name_with_kind(func));

@@ -16,7 +16,7 @@ impl<const VITEST: bool> Rule for ValidExpectInPromise<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.mentions_any(&["then", "catch", "finally"])).then_some(())
+        (file.mentions("expect") && file.mentions_any(&["then", "catch", "finally"]) && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

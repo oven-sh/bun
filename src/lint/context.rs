@@ -92,6 +92,8 @@ pub(crate) struct Sink {
     pub(crate) drops_texts_of_fixes: Cell<bool>,
     /// Whether anything reads the help of oxlint. If not, it is not looked up.
     pub(crate) wants_help: Cell<bool>,
+    /// Nothing reads [`Diagnostic::message`] and [`Suggestion::message`]: what is found is only counted. They are empty.
+    pub(crate) drops_messages: Cell<bool>,
     /// What a rule has thrown: of all the first in the text, which ESLint comes to first.
     pub(crate) thrown: RefCell<Option<Thrown>>,
 }
@@ -197,10 +199,15 @@ impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
     fn report(&self, span: Span, message: Message) -> Report<'a> {
-        let language = self.file.language();
+        let (language, sink) = (self.file.language(), &self.file.sink);
+        let wants_help = language.is_oxlint && sink.wants_help.get();
+        let wants_text = !sink.drops_messages.get();
         let message = match language.is_oxlint {
+            // What oxlint says has the same id.
+            true if !wants_text && !wants_help => message,
             true => {
-                let said = (self.said_by_oxlint).get_or_init(|| oxlint_messages::of_rule(self.meta));
+                let said =
+                    (self.said_by_oxlint).get_or_init(|| oxlint_messages::of_rule(self.meta));
                 oxlint_messages::of(said, message)
             }
             false if language.eslint_8.is_some() => {
@@ -208,7 +215,7 @@ impl<'a> CxBase<'a> {
             }
             false => message,
         };
-        let help = match language.is_oxlint && self.file.sink.wants_help.get() {
+        let help = match wants_help {
             true => oxlint_help::of(self.meta, message),
             false => None,
         };
@@ -229,6 +236,7 @@ impl<'a> CxBase<'a> {
             file: self.file,
             message,
             data: SmallVec::new(),
+            reads_data: wants_text && message.may_have_placeholders || help.is_some(),
             diagnostic: Some(diagnostic),
         }
     }
@@ -273,6 +281,8 @@ pub struct Report<'a> {
     file: &'a File<'a>,
     message: Message,
     data: Data<'a>,
+    /// A text is made of `data`.
+    reads_data: bool,
     diagnostic: Option<Diagnostic>,
 }
 
@@ -287,7 +297,7 @@ impl<'a> Report<'a> {
     /// What of [`Report::data`] is the same for all values.
     #[inline(never)]
     fn push_data(&mut self, name: &'static str, value: Cow<'a, [u8]>) {
-        if self.diagnostic.is_some() {
+        if self.reads_data {
             self.data.push((name, value));
         }
     }
@@ -571,12 +581,16 @@ impl<'a> Report<'a> {
         data: &[(&'static str, &[u8])],
         fix: Fix,
     ) {
+        let wants_text = !self.file.sink.drops_messages.get();
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.suggestions.push(Suggestion {
                 message_id: message.id,
-                message: interpolate(message, |name| {
-                    data.iter().find(|it| it.0 == name).map(|it| it.1)
-                }),
+                message: match wants_text {
+                    true => interpolate(message, |name| {
+                        data.iter().find(|it| it.0 == name).map(|it| it.1)
+                    }),
+                    false => Vec::new(),
+                },
                 data: data.iter().map(|it| (it.0, it.1.to_vec())).collect(),
                 fix,
                 kind,
@@ -587,31 +601,35 @@ impl<'a> Report<'a> {
 
 impl Drop for Report<'_> {
     fn drop(&mut self) {
-        if let Some(mut diagnostic) = self.diagnostic.take() {
-            let data = |name: &str| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1);
+        let Some(diagnostic) = &mut self.diagnostic else {
+            return;
+        };
+        let data = |name: &str| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1);
+        if !self.file.sink.drops_messages.get() {
             diagnostic.message = interpolate(self.message, data);
-            if let Some(texts) = diagnostic.constant_help.filter(|it| it.has_values()) {
-                let details = &mut **diagnostic.details.get_or_insert_default();
-                let parts = [
-                    (Part::Help, &mut details.help),
-                    (Part::FirstLabel, &mut details.first_label),
-                    (Part::Note, &mut details.note),
-                ];
-                for (part, said) in parts {
-                    if let (Found::WithData(text), true) = (texts.found(part), said.is_empty()) {
-                        let text = interpolate_text(text, data);
-                        let text = std::str::from_utf8(&text).unwrap_or_default();
-                        *said = Cow::Owned(text.to_owned());
-                    }
-                }
-            }
-            for suggestion in &mut diagnostic.suggestions {
-                if suggestion.kind == SuggestionKind::DangerousFix {
-                    suggestion.message.clone_from(&diagnostic.message);
-                }
-            }
-            self.file.sink.diagnostics.borrow_mut().push(diagnostic);
         }
+        if let Some(texts) = diagnostic.constant_help.filter(|it| it.has_values()) {
+            let details = &mut **diagnostic.details.get_or_insert_default();
+            let parts = [
+                (Part::Help, &mut details.help),
+                (Part::FirstLabel, &mut details.first_label),
+                (Part::Note, &mut details.note),
+            ];
+            for (part, said) in parts {
+                if let (Found::WithData(text), true) = (texts.found(part), said.is_empty()) {
+                    let text = interpolate_text(text, data);
+                    let text = std::str::from_utf8(&text).unwrap_or_default();
+                    *said = Cow::Owned(text.to_owned());
+                }
+            }
+        }
+        for suggestion in &mut diagnostic.suggestions {
+            if suggestion.kind == SuggestionKind::DangerousFix {
+                suggestion.message.clone_from(&diagnostic.message);
+            }
+        }
+        let mut diagnostics = self.file.sink.diagnostics.borrow_mut();
+        diagnostics.extend(self.diagnostic.take());
     }
 }
 
@@ -641,13 +659,21 @@ pub fn interpolate_text<'d>(text: &str, data: impl Fn(&str) -> Option<&'d [u8]>)
             .unwrap_or(bytes.len() - name_start);
         let name_end = name_start + name_len;
         let value = match name_len > 0 && bytes[name_end..].starts_with(b"}}") {
-            true => data(text[name_start..name_end].trim()),
+            true => data(match &bytes[name_start..name_end] {
+                [first, .., last] if first.is_ascii_graphic() && last.is_ascii_graphic() => {
+                    &text[name_start..name_end]
+                }
+                _ => text[name_start..name_end].trim(),
+            }),
             false => None,
         };
         match value {
             Some(value) => {
                 out.extend_from_slice(&bytes[at..open]);
-                bun_core::strings::push_wtf8_well_formed(&mut out, value);
+                match value.is_ascii() {
+                    true => out.extend_from_slice(value),
+                    false => bun_core::strings::push_wtf8_well_formed(&mut out, value),
+                }
                 at = name_end + 2;
             }
             // The second brace can be the first of the next pair.

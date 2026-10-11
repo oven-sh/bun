@@ -170,25 +170,27 @@ tags! {
 impl<'a> Stmt<'a> {
     #[inline]
     pub fn kind(self) -> StmtKind<'a> {
-        match self.try_raw() {
-            None => StmtKind::Empty,
-            Some(raw) if self.file.hides_casts => self.kind_without_casts(raw),
-            Some(raw) => self.kind_of::<false>(raw),
+        match self.file.plain_stmts.get(self.id.idx()) {
+            Some(raw) => self.kind_of::<true>(raw),
+            None => self.kind_in_general(),
         }
     }
 
     #[inline(never)]
-    fn kind_without_casts(self, raw: &hir::Stmt) -> StmtKind<'a> {
-        self.kind_of::<true>(raw)
+    fn kind_in_general(self) -> StmtKind<'a> {
+        match self.try_raw() {
+            Some(raw) => self.kind_of::<false>(raw),
+            None => StmtKind::Empty,
+        }
     }
 
     /// See `Expr::kind_of`.
     #[inline(always)]
-    fn kind_of<const HIDES_CASTS: bool>(self, raw: &hir::Stmt) -> StmtKind<'a> {
+    fn kind_of<const PLAIN: bool>(self, raw: &hir::Stmt) -> StmtKind<'a> {
         let file = self.file;
-        let e = |id| match HIDES_CASTS {
-            true => Expr::new(file, id),
-            false => Expr { file, id },
+        let e = |id| match PLAIN {
+            true => Expr { file, id },
+            false => Expr::new(file, id),
         };
         let some = |id: hir::ExprId| (id.idx() < file.hir.exprs.len()).then(|| e(id));
         let s = |id| Stmt::new(file, id);
@@ -209,17 +211,7 @@ impl<'a> Stmt<'a> {
                 yes: s(yes),
                 no: Stmt::some(file, no),
             },
-            hir::StmtKind::For {
-                init,
-                test,
-                update,
-                body,
-            } => StmtKind::For {
-                init: Stmt::some(file, init),
-                test: some(test),
-                update: some(update),
-                body: s(body),
-            },
+            hir::StmtKind::For { .. } | hir::StmtKind::Try { .. } => self.kind_of_four_parts(raw),
             hir::StmtKind::ForIn { left, expr, body } => StmtKind::ForIn {
                 left: s(left),
                 expr: e(expr),
@@ -244,24 +236,13 @@ impl<'a> Stmt<'a> {
                 body: s(body),
                 test: e(test),
             },
-            hir::StmtKind::Block(list) if file.is_with(raw) => {
-                Stmt::kind_of_with(List::ids(file, list))
-            }
-            hir::StmtKind::Block(list) => StmtKind::Block(List::ids(file, list)),
+            hir::StmtKind::Block(list) => match file.hir.with_bodies.is_empty() {
+                true => StmtKind::Block(List::ids(file, list)),
+                false => self.kind_of_block_or_with(raw, list),
+            },
             hir::StmtKind::Switch { expr, cases } => StmtKind::Switch {
                 expr: e(expr),
                 cases: List::run(file, cases),
-            },
-            hir::StmtKind::Try {
-                block,
-                param,
-                handler,
-                finalizer,
-            } => StmtKind::Try {
-                block: s(block),
-                param: VarDecl::some(file, param),
-                handler: Stmt::some(file, handler),
-                finalizer: Stmt::some(file, finalizer),
             },
             hir::StmtKind::Throw(value) => StmtKind::Throw(e(value)),
             hir::StmtKind::Break(label) => StmtKind::Break(file.name_if_some(label)),
@@ -290,11 +271,49 @@ impl<'a> Stmt<'a> {
         }
     }
 
-    /// The kind of the `with` statement that the HIR has as the block `list`.
+    /// Apart from `kind_of`, which without these has to save no registers.
     #[inline(never)]
-    fn kind_of_with(list: List<'a, Stmt<'a>>) -> StmtKind<'a> {
+    fn kind_of_four_parts(self, raw: &hir::Stmt) -> StmtKind<'a> {
+        let file = self.file;
+        match raw.kind {
+            hir::StmtKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => StmtKind::For {
+                init: Stmt::some(file, init),
+                test: Expr::some(file, test),
+                update: Expr::some(file, update),
+                body: Stmt::new(file, body),
+            },
+            hir::StmtKind::Try {
+                block,
+                param,
+                handler,
+                finalizer,
+            } => StmtKind::Try {
+                block: Stmt::new(file, block),
+                param: VarDecl::some(file, param),
+                handler: Stmt::some(file, handler),
+                finalizer: Stmt::some(file, finalizer),
+            },
+            _ => StmtKind::Empty,
+        }
+    }
+
+    /// The kind of what the HIR has as the block `list`, in a file with a `with` statement.
+    #[inline(never)]
+    fn kind_of_block_or_with(
+        self,
+        raw: &hir::Stmt,
+        list: hir::IdList<hir::StmtId>,
+    ) -> StmtKind<'a> {
+        let list = List::ids(self.file, list);
         match (list.get(0).map(Stmt::kind), list.get(1)) {
-            (Some(StmtKind::Expr(object)), Some(body)) => StmtKind::With { object, body },
+            (Some(StmtKind::Expr(object)), Some(body)) if self.file.is_with(raw) => {
+                StmtKind::With { object, body }
+            }
             _ => StmtKind::Block(list),
         }
     }
@@ -549,8 +568,114 @@ impl<'a> Stmt<'a> {
     /// The statements, if it is a block.
     #[inline]
     pub fn as_block(self) -> Option<List<'a, Stmt<'a>>> {
-        match self.kind() {
-            StmtKind::Block(statements) => Some(statements),
+        let raw = self.try_raw()?;
+        match raw.kind {
+            hir::StmtKind::Block(list) => match self.file.hir.with_bodies.is_empty() {
+                true => Some(List::ids(self.file, list)),
+                false => match self.kind_of_block_or_with(raw, list) {
+                    StmtKind::Block(statements) => Some(statements),
+                    _ => None,
+                },
+            },
+            _ => None,
+        }
+    }
+
+    /// The expression of an `Expr`.
+    #[inline]
+    pub fn as_expr(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Expr(e) => Some(Expr::new(self.file, e)),
+            _ => None,
+        }
+    }
+
+    /// The declarations of a `Var`.
+    #[inline]
+    pub fn as_var(self) -> Option<List<'a, VarDecl<'a>>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Var(decls) => Some(List::run(self.file, decls)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_fn(self) -> Option<Func<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Fn(func) => Some(Func::new(self.file, func)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_class(self) -> Option<Class<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Class(class) => Some(Class::new(self.file, class)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_interface(self) -> Option<Interface<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Interface(interface) => Some(Interface::new(self.file, interface)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_module(self) -> Option<Module<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Module(module) => Some(Module::new(self.file, module)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_import(self) -> Option<Import<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Import(import) => Some(Import::new(self.file, import)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_export_named(self) -> Option<Export<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ExportNamed(export) => Some(Export::new(self.file, export)),
+            _ => None,
+        }
+    }
+
+    /// What a `Return` returns: `Some(None)` for a bare `return`.
+    #[inline]
+    pub fn as_return(self) -> Option<Option<Expr<'a>>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Return(value) => Some(Expr::some(self.file, value)),
+            _ => None,
+        }
+    }
+
+    /// The `test`, the `yes` and the `no` of an `If`.
+    #[inline]
+    pub fn as_if(self) -> Option<(Expr<'a>, Stmt<'a>, Option<Stmt<'a>>)> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::If { test, yes, no } => Some((
+                Expr::new(self.file, test),
+                Stmt::new(self.file, yes),
+                Stmt::some(self.file, no),
+            )),
+            _ => None,
+        }
+    }
+
+    /// The `expr` and the `cases` of a `Switch`.
+    #[inline]
+    pub fn as_switch(self) -> Option<(Expr<'a>, List<'a, Case<'a>>)> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Switch { expr, cases } => {
+                Some((Expr::new(self.file, expr), List::run(self.file, cases)))
+            }
             _ => None,
         }
     }

@@ -39,27 +39,26 @@ impl Rule for NoImmediateMutation {
         let Some(expr) = get_inner_expression_unless_chain(expr) else {
             return;
         };
-        // The variable that is changed, how it has to be initialized, and what is reported then.
+        // Whether the statement before gives the variable that is changed a new value of that kind.
+        let is_initialized = |variable: Name<'a>, init_type: InitType| {
+            let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
+            prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
+        };
         let Some(mutation) = (match expr.kind() {
-            ExprKind::Call(call) => call_mutation(call),
-            ExprKind::Assign { op: None, target, value } => property_assignment(target, value),
+            ExprKind::Call(call) => call_mutation(call, is_initialized),
+            ExprKind::Assign { op: None, target, value } => property_assignment(target, value, is_initialized),
             _ => None,
         }) else {
             return;
         };
-        let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
-        if prev_stmt.and_then(get_prev_declaration) == Some((mutation.variable, mutation.init_type)) {
-            let report = cx.report(expr, mutation.message);
-            if let Some(method) = mutation.method {
-                report.data("method", method);
-            }
+        let report = cx.report(expr, mutation.message);
+        if let Some(method) = mutation.method {
+            report.data("method", method);
         }
     }
 }
 
 struct Mutation<'a> {
-    variable: Name<'a>,
-    init_type: InitType,
     message: Message,
     method: Option<Name<'a>>,
 }
@@ -68,39 +67,58 @@ fn is_spread(e: Expr) -> bool {
     e.tag() == ExprTag::Spread
 }
 
-fn call_mutation(call: Call<'_>) -> Option<Mutation<'_>> {
+fn call_mutation<'a>(call: Call<'a>, is_initialized: impl Fn(Name<'a>, InitType) -> bool) -> Option<Mutation<'a>> {
     let member = get_member_expr(call.callee()).filter(|it| !it.is_optional())?;
-    let method_name = static_property_name(member)?;
+    let method_name = match member.member_name() {
+        Some(name) => name.name(),
+        None => static_property_name(member)?,
+    };
+    let method = method_name.bytes();
+    if !matches!(method, b"assign" | b"push" | b"unshift" | b"add" | b"set") {
+        return None;
+    }
     let object = get_inner_expression(member.object()?);
     let args = call.args();
     let references = |variable| args.iter().filter(|it| !is_spread(*it)).any(|it| expression_references_variable(it, variable));
-    if method_name.is("assign") && object.is_ident("Object") && is_global_reference(object) {
+    if method == b"assign" {
+        if !object.is_ident("Object") {
+            return None;
+        }
         // `Object.assign(obj, ...spread)` cannot be moved.
         let variable = get_inner_expression(args.first()?).as_ident()?;
         let is_valid = args.len() >= 2
             && !args.get(1).is_some_and(is_spread)
+            && is_initialized(variable, InitType::Object)
+            && is_global_reference(object)
             && !args.iter().skip(1).filter(|it| !is_spread(*it)).any(|it| expression_references_variable(it, variable));
-        return is_valid.then_some(Mutation { variable, init_type: InitType::Object, message: OBJECT_ASSIGN, method: None });
+        return is_valid.then_some(Mutation { message: OBJECT_ASSIGN, method: None });
     }
     let variable = object.as_ident()?;
-    let (init_type, message, method) = match method_name.bytes() {
+    let (init_type, message, method) = match method {
         b"push" | b"unshift" if !args.is_empty() => (InitType::Array, ARRAY_MUTATION, Some(method_name)),
         b"add" if args.len() == 1 && !args.iter().any(is_spread) => (InitType::Set, SET_ADD, None),
         b"set" if args.len() == 2 && !args.iter().any(is_spread) => (InitType::Map, MAP_SET, None),
         _ => return None,
     };
-    (!references(variable)).then_some(Mutation { variable, init_type, message, method })
+    (is_initialized(variable, init_type) && !references(variable)).then_some(Mutation { message, method })
 }
 
 /// `obj.a = value`, `obj[a] = value`
-fn property_assignment<'a>(target: Expr<'a>, value: Expr<'a>) -> Option<Mutation<'a>> {
+fn property_assignment<'a>(
+    target: Expr<'a>,
+    value: Expr<'a>,
+    is_initialized: impl Fn(Name<'a>, InitType) -> bool,
+) -> Option<Mutation<'a>> {
     if target.is_private_member() {
         return None;
     }
     let variable = get_inner_expression(target.object()?).as_ident()?;
+    if !is_initialized(variable, InitType::Object) {
+        return None;
+    }
     let is_self_reference = target.index().is_some_and(|it| expression_references_variable(it, variable))
         || expression_references_variable(value, variable);
-    (!is_self_reference).then_some(Mutation { variable, init_type: InitType::Object, message: OBJECT_PROPERTY, method: None })
+    (!is_self_reference).then_some(Mutation { message: OBJECT_PROPERTY, method: None })
 }
 
 /// The variable that `prev_stmt` gives a new array, object, set or map.

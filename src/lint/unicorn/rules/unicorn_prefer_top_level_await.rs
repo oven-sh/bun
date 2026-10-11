@@ -2,6 +2,8 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, is_method_call};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 /// Prefer top-level await over top-level promises and async function calls.
 pub struct PreferTopLevelAwait;
@@ -14,6 +16,43 @@ const OVER_ASYNC_FUNCTION_CALL: Message = Message::new("", "Prefer top-level awa
 pub struct State<'a> {
     /// What is in the body of a function or of a class, or anywhere in an arrow function.
     bodies: AncestorMemo<'a, ()>,
+    /// Those of `then`, `catch` and `finally` that the file mentions.
+    promise_methods: SmallVec<[Name<'a>; 3]>,
+    has_async_function: bool,
+    /// The names that are declared with an `async` function.
+    async_functions: FxHashSet<Name<'a>>,
+    /// A pattern is declared with one.
+    destructures_async_function: bool,
+}
+
+impl<'a> State<'a> {
+    fn new(file: &'a File<'a>) -> Self {
+        let mut state = State::default();
+        let methods = ["then", "catch", "finally"].into_iter().filter(|it| file.mentions(it));
+        state.promise_methods.extend(methods.map(|it| file.name_of(it)));
+        for func in file.funcs().filter(|it| it.is_async() && !it.is_generator()) {
+            state.has_async_function = true;
+            state.async_functions.extend(func.name().map(Ident::name));
+            let Node::Expr(mut at) = func.owner() else {
+                continue;
+            };
+            while let Node::Expr(parent) = at.parent()
+                && matches!(
+                    parent.tag(),
+                    ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation
+                )
+            {
+                at = parent;
+            }
+            if let Node::VarDecl(var_decl) = at.parent() {
+                match var_decl.pat().as_ident() {
+                    Some(name) => _ = state.async_functions.insert(name),
+                    None => state.destructures_async_function = true,
+                }
+            }
+        }
+        state
+    }
 }
 
 impl Rule for PreferTopLevelAwait {
@@ -25,21 +64,28 @@ impl Rule for PreferTopLevelAwait {
         PreferTopLevelAwait
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(State::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::new(file)).filter(|it| it.has_async_function || !it.promise_methods.is_empty())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        let callee = call_expr.callee();
-        let message = if is_promise_method(callee) {
+        let (callee, state) = (call_expr.callee(), &cx.state);
+        let message = if let Some(method) = callee.member_name() {
+            if !state.promise_methods.contains(&method.name()) || !is_promise_method(callee) {
+                return;
+            }
             OVER_PROMISE_CHAIN
-        } else if is_async_function(callee) {
-            OVER_ASYNC_IIFE
-        } else if callee.tag() == ExprTag::Ident && !callee.is_parenthesized() {
+        } else if let Some(name) = callee.as_ident() {
+            let is_declared = state.destructures_async_function || state.async_functions.contains(&name);
+            if !is_declared || callee.is_parenthesized() {
+                return;
+            }
             OVER_ASYNC_FUNCTION_CALL
+        } else if state.has_async_function && is_async_function(callee) {
+            OVER_ASYNC_IIFE
         } else {
             return;
         };

@@ -5,6 +5,7 @@ use crate::ast::{
 };
 use crate::span::{Span, Spanned};
 use crate::tokens::skip_trivia;
+use bun_sema::hir::{Flags, NameKind};
 
 /// A string in quotes or a number: what ESLint calls a listener for `Literal` with.
 ///
@@ -111,6 +112,36 @@ impl RawLiteral {
     }
 }
 
+// Nearly every key is a plain name. These tell from what the HIR has, before a `Key` is made.
+impl File<'_> {
+    #[inline]
+    fn is_quote_at(&self, pos: u32) -> bool {
+        matches!(self.text().get(pos as usize), Some(b'"' | b'\''))
+    }
+
+    #[inline]
+    fn is_digit_at(&self, pos: u32) -> bool {
+        (self.text().get(pos as usize)).is_some_and(u8::is_ascii_digit)
+    }
+
+    /// Whether a key that is written so, at `pos`, can be a `KeyKind::String` or a `KeyKind::ComputedString`.
+    #[inline]
+    fn can_be_string_key(&self, written: NameKind, pos: u32) -> bool {
+        match written {
+            NameKind::StringLiteral | NameKind::ComputedString => true,
+            NameKind::Identifier => self.is_quote_at(pos),
+            NameKind::NumericLiteral | NameKind::ComputedNumber | NameKind::Jsx => false,
+        }
+    }
+
+    /// The same for `KeyKind::Number` and `KeyKind::ComputedNumber`. The HIR does not tell a `bigint`.
+    #[inline]
+    fn can_be_number_key(&self, written: NameKind, pos: u32) -> bool {
+        matches!(written, NameKind::NumericLiteral | NameKind::ComputedNumber)
+            || self.is_digit_at(pos)
+    }
+}
+
 impl<'a> File<'a> {
     /// They are looked for once for all rules.
     #[inline(never)]
@@ -129,12 +160,28 @@ impl<'a> File<'a> {
         }
     }
 
+    /// The same for numbers.
+    #[inline(never)]
+    fn number_literals(&'a self) -> &'a [RawLiteral] {
+        self.by_kind().number_literals.get_or_init(|| {
+            let mut all = Vec::new();
+            self.find_number_literals(|literal| all.extend(RawLiteral::of(literal)));
+            all
+        })
+    }
+
+    #[inline]
+    pub(crate) fn every_number_literal(&'a self, mut visit: impl FnMut(Literal<'a>)) {
+        for raw in self.number_literals() {
+            visit(raw.literal(self));
+        }
+    }
+
     fn find_string_literals(&'a self, mut visit: impl FnMut(Literal<'a>)) {
-        let is_quoted =
-            |span: Span| matches!(self.text().get(span.start as usize), Some(b'"' | b'\''));
+        let hir = &self.hir;
         // What may be a name as well as a string.
         let mut name = |span: Span, owner: Node<'a>| {
-            if is_quoted(span) {
+            if self.is_quote_at(span.start) {
                 visit(Literal { span, owner });
             }
         };
@@ -181,20 +228,53 @@ impl<'a> File<'a> {
             }
             attributes(ty.import_attributes(), Node::Type(ty), &mut name);
         });
-        self.every_prop(|it| key(it.key(), Node::Prop(it), &mut name));
-        self.every_member(|it| match it.constructor_keyword() {
-            Some(constructor) => name(constructor.span(), Node::Member(it)),
-            None => key(it.key(), Node::Member(it), &mut name),
+        self.every_prop(|it| {
+            if (hir.props.get(it.id().idx()))
+                .is_some_and(|raw| self.can_be_string_key(raw.name_kind, raw.pos))
+            {
+                key(it.key(), Node::Prop(it), &mut name);
+            }
         });
-        self.every_enum_member(|it| key(it.key(), Node::EnumMember(it), &mut name));
+        self.every_member(|it| {
+            let can_be_string = hir.members.get(it.id().idx()).is_some_and(|raw| {
+                raw.flags.contains(Flags::STRING_NAME) || self.is_quote_at(raw.name_pos)
+            });
+            if !can_be_string {
+                return;
+            }
+            match it.constructor_keyword() {
+                Some(constructor) => name(constructor.span(), Node::Member(it)),
+                None => key(it.key(), Node::Member(it), &mut name),
+            }
+        });
+        self.every_enum_member(|it| {
+            if (hir.enum_members.get(it.id().idx()))
+                .is_some_and(|raw| self.can_be_string_key(raw.name_kind, raw.pos))
+            {
+                key(it.key(), Node::EnumMember(it), &mut name);
+            }
+        });
         if !self.pats_of(PatTag::Object).is_empty() {
-            self.every_pat_prop(|it| key(it.key(), Node::PatProp(it), &mut name));
+            self.every_pat_prop(|it| {
+                if (hir.pat_props.get(it.id().idx()))
+                    .is_some_and(|raw| self.can_be_string_key(raw.name_kind, raw.key_pos))
+                {
+                    key(it.key(), Node::PatProp(it), &mut name);
+                }
+            });
         }
-        self.every_import_spec(|it| name(it.imported().span(), Node::ImportSpec(it)));
+        self.every_import_spec(|it| {
+            if it.imported().is_string() {
+                name(it.imported().span(), Node::ImportSpec(it));
+            }
+        });
         self.every_export_spec(|it| {
             // Two nodes for ESLint, also where it is written once: `export { "a" } from "b"`.
-            name(it.local().span(), Node::ExportSpec(it));
-            name(it.exported().span(), Node::ExportSpec(it));
+            for written in [it.local(), it.exported()] {
+                if written.is_string() {
+                    name(written.span(), Node::ExportSpec(it));
+                }
+            }
         });
         self.every_type_of(&[TypeTag::StringLit], |ty| name(ty.span(), Node::Type(ty)));
         self.every_expr_of(&[ExprTag::String], |e| {
@@ -204,7 +284,8 @@ impl<'a> File<'a> {
         });
     }
 
-    pub(crate) fn every_number_literal(&'a self, visit: &mut dyn FnMut(Literal<'a>)) {
+    fn find_number_literals(&'a self, mut visit: impl FnMut(Literal<'a>)) {
+        let hir = &self.hir;
         let mut key = |key: Option<Key<'a>>, owner: Node<'a>| {
             if let Some(key) = key
                 && matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))
@@ -215,11 +296,37 @@ impl<'a> File<'a> {
                 });
             }
         };
-        self.every_prop(|it| key(it.key(), Node::Prop(it)));
-        self.every_member(|it| key(it.key(), Node::Member(it)));
-        self.every_enum_member(|it| key(it.key(), Node::EnumMember(it)));
+        self.every_prop(|it| {
+            if (hir.props.get(it.id().idx()))
+                .is_some_and(|raw| self.can_be_number_key(raw.name_kind, raw.pos))
+            {
+                key(it.key(), Node::Prop(it));
+            }
+        });
+        self.every_member(|it| {
+            if hir.members.get(it.id().idx()).is_some_and(|raw| {
+                raw.flags
+                    .intersects(Flags::COMPUTED_NAME | Flags::LITERAL_NAME)
+                    || self.is_digit_at(raw.name_pos)
+            }) {
+                key(it.key(), Node::Member(it));
+            }
+        });
+        self.every_enum_member(|it| {
+            if (hir.enum_members.get(it.id().idx()))
+                .is_some_and(|raw| self.can_be_number_key(raw.name_kind, raw.pos))
+            {
+                key(it.key(), Node::EnumMember(it));
+            }
+        });
         if !self.pats_of(PatTag::Object).is_empty() {
-            self.every_pat_prop(|it| key(it.key(), Node::PatProp(it)));
+            self.every_pat_prop(|it| {
+                if (hir.pat_props.get(it.id().idx()))
+                    .is_some_and(|raw| self.can_be_number_key(raw.name_kind, raw.key_pos))
+                {
+                    key(it.key(), Node::PatProp(it));
+                }
+            });
         }
         self.every_type_of(&[TypeTag::NumberLit, TypeTag::BigIntLit], |ty| {
             // `-1` is a `UnaryExpression` there.

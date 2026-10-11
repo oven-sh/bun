@@ -46,13 +46,13 @@ impl Rule for PreferAwaitToCallbacks {
             cx.report(e, PREFER_AWAIT_TO_CALLBACKS);
             return;
         }
-        let Some(last_arg) = call.args().last().filter(|it| !it.is_parenthesized()) else {
+        let Some(last_arg) = call.args().last() else {
             return;
         };
         let Some(first_param) = last_arg.as_fn().and_then(|it| it.params().first()).filter(|it| !it.is_rest()) else {
             return;
         };
-        if !first_param.pat().as_ident().is_some_and(|name| name.is_any(&["err", "error"])) {
+        if !first_param.pat().as_ident().is_some_and(|name| name.is_any(&["err", "error"])) || last_arg.is_parenthesized() {
             return;
         }
         let member = Some(callee).filter(|it| !it.is_parenthesized());

@@ -1956,15 +1956,41 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
         },
       });
       const url = new URL("/", server.url).href;
-      const body = new Blob(["a=1"], { type: "text/x-custom" });
+      const body = () => new Blob(["a=1"], { type: "text/x-custom" });
       const callerHeaders = new Headers({ "x-a": "1" });
-      await server.fetch(url, { method: "POST", body });
-      await server.fetch(url, { method: "POST", body, headers: { "x-a": "1" } });
-      await server.fetch(url, { method: "POST", body, headers: callerHeaders });
-      await server.fetch(url, { method: "POST", body, headers: { "content-type": "text/x-other" } });
+      await server.fetch(url, { method: "POST", body: body() });
+      await server.fetch(url, { method: "POST", body: body(), headers: { "x-a": "1" } });
+      await server.fetch(url, { method: "POST", body: body(), headers: callerHeaders });
+      await server.fetch(url, { method: "POST", body: body(), headers: { "content-type": "text/x-other" } });
       expect({ seen, callerHeaders: [...callerHeaders] }).toEqual({
         seen: ["text/x-custom", "text/x-custom", "text/x-custom", "text/x-other"],
         callerHeaders: [["x-a", "1"]],
+      });
+    });
+
+    // Bun extension: a Response in place of `init` gives its headers and its body.
+    test("also when a Response stands in for init", async () => {
+      const typed = (init?: ResponseInit) => new Response(new Blob(["a=1"], { type: "text/x-custom" }), init);
+      const contentType = (response: Response) =>
+        new Request("http://a/", response as RequestInit).headers.get("content-type");
+      const headersRead = typed();
+      headersRead.headers;
+      const bodyRead = typed();
+      bodyRead.body;
+      expect({
+        fromBody: contentType(typed()),
+        explicitWins: contentType(typed({ headers: { "content-type": "text/x-other" } })),
+        otherHeaderOnly: contentType(typed({ headers: { "x-a": "1" } })),
+        headersRead: contentType(headersRead),
+        bodyRead: contentType(bodyRead),
+        text: await new Request("http://a/", typed() as RequestInit).text(),
+      }).toEqual({
+        fromBody: "text/x-custom",
+        explicitWins: "text/x-other",
+        otherHeaderOnly: "text/x-custom",
+        headersRead: "text/x-custom",
+        bodyRead: "text/x-custom",
+        text: "a=1",
       });
     });
   });

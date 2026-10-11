@@ -23,16 +23,13 @@ pub struct CPUProfilerConfig {
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
-    /// Sequence numbers of the default-named `.cpuprofile` and `.md` files.
-    /// 0 when `--cpu-prof-name` names the file.
+    /// Numbers of the default-named files, 0 when `--cpu-prof-name` names the file.
     json_sequence: u32,
     md_sequence: u32,
 }
 
 impl CPUProfilerConfig {
-    /// Draws the sequence numbers of the default-named files now. Node names
-    /// its profile when the profiler starts, so a diagnostic file the program
-    /// names while it runs gets a later number than the profile.
+    /// Draws the numbers of the default-named files now, as node does when its profiler starts.
     pub fn new(
         name: &'static [u8],
         dir: &'static [u8],
@@ -226,8 +223,7 @@ fn generate_default_filename<'a>(
     Ok(&buf[..len])
 }
 
-/// Node numbers every diagnostic file of a process from one counter
-/// (`seq`, https://github.com/nodejs/node/blob/v26.3.0/src/util.cc#L59).
+/// Node's `seq`: https://github.com/nodejs/node/blob/v26.3.0/src/util.cc#L59
 static SEQUENCE: AtomicU32 = AtomicU32::new(0);
 
 pub(crate) fn next_sequence() -> u32 {
@@ -318,16 +314,13 @@ pub(crate) fn local_time_now() -> GregorianDateTime {
     }
 }
 
-/// The name `v8.writeHeapSnapshot()` writes to when it gets no path. Node:
-/// `DiagnosticFilename name(env, "Heap", "heapsnapshot")`,
-/// https://github.com/nodejs/node/blob/v26.3.0/src/heap_utils.cc#L461-L462
+/// The default name of `v8.writeHeapSnapshot()`: https://github.com/nodejs/node/blob/v26.3.0/src/heap_utils.cc#L461-L462
 pub fn js_heap_snapshot_filename(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let thread_id = global
         .bun_vm()
         .worker_ref()
         .map_or(0, |worker| worker.thread_id());
-    // The VM's DateCache gives the zone `Date` uses, so an assignment to
-    // `process.env.TZ` applies. libc does not see that assignment.
+    // The DateCache is the zone `Date` uses. Unlike libc, it follows `process.env.TZ`.
     let time = global.ms_to_gregorian_date_time(bun_core::time::milli_timestamp() as f64);
 
     // Every field is a 32-bit integer, so the name is at most 119 bytes.

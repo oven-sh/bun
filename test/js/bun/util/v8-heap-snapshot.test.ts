@@ -2,11 +2,11 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
-// CI gives every test 90 s through --timeout. A plain `bun bd test` gets 5 s,
-// and on a debug build a fixture needs 4 to 6 s to start and take a snapshot.
+// On a debug build a fixture takes 4 to 6 s and `bun bd test` allows 5 s. CI passes its own --timeout.
 if (isDebug) setDefaultTimeout(60_000);
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
+const namesFixture = join(import.meta.dir, "v8-heap-snapshot-names-fixture.ts");
 
 const NODE_FIELDS = ["type", "name", "id", "self_size", "edge_count", "trace_node_id", "detachedness"];
 const EDGE_FIELDS = ["type", "name_or_index", "to_node"];
@@ -16,9 +16,12 @@ const EDGE_FIELDS = ["type", "name_or_index", "to_node"];
 // with `v8-heapsnapshot` materializes an object per node and per edge, and two
 // parses in a row grow the snapshot by ~10x, until the process is OOM-killed.
 // Every snapshot therefore gets its own short-lived process.
-async function runFixture(mode: string, { cwd = import.meta.dir, args = [] }: { cwd?: string; args?: string[] } = {}) {
+async function runFixture(
+  mode: string,
+  { cwd = import.meta.dir, args = [], script = fixture }: { cwd?: string; args?: string[]; script?: string } = {},
+) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), fixture, mode, ...args],
+    cmd: [bunExe(), script, mode, ...args],
     env: bunEnv,
     cwd,
     stdout: "pipe",
@@ -108,7 +111,10 @@ test("v8.writeHeapSnapshot()", async () => {
 
 test("v8.writeHeapSnapshot() default names", async () => {
   using dir = tempDir("v8-heap-snapshot", {});
-  const { names, underMockedClock, inKiritimati, files } = await runFixture("default-names", { cwd: String(dir) });
+  const { names, underMockedClock, inKiritimati, files } = await runFixture("default-names", {
+    cwd: String(dir),
+    script: namesFixture,
+  });
 
   // <thread id>.<sequence number> twice on the main thread, twice in a Worker,
   // then on the main thread: the process has one counter, as in node.

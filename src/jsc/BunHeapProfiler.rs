@@ -12,14 +12,12 @@ pub struct HeapProfilerConfig {
     pub name: &'static [u8],
     pub dir: &'static [u8],
     pub text_format: bool,
-    /// Sequence number of the default-named profile. 0 when `--heap-prof-name`
-    /// names the file.
+    /// Number of the default-named profile, 0 when `--heap-prof-name` names the file.
     sequence: u32,
 }
 
 impl HeapProfilerConfig {
-    /// Draws the sequence number of a default-named profile now, for the
-    /// reason `CPUProfilerConfig::new` gives.
+    /// Draws the number of a default-named profile now, like `CPUProfilerConfig::new`.
     pub fn new(name: &'static [u8], dir: &'static [u8], text_format: bool) -> Self {
         Self {
             name,

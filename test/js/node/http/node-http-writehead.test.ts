@@ -330,18 +330,26 @@ describe("writeHead(status, headers) with no header set before sends the header 
   });
 
   test("an object: a getter is read, and a property that is not enumerable or has a Symbol for its name is not a header", async () => {
-    const { headers } = await respond(res => {
-      const object = {
+    const sent: string[][] = [];
+    // With a getter and with none: Bun reads the names of a plain object with no getter from its shape.
+    for (const object of [
+      {
         get "X-A"() {
           return "got";
         },
-        "X-B": "2",
-        [Symbol("s")]: "3",
-      };
-      Object.defineProperty(object, "X-Hidden", { value: "4", enumerable: false });
-      res.writeHead(200, object).end();
-    });
-    assert.deepStrictEqual(headers, ["X-A: got", "X-B: 2", "Transfer-Encoding: chunked"]);
+      },
+      { "X-A": "got" },
+    ] as Record<string | symbol, string>[]) {
+      const { headers } = await respond(res => {
+        object["X-B"] = "2";
+        object[Symbol("s")] = "3";
+        Object.defineProperty(object, "X-Hidden", { value: "4", enumerable: false });
+        res.writeHead(200, object as Record<string, string>).end();
+      });
+      sent.push(headers);
+    }
+    const lines = ["X-A: got", "X-B: 2", "Transfer-Encoding: chunked"];
+    assert.deepStrictEqual(sent, [lines, lines]);
   });
 
   test("an object: the names that are array indexes come first", async () => {
@@ -371,9 +379,26 @@ describe("writeHead(status, headers) with no header set before sends the header 
     ]);
   });
 
-  test("a value with a character above 0x7f is sent as one byte", async () => {
-    const { headers } = await respond(res => res.writeHead(200, { "X-A": "caf\u00e9" }).end());
-    assert.deepStrictEqual(headers, ["X-A: caf\u00e9", "Transfer-Encoding: chunked"]);
+  test("a value with a character above 0x7f is sent as one byte, and a tab is sent", async () => {
+    const { headers } = await respond(res => res.writeHead(200, { "X-A": "caf\u00e9", "X-B": "a\tb" }).end());
+    assert.deepStrictEqual(headers, ["X-A: caf\u00e9", "X-B: a\tb", "Transfer-Encoding: chunked"]);
+  });
+
+  test("a name and a value in strings of 16-bit characters are sent as bytes", async () => {
+    // A slice of a string with a character above 0xff keeps its 16-bit characters.
+    const wide = (text: string) => ("\u0100" + text).slice(1);
+    const sent: string[][] = [];
+    for (const [, form] of forms) {
+      const { headers } = await respond(res =>
+        // Node.js sends a head as UTF-8 when it goes out in one string with the body. A body of bytes keeps them apart.
+        res
+          .writeHead(200, form(wide("X-A"), wide("caf\u00e9"), wide("Content-Length"), wide("2")))
+          .end(Buffer.from("ok")),
+      );
+      sent.push(headers);
+    }
+    const lines = ["X-A: caf\u00e9", "Content-Length: 2"];
+    assert.deepStrictEqual(sent, [lines, lines, lines]);
   });
 
   for (const transport of transports.slice(0, 2)) {
@@ -409,8 +434,23 @@ describe("writeHead(status, headers) with no header set before sends the header 
 
   test("a server with insecureHTTPParser sends a control character in a value", async () => {
     const transport = plain({ insecureHTTPParser: true });
-    const { headers } = await respond(res => res.writeHead(200, { "X-A": "a\u0001b" }).end(), { transport });
-    assert.deepStrictEqual(headers, ["X-A: a\u0001b", "Transfer-Encoding: chunked"]);
+    const { headers } = await respond(res => res.writeHead(200, { "X-A": "a\u0001b\u007f" }).end(), { transport });
+    assert.deepStrictEqual(headers, ["X-A: a\u0001b\u007f", "Transfer-Encoding: chunked"]);
+  });
+
+  test("a server with insecureHTTPParser refuses NUL, a line break and a character above 0xff in a value", async () => {
+    const transport = plain({ insecureHTTPParser: true });
+    const { result } = await respond(
+      res => {
+        const thrown = ["a\u0000b", "a\nb", "a\rb", "a\u0100b"].map(value =>
+          code(() => res.writeHead(200, { "X-A": value })),
+        );
+        res.end();
+        return thrown;
+      },
+      { transport },
+    );
+    assert.deepStrictEqual(result, ["ERR_INVALID_CHAR", "ERR_INVALID_CHAR", "ERR_INVALID_CHAR", "ERR_INVALID_CHAR"]);
   });
 
   test("a Date in the list replaces the Date of the server, and res.sendDate stays true", async () => {
@@ -1466,6 +1506,9 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
     ["a value that is a Symbol", ["X-A", "1", "X-B", Symbol("s")], "TypeError"],
     ["a Content-Length that is a BigInt", { "X-A": "1", "Content-Length": 2n }, "TypeError"],
     ["a character above 0xff in a value", { "X-A": "1", "X-B": "\u0100" }, "ERR_INVALID_CHAR"],
+    ["DEL in a value", { "X-A": "1", "X-B": "a\u007fb" }, "ERR_INVALID_CHAR"],
+    ["NUL in a value", { "X-A": "1", "X-B": "a\u0000b" }, "ERR_INVALID_CHAR"],
+    ["a character above 0x7f in a name", { "X-A": "1", "X-\u00e9": "1" }, "ERR_INVALID_HTTP_TOKEN"],
     ["Content-Length with Trailer", ["X-A", "1", "Content-Length", "2", "Trailer", "X-T"], "ERR_HTTP_TRAILER_INVALID"],
   ] as const) {
     test(name, async () => {

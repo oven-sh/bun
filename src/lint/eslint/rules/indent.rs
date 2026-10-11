@@ -11,6 +11,8 @@ pub struct Indent {
     character: u8,
     /// How many of them are one level.
     size: u32,
+    /// One of the numbers among the options is `Infinity`, which is the largest number here.
+    has_infinite_option: bool,
     switch_case: u32,
     /// `VariableDeclarator`, for `var`, `let` and `const`.
     variable_declarator: [Offset; 3],
@@ -58,6 +60,14 @@ impl Offset {
     }
 }
 
+fn has_infinite_number(json: &Json) -> bool {
+    match json {
+        Json::Number(it) => it.is_infinite(),
+        Json::Object(entries) => entries.iter().any(|it| has_infinite_number(&it.1)),
+        _ => false,
+    }
+}
+
 #[derive(Copy, Clone)]
 struct FunctionOffsets {
     parameters: Offset,
@@ -92,6 +102,7 @@ impl Rule for Indent {
         Indent {
             character: if is_tab { b'\t' } else { b' ' },
             size: if is_tab { 1 } else { options.number(0).map_or(4, |it| it as u32) },
+            has_infinite_option: options.all().iter().any(has_infinite_number),
             switch_case: levels(object, "SwitchCase", 0),
             variable_declarator: match object.get("VariableDeclarator") {
                 Some(Json::Object(_)) => ["var", "let", "const"].map(|kind| Offset::of(kinds.get(kind))),
@@ -1134,8 +1145,9 @@ impl<'a> Offsets<'a, '_> {
         };
         let end = self.token(token).start;
         let span = Span::new(end - actual.len() as u32, end);
+        let is_infinite = self.rule.has_infinite_option && desired.extra == u32::MAX - 1;
         // ESLint is at the end of the program.
-        if cx.repeat_count(expected as f64, Span::empty(0)).is_none() {
+        if cx.repeat_count(if is_infinite { f64::INFINITY } else { expected as f64 }, Span::empty(0)).is_none() {
             return;
         }
         cx.report(span, WRONG_INDENTATION)

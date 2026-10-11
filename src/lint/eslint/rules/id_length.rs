@@ -6,8 +6,8 @@ use bun_lint::utils::string_utils::get_grapheme_count;
 
 /// Enforce minimum and maximum identifier lengths.
 pub struct IdLength {
-    min: i64,
-    max: Option<i64>,
+    min: f64,
+    max: f64,
     properties: bool,
     exceptions: Vec<Box<[u8]>>,
     exception_patterns: Vec<Regex>,
@@ -99,10 +99,10 @@ fn is_definition(member: Member) -> bool {
 impl IdLength {
     /// What to report about an identifier named `name`, which is without its `#`.
     fn problem(&self, name: &[u8], is_private: bool) -> Option<Message> {
-        let length = get_grapheme_count(name) as i64;
+        let length = get_grapheme_count(name) as f64;
         let message = if length < self.min {
             if is_private { TOO_SHORT_PRIVATE } else { TOO_SHORT }
-        } else if self.max.is_some_and(|max| length > max) {
+        } else if length > self.max {
             if is_private { TOO_LONG_PRIVATE } else { TOO_LONG }
         } else {
             return None;
@@ -127,8 +127,8 @@ impl IdLength {
         {
             cx.report(at, message)
                 .data("name", name)
-                .data("min", self.min)
-                .data("max", self.max.unwrap_or(i64::MAX));
+                .data("min", text::number_to_string(self.min))
+                .data("max", text::number_to_string(self.max));
         }
     }
 
@@ -425,8 +425,8 @@ impl Rule for IdLength {
         let options = options.object(0);
         let patterns = options.strings("exceptionPatterns");
         IdLength {
-            min: options.number("min").map_or(2, |it| it as i64),
-            max: options.number("max").map(|it| it as i64),
+            min: options.number("min").unwrap_or(2.0),
+            max: options.number("max").unwrap_or(f64::INFINITY),
             properties: options.str("properties") != Some("never"),
             exceptions: (options.strings("exceptions").iter())
                 .map(|it| it.as_bytes().into())

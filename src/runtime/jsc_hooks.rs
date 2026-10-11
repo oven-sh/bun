@@ -751,32 +751,21 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             .strip_prefix(b"file://".as_slice())
             .unwrap_or(preload_slice);
 
-        // A builtin's name bypasses the file resolver, which would look a package
-        // of that name up. JSModuleLoader resolves it, so `bun --import path` and
-        // `bun --import node:path` work like Node's.
-        let module_name = if bun_jsc::module_loader::preload_is_builtin(preload_slice) {
+        // JSModuleLoader resolves a builtin's name: `bun --import path` works like Node's.
+        let module_name = if bun_jsc::module_loader::preload_skips_resolver(preload_slice) {
             bun_core::String::from_bytes(preload_slice)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
-            // What the strip of "file://" leaves can be a builtin's name as well
-            // (`file://path`): that is no file, and no package to look up.
-            let resolved = if normalized.len() != preload_slice.len()
-                && bun_jsc::module_loader::is_builtin(normalized)
-            {
-                ResolveResultUnion::NotFound
-            } else {
-                // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
-                // singleton field.
-                unsafe {
-                    (*vm).transpiler.resolver.resolve_and_auto_install(
-                        &*top_level_dir,
-                        normalized,
-                        ImportKind::Stmt,
-                        global_cache,
-                    )
-                }
-            };
-            let mut result = match resolved {
+            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
+            // singleton field.
+            let mut result = match unsafe {
+                (*vm).transpiler.resolver.resolve_and_auto_install(
+                    &*top_level_dir,
+                    normalized,
+                    ImportKind::Stmt,
+                    global_cache,
+                )
+            } {
                 ResolveResultUnion::Success(r) => r,
                 ResolveResultUnion::Failure(e) => {
                     // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by

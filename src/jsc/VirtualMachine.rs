@@ -5084,6 +5084,7 @@ impl VirtualMachine {
         // note). Erase to `'static` to seat the result paths without threading
         // a lifetime parameter through the VM.
         let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
+        debug_assert!(!ModuleLoader::is_builtin(specifier));
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
@@ -5126,8 +5127,7 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
-        // The caller answers a builtin's name as written. With a query it names no module (as in Node), and what
-        // the cut leaves is that builtin's name, not a package's for the resolver to look up.
+        // `path?v=2` names no module, as in Node: what the cut leaves is the builtin's name, not a package's.
         if !query_string.is_empty() && ModuleLoader::is_builtin(normalized_specifier) {
             return Err(crate::CrateError::ModuleNotFound);
         }

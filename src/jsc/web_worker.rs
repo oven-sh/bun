@@ -327,9 +327,8 @@ impl WebWorker {
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
-            // A builtin's name skips the file resolver, which would look a package
-            // of that name up: the worker-side module loader resolves it.
-            if crate::module_loader::preload_is_builtin(utf8_slice.slice()) {
+            // The entry-point resolver takes a builtin's name for a package, or for a `./name` file.
+            if crate::module_loader::preload_skips_resolver(utf8_slice.slice()) {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }

@@ -334,7 +334,7 @@ describe("a builtin's name with a ?query", () => {
         "path": "loaded a builtin",
         // Bun's code for this was already Node's.
         "node:path?v=2": "ERR_UNKNOWN_BUILTIN_MODULE",
-        // A package that is no builtin still takes a query.
+        // Not changed here. Node rejects a query on a package, and Bun has no rule for it yet (#36275).
         "lodashy?v=1": "loaded node_modules/lodashy",
         // As in Node, a trailing slash names the package and not the builtin.
         "path/": "loaded node_modules/path",
@@ -379,6 +379,35 @@ describe("a builtin's name with a ?query", () => {
     expect(stderr).toContain("Cannot find package 'path?v=2'");
     expect(requests).toEqual([]);
     expect(exitCode).toBe(1);
+  });
+
+  // The resolver has more than node_modules for a name: tsconfig `paths` and `baseUrl` too.
+  test("does not load the file that tsconfig maps that name to", async () => {
+    using dir = tempDir("import-query-builtin-tsconfig", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "./src", paths: { ws: ["./ws-shim.js"] } } }),
+      "src/constants.js": `module.exports = "src/constants.js";`,
+      "src/ws-shim.js": `module.exports = "src/ws-shim.js";`,
+      "src/lodashy.js": `module.exports = "src/lodashy.js";`,
+      "run.cjs": `
+        const outcome = ${outcome};
+        (async () => {
+          const out = {};
+          for (const specifier of ["constants?x", "ws?x", "constants", "lodashy?v=1"]) {
+            out[specifier] = await outcome(() => require(specifier));
+          }
+          console.log(JSON.stringify(out));
+        })();
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run.cjs"]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "constants?x": "MODULE_NOT_FOUND",
+      "ws?x": "MODULE_NOT_FOUND",
+      "constants": "loaded a builtin",
+      "lodashy?v=1": "loaded src/lodashy.js",
+    });
+    expect(exitCode).toBe(0);
   });
 
   // Under `--expose-internals` an `internal/` module is a builtin too, and `internal` is a package's name.

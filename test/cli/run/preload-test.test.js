@@ -1,9 +1,10 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
+import { mkdirSync, realpathSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
+import { pathToFileURL } from "url";
 const preloadModule = `
 import {plugin} from 'bun';
 
@@ -191,11 +192,17 @@ plugin({
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0 });
   });
 
-  // As with `node -r path` and `node --import path`, a builtin's bare name is the builtin. The resolver would
-  // take it for a package: the one in node_modules, or one to fetch from the registry.
+  // A builtin's bare name is the builtin, as it is to `import` and to `node -r path`. The resolver would take it
+  // for a package. "abort-controller" is a package that Bun replaces with a built-in module.
   describe("of a builtin by its bare name", () => {
-    const preloads = ["path", "fs/promises", "bun:sqlite", "abort-controller"];
-    const main = { "main.js": `console.log("main ran");` };
+    const builtins = ["path", "fs/promises", "bun:sqlite", "abort-controller", "events"];
+    const packages = (...names) =>
+      Object.fromEntries(
+        names.flatMap(name => [
+          [`node_modules/${name}/package.json`, JSON.stringify({ name, version: "1.0.0", main: "index.js" })],
+          [`node_modules/${name}/index.js`, `console.log("node_modules/${name} ran");`],
+        ]),
+      );
 
     async function run(cwd, args) {
       const requests = [];
@@ -208,7 +215,12 @@ plugin({
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args, "main.js"],
-        env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry.url.href, NPM_CONFIG_REGISTRY: registry.url.href },
+        env: {
+          ...bunEnv,
+          NODE_NO_WARNINGS: undefined,
+          BUN_CONFIG_REGISTRY: registry.url.href,
+          NPM_CONFIG_REGISTRY: registry.url.href,
+        },
         cwd,
         stdout: "pipe",
         stderr: "pipe",
@@ -218,27 +230,70 @@ plugin({
     }
 
     test.each(["--preload", "--import", "--require", "bunfig.toml"])(
-      "%s does not run the package of that name in node_modules",
+      "%s does not run a file that the resolver has for that name",
       async how => {
-        const files = { ...main };
-        for (const name of ["path", "fs", "abort-controller"]) {
-          files[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", main: "index.js" });
-          files[`node_modules/${name}/index.js`] = `console.log("node_modules/${name} ran");`;
+        using dir = tempDir("preload-builtin-name-resolver", {
+          ...packages("path", "fs", "abort-controller", "lodashy"),
+          "node_modules/fs/promises.js": `console.log("node_modules/fs/promises.js ran");`,
+          "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "./src" } }),
+          "src/events.js": `console.log("src/events.js ran");`,
+          "setup.js": `console.log("setup.js ran");`,
+          "main.js": `console.log("main ran");`,
+        });
+        // A package that is no builtin, and a file, are still the resolver's.
+        const preloads = [...builtins, "lodashy", pathToFileURL(join(String(dir), "setup.js")).href];
+        if (how === "bunfig.toml") {
+          writeFileSync(join(String(dir), "bunfig.toml"), `preload = ${JSON.stringify(preloads)}`);
         }
-        files["node_modules/fs/promises.js"] = `console.log("node_modules/fs/promises.js ran");`;
-        if (how === "bunfig.toml") files["bunfig.toml"] = `preload = ${JSON.stringify(preloads)}`;
-        using dir = tempDir("preload-builtin-name-node-modules", files);
 
         const args = how === "bunfig.toml" ? [] : preloads.flatMap(name => [how, name]);
-        expect(await run(String(dir), args)).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0, requests: [] });
+        expect(await run(String(dir), args)).toEqual({
+          stdout: "node_modules/lodashy ran\nsetup.js ran\nmain ran\n",
+          stderr: "",
+          exitCode: 0,
+          requests: [],
+        });
       },
     );
 
     test("--preload does not ask the registry for a package of that name", async () => {
-      using dir = tempDir("preload-builtin-name-autoinstall", main);
-      const args = preloads.flatMap(name => ["--preload", name]);
+      using dir = tempDir("preload-builtin-name-autoinstall", { "main.js": `console.log("main ran");` });
+      const args = builtins.flatMap(name => ["--preload", name]);
       expect(await run(String(dir), args)).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0, requests: [] });
     });
+
+    // The `preload` option of a Worker is "equivalent to passing the `--preload` CLI argument". Its resolver also
+    // takes a bare name for a `./name` file. Only the builtin `_tls_wrap` warns when it loads: that shows the load.
+    // It loads `node:tls`, which takes seconds in a debug build.
+    test("Worker preload loads the builtin, not a file that the resolver has for that name", async () => {
+      using dir = tempDir("preload-builtin-name-worker", {
+        ...packages("path", "abort-controller", "_tls_wrap", "lodashy"),
+        "util.ts": `console.log("util.ts ran");`,
+        "worker.js": `postMessage("worker ran");`,
+        "main.js": `
+          const preload = ["path", "bun:sqlite", "abort-controller", "util", "_tls_wrap", "lodashy"];
+          const worker = new Worker("./worker.js", { preload });
+          worker.onmessage = e => {
+            console.log(e.data);
+            worker.terminate();
+          };
+          worker.onerror = e => {
+            console.log("error: " + e.message);
+          };
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), []);
+      // "(node:<pid>) <warning>", then a hint that names the executable.
+      const warnings = stderr
+        .split("\n")
+        .map(line => line.replace(/^\(node:\d+\) /, ""))
+        .filter(line => line && !line.startsWith("(Use `"));
+      expect({ stdout, warnings, exitCode }).toEqual({
+        stdout: "node_modules/lodashy ran\nworker ran\n",
+        warnings: ["[DEP0192] DeprecationWarning: The _tls_wrap module is deprecated. Use `node:tls` instead."],
+        exitCode: 0,
+      });
+    }, 30_000);
   });
 
   // Under `--expose-internals` an `internal/` module is a builtin too, and `internal` is a package's name.
@@ -259,16 +314,11 @@ plugin({
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0 });
   });
 
-  // What is left of `file://path` without the scheme is a builtin's name as well. It is no file (Node:
-  // ERR_INVALID_FILE_URL_HOST), and no package to run either.
-  test.each(["file://path", "file://node:fs"])("--preload of %s is not found", async name => {
-    using dir = tempDir("preload-builtin-name-file-url", {
-      "node_modules/path/package.json": JSON.stringify({ name: "path", version: "1.0.0", main: "index.js" }),
-      "node_modules/path/index.js": `console.log("node_modules/path ran");`,
-      "main.js": `console.log("main ran");`,
-    });
+  // The name as written decides. `file://node:fs` is no builtin's name, and no file.
+  test("--preload of file://node:fs is not found", async () => {
+    using dir = tempDir("preload-builtin-name-file-url", { "main.js": `console.log("main ran");` });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preload", name, "main.js"],
+      cmd: [bunExe(), "--preload", "file://node:fs", "main.js"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -277,41 +327,9 @@ plugin({
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
-      stderr: `error: preload not found ${JSON.stringify(name)}\n`,
+      stderr: `error: preload not found "file://node:fs"\n`,
       exitCode: 1,
     });
-  });
-
-  // The `preload` option of a Worker names its modules the same way.
-  test("Worker preload of a builtin by its bare name does not run the package of that name in node_modules", async () => {
-    const packages = {};
-    for (const name of ["path", "abort-controller"]) {
-      packages[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", main: "index.js" });
-      packages[`node_modules/${name}/index.js`] = `console.log("node_modules/${name} ran");`;
-    }
-    using dir = tempDir("preload-builtin-name-worker", {
-      ...packages,
-      "worker.js": `postMessage("worker ran");`,
-      "main.js": `
-        const worker = new Worker("./worker.js", { preload: ["path", "bun:sqlite", "abort-controller"] });
-        worker.onmessage = e => {
-          console.log(e.data);
-          worker.terminate();
-        };
-        worker.onerror = e => {
-          console.log("error: " + e.message);
-        };
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "worker ran\n", stderr: "", exitCode: 0 });
   });
 
   test("throws an error when preloaded module not found", async () => {

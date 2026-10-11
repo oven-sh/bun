@@ -16,7 +16,7 @@ impl<const VITEST: bool> Rule for PaddingAroundAfterAllBlocks<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.mentions("afterAll")).then_some(())
+        (file.mentions("afterAll") && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

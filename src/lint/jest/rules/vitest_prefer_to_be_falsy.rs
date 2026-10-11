@@ -21,7 +21,7 @@ impl<const TRUTHY: bool> Rule for PreferToBeFalsy<TRUTHY> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::is_test(file).then_some(())
+        (jest::mentions_any(file, &const { jest::mention_bits(["expect", "expectTypeOf"]) }) && jest::mentions_any(file, &const { jest::mention_bits(["toBe", "toEqual", "toStrictEqual"]) }) && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

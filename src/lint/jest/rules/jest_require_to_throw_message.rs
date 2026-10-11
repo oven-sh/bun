@@ -15,7 +15,7 @@ impl<const VITEST: bool> Rule for RequireToThrowMessage<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (jest::is_test(file) && file.mentions_any(&["toThrow", "toThrowError"])).then_some(())
+        (file.mentions("expect") && jest::mentions_any(file, &const { jest::mention_bits(["toThrow", "toThrowError"]) }) && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

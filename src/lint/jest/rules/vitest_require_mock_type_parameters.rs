@@ -25,8 +25,9 @@ impl Rule for RequireMockTypeParameters {
         let extension = strings::rsplit_once_char(file_name.unwrap_or_else(|| file.path()), b'.').filter(|it| !it.0.is_empty());
         let names: &[&str] = if self.check_import_functions { &["fn", "importMock", "importActual"] } else { &["fn"] };
         (extension.is_some_and(|it| it.1.ends_with(b"ts") || it.1.ends_with(b"tsx"))
-            && jest::is_test(file)
-            && file.mentions_any(names))
+            && jest::mentions_any(file, &const { jest::mention_bits(["vi", "vitest"]) })
+            && file.mentions_any(names)
+            && jest::is_test(file))
         .then_some(())
     }
 

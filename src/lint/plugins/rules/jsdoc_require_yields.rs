@@ -33,7 +33,13 @@ impl Rule for RequireYields {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        let finder = JSDocFinder::new(file)?;
+        // A function that is reported has a `yield`, or a comment with one of these tags.
+        let is_candidate = self.force_require_yields || file.has_exprs([ExprTag::Yield]) || {
+            let settings = finder.settings();
+            finder.mentions_tag(&[settings.resolve_tag_name("yields"), settings.resolve_tag_name("generator")])
+        };
+        is_candidate.then_some(finder)
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

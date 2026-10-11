@@ -21,7 +21,7 @@ impl Rule for PreferDescribeFunctionTitle {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.has_stmts([StmtTag::Import])).then_some(())
+        (jest::mentions_describe(file) && jest::is_test(file) && file.has_stmts([StmtTag::Import])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

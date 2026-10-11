@@ -18,7 +18,7 @@ impl<const VITEST: bool> Rule for PreferToHaveBeenCalledTimes<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (jest::is_test(file) && file.mentions("toHaveLength") && file.mentions("calls")).then_some(())
+        (file.mentions("expect") && file.mentions("toHaveLength") && file.mentions("calls") && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

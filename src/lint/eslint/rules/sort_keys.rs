@@ -20,11 +20,14 @@ const SORT_KEYS: Message = Message::new(
 );
 
 /// The static name of the property, or else the name of the identifier in `[name]`, which oxlint passes over.
+#[inline]
 fn get_property_name(key: Key<'_>, is_oxlint: bool) -> Option<Cow<'_, [u8]>> {
-    ast_utils::get_static_key_name(key).or_else(|| match key.kind() {
-        KeyKind::Computed(e) if !is_oxlint => e.as_ident().map(|name| Cow::Borrowed(name.bytes())),
-        _ => None,
-    })
+    match key.kind() {
+        KeyKind::Ident(name) => Some(Cow::Borrowed(name.bytes())),
+        KeyKind::Computed(e) => ast_utils::get_static_key_name(key)
+            .or_else(|| e.as_ident().filter(|_| !is_oxlint).map(|name| Cow::Borrowed(name.bytes()))),
+        _ => ast_utils::get_static_key_name(key),
+    }
 }
 
 /// Whether there is a blank line between `previous` and `current` that is not inside a token or a
@@ -307,7 +310,7 @@ impl Rule for SortKeys {
     }
 
     fn expr<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Object(props) = object.kind() else {
+        let Some(props) = object.as_object() else {
             return;
         };
         if props.len() < self.min_keys {

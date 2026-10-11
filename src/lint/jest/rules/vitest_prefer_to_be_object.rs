@@ -17,7 +17,7 @@ impl Rule for PreferToBeObject {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.mentions("Object")).then_some(())
+        (file.mentions("expectTypeOf") && file.mentions("Object") && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

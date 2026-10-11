@@ -15,8 +15,8 @@ impl<const VITEST: bool> Rule for NoInterpolationInSnapshots<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.mentions_any(&no_interpolation_in_snapshots::INLINE_SNAPSHOT_MATCHERS))
-            .then_some(())
+        const MATCHERS: [u32; 2] = jest::mention_bits(no_interpolation_in_snapshots::INLINE_SNAPSHOT_MATCHERS);
+        (file.mentions("expect") && jest::mentions_any(file, &MATCHERS) && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

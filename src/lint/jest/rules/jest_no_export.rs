@@ -18,11 +18,17 @@ impl Rule for NoExport {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_jest_file(file) && jest::may_have_possible_jest_call_node(file)).then_some(())
+        (jest::mentions_test(file) && jest::is_jest_file(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
+        let may_export = |it: Stmt| {
+            it.is_exported() || matches!(it.tag(), StmtTag::ExportStar | StmtTag::ExportDefault | StmtTag::ExportNamed)
+        };
+        if !file.body().iter().any(may_export) {
+            return;
+        }
         let has_tests = jest::iter_possible_jest_call_node(file).any(|possible_node| {
             jest::parse_general_jest_fn_call(file, possible_node)
                 .is_some_and(|general| general.kind == JestFnKind::General(JestGeneralFnKind::Test))

@@ -16,7 +16,7 @@ impl<const VITEST: bool> Rule for PreferExpectResolves<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.has_exprs([ExprTag::Await])).then_some(())
+        (file.mentions("expect") && jest::is_test(file) && file.has_exprs([ExprTag::Await])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

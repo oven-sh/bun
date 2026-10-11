@@ -33,7 +33,10 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, NoDoneCallback>
     let Some(jest_fn_call) = jest::parse_general_jest_fn_call(cx.file(), possible_jest_node) else {
         return;
     };
-    let is_jest_each = jest::get_node_name(call_expr.callee()).ends_with(b"each");
+    if !matches!(jest_fn_call.kind, JestFnKind::General(JestGeneralFnKind::Test | JestGeneralFnKind::Hook)) {
+        return;
+    }
+    let is_jest_each = jest::get_node_name_vec(call_expr.callee()).last().is_some_and(|it| it.ends_with(b"each"));
     let callback_index = match jest_fn_call.kind {
         // Of `.each` only the one with a template is looked at: its callback gets one object before `done`.
         JestFnKind::General(JestGeneralFnKind::Test | JestGeneralFnKind::Hook) if is_jest_each => {

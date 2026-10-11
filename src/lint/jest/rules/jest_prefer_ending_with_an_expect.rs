@@ -80,10 +80,13 @@ impl PreferEndingWithAnExpect {
         if jest::parse_expect_jest_fn_call(file, PossibleJestNode::new(call_expression)).is_some() {
             return true;
         }
-        let node_name = call_expression.callee().map(jest::get_node_name).unwrap_or_default();
+        let names = call_expression.callee().map(jest::get_node_name_vec).unwrap_or_default();
         match &self.assert_function_names {
-            Some(patterns) => patterns.iter().any(|pattern| pattern.test(&node_name)),
-            None => strings::contains(&node_name, b"expect"),
+            Some(patterns) => {
+                let node_name = names.join(&b"."[..]);
+                patterns.iter().any(|pattern| pattern.test(&node_name))
+            }
+            None => names.iter().any(|it| strings::contains(it, b"expect")),
         }
     }
 }

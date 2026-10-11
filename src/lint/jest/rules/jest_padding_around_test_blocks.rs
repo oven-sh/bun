@@ -16,7 +16,7 @@ impl<const VITEST: bool> Rule for PaddingAroundTestBlocks<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::is_test(file).then_some(())
+        (jest::mentions_test(file) && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

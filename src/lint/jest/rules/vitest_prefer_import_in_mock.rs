@@ -23,7 +23,7 @@ impl Rule for PreferImportInMock {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.mentions_any(&["mock", "doMock"])).then_some(())
+        (jest::mentions_any(file, &const { jest::mention_bits(["jest", "vi", "vitest"]) }) && jest::mentions_any(file, &const { jest::mention_bits(["mock", "doMock"]) }) && jest::is_test(file)).then_some(())
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {

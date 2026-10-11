@@ -362,11 +362,7 @@ impl<'a> File<'a> {
     /// every member access of the file.
     #[inline]
     pub fn mentions(&self, text: &str) -> bool {
-        let bit = bun_sema::hir::mention_bit(text.as_bytes()) as usize;
-        self.hir
-            .mentioned
-            .get(bit / 64)
-            .is_none_or(|word| word >> (bit % 64) & 1 != 0)
+        self.mentions_bit(mention_bit_without_loop(text.as_bytes()))
     }
 
     /// [`File::mentions`] for a text whose [`mention_bit`] is known: a rule that looks for hundreds of names, which are not constants
@@ -393,10 +389,35 @@ impl<'a> File<'a> {
         self.intern(text.as_bytes())
     }
 
+    /// [`File::name_of`], if the file [mentions](File::mentions) `text`. Where the file is linted on its own that is exact:
+    /// `None` unless `text` is one of the texts that `mentions` is about. For [`Rule::register`](crate::rule::Rule::register):
+    /// `let name = file.find_name("text")?;`
+    pub fn find_name(&'a self, text: &str) -> Option<Name<'a>> {
+        if !self.mentions(text) {
+            return None;
+        }
+        match self.hir.mentioned.is_empty() {
+            // The names are those of many files.
+            true => Some(self.name_of(text)),
+            false => self.atoms.find(text.as_bytes()).map(|it| self.name(it)),
+        }
+    }
+
     /// Whether the file [mentions](File::mentions) one of `texts`.
+    #[inline]
     pub fn mentions_any(&self, texts: &[&str]) -> bool {
         texts.iter().any(|text| self.mentions(text))
     }
+}
+
+/// [`mention_bit`]. Of a literal this is a constant of the program, which a loop over its bytes is not always.
+#[inline(always)]
+fn mention_bit_without_loop(text: &[u8]) -> u32 {
+    let mut first = [0; 16];
+    let len = text.len().min(first.len());
+    first[..len].copy_from_slice(&text[..len]);
+    let first = u128::from_le_bytes(first);
+    bun_sema::hir::mention_bit_of([first as u64, (first >> 64) as u64], text.len())
 }
 
 /// Where the lines of `text` start.

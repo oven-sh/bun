@@ -17,7 +17,7 @@ impl<const VITEST: bool> Rule for PreferToHaveLength<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (jest::is_test(file) && file.mentions("length")).then_some(())
+        (file.mentions("expect") && file.mentions("length") && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

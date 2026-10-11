@@ -17,7 +17,7 @@ impl Rule for PreferExpectTypeOf {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.has_exprs([ExprTag::Unary])).then_some(())
+        (file.mentions("expect") && jest::is_test(file) && file.has_exprs([ExprTag::Unary])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

@@ -252,9 +252,17 @@ impl<'a> PossibleJestNode<'a> {
         }
     }
 
-    /// What [`JestFnKind::from`] says of the name that the chain starts with, where that is known.
+    /// What [`JestFnKind::from`] says of the name that the chain starts with. `None`: it starts with none, and is not parsed.
     fn kind(&self) -> Option<JestFnKind> {
-        self.known.map(|it| it.kind)
+        match self.known {
+            Some(known) => Some(known.kind),
+            None => {
+                let local = first_identifier_of_chain(self.node.as_call()?.callee())?;
+                Some(JestFnKind::from(
+                    self.original.unwrap_or_else(|| local.bytes()),
+                ))
+            }
+        }
     }
 }
 
@@ -972,13 +980,7 @@ pub(crate) fn is_type_of_jest_fn_call<'a>(
     possible_jest_node: PossibleJestNode<'a>,
     kinds: &[JestFnKind],
 ) -> bool {
-    let kind = match possible_jest_node.known {
-        Some(known) => Some(known.kind),
-        None => (possible_jest_node.node.as_call())
-            .and_then(|it| first_identifier_of_chain(it.callee()))
-            .map(|it| JestFnKind::from(possible_jest_node.original.unwrap_or_else(|| it.bytes()))),
-    };
-    kind.is_some_and(|it| kinds.contains(&it))
+    (possible_jest_node.kind()).is_some_and(|it| kinds.contains(&it))
         && parse_jest_fn_call(file, possible_jest_node).is_some_and(|it| kinds.contains(&it.kind()))
 }
 
@@ -987,8 +989,8 @@ pub(crate) fn parse_general_jest_fn_call<'a>(
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedGeneralJestFnCall<'a>> {
     if matches!(
-        possible_jest_node.kind(),
-        Some(JestFnKind::Expect | JestFnKind::ExpectTypeOf)
+        possible_jest_node.kind()?,
+        JestFnKind::Expect | JestFnKind::ExpectTypeOf
     ) {
         return None;
     }
@@ -1002,10 +1004,7 @@ pub(crate) fn parse_expect_jest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedExpectFnCall<'a>> {
-    if possible_jest_node
-        .kind()
-        .is_some_and(|it| it != JestFnKind::Expect)
-    {
+    if possible_jest_node.kind()? != JestFnKind::Expect {
         return None;
     }
     match parse_jest_fn_call(file, possible_jest_node)? {
@@ -1018,10 +1017,10 @@ pub(crate) fn parse_expect_and_typeof_vitest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedExpectFnCall<'a>> {
-    if possible_jest_node
-        .kind()
-        .is_some_and(|it| !matches!(it, JestFnKind::Expect | JestFnKind::ExpectTypeOf))
-    {
+    if !matches!(
+        possible_jest_node.kind()?,
+        JestFnKind::Expect | JestFnKind::ExpectTypeOf
+    ) {
         return None;
     }
     match parse_jest_fn_call(file, possible_jest_node)? {
@@ -1094,6 +1093,22 @@ pub(crate) fn run_on_jest_nodes<'a>(
 /// Whether [`iter_possible_jest_call_node`] can have anything, by what the file mentions. It computes nothing.
 pub(crate) fn may_have_possible_jest_call_node(file: &File) -> bool {
     mentions_jest_method(file) || mentions_any(file, &SOURCE_BITS)
+}
+
+/// Whether the file mentions what a test is called with: `it`, `test`, `xit`, ..
+pub(crate) fn mentions_test(file: &File) -> bool {
+    mentions_any(
+        file,
+        &const { mention_bits(["test", "it", "fit", "xit", "xtest"]) },
+    )
+}
+
+/// The same for `describe`.
+pub(crate) fn mentions_describe(file: &File) -> bool {
+    mentions_any(
+        file,
+        &const { mention_bits(["describe", "suite", "fdescribe", "xdescribe"]) },
+    )
 }
 
 /// Whether the file mentions one of [`JEST_METHOD_NAMES`].
@@ -1362,6 +1377,28 @@ impl<'a> OxlintOrder<'a> {
         OxlintOrder {
             ranks: table.iter().zip(0..).collect(),
         }
+    }
+
+    /// The one of `nodes` that oxlint has first in its list of possible nodes.
+    pub(crate) fn first(
+        file: &'a File<'a>,
+        nodes: &[PossibleJestNode<'a>],
+    ) -> Option<PossibleJestNode<'a>> {
+        // The table tells names apart.
+        let global = |it: &PossibleJestNode<'a>| {
+            let known = it.known.filter(|it| it.import_index == u32::MAX)?;
+            Expr::from_raw(file, known.reference).as_ident()
+        };
+        let name = global(nodes.first()?);
+        if name.is_some() && nodes.iter().all(|it| global(it) == name) {
+            let key = |it: &PossibleJestNode<'a>| {
+                let reference = it.known.map(|it| Expr::from_raw(file, it.reference));
+                (reference.map(|it| it.span().start), it.node.span().end)
+            };
+            return nodes.iter().copied().min_by_key(key);
+        }
+        let order = OxlintOrder::new(file);
+        nodes.iter().copied().min_by_key(|it| order.key(*it))
     }
 
     /// The place of `name` in the table.

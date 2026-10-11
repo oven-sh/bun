@@ -77,17 +77,13 @@ impl PreferImportingJestGlobals {
                 ParsedJestFnCall::GeneralJest(c) | ParsedJestFnCall::Fixture(c) => c.name,
                 ParsedJestFnCall::Expect(c) | ParsedJestFnCall::ExpectTypeOf(c) => c.name,
             };
-            functions_to_import.insert(name.to_vec());
+            if !functions_to_import.contains(name) {
+                functions_to_import.insert(name.to_vec());
+            }
             found.push(jest_node);
         }
-        if found.is_empty() {
-            return;
-        }
         // The first of oxlint's list is reported.
-        let order = OxlintOrder::new(file);
-        let Some(span) = found
-            .iter()
-            .min_by_key(|it| order.key(**it))
+        let Some(span) = OxlintOrder::first(file, &found)
             .and_then(|it| it.node.callee())
             .map(Expr::outer_span)
         else {

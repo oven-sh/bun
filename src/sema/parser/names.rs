@@ -17,23 +17,20 @@ use bun_threading::Guarded;
 use std::sync::OnceLock;
 
 /// A text of at most 15 bytes, padded with zeros. It does not end with a zero byte, so the padded
-/// bytes determine the length.
+/// bytes determine the length. An entry without bytes is free.
 #[derive(Copy, Clone)]
 struct Short {
     words: [u64; 2],
     atom: u32,
-    /// `Names::generation` when it was entered.
-    generation: u16,
     kind: T,
 }
 
-/// A text of 16 to 32 bytes.
+/// A text of 16 to 32 bytes. An entry without a length is free.
 #[derive(Copy, Clone)]
 struct Long {
     /// The first and the last 16 bytes, which may overlap.
     words: [u64; 4],
     atom: u32,
-    generation: u16,
     len: u8,
 }
 
@@ -77,8 +74,6 @@ pub(crate) struct Names {
     long: Box<[Long; 1 << LONG_BITS]>,
     /// The file's own atoms of all other texts, and of those that found no place above.
     other: Table,
-    /// An entry of another generation is free. Never 0.
-    generation: u16,
     /// By how many bits the places in `short` and in `long` are shifted: only the start of a table
     /// is in use for a file that is small, so that little memory is touched.
     unused_bits: u32,
@@ -96,7 +91,7 @@ pub(crate) struct Names {
     /// The keywords, and the short ones of `KNOWN_TEXTS`: the padded bytes, the atom if its number
     /// is fixed, and the token kind. An entry without bytes is free.
     known: Box<[([u64; 2], u32, T); 1 << KNOWN_BITS]>,
-    /// Those of 16 to 32 bytes. An entry without a length is free.
+    /// Those of 16 to 32 bytes.
     known_long: Box<[Long; 1 << KNOWN_LONG_BITS]>,
     /// The others.
     known_others: Vec<(&'static [u8], u32)>,
@@ -107,13 +102,11 @@ pub(crate) struct Names {
 const NO_SHORT: Short = Short {
     words: [0; 2],
     atom: 0,
-    generation: 0,
     kind: T::Eof,
 };
 const NO_LONG: Long = Long {
     words: [0; 4],
     atom: 0,
-    generation: 0,
     len: 0,
 };
 
@@ -143,7 +136,6 @@ impl Default for Names {
                 known_long[at] = Long {
                     words,
                     atom,
-                    generation: 0,
                     len: text.len() as u8,
                 };
                 continue;
@@ -166,7 +158,6 @@ impl Default for Names {
             short: boxed(NO_SHORT),
             long: boxed(NO_LONG),
             other: Table::default(),
-            generation: 1,
             unused_bits: 0,
             of: 0,
             is_own: false,
@@ -296,22 +287,11 @@ impl<'a> Text<'a> {
 }
 
 impl Names {
-    /// All entries are free.
-    fn next_generation(&mut self) {
-        self.generation = match self.generation.checked_add(1) {
-            Some(next) => next,
-            None => {
-                self.short.fill(NO_SHORT);
-                self.long.fill(NO_LONG);
-                1
-            }
-        };
-    }
-
     /// Before a file is parsed whose atoms are those of `atoms`.
     pub(crate) fn belong_to(&mut self, atoms: &dyn Intern) {
         if self.of != atoms.number() {
-            self.next_generation();
+            self.short.fill(NO_SHORT);
+            self.long.fill(NO_LONG);
             self.of = atoms.number();
             self.is_own = false;
             self.unused_bits = 0;
@@ -320,15 +300,12 @@ impl Names {
 
     /// Before a file of `len` bytes is parsed that has its own atoms.
     pub(crate) fn begin_own(&mut self, len: usize) {
-        self.next_generation();
         // A place in `short` for every 8 bytes of the text.
         let bits = (len / 8)
             .next_power_of_two()
             .trailing_zeros()
             .clamp(8, SHORT_BITS);
         self.unused_bits = SHORT_BITS - bits;
-        // What has been done since the last file has pushed the tables out of the caches of the
-        // processor. Written in order they come back much faster than one entry at a time.
         self.short[..1 << bits].fill(NO_SHORT);
         self.long[..1 << (LONG_BITS - self.unused_bits)].fill(NO_LONG);
         self.of = bun_sema::atom::next_interner_number();
@@ -448,8 +425,7 @@ impl Names {
     #[inline(always)]
     pub(crate) fn find_short(&self, words: [u64; 2]) -> Option<(Atom, T)> {
         let entry = &self.short[short_place(words) >> self.unused_bits];
-        (entry.words == words && entry.generation == self.generation)
-            .then_some((Atom(entry.atom), entry.kind))
+        (entry.words == words).then_some((Atom(entry.atom), entry.kind))
     }
 
     /// The same if it is not.
@@ -465,7 +441,7 @@ impl Names {
         let mut free = None;
         for at in (first..first + WINDOW).map(|at| at & mask) {
             let entry = &self.short[at];
-            if entry.generation != self.generation {
+            if entry.words == [0; 2] {
                 free = Some(at);
                 break;
             }
@@ -483,7 +459,6 @@ impl Names {
         self.short[at] = Short {
             words,
             atom: atom.0,
-            generation: self.generation,
             kind,
         };
         (atom, kind)
@@ -512,10 +487,7 @@ impl Names {
         };
         let place = long_place(words);
         let entry = &self.long[place >> self.unused_bits];
-        if entry.words == words
-            && usize::from(entry.len) == text.text.len()
-            && entry.generation == self.generation
-        {
+        if entry.words == words && usize::from(entry.len) == text.text.len() {
             return Atom(entry.atom);
         }
         self.long_elsewhere(words, place, text, atoms)
@@ -535,7 +507,7 @@ impl Names {
         let mut free = None;
         for at in (first..first + WINDOW).map(|at| at & mask) {
             let entry = &self.long[at];
-            if entry.generation != self.generation {
+            if entry.len == 0 {
                 free = Some(at);
                 break;
             }
@@ -554,7 +526,6 @@ impl Names {
         self.long[at] = Long {
             words,
             atom: atom.0,
-            generation: self.generation,
             len: text.text.len() as u8,
         };
         atom
@@ -607,7 +578,7 @@ impl Names {
                 let mask = (self.short.len() >> self.unused_bits) - 1;
                 for at in (first..first + WINDOW).map(|at| at & mask) {
                     let entry = &self.short[at];
-                    if entry.generation != self.generation {
+                    if entry.words == [0; 2] {
                         return Err(None);
                     }
                     if entry.words == words {
@@ -624,7 +595,7 @@ impl Names {
                 let mask = (self.long.len() >> self.unused_bits) - 1;
                 for at in (first..first + WINDOW).map(|at| at & mask) {
                     let entry = &self.long[at];
-                    if entry.generation != self.generation {
+                    if entry.len == 0 {
                         return Err(None);
                     }
                     if entry.words == words && usize::from(entry.len) == text.len() {

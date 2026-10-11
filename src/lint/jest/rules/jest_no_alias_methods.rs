@@ -15,7 +15,7 @@ impl<const VITEST: bool> Rule for NoAliasMethods<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.mentions_any(&no_alias_methods::ALIASES)).then_some(())
+        (file.mentions("expect") && jest::mentions_any(file, &const { jest::mention_bits(no_alias_methods::ALIASES) }) && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

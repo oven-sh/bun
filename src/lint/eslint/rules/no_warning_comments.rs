@@ -198,10 +198,13 @@ impl Rule for NoWarningComments {
             if comment.kind() == TokenKind::Shebang {
                 continue;
             }
-            let value = comment.comment_value();
-            if (self.first_bytes.as_ref()).is_some_and(|it| !self.may_start_with_a_term(it, value)) {
+            // With the `*/` of a block, which can only make it look closer.
+            if let (Some(first_bytes), [b'/', b'/' | b'*', rest @ ..]) = (&self.first_bytes, comment.text())
+                && !self.may_start_with_a_term(first_bytes, rest)
+            {
                 continue;
             }
+            let value = comment.comment_value();
             let mut matches = self.terms.iter().filter(|term| self.has(term, value)).peekable();
             if matches.peek().is_none() || ast_utils::is_directive_comment(&comment) && is_self_config(value) {
                 continue;

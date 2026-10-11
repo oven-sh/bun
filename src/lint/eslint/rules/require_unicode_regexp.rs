@@ -15,6 +15,8 @@ const REQUIRE_V_FLAG: Message = Message::new("requireVFlag", "Use the 'v' flag."
 
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
+/// The names that a reference to it starts with.
+const ROOTS: [&str; 5] = ["RegExp", "global", "globalThis", "self", "window"];
 
 /// `text` with the first `from` in it, at or after `start`, replaced by `to`.
 fn replace_first(text: &[u8], start: usize, from: u8, to: u8) -> Option<Vec<u8>> {
@@ -78,8 +80,13 @@ impl Rule for RequireUnicodeRegexp {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Regex]);
+        if file.mentions_any(&ROOTS) { on.finish() } else { on }
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Regex(regex) = e.kind() else {
+        let Some(regex) = e.as_regex() else {
             return;
         };
         if !self.is_missing_flag(regex.flags()) {

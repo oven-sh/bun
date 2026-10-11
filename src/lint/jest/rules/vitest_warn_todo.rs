@@ -17,7 +17,7 @@ impl Rule for WarnTodo {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::is_test(file) && file.mentions("todo")).then_some(())
+        (file.mentions("todo") && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

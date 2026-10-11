@@ -18,7 +18,7 @@ impl Rule for PreferToHaveBeenCalled {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (jest::is_test(file) && file.mentions_any(&["toHaveBeenCalledTimes", "toBeCalledTimes"])).then_some(())
+        (file.mentions("expect") && jest::mentions_any(file, &const { jest::mention_bits(["toHaveBeenCalledTimes", "toBeCalledTimes"]) }) && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

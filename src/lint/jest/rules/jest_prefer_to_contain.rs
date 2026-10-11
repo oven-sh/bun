@@ -16,7 +16,7 @@ impl<const VITEST: bool> Rule for PreferToContain<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (jest::is_test(file) && file.mentions("includes")).then_some(())
+        (file.mentions("expect") && file.mentions("includes") && jest::is_test(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

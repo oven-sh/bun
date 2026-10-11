@@ -15,7 +15,7 @@ impl<const VITEST: bool> Rule for PreferSnapshotHint<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&SNAPSHOT_MATCHERS).then_some(())
+        (file.mentions("expect") && jest::mentions_any(file, &const { jest::mention_bits(SNAPSHOT_MATCHERS) })).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

@@ -497,16 +497,27 @@ impl<'a> Uses<'a> {
         self.is_in_module_scope = variable.scope().kind() == ScopeKind::Module;
     }
 
+    /// How many of `uses`, which are in source order, start before `offset`. Most variables have few.
+    #[inline]
+    fn count_before(uses: &[Reference<'a>], offset: u32) -> usize {
+        match uses.len() {
+            0..=8 => uses.iter().take_while(|it| start_of(it) < offset).count(),
+            _ => uses.partition_point(|it| start_of(it) < offset),
+        }
+    }
+
     fn within(&self, span: Span) -> &[Reference<'a>] {
-        let all = &self.all[..];
-        let first = all.partition_point(|it| start_of(it) < span.start);
-        let end = first + all[first..].partition_point(|it| start_of(it) < span.end);
-        &all[first..end]
+        let from = &self.all[Self::count_before(&self.all, span.start)..];
+        &from[..Self::count_before(from, span.end)]
+    }
+
+    /// The first use that does not start before `offset`.
+    fn first_from(&self, offset: u32) -> Option<Reference<'a>> {
+        self.all.get(Self::count_before(&self.all, offset)).copied()
     }
 
     fn first_within(&self, span: Span) -> Option<Reference<'a>> {
-        let first = self.all.partition_point(|it| start_of(it) < span.start);
-        (self.all.get(first).copied()).filter(|it| start_of(it) < span.end)
+        self.first_from(span.start).filter(|it| start_of(it) < span.end)
     }
 
     /// Whether `written` and what it evaluates first are the only uses in `span`.
@@ -574,17 +585,16 @@ impl<'a> Uses<'a> {
         }
     }
 
-    /// From `offset` on, which is between two statements of `list`, before the first or after the
-    /// last.
-    fn statements(&mut self, list: List<'a, Stmt<'a>>, mut offset: u32) -> Flow<'a> {
-        let (Some(first), Some(last)) = (
-            list.first(),
-            list.last().filter(|it| it.span().end > offset),
-        ) else {
-            return Flow::Through;
+    /// From the end of `after` on, which is one of `list`, or from the start of `list`.
+    fn statements(&mut self, list: List<'a, Stmt<'a>>, after: Option<Stmt<'a>>) -> Flow<'a> {
+        // Where the statement ends that has been passed last, and from where on uses are looked for.
+        let (mut passed, mut offset) = match after {
+            Some(after) => (after.span().end, after.span().end),
+            None => match list.first() {
+                Some(first) => (0, first.span().start),
+                None => return Flow::Through,
+            },
         };
-        offset = offset.max(first.span().start);
-        let end = last.span().end;
         loop {
             // Whether there is a way from `offset` to the start of `list[at]`. That the end of the one
             // before it can be reached tells the same of those before that.
@@ -592,19 +602,23 @@ impl<'a> Uses<'a> {
                 let previous = list.before(statement.span().start);
                 previous.is_none_or(|it| it.span().start < offset || it.is_known_to_complete())
             };
-            let Some(next) = self.first_within(Span::new(offset, end)) else {
+            let next = self.first_from(offset).map(|it| start_of(&it));
+            let Some(statement) = next.and_then(|next| list.around(next)) else {
+                let Some(last) = list.last().filter(|it| it.span().end > passed) else {
+                    return Flow::Through;
+                };
                 return match last.tag() {
+                    _ if next.is_some_and(|next| next < last.span().end) => Flow::Unknown,
                     _ if last.is_known_to_complete() => Flow::Through,
                     StmtTag::Break | StmtTag::Continue if is_reached(last) => Flow::Leaves(last),
                     _ => Flow::Unknown,
                 };
             };
-            let Some(statement) = list.around(start_of(&next)).filter(|&it| is_reached(it)) else {
+            if !is_reached(statement) {
                 return Flow::Unknown;
-            };
+            }
             match self.statement_with_uses(statement) {
-                Flow::Through if statement == last => return Flow::Through,
-                Flow::Through => offset = statement.span().end,
+                Flow::Through => (passed, offset) = (statement.span().end, statement.span().end),
                 flow => return flow,
             }
         }
@@ -644,7 +658,7 @@ impl<'a> Uses<'a> {
                 _ => Flow::Unknown,
             },
             StmtKind::Var(declarators) => self.declarations(declarators),
-            StmtKind::Block(list) => self.statements(list, 0),
+            StmtKind::Block(list) => self.statements(list, None),
             StmtKind::Labeled { body, .. } => self.statement(body).or(Flow::Unknown),
             StmtKind::If { test, yes, no } => {
                 through!(self.expression(test));
@@ -718,7 +732,7 @@ impl<'a> Uses<'a> {
                 // From the start of the following case on.
                 let mut next = Flow::Through;
                 for case in cases.iter().rev() {
-                    next = match self.statements(case.body(), 0) {
+                    next = match self.statements(case.body(), None) {
                         Flow::Through => next,
                         Flow::Leaves(jump) if matches!(jump.kind(), StmtKind::Break(None)) => {
                             Flow::Through
@@ -923,14 +937,14 @@ impl<'a> Uses<'a> {
                 Node::Func(func) => (func.body_statements(), None),
                 Node::File(file) => (Some(file.body()), None),
                 Node::Case(case) => (Some(case.body()), None),
-                Node::Stmt(it) => match it.kind() {
-                    StmtKind::Block(list) => (Some(list), None),
-                    kind => (None, Some((it, kind))),
+                Node::Stmt(it) => match it.as_block() {
+                    Some(list) => (Some(list), None),
+                    None => (None, Some((it, it.kind()))),
                 },
                 _ => (None, None),
             };
             if let Some(list) = list {
-                let mut flow = self.statements(list, statement.span().end);
+                let mut flow = self.statements(list, Some(statement));
                 let mut around = parent;
                 if let (Node::Case(case), Node::Stmt(switch)) = (parent, parent.parent())
                     && let StmtKind::Switch { cases, .. } = switch.kind()
@@ -945,7 +959,7 @@ impl<'a> Uses<'a> {
                             return false;
                         };
                         self.budget = budget;
-                        flow = self.statements(next.body(), 0);
+                        flow = self.statements(next.body(), None);
                     }
                     around = Node::Stmt(switch);
                 }

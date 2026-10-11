@@ -327,17 +327,13 @@ impl Rule for NoUnmodifiedLoopCondition {
         let is_oxlint = cx.state.is_oxlint;
         let mut functions =
             Functions { is_oxlint, nearest: AncestorMemo::default(), declarations: AncestorMemo::default() };
-        let (mut tests, mut end) = (spans.iter().peekable(), 0u32);
-        for reference in cx.file().references() {
-            let start = reference.ident().start();
-            while let Some(test) = tests.next_if(|it| it.start <= start) {
-                end = end.max(test.end);
-            }
-            if start < end {
+        // Each once: a test can be in another.
+        let mut end = 0u32;
+        for test in spans {
+            for reference in cx.file().references_within(Span::new(test.start.max(end), test.end)) {
                 conditions.extend(self.to_loop_condition(reference, &mut cx.state, &mut functions));
-            } else if tests.peek().is_none() {
-                break;
             }
+            end = end.max(test.end);
         }
         let mut modified_groups: FxHashSet<Expr<'a>> = FxHashSet::default();
         let mut of_symbols: FxHashMap<Symbol<'a>, Modifiers<'a>> = FxHashMap::default();

@@ -9,9 +9,6 @@ const UNEXPECTED_UNDEFINED: Message =
 impl NoUndefined {
     /// A variable that the file declares.
     fn check_symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        if symbol.name() != cx.state {
-            return;
-        }
         for reference in symbol.references().filter(|it| !it.is_init()) {
             cx.report(reference, UNEXPECTED_UNDEFINED);
         }
@@ -48,7 +45,7 @@ impl NoUndefined {
 
 impl Rule for NoUndefined {
     const META: Meta = Meta::eslint("no-undefined", Kind::Suggestion).reports_at_the_end();
-    const ON: On = On::new().symbols().finish();
+    const ON: On = On::new().finish();
     /// `undefined`
     type State<'a> = Name<'a>;
 
@@ -60,11 +57,10 @@ impl Rule for NoUndefined {
         file.find_name("undefined")
     }
 
-    fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_symbol(symbol, cx);
-    }
-
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for symbol in cx.file().symbols_named(cx.state) {
+            self.check_symbol(symbol, cx);
+        }
         self.check_global(cx);
     }
 }

@@ -651,12 +651,7 @@ impl<'p> Checker<'p, '_> {
                 // `compareSymbols` breaks ties between equally close candidates.
                 candidates.push(((self.order_of_property(prop), candidate), prop.name));
             }
-            if self
-                .index_infos_among(member, members)
-                .shape()
-                .index
-                .is_empty()
-            {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
         }

@@ -1635,14 +1635,9 @@ impl<'p, 's> Checker<'p, 's> {
         // FOR SPEED: few object types have signatures, and `signatures` stores a list for every
         // type it is asked for.
         if self.is_object_type(source)
-            && self.members(source).is_some_and(|members| {
-                let shape = members.shape();
-                if construct {
-                    shape.construct.is_empty()
-                } else {
-                    shape.call.is_empty()
-                }
-            })
+            && self
+                .members(source)
+                .is_some_and(|members| !members.has_signatures_of_kind(construct))
         {
             return;
         }
@@ -1866,7 +1861,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (Some(sm), Some(tm)) = (self.members(source), self.structured_members(apparent)) else {
             return;
         };
-        if tm.shape().index.is_empty() {
+        if tm.index_infos().is_empty() {
             return;
         }
         let is_mapped = |c: &Self, t: TypeId| {
@@ -1892,7 +1887,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.apparent_type_of_intersection(source)
         };
         if self.is_object_type_with_inferable_index(looks) {
-            for info in &tm.shape().index {
+            for info in tm.index_infos() {
                 let expected = self.instantiate(info.value, tm.mapper);
                 let mut types = Parts::new();
                 for prop in &sm.shape().props {
@@ -1906,7 +1901,7 @@ impl<'p, 's> Checker<'p, 's> {
                         });
                     }
                 }
-                for other in &self.index_infos_among(source, sm).shape().index {
+                for other in self.structured(sm).index_infos() {
                     if other.key == info.key || self.is_applicable_index_type(other.key, info.key) {
                         types.push(self.instantiate(other.value, sm.mapper));
                     }
@@ -1917,8 +1912,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        for info in &tm.shape().index {
-            let indexed = self.index_infos_among(source, sm);
+        for info in tm.index_infos() {
+            let indexed = self.structured(sm);
             if let Some(source_info) = self.applicable_index_info(&indexed, info.key) {
                 let expected = self.instantiate(info.value, tm.mapper);
                 self.infer_with_priority(n, source_info.value, expected, priority);
@@ -2011,9 +2006,10 @@ impl<'p, 's> Checker<'p, 's> {
                         ..
                     }
                 ) {
+                    let indexed = self.structured(sm);
                     types.extend(
-                        sm.shape()
-                            .index
+                        indexed
+                            .index_infos()
                             .iter()
                             .map(|i| self.instantiate(i.value, sm.mapper)),
                     );
@@ -2036,9 +2032,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let members = self.members_of_reduced_apparent_type(source)?;
         // It requires a string index signature, or properties that are not all omitted.
-        if !(members
-            .shape()
-            .index
+        if !(self
+            .structured(members)
+            .index_infos()
             .iter()
             .any(|i| i.key == TypeId::STRING)
             || !members.shape().props.is_empty() && self.is_partially_inferable(source))
@@ -2163,9 +2159,9 @@ impl<'p, 's> Checker<'p, 's> {
         let adds_readonly = self.mapped_origin(target).is_some_and(|(file, node, _)| {
             self.mapped_decl(file, node).readonly == MappedModifier::Add
         });
-        if let Some(info) = members
-            .shape()
-            .index
+        if let Some(info) = self
+            .structured(members)
+            .index_infos()
             .iter()
             .find(|i| i.key == TypeId::STRING)
         {

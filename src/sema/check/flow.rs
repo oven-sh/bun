@@ -1046,7 +1046,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = self.members(ty) else {
             return false;
         };
-        if !(members.shape().call.is_empty() && members.shape().construct.is_empty()) {
+        if members.has_signatures() {
             return true;
         }
         if members.resolved.prop(known::bind).is_none() {
@@ -1809,7 +1809,14 @@ impl<'p, 's> Checker<'p, 's> {
         let both = PropFlags::HAS_NON_UNIFORM_TYPE | PropFlags::HAS_LITERAL_TYPE;
         self.is_union(ty)
             && self.union_property(ty, name).is_some_and(|prop| {
-                prop.flags.contains(both) && {
+                // The property of the only member that has one is that of the union.
+                let flags = match &prop.source {
+                    PropSource::Intersected(of, props) if self.is_intersection(*of) => {
+                        self.non_uniform_and_literal(props)
+                    }
+                    _ => prop.flags,
+                };
+                flags.contains(both) && {
                     let ty = self.type_of_prop(prop, MapperId::IDENTITY);
                     !self.is_generic(ty)
                 }

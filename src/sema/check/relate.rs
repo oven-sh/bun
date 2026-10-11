@@ -678,7 +678,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isEmptyResolvedType` of the resolved members of `ty`.
     fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
         !self.is_any_function_type(ty)
-            && (self.members(ty)).is_some_and(|m| Self::has_no_members(m.shape()))
+            && (self.members(ty)).is_some_and(|m| Self::has_no_members(m.whole_shape()))
     }
 
     /// `isEmptyObjectType`
@@ -729,7 +729,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.is_empty_resolved_type(ty);
         }
         match self.resolved_members(ty) {
-            Some(members) => Self::has_no_members(members.shape()),
+            Some(members) => Self::has_no_members(members.whole_shape()),
             None => self.has_no_members_in_place(ty),
         }
     }
@@ -765,8 +765,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn has_call_or_construct_signatures(&mut self, ty: TypeId) -> bool {
-        self.members(ty)
-            .is_some_and(|m| !(m.shape().call.is_empty() && m.shape().construct.is_empty()))
+        self.members(ty).is_some_and(|m| m.has_signatures())
     }
 
     /// `getNonMissingTypeOfSymbol`: the type of a property as used in comparisons. It includes
@@ -2078,13 +2077,7 @@ impl<'p, 's> Checker<'p, 's> {
                     TypeId::NEVER
                 });
             }
-            key_types.extend(
-                self.index_infos_among(owner, members)
-                    .shape()
-                    .index
-                    .iter()
-                    .map(|i| i.key),
-            );
+            key_types.extend(self.structured(members).index_infos().iter().map(|i| i.key));
         }
         let mut keys = Vec::with_capacity(key_types.len());
         for key in key_types {
@@ -2742,10 +2735,8 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.is_weak_type(target)
                 && {
                     let apparent = self.reduced_apparent_type_as_object(source);
-                    self.members(apparent).is_some_and(|m| {
-                        let s = m.shape();
-                        !(s.props.is_empty() && s.call.is_empty() && s.construct.is_empty())
-                    })
+                    self.members(apparent)
+                        .is_some_and(|m| !m.shape().props.is_empty() || m.has_signatures())
                 };
             if is_performing_common_property_checks && !self.has_common_properties(source, target) {
                 if REPORT {
@@ -2808,6 +2799,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if REPORT {
+            // `typeRelatedToSomeType` goes on with `getRegularTypeOfObjectLiteral(source)`.
+            let regular = |c: &mut Self, ty| match state & STATE_REGULAR {
+                0 => ty,
+                _ => c.regular_type_of_object_literal(ty),
+            };
+            let (original_source, source) = (regular(self, original_source), regular(self, source));
             self.report_error_results(r, original_source, original_target, source, target, head);
         }
         Ternary::FALSE
@@ -3080,8 +3077,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // A name derived from a symbol is accepted by a string index signature.
                 self.atoms().is_symbol_name(name)
                     && members
-                        .shape()
-                        .index
+                        .index_infos()
                         .iter()
                         .any(|i| i.key == TypeId::STRING)
             }
@@ -3092,7 +3088,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_weak_type(&mut self, t: TypeId) -> bool {
         match self.data(t) {
             data if is_object_kind(data) => self.members(t).is_some_and(|m| {
-                let s = m.shape();
+                let s = m.whole_shape();
                 !s.props.is_empty()
                     && s.call.is_empty()
                     && s.construct.is_empty()
@@ -3229,7 +3225,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.type_related_to_some_type::<false>(r, source, target, state);
         }
         if matches!(td, TypeData::Intersection(_)) {
-            return self.type_related_to_each_type::<REPORT>(r, source, target, STATE_TARGET);
+            let state = STATE_TARGET | state & STATE_REGULAR;
+            return self.type_related_to_each_type::<REPORT>(r, source, target, state);
         }
         // The source is an intersection. `T & 1` with `T extends 1 | 2` must not be comparable to
         // `2`.
@@ -4375,12 +4372,7 @@ impl<'p, 's> Checker<'p, 's> {
                     props.push(combined);
                 }
             }
-            if self
-                .index_infos_among(current, of_current)
-                .shape()
-                .index
-                .is_empty()
-            {
+            if self.structured(of_current).index_infos().is_empty() {
                 break;
             }
         }
@@ -5904,16 +5896,17 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `shouldReportUnmatchedPropertyError`: a function type that lacks the properties of an
             // object type is a mismatch of kind, not a missing property.
-            let (s, t) = (sm.shape(), tm.shape());
+            let both_have =
+                |kind| tm.has_signatures_of_kind(kind) && sm.has_signatures_of_kind(kind);
             if REPORT
-                && (s.call.is_empty() && s.construct.is_empty()
-                    || !s.props.is_empty() && self.is_object_type(source)
-                    || !t.call.is_empty() && !s.call.is_empty()
-                    || !t.construct.is_empty() && !s.construct.is_empty())
+                && (!sm.has_signatures()
+                    || !sm.shape().props.is_empty() && self.is_object_type(source)
+                    || both_have(false)
+                    || both_have(true))
             {
                 // `getUnmatchedProperties`
                 let mut unmatched: Vec<&Prop> = Vec::new();
-                for tp in &t.props {
+                for tp in &tm.shape().props {
                     if !self.is_static_private_name(tp)
                         && (require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
                         && (self.property_among(has_properties, &sm, &mut inherited, tp.name))
@@ -6310,9 +6303,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let pick = |m: &Members| {
             if construct {
-                m.shape().construct.len()
+                m.construct_signatures().len()
             } else {
-                m.shape().call.len()
+                m.call_signatures().len()
             }
         };
         if r.relation == Relation::Identity && pick(&sm) != pick(&tm) {
@@ -6325,9 +6318,9 @@ impl<'p, 's> Checker<'p, 's> {
         let list =
             |c: &mut Self, ty: TypeId, data: &TypeData, m: &Members<'p>| -> List<'p, SigId> {
                 let sigs: &'p [SigId] = if construct {
-                    &m.shape().construct
+                    m.construct_signatures()
                 } else {
-                    &m.shape().call
+                    m.call_signatures()
                 };
                 match sigs {
                     _ if sigs.is_empty() || m.mapper == MapperId::IDENTITY => List::Kept(sigs),
@@ -7185,11 +7178,11 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(sm) = self.structured_members(source) else {
                 return Ternary::FALSE;
             };
-            if sm.shape().index.len() != tm.shape().index.len() {
+            if sm.index_infos().len() != tm.index_infos().len() {
                 return Ternary::FALSE;
             }
-            for info in &tm.shape().index {
-                let Some(other) = sm.shape().index.iter().find(|i| i.key == info.key) else {
+            for info in tm.index_infos() {
+                let Some(other) = sm.index_infos().iter().find(|i| i.key == info.key) else {
                     return Ternary::FALSE;
                 };
                 let (s, t) = (
@@ -7203,12 +7196,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return Ternary::TRUE;
         }
-        if tm.shape().index.is_empty() {
+        if tm.index_infos().is_empty() {
             return Ternary::TRUE;
         }
-        let target_has_string_index = tm.shape().index.iter().any(|i| i.key == TypeId::STRING);
+        let target_has_string_index = tm.index_infos().iter().any(|i| i.key == TypeId::STRING);
         let mut result = Ternary::TRUE;
-        for info in &tm.shape().index {
+        for info in tm.index_infos() {
             let expected = self.instantiate(info.value, tm.mapper);
             let related = if r.relation != Relation::StrictSubtype
                 && !source_is_primitive
@@ -7242,7 +7235,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        let indexed = self.index_infos_among(source, sm);
+        let indexed = self.structured(sm);
         if let Some(info) = self.applicable_index_info(&indexed, key) {
             let (source, target) = ((info.key, info.value), (key, expected));
             return self.index_info_related_to::<REPORT>(r, source, target, state);
@@ -7439,7 +7432,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             result &= related;
         }
-        for info in &self.index_infos_among(source, *sm).shape().index {
+        for info in self.structured(*sm).index_infos() {
             if info.key == key || self.is_applicable_index_type(info.key, key) {
                 let actual = self.instantiate(info.value, sm.mapper);
                 let (source, target) = ((info.key, actual), (key, expected));

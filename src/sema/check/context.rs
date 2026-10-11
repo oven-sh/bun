@@ -1635,12 +1635,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `getPropertiesOfUnionOrIntersectionType`: a property that all members have is a
             // property of the first member without index signatures.
-            if self
-                .index_infos_among(part, members)
-                .shape()
-                .index
-                .is_empty()
-            {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
             visited.push(members);

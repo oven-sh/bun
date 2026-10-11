@@ -768,7 +768,6 @@ impl<'s> Program<'s> {
             symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: Vec::new(),
-            intersections_in_resolution: Vec::new(),
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
@@ -871,6 +870,9 @@ enum Query {
     /// signature (`Return`) and the instantiation of its result.
     ReturnOfSignature(SigId),
     Shape(TypeId),
+    /// `getPropertiesOfUnionOrIntersectionType` of an intersection, whose `Shape` is
+    /// `resolveIntersectionTypeMembers`: see `structured_members`.
+    Properties(TypeId),
     Bases(Sym),
     /// `TypeSystemPropertyNameResolvedBaseConstructorType`
     BaseConstructor(Sym),
@@ -946,6 +948,7 @@ impl Query {
             Query::BaseConstructor(sym) => (sym.file, 13),
             Query::ReturnOfSignature(_)
             | Query::Shape(_)
+            | Query::Properties(_)
             | Query::Constraint(_)
             | Query::InferredConstraint(_)
             | Query::MappedProp(..)
@@ -1468,8 +1471,6 @@ pub struct Checker<'p, 's> {
     /// file that a query gets to in the meantime, whose `errorType` then stays in what the query
     /// stores.
     flow_analysis_disabled: Vec<FileId>,
-    /// The intersections whose properties are being collected: see `properties_of_intersection`.
-    intersections_in_resolution: Vec<TypeId>,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,
     /// The declared type of the reference that the flow walk in progress narrows.
@@ -2145,7 +2146,8 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         // `resolveIntersectionTypeMembers` has none either, and calls `setStructuredTypeMembers` at its end.
-        if matches!(q, Query::Shape(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
+        // Nor has `getPropertiesOfUnionOrIntersectionType`, which sets `resolvedProperties` at its end.
+        if matches!(q, Query::Shape(ty) | Query::Properties(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
             && self.ends_at_reduction_in_progress(i)
         {
             return false;

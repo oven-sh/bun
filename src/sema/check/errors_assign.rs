@@ -654,9 +654,9 @@ impl Checker<'_, '_> {
             return;
         };
         // A rest element accepts any property.
-        if members
-            .shape()
-            .index
+        if self
+            .structured(members)
+            .index_infos()
             .iter()
             .any(|info| info.key == TypeId::STRING)
         {

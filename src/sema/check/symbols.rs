@@ -2291,7 +2291,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.get_named_members(&mut shape.props, |_| true, &[]);
-        for info in &self.index_infos_among(ty, members).shape().index {
+        for info in self.structured(members).index_infos() {
             let value = self.instantiate(info.value, members.mapper);
             let value = self.get_widened_type(value);
             shape.index.push(IndexInfo { value, ..*info });
@@ -3274,7 +3274,7 @@ impl<'p, 's> Checker<'p, 's> {
             let member = self.get_spread_symbol(prop, members.mapper, options);
             shape.props.push(member);
         }
-        for info in &self.index_infos_among(apparent, members).shape().index {
+        for info in self.structured(members).index_infos() {
             let value = self.instantiate(info.value, members.mapper);
             shape.index.push(IndexInfo { value, ..*info });
         }
@@ -3926,7 +3926,7 @@ impl<'p, 's> Checker<'p, 's> {
                         name_type: TypeId::UNRESOLVED,
                     });
                 }
-                for info in &self.index_infos_among(ty, members).shape().index {
+                for info in self.structured(members).index_infos() {
                     let value = self.instantiate(info.value, members.mapper);
                     shape.index.push(IndexInfo { value, ..*info });
                 }

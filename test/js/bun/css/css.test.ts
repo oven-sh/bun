@@ -5757,6 +5757,7 @@ describe("css tests", () => {
       "view-transition-image-pair",
       "view-transition-new",
       "view-transition-old",
+      "view-transition-group-children",
     ]) {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
@@ -5764,6 +5765,18 @@ describe("css tests", () => {
       // Test class selector syntax (.class-name)
       minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
       minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
+      // <pt-name-and-class-selector>: a name or `*` followed by classes, or classes alone.
+      minify_test(`:root::${name}(*.class) {position: fixed}`, `:root::${name}(*.class){position:fixed}`);
+      minify_test(`:root::${name}(*.class.class) {position: fixed}`, `:root::${name}(*.class.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.class) {position: fixed}`, `:root::${name}(foo.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.bar.baz) {position: fixed}`, `:root::${name}(foo.bar.baz){position:fixed}`);
+      minify_test(
+        `:root::${name}(foo.bar.baz):only-child {position: fixed}`,
+        `:root::${name}(foo.bar.baz):only-child{position:fixed}`,
+      );
+      minify_test(`:root::${name}(.foo.bar) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  .foo.bar  ) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  foo.bar  ) {position: fixed}`, `:root::${name}(foo.bar){position:fixed}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
@@ -5772,6 +5785,23 @@ describe("css tests", () => {
         `:root::${name}(foo)::before {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidState)",
       );
+      // White space is not allowed between the name and a class, or inside the classes.
+      test.each([
+        ["*.*", "Expected identifier after '.' in class selector, found: *"],
+        ["*. cls", "Expected identifier after '.' in class selector"],
+        [". cls", "Expected identifier after '.' in class selector"],
+        ["foo .bar", "Unexpected token: ."],
+        [".foo .bar", "Unexpected token: ."],
+        ["*.cls. c", "Expected identifier after '.' in class selector"],
+        ["*.cls>cls", "Unexpected token: >"],
+        ["*.cls.foo.*", "Expected identifier after '.' in class selector, found: *"],
+        ["foo.bar baz", "Unexpected token: baz"],
+        ["foo.inherit", "Unexpected token: inherit"],
+        ["inherit.foo", "Unexpected token: inherit"],
+        ["", "Unexpected end of input"],
+      ])(`ERROR: :root::${name}(%s) {position: fixed}`, (argument, message) => {
+        expect(() => minify_test_with_options(`:root::${name}(${argument}) {position: fixed}`, "")).toThrow(message);
+      });
     }
 
     minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");

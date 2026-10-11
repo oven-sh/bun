@@ -599,6 +599,25 @@ impl Default for Loc {
 impl Loc {
     pub const EMPTY: Loc = Loc { start: -1 };
 
+    /// Whether `start` is not a source offset but an index, marked by bit 30. Only the parse for
+    /// the type checker creates such a location (`bun_js_parser::sema::notes`).
+    #[inline]
+    pub const fn is_index(self) -> bool {
+        self.start >= 1 << 30
+    }
+
+    #[inline]
+    pub const fn from_index(index: usize) -> Loc {
+        Loc {
+            start: index as i32 | 1 << 30,
+        }
+    }
+
+    #[inline]
+    pub const fn index(self) -> usize {
+        (self.start & !(1 << 30)) as usize
+    }
+
     #[inline]
     pub fn to_nullable(self) -> Option<Loc> {
         if self.start == -1 { None } else { Some(self) }
@@ -644,7 +663,8 @@ pub struct Location {
     // the bundle's arena.
     pub file: Cow<'static, [u8]>,
     pub namespace: Cow<'static, [u8]>,
-    /// Text on the line, avoiding the need to refetch the source code
+    /// Text on the line, avoiding the need to refetch the source code. It may be prefixed by the
+    /// preceding lines, which are printed too.
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
@@ -794,6 +814,7 @@ impl Location {
                     offset: 0,
                 });
             }
+            debug_assert!(!r.loc.is_index());
             let data = match tracker {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
@@ -980,9 +1001,31 @@ impl Data {
             if let Some(line_text_) = location.line_text.as_deref() {
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
+                // The creator of the location may have included the lines preceding its own line.
+                let mut lines_before: Vec<&[u8]> =
+                    bun_core::strings::split(line_text, b"\n").collect();
+                let line_text = lines_before.pop().unwrap_or_default();
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =
                         usize::try_from(location.column - 1).expect("int cast");
+                    let gutter = bun_core::fmt::digit_count(location.line);
+                    for (line, text) in
+                        (location.line - lines_before.len() as i32..).zip(lines_before)
+                    {
+                        pretty_write!("<d>{:>1$} | <r>", line, gutter)?;
+                        writeln!(
+                            to,
+                            "{}",
+                            bun_core::fmt::fmt_javascript(
+                                text,
+                                bun_core::fmt::HighlighterOptions {
+                                    enable_colors: ENABLE_ANSI_COLORS,
+                                    redact_sensitive_information,
+                                    ..Default::default()
+                                },
+                            )
+                        )?;
+                    }
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
@@ -1227,6 +1270,22 @@ impl Msg {
 pub enum Metadata {
     Build,
     Resolve(MetadataResolve),
+    /// An error of TypeScript's, by its code: `TS2322`.
+    TypeScript {
+        code: u32,
+        kind: TypeScriptKind,
+    },
+}
+
+/// How TypeScript reports an error, which decides what suppresses it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TypeScriptKind {
+    /// `parseErrorAtRange`
+    Parse,
+    /// `grammarErrorOnNode`
+    Grammar,
+    /// `Checker.error`
+    Checker,
 }
 
 #[derive(Copy, Clone)]
@@ -2868,6 +2927,7 @@ pub mod server_component_boundary;
 pub mod stmt;
 pub mod symbol;
 pub mod ts;
+pub mod ts_syntax;
 pub mod use_directive;
 
 pub mod lexer_log;

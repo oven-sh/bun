@@ -2251,8 +2251,8 @@ test("transitive peer resolves when its tarball is cached from another registry"
   const cacheDir = join(String(root), "cache").replaceAll("\\", "\\\\");
   const bunfig = (port: number) =>
     `[install]\ncache = "${cacheDir}"\nregistry = "http://localhost:${port}/"\nlinker = "isolated"\n`;
-  await write(join(String(root), "warmup", "bunfig.toml"), bunfig(serverA.port));
-  await write(join(String(root), "cold", "bunfig.toml"), bunfig(serverB.port));
+  await write(join(String(root), "warmup", "bunfig.toml"), bunfig(serverA.port!));
+  await write(join(String(root), "cold", "bunfig.toml"), bunfig(serverB.port!));
 
   // Caches strict-peer-dep's manifest (registry A's URL hash) and extracts its
   // tarball (shared across registries).
@@ -2691,7 +2691,7 @@ describe("store entry names of URL dependencies", () => {
 
   test.concurrent.each(tarballCases)("tarball dependency with %s", async (_, urlFor, hashed) => {
     using server = serveTarballs();
-    const url = urlFor(server.port);
+    const url = urlFor(server.port!);
     using dir = tempDir("store-name-tarball-", {
       "bunfig.toml": `[install]\nlinker = "isolated"\n`,
       "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": url } }),
@@ -2815,7 +2815,7 @@ describe("store entry names of URL dependencies", () => {
       using dir = tempDir("store-name-git-", {});
       const { bare, sha } = await createBareRepo(String(dir));
       using server = serveBareRepo(bare);
-      const repo = repoFor(server.port);
+      const repo = repoFor(server.port!);
       const project = join(String(dir), "project");
       await write(
         join(project, "package.json"),

@@ -116,8 +116,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -330,23 +328,6 @@ impl From<Error> for bun_jsc::JsError {
     }
 }
 
-impl From<Error> for bun_jsc::CrateError {
-    #[inline]
-    fn from(e: Error) -> Self {
-        match e {
-            Error::Sys(s) => Self::Sys(s),
-            Error::Alloc(a) => Self::Alloc(a),
-            Error::Core(c) => Self::Core(c),
-            Error::Resolver(r) => Self::Resolver(r),
-            Error::Bundler(b) => Self::Bundler(b),
-            Error::Install(i) => Self::Install(i),
-            Error::Jsc(j) => j,
-            Error::JSError | Error::Js(_) => Self::JSError,
-            _ => Self::Core(bun_core::Error::Unexpected),
-        }
-    }
-}
-
 impl From<Error> for bun_uws_sys::Error {
     #[inline]
     fn from(e: Error) -> Self {
@@ -359,7 +340,6 @@ impl From<Error> for bun_uws_sys::Error {
 }
 
 impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::SnapshotFailed => "SnapshotFailed",
@@ -422,7 +402,6 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",
@@ -509,4 +488,4 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-pub type Result<T, E = Error> = core::result::Result<T, E>;
+pub(crate) type Result<T, E = Error> = core::result::Result<T, E>;

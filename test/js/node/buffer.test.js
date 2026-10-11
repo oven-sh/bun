@@ -4527,6 +4527,136 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
       expect(buf.toString("hex")).toBe(untouched);
     });
 
+    // Node's native writers start with THROW_AND_RETURN_IF_NOT_STRING: they reject a value
+    // that is not a primitive string and never coerce it.
+    describe("with a value that is not a string", () => {
+      const NOT_A_STRING = expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "argument must be a string",
+      });
+      const nonStrings = () => [
+        123,
+        null,
+        undefined,
+        true,
+        1n,
+        Symbol("s"),
+        {},
+        [],
+        new String("ab"),
+        Buffer.from("ab"),
+        () => {},
+      ];
+
+      it.each([...strict, ...clamping])("%s throws ERR_INVALID_ARG_TYPE", method => {
+        const buf = dest();
+        for (const value of nonStrings()) {
+          expect(() => buf[method](value)).toThrow(NOT_A_STRING);
+          expect(() => buf[method](value, 0, 1)).toThrow(NOT_A_STRING);
+        }
+        expect(() => buf[method]()).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123)).toThrow(TypeError);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+
+      it.each([...strict, ...clamping])("%s does not coerce an object value", method => {
+        const calls = [];
+        const value = {
+          toString() {
+            calls.push("toString");
+            return source[method];
+          },
+          valueOf() {
+            calls.push("valueOf");
+            return source[method];
+          },
+          [Symbol.toPrimitive]() {
+            calls.push("toPrimitive");
+            return source[method];
+          },
+        };
+        // The handler is a Proxy too, so a lookup of any trap is recorded. A message built
+        // from the value would show up here as a `get` of "constructor".
+        const proxy = new Proxy(value, new Proxy({}, { get: (_, trap) => void calls.push(`trap ${trap}`) }));
+        const buf = dest();
+        expect(() => buf[method](value)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](proxy)).toThrow(NOT_A_STRING);
+        expect(calls).toEqual([]);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+
+      it.each([...strict, ...clamping])("%s throws on an empty, a detached and a plain Uint8Array receiver", method => {
+        const detached = Buffer.from(new ArrayBuffer(9));
+        structuredClone(detached.buffer, { transfer: [detached.buffer] });
+        expect(() => Buffer.alloc(0)[method](123)).toThrow(NOT_A_STRING);
+        expect(() => detached[method](123)).toThrow(NOT_A_STRING);
+        expect(() => Buffer.prototype[method].call(new Uint8Array(9), 123)).toThrow(NOT_A_STRING);
+      });
+
+      // utf8Write/latin1Write/asciiWrite check the bounds in a JS wrapper first. The native
+      // writer sees the value only after that, so a bounds error wins.
+      it.each(strict)("%s reports an out-of-bounds offset or length first", method => {
+        const buf = dest();
+        expect(() => buf[method](123, -1)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 10)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, Infinity)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 0, -1)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 0, 10)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 6, 4)).toThrow(OUT_OF_BOUNDS);
+        // In bounds, including the ranges that leave nothing to write.
+        expect(() => buf[method](123, 9)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, 0)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN, NaN)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, "abc")).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 1.5)).toThrow(NOT_A_STRING);
+      });
+
+      it.each(strict)("%s converts offset and length before it rejects the value", method => {
+        const converted = [];
+        const arg = (name, result) => ({
+          valueOf() {
+            if (!converted.includes(name)) converted.push(name);
+            return result;
+          },
+        });
+        expect(() => dest()[method](123, arg("offset", 0), arg("length", 1))).toThrow(NOT_A_STRING);
+        expect(converted).toEqual(["offset", "length"]);
+
+        const throwing = message => ({
+          valueOf() {
+            throw new Error(message);
+          },
+        });
+        expect(() => dest()[method](123, throwing("offset valueOf"))).toThrow("offset valueOf");
+        expect(() => dest()[method](123, 0, throwing("length valueOf"))).toThrow("length valueOf");
+      });
+
+      // base64/base64url/hex/ucs2 are the raw binding. It rejects the value before it reads
+      // offset or length, so the value error wins and neither argument is converted.
+      it.each(clamping)("%s rejects the value before it reads offset and length", method => {
+        const buf = dest();
+        expect(() => buf[method](123, -1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 10)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, Infinity)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, -1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 9, 1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, 0)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN, NaN)).toThrow(NOT_A_STRING);
+
+        const converted = [];
+        const arg = name => ({
+          valueOf() {
+            converted.push(name);
+            throw new Error(`${name} valueOf`);
+          },
+        });
+        expect(() => buf[method](123, arg("offset"), arg("length"))).toThrow(NOT_A_STRING);
+        expect(converted).toEqual([]);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+    });
+
     it("the documented write() wrapper is unchanged", () => {
       const buf = dest();
       expect(() => buf.write("hello", 6, 1000)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
@@ -5142,6 +5272,157 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+// A latin1 or ascii target gets one byte for each code point: '?' when the target cannot encode it,
+// and one '?' for a surrogate pair. The lengths sit on both sides of the simdutf block sizes and of
+// the 1000 bytes above which a typed array is allocated with malloc.
+it("transcode to latin1 and ascii writes one byte for each code point", () => {
+  const { transcode } = BufferModule;
+  const questionMark = Buffer.from("?");
+  for (const length of [1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 1001]) {
+    // `length` code points in every shape.
+    const latin1Only = Buffer.alloc(length, "A\u00e9", "latin1").toString("latin1");
+    const half = length >> 1;
+    const shapes = {
+      "latin1 only": latin1Only,
+      "U+0100 last": latin1Only.slice(0, -1) + "\u0100",
+      "U+6F22 first": "\u6f22" + latin1Only.slice(1),
+      "U+1F600 in the middle": latin1Only.slice(0, half) + "\u{1F600}" + latin1Only.slice(half + 1),
+      "U+1F600 only": Buffer.alloc(length * 4, "\u{1F600}").toString(),
+    };
+    for (const [shape, text] of Object.entries(shapes)) {
+      // A lone surrogate in a ucs2 source decodes to U+FFFD, and the trailing odd byte is dropped.
+      const loneSurrogates = Buffer.concat([
+        Buffer.from([0x00, 0xdc]),
+        Buffer.from(text, "ucs2"),
+        Buffer.from([0x00, 0xd8, 0x41]),
+      ]);
+      // With the `u` flag a surrogate pair is one match.
+      for (const [to, notEncodable] of [
+        ["latin1", /[^\x00-\xff]/gu],
+        ["ascii", /[^\x00-\x7f]/gu],
+      ]) {
+        const expected = Buffer.from(text.replace(notEncodable, "?"), "latin1");
+        for (const from of ["ucs2", "utf8"]) {
+          expect(transcode(Buffer.from(text, from), from, to), `${length} x ${shape}, ${from} to ${to}`).toEqual(
+            expected,
+          );
+        }
+        expect(transcode(loneSurrogates, "ucs2", to), `${length} x ${shape}, lone surrogates to ${to}`).toEqual(
+          Buffer.concat([questionMark, expected, questionMark]),
+        );
+      }
+    }
+  }
+});
+
+// transcode() sized its result, and the UTF-16 copy of the source it converts through, with
+// WTF::Vector::grow(). That aborts the process when the allocation fails or passes 2**31 bytes, also
+// inside try/catch. Each case runs in a child and prints its line as soon as it finishes, so an abort
+// shows which case it was.
+describe("transcode allocation limits", () => {
+  async function runCases(defineCases, env = {}) {
+    const script = `
+      const { transcode } = require("node:buffer");
+      ${defineCases}
+      for (const [name, run] of Object.entries(cases)) {
+        try {
+          const result = run();
+          console.log(name + ": " + JSON.stringify({ length: result.length, head: [...result.subarray(0, 4)], tail: [...result.subarray(-4)] }));
+        } catch (e) {
+          console.log(name + ": " + e.name + ": " + e.message);
+        }
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  // `BUN_JSC_maxSingleAllocationSize` exists in debug WTF only. It makes every fallible WTF allocation
+  // above the cap return null and every infallible one assert. A 3 MiB source decodes to a 6 MiB
+  // UTF-16 copy, and a 10 MiB ucs2 source to a 10 MiB one.
+  it.skipIf(!isDebug)("throws when the UTF-16 copy of the source cannot be allocated", async () => {
+    const result = await runCases(
+      `
+      const bytes = Buffer.alloc(${3 * 1024 ** 2}, 97);
+      const units = Buffer.alloc(${10 * 1024 ** 2}, 97);
+      const cases = {
+        "latin1 to utf8": () => transcode(bytes, "latin1", "utf8"),
+        "ascii to utf8": () => transcode(bytes, "ascii", "utf8"),
+        "utf8 to latin1": () => transcode(bytes, "utf8", "latin1"),
+        "ucs2 to latin1": () => transcode(units, "ucs2", "latin1"),
+        "ucs2 to utf8": () => transcode(units, "ucs2", "utf8"),
+        // Under the cap, so the copy is made.
+        "1 MiB of utf8 to latin1": () => transcode(bytes.subarray(0, ${1024 ** 2}), "utf8", "latin1"),
+      };
+    `,
+      { BUN_JSC_maxSingleAllocationSize: String(4 * 1024 ** 2) },
+    );
+    expect(result).toEqual({
+      stdout: [
+        "latin1 to utf8: RangeError: Out of memory",
+        "ascii to utf8: RangeError: Out of memory",
+        "utf8 to latin1: RangeError: Out of memory",
+        "ucs2 to latin1: RangeError: Out of memory",
+        "ucs2 to utf8: RangeError: Out of memory",
+        '1 MiB of utf8 to latin1: {"length":1048576,"head":[97,97,97,97],"tail":[97,97,97,97]}',
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The child never writes to the source, so it stays untouched address space and the test is cheap.
+  // A small host can still refuse to reserve the 2 GiB.
+  it.skipIf(os.totalmem() < 4 * 1024 ** 3)("throws past the size limit of a Buffer or a Vector", async () => {
+    const result = await runCases(`
+      const memory = new ArrayBuffer(2 ** 31 + 1);
+      const cases = {
+        // The result needs 2**32 + 2 bytes and a Buffer holds 2**32.
+        "latin1 to ucs2": () => transcode(new Uint8Array(memory), "latin1", "ucs2"),
+        // These convert through a UTF-16 copy of 2**30 units, which is 2**31 bytes.
+        "latin1 to utf8": () => transcode(new Uint8Array(memory, 0, 2 ** 30), "latin1", "utf8"),
+        "ascii to utf8": () => transcode(new Uint8Array(memory, 0, 2 ** 30), "ascii", "utf8"),
+        "ucs2 to latin1": () => transcode(new Uint8Array(memory, 0, 2 ** 31), "ucs2", "latin1"),
+        "ucs2 to ucs2": () => transcode(new Uint8Array(memory, 0, 2 ** 31 - 1), "ucs2", "ucs2"),
+        "ucs2 to utf8": () => transcode(new Uint8Array(memory, 0, 2 ** 31), "ucs2", "utf8"),
+      };
+    `);
+    expect(result).toEqual({
+      stdout: [
+        "latin1 to ucs2: RangeError: Out of memory",
+        "latin1 to utf8: RangeError: Out of memory",
+        "ascii to utf8: RangeError: Out of memory",
+        "ucs2 to latin1: RangeError: Out of memory",
+        "ucs2 to ucs2: RangeError: Out of memory",
+        "ucs2 to utf8: RangeError: Out of memory",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node v26.3.0 returns the same 2 GiB Buffer. The child writes all of it.
+  it.skipIf(os.totalmem() < 10 * 1024 ** 3)("returns a result of 2 GiB", async () => {
+    const result = await runCases(`
+      const source = new Uint8Array(2 ** 30);
+      source[0] = 0xe9;
+      source[source.length - 1] = 0x41;
+      const cases = { "latin1 to ucs2": () => transcode(source, "latin1", "ucs2") };
+    `);
+    expect(result).toEqual({
+      stdout: ['latin1 to ucs2: {"length":2147483648,"head":[233,0,0,0],"tail":[0,0,65,0]}'],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
 
 // The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
 // bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must

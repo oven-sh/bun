@@ -15,28 +15,8 @@ pub struct Scratch {
     printer: super::printer::PrinterBuffers,
 }
 
-/// Appends the formatted text of `file` to `out`.
-pub fn format<'a>(
-    file: &'a File<'a>,
-    options: &FormatOptions,
-    scratch: &mut Scratch,
-    out: &mut Vec<u8>,
-) -> Result<(), FormatError> {
-    format_with(file, options, scratch, out, crate::js::format_file)
-}
-
-/// The same for the document that `write` writes.
-pub(crate) fn format_with<'a>(
-    file: &'a File<'a>,
-    options: &FormatOptions,
-    scratch: &mut Scratch,
-    out: &mut Vec<u8>,
-    write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
-) -> Result<(), FormatError> {
-    format_with_marks(file, options, CursorRegion::NONE, scratch, out, write).map(|_| ())
-}
-
-/// The same. Returns where the ends of `cursor` are in what is appended to `out`.
+/// Appends the formatted text of `file` to `out`: the document that `write` writes. Returns where the ends of `cursor` are
+/// in what is appended.
 pub(crate) fn format_with_marks<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,

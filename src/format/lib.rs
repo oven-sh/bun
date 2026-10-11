@@ -26,6 +26,7 @@ pub mod options;
 pub mod pragma;
 pub mod range;
 mod sort;
+mod stack;
 pub mod svelte;
 pub mod syntax_error;
 pub mod tailwind;

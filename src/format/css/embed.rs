@@ -38,37 +38,36 @@ fn find_placeholder(text: &[u8]) -> Option<(usize, usize, usize)> {
 /// How many placeholders are in the strings of `doc`, or `None` if one of them has a number that is
 /// not below `count`.
 fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
-    match doc {
-        Doc::Text(text) => {
-            let (mut found, mut rest) = (0, &text[..]);
-            while let Some((_, end, number)) = find_placeholder(rest) {
-                if number >= count {
-                    return None;
+    let (mut found, mut rest) = (0, vec![doc]);
+    while let Some(doc) = rest.pop() {
+        match doc {
+            Doc::Text(text) => {
+                let mut text = &text[..];
+                while let Some((_, end, number)) = find_placeholder(text) {
+                    if number >= count {
+                        return None;
+                    }
+                    found += 1;
+                    text = &text[end..];
                 }
-                found += 1;
-                rest = &rest[end..];
             }
-            Some(found)
+            Doc::Array(parts) | Doc::Fill(parts) => rest.extend(parts),
+            Doc::Indent(contents)
+            | Doc::Align(_, contents)
+            | Doc::Dedent(contents)
+            | Doc::DedentToRoot(contents)
+            | Doc::MarkAsRoot(contents)
+            | Doc::LineSuffix(contents)
+            | Doc::Group { contents, .. } => rest.push(contents),
+            Doc::IfBreak {
+                break_contents,
+                flat_contents,
+                ..
+            } => rest.extend([&**break_contents, &**flat_contents]),
+            Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => {}
         }
-        Doc::Array(parts) | Doc::Fill(parts) => parts
-            .iter()
-            .try_fold(0, |all, part| Some(all + count_placeholders(part, count)?)),
-        Doc::Indent(contents)
-        | Doc::Align(_, contents)
-        | Doc::Dedent(contents)
-        | Doc::DedentToRoot(contents)
-        | Doc::MarkAsRoot(contents)
-        | Doc::LineSuffix(contents)
-        | Doc::Group { contents, .. } => count_placeholders(contents, count),
-        Doc::IfBreak {
-            break_contents,
-            flat_contents,
-            ..
-        } => Some(
-            count_placeholders(break_contents, count)? + count_placeholders(flat_contents, count)?,
-        ),
-        Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => Some(0),
     }
+    Some(found)
 }
 
 struct Writer<'a> {
@@ -82,30 +81,29 @@ struct Writer<'a> {
 
 /// Whether there is a `breakParent` in `doc` that is in no group in it.
 fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
-    match doc {
-        Doc::BreakParent => true,
-        Doc::Array(parts) | Doc::Fill(parts) => {
-            parts.iter().any(has_break_parent_outside_of_groups)
+    let mut rest = vec![doc];
+    while let Some(doc) = rest.pop() {
+        match doc {
+            Doc::BreakParent => return true,
+            Doc::Array(parts) | Doc::Fill(parts) => rest.extend(parts),
+            Doc::Indent(contents)
+            | Doc::Align(_, contents)
+            | Doc::Dedent(contents)
+            | Doc::DedentToRoot(contents)
+            | Doc::MarkAsRoot(contents) => rest.push(contents),
+            Doc::IfBreak {
+                break_contents,
+                flat_contents,
+                ..
+            } => rest.extend([&**break_contents, &**flat_contents]),
+            Doc::Text(_)
+            | Doc::Group { .. }
+            | Doc::LineSuffix(_)
+            | Doc::LineSuffixBoundary
+            | Doc::Line(_) => {}
         }
-        Doc::Indent(contents)
-        | Doc::Align(_, contents)
-        | Doc::Dedent(contents)
-        | Doc::DedentToRoot(contents)
-        | Doc::MarkAsRoot(contents) => has_break_parent_outside_of_groups(contents),
-        Doc::IfBreak {
-            break_contents,
-            flat_contents,
-            ..
-        } => {
-            has_break_parent_outside_of_groups(break_contents)
-                || has_break_parent_outside_of_groups(flat_contents)
-        }
-        Doc::Text(_)
-        | Doc::Group { .. }
-        | Doc::LineSuffix(_)
-        | Doc::LineSuffixBoundary
-        | Doc::Line(_) => false,
     }
+    false
 }
 
 impl<'a> Writer<'a> {
@@ -144,6 +142,9 @@ impl<'a> Writer<'a> {
     }
 
     fn write(&mut self, doc: &Doc<'_>, f: &mut Formatter<'a>) {
+        if !f.context_mut().has_stack_left() {
+            return;
+        }
         match doc {
             // Only a string with a substitution in it is taken apart.
             Doc::Text(text) if !self.has_placeholders || find_placeholder(text).is_none() => {
@@ -336,7 +337,9 @@ fn print_embed_css<'a>(
     ) else {
         return false;
     };
-    let document = doc::strip_trailing_hardline(doc::clean(sink.into_document()));
+    let Ok(document) = sink.into_document().and_then(doc::text_to_doc) else {
+        return false;
+    };
     if document.is_empty_text()
         || (count > 0 && count_placeholders(&document, count) != Some(count))
     {

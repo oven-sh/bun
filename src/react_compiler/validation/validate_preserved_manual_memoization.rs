@@ -9,7 +9,7 @@
 //! accurately preserved, and that no originally memoized values became
 //! unmemoized in the output.
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use bun_core::BStr;
 
@@ -65,9 +65,9 @@ pub(crate) fn validate_preserved_manual_memoization(
     let mut state = VisitorState {
         env,
         manual_memo_state: None,
-        scopes: HashSet::new(),
-        pruned_scopes: HashSet::new(),
-        temporaries: HashMap::new(),
+        scopes: HashSet::default(),
+        pruned_scopes: HashSet::default(),
+        temporaries: HashMap::default(),
     };
     visit_block(&func.body, &mut state);
 }
@@ -203,7 +203,7 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
 
             state.manual_memo_state = Some(ManualMemoBlockState {
                 loc: instr.loc,
-                decls: HashSet::new(),
+                decls: HashSet::default(),
                 deps_from_source,
                 manual_memo_id: *manual_memo_id,
                 reassignments: IdMap::new(),

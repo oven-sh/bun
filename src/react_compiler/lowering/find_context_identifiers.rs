@@ -21,12 +21,12 @@ use crate::program::Host;
     clippy::disallowed_types,
     reason = "vendored react_compiler_hir HashSet<BindingId> contract"
 )]
-type RefSet = std::collections::HashSet<Ref>;
+type RefSet = crate::collections::FxHashSet<Ref>;
 #[allow(
     clippy::disallowed_types,
     reason = "vendored react_compiler_hir HashMap<BindingId, _> contract"
 )]
-type RefMap<V> = std::collections::HashMap<Ref, V>;
+type RefMap<V> = crate::collections::FxHashMap<Ref, V>;
 
 #[derive(Default)]
 struct BindingInfo {

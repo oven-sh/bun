@@ -4,7 +4,7 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -913,7 +913,7 @@ impl ScopeBlockTraversal {
     pub fn new() -> Self {
         ScopeBlockTraversal {
             active_scopes: Vec::new(),
-            block_infos: HashMap::new(),
+            block_infos: HashMap::default(),
         }
     }
 

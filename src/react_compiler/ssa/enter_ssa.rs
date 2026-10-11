@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IndexMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory, cold_diagnostic, cold_invariant};
@@ -117,8 +117,8 @@ impl SSABuilder {
             current: None,
             unsealed_preds: vec![None; num_blocks],
             block_preds,
-            unknown: HashSet::new(),
-            context: HashSet::new(),
+            unknown: HashSet::default(),
+            context: HashSet::default(),
             pending_phis: vec![Vec::new(); num_blocks],
             processed_functions: Vec::new(),
         }
@@ -459,7 +459,7 @@ fn enter_ssa_impl(
         return Err(crate::lowering::nested_too_deeply());
     }
 
-    let mut visited_blocks: HashSet<BlockId> = HashSet::new();
+    let mut visited_blocks: HashSet<BlockId> = HashSet::default();
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 
     for block_id in &block_ids {

@@ -7,7 +7,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/BuildReactiveFunction.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation, cold_invariant,
@@ -125,10 +125,10 @@ impl<'a> Context<'a> {
         Self {
             ir,
             next_schedule_id: 0,
-            emitted: HashSet::new(),
-            scope_fallthroughs: HashSet::new(),
-            scheduled: HashSet::new(),
-            catch_handlers: HashSet::new(),
+            emitted: HashSet::default(),
+            scope_fallthroughs: HashSet::default(),
+            scheduled: HashSet::default(),
+            catch_handlers: HashSet::default(),
             control_flow_stack: Vec::new(),
         }
     }

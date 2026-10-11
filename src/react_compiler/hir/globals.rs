@@ -8,8 +8,8 @@
 //! Provides `DEFAULT_SHAPES` (built-in object shapes) and `DEFAULT_GLOBALS`
 //! (global variable types including React hooks and JS built-ins).
 
+use crate::collections::FxHashMap as HashMap;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::hir::Effect;
@@ -120,7 +120,7 @@ impl GlobalRegistry {
     pub fn new() -> Self {
         Self {
             base: false,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
         }
     }
 
@@ -128,7 +128,7 @@ impl GlobalRegistry {
     pub fn with_base() -> Self {
         Self {
             base: true,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
         }
     }
 
@@ -1402,7 +1402,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
         None,
         false,
     );
-    let mut mixed_props: HashMap<&'static str, Type> = HashMap::new();
+    let mut mixed_props: HashMap<&'static str, Type> = HashMap::default();
     mixed_props.insert("toString", mixed_to_string);
     mixed_props.insert("indexOf", mixed_index_of);
     mixed_props.insert("includes", mixed_includes);

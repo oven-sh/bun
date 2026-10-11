@@ -12,6 +12,7 @@ use crate::ast::{
 use crate::language::SourceType;
 use crate::regex;
 use crate::tokens::skip_trivia;
+use crate::utils::ancestor_memo::AncestorMemo;
 use bun_core::strings;
 use bun_sema::bind::Parent;
 use bun_sema::hir::{self, DiagnosticKind, Flags, ModifierKind};
@@ -409,6 +410,8 @@ impl<'a> Checks<'a, '_> {
             }
             checks.comma_after_rest(end);
         };
+        let mut functions: AncestorMemo<'a, Func<'a>> = AncestorMemo::default();
+        let mut parameters: AncestorMemo<'a, bool> = AncestorMemo::default();
         for (i, raw) in file
             .hir
             .pat_elems
@@ -424,14 +427,14 @@ impl<'a> Checks<'a, '_> {
                 continue;
             };
             // acorn parses the parameters of an arrow function as an expression first.
-            let arrow = Node::Pat(pat)
-                .ancestors()
-                .find_map(Node::as_func)
+            let arrow = functions
+                .find(Node::Pat(pat), |_, parent| parent.as_func())
                 .filter(|it| it.kind() == FnKind::Arrow);
-            let is_parameter = Node::Pat(pat)
-                .ancestors()
-                .take_while(|it| !matches!(it, Node::Func(_)))
-                .any(|it| matches!(it, Node::Param(_)));
+            let is_parameter = parameters.find(Node::Pat(pat), |_, parent| match parent {
+                Node::Param(_) => Some(true),
+                Node::Func(_) => Some(false),
+                _ => None,
+            }) == Some(true);
             match arrow.filter(|_| is_parameter && it.default().is_some()) {
                 Some(arrow) => {
                     let noticed = arrow.arrow_span().map_or(raw.end, |it| it.start);

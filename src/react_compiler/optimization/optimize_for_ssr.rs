@@ -17,7 +17,7 @@
 //!
 //! Ported from TypeScript `src/Optimization/OptimizeForSSR.ts`.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
@@ -43,7 +43,7 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
     // Any use of the hook return other than the expected destructuring pattern
     // prevents inlining (we delete from inlined_state if we see the identifier used
     // as an operand elsewhere).
-    let mut inlined_state: HashMap<IdentifierId, InlinedStateReplacement> = HashMap::new();
+    let mut inlined_state: HashMap<IdentifierId, InlinedStateReplacement> = HashMap::default();
 
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {

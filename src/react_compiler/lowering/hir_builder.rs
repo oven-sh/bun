@@ -269,7 +269,7 @@ fn new_block(id: BlockId, kind: BlockKind) -> WipBlock {
     clippy::disallowed_types,
     reason = "vendored react_compiler_hir HashSet<BindingId> contract"
 )]
-type RefSet = std::collections::HashSet<Ref>;
+type RefSet = crate::collections::FxHashSet<Ref>;
 
 pub(crate) struct HirBuilder<'h> {
     completed: IndexMap<BlockId, BasicBlock>,

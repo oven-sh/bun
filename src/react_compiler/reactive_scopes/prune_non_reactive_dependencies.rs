@@ -8,7 +8,7 @@
 //! Corresponds to `src/ReactiveScopes/PruneNonReactiveDependencies.ts`
 //! and `src/ReactiveScopes/CollectReactiveIdentifiers.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::{
     EvaluationOrder, IdentifierId, InstructionValue, Place, PrunedReactiveScopeBlock,
@@ -30,7 +30,7 @@ pub fn collect_reactive_identifiers(
     env: &Environment,
 ) -> HashSet<IdentifierId> {
     let visitor = CollectVisitor { env };
-    let mut state = HashSet::new();
+    let mut state = HashSet::default();
     crate::reactive_scopes::visitors::visit_reactive_function(func, &visitor, &mut state);
     state
 }

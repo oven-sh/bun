@@ -20,7 +20,7 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::CompilerError;
 use crate::hir::ReactFunctionType;

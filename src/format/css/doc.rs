@@ -12,7 +12,9 @@
 //! The list is shorter than the document: texts that follow each other are one element, and a group with nothing but
 //! text in it is one element before its text. So whoever wants to know where an element is asks `position`.
 
+use crate::FormatError;
 use crate::options::{FormatOptions, IndentStyle, LineEnding};
+use crate::stack::Stack;
 use std::borrow::Cow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +79,54 @@ impl<'a> Doc<'a> {
 
     pub(crate) fn is_empty_text(&self) -> bool {
         matches!(self, Doc::Text(text) if text.is_empty())
+    }
+
+    /// What it is. It is nothing afterwards.
+    fn take(&mut self) -> Doc<'a> {
+        std::mem::replace(self, Doc::EMPTY)
+    }
+
+    /// Moves what is in it, and has something in it, to `rest`.
+    fn take_contents(&mut self, rest: &mut Vec<Doc<'a>>) {
+        let mut take = |contents: &mut Doc<'a>| {
+            if !matches!(
+                contents,
+                Doc::Text(_) | Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_)
+            ) {
+                rest.push(contents.take());
+            }
+        };
+        match self {
+            Doc::Array(parts) | Doc::Fill(parts) => parts.iter_mut().for_each(take),
+            Doc::Indent(contents)
+            | Doc::Align(_, contents)
+            | Doc::Dedent(contents)
+            | Doc::DedentToRoot(contents)
+            | Doc::MarkAsRoot(contents)
+            | Doc::Group { contents, .. }
+            | Doc::LineSuffix(contents) => take(contents),
+            Doc::IfBreak {
+                break_contents,
+                flat_contents,
+                ..
+            } => {
+                take(break_contents);
+                take(flat_contents);
+            }
+            Doc::Text(_) | Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => {}
+        }
+    }
+}
+
+/// In a loop: a document is nested as deeply as what it is made of, and what the compiler makes to let go of one calls
+/// itself for each level without asking whether there is stack for that.
+impl Drop for Doc<'_> {
+    fn drop(&mut self) {
+        let mut rest = Vec::new();
+        self.take_contents(&mut rest);
+        while let Some(mut doc) = rest.pop() {
+            doc.take_contents(&mut rest);
+        }
     }
 }
 
@@ -159,17 +209,35 @@ pub(crate) fn join<'a>(separator: &Doc<'a>, docs: Vec<Doc<'a>>) -> Vec<Doc<'a>> 
     parts
 }
 
+/// What Prettier's `textToDoc` makes of the document of a text in another language: `stripTrailingHardline(cleanDoc(doc))`.
+pub(crate) fn text_to_doc(doc: Doc<'_>) -> Result<Doc<'_>, FormatError> {
+    let stack = Stack::new();
+    let doc = strip_trailing_hardline(clean(doc, &stack), &stack);
+    match stack.ran_out() {
+        true => Err(FormatError::NestedTooDeeply),
+        false => Ok(doc),
+    }
+}
+
 /// Prettier's `cleanDoc`: no arrays in arrays, no empty strings, strings that follow each other are
 /// one.
-pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
-    let wrap = |contents: Box<Doc<'a>>, wrapper: fn(Box<Doc<'a>>) -> Doc<'a>| match clean(*contents)
-    {
+fn clean<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
+    if !stack.has_room() {
+        return doc;
+    }
+    let wrap = |contents: &mut Doc<'a>, wrapper: fn(Box<Doc<'a>>) -> Doc<'a>| match clean(
+        contents.take(),
+        stack,
+    ) {
         contents if contents.is_empty_text() => Doc::EMPTY,
         contents => wrapper(Box::new(contents)),
     };
-    match doc {
+    match &mut doc {
         Doc::Fill(parts) => {
-            let mut parts: Vec<Doc<'a>> = parts.into_iter().map(clean).collect();
+            let mut parts: Vec<Doc<'a>> = std::mem::take(parts)
+                .into_iter()
+                .map(|part| clean(part, stack))
+                .collect();
             match parts.len() {
                 _ if parts.iter().all(Doc::is_empty_text) => Doc::EMPTY,
                 1 => parts.swap_remove(0),
@@ -181,27 +249,32 @@ pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
             should_break,
             id,
             is_conditional,
-        } => match clean(*contents) {
-            contents if contents.is_empty_text() && !should_break && id == 0 && !is_conditional => {
-                Doc::EMPTY
+        } => {
+            let (should_break, id, is_conditional) = (*should_break, *id, *is_conditional);
+            match clean(contents.take(), stack) {
+                contents
+                    if contents.is_empty_text() && !should_break && id == 0 && !is_conditional =>
+                {
+                    Doc::EMPTY
+                }
+                contents @ Doc::Group {
+                    should_break: inner,
+                    id: 0,
+                    is_conditional: false,
+                    ..
+                } if inner == should_break && id == 0 && !is_conditional => contents,
+                contents => Doc::Group {
+                    contents: Box::new(contents),
+                    should_break,
+                    id,
+                    is_conditional,
+                },
             }
-            contents @ Doc::Group {
-                should_break: inner,
-                id: 0,
-                is_conditional: false,
-                ..
-            } if inner == should_break && id == 0 && !is_conditional => contents,
-            contents => Doc::Group {
-                contents: Box::new(contents),
-                should_break,
-                id,
-                is_conditional,
-            },
-        },
+        }
         Doc::Indent(contents) => wrap(contents, Doc::Indent),
-        Doc::Align(width, contents) => match clean(*contents) {
+        Doc::Align(width, contents) => match clean(contents.take(), stack) {
             contents if contents.is_empty_text() => Doc::EMPTY,
-            contents => Doc::Align(width, Box::new(contents)),
+            contents => Doc::Align(*width, Box::new(contents)),
         },
         Doc::Dedent(contents) => wrap(contents, Doc::Dedent),
         Doc::DedentToRoot(contents) => wrap(contents, Doc::DedentToRoot),
@@ -211,7 +284,10 @@ pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
             break_contents,
             flat_contents,
             group_id,
-        } => match (clean(*break_contents), clean(*flat_contents)) {
+        } => match (
+            clean(break_contents.take(), stack),
+            clean(flat_contents.take(), stack),
+        ) {
             (break_contents, flat_contents)
                 if break_contents.is_empty_text() && flat_contents.is_empty_text() =>
             {
@@ -220,20 +296,24 @@ pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
             (break_contents, flat_contents) => Doc::IfBreak {
                 break_contents: Box::new(break_contents),
                 flat_contents: Box::new(flat_contents),
-                group_id,
+                group_id: *group_id,
             },
         },
         Doc::Array(parts) => {
             let mut cleaned: Vec<Doc<'a>> = Vec::with_capacity(parts.len());
-            let mut push = |part: Doc<'a>| match (cleaned.last_mut(), part) {
-                (Some(Doc::Text(last)), Doc::Text(text)) => last.to_mut().extend_from_slice(&text),
-                (_, part) => cleaned.push(part),
+            let mut push = |part: Doc<'a>| {
+                if let (Some(Doc::Text(last)), Doc::Text(text)) = (cleaned.last_mut(), &part) {
+                    last.to_mut().extend_from_slice(text);
+                } else {
+                    cleaned.push(part);
+                }
             };
-            for part in parts {
-                match clean(part) {
-                    part if part.is_empty_text() => {}
-                    Doc::Array(parts) => parts.into_iter().for_each(&mut push),
-                    part => push(part),
+            for part in std::mem::take(parts) {
+                let mut part = clean(part, stack);
+                if let Doc::Array(parts) = &mut part {
+                    std::mem::take(parts).into_iter().for_each(&mut push);
+                } else if !part.is_empty_text() {
+                    push(part);
                 }
             }
             match cleaned.len() {
@@ -242,70 +322,57 @@ pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
                 _ => Doc::Array(cleaned),
             }
         }
-        doc @ (Doc::Text(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => doc,
+        leaf @ (Doc::Text(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => {
+            leaf.take()
+        }
     }
 }
 
 /// Prettier's `stripTrailingHardlineFromDoc`. `doc` is clean.
-pub(crate) fn strip_trailing_hardline(doc: Doc<'_>) -> Doc<'_> {
-    fn strip_parts(parts: &mut Vec<Doc<'_>>) {
-        while matches!(parts[..], [.., Doc::Line(_), Doc::BreakParent]) {
-            parts.truncate(parts.len() - 2);
-        }
-        if let Some(last) = parts.pop() {
-            parts.push(strip_trailing_hardline(last));
-        }
+fn strip_trailing_hardline<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
+    if !stack.has_room() {
+        return doc;
     }
-    match doc {
-        Doc::Indent(contents) => Doc::Indent(Box::new(strip_trailing_hardline(*contents))),
-        Doc::LineSuffix(contents) => Doc::LineSuffix(Box::new(strip_trailing_hardline(*contents))),
-        Doc::Group {
-            contents,
-            should_break,
-            id,
-            is_conditional,
-        } => Doc::Group {
-            contents: Box::new(strip_trailing_hardline(*contents)),
-            should_break,
-            id,
-            is_conditional,
-        },
+    let strip = |doc: &mut Doc<'a>| *doc = strip_trailing_hardline(doc.take(), stack);
+    match &mut doc {
+        Doc::Indent(contents) | Doc::LineSuffix(contents) | Doc::Group { contents, .. } => {
+            strip(contents);
+        }
         Doc::IfBreak {
             break_contents,
             flat_contents,
-            group_id,
-        } => Doc::IfBreak {
-            break_contents: Box::new(strip_trailing_hardline(*break_contents)),
-            flat_contents: Box::new(strip_trailing_hardline(*flat_contents)),
-            group_id,
-        },
-        Doc::Fill(mut parts) => {
-            strip_parts(&mut parts);
-            Doc::Fill(parts)
+            ..
+        } => {
+            strip(break_contents);
+            strip(flat_contents);
         }
-        Doc::Array(mut parts) => {
-            strip_parts(&mut parts);
-            Doc::Array(parts)
+        Doc::Fill(parts) | Doc::Array(parts) => {
+            while matches!(parts[..], [.., Doc::Line(_), Doc::BreakParent]) {
+                parts.truncate(parts.len() - 2);
+            }
+            if let Some(last) = parts.last_mut() {
+                strip(last);
+            }
         }
-        Doc::Text(mut text) => {
+        Doc::Text(text) => {
             let len = text
                 .iter()
                 .rposition(|b| !matches!(b, b'\n' | b'\r'))
                 .map_or(0, |at| at + 1);
-            match &mut text {
+            match text {
                 Cow::Borrowed(text) => *text = &text[..len],
                 Cow::Owned(text) => text.truncate(len),
             }
-            Doc::Text(text)
         }
-        doc @ (Doc::Align(..)
+        Doc::Align(..)
         | Doc::Dedent(_)
         | Doc::DedentToRoot(_)
         | Doc::MarkAsRoot(_)
         | Doc::Line(_)
         | Doc::LineSuffixBoundary
-        | Doc::BreakParent) => doc,
+        | Doc::BreakParent => {}
     }
+    doc
 }
 
 /// Prettier's `replaceEndOfLine(text, literallineWithoutBreakParent)`.
@@ -414,6 +481,8 @@ pub(crate) struct Elements {
     groups_with_lines: usize,
     /// So many of `list` stay where they are and as they are: somebody has asked where the next one goes.
     settled: usize,
+    /// Not all of a [`Doc`] has been written.
+    is_nested_too_deeply: bool,
 }
 
 impl Default for Elements {
@@ -426,6 +495,7 @@ impl Default for Elements {
             open_groups: Vec::new(),
             groups_with_lines: 0,
             settled: 1,
+            is_nested_too_deeply: false,
         }
     }
 }
@@ -439,6 +509,7 @@ impl Elements {
         self.open_groups.clear();
         self.groups_with_lines = 0;
         self.settled = 1;
+        self.is_nested_too_deeply = false;
     }
 
     /// What is written next depends on whether the group that it is in is broken.
@@ -826,16 +897,24 @@ impl Elements {
 
     /// Writes `doc`.
     pub(crate) fn document(&mut self, doc: &Doc<'_>) {
+        self.write(doc, bun_core::StackCheck::init());
+    }
+
+    fn write(&mut self, doc: &Doc<'_>, stack_check: bun_core::StackCheck) {
+        if !stack_check.is_safe_to_recurse() {
+            self.is_nested_too_deeply = true;
+            return;
+        }
         let indented = |elements: &mut Self, command: IndentCommand, contents: &Doc<'_>| {
             elements.start_indent(command);
-            elements.document(contents);
+            elements.write(contents, stack_check);
             elements.end_indent();
         };
         match doc {
             Doc::Text(text) => self.text(text),
-            Doc::Array(parts) => parts.iter().for_each(|part| self.document(part)),
+            Doc::Array(parts) => parts.iter().for_each(|part| self.write(part, stack_check)),
             Doc::Indent(contents) => indented(self, IndentCommand::Indent, contents),
-            Doc::Align(Alignment::Spaces(0), contents) => self.document(contents),
+            Doc::Align(Alignment::Spaces(0), contents) => self.write(contents, stack_check),
             Doc::Align(alignment, contents) => {
                 indented(self, IndentCommand::Align(*alignment), contents)
             }
@@ -853,14 +932,14 @@ impl Elements {
                     id: *id,
                     is_conditional: *is_conditional,
                 });
-                self.document(contents);
+                self.write(contents, stack_check);
                 self.end_group();
             }
             Doc::Fill(parts) => {
                 self.start_fill();
                 for part in parts {
                     self.start_item();
-                    self.document(part);
+                    self.write(part, stack_check);
                     self.end_item();
                 }
                 self.end_fill();
@@ -871,14 +950,14 @@ impl Elements {
                 group_id,
             } => {
                 self.start_if_break(*group_id);
-                self.document(break_contents);
+                self.write(break_contents, stack_check);
                 self.otherwise();
-                self.document(flat_contents);
+                self.write(flat_contents, stack_check);
                 self.end_if_break();
             }
             Doc::LineSuffix(contents) => {
                 self.start_line_suffix();
-                self.document(contents);
+                self.write(contents, stack_check);
                 self.end_line_suffix();
             }
             Doc::LineSuffixBoundary => self.line_suffix_boundary(),
@@ -911,19 +990,26 @@ impl Elements {
     }
 
     /// The document as a tree.
-    pub(crate) fn to_tree(&self) -> Doc<'static> {
-        let mut at = 1;
-        Doc::Array(self.tree_up_to(&mut at, self.list.len()))
+    pub(crate) fn to_tree(&self) -> Result<Doc<'static>, FormatError> {
+        let (mut at, stack) = (1, Stack::for_tree());
+        let tree = Doc::Array(self.tree_up_to(&mut at, self.list.len(), &stack));
+        match self.is_nested_too_deeply || stack.ran_out() {
+            true => Err(FormatError::NestedTooDeeply),
+            false => Ok(tree),
+        }
     }
 
-    fn tree_up_to(&self, at: &mut usize, end: usize) -> Vec<Doc<'static>> {
+    fn tree_up_to(&self, at: &mut usize, end: usize, stack: &Stack) -> Vec<Doc<'static>> {
         let mut parts = Vec::new();
+        if !stack.has_room() {
+            return parts;
+        }
         while *at < end {
             let element = self.list[*at];
             *at += 1;
             // What is in it, and its end.
             let contents = |at: &mut usize, end: u32| {
-                let contents = Doc::Array(self.tree_up_to(at, end as usize));
+                let contents = Doc::Array(self.tree_up_to(at, end as usize, stack));
                 *at = end as usize + 1;
                 Box::new(contents)
             };
@@ -1077,6 +1163,8 @@ pub(crate) struct Printer<'o> {
     line_suffixes: Vec<Task>,
     /// For `fits`: the modes around what it is looking at.
     outer_modes: Vec<Mode>,
+    /// Why what has been printed is of no use. From there on nothing is indented.
+    failure: Option<FormatError>,
 }
 
 fn string_width(text: &[u8]) -> usize {
@@ -1124,6 +1212,15 @@ impl<'o> Printer<'o> {
             tasks: Vec::new(),
             line_suffixes: Vec::new(),
             outer_modes: Vec::new(),
+            failure: None,
+        }
+    }
+
+    /// Whether what has been printed is what the documents print.
+    pub(crate) fn result(&self) -> Result<(), FormatError> {
+        match self.failure {
+            Some(failure) => Err(failure),
+            None => Ok(()),
         }
     }
 
@@ -1152,6 +1249,9 @@ impl<'o> Printer<'o> {
 
     /// Prettier's `makeIndent` and `makeAlign`.
     fn make_indent(&mut self, indent: u32, command: IndentCommand) -> u32 {
+        if self.failure.is_some() {
+            return indent;
+        }
         let parent = &self.indents[indent as usize];
         if command == IndentCommand::DedentToRoot {
             return parent.root;
@@ -1205,6 +1305,12 @@ impl<'o> Printer<'o> {
 
     /// Writes the indentation. Returns its width.
     fn write_indent(&mut self, indent: u32) -> usize {
+        if crate::is_too_long(self.out.len()) {
+            self.failure = Some(FormatError::TooLong);
+        }
+        if self.failure.is_some() {
+            return 0;
+        }
         let indent = &self.indents[indent as usize];
         self.out.extend_from_slice(&indent.value);
         indent.length
@@ -1355,6 +1461,9 @@ impl<'o> Printer<'o> {
         let list = &elements.list[..];
         let (mut at, mut end, mut mode, mut indent) = (1, list.len(), Mode::Break, indent);
         let mut should_remeasure = false;
+        if elements.is_nested_too_deeply {
+            self.failure = Some(FormatError::NestedTooDeeply);
+        }
         self.frames.clear();
         self.tasks.clear();
         self.line_suffixes.clear();
@@ -1573,9 +1682,16 @@ impl<'o> Printer<'o> {
 }
 
 /// Appends what `doc` prints to `out`. `text`: what is formatted, for `endOfLine: "auto"`.
-pub(crate) fn print(doc: Doc<'_>, options: &FormatOptions, text: &[u8], out: &mut Vec<u8>) {
+pub(crate) fn print(
+    doc: Doc<'_>,
+    options: &FormatOptions,
+    text: &[u8],
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
     let mut elements = Elements::default();
     elements.document(&doc);
     drop(doc);
-    Printer::new(options, text, out).print(&elements, 0, 0);
+    let mut printer = Printer::new(options, text, out);
+    printer.print(&elements, 0, 0);
+    printer.result()
 }

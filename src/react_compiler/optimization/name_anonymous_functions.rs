@@ -11,7 +11,7 @@
 //!
 //! Conditional on `env.config.enable_name_anonymous_functions`.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
@@ -132,9 +132,9 @@ fn name_anonymous_functions_impl(func: &HirFunction, env: &Environment) -> Vec<N
     }
 
     // Functions that we track to generate names for
-    let mut functions: HashMap<IdentifierId, usize> = HashMap::new();
+    let mut functions: HashMap<IdentifierId, usize> = HashMap::default();
     // Tracks temporaries that read from variables/globals/properties
-    let mut names: HashMap<IdentifierId, String> = HashMap::new();
+    let mut names: HashMap<IdentifierId, String> = HashMap::default();
     // Tracks all function nodes
     let mut nodes: Vec<Node> = Vec::new();
 

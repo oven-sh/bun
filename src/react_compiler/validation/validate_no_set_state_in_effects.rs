@@ -12,7 +12,7 @@
 //!
 //! Port of ValidateNoSetStateInEffects.ts.
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
@@ -37,7 +37,7 @@ pub(crate) fn validate_no_set_state_in_effects(
     let enable_allow_set_state_from_refs = env.config.enable_allow_set_state_from_refs_in_effects;
 
     // Map from IdentifierId to the Place where the setState originated
-    let mut set_state_functions: HashMap<IdentifierId, SetStateInfo> = HashMap::new();
+    let mut set_state_functions: HashMap<IdentifierId, SetStateInfo> = HashMap::default();
     let mut errors = CompilerError::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -304,7 +304,7 @@ fn create_ref_controlled_block_checker(
 ) -> Result<HashMap<BlockId, bool>, CompilerDiagnostic> {
     let post_dominators = compute_post_dominator_tree(func, next_block_id_counter, false)?;
     let frontiers = post_dominator_frontiers(func, &post_dominators)?;
-    let mut cache: HashMap<BlockId, bool> = HashMap::new();
+    let mut cache: HashMap<BlockId, bool> = HashMap::default();
 
     for (block_id, _block) in &func.body.blocks {
         let mut is_controlled = false;
@@ -365,7 +365,7 @@ fn get_set_state_call(
     next_block_id_counter: u32,
     source_code: Option<&str>,
 ) -> Result<Option<SetStateInfo>, CompilerDiagnostic> {
-    let mut ref_derived_values: HashSet<IdentifierId> = HashSet::new();
+    let mut ref_derived_values: HashSet<IdentifierId> = HashSet::default();
 
     // First pass: collect ref-derived values (needed before building control dominator checker)
     // We do a pre-pass to seed ref_derived_values so the control dominator checker has them.
@@ -424,7 +424,7 @@ fn get_set_state_call(
             types,
         )?
     } else {
-        HashMap::new()
+        HashMap::default()
     };
 
     let is_ref_controlled_block = |block_id: BlockId| -> bool {

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::diagnostics::{
@@ -59,7 +59,7 @@ pub(crate) fn validate_exhaustive_dependencies(
         validate_effect: validate_effect.clone(),
         reactive: &reactive,
         diagnostics: Vec::new(),
-        invalid_memo_ids: HashSet::new(),
+        invalid_memo_ids: HashSet::default(),
     };
 
     collect_dependencies(
@@ -257,7 +257,7 @@ fn collect_reactive_identifiers(
     func: &HirFunction,
     functions: &[HirFunction],
 ) -> HashSet<IdentifierId> {
-    let mut reactive = HashSet::new();
+    let mut reactive = HashSet::default();
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -296,7 +296,7 @@ fn find_optional_places(
     func: &HirFunction,
 ) -> Result<IdMap<IdentifierId, bool>, CompilerDiagnostic> {
     let mut optionals: IdMap<IdentifierId, bool> = IdMap::new();
-    let mut visited: HashSet<BlockId> = HashSet::new();
+    let mut visited: HashSet<BlockId> = HashSet::default();
 
     for (_block_id, block) in &func.body.blocks {
         if visited.contains(&block.id) {
@@ -481,7 +481,7 @@ fn collect_dependencies(
     }
 
     let optionals = find_optional_places(func)?;
-    let mut locals: HashSet<IdentifierId> = HashSet::new();
+    let mut locals: HashSet<IdentifierId> = HashSet::default();
 
     if is_function_expression {
         for param in &func.params {
@@ -865,7 +865,7 @@ fn collect_dependencies(
                 }
                 InstructionValue::ArrayExpression { elements, loc, .. } => {
                     let mut array_deps: Vec<InferredDependency> = Vec::new();
-                    let empty_locals = HashSet::new();
+                    let empty_locals = HashSet::default();
                     for elem in elements {
                         let place = match elem {
                             ArrayElement::Place(p) => Some(p),
@@ -1298,7 +1298,7 @@ fn validate_dependencies(
     }
 
     // Validate manual deps
-    let mut matched: HashSet<usize> = HashSet::new(); // indices into manual_dependencies
+    let mut matched: HashSet<usize> = HashSet::default(); // indices into manual_dependencies
     let mut missing: Vec<&InferredDependency> = Vec::new();
     let mut extra: Vec<&ManualMemoDependency> = Vec::new();
 

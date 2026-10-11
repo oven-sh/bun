@@ -12,7 +12,7 @@
 //! Ported from TypeScript `src/Optimization/DeadCodeElimination.ts`.
 //! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::object_shape::HookKind;
@@ -86,8 +86,8 @@ struct State {
 impl State {
     fn new() -> Self {
         State {
-            identifiers: HashSet::new(),
-            named: HashSet::new(),
+            identifiers: HashSet::default(),
+            named: HashSet::default(),
         }
     }
 
@@ -506,7 +506,7 @@ fn pruneable_value(value: &InstructionValue, state: &State, env: &Environment) -
 
 /// Check if the CFG has any back edges (indicating loops).
 fn has_back_edge(func: &HirFunction) -> bool {
-    let mut visited: HashSet<BlockId> = HashSet::new();
+    let mut visited: HashSet<BlockId> = HashSet::default();
     for (block_id, block) in &func.body.blocks {
         for pred_id in &block.preds {
             if !visited.contains(pred_id) {

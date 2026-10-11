@@ -8,8 +8,8 @@
 //! Generates type equations from the HIR, unifies them, and applies the
 //! resolved types back to identifiers. Analogous to TS `InferTypes.ts`.
 
+use crate::collections::FxHashMap as HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::collections::{FxHashMap, FxHashSet, IdMap};
@@ -398,7 +398,7 @@ fn generate(
     // &mut env, but generate_instruction_types takes split borrows on env fields.
     // The key is (function_key, InstructionId) where function_key is u32::MAX
     // for the outer function and FunctionId.0 for inner functions.
-    let mut global_types: HashMap<(u32, InstructionId), Type> = HashMap::new();
+    let mut global_types: HashMap<(u32, InstructionId), Type> = HashMap::default();
     pre_resolve_globals(func, u32::MAX, env, &mut global_types);
     // Also pre-resolve inner functions recursively
     for &instr_id in func.body.blocks.values().flat_map(|b| &b.instructions) {
@@ -1101,7 +1101,7 @@ impl Unifier {
         enable_treat_set_identifiers_as_state_setters: bool,
     ) -> Self {
         Unifier {
-            substitutions: HashMap::new(),
+            substitutions: HashMap::default(),
             resolved: RefCell::default(),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,

@@ -13,7 +13,7 @@
 //!
 //! Analogous to TS `HIR/MergeConsecutiveBlocks.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
@@ -64,7 +64,7 @@ pub(crate) fn merge_consecutive_blocks(
     }
 
     // Build fallthrough set
-    let mut fallthrough_blocks: HashSet<BlockId> = HashSet::new();
+    let mut fallthrough_blocks: HashSet<BlockId> = HashSet::default();
     for block in func.body.blocks.values() {
         if let Some(ft) = visitors::terminal_fallthrough(&block.terminal) {
             fallthrough_blocks.insert(ft);

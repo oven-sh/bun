@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::hir::environment::Environment;
@@ -30,7 +30,7 @@ fn eliminate_redundant_phi_impl(
     let ir = &mut func.body;
 
     let mut has_back_edge = false;
-    let mut visited: HashSet<BlockId> = HashSet::new();
+    let mut visited: HashSet<BlockId> = HashSet::default();
 
     let mut size;
     loop {

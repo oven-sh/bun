@@ -613,6 +613,9 @@ impl<'a> Printer<'a, '_> {
         parsed: &mut Parsed,
         converted: Option<&mut Option<CssNode<'a>>>,
     ) {
+        if !self.context.stack.has_room() {
+            return;
+        }
         let (text, tree) = (self.original_text(), parent.tree);
         let raw = &tree.nodes[id as usize];
         let start = (raw.start as usize).min(text.len());
@@ -1313,6 +1316,7 @@ impl<'a> Printer<'a, '_> {
         let value = selectors.text(node.value);
         let single_quote = self.single_quote;
         match node.kind {
+            SelectorKind::Root | SelectorKind::Pseudo if !self.context.stack.has_room() => {}
             SelectorKind::Root => {
                 let custom_selector = match statement.inside_at_rule(&[b"custom-selector"]) {
                     true => statement
@@ -1572,6 +1576,13 @@ impl<'a> Printer<'a, '_> {
         let node = values.node(id);
         let value = values.value(id).unwrap_or_default();
         match node.kind {
+            ValueKind::Root
+            | ValueKind::Value
+            | ValueKind::CommaGroup
+            | ValueKind::ParenGroup
+            | ValueKind::Func
+            | ValueKind::Selector
+                if !self.context.stack.has_room() => {}
             ValueKind::Root | ValueKind::Value => self.print_child_value(statement, id, node.group),
             ValueKind::Comment => {
                 self.is_memoizable = false;

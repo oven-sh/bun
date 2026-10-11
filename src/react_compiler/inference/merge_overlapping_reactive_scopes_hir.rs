@@ -15,8 +15,8 @@
 //!
 //! Ported from TypeScript `src/HIR/MergeOverlappingReactiveScopesHIR.ts`.
 
+use crate::collections::FxHashMap as HashMap;
 use std::cmp;
-use std::collections::HashMap;
 
 use crate::collections::IdMap;
 use crate::hir::environment::Environment;
@@ -94,8 +94,8 @@ fn is_mutable(env: &Environment, id: EvaluationOrder, identifier_id: IdentifierI
 // =============================================================================
 
 fn collect_scope_info(func: &HirFunction, env: &Environment) -> ScopeInfo {
-    let mut scope_starts_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::new();
-    let mut scope_ends_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::new();
+    let mut scope_starts_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::default();
+    let mut scope_ends_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::default();
     let mut place_scopes: IdMap<IdentifierId, ScopeId> = IdMap::new();
 
     let mut collect_place_scope = |identifier_id: IdentifierId, env: &Environment| {
@@ -143,7 +143,7 @@ fn collect_scope_info(func: &HirFunction, env: &Environment) -> ScopeInfo {
     // We must NOT sort by ScopeId here — the insertion order determines which scope
     // becomes the root in the disjoint set union.
     fn dedup_preserve_order(scopes: &mut Vec<ScopeId>) {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = crate::collections::FxHashSet::default();
         scopes.retain(|s| seen.insert(*s));
     }
     for scopes in scope_starts_map.values_mut() {

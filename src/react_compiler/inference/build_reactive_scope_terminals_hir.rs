@@ -11,7 +11,7 @@
 //!
 //! Ported from TypeScript `src/HIR/BuildReactiveScopeTerminalsHIR.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::collections::IndexMap;
@@ -39,7 +39,7 @@ use crate::hir::visitors::each_terminal_operand_ids;
 /// Collect all unique scopes from places in the function that have non-empty ranges.
 /// Corresponds to TS `getScopes(fn)`.
 fn get_scopes(func: &HirFunction, env: &Environment) -> Vec<ScopeId> {
-    let mut scope_ids: HashSet<ScopeId> = HashSet::new();
+    let mut scope_ids: HashSet<ScopeId> = HashSet::default();
 
     let mut visit_place = |identifier_id: IdentifierId| {
         if let Some(scope_id) = env.identifiers[identifier_id.0 as usize].scope {

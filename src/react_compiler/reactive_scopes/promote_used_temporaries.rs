@@ -8,7 +8,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PromoteUsedTemporaries.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::hir::ArrayElement;
@@ -63,8 +63,8 @@ pub(crate) fn promote_used_temporaries(
     inline_macro_operands: &HashSet<IdentifierId>,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     let mut state = State {
-        tags: HashSet::new(),
-        promoted: HashSet::new(),
+        tags: HashSet::default(),
+        promoted: HashSet::default(),
         pruned: IdMap::new(),
         has_promoted_a_variable: false,
     };
@@ -86,8 +86,8 @@ pub(crate) fn promote_used_temporaries(
     promote_temporaries_block(&func.body, &mut state, env);
 
     // Phase 3: promote interposed temporaries
-    let mut consts: HashSet<IdentifierId> = HashSet::new();
-    let mut globals: HashSet<IdentifierId> = HashSet::new();
+    let mut consts: HashSet<IdentifierId> = HashSet::default();
+    let mut globals: HashSet<IdentifierId> = HashSet::default();
     for param in &func.params {
         match param {
             ParamPattern::Place(p) => {

@@ -22,7 +22,7 @@
 //! instructions in each scope, the scopes must be aligned to block-scope
 //! boundaries — we can't memoize half of a loop!
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::hir::BlockId;
@@ -102,8 +102,8 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
         env.scopes.iter().map(|s| s.range.clone()).collect();
 
     let mut active_block_fallthrough_ranges: Vec<BlockFallthroughRange> = Vec::new();
-    let mut active_scopes: HashSet<ScopeId> = HashSet::new();
-    let mut seen: HashSet<ScopeId> = HashSet::new();
+    let mut active_scopes: HashSet<ScopeId> = HashSet::default();
+    let mut seen: HashSet<ScopeId> = HashSet::default();
     let mut value_block_nodes: IdMap<BlockId, ValueBlockNode> = IdMap::new();
 
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();

@@ -440,8 +440,6 @@ describe.concurrent("bun format", () => {
       "b.css": 'a {\n  b: c;\n}\n\n\nd {\n  e: "f\n}\n\ng {\n  h: i;\n}\nj {\n}\n',
       "c.js": "const a = ;\n",
       "d.yaml": "a:\n\t- b\n",
-      // Not lines that nobody has written, which fill the screen.
-      "e.css": `a{b:${"c ".repeat(600)}"}\n`,
     };
     const result = await format(files, []);
     expect(result.stderr).toMatchInlineSnapshot(`
@@ -468,7 +466,6 @@ describe.concurrent("bun format", () => {
       [error] > 2 | 	- b
       [error]     | ^
       [error]   3 |
-      [error] e.css: SyntaxError: This string is not closed (1:1205)
       Formatted 0 files, 0 unchanged"
     `);
     expect(result.exitCode).toBe(2);

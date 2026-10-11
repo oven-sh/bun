@@ -1590,6 +1590,12 @@ describe.concurrent("an .oxlintrc.json", () => {
     [`[{ rules: {} }, "./base.json"]`, "`extends[1]` must be a config object (strings/paths are not supported)."],
     [`[{ extends: [{}, "./base.json"] }]`, "`extends[1]` must be a config object (strings/paths are not supported)."],
     [`[null]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+    [`[[]]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+    [`[[{}]]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+    [`"./base.json"`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+    [`{}`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+    [`null`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+    [`0`, "`extends` must be an array of config objects (strings/paths are not supported)."],
   ])("`extends` of an oxlint.config.ts has no files: %s", async (extended, message) => {
     const { problems, stdout, exitCode } = await lint({
       "oxlint.config.ts": `export default { extends: ${extended} };`,

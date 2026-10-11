@@ -7,7 +7,7 @@
 //!
 //! Port of ValidateNoSetStateInRender.ts.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::dominator::compute_unconditional_blocks;
@@ -21,7 +21,7 @@ pub(crate) fn validate_no_set_state_in_render(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut unconditional_set_state_functions: HashSet<IdentifierId> = HashSet::new();
+    let mut unconditional_set_state_functions: HashSet<IdentifierId> = HashSet::default();
     let next_block_id = env.next_block_id().0;
     let diagnostics = validate_impl(
         func,

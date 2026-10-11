@@ -11,6 +11,7 @@
 //! creation, aliasing, mutation, freezing, and error conditions for each
 //! instruction and terminal in the HIR.
 
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -130,22 +131,22 @@ pub(crate) fn infer_mutation_aliasing_effects(
     let mut queued_states: crate::collections::IndexMap<BlockId, InferenceState> =
         crate::collections::IndexMap::new();
 
-    // Queue helper. Takes `state` by reference; clones only when actually inserting.
+    // Queue helper. Clones a state that is lent only when actually inserting.
     fn queue(
         queued_states: &mut crate::collections::IndexMap<BlockId, InferenceState>,
         states_by_block: &HashMap<BlockId, InferenceState>,
         block_id: BlockId,
-        state: &InferenceState,
+        state: Cow<'_, InferenceState>,
     ) {
         if let Some(queued_state) = queued_states.get_mut(&block_id) {
-            queued_state.merge_from(state);
+            queued_state.merge_from(&state);
         } else if let Some(prev) = states_by_block.get(&block_id) {
             let mut next = prev.clone();
-            if next.merge_from(state) {
+            if next.merge_from(&state) {
                 queued_states.insert(block_id, next);
             }
         } else {
-            queued_states.insert(block_id, state.clone());
+            queued_states.insert(block_id, state.into_owned());
         }
     }
 
@@ -153,7 +154,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
         &mut queued_states,
         &states_by_block,
         func.body.entry,
-        &initial_state,
+        Cow::Owned(initial_state),
     );
 
     let hoisted_context_declarations = find_hoisted_context_declarations(func, env);
@@ -239,9 +240,15 @@ pub(crate) fn infer_mutation_aliasing_effects(
             }
 
             // Queue successors
-            let successors = terminal_successors(&func.body.blocks[&block_id].terminal);
+            let mut successors = terminal_successors(&func.body.blocks[&block_id].terminal);
+            let last = successors.pop();
             for next_block_id in successors {
-                queue(&mut queued_states, &states_by_block, next_block_id, &state);
+                let state = Cow::Borrowed(&state);
+                queue(&mut queued_states, &states_by_block, next_block_id, state);
+            }
+            if let Some(next_block_id) = last {
+                let state = Cow::Owned(state);
+                queue(&mut queued_states, &states_by_block, next_block_id, state);
             }
         }
     }

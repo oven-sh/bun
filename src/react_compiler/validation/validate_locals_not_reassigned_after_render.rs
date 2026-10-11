@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
@@ -24,7 +24,7 @@ pub(crate) fn validate_locals_not_reassigned_after_render(
     func: &HirFunction,
     env: &mut Environment,
 ) {
-    let mut context_variables: HashSet<IdentifierId> = HashSet::new();
+    let mut context_variables: HashSet<IdentifierId> = HashSet::default();
     let mut diagnostics: Vec<CompilerDiagnostic> = Vec::new();
 
     let reassignment = get_context_reassignment(

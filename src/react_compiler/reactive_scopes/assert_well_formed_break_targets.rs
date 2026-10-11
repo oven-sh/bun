@@ -7,8 +7,8 @@
 //!
 //! Corresponds to `src/ReactiveScopes/AssertWellFormedBreakTargets.ts`.
 
+use crate::collections::FxHashSet as HashSet;
 use std::cell::Cell;
-use std::collections::HashSet;
 
 use crate::hir::{
     BlockId, ReactiveFunction, ReactiveTerminal, ReactiveTerminalStatement,
@@ -26,7 +26,7 @@ pub(crate) fn assert_well_formed_break_targets(
         env,
         is_well_formed: Cell::new(true),
     };
-    let mut state: HashSet<BlockId> = HashSet::new();
+    let mut state: HashSet<BlockId> = HashSet::default();
     visit_reactive_function(func, &visitor, &mut state);
     crate::diagnostics::invariant(
         visitor.is_well_formed.get(),

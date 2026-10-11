@@ -11,7 +11,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneAlwaysInvalidatingScopes.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::{
     IdentifierId, InstructionValue, PrunedReactiveScopeBlock, ReactiveFunction,
@@ -32,8 +32,8 @@ pub(crate) fn prune_always_invalidating_scopes(
 ) -> Result<(), crate::diagnostics::CompilerError> {
     let mut transform = Transform {
         env,
-        always_invalidating_values: HashSet::new(),
-        unmemoized_values: HashSet::new(),
+        always_invalidating_values: HashSet::default(),
+        unmemoized_values: HashSet::default(),
     };
     let mut state = false; // withinScope
     transform_reactive_function(func, &mut transform, &mut state)

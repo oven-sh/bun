@@ -8,8 +8,8 @@
 //!
 //! Corresponds to `src/ReactiveScopes/RenameVariables.ts`.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::hir::DeclarationId;
@@ -44,9 +44,9 @@ impl Scopes {
     fn new(globals: HashSet<StoreStr>) -> Self {
         Self {
             seen: IdMap::new(),
-            stack: vec![HashMap::new()],
+            stack: vec![HashMap::default()],
             globals,
-            names: HashSet::new(),
+            names: HashSet::default(),
         }
     }
 
@@ -114,7 +114,7 @@ impl Scopes {
     }
 
     fn enter(&mut self) {
-        self.stack.push(HashMap::new());
+        self.stack.push(HashMap::default());
     }
 
     fn leave(&mut self) {
@@ -245,7 +245,8 @@ fn rename_variables_with_parent(
         }
     }
 
-    let mut result: HashSet<String> = HashSet::with_capacity(scopes.names.len() + globals.len());
+    let mut result: HashSet<String> =
+        HashSet::with_capacity_and_hasher(scopes.names.len() + globals.len(), Default::default());
     for n in scopes.names.iter().chain(globals.iter()) {
         result.insert(bun_core::BStr::new(n.slice()).to_string());
     }
@@ -270,7 +271,7 @@ fn rename_variables_impl(func: &ReactiveFunction, visitor: &Visitor, scopes: &mu
 /// Collects all globally referenced names from the reactive function.
 /// TS: `collectReferencedGlobals`
 fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashSet<StoreStr> {
-    let mut globals = HashSet::new();
+    let mut globals = HashSet::default();
     collect_globals_block(block, &mut globals, env);
     globals
 }

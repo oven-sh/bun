@@ -50,7 +50,7 @@ pub(super) use super::hir_builder::FunctionNode;
     clippy::disallowed_types,
     reason = "vendored react_compiler_hir HashSet<BindingId> contract"
 )]
-type RefSet = std::collections::HashSet<Ref>;
+type RefSet = crate::collections::FxHashSet<Ref>;
 
 /// Port of upstream `lower()` (build_hir.rs:4257).
 pub(crate) fn lower(
@@ -410,8 +410,8 @@ pub(super) fn gather_captured_context<'h>(
         clippy::disallowed_types,
         reason = "vendored react_compiler_hir HashMap<BindingId, _> contract"
     )]
-    let mut captured: std::collections::HashMap<Ref, (i32, Option<SourceLocation>)> =
-        std::collections::HashMap::new();
+    let mut captured: crate::collections::FxHashMap<Ref, (i32, Option<SourceLocation>)> =
+        crate::collections::FxHashMap::default();
 
     for (ref_, ref_loc) in walker.referenced {
         if !ref_.is_symbol() {

@@ -6,9 +6,12 @@ use super::media_query::{self, MediaNode};
 use super::postcss::{self, Kind, NodeId, Range, Tree};
 use super::selector_parser::{SelectorId, Selectors};
 use super::value_parser::{ValueId, Values};
+use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal, Refused};
 use crate::text::{self, ByteSet};
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::cell::RefCell;
 
 /// `node.value`
 pub(crate) enum Value<'a> {
@@ -91,6 +94,10 @@ pub(crate) struct Context<'a> {
     pub(crate) is_oxfmt: bool,
     /// Why a node has not been converted.
     pub(crate) refusal: Refusal,
+    pub(crate) stack: Stack,
+    /// By where a custom property set starts, whether what is in it [can be converted](Context::can_be_converted). One
+    /// that is in `n` others is converted for each of them.
+    pub(crate) convertible_sets: RefCell<FxHashMap<u32, bool>>,
 }
 
 /// The part of `text` from `start` to `end`.
@@ -288,7 +295,13 @@ impl<'a> Context<'a> {
         let parse = |text: Cow<'a, [u8]>, node: &CssNode<'a>, parsed: &mut Parsed| {
             let Parsed { selectors, values } = parsed;
             values
-                .parse(&text, self.syntax, value_root_offset(node), selectors)
+                .parse(
+                    &text,
+                    self.syntax,
+                    value_root_offset(node),
+                    selectors,
+                    &self.stack,
+                )
                 .map(Value::Parsed)
                 .map_err(|_| self.refusal.note(Message::UnreadableAtRule, raw.start))
         };
@@ -329,7 +342,7 @@ impl<'a> Context<'a> {
                 &node.raw_params,
             ]
             .concat();
-            node.selector = Some(parsed.selectors.parse(&source));
+            node.selector = Some(parsed.selectors.parse(&source, &self.stack));
             return Ok(true);
         }
         if raw.function {
@@ -371,10 +384,30 @@ impl<'a> Context<'a> {
 
     /// Whether `id` and everything in it can be converted.
     fn can_be_converted(&self, tree: &Tree, id: NodeId, parsed: &mut Parsed) -> bool {
-        self.convert(tree, id, parsed).is_ok()
+        self.stack.has_room()
+            && self.convert(tree, id, parsed).is_ok()
             && tree
                 .children(&tree.nodes[id as usize])
                 .all(|child| self.can_be_converted(tree, child, parsed))
+    }
+
+    /// Whether the rule `only` of `tree`, which is what is in the custom property set that starts at `start`, can be
+    /// converted.
+    fn is_convertible_set(
+        &self,
+        start: u32,
+        tree: &Tree,
+        only: NodeId,
+        parsed: &mut Parsed,
+    ) -> bool {
+        if let Some(&known) = self.convertible_sets.borrow().get(&start) {
+            return known;
+        }
+        let can_be_converted = self.can_be_converted(tree, only, parsed);
+        self.convertible_sets
+            .borrow_mut()
+            .insert(start, can_be_converted);
+        can_be_converted
     }
 
     /// `locEnd(node)`
@@ -382,6 +415,7 @@ impl<'a> Context<'a> {
         let raw = &tree.nodes[id as usize];
         match raw.end {
             Some(end) if !raw.inline => (end as usize).min(self.original_text.len()),
+            _ if !self.stack.has_room() => 0,
             _ => self.convert(tree, id, parsed).map_or(0, |node| node.end),
         }
     }
@@ -469,7 +503,7 @@ impl<'a> Context<'a> {
                         .unwrap_or_else(|| self.of(raw.selector));
                     node.is_scss_nested_property =
                         self.syntax == Syntax::Scss && is_scss_nested_property(clean);
-                    node.selector = Some(parsed.selectors.parse(&node.raw_selector));
+                    node.selector = Some(parsed.selectors.parse(&node.raw_selector, &self.stack));
                 }
             }
             Kind::Decl => self.convert_declaration(raw, &mut node, parsed)?,
@@ -526,7 +560,7 @@ impl<'a> Context<'a> {
                 && tree.nodes[only as usize].kind == Kind::Rule
                 // What is in it would not live long enough.
                 && tree.extra.is_empty()
-                && self.can_be_converted(&tree, only, parsed)
+                && self.is_convertible_set(raw.start, &tree, only, parsed)
             {
                 rules = Some(Box::new(tree));
             }
@@ -573,7 +607,13 @@ impl<'a> Context<'a> {
             }
             let root = parsed
                 .values
-                .parse(value, self.syntax, root_offset, &mut parsed.selectors)
+                .parse(
+                    value,
+                    self.syntax,
+                    root_offset,
+                    &mut parsed.selectors,
+                    &self.stack,
+                )
                 .map_err(|_| self.refusal.note(Message::UnreadableValue, root_offset))?;
             node.value = Value::Parsed(root);
         }
@@ -595,7 +635,7 @@ impl<'a> Context<'a> {
                     let selector = value
                         .get(b"extend(".len()..value.len() - 1)
                         .unwrap_or_default();
-                    node.selector = Some(parsed.selectors.parse(selector));
+                    node.selector = Some(parsed.selectors.parse(selector, &self.stack));
                 }
             }
         }
@@ -632,7 +672,7 @@ impl<'a> Context<'a> {
         let Parsed { selectors, values } = parsed;
         let value = |text: &[u8], values: &mut Values, selectors: &mut Selectors| {
             values
-                .parse(text, self.syntax, root_offset, selectors)
+                .parse(text, self.syntax, root_offset, selectors, &self.stack)
                 .map_err(|_| self.refusal.note(Message::UnreadableAtRule, raw.start))
         };
 
@@ -652,7 +692,8 @@ impl<'a> Context<'a> {
                 return Err(unreadable());
             }
             node.custom_selector = Some(slice(&clean, start, start + name_len));
-            node.selector = Some(selectors.parse(&trim(&slice(&clean, name_len, clean.len()))));
+            node.selector =
+                Some(selectors.parse(&trim(&slice(&clean, name_len, clean.len())), &self.stack));
             return Ok(());
         }
         if params.is_empty() {
@@ -665,7 +706,7 @@ impl<'a> Context<'a> {
                 _ => node.params = Params::Unknown(params.clone()),
             }
         } else if matches!(name, b"extend" | b"nest") {
-            node.selector = Some(selectors.parse(&params));
+            node.selector = Some(selectors.parse(&params, &self.stack));
         } else if name == b"at-root" {
             // `/^\(\s*(?:without|with)\s*:.+\)$/s`
             let is_query = params
@@ -683,7 +724,7 @@ impl<'a> Context<'a> {
                 });
             match is_query {
                 true => node.params = Params::Value(value(&params, values, selectors)?),
-                false => node.selector = Some(selectors.parse(&params)),
+                false => node.selector = Some(selectors.parse(&params, &self.stack)),
             }
         } else if matches!(&*name.to_ascii_lowercase(), b"import" | b"use" | b"forward") {
             node.params = Params::Value(value(&params, values, selectors)?);

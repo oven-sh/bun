@@ -9,7 +9,7 @@
 //!
 //! Ported from TypeScript `src/ReactiveScopes/AlignMethodCallScopes.ts`.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::{EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ScopeId};
@@ -29,7 +29,7 @@ pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environ
     }
 
     // Maps an identifier to the scope it should be assigned to (or None to remove scope)
-    let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::new();
+    let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::default();
     let mut merged_scopes = DisjointSet::<ScopeId>::new();
 
     // Phase 1: Walk instructions and collect scope relationships
@@ -80,7 +80,8 @@ pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environ
     // Phase 2: Merge scope ranges for unioned scopes.
     // Use a HashMap to accumulate min/max across all scopes mapping to the same root,
     // matching TS behavior where root.range is updated in-place during iteration.
-    let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> = HashMap::new();
+    let mut range_updates: HashMap<ScopeId, (EvaluationOrder, EvaluationOrder)> =
+        HashMap::default();
 
     merged_scopes.for_each(|scope_id, root_id| {
         if scope_id == root_id {

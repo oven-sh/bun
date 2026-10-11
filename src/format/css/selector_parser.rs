@@ -1,6 +1,7 @@
 //! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`), and Prettier's
 //! `parse/parse-selector.js`.
 
+use crate::stack::Stack;
 use crate::text::{self, ByteSet};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -209,8 +210,7 @@ struct Parser<'t> {
     position: usize,
     nodes: &'t mut Vec<SelectorNode>,
     current: SelectorId,
-    /// So that what makes the parser go round in circles comes to an end.
-    steps: usize,
+    stack: &'t Stack,
     depth: usize,
 }
 
@@ -279,10 +279,6 @@ impl<'t> Parser<'t> {
     }
 
     fn parse(&mut self, throw_on_parenthesis: bool) -> Result<(), ParseError> {
-        self.steps += 1;
-        if self.steps > self.tokens.len() * 4 + 16 {
-            return Err(ParseError);
-        }
         let token = self.current_token()?;
         match token.kind {
             TokenKind::Space => self.space(token),
@@ -420,8 +416,9 @@ impl<'t> Parser<'t> {
                 _ => Namespace::Empty,
             };
             let kind = self.next_token().ok_or(ParseError)?.kind;
+            // The parser stays where it is, and comes here again, without end.
             if !matches!(kind, TokenKind::Word | TokenKind::Control(b'*')) {
-                return Ok(());
+                return Err(ParseError);
             }
             self.position += 1;
             if !self.is_before_namespace_separator() {
@@ -440,7 +437,7 @@ impl<'t> Parser<'t> {
             last.filter(|&last| self.nodes[last as usize].kind == SelectorKind::Pseudo)
         {
             self.depth += 1;
-            if self.depth > MAX_DEPTH {
+            if self.depth > MAX_DEPTH || !self.stack.has_room() {
                 return Err(ParseError);
             }
             let selector = self.append(last, SelectorKind::Selector, (0, 0));
@@ -644,7 +641,7 @@ impl Selectors {
     }
 
     /// Prettier's `parseSelector`.
-    pub(crate) fn parse(&mut self, selector: &[u8]) -> SelectorId {
+    pub(crate) fn parse(&mut self, selector: &[u8], stack: &Stack) -> SelectorId {
         if self.nodes.is_empty() {
             self.nodes
                 .push(SelectorNode::new(SelectorKind::Unknown, (0, 0), 0));
@@ -675,7 +672,7 @@ impl Selectors {
                 position: 0,
                 nodes: &mut self.nodes,
                 current: root,
-                steps: 0,
+                stack,
                 depth: 0,
             };
             parser.current = parser.append(root, SelectorKind::Selector, (0, 0));

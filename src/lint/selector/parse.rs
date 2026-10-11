@@ -129,6 +129,8 @@ struct Parser<'s> {
     /// What `esquery` throws from an action, which ends the parsing.
     error: Option<Error>,
     program: Program,
+    /// As much as a thread of Bun's pool has. On a larger stack the rest is for what matches the selector.
+    stack: bun_core::StackCheck,
 }
 
 /// The types of a class of ESLint's `matchesSelectorClass`, and whether an `Identifier` in a
@@ -408,7 +410,7 @@ impl<'s> Parser<'s> {
     }
 
     fn atom(&mut self) -> Option<Id> {
-        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        if !self.stack.is_safe_to_recurse() {
             self.error.get_or_insert_with(Error::too_deep);
         }
         if self.error.is_some() {
@@ -893,6 +895,8 @@ pub(super) fn parse(source: &[u8]) -> Result<(Program, Id), Error> {
         expected: 0,
         error: None,
         program: Program::default(),
+        stack: bun_core::StackCheck::init()
+            .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
     };
     let root = parser.start();
     if let Some(error) = parser.error {

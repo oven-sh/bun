@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerError;
@@ -171,7 +171,7 @@ impl Environment {
         }
 
         // Register reanimated module type when enabled
-        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::new();
+        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::default();
         if config.enable_custom_type_definition_for_reanimated {
             let reanimated_module_type = globals::get_reanimated_module_type(&mut shapes);
             module_types.insert(
@@ -199,9 +199,9 @@ impl Environment {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: AstAlloc::vec(),
-            binding_names: HashMap::new(),
-            reference_node_ids: HashSet::new(),
-            hoisted_identifiers: HashSet::new(),
+            binding_names: HashMap::default(),
+            reference_node_ids: HashSet::default(),
+            hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config
                 .validate_preserve_existing_memoization_guarantees,
             validate_no_set_state_in_render: config.validate_no_set_state_in_render,
@@ -210,7 +210,7 @@ impl Environment {
             globals: global_registry,
             shapes,
             module_types,
-            module_type_errors: HashMap::new(),
+            module_type_errors: HashMap::default(),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
             outlined_functions: AstAlloc::vec(),
@@ -788,7 +788,7 @@ impl Environment {
         // Lazily build the set of known names from existing identifiers.
         // This approximates Babel's hasBinding/hasGlobal/hasReference checks.
         if self.uid_known_names.is_none() {
-            let mut known = HashSet::new();
+            let mut known = HashSet::default();
             for id in &self.identifiers {
                 if let Some(name) = &id.name {
                     known.insert(StoreStr::new(name.value()));

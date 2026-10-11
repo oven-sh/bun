@@ -247,22 +247,34 @@ impl<'a> FillParts<'a> {
     }
 
     /// Prettier's `flattenFill`: the parts of a `fill` in `doc` become parts of this one.
-    fn flatten(&mut self, doc: Doc<'a>) {
-        match doc {
-            Doc::Array(mut docs) if !self.is_fill => match self.parts.is_empty() {
-                true => self.parts = docs,
-                false => self.parts.append(&mut docs),
-            },
-            Doc::Array(docs) => docs.into_iter().for_each(|doc| self.flatten(doc)),
-            Doc::Fill(parts) => {
-                for (index, part) in parts.into_iter().enumerate() {
+    fn flatten(&mut self, mut doc: Doc<'a>) {
+        // What follows `doc` in the arrays that it is in.
+        let mut outer: Vec<std::vec::IntoIter<Doc<'a>>> = Vec::new();
+        loop {
+            if let Doc::Array(docs) = &mut doc {
+                let mut docs = std::mem::take(docs);
+                match (self.is_fill, self.parts.is_empty()) {
+                    (true, _) => outer.push(docs.into_iter()),
+                    (false, true) => self.parts = docs,
+                    (false, false) => self.parts.append(&mut docs),
+                }
+            } else if let Doc::Fill(parts) = &mut doc {
+                for (index, part) in std::mem::take(parts).into_iter().enumerate() {
                     match index % 2 {
                         0 => self.content(part),
                         _ => self.separator(part),
                     }
                 }
+            } else {
+                self.content(doc);
             }
-            doc => self.content(doc),
+            doc = loop {
+                match outer.last_mut().map(Iterator::next) {
+                    Some(Some(next)) => break next,
+                    Some(None) => outer.truncate(outer.len() - 1),
+                    None => return,
+                }
+            };
         }
     }
 
@@ -2121,7 +2133,8 @@ impl<'a> Printer<'a, '_> {
             for (column, cell) in self.tree.children(row).enumerate() {
                 let mut text = Vec::new();
                 let doc = self.print(cell);
-                doc::print(doc, self.options, b"\n", &mut text);
+                self.is_nested_too_deeply |=
+                    doc::print(doc, self.options, b"\n", &mut text).is_err();
                 let width = crate::ir::width::string_width_as(&text, self.options.flavor) as usize;
                 if widths.len() <= column {
                     // `---`, `:--`, `:-:`, `--:`

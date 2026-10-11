@@ -58,7 +58,7 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
 pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
     let mut elements = Elements::default();
     write_document(text, options, &mut elements)?;
-    Ok(elements.to_tree())
+    elements.to_tree()
 }
 
 /// Writes the document for `text`, whose line breaks are `\n`, to `out`, which is empty.
@@ -151,13 +151,12 @@ pub fn format(
         .inspect_err(|_| out.truncate(start))
         .map_err(in_original)?;
     if is_range {
-        doc::print(
+        return doc::print(
             doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(&text)),
             options,
             original,
             out,
         );
-        return Ok(());
     }
     if options.filepath.as_deref().is_some_and(can_be_json) {
         let end = out.len();
@@ -174,6 +173,7 @@ pub fn format(
         }
         out.truncate(end);
     }
-    doc::Printer::new(options, original, out).print(document, 0, 0);
-    Ok(())
+    let mut printer = doc::Printer::new(options, original, out);
+    printer.print(document, 0, 0);
+    printer.result()
 }

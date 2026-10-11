@@ -8,6 +8,7 @@
 //! written again, this time to a document, which is printed in its place.
 
 use super::doc::{self, Doc, Elements, Group, IndentCommand, Line};
+use crate::FormatError;
 
 /// What is between two items of a `fill`.
 #[derive(Copy, Clone)]
@@ -97,8 +98,16 @@ impl<'o> Sink<'o> {
     }
 
     /// Everything that has been written to `Sink::to_document()`.
-    pub(crate) fn into_document(self) -> Doc<'static> {
+    pub(crate) fn into_document(self) -> Result<Doc<'static>, FormatError> {
         self.elements.to_tree()
+    }
+
+    /// Whether what has gone to the output is what has been written.
+    pub(crate) fn result(&self) -> Result<(), FormatError> {
+        match &self.printer {
+            Some(printer) => printer.result(),
+            None => Ok(()),
+        }
     }
 
     // ───────────────────────────── units ─────────────────────────────

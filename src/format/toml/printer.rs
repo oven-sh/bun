@@ -37,8 +37,8 @@ struct Printer<'t> {
     /// For each element, how many of those before it are line breaks, and how many are comments.
     counts: Vec<[u32; 2]>,
     stack_check: bun_core::StackCheck,
-    /// A value has not been written because it is nested too deeply.
-    ran_out_of_stack: Cell<bool>,
+    /// Why what has been written is of no use. From there on no value is written and no line is indented.
+    failure: Cell<Option<FormatError>>,
 }
 
 /// Appends the document to `out`.
@@ -71,14 +71,14 @@ pub(super) fn print(
         array_trailing_comma: !options.trailing_commas.is_none(),
         counts,
         stack_check: bun_core::StackCheck::init(),
-        ran_out_of_stack: Cell::new(false),
+        failure: Cell::new(None),
     };
     let start = out.len();
     out.reserve(text.len());
     printer.root(out);
-    if printer.ran_out_of_stack.get() {
+    if let Some(failure) = printer.failure.get() {
         out.truncate(start);
-        return Err(FormatError::NestedTooDeeply);
+        return Err(failure);
     }
     if out[start..].ends_with(b"\r\n") {
         out.truncate(out.len() - 2);
@@ -139,6 +139,12 @@ impl Printer<'_> {
     }
 
     fn write_indent(&self, context: Context, out: &mut Vec<u8>) {
+        if crate::is_too_long(out.len()) {
+            self.failure.set(Some(FormatError::TooLong));
+        }
+        if self.failure.get().is_some() {
+            return;
+        }
         for _ in 0..context.indent_level {
             out.extend_from_slice(&self.indent);
         }
@@ -324,7 +330,9 @@ impl Printer<'_> {
     /// `format_value`. Returns the comment behind the value.
     fn value(&self, node: usize, context: Context, out: &mut Vec<u8>) -> Option<Span> {
         if !self.stack_check.is_safe_to_recurse() {
-            self.ran_out_of_stack.set(true);
+            self.failure.set(Some(FormatError::NestedTooDeeply));
+        }
+        if self.failure.get().is_some() {
             return None;
         }
         let mut comment = None;

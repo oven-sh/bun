@@ -6,6 +6,7 @@
 
 use super::Parser as Syntax;
 use super::selector_parser::{SelectorId, Selectors};
+use crate::stack::Stack;
 use crate::text::{self, ByteSet};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -67,8 +68,14 @@ static WORD_END: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"+|~>,[]\\/");
 static WORD_END_NUM: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"-+|~>,[]\\/");
 static AT_END: ByteSet = ByteSet::new(b" \n\t\r{()'\"\\;,/");
 
-fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
+/// `unclosed`: the indices of the `(` that have no `)`.
+fn tokenize(
+    css: &[u8],
+    tokens: &mut Vec<Token>,
+    unclosed: &mut Vec<u32>,
+) -> Result<(), ParseError> {
     tokens.clear();
+    unclosed.clear();
     let length = css.len();
     // The position of the last line break, which is -1 at first: all columns are one more.
     let mut offset: i64 = -1;
@@ -108,6 +115,7 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
                 if paren_count > MAX_DEPTH {
                     return Err(ParseError);
                 }
+                unclosed.push(tokens.len() as u32);
                 is_url_arg = !is_url_arg
                     && paren_count == 1
                     && tokens.last().is_some_and(|last| {
@@ -118,6 +126,7 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
             }
             b')' => {
                 paren_count -= 1;
+                unclosed.pop();
                 is_url_arg = is_url_arg && paren_count > 0;
                 (kind, end, next) = (TokenKind::CloseParen, pos + 1, pos + 1);
             }
@@ -456,6 +465,8 @@ pub(crate) struct Values {
     nodes: Vec<ValueNode>,
     lists: Vec<ValueId>,
     tokens: Vec<Token>,
+    /// See [`tokenize`].
+    unclosed_parens: Vec<u32>,
     /// `cache` of the parser.
     cache: Vec<ValueId>,
     open_parens: Vec<OpenParen>,
@@ -696,23 +707,8 @@ impl ValuesParser<'_> {
     }
 
     fn paren_open(&mut self, token: Token) -> Result<(), ParseError> {
-        let mut unbalanced = 1;
-        for token in self
-            .values
-            .tokens
-            .get(self.position + 1..)
-            .unwrap_or_default()
-        {
-            match token.kind {
-                TokenKind::OpenParen => unbalanced += 1,
-                TokenKind::CloseParen => unbalanced -= 1,
-                _ => {}
-            }
-            if unbalanced == 0 {
-                break;
-            }
-        }
-        if unbalanced != 0 {
+        let position = self.position as u32;
+        if self.values.unclosed_parens.binary_search(&position).is_ok() {
             return Err(ParseError);
         }
         if let Some(last) = self.last_of_current()
@@ -864,6 +860,7 @@ struct Grouper<'t> {
     base: usize,
     syntax: Syntax,
     is_unbalanced: bool,
+    stack: &'t Stack,
 }
 
 impl Grouper<'_> {
@@ -941,6 +938,9 @@ impl Grouper<'_> {
 
     /// `parseNestedValue` and `parseValueNode` for the container `id`, and `flattenGroups` for the result.
     fn group_nodes_of(&mut self, id: ValueId) -> ValueId {
+        if !self.stack.has_room() {
+            return 0;
+        }
         // A group of one node is that node.
         let only = self.node(self.node(id).first_child);
         if only.next_sibling == 0
@@ -1021,7 +1021,7 @@ impl Grouper<'_> {
                         .text
                         .get(self.base + start..self.base + end)
                         .unwrap_or_default();
-                    let selector = self.selectors.parse(text);
+                    let selector = self.selectors.parse(text, self.stack);
                     let mut selector = ValueNode {
                         selector,
                         ..ValueNode::new(ValueKind::Selector)
@@ -1280,6 +1280,7 @@ impl Values {
         syntax: Syntax,
         root_offset: u32,
         selectors: &mut Selectors,
+        stack: &Stack,
     ) -> Result<ValueId, ParseError> {
         // Inline JavaScript in Less.
         if syntax == Syntax::Less && value.starts_with(b"~`") {
@@ -1297,7 +1298,7 @@ impl Values {
             unbalanced: 0,
             ..ValueNode::new(ValueKind::Value)
         });
-        let parsed = tokenize(value, &mut self.tokens).and_then(|()| {
+        let parsed = tokenize(value, &mut self.tokens, &mut self.unclosed_parens).and_then(|()| {
             ValuesParser {
                 values: self,
                 base,
@@ -1321,6 +1322,7 @@ impl Values {
             base,
             syntax,
             is_unbalanced: false,
+            stack,
         };
         let group = grouper.group_nodes_of(container);
         let is_unbalanced = grouper.is_unbalanced;

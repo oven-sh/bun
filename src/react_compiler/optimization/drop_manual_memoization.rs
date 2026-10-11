@@ -12,8 +12,8 @@
 //!
 //! Analogous to TS `Inference/DropManualMemoization.ts`.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::diagnostics::CompilerDiagnostic;
@@ -103,10 +103,10 @@ pub(crate) fn drop_manual_memoization(
 
     let optionals = find_optional_places(func)?;
     let mut sidemap = IdentifierSidemap {
-        functions: HashSet::new(),
+        functions: HashSet::default(),
         manual_memos: IdMap::new(),
-        react: HashSet::new(),
-        maybe_deps: HashMap::new(),
+        react: HashSet::default(),
+        maybe_deps: HashMap::default(),
         maybe_deps_lists: IdMap::new(),
         optionals,
     };
@@ -657,7 +657,7 @@ fn extract_manual_memoization_args(
 fn find_optional_places(func: &HirFunction) -> Result<HashSet<IdentifierId>, CompilerDiagnostic> {
     use crate::hir::Terminal;
 
-    let mut optionals = HashSet::new();
+    let mut optionals = HashSet::default();
     for block in func.body.blocks.values() {
         if let Terminal::Optional {
             optional: true,

@@ -24,6 +24,7 @@ use self::sink::Sink;
 use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
 use crate::range::Offsets;
+use crate::stack::Stack;
 use crate::text::{self, BOM};
 use crate::{FormatError, FormatOptions, front_matter};
 use std::borrow::Cow;
@@ -301,8 +302,8 @@ fn parse_and_print<'o>(
             }
             b"" if is_yaml || is_toml => Some(Doc::EMPTY),
             _ if is_yaml => crate::yaml::document(value, options)
-                .ok()
-                .map(|it| doc::strip_trailing_hardline(doc::clean(it))),
+                .and_then(doc::text_to_doc)
+                .ok(),
             _ => None,
         };
         let front_matter = match formatted {
@@ -338,6 +339,8 @@ fn parse_and_print<'o>(
             syntax: parser,
             is_oxfmt: options.flavor.is_oxfmt(),
             refusal: Default::default(),
+            stack: Stack::new(),
+            convertible_sets: Default::default(),
         },
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
@@ -355,9 +358,12 @@ fn parse_and_print<'o>(
         is_memoizable: false,
     };
     printer.print_root(&tree, &mut parse::Parsed::default());
+    if printer.context.stack.ran_out() {
+        return Err(FormatError::NestedTooDeeply);
+    }
     match printer.failure {
         Some(error) => Err(FormatError::SyntaxErrorAt(error)),
-        None => Ok(printer.sink),
+        None => printer.sink.result().map(|()| printer.sink),
     }
 }
 
@@ -369,9 +375,7 @@ pub(crate) fn document(
 ) -> Result<Doc<'static>, FormatError> {
     let mut memo = Memo::default();
     let sink = parse_and_print(text, parser, options, Sink::to_document(), &mut memo)?;
-    Ok(doc::strip_trailing_hardline(doc::clean(
-        sink.into_document(),
-    )))
+    doc::text_to_doc(sink.into_document()?)
 }
 
 /// Appends the formatted `text` to `out`.
@@ -431,13 +435,12 @@ pub fn format(
         )
         .inspect_err(|_| out.truncate(start))
         .map_err(in_original)?;
-        doc::print(
+        return doc::print(
             doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
             options,
             original,
             out,
         );
-        return Ok(());
     }
     let is_in_html = options.in_html.root != crate::options::HtmlRoot::None;
     let sink = Sink::to_output(doc::Printer::new(options, original, out), is_in_html);

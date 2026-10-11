@@ -44,10 +44,13 @@ enum Op<'d> {
 }
 
 /// The parts of `doc`. Returns whether all of it can be written as a part of a document for JavaScript.
-fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>) -> bool {
+fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::StackCheck) -> bool {
+    if !stack_check.is_safe_to_recurse() {
+        return false;
+    }
     let between = |start: Tag, contents: &'d Doc<'_>, end: Tag, ops: &mut Vec<Op<'d>>| {
         ops.push(Op::Element(FormatElement::Tag(start)));
-        let is_done = flatten(contents, ops);
+        let is_done = flatten(contents, ops, stack_check);
         ops.push(Op::Element(FormatElement::Tag(end)));
         is_done
     };
@@ -58,10 +61,10 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>) -> bool {
             }
             true
         }
-        Doc::Array(parts) => parts.iter().all(|part| flatten(part, ops)),
+        Doc::Array(parts) => parts.iter().all(|part| flatten(part, ops, stack_check)),
         Doc::Indent(contents) => between(Tag::StartIndent, contents, Tag::EndIndent, ops),
         Doc::Align(Alignment::Spaces(0), contents) | Doc::MarkAsRoot(contents) => {
-            flatten(contents, ops)
+            flatten(contents, ops, stack_check)
         }
         Doc::Align(Alignment::Spaces(width), contents) => match u8::try_from(*width) {
             Ok(width) => between(Tag::StartAlign(Align(width)), contents, Tag::EndAlign, ops),
@@ -258,9 +261,11 @@ pub(crate) fn write_template<'a>(
         is_mdx: false,
     };
     let is_written = super::with_document(&text, &options, &mut tree, mode, None, |document| {
-        let document = doc::strip_trailing_hardline(doc::clean(document));
+        let Ok(document) = doc::text_to_doc(document) else {
+            return false;
+        };
         let mut ops = Vec::new();
-        if !flatten(&document, &mut ops) {
+        if !flatten(&document, &mut ops, bun_core::StackCheck::init()) {
             return false;
         }
         f.write_token("`");

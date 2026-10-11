@@ -137,13 +137,12 @@ pub fn format(
     out.extend_from_slice(&original[..first]);
     // Nothing in a template is something that Prettier formats on its own.
     if is_range {
-        doc::print(
+        return doc::print(
             doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
             options,
             original,
             out,
         );
-        return Ok(());
     }
     if let Some(tailwind) = &options.tailwind {
         tailwind::sort_classes(&mut scratch.tree, &content, tailwind);
@@ -168,6 +167,7 @@ pub fn format(
     scratch.is_damaged = printer.is_damaged
         || scratch.tree.is_damaged
         || positions::Positions::can_be_wrong(&content);
-    doc::Printer::new(options, original, out).print(&scratch.elements, 0, 0);
-    Ok(())
+    let mut printer = doc::Printer::new(options, original, out);
+    printer.print(&scratch.elements, 0, 0);
+    printer.result()
 }

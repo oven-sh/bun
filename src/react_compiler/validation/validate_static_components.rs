@@ -9,7 +9,7 @@
 //!
 //! Port of ValidateStaticComponents.ts.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
@@ -23,7 +23,7 @@ use crate::hir::{HirFunction, IdentifierId, InstructionValue, JsxTag};
 pub(crate) fn validate_static_components(func: &HirFunction) -> CompilerError {
     let mut error = CompilerError::new();
     let mut known_dynamic_components: HashMap<IdentifierId, Option<SourceLocation>> =
-        HashMap::new();
+        HashMap::default();
 
     for (_block_id, block) in &func.body.blocks {
         // Process phis: propagate dynamic component knowledge through phi nodes

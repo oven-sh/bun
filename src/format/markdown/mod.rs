@@ -465,7 +465,7 @@ fn format_in(
     let tree = &mut scratch.tree;
     with_document(text, &options, tree, mode, format_block, |document| {
         doc::print(document, &options, text, out)
-    })
+    })?
 }
 
 /// Calls `then` with the document for `text`, in which every line break is `\n`.

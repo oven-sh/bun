@@ -7,7 +7,7 @@
 //!
 //! Contains feature flags and custom hook definitions that control compiler behavior.
 
-use std::collections::HashMap;
+use crate::collections::FxHashMap as HashMap;
 
 use crate::hir::Effect;
 use crate::hir::type_config::{TypeConfig, ValueKind};
@@ -123,7 +123,7 @@ pub struct EnvironmentConfig {
 impl Default for EnvironmentConfig {
     fn default() -> Self {
         Self {
-            custom_hooks: HashMap::new(),
+            custom_hooks: HashMap::default(),
             enable_reset_cache_on_source_file_changes: None,
             module_type_provider: None,
             enable_preserve_existing_memoization_guarantees: true,

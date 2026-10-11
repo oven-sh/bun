@@ -324,9 +324,9 @@ impl<'a> Printer<'a> {
                 match strings::trim_js_whitespace(&raw[front_matter.value.0..front_matter.value.1])
                 {
                     b"" if is_yaml || is_toml => Doc::EMPTY,
-                    value if is_yaml => doc::strip_trailing_hardline(doc::clean(
-                        crate::yaml::document(value, self.options).ok()?,
-                    )),
+                    value if is_yaml => crate::yaml::document(value, self.options)
+                        .and_then(doc::text_to_doc)
+                        .ok()?,
                     _ => return None,
                 };
             Some((language, value))

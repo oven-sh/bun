@@ -8,7 +8,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneNonEscapingScopes.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::collections::IndexSet;
@@ -78,7 +78,7 @@ pub(crate) fn prune_non_escaping_scopes(
     // Prune scopes that do not declare/reassign any escaping values
     let mut transform = PruneScopesTransform {
         env,
-        pruned_scopes: HashSet::new(),
+        pruned_scopes: HashSet::default(),
         reassignments: IdMap::new(),
     };
     let mut memoized_state = memoized;
@@ -1106,7 +1106,7 @@ fn compute_memoized_identifiers(
     state: &CollectState,
     env: &Environment,
 ) -> Result<HashSet<DeclarationId>, CompilerError> {
-    let mut memoized = HashSet::new();
+    let mut memoized = HashSet::default();
 
     // We need mutable access to the nodes, so we clone the state into mutable structures
     let mut identifier_nodes: IdMap<DeclarationId, IdentNodeTuple> = IdMap::new();
@@ -1304,10 +1304,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
             }) if store_lvalue.kind == InstructionKind::Reassign => {
                 let decl_id =
                     self.env.identifiers[store_lvalue.place.identifier.0 as usize].declaration_id;
-                let ids = self
-                    .reassignments
-                    .entry(decl_id)
-                    .or_insert_with(HashSet::new);
+                let ids = self.reassignments.entry(decl_id).or_default();
                 ids.insert(store_value.identifier);
             }
             ReactiveValue::Instruction(InstructionValue::LoadLocal { place, .. }) => {
@@ -1326,10 +1323,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
                 if has_scope && lvalue_no_scope {
                     if let Some(lv) = &instruction.lvalue {
                         let decl_id = self.env.identifiers[lv.identifier.0 as usize].declaration_id;
-                        let ids = self
-                            .reassignments
-                            .entry(decl_id)
-                            .or_insert_with(HashSet::new);
+                        let ids = self.reassignments.entry(decl_id).or_default();
                         ids.insert(place.identifier);
                     }
                 }

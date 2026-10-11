@@ -14,8 +14,8 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use bun_alloc::{Arena, ArenaVec, AstAlloc, AstVec};
@@ -120,7 +120,7 @@ impl<'h> Codegen<'h> {
             arena,
             id_to_ref: IdMap::new(),
             well_known: [None; WellKnown::COUNT],
-            name_to_ref: HashMap::new(),
+            name_to_ref: HashMap::default(),
             label_to_ref: IdMap::new(),
         }
     }
@@ -411,11 +411,11 @@ impl<'a, 'h> Context<'a, 'h> {
             env,
             cg,
             next_cache_index: 0,
-            declarations: HashSet::new(),
+            declarations: HashSet::default(),
             temp: IdMap::new(),
             object_methods: IdMap::new(),
             unique_identifiers,
-            synthesized_names: HashMap::new(),
+            synthesized_names: HashMap::default(),
         }
     }
 

@@ -11,7 +11,7 @@
 //!
 //! Conditional on `env.config.enable_function_outlining`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::environment::Environment;
 use crate::hir::{

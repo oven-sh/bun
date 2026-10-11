@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::environment::Environment;
@@ -24,8 +24,8 @@ pub(crate) fn validate_no_capitalized_calls(
         }
     }
 
-    let mut capital_load_globals: HashMap<IdentifierId, StoreStr> = HashMap::new();
-    let mut capitalized_properties: HashMap<IdentifierId, StoreStr> = HashMap::new();
+    let mut capital_load_globals: HashMap<IdentifierId, StoreStr> = HashMap::default();
+    let mut capitalized_properties: HashMap<IdentifierId, StoreStr> = HashMap::default();
 
     let reason = "Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config";
 

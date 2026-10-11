@@ -35,33 +35,42 @@ fn is_source_element(kind: Kind) -> bool {
     )
 }
 
-/// Prettier's `findNodeAtOffset`. `path`: the ancestors of `node`, from the outside in. If there is a
-/// source element at `offset` in `node`, the way to it is added to `path`.
+/// Prettier's `findNodeAtOffset`. If there is a source element at `offset` in `root`, `path` is the way to it, from
+/// the outside in.
 fn find_node_at_offset(
     tree: &Tree,
-    node: NodeId,
+    root: NodeId,
     offset: u32,
     edge: Edge,
     path: &mut Path,
 ) -> bool {
-    let span = tree.span(node);
-    if offset > span.end
-        || offset < span.start
-        || (edge == Edge::End && offset == span.start)
-        || (edge == Edge::Start && offset == span.end)
-    {
-        return false;
+    let is_at_offset = |node: NodeId| {
+        let span = tree.span(node);
+        !(offset > span.end
+            || offset < span.start
+            || (edge == Edge::End && offset == span.start)
+            || (edge == Edge::Start && offset == span.end))
+    };
+    // For each node of `path`, its children that have not been looked at.
+    let mut rest: Vec<&[NodeId]> = Vec::new();
+    if is_at_offset(root) {
+        path.push(root);
+        rest.push(tree.children(root));
     }
-    path.push(node);
-    if tree
-        .children(node)
-        .iter()
-        .any(|&child| find_node_at_offset(tree, child, offset, edge, path))
-        || is_source_element(tree.kind(node))
-    {
-        return true;
+    while let (Some(children), Some(&node)) = (rest.last_mut(), path.last()) {
+        if let Some((&child, others)) = children.split_first() {
+            *children = others;
+            if is_at_offset(child) {
+                path.push(child);
+                rest.push(tree.children(child));
+            }
+        } else if is_source_element(tree.kind(node)) {
+            return true;
+        } else {
+            path.pop();
+            rest.pop();
+        }
     }
-    path.pop();
     false
 }
 

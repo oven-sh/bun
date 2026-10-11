@@ -40,7 +40,7 @@
 //!
 //! Analogous to TS `Inference/InlineImmediatelyInvokedFunctionExpressions.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::hir::cfg_utils::{
@@ -65,7 +65,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
     // Track all function expressions that are assigned to a temporary
     let mut functions: IdMap<IdentifierId, FunctionId> = IdMap::new();
     // Functions that are inlined (by identifier id of the callee)
-    let mut inlined_functions: HashSet<IdentifierId> = HashSet::new();
+    let mut inlined_functions: HashSet<IdentifierId> = HashSet::default();
 
     // Iterate the *existing* blocks from the outer component to find IIFEs
     // and inline them. During iteration we will modify `func` (by inlining the CFG

@@ -71,16 +71,21 @@ fn convert(value: &JsonValue, room: RoomToNest) -> Option<Json> {
         JsonValue::Number(it) => Json::Number(it.value()),
         JsonValue::String(it) => Json::String(it.slice().to_vec()),
         JsonValue::Array(it) => {
-            let items = it.get().items().iter();
-            Json::Array(items.map(|it| convert(it, room)).collect::<Option<_>>()?)
+            let mut items = Vec::with_capacity(it.get().items().len());
+            for item in it.get().items() {
+                items.push(convert(item, room)?);
+            }
+            Json::Array(items)
         }
         JsonValue::Object(it) => {
-            let properties = it.get().properties().iter();
-            Json::Object(
-                properties
-                    .map(|it| Some((it.key.slice().to_vec(), convert(&it.value, room)?)))
-                    .collect::<Option<_>>()?,
-            )
+            let mut entries = Vec::with_capacity(it.get().properties().len());
+            for property in it.get().properties() {
+                entries.push((
+                    property.key.slice().to_vec(),
+                    convert(&property.value, room)?,
+                ));
+            }
+            Json::Object(entries)
         }
     })
 }
@@ -141,11 +146,11 @@ fn from_expr(expr: &Expr, room: RoomToNest) -> Option<Json> {
         )),
         Data::EString(it) => Json::String(it.slice8().to_vec()),
         Data::EArray(it) => {
-            let mut items = it.slice().iter();
-            Json::Array(items.try_fold(Vec::new(), |mut items, item| {
+            let mut items = Vec::with_capacity(it.slice().len());
+            for item in it.slice() {
                 items.push(from_expr(item, room)?);
-                Some(items)
-            })?)
+            }
+            Json::Array(items)
         }
         Data::EObject(it) => {
             let mut entries = Vec::with_capacity(it.properties.len());

@@ -69,8 +69,17 @@ pub enum FormatError {
     /// The syntax is nested so deeply that formatting it would overflow the stack. The file is left
     /// as it is.
     NestedTooDeeply,
+    /// The formatted text is [longer than a string can be](is_too_long). The file is left as it is.
+    TooLong,
     /// A bug in the formatter: the document it wrote is malformed.
     InvalidDocument,
+}
+
+/// Whether a text of `len` bytes is longer than a string of JavaScript can be, which is where Prettier ends with
+/// `RangeError: Invalid string length`. What is nested `n` deep is indented by `n * n` blanks.
+#[inline]
+pub(crate) fn is_too_long(len: usize) -> bool {
+    len as u64 > bun_lint::fix::MAX_STRING_LENGTH
 }
 
 impl FormatError {

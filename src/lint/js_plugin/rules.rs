@@ -210,7 +210,7 @@ impl FileSettings {
                 },
             ),
         ]);
-        let settings = match &language.settings {
+        let settings = match &*language.settings {
             Json::Null => Json::Object(Vec::new()),
             // A key that begins with `$` is this program's own.
             Json::Object(entries) => {

@@ -13,6 +13,7 @@ use super::Config;
 use super::parser::{
     BLANK_AFTER, CONCISE, Kind, MUST_BREAK, Node, QUOTED, REWRITTEN, Tree, UNQUOTED,
 };
+use crate::FormatError;
 use crate::ir::width::string_width;
 use crate::js::utils::number::format_trimmed_number;
 use crate::options::{IndentStyle, QuoteStyle};
@@ -49,6 +50,8 @@ struct Writer<'t, 'o> {
     column: u32,
     /// A line break and the deepest indentation so far.
     line_start: &'o mut Vec<u8>,
+    /// From here on no line has been started.
+    is_too_long: bool,
 }
 
 /// Appends `tree`, which has a node and no comments, to `out`.
@@ -58,7 +61,7 @@ pub(super) fn write(
     config: &Config,
     frames: &mut Frames,
     out: &mut Vec<u8>,
-) {
+) -> Result<(), FormatError> {
     let Frames { frames, line_start } = frames;
     frames.clear();
     line_start.clear();
@@ -71,6 +74,7 @@ pub(super) fn write(
         level: 0,
         column: config.alignment,
         line_start,
+        is_too_long: false,
     };
     let nodes = &tree.nodes[..];
     let trailing_comma = u32::from(config.trailing_comma);
@@ -185,6 +189,10 @@ pub(super) fn write(
         });
     }
     writer.out.extend_from_slice(config.line_ending);
+    match writer.is_too_long {
+        true => Err(FormatError::TooLong),
+        false => Ok(()),
+    }
 }
 
 impl Writer<'_, '_> {
@@ -195,6 +203,10 @@ impl Writer<'_, '_> {
     }
 
     fn new_line(&mut self) {
+        if crate::is_too_long(self.out.len()) {
+            self.is_too_long = true;
+            return;
+        }
         let Config {
             alignment,
             indent_width,

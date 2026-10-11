@@ -150,8 +150,8 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         language_options.push((b"globals", Json::Object(globals.collect())));
     }
     let mut all = vec![(&b"linterOptions"[..], object(linter_options))];
-    if !matches!(language.settings, Json::Null) {
-        all.push((b"settings", language.settings.clone()));
+    if !matches!(*language.settings, Json::Null) {
+        all.push((b"settings", Json::clone(&language.settings)));
     }
     all.push((b"rules", Json::Object(rules.chain(js_rules).collect())));
     all.push((b"plugins", Json::Array(plugins)));

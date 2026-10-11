@@ -426,7 +426,7 @@ fn describe(config: &ResolvedConfig) -> Vec<(Vec<u8>, Json)> {
         ),
         (b"globals".to_vec(), Json::Array(globals.collect())),
         (b"parserOptions".to_vec(), language.parser_options.clone()),
-        (b"settings".to_vec(), language.settings.clone()),
+        (b"settings".to_vec(), Json::clone(&language.settings)),
         (
             b"language".to_vec(),
             config
@@ -488,7 +488,7 @@ fn config_of(case: &Json, host: Option<&Host>) -> Result<Config, bun_lint::linte
                 plugins_from: None,
                 cascade: 1,
             },
-            &[LegacyFile {
+            &mut [LegacyFile {
                 path: [base_path, b"/.eslintrc.json"].concat(),
                 name: b".eslintrc.json".to_vec(),
                 base_path: base_path.to_vec(),

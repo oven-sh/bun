@@ -561,7 +561,7 @@ impl Reader<'_> {
         let part = |key: &[u8]| json.get(key).cloned().unwrap_or(Json::Null);
         object.language_options = part(b"languageOptions");
         object.linter_options = part(b"linterOptions");
-        object.settings = part(b"settings");
+        object.settings = ConfigObject::settings_of(part(b"settings"));
         object.language = json.get(b"language").and_then(Json::as_str).map(Box::from);
         object.processor = json.get(b"processor").and_then(Json::as_str).map(Box::from);
         object.source = json.get(b"$source").cloned();

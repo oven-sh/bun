@@ -51,6 +51,8 @@ macro_rules! pretty {
 }
 
 const NESTED_TOO_DEEPLY: &[u8] = b"RangeError: The code is nested too deeply.";
+/// In the words of Prettier.
+const TOO_LONG: &[u8] = b"RangeError: Invalid string length";
 
 /// Why a file is left as it is.
 enum Failure {
@@ -478,6 +480,7 @@ fn format(
             Err(Failure::Syntax(syntax_error_at(text, error)))
         }
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
+        Err(FormatError::TooLong) => Err(Failure::Syntax(TOO_LONG.to_vec())),
         Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
     };
     let mut out = Vec::new();
@@ -741,6 +744,7 @@ fn print<'a>(
         Err(FormatError::NestedTooDeeply) => {
             return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
         }
+        Err(FormatError::TooLong) => return Err(Failure::Syntax(TOO_LONG.to_vec())),
         Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
     };
     if how.resolved.omits_final_newline {

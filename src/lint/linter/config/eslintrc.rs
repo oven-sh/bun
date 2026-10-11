@@ -928,13 +928,13 @@ struct Legacy<'r, 'l, 'c> {
 
 impl<'c> Legacy<'_, '_, 'c> {
     /// `_normalizeConfigData`
-    fn config_data(&mut self, json: &Json, context: &Context<'c>) -> Result<(), ConfigError> {
+    fn config_data(&mut self, json: &mut Json, context: &Context<'c>) -> Result<(), ConfigError> {
         validate_schema(json, context)?;
         self.object_data(json, context)
     }
 
-    /// `_normalizeObjectConfigData`
-    fn object_data(&mut self, json: &Json, context: &Context<'c>) -> Result<(), ConfigError> {
+    /// `_normalizeObjectConfigData`. It takes out of `json` what it keeps.
+    fn object_data(&mut self, json: &mut Json, context: &Context<'c>) -> Result<(), ConfigError> {
         let patterns = |key: &[u8]| {
             let mut patterns = strings_of(json.get(key));
             patterns.retain(|it| !it.is_empty());
@@ -1105,14 +1105,14 @@ impl<'c> Legacy<'_, '_, 'c> {
             if let Some(rules) = flat.get(b"rules") {
                 config.push((b"rules", rules.clone()));
             }
-            let config = match flat.get(b"files") {
+            let mut config = match flat.get(b"files") {
                 Some(files) => {
                     config.push((b"files", files.clone()));
                     object(vec![(b"overrides", Json::Array(vec![object(config)]))])
                 }
                 None => object(config),
             };
-            self.object_data(&config, context)?;
+            self.object_data(&mut config, context)?;
         }
         Ok(())
     }
@@ -1145,8 +1145,8 @@ impl<'c> Legacy<'_, '_, 'c> {
             };
             let rules =
                 eslint8::rules_with(flag).map(|it| (it.as_bytes().to_vec(), text(b"error")));
-            let config = object(vec![(b"rules", Json::Object(rules.collect()))]);
-            return self.object_data(&config, &inner(Vec::new(), name));
+            let mut config = object(vec![(b"rules", Json::Object(rules.collect()))]);
+            return self.object_data(&mut config, &inner(Vec::new(), name));
         }
         if name.starts_with(b"plugin:") {
             let Some(slash) = strings::last_index_of_char(name, b'/') else {
@@ -1173,9 +1173,9 @@ impl<'c> Legacy<'_, '_, 'c> {
                 &what,
             );
             if let Some(config) = answer.and_then(|it| it.get(b"configs")?.get(config_name)) {
-                let config = config.clone();
+                let mut config = config.clone();
                 validate_schema(&config, &inner).map_err(|it| referenced(&it.message))?;
-                return self.object_data(&config, &inner);
+                return self.object_data(&mut config, &inner);
             }
             return match presets::find(&what).filter(|_| is_built_in) {
                 Some(objects) => self.preset(objects, &inner),
@@ -1191,7 +1191,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             normalize_package_name(name, b"eslint-config")
         };
         let loaded = (self.load)(LegacyKind::Config, &request, &context.path, context.entry);
-        let loaded = loaded.map_err(|failure| match failure.is_missing {
+        let mut loaded = loaded.map_err(|failure| match failure.is_missing {
             true => config_missing(name, &context.path),
             false => referenced(&failure.message),
         })?;
@@ -1200,10 +1200,9 @@ impl<'c> Legacy<'_, '_, 'c> {
             file.map_or_else(|| context.path.clone(), <[u8]>::to_vec),
             &request,
         );
-        let null = Json::Null;
-        let config = loaded.get(b"config").unwrap_or(&null);
-        validate_schema(config, &inner).map_err(|it| referenced(&it.message))?;
-        self.object_data(config, &inner)
+        let mut config = take(&mut loaded, b"config").unwrap_or(Json::Null);
+        validate_schema(&config, &inner).map_err(|it| referenced(&it.message))?;
+        self.object_data(&mut config, &inner)
     }
 
     /// `_takeFileExtensionProcessors`: a processor that is called like an extension is for the files that have it.
@@ -1223,7 +1222,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             for extension in extensions {
                 let processor = [&used.id[..], b"/", &extension].concat();
                 let name = [&context.name[..], b"#processors[\"", &processor, b"\"]"].concat();
-                let config = object(vec![
+                let mut config = object(vec![
                     (
                         b"files",
                         Json::Array(vec![text(&[b"*", &extension[..]].concat())]),
@@ -1231,7 +1230,7 @@ impl<'c> Legacy<'_, '_, 'c> {
                     (b"processor", Json::String(processor)),
                 ]);
                 self.object_data(
-                    &config,
+                    &mut config,
                     &Context {
                         name,
                         is_implicit_processor: true,
@@ -1244,7 +1243,7 @@ impl<'c> Legacy<'_, '_, 'c> {
     }
 
     /// `_normalizeObjectConfigDataBody`
-    fn body(&mut self, json: &Json, context: &Context<'c>) -> Result<(), ConfigError> {
+    fn body(&mut self, json: &mut Json, context: &Context<'c>) -> Result<(), ConfigError> {
         for name in strings_of(json.get(b"extends")) {
             if !name.is_empty() {
                 self.extends(name, context)?;
@@ -1258,30 +1257,36 @@ impl<'c> Legacy<'_, '_, 'c> {
             None => None,
         };
         self.file_extension_processors(plugins.as_deref().unwrap_or_default(), context)?;
-        let part = |key: &[u8]| json.get(key).cloned();
         let patterns = strings_of(json.get(b"ignorePatterns"));
+        let ignore_patterns = patterns.into_iter().map(<[u8]>::to_vec).collect();
+        // What `overrides` extend does not end the cascade.
+        let root = json.get(b"root").and_then(Json::as_bool);
+        let root = root.filter(|_| context.criteria.is_empty());
+        let no_inline_config = json.get(b"noInlineConfig").and_then(Json::as_bool);
+        let processor = (json.get(b"processor").and_then(Json::as_str)).map(<[u8]>::to_vec);
+        let mut part = |key: &[u8]| take(json, key);
         self.elements.push(Element {
             name: context.name.clone(),
             base_path: context.base_path,
             criteria: context.criteria.clone(),
             is_config: !context.is_implicit_processor,
-            // What `overrides` extend does not end the cascade.
-            root: (json.get(b"root").and_then(Json::as_bool))
-                .filter(|_| context.criteria.is_empty()),
+            root,
             env: part(b"env"),
             globals: part(b"globals"),
-            ignore_patterns: patterns.into_iter().map(<[u8]>::to_vec).collect(),
-            no_inline_config: json.get(b"noInlineConfig").and_then(Json::as_bool),
+            ignore_patterns,
+            no_inline_config,
             parser,
             parser_options: part(b"parserOptions"),
             plugins,
-            processor: (json.get(b"processor").and_then(Json::as_str)).map(<[u8]>::to_vec),
+            processor,
             report_unused_disable_directives: part(b"reportUnusedDisableDirectives"),
             rules: part(b"rules"),
             settings: part(b"settings"),
         });
-        let overrides = json.get(b"overrides").and_then(Json::as_array);
-        for (index, item) in overrides.unwrap_or_default().iter().enumerate() {
+        let Some(Json::Array(mut overrides)) = take(json, b"overrides") else {
+            return Ok(());
+        };
+        for (index, item) in overrides.iter_mut().enumerate() {
             let index = index.to_string();
             let name = [&context.name[..], b"#overrides[", index.as_bytes(), b"]"].concat();
             self.object_data(
@@ -1295,11 +1300,11 @@ impl<'c> Legacy<'_, '_, 'c> {
         Ok(())
     }
 
-    /// The elements of `file`.
-    fn file(&mut self, file: &'c LegacyFile) -> Result<(), ConfigError> {
+    /// The elements of `file`, in which `json` was.
+    fn file(&mut self, file: &'c LegacyFile, mut json: Json) -> Result<(), ConfigError> {
         let given = self.options.plugins_from;
         self.config_data(
-            &file.json,
+            &mut json,
             &Context {
                 path: file.path.clone(),
                 name: file.name.clone(),
@@ -1654,7 +1659,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             pattern.is_universal = false;
         }
         read.rules = settings;
-        read.settings = element.settings.take().unwrap_or(Json::Null);
+        read.settings = (element.settings.take()).and_then(super::ConfigObject::settings_of);
         if error.is_some() {
             read.error = error;
         }
@@ -2180,11 +2185,11 @@ pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
 
 impl Config {
     /// From the configuration files of ESLint 8 that count for a directory: the outermost first, then what the command line
-    /// adds. See the [module](self).
+    /// adds. See the [module](self). It takes [`LegacyFile::json`] out of each.
     pub fn from_legacy(
         registry: &Registry,
         options: &LegacyOptions,
-        files: &[LegacyFile],
+        files: &mut [LegacyFile],
         load: &mut LoadLegacy<'_>,
         load_plugin: &mut LoadLocatedPlugin<'_>,
     ) -> Result<Config, ConfigError> {
@@ -2240,10 +2245,11 @@ impl Config {
         legacy.ignore_patterns(&DEFAULT_PATTERNS, options.cwd);
         legacy.reader.defaults = legacy.reader.objects.len();
         // `_loadConfigInAncestors`: from the innermost, up to one with `root`.
-        let (cascade, others) = files.split_at(options.cascade.min(files.len()));
+        let (cascade, others) = files.split_at_mut(options.cascade.min(files.len()));
         let mut of_directories: Vec<Vec<Element>> = Vec::new();
-        for file in cascade.iter().rev() {
-            legacy.file(file)?;
+        for file in cascade.iter_mut().rev() {
+            let json = std::mem::replace(&mut file.json, Json::Null);
+            legacy.file(file, json)?;
             let elements = std::mem::take(&mut legacy.elements);
             let is_root = elements.iter().rev().find_map(|it| it.root) == Some(true);
             of_directories.push(elements);
@@ -2253,7 +2259,8 @@ impl Config {
         }
         legacy.elements = of_directories.into_iter().rev().flatten().collect();
         for file in others {
-            legacy.file(file)?;
+            let json = std::mem::replace(&mut file.json, Json::Null);
+            legacy.file(file, json)?;
         }
         let mut elements = std::mem::take(&mut legacy.elements);
         let named = Named::of(&elements);

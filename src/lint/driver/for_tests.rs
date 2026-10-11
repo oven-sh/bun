@@ -178,7 +178,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
                 plugins_from: None,
                 cascade: 1,
             },
-            &[LegacyFile {
+            &mut [LegacyFile {
                 path: paths::join(base_path, b".eslintrc.json"),
                 name: b".eslintrc.json".to_vec(),
                 base_path: base_path.to_vec(),

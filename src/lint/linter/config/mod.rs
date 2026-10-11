@@ -167,7 +167,8 @@ struct ConfigObject {
     ignores_inside_only: bool,
     language_options: Json,
     linter_options: Json,
-    settings: Json,
+    /// If it is an object. The files for which no other object has any share it.
+    settings: Option<Arc<Json>>,
     rules: Vec<RuleSetting>,
     /// The prefixes of the plugins that are implemented here.
     plugins: Vec<Box<[u8]>>,
@@ -195,6 +196,22 @@ struct ConfigObject {
     plugins_of_override: Option<(u32, u32)>,
 }
 
+impl ConfigObject {
+    /// What it keeps of `settings` as they are written.
+    fn settings_of(written: Json) -> Option<Arc<Json>> {
+        matches!(written, Json::Object(_)).then(|| Arc::new(written))
+    }
+}
+
+/// Whether `settings` merged into none are the same again: `__proto__` is left out, and of a key that is there twice a flat
+/// configuration has one.
+fn stay_as_they_are(settings: &Json, is_legacy: bool) -> bool {
+    let entries = settings.as_object().unwrap_or_default();
+    let is_again = |at: usize, key: &[u8]| entries.iter().take(at).any(|it| it.0 == key);
+    let mut entries = entries.iter().enumerate();
+    entries.all(|(at, it)| it.0 != b"__proto__" && (is_legacy || !is_again(at, &it.0)))
+}
+
 impl Default for ConfigObject {
     fn default() -> Self {
         ConfigObject {
@@ -206,7 +223,7 @@ impl Default for ConfigObject {
             ignores_inside_only: false,
             language_options: Json::Null,
             linter_options: Json::Null,
-            settings: Json::Null,
+            settings: None,
             rules: Vec::new(),
             plugins: Vec::new(),
             foreign_plugins: Vec::new(),
@@ -779,7 +796,8 @@ impl Config {
 
     /// Merges the objects at `indices`, and does what the constructor of ESLint's `Config` does.
     fn merge(&self, registry: &Registry, indices: &[u32]) -> ResolvedConfig {
-        let (mut language_options, mut settings) = (Json::Null, Json::Null);
+        let mut language_options = Json::Null;
+        let mut settings: Option<Arc<Json>> = None;
         let mut linter = LinterOptions {
             report_unused_disable_directives: Severity::Off,
             ..LinterOptions::default()
@@ -827,7 +845,14 @@ impl Config {
                 false => merge::deep_merge_into,
             };
             merge_into(&mut language_options, &object.language_options);
-            merge_into(&mut settings, &object.settings);
+            if let Some(of_object) = &object.settings {
+                if settings.is_none() && stay_as_they_are(of_object, self.is_legacy) {
+                    settings = Some(Arc::clone(of_object));
+                } else {
+                    let merged = settings.get_or_insert_with(|| Arc::new(Json::Null));
+                    merge_into(Arc::make_mut(merged), of_object);
+                }
+            }
             linter.merge_json(&object.linter_options);
             match self.is_legacy {
                 true => eslintrc::merge_rules(&mut rules, &object.rules),
@@ -875,6 +900,7 @@ impl Config {
             (false, true) => Tables::Oxlint,
             (false, false) => Tables::Today,
         };
+        let settings = settings.unwrap_or_else(|| Arc::new(Json::Null));
         // oxlint has no such setting.
         config.has_unknown_resolver =
             !self.prefers_typescript_rules && flat::names_unknown_resolver(&settings);

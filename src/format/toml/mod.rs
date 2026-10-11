@@ -42,6 +42,5 @@ pub fn format(text: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> Result
     if text.starts_with(BOM) {
         out.extend_from_slice(BOM);
     }
-    printer::print(text, &elements, options, out);
-    Ok(())
+    printer::print(text, &elements, options, out)
 }

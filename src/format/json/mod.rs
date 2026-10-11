@@ -300,7 +300,7 @@ fn format_normalized(
     let has_marks = options.is_in_markdown && bun_core::strings::contains(text, b"\\\n");
     if tree.comments.is_empty() && !has_marks {
         if !tree.nodes.is_empty() {
-            writer::write(text, tree, config, frames, out);
+            writer::write(text, tree, config, frames, out)?;
         }
         return Ok(());
     }

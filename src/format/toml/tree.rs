@@ -40,17 +40,13 @@ pub(super) struct Element {
     pub(super) next: u32,
 }
 
-/// How deep arrays and inline tables can be nested: they are read and written by functions that call
-/// each other.
-const MAX_DEPTH: u32 = 128;
-
 struct Builder<'t> {
     text: &'t [u8],
     tokens: std::slice::Iter<'t, Token>,
     /// Behind the last token.
     at: usize,
     elements: Vec<Element>,
-    depth: u32,
+    stack_check: bun_core::StackCheck,
 }
 
 /// `tokens`: those of `text`.
@@ -60,7 +56,7 @@ pub(super) fn build(text: &[u8], tokens: &[Token]) -> Result<Vec<Element>, Forma
         tokens: tokens.iter(),
         at: if text.starts_with(BOM) { BOM.len() } else { 0 },
         elements: Vec::with_capacity(tokens.len() * 2),
-        depth: 0,
+        stack_check: bun_core::StackCheck::init(),
     };
     loop {
         builder.trivia();
@@ -199,10 +195,9 @@ impl Builder<'_> {
 
     /// An array or an inline table.
     fn container(&mut self, kind: Kind) -> Result<(), FormatError> {
-        if self.depth == MAX_DEPTH {
+        if !self.stack_check.is_safe_to_recurse() {
             return Err(FormatError::NestedTooDeeply);
         }
-        self.depth += 1;
         let container = self.start(kind);
         self.token(Kind::Open);
         loop {
@@ -220,7 +215,6 @@ impl Builder<'_> {
         }
         self.token(Kind::Close);
         self.finish(container);
-        self.depth -= 1;
         Ok(())
     }
 }

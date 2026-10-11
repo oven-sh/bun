@@ -3,8 +3,9 @@
 //! no comment is on one line, one that does not fit has an element on each line.
 
 use super::tree::{Element, Kind};
-use crate::FormatOptions;
 use crate::options::LineEnding;
+use crate::{FormatError, FormatOptions};
+use std::cell::Cell;
 
 /// `allowed_blank_lines`
 const MAX_EMPTY_LINES: usize = 2;
@@ -33,10 +34,28 @@ struct Printer<'t> {
     indent: Vec<u8>,
     newline: &'static [u8],
     array_trailing_comma: bool,
+    /// For each element, how many of those before it are line breaks, and how many are comments.
+    counts: Vec<[u32; 2]>,
+    stack_check: bun_core::StackCheck,
+    /// A value has not been written because it is nested too deeply.
+    ran_out_of_stack: Cell<bool>,
 }
 
 /// Appends the document to `out`.
-pub(super) fn print(text: &[u8], elements: &[Element], options: &FormatOptions, out: &mut Vec<u8>) {
+pub(super) fn print(
+    text: &[u8],
+    elements: &[Element],
+    options: &FormatOptions,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
+    let mut counts = Vec::with_capacity(elements.len() + 1);
+    let mut count = [0; 2];
+    counts.push(count);
+    for element in elements {
+        count[0] += u32::from(element.kind == Kind::LineBreaks);
+        count[1] += u32::from(element.kind == Kind::Comment);
+        counts.push(count);
+    }
     let printer = Printer {
         text,
         elements,
@@ -50,16 +69,24 @@ pub(super) fn print(text: &[u8], elements: &[Element], options: &FormatOptions, 
             _ => b"\n",
         },
         array_trailing_comma: !options.trailing_commas.is_none(),
+        counts,
+        stack_check: bun_core::StackCheck::init(),
+        ran_out_of_stack: Cell::new(false),
     };
     let start = out.len();
     out.reserve(text.len());
     printer.root(out);
+    if printer.ran_out_of_stack.get() {
+        out.truncate(start);
+        return Err(FormatError::NestedTooDeeply);
+    }
     if out[start..].ends_with(b"\r\n") {
         out.truncate(out.len() - 2);
     } else if out[start..].ends_with(b"\n") {
         out.truncate(out.len() - 1);
     }
     out.extend_from_slice(printer.newline);
+    Ok(())
 }
 
 /// `str::chars().count()`
@@ -91,9 +118,13 @@ impl Printer<'_> {
         self.siblings(node + 1, self.elements[node].next as usize)
     }
 
-    fn has_descendant(&self, node: usize, kind: Kind) -> bool {
-        let descendants = &self.elements[node + 1..self.elements[node].next as usize];
-        descendants.iter().any(|it| it.kind == kind)
+    /// Whether there are both line breaks and comments in `node`.
+    fn has_line_breaks_and_comments(&self, node: usize) -> bool {
+        let (from, to) = (
+            self.counts[node + 1],
+            self.counts[self.elements[node].next as usize],
+        );
+        from[0] < to[0] && from[1] < to[1]
     }
 
     fn line_breaks(&self, element: &Element) -> usize {
@@ -260,6 +291,29 @@ impl Printer<'_> {
         entry
     }
 
+    /// What [`Printer::write_entry`] writes for the [`Printer::entry`] of `node`, which is in an inline table.
+    fn entry_in_place(&self, node: usize, context: Context, out: &mut Vec<u8>) {
+        let mut first_comment = None;
+        for index in self.children(node) {
+            let element = &self.elements[index];
+            let comment = match element.kind {
+                Kind::Key => {
+                    self.key(index, out);
+                    out.extend_from_slice(b" = ");
+                    None
+                }
+                Kind::Value => self.value(index, context, out),
+                Kind::Comment => Some((element.start, element.end)),
+                _ => None,
+            };
+            first_comment = first_comment.or(comment);
+        }
+        if let Some(comment) = first_comment {
+            out.push(b' ');
+            out.extend_from_slice(self.span(comment));
+        }
+    }
+
     /// `format_key`: names and periods without white space.
     fn key(&self, node: usize, out: &mut Vec<u8>) {
         for index in self.children(node) {
@@ -269,6 +323,10 @@ impl Printer<'_> {
 
     /// `format_value`. Returns the comment behind the value.
     fn value(&self, node: usize, context: Context, out: &mut Vec<u8>) -> Option<Span> {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.ran_out_of_stack.set(true);
+            return None;
+        }
         let mut comment = None;
         for index in self.children(node) {
             let element = &self.elements[index];
@@ -298,7 +356,7 @@ impl Printer<'_> {
                     } else if is_after_comment {
                         out.push(b' ');
                     }
-                    self.write_entry(&self.entry(index, context), out);
+                    self.entry_in_place(index, context, out);
                     is_first = false;
                     is_after_comment = false;
                 }
@@ -316,41 +374,9 @@ impl Printer<'_> {
         }
     }
 
-    /// The `add_values` of `format_array`. `values`: each without its comma, with the comment behind
-    /// it. Returns whether there were any.
-    fn add_values(
-        &self,
-        values: &mut Vec<(Vec<u8>, Option<Span>)>,
-        inner: Option<Context>,
-        out: &mut Vec<u8>,
-    ) -> bool {
-        let were_values = !values.is_empty();
-        for (index, (value, comment)) in values.drain(..).enumerate() {
-            match inner {
-                // On one line.
-                None if index != 0 => out.push(b' '),
-                None => {}
-                Some(inner) => {
-                    if index != 0 {
-                        out.extend_from_slice(self.newline);
-                    }
-                    self.write_indent(inner, out);
-                }
-            }
-            out.extend_from_slice(&value);
-            if let Some(comment) = comment.filter(|_| inner.is_some()) {
-                out.push(b' ');
-                out.extend_from_slice(self.span(comment));
-            }
-        }
-        were_values
-    }
-
     /// `format_array`
     fn array(&self, node: usize, context: Context, out: &mut Vec<u8>) {
-        let is_multiline = context.force_multiline
-            || (self.has_descendant(node, Kind::LineBreaks)
-                && self.has_descendant(node, Kind::Comment));
+        let is_multiline = context.force_multiline || self.has_line_breaks_and_comments(node);
         let inner = is_multiline.then_some(Context {
             indent_level: context.indent_level + 1,
             ..context
@@ -360,8 +386,22 @@ impl Printer<'_> {
             .filter(|index| self.elements[*index].kind == Kind::Value)
             .count();
 
-        // As in `root`.
-        let mut values: Vec<(Vec<u8>, Option<Span>)> = Vec::new();
+        // oxc-toml keeps the values as `root` keeps the entries, and adds them when it is known what follows them. Here
+        // a value is written at once, or what is in `n` arrays would be copied `n` times. Only the comment behind the
+        // last value depends on what follows. `values`: how many oxc-toml would be keeping.
+        let mut values = 0usize;
+        let mut comment_behind_last: Option<Span> = None;
+        let write_comment = |comment: &mut Option<Span>, out: &mut Vec<u8>| {
+            if let Some(comment) = comment.take().filter(|_| is_multiline) {
+                out.push(b' ');
+                out.extend_from_slice(self.span(comment));
+            }
+        };
+        // The end of its `add_values`. Returns whether there were any.
+        let add_values = |values: &mut usize, comment: &mut Option<Span>, out: &mut Vec<u8>| {
+            write_comment(comment, out);
+            std::mem::take(values) != 0
+        };
         let mut skip_newlines = 0usize;
         let mut value_index = 0;
         let mut previous = Kind::Open;
@@ -372,18 +412,29 @@ impl Printer<'_> {
                     if is_multiline && out.last() == Some(&b'[') {
                         out.extend_from_slice(self.newline);
                     }
-                    let mut value = Vec::new();
-                    let comment = self.value(index, of_values, &mut value);
+                    write_comment(&mut comment_behind_last, out);
+                    match inner {
+                        // On one line.
+                        None if values != 0 => out.push(b' '),
+                        None => {}
+                        Some(inner) => {
+                            if values != 0 {
+                                out.extend_from_slice(self.newline);
+                            }
+                            self.write_indent(inner, out);
+                        }
+                    }
+                    comment_behind_last = self.value(index, of_values, out);
                     value_index += 1;
                     if value_index < value_count || (is_multiline && self.array_trailing_comma) {
-                        value.push(b',');
+                        out.push(b',');
                     }
-                    values.push((value, comment));
+                    values += 1;
                     skip_newlines += 1;
                 }
                 Kind::Open => out.push(b'['),
                 Kind::Close => {
-                    self.add_values(&mut values, inner, out);
+                    add_values(&mut values, &mut comment_behind_last, out);
                     if is_multiline {
                         if out.last() != Some(&b'\n') {
                             out.extend_from_slice(self.newline);
@@ -395,28 +446,27 @@ impl Printer<'_> {
                 Kind::LineBreaks if is_multiline => {
                     let count = self.line_breaks(element);
                     if count > 1 {
-                        self.add_values(&mut values, inner, out);
+                        add_values(&mut values, &mut comment_behind_last, out);
                         skip_newlines = 0;
                     }
                     self.write_newlines(count.saturating_sub(skip_newlines), out);
                 }
                 Kind::Comment => {
                     let comment = (element.start, element.end);
-                    match values.last_mut() {
-                        // It is behind the last value, on its line.
-                        Some(last) if previous != Kind::LineBreaks => last.1 = Some(comment),
-                        _ => {
-                            if self.add_values(&mut values, inner, out) {
-                                out.extend_from_slice(self.newline);
-                                skip_newlines = 0;
-                            }
-                            if out.last() == Some(&b'[') {
-                                out.push(b' ');
-                            } else {
-                                self.write_indent(of_values, out);
-                            }
-                            out.extend_from_slice(self.span(comment));
+                    // It is behind the last value, on its line.
+                    if values != 0 && previous != Kind::LineBreaks {
+                        comment_behind_last = Some(comment);
+                    } else {
+                        if add_values(&mut values, &mut comment_behind_last, out) {
+                            out.extend_from_slice(self.newline);
+                            skip_newlines = 0;
                         }
+                        if out.last() == Some(&b'[') {
+                            out.push(b' ');
+                        } else {
+                            self.write_indent(of_values, out);
+                        }
+                        out.extend_from_slice(self.span(comment));
                     }
                 }
                 _ => {}

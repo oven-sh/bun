@@ -142,7 +142,7 @@ pub struct LanguageOptions {
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
-    pub settings: Json,
+    pub settings: Arc<Json>,
     /// Computed from the fields above the first time it is asked for. They must not change after
     /// that.
     #[doc(hidden)]
@@ -265,13 +265,13 @@ impl LanguageOptions {
     /// `parser` is a string: `"espree"`, `"@typescript-eslint/parser"`, `"typescript-eslint/parser"`
     /// or `"typescript"`, each with or without `@version`. Any other is [`Parser::Other`].
     pub fn from_json(language_options: &Json, settings: &Json) -> LanguageOptions {
-        Self::from_json_for(language_options, settings.clone(), Tables::Today)
+        Self::from_json_for(language_options, Arc::new(settings.clone()), Tables::Today)
     }
 
     /// The same. `whose`: whose environments `$env` names.
     pub(crate) fn from_json_for(
         language_options: &Json,
-        settings: Json,
+        settings: Arc<Json>,
         whose: Tables,
     ) -> LanguageOptions {
         let parser_options = language_options
@@ -478,7 +478,7 @@ impl Default for LanguageOptions {
             without_modules: false,
             infers_globals: InferGlobals::No,
             parser_options: Json::Null,
-            settings: Json::Null,
+            settings: Arc::new(Json::Null),
             config_globals: OnceLock::new(),
         }
     }

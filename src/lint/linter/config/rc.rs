@@ -745,7 +745,10 @@ impl Rc<'_, '_> {
         };
         if passes_everything_on {
             base.language_options = self.language_options(json);
-            base.settings = json.get(b"settings").cloned().unwrap_or(Json::Null);
+            base.settings = json
+                .get(b"settings")
+                .cloned()
+                .and_then(ConfigObject::settings_of);
             base.linter_options = Json::Object(linter_options);
         }
         self.reader.objects.push(base);
@@ -779,7 +782,7 @@ impl Rc<'_, '_> {
                 ignores: (!excluded.is_empty())
                     .then(|| excluded.iter().map(|it| Pattern::of_oxlint(it)).collect()),
                 language_options: self.language_options(item),
-                settings: item.get(b"settings").cloned().unwrap_or(Json::Null),
+                settings: (item.get(b"settings").cloned()).and_then(ConfigObject::settings_of),
                 rules: self.rules(item, &certain)?,
                 ..ConfigObject::default()
             };

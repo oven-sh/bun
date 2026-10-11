@@ -52,7 +52,7 @@ type Exports = FxHashMap<Box<[u8]>, bool>;
 
 /// What of the file that asks decides how the other files are found and read.
 struct Context {
-    settings: Json,
+    settings: Arc<Json>,
     parser_options: Json,
     parser: Parser,
     source_type: SourceType,
@@ -86,7 +86,7 @@ pub struct Usage(OnceCell<Option<Arc<Exports>>>);
 impl Context {
     fn of(language: &LanguageOptions) -> Context {
         Context {
-            settings: language.settings.clone(),
+            settings: Arc::clone(&language.settings),
             parser_options: language.parser_options.clone(),
             parser: language.parser,
             source_type: language.source_type,

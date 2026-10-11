@@ -1383,7 +1383,7 @@ impl<'l> Loader<'l> {
                 plugins_from: plugins_from.as_deref(),
                 cascade,
             },
-            &files,
+            &mut files,
             &mut load,
             &mut load_plugin,
         )

@@ -3959,7 +3959,7 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 #[thread_local]
 static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 
-fn normalize_specifier_for_resolution<'a>(
+pub(crate) fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {

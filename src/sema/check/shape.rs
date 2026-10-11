@@ -937,7 +937,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The members of an object type or an intersection of them. `None` for anything else.
+    /// The members of an object type. For an intersection of them: its properties, and no more of
+    /// its signatures than says whether it has any. The rest is in `structured_members`.
+    /// `None` for anything else.
     #[inline]
     pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];

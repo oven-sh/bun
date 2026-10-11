@@ -1186,13 +1186,13 @@ impl Config {
                 && let Some(rule) =
                     find_formatting_rule(registry, &setting.id, foreign, &js_plugins)
             {
-                if setting.severity != Severity::Off {
-                    let position = (config.rules.len(), config.js_rules.len());
-                    config
-                        .formatting_rules
-                        .push(FormattingRule { rule, position });
-                    config.has_skipped_rules = true;
-                }
+                config.has_skipped_rules |= setting.severity != Severity::Off;
+                config.formatting_rules.push(FormattingRule {
+                    rule,
+                    severity: setting.severity,
+                    options: setting.options,
+                    position: (config.rules.len(), config.js_rules.len()),
+                });
                 continue;
             }
             if let Some(plugin) = setting.written_for.filter(|it| it.has_no_rules()) {

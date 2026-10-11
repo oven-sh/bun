@@ -2,7 +2,7 @@
 
 use bun_lint::language::{Global, Parser, SourceType};
 pub(crate) use bun_lint::linter::write_json_indented as write_indented;
-use bun_lint::linter::{ResolvedConfig, RuleId};
+use bun_lint::linter::{Entry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 
 pub(crate) fn text(text: &[u8]) -> Json {
@@ -39,21 +39,24 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
             number(config.linter.report_unused_inline_configs as u32),
         ));
     }
-    let rules = config.configured();
-    let rules = rules.filter(|it| !config.only_has_defaults(it));
-    let rules = rules.map(|rule| {
-        let mut setting = vec![number(rule.severity as u32)];
-        setting.extend(rule.options.iter().cloned());
-        let id = match rule.name() {
-            Some(name) => name.to_vec(),
-            None => RuleId::Known(rule.entry.meta).to_vec(),
+    let rules = config.entries().filter_map(|entry| {
+        let (id, severity, options) = match entry {
+            Entry::Native(rule) if config.only_has_defaults(rule) => return None,
+            Entry::Native(rule) => {
+                let id = match rule.name() {
+                    Some(name) => name.to_vec(),
+                    None => RuleId::Known(rule.entry.meta).to_vec(),
+                };
+                (id, rule.severity, &rule.options[..])
+            }
+            Entry::Js(rule) => {
+                let id = rule.configured.rule.id.to_vec();
+                (id, rule.severity, &rule.options[..])
+            }
+            Entry::Formatting(rule) => (rule.rule.0.into(), rule.severity, &rule.options[..]),
         };
-        (id, Json::Array(setting))
-    });
-    let js_rules = config.js_rules.iter().map(|rule| {
-        let mut setting = vec![number(rule.severity as u32)];
-        setting.extend(rule.options.iter().cloned());
-        (rule.configured.rule.id.to_vec(), Json::Array(setting))
+        let setting = std::iter::once(number(severity as u32)).chain(options.iter().cloned());
+        Some((id, Json::Array(setting.collect())))
     });
     let mut plugins = vec![text(b"@")];
     let of_rules = config.configured().map(|it| it.entry.meta.plugin);
@@ -116,7 +119,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     if !matches!(*language.settings, Json::Null) {
         all.push((b"settings", Json::clone(&language.settings)));
     }
-    all.push((b"rules", Json::Object(rules.chain(js_rules).collect())));
+    all.push((b"rules", Json::Object(rules.collect())));
     all.push((b"plugins", Json::Array(plugins)));
     all.push((
         b"language",

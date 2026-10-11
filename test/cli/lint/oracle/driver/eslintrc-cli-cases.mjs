@@ -2234,6 +2234,11 @@ const whatIsPrinted = [
     ".eslintrc.json": rc({ env: { node: true }, globals: { a: "readonly", b: true }, parserOptions: { ecmaVersion: 2020 }, settings: { s: 1 }, rules: { eqeqeq: ["error", "smart"], "no-var": 1, "no-debugger": "off" } }),
     "a.js": code,
   }, ["--print-config", "a.js"]),
+  printConfig("rules about layout, on and off", {
+    ".eslintrc.json": rc({ extends: "./base.json", rules: { "no-var": "error", semi: ["warn", "never"], quotes: 1, indent: "off", eqeqeq: [2, "smart"] } }),
+    "base.json": json({ rules: { quotes: ["error", "single"], "max-len": [0, 100] } }),
+    "a.js": code,
+  }, ["--print-config", "a.js"]),
   printConfig("an empty configuration", { ".eslintrc.json": rc(), "a.js": code }, ["--print-config", "a.js"]),
   printConfig("the cascade, extends and overrides", {
     ".eslintrc.json": rc({ extends: "./base.json", overrides: [{ files: ["*.js"], rules: { "no-var": "warn" } }], ignorePatterns: ["dist"] }),

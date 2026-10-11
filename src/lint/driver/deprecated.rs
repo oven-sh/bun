@@ -4,7 +4,7 @@ use bun_core::printer::json_stringify;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin;
-use bun_lint::linter::{Deprecated, ResolvedConfig, RuleId, deprecated_rule, write_json};
+use bun_lint::linter::{Deprecated, Entry, ResolvedConfig, RuleId, deprecated_rule, write_json};
 use bun_lint::options::Json;
 
 /// `getShorthandName(name, "eslint-plugin")`
@@ -63,49 +63,29 @@ fn write(out: &mut Vec<u8>, (id, rest): &Deprecated) {
 /// `JSON.stringify(result.usedDeprecatedRules)` for a file that has `config`.
 pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
     out.push(b'[');
-    let rules = config.into_iter().flat_map(ResolvedConfig::configured);
-    let mut js_rules = (config.map_or(&[][..], |config| &config.js_rules[..]).iter())
-        .enumerate()
-        .filter(|it| it.1.severity != Severity::Off)
-        .filter_map(|(at, it)| {
-            Some((
-                (it.position, at),
-                &*it.configured.rule,
-                it.configured.rule.deprecated.as_deref()?,
-            ))
-        })
-        .peekable();
-    let formatting_rules = config.map_or(&[][..], |config| &config.formatting_rules[..]);
-    let mut formatting_rules = formatting_rules.iter().peekable();
     let start = out.len();
-    let separate = |out: &mut Vec<u8>| {
-        if out.len() > start {
+    for entry in config.into_iter().flat_map(ResolvedConfig::entries) {
+        let before = out.len();
+        if before > start {
             out.push(b',');
         }
-    };
-    // In the order of the configuration.
-    for (position, rule) in rules.map(Some).chain([None]).enumerate() {
-        loop {
-            let about_layout = formatting_rules.next_if(|it| {
-                it.position.0 <= position
-                    && js_rules.peek().is_none_or(|js| js.0.1 >= it.position.1)
-            });
-            if let Some(about_layout) = about_layout {
-                separate(out);
-                write(out, about_layout.rule);
-            } else if let Some((_, rule, deprecated)) = js_rules.next_if(|it| it.0.0 <= position) {
-                separate(out);
-                write_js(out, rule, deprecated);
-            } else {
-                break;
+        let separated = out.len();
+        match entry {
+            Entry::Native(rule) if rule.severity != Severity::Off => {
+                let id = RuleId::Known(rule.entry.meta).to_vec();
+                let deprecated = deprecated_rule(&id).filter(|_| rule.entry.meta.is_deprecated);
+                deprecated.into_iter().for_each(|it| write(out, it));
             }
+            Entry::Js(rule) if rule.severity != Severity::Off => {
+                let rule = &*rule.configured.rule;
+                let deprecated = rule.deprecated.as_deref().into_iter();
+                deprecated.for_each(|it| write_js(out, rule, it));
+            }
+            Entry::Formatting(rule) if rule.severity != Severity::Off => write(out, rule.rule),
+            _ => {}
         }
-        if let Some(rule) =
-            rule.filter(|it| it.severity != Severity::Off && it.entry.meta.is_deprecated)
-            && let Some(deprecated) = deprecated_rule(&RuleId::Known(rule.entry.meta).to_vec())
-        {
-            separate(out);
-            write(out, deprecated);
+        if out.len() == separated {
+            out.truncate(before);
         }
     }
     out.push(b']');

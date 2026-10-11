@@ -210,14 +210,26 @@ fn record_dynamic_hook_usage_error(
 
 /// The unconditional blocks of a function, computed for the first block asked for that is not the entry,
 /// which is always one of them.
-struct UnconditionalBlocks<'a> {
+pub(crate) struct UnconditionalBlocks<'a> {
     func: &'a HirFunction,
     next_block_id: u32,
     blocks: Option<BlockSet>,
 }
 
-impl UnconditionalBlocks<'_> {
-    fn contains(&mut self, id: BlockId) -> Result<bool, CompilerDiagnostic> {
+impl<'a> UnconditionalBlocks<'a> {
+    pub(crate) fn new(func: &'a HirFunction, next_block_id: u32) -> Self {
+        debug_assert!(
+            compute_unconditional_blocks(func, next_block_id)
+                .is_ok_and(|blocks| blocks.contains(&func.body.entry))
+        );
+        UnconditionalBlocks {
+            func,
+            next_block_id,
+            blocks: None,
+        }
+    }
+
+    pub(crate) fn contains(&mut self, id: BlockId) -> Result<bool, CompilerDiagnostic> {
         if id == self.func.body.entry {
             return Ok(true);
         }
@@ -236,16 +248,7 @@ pub(crate) fn validate_hooks_usage(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
-    let next_block_id = env.next_block_id().0;
-    debug_assert!(
-        compute_unconditional_blocks(func, next_block_id)
-            .is_ok_and(|blocks| blocks.contains(&func.body.entry))
-    );
-    let mut unconditional_blocks = UnconditionalBlocks {
-        func,
-        next_block_id,
-        blocks: None,
-    };
+    let mut unconditional_blocks = UnconditionalBlocks::new(func, env.next_block_id().0);
     let mut errors_by_loc: IndexMap<SourceLocation, CompilerErrorDetail> = IndexMap::new();
     let mut value_kinds = ValueKinds(vec![None; env.identifiers.len()]);
 

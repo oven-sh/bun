@@ -1550,6 +1550,7 @@ impl NotBuiltIn {
 
     fn add(&mut self, config: &ResolvedConfig) {
         let about_layout = config.formatting_rules.iter();
+        let about_layout = about_layout.filter(|it| it.severity != Severity::Off);
         self.about_layout.extend(about_layout.map(|it| it.rule.0));
         let plugins = config.plugins_without_rules.iter();
         self.plugins.extend(plugins.map(|it| it.prefix()));

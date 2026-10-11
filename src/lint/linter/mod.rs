@@ -62,7 +62,8 @@ pub use registry::{
     oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
 pub use resolved::{
-    ConfiguredJsRule, ConfiguredRule, FormattingRule, LinterOptions, ResolvedConfig, severity_of,
+    ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,
+    severity_of,
 };
 use resolved::{Prepared, Slot};
 pub use syntax::{

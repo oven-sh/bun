@@ -3832,6 +3832,41 @@ describe.concurrent("the deprecated rules about layout", () => {
     ]);
   });
 
+  // What ESLint 10.12 and 8.57.1 print, the latter with the severities as they are written.
+  test.each([
+    [
+      {
+        "eslint.config.mjs": `export default [
+          {
+            plugins: { p: { rules: { one: { create: () => ({}) } } } },
+            rules: {
+              "no-var": "error", semi: "error", "p/one": "warn", quotes: ["warn", "double", { avoidEscape: true }],
+              eqeqeq: ["error", "smart"], indent: "off", "max-len": [0, 100], "no-debugger": 1,
+            },
+          },
+          { rules: { semi: ["warn", "never"], indent: 0 } },
+        ];`,
+      },
+      `{"no-var":[2],"semi":[1,"never"],"p/one":[1],"quotes":[1,"double",{"avoidEscape":true}],"eqeqeq":[2,"smart"],"indent":[0],"max-len":[0,100],"no-debugger":[1]}`,
+    ],
+    [
+      {
+        ".eslintrc.json": rc({
+          extends: "./base.json",
+          rules: { "no-var": "error", semi: ["warn", "never"], quotes: 1, indent: "off", eqeqeq: [2, "smart"] },
+        }),
+        "base.json": `{ "rules": { "quotes": ["error", "single"], "max-len": [0, 100] } }`,
+      },
+      `{"no-var":[2],"semi":[1,"never"],"quotes":[1,"single"],"indent":[0],"eqeqeq":[2,"smart"],"max-len":[0,100]}`,
+    ],
+    // ESLint refuses these options.
+    [{ "eslint.config.mjs": flavors[0][1]({ quotes: ["error", "sideways", 3] }) }, `{"quotes":[2,"sideways",3]}`],
+  ])("--print-config has them, on or off, where the configuration has them: %#", async (config, rules) => {
+    const { raw, exitCode } = await lint({ ...config, "a.js": "" }, ["--print-config", "a.js"]);
+    expect(JSON.stringify(JSON.parse(raw).rules)).toBe(rules);
+    expect(exitCode).toBe(0);
+  });
+
   const reports = `{ create: context => ({ Program: node => context.report({ node, message: "It ran." }) }) }`;
 
   test("a rule of a plugin that is called the same runs", async () => {

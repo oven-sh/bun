@@ -10,12 +10,12 @@
 use crate::collections::IdBitSet;
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
-use crate::hir::dominator::compute_unconditional_blocks;
 use crate::hir::environment::Environment;
 use crate::hir::{
     HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type,
     is_set_state_identifier,
 };
+use crate::validation::validate_hooks_usage::UnconditionalBlocks;
 
 pub(crate) fn validate_no_set_state_in_render(
     func: &HirFunction,
@@ -51,8 +51,7 @@ fn validate_impl(
         return Err(crate::lowering::nested_too_deeply());
     }
 
-    debug_assert!(compute_unconditional_blocks(func, next_block_id_counter).is_ok());
-    let mut unconditional_blocks = None;
+    let mut unconditional_blocks = UnconditionalBlocks::new(func, next_block_id_counter);
     let mut active_manual_memo_id: Option<u32> = None;
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
 
@@ -117,20 +116,9 @@ fn validate_impl(
                     {
                         if active_manual_memo_id.is_some() {
                             errors.push(set_state_in_memo_diag(callee.loc));
-                        } else {
-                            let unconditional_blocks = match &unconditional_blocks {
-                                Some(blocks) => blocks,
-                                None => unconditional_blocks.insert(compute_unconditional_blocks(
-                                    func,
-                                    next_block_id_counter,
-                                )?),
-                            };
-                            if unconditional_blocks.contains(&block.id) {
-                                errors.push(set_state_in_render_diag(
-                                    callee.loc,
-                                    enable_use_keyed_state,
-                                ));
-                            }
+                        } else if unconditional_blocks.contains(block.id)? {
+                            errors
+                                .push(set_state_in_render_diag(callee.loc, enable_use_keyed_state));
                         }
                     }
                 }

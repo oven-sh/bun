@@ -89,6 +89,7 @@
   "system: eslint.config.js only, ESLINT_USE_FLAT_CONFIG=false": "exit",
   "system: both files, a flag of ESLint 8": "exit",
   "print-config: rules, env, globals, parserOptions, settings": "config",
+  "print-config: rules about layout, on and off": "config",
   "print-config: an empty configuration": "config",
   "print-config: the cascade, extends and overrides": "config",
   "print-config: plugins and the parser": "config",

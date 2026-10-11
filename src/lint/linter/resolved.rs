@@ -129,12 +129,23 @@ pub struct ConfiguredJsRule {
     pub position: usize,
 }
 
-/// An entry of ESLint's `rules` that turns on a [rule about layout](formatting_rule), which does not run.
-#[derive(Copy, Clone)]
+/// An entry of ESLint's `rules` for a [rule about layout](formatting_rule), which does not run.
+#[derive(Clone)]
 pub struct FormattingRule {
     pub rule: &'static Deprecated,
+    pub severity: Severity,
+    /// What follows the severity. Nothing has looked at it.
+    pub options: Vec<Json>,
     /// How many of [`ResolvedConfig::rules`], and of [`ResolvedConfig::js_rules`], the configuration has before it.
     pub position: (usize, usize),
+}
+
+/// An entry of ESLint's `rules`.
+#[derive(Copy, Clone)]
+pub enum Entry<'c> {
+    Native(&'c ConfiguredRule),
+    Js(&'c ConfiguredJsRule),
+    Formatting(&'c FormattingRule),
 }
 
 /// [`formatting_rule`], unless `id` is the name of another rule: of a plugin that the rules here do not answer for, as all in
@@ -222,7 +233,7 @@ pub struct ResolvedConfig {
     /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is
     /// there, and are skipped otherwise.
     pub js_rules: Vec<ConfiguredJsRule>,
-    /// Those about layout that are on, which are left to `bun format`.
+    /// Those about layout, which are left to `bun format`, also the ones that are off.
     pub formatting_rules: Vec<FormattingRule>,
     /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which oxlint would run one.
     pub plugins_without_rules: Vec<Plugin>,
@@ -281,6 +292,27 @@ impl ResolvedConfig {
     /// What the configuration says about the rules that are built in, also about those that it turns off, in its order.
     pub fn configured(&self) -> std::slice::Iter<'_, ConfiguredRule> {
         self.rules.iter()
+    }
+
+    /// All that it says about rules, in its order.
+    pub fn entries(&self) -> impl Iterator<Item = Entry<'_>> {
+        let mut native = self.rules.iter().enumerate().peekable();
+        let mut js = self.js_rules.iter().enumerate().peekable();
+        let mut about_layout = self.formatting_rules.iter().peekable();
+        std::iter::from_fn(move || {
+            let seen = (
+                native.peek().map_or(self.rules.len(), |it| it.0),
+                js.peek().map_or(self.js_rules.len(), |it| it.0),
+            );
+            let is_next = |it: &&FormattingRule| it.position.0 <= seen.0 && it.position.1 <= seen.1;
+            if let Some(rule) = about_layout.next_if(is_next) {
+                return Some(Entry::Formatting(rule));
+            }
+            if let Some((_, rule)) = js.next_if(|it| it.1.position <= seen.0) {
+                return Some(Entry::Js(rule));
+            }
+            Some(Entry::Native(native.next()?.1))
+        })
     }
 
     /// Whether a rule is on of which `is_it` says so.

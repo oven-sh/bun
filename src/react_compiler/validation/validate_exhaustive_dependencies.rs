@@ -439,11 +439,22 @@ fn find_optional_places(
 // Dependency collection
 // =============================================================================
 
+/// The dependencies found so far.
+struct Dependencies {
+    list: Vec<InferredDependency>,
+    /// Not those of the outermost function outside of manual memoization: nothing reads them.
+    is_collected: bool,
+}
+
 fn add_dependency(
     dep: &Temporary,
-    dependencies: &mut Vec<InferredDependency>,
+    dependencies: &mut Dependencies,
     locals: &IdBitSet<IdentifierId>,
 ) {
+    if !dependencies.is_collected {
+        return;
+    }
+    let dependencies = &mut dependencies.list;
     match dep {
         Temporary::Aggregate {
             dependencies: agg_deps,
@@ -504,7 +515,7 @@ fn add_dependency_inferred(
 fn visit_candidate_dependency(
     place: &Place,
     temporaries: &IdMap<IdentifierId, Temporary>,
-    dependencies: &mut Vec<InferredDependency>,
+    dependencies: &mut Dependencies,
     locals: &IdBitSet<IdentifierId>,
 ) {
     if let Some(dep) = temporaries.get(place.identifier) {
@@ -535,7 +546,10 @@ fn collect_dependencies(
         }
     }
 
-    let mut dependencies: Vec<InferredDependency> = Vec::new();
+    let mut dependencies = Dependencies {
+        list: Vec::new(),
+        is_collected: is_function_expression,
+    };
 
     // Saved state for when we're inside a memo block (StartMemoize..FinishMemoize).
     // In TS, `dependencies` and `locals` are shared by reference between the main
@@ -836,7 +850,8 @@ fn collect_dependencies(
                         });
                         // Save current state and clear, matching TS which clears the shared
                         // dependencies/locals sets on StartMemoize
-                        saved_dependencies = Some(std::mem::take(&mut dependencies));
+                        saved_dependencies = Some(std::mem::take(&mut dependencies.list));
+                        dependencies.is_collected = true;
                         saved_locals = Some(std::mem::take(&mut locals));
                     }
                 }
@@ -866,7 +881,7 @@ fn collect_dependencies(
 
                                 // Use ALL dependencies collected since StartMemoize cleared the set.
                                 // This matches TS: `const inferred = Array.from(dependencies)`
-                                let inferred: Vec<InferredDependency> = dependencies.clone();
+                                let inferred: Vec<InferredDependency> = dependencies.list.clone();
 
                                 let diagnostic = validate_dependencies(
                                     inferred,
@@ -888,20 +903,24 @@ fn collect_dependencies(
                             // We restore instead of just clearing because we need the outer deps back
                             if let Some(saved) = saved_dependencies.take() {
                                 // Merge current memo-block deps into the restored outer deps
-                                let memo_deps = std::mem::replace(&mut dependencies, saved);
+                                let memo_deps = std::mem::replace(&mut dependencies.list, saved);
                                 locals = saved_locals.take().unwrap_or_default();
                                 // Add memo deps to outer deps (they're still valid outer deps)
                                 for d in memo_deps {
-                                    if !contains_dep(&dependencies, &d) {
-                                        dependencies.push(d);
+                                    if !contains_dep(&dependencies.list, &d) {
+                                        dependencies.list.push(d);
                                     }
                                 }
+                                dependencies.is_collected = false;
                             }
                         }
                     }
                 }
                 InstructionValue::ArrayExpression { loc, .. } => {
-                    let mut array_deps: Vec<InferredDependency> = Vec::new();
+                    let mut array_deps = Dependencies {
+                        list: Vec::new(),
+                        is_collected: true,
+                    };
                     let empty_locals = IdBitSet::default();
                     for place in operands(&instr.value, functions) {
                         // Visit with empty locals for manual deps
@@ -917,7 +936,7 @@ fn collect_dependencies(
                     temporaries.insert(
                         lvalue_id,
                         Temporary::Aggregate {
-                            dependencies: array_deps,
+                            dependencies: array_deps.list,
                             loc: *loc,
                         },
                     );
@@ -1162,7 +1181,7 @@ fn collect_dependencies(
     }
 
     Ok(Temporary::Aggregate {
-        dependencies,
+        dependencies: dependencies.list,
         loc: None,
     })
 }

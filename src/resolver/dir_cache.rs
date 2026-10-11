@@ -93,7 +93,7 @@ impl DirCache {
 
     /// The cache of the process.
     #[inline]
-    pub fn process() -> &'static DirCache {
+    pub(crate) fn process() -> &'static DirCache {
         // SAFETY: `process_storage` returns the initialized, never-freed
         // singleton.
         unsafe { &*process_storage() }
@@ -145,7 +145,7 @@ impl DirCache {
     }
 
     #[inline]
-    pub fn is_process(&self) -> bool {
+    pub(crate) fn is_process(&self) -> bool {
         core::ptr::eq(self, process_storage())
     }
 
@@ -176,14 +176,14 @@ impl DirCache {
     /// Where this cache interns directory paths. A slice it returns lives as
     /// long as the cache, which is `'static` only for [`DirCache::process`].
     #[inline]
-    pub fn dirname_store(&self) -> DirnameStoreRef {
+    pub(crate) fn dirname_store(&self) -> DirnameStoreRef {
         DirnameStoreRef(self.dirname_store.get())
     }
 
     /// Where this cache interns file names and file paths. See
     /// [`dirname_store`](Self::dirname_store) for the lifetime.
     #[inline]
-    pub fn filename_store(&self) -> FilenameStoreRef {
+    pub(crate) fn filename_store(&self) -> FilenameStoreRef {
         FilenameStoreRef(self.filename_store.get())
     }
 
@@ -196,7 +196,7 @@ impl DirCache {
     /// `value` as this cache stores it, if it already points into the fixed
     /// buffer of one of its two path stores.
     #[inline]
-    pub fn as_interned_path(&self, value: &[u8]) -> Option<&'static [u8]> {
+    pub(crate) fn as_interned_path(&self, value: &[u8]) -> Option<&'static [u8]> {
         self.dirname_store()
             .as_interned(value)
             .or_else(|| self.filename_store().as_interned(value))
@@ -274,7 +274,7 @@ impl DirCache {
         Ok(unsafe { &mut *opt })
     }
 
-    pub fn read_directory(
+    pub(crate) fn read_directory(
         &self,
         dir: &[u8],
         handle: Option<Fd>,
@@ -291,7 +291,7 @@ impl DirCache {
     // https://twitter.com/jarredsumner/status/1655787337027309568
     // https://twitter.com/jarredsumner/status/1655714084569120770
     // https://twitter.com/jarredsumner/status/1655464485245845506
-    pub fn read_directory_with_iterator<I: DirEntryIterator>(
+    pub(crate) fn read_directory_with_iterator<I: DirEntryIterator>(
         &self,
         dir_maybe_trail_slash: &[u8],
         maybe_handle: Option<Fd>,
@@ -397,7 +397,7 @@ unsafe impl Sync for DirCacheRef {}
 impl DirCacheRef {
     /// The cache of the process.
     #[inline]
-    pub fn process() -> DirCacheRef {
+    pub(crate) fn process() -> DirCacheRef {
         DirCacheRef(NonNull::from(DirCache::process()))
     }
 
@@ -408,7 +408,7 @@ impl DirCacheRef {
     }
 
     #[inline]
-    pub fn as_ptr(&self) -> *const DirCache {
+    pub(crate) fn as_ptr(&self) -> *const DirCache {
         self.0.as_ptr()
     }
 }

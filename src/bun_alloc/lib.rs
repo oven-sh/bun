@@ -1940,16 +1940,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// SAFETY: `slot` must point to writable, properly-aligned storage of
     /// `size_of::<Self>()` bytes.
     pub unsafe fn init_at_heap(slot: *mut Self) {
-        // SAFETY: caller contract.
+        let backing_buf = Box::into_raw(Box::<[u8]>::new_uninit_slice(COUNT * ITEM_LENGTH));
+        let slice_buf = Box::into_raw(Box::<[&'static [u8]]>::new_uninit_slice(COUNT));
+        // SAFETY: caller contract; `Box::into_raw` is never null.
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
-            addr_of_mut!((*slot).backing_buf).write(NonNull::new_unchecked(Box::into_raw(
-                Box::<[u8]>::new_uninit_slice(COUNT * ITEM_LENGTH),
-            )));
+            addr_of_mut!((*slot).backing_buf).write(NonNull::new_unchecked(backing_buf));
             addr_of_mut!((*slot).backing_buf_used).write(0);
-            addr_of_mut!((*slot).slice_buf).write(NonNull::new_unchecked(Box::into_raw(
-                Box::<[&'static [u8]]>::new_uninit_slice(COUNT),
-            )));
+            addr_of_mut!((*slot).slice_buf).write(NonNull::new_unchecked(slice_buf));
             addr_of_mut!((*slot).slice_buf_used).write(0);
             OverflowList::init_at_uninit(addr_of_mut!((*slot).overflow_list));
         }

@@ -70,14 +70,8 @@ for (const abs of rustSources) {
 test("scans the known bss singleton declare sites", () => {
   // Guards against the regexes or the tracked/realpath filters over-firing and
   // leaving nothing to scan, which would make the uniqueness check vacuous.
-  expect([...declarations.keys()]).toEqual(
-    expect.arrayContaining([
-      "dirname_store_backing",
-      "filename_store_backing",
-      "entry_store_backing",
-      "entries_option_map",
-    ]),
-  );
+  // The resolver's stores are the fields of one `DirCache` singleton.
+  expect([...declarations.keys()]).toEqual(expect.arrayContaining(["process_storage"]));
 });
 
 test("every bss singleton name is declared exactly once", () => {

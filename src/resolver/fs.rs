@@ -513,12 +513,15 @@ impl DirEntry {
     #[inline]
     fn debug_assert_entries_mutex_held(&self) {
         #[cfg(debug_assertions)]
-        // SAFETY: the mutex is a field of the `DirCache` that owns this
-        // listing, which outlives it.
-        debug_assert!(
-            unsafe { &*self.entries_mutex }.is_held_by_current_thread(),
-            "DirEntry.data probed without the entries_mutex of its DirCache"
-        );
+        {
+            // SAFETY: the mutex is a field of the `DirCache` that owns this
+            // listing, which outlives it.
+            let entries_mutex = unsafe { &*self.entries_mutex };
+            debug_assert!(
+                entries_mutex.is_held_by_current_thread(),
+                "DirEntry.data probed without the entries_mutex of its DirCache"
+            );
+        }
     }
 
     // `query_` borrow is detached from the returned `Entry` lifetime so callers

@@ -413,12 +413,15 @@ test.each([
       setImmediate(async () => {
         let closeCallback = false;
         server.close(() => (closeCallback = true));
-        // A sweep that took the connection calls back within a few turns of the loop.
-        for (let turn = 0; turn < 50 && !closeCallback; turn++) await new Promise<void>(r => setImmediate(r));
+        // A sweep that took the connection calls back within a few turns of the loop. One that left it
+        // calls back when the keep-alive timer ends the connection, which the runner's timeout would wait for.
+        const deadline = Date.now() + 2000;
+        while (!closeCallback && Date.now() < deadline) await new Promise<void>(r => setImmediate(r));
         server.getConnections((_error, connections) => result.resolve({ connections, closeCallback }));
       });
     });
   });
+  server.on("clientError", result.reject);
   server.keepAliveTimeout = 60000;
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

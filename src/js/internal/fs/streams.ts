@@ -18,7 +18,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   path: string | null | undefined;
   _write: import("node:fs").WriteStream["_write"] | null;
   _writev: import("node:fs").WriteStream["_writev"] | null;
-  _writableState?: { ending: boolean; destroyed: boolean };
+  _writableState?: { ending: boolean; destroyed: boolean; errored: Error | null; length: number };
   flags: string;
   mode: number;
   start: number;
@@ -33,8 +33,20 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kFastWriteRun]?: FastWriteRun | null;
 };
 type FD = number;
+
+// The writes that the sink parked on one promise.
+type FastWriteRun = {
+  promise: Promise<unknown>;
+  settled: boolean;
+  err: any;
+  // Writable's onwrite for the marker of this run that it has dispatched.
+  waiting: ((err: any) => void) | null;
+  marker: Buffer | null;
+  markers: number;
+};
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
 
@@ -43,6 +55,13 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+// The fast path gives each chunk to the sink inside write() and skips Writable's queue.
+// A write that has a callback also sends a zero-length marker through Writable, so that
+// Writable reports it in order with end(), _final and destroy(). _write completes a marker
+// when the run of parked writes that its chunk joined has settled. The shared marker is for
+// a chunk that joined no run: it completes at once.
+const kFastWriteRun = Symbol("kFastWriteRun");
+const kFastWriteMarker = Buffer.alloc(0);
 const kFs = Symbol("kFs");
 
 const {
@@ -602,7 +621,81 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
+function parkedFastRun(stream: FSStream, promise: Promise<unknown>): FastWriteRun {
+  const current = stream[kFastWriteRun];
+  // The sink hands back one promise for every write it parks until that promise settles.
+  if (current != null && current.promise === promise) return current;
+  const run: FastWriteRun = (stream[kFastWriteRun] = {
+    promise,
+    settled: false,
+    err: null,
+    waiting: null,
+    marker: null,
+    markers: 0,
+  });
+  // The reactions run no user code, so a throw from a callback is never taken for a
+  // write failure.
+  promise.then(
+    () => settleFastRun(stream, run, null),
+    err => settleFastRun(stream, run, err),
+  );
+  return run;
+}
+
+function settleFastRun(stream: FSStream, run: FastWriteRun, err: any) {
+  if (stream[kFastWriteRun] === run) stream[kFastWriteRun] = null;
+  run.settled = true;
+  run.err = err;
+  if (err === null) process.nextTick(emitDrain, stream);
+  const waiting = run.waiting;
+  if (waiting !== null) {
+    run.waiting = null;
+    if (err === null) process.nextTick(waiting, null);
+    else process.nextTick(failFastMarker, stream, waiting, err);
+  } else if (err !== null && run.markers === 0) {
+    // No write of this run has a callback, so no marker reports the failure.
+    require("internal/streams/destroy").errorOrDestroy(stream, err);
+    destroyErroredFastStream(stream);
+  }
+}
+
+// Writable holds back every later write of a stream that is errored and not destroyed,
+// and without autoDestroy a failed write leaves the stream like that. So destroy it.
+// process.stdout and process.stderr come back from destroy() ready for the next write,
+// as in Node.
+function destroyErroredFastStream(stream: FSStream) {
+  const state = stream._writableState!;
+  if (state.errored && !state.destroyed) stream.destroy();
+}
+
+function failFastMarker(stream: FSStream, onwrite: (err: any) => void, err: any) {
+  onwrite(err);
+  destroyErroredFastStream(stream);
+}
+
+function reportFastWrite(stream: FSStream, run: FastWriteRun | null | undefined, cb: (err?: any) => void) {
+  let marker = kFastWriteMarker;
+  if (run != null) {
+    if (run.markers++ === 0) (run.marker = Buffer.alloc(0))[kFastWriteRun] = run;
+    marker = run.marker!;
+  }
+  writablePrototypeWrite.$call(stream, marker, cb);
+}
+
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
+  if (data === kFastWriteMarker) {
+    cb(null);
+    return;
+  }
+  const run: FastWriteRun | undefined = data.length === 0 ? data[kFastWriteRun] : undefined;
+  if (run !== undefined) {
+    if (!run.settled) run.waiting = cb;
+    else if (run.err === null) cb(null);
+    // On a tick: Writable must see the failure before it dispatches the next marker.
+    else process.nextTick(failFastMarker, this, cb, run.err);
+    return;
+  }
+
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
     // When the fast path is disabled, the write function gets reset.
@@ -626,6 +719,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
         err => {
           if (cb) cb(err);
           require("internal/streams/destroy").errorOrDestroy(this, err);
+          destroyErroredFastStream(this);
         },
       );
       return false;
@@ -667,8 +761,10 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
 
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
+  // A chunk that Writable still holds (from end(chunk) or Writable.prototype.write())
+  // reaches the sink first, so this one goes behind it.
   const state = this._writableState;
-  if (state !== undefined && (state.ending || state.destroyed)) {
+  if (state !== undefined && (state.ending || state.destroyed || state.length > 0)) {
     return writablePrototypeWrite.$call(this, data, encoding, cb);
   }
 
@@ -676,34 +772,22 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     cb = encoding;
     encoding = undefined;
   }
-  if (typeof cb !== "function") {
-    cb = streamNoop;
-  }
 
   const fileSink = this[kWriteStreamFastPath];
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      // Two-arg then(): a throw from the fulfillment handler must not be
-      // mistaken for a write failure.
-      maybePromise.then(
-        () => {
-          emitDrain(this);
-          cb(null);
-        },
-        err => {
-          cb(err);
-          // Node.js onwriteError: callback AND destroy are both invoked; the
-          // callback is additive, not a replacement for the 'error' event.
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
-      );
+      const run = parkedFastRun(this, maybePromise);
+      if (typeof cb === "function") reportFastWrite(this, run, cb);
       return false; // Indicate backpressure
-    } else {
-      cb(null);
-      return true; // No backpressure
     }
+    // While a run has not settled, the sink holds this chunk behind the ones of that run.
+    if (typeof cb === "function") reportFastWrite(this, this[kFastWriteRun], cb);
+    return true; // No backpressure
   } else {
+    if (typeof cb !== "function") {
+      cb = streamNoop;
+    }
     const result: any = this._write!(data, encoding, cb);
     if (this.write === writeFast) {
       this.write = writablePrototypeWrite;

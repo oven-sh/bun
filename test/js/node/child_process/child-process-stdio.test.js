@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -166,6 +167,88 @@ describe("child.stdin", () => {
       cbCode: "ERR_STREAM_DESTROYED",
     });
   });
+
+  // 1 MiB is more than the pipe holds, so the first write is pending while the other
+  // two are made. The empty chunk never reaches the pipe and "x" waits behind the first.
+  const pending = () => Buffer.alloc((1 << 20) + 1, "a");
+
+  it("write callbacks run in the order of the writes, after write() returned", async () => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.resume()"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const events = [];
+    let inside = true;
+    const record = name => err => events.push(`${inside ? "inside write(): " : ""}${name}:${err?.code ?? "ok"}`);
+    child.stdin.on("finish", () => events.push("finish"));
+
+    child.stdin.write(pending(), record("w1"));
+    child.stdin.write("", record("w2"));
+    child.stdin.write("x", record("w3"));
+    child.stdin.end(() => events.push("end callback"));
+    inside = false;
+    await once(child.stdin, "close");
+
+    expect(events).toEqual(["w1:ok", "w2:ok", "w3:ok", "end callback", "finish"]);
+  });
+
+  // end(chunk) and code that calls Writable.prototype.write() reach the pipe through
+  // _write(), not through the stream's own write().
+  for (const [what, first] of [
+    ["the pipe takes at once", () => "a"],
+    ["the pipe holds", pending],
+  ]) {
+    it(`the child reads the chunks in call order when Writable.prototype.write() follows a write() that ${what}`, async () => {
+      const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], {
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      child.stdin.write(first(), () => {});
+      Writable.prototype.write.call(child.stdin, "B");
+      child.stdin.write("C");
+      child.stdin.end("D");
+
+      const chunks = [];
+      for await (const chunk of child.stdout) chunks.push(chunk);
+      const text = Buffer.concat(chunks).toString();
+      expect({ bytes: text.length, end: text.slice(-3) }).toEqual({ bytes: first().length + 3, end: "BCD" });
+    });
+  }
+
+  // On Windows one uv_write takes the whole chunk, so the write has reported before the pipe fails.
+  it.skipIf(isWindows)(
+    "a write that fails gives the error to every pending write callback in write order, then to 'error'",
+    async () => {
+      // The child closes its end of the pipe and stays alive, so that the error comes from
+      // the pipe and not from the exit of the child.
+      const child = spawn(bunExe(), ["-e", "require('fs').closeSync(0); setInterval(() => {}, 1 << 30);"], {
+        env: bunEnv,
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      try {
+        const events = [];
+        const record = name => err =>
+          events.push(`${name}:${err?.code ?? "ok"}${child.stdin.destroyed ? " after destroy" : ""}`);
+        child.stdin.on("drain", () => events.push("drain"));
+        child.stdin.on("error", err => events.push(`error:${err.code}`));
+        // Not events.once(): it rejects on 'error', which is expected here.
+        const { promise: closed, resolve: onClose } = Promise.withResolvers();
+        child.stdin.on("close", onClose);
+
+        child.stdin.write(pending(), record("w1"));
+        child.stdin.write("", record("w2"));
+        child.stdin.write("x", record("w3"));
+        await closed;
+
+        // EPIPE on POSIX. Whatever the platform calls it, every callback gets the same one.
+        const code = events[0]?.slice("w1:".length);
+        expect(code).toMatch(/^E[A-Z]+$/);
+        expect(events).toEqual([`w1:${code}`, `w2:${code}`, `w3:${code}`, `error:${code}`]);
+      } finally {
+        child.kill();
+      }
+    },
+  );
 });
 
 describe.skipIf(!isPosix)("stdio handed to the child", () => {

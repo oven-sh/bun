@@ -410,8 +410,8 @@ pub struct Options {
     /// The directory of `tsconfig.json`. Absolute, no trailing slash.
     pub base_dir: Vec<u8>,
     /// `compilerOptions.paths`: a pattern with at most one `*`, and the substitutions to try for
-    /// it.
-    pub paths: Vec<(Vec<u8>, Vec<Vec<u8>>)>,
+    /// it. There can be thousands, and a build copies the options of each project.
+    pub paths: std::sync::Arc<Vec<(Vec<u8>, Vec<Vec<u8>>)>>,
     /// `PathsBasePath`: the directory of the configuration file that specifies `paths`, which they
     /// are relative to.
     pub paths_base_dir: Vec<u8>,
@@ -749,11 +749,12 @@ impl Options {
         let target = lower(b"target");
         options.paths_base_dir = word(b"pathsBasePath").unwrap_or(base_dir).to_vec();
         if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
-            for (pattern, targets) in paths {
+            let paths = paths.iter().map(|(pattern, targets)| {
                 let targets = targets.as_array().unwrap_or(&[]).iter();
                 let targets = targets.filter_map(|t| t.as_str().map(<[u8]>::to_vec));
-                options.paths.push((pattern.clone(), targets.collect()));
-            }
+                (pattern.clone(), targets.collect())
+            });
+            options.paths = std::sync::Arc::new(paths.collect());
         }
         options.no_lib = flag(b"noLib");
         options.specifies_lib = list(b"lib").is_some();

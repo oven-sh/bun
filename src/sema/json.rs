@@ -10,6 +10,7 @@ use crate::hir::{
 };
 use crate::resolve::{Host, Options};
 use crate::session::Session;
+use std::collections::hash_map::Entry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
@@ -499,11 +500,16 @@ impl<'s> TsConfigSourceFile<'s> {
             // `convertObjectLiteralExpressionToJson`
             ExprKind::Object(_) => {
                 let mut result: Vec<(Vec<u8>, Json)> = Vec::new();
+                // `paths` can have thousands of keys.
+                let mut positions: crate::util::FxHashMap<&[u8], usize> = Default::default();
                 for (p, key) in self.properties(e) {
                     let value = self.convert_property_value_to_json(hir[p].value);
-                    match result.iter_mut().find(|entry| entry.0 == key) {
-                        Some(entry) => entry.1 = value,
-                        None => result.push((key.to_vec(), value)),
+                    match positions.entry(key) {
+                        Entry::Occupied(at) => result[*at.get()].1 = value,
+                        Entry::Vacant(at) => {
+                            at.insert(result.len());
+                            result.push((key.to_vec(), value));
+                        }
                     }
                 }
                 Json::Object(result)

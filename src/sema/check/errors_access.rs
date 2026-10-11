@@ -1402,9 +1402,10 @@ impl<'p> Checker<'p, '_> {
             self.mark_property_as_referenced(file, containing, name, node_for_check_write_only);
         }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
-        // If all of them share one declaration, its modifiers are used
-        // (`createUnionOrIntersectionProperty`).
-        let is_declared_once = parts.len() == 1 || parts.iter().all(|p| p.source == first.source);
+        // With one declaration for all of them, its modifiers and its parent are used.
+        let declared = Self::with_value_declaration_of_all(parts.iter().copied());
+        let is_declared_once = parts.len() == 1 || declared.is_some();
+        let first = declared.unwrap_or(first);
         let flags = if is_declared_once {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {

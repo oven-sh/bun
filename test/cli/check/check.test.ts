@@ -738,6 +738,138 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The time was quadratic: over 60 s for these 60,000 `paths` in a release build.
+  test("a configuration file with an object of many keys", async () => {
+    const n = isDebug || isASAN ? 10_000 : 60_000;
+    const paths = Array.from({ length: n }, (_, i) => `"@m/${i}": ["./one.ts"]`);
+    // Of a key that is written twice, the last value counts.
+    const again = [0, n / 2, n - 1].map(i => `"@m/${i}": ["./two.ts"]`);
+    const imported = [0, 1, n / 2 - 1, n / 2, n - 2, n - 1];
+    using dir = tempDir("bun-check", {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es5"], "paths": {
+        ${[...paths, ...again].join(",\n")} } }, "unrelated": { ${paths.join(",\n")} }, "files": ["a.ts"] }`,
+      "one.ts": `export const v: 1 = 1;\n`,
+      "two.ts": `export const v: 2 = 2;\n`,
+      "a.ts":
+        imported.map((i, at) => `import { v as v${at} } from "@m/${i}";\n`).join("") +
+        `export const probe: never = [${imported.map((_, at) => `v${at}`)}] as const;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      `a.ts(7,14): error TS2322: Type 'readonly [2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // It is parsed once for all of them. What `tsc -b` reports.
+  describe("projects of a build that extend one configuration file", () => {
+    const common = `"strict": true, "composite": true, "emitDeclarationOnly": true, "types": [], "lib": ["es5"]`;
+    const own = (extended: string, options = "") =>
+      `{ "extends": ${extended}, "compilerOptions": { "outDir": "./out", "rootDir": "."${options} }, "files": ["a.ts"] }`;
+    const solution = (count: number) =>
+      `{ "files": [], "references": [${Array.from({ length: count }, (_, i) => `{ "path": "./p${i}" }`)}] }`;
+    const bad = `export const bad: number = "";\n`;
+    const isBad = (project: number, line = 1) =>
+      `p${project}/a.ts(${line},14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    const projects = (configs: string[], source: string | ((i: number) => string)) =>
+      Object.fromEntries([
+        ["tsconfig.json", solution(configs.length)],
+        ...configs.flatMap((config, i) => [
+          [`p${i}/tsconfig.json`, config],
+          [`p${i}/a.ts`, typeof source === "string" ? source : source(i)],
+        ]),
+      ]);
+
+    test.concurrent.each<[string, Record<string, string>, string[]]>([
+      [
+        "its errors are reported for each",
+        {
+          "base.json": `{ "compilerOptions": { ${common},\n"nope": 1 } }`,
+          ...projects([own(`"../base.json"`), own(`"../base.json"`), own(`"../base.json"`)], bad),
+        },
+        [0, 1, 2].flatMap(i => [`base.json(2,1): error TS5023: Unknown compiler option 'nope'.`, isBad(i)]),
+      ],
+      [
+        "`${configDir}` is the directory of each",
+        {
+          "base.json": `{ "compilerOptions": { ${common}, "outDir": "\${configDir}/out", "rootDir": "\${configDir}",
+            "paths": { "@own": ["\${configDir}/own.ts"] } }, "include": ["\${configDir}/*.ts"] }`,
+          ...projects(
+            [`{ "extends": "../base.json" }`, `{ "extends": "../base.json" }`],
+            `import { own } from "@own";\nexport const probe: never = own;\n`,
+          ),
+          "p0/own.ts": `export const own: 0 = 0;\n`,
+          "p1/own.ts": `export const own: 1 = 1;\n`,
+        },
+        [0, 1].map(i => `p${i}/a.ts(2,14): error TS2322: Type '${i}' is not assignable to type 'never'.`),
+      ],
+      [
+        "one is extended by a project, and through another file by the next",
+        {
+          "base2.json": `{ "compilerOptions": { ${common}, "strictNullChecks": false } }`,
+          "base.json": `{ "extends": "./base2.json", "compilerOptions": { "strictNullChecks": true } }`,
+          ...projects(
+            [
+              own(`"../base.json"`),
+              own(`"../base2.json"`),
+              own(`"../base.json"`),
+              own(`["../base2.json", "../base.json"]`),
+              own(`["../base.json", "../base2.json"]`),
+            ],
+            `export const n: string = null;\n` + bad,
+          ),
+        },
+        [0, 1, 2, 3, 4].flatMap(i => [
+          ...(i === 1 || i === 4
+            ? []
+            : [`p${i}/a.ts(1,14): error TS2322: Type 'null' is not assignable to type 'string'.`]),
+          isBad(i, 2),
+        ]),
+      ],
+      [
+        "a cycle that the projects enter at each of its files",
+        {
+          "a.json": `{ "extends": "./b.json", "compilerOptions": { ${common} } }`,
+          "b.json": `{ "extends": "./a.json", "compilerOptions": { "strict": false } }`,
+          ...projects(
+            ["a", "b", "a"].map(name => own(`"../${name}.json"`, `, "composite": true, "types": [], "lib": ["es5"]`)),
+            bad,
+          ),
+        },
+        [0, 1, 2].flatMap(i => [`error TS18000: Circularity detected while resolving configuration: {0}`, isBad(i)]),
+      ],
+      [
+        "`null` unsets what one of them inherits, and a file is missing for two",
+        {
+          "base.json": `{ "compilerOptions": { ${common}, "noUnusedLocals": true } }`,
+          ...projects(
+            [
+              own(`"../none.json"`, `, "composite": true, "types": [], "lib": ["es5"]`),
+              own(`"../none.json"`, `, "composite": true, "types": [], "lib": ["es5"]`),
+              own(`"../base.json"`, `, "noUnusedLocals": null`),
+              own(`"../base.json"`),
+            ],
+            `function unused() {}\n` + bad,
+          ),
+        },
+        [
+          `error TS5083: Cannot read file '<dir>/none.json'.`,
+          isBad(0, 2),
+          `error TS5083: Cannot read file '<dir>/none.json'.`,
+          isBad(1, 2),
+          isBad(2, 2),
+          `p3/a.ts(1,10): error TS6133: 'unused' is declared but its value is never read.`,
+          isBad(3, 2),
+        ],
+      ],
+    ])("%s", async (_, files, expected) => {
+      using dir = tempDir("bun-check", files);
+      const { stdout, exitCode } = await check(dir, ["-b"]);
+      expect(stdout.split("\n")).toEqual(expected);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   // The time was cubic: 16 s for 2,000 interfaces in a release build, where it now takes 0.7 s.
   test("a long chain of interfaces, each of which extends the last", async () => {
     const n = isDebug || isASAN ? 300 : 2000;

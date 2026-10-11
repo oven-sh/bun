@@ -1546,6 +1546,7 @@ fn run_one(
             &only_units,
             &Session::new(),
             config_path.as_bytes(),
+            &Default::default(),
             &|_| Vec::new(),
         );
         named_by_config = project.ok().map(|project| project.files);
@@ -1637,7 +1638,8 @@ fn run_one(
         let from_config_file = config_unit.as_ref().and_then(|unit| {
             let path = absolute(&unit.name, &cwd);
             let over = |_: bool| compiler.clone();
-            config::load_overriding(&host, &Session::new(), path.as_bytes(), &over).ok()
+            let cache = Default::default();
+            config::load_overriding(&host, &Session::new(), path.as_bytes(), &cache, &over).ok()
         });
         let mut project: Project = from_config_file.unwrap_or_else(|| {
             config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())

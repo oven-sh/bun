@@ -1216,6 +1216,7 @@ fn dependencies_not_installed(
 #[derive(Default)]
 struct Projects {
     loaded: FxHashMap<Vec<u8>, Result<config::Project, Vec<ConfigError>>>,
+    extended: config::ExtendedConfigCache,
     /// `Project::files`, to look a file up in.
     files: FxHashMap<Vec<u8>, FxHashSet<Vec<u8>>>,
     /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
@@ -1232,7 +1233,7 @@ impl Projects {
         config: &[u8],
     ) -> Option<&config::Project> {
         let loaded = (self.loaded.entry(config.to_vec()))
-            .or_insert_with(|| Self::load_from_disk(disk, request, config));
+            .or_insert_with(|| Self::load_from_disk(disk, request, config, &self.extended));
         loaded.as_ref().ok()
     }
 
@@ -1244,17 +1245,18 @@ impl Projects {
         config: &[u8],
     ) -> Result<config::Project, Vec<ConfigError>> {
         let loaded = self.loaded.remove(config);
-        loaded.unwrap_or_else(|| Self::load_from_disk(disk, request, config))
+        loaded.unwrap_or_else(|| Self::load_from_disk(disk, request, config, &self.extended))
     }
 
     fn load_from_disk(
         disk: &host::Disk,
         request: &Request,
         config: &[u8],
+        extended: &config::ExtendedConfigCache,
     ) -> Result<config::Project, Vec<ConfigError>> {
         // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
         // `tsc -b` has no such option.
-        config::load_overriding(disk, &Session::new(), config, &|_| {
+        config::load_overriding(disk, &Session::new(), config, extended, &|_| {
             overriding_options(request, false)
         })
     }
@@ -1290,7 +1292,8 @@ impl Projects {
                         options.push((b"allowJs".to_vec(), Json::Bool(true)));
                         options
                     };
-                    config::load_overriding(disk, &Session::new(), config, &with_javascript)
+                    let (session, extended) = (Session::new(), &self.extended);
+                    config::load_overriding(disk, &session, config, extended, &with_javascript)
                         .map(|it| it.files)
                         .unwrap_or_default()
                 }
@@ -1870,6 +1873,7 @@ impl Graph<'_> {
             };
             references.map(name).collect()
         };
+        let extended = config::ExtendedConfigCache::default();
         let mut queued = referenced(&root);
         let config = root.config_path.clone();
         self.tasks.insert(key(&config), (config, Some(root)));
@@ -1880,7 +1884,10 @@ impl Graph<'_> {
             }
             let over = |_: bool| self.overrides.clone();
             let resolved = match self.host.is_file(&config) {
-                true => config::load_overriding(self.host, self.session, &config, &over).ok(),
+                true => {
+                    let (host, session) = (self.host, self.session);
+                    config::load_overriding(host, session, &config, &extended, &over).ok()
+                }
                 false => None,
             };
             if let Some(project) = &resolved {

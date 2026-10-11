@@ -12,11 +12,14 @@ use crate::resolve::{
     supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
+use crate::util::FxHashMap;
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// A configuration file error: the code of TypeScript's message, and the message arguments.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -180,8 +183,19 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-/// One configuration file with its extended configuration files merged in.
+/// `ExtendedConfigCache`: what `ParseExtendedConfig` returns for a configuration file that another
+/// one extends, by its path. The projects of a build often extend one file, and `paths` in it can
+/// have thousands of entries.
 #[derive(Default)]
+pub struct ExtendedConfigCache(RefCell<FxHashMap<Vec<u8>, Rc<ExtendedConfigCacheEntry>>>);
+
+struct ExtendedConfigCacheEntry {
+    extended_config: Option<Raw>,
+    errors: Vec<ConfigError>,
+}
+
+/// One configuration file with its extended configuration files merged in.
+#[derive(Default, Clone)]
 struct Raw {
     /// `options`. Paths are absolute, or start with `${configDir}`. No value is `null`.
     compiler: Vec<(Vec<u8>, Json)>,
@@ -196,7 +210,7 @@ struct Raw {
 }
 
 /// `files`, `include`, `exclude` or `references`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct List {
     /// `rawConfig.Has`: the property is there, whatever its value.
     is_specified: bool,
@@ -301,6 +315,7 @@ fn parse_config(
     session: &Session,
     path: &[u8],
     stack: &mut Vec<Vec<u8>>,
+    extended_config_cache: &ExtendedConfigCache,
     errors: &mut Vec<ConfigError>,
 ) -> Option<Raw> {
     let text = host.read(path);
@@ -475,7 +490,10 @@ fn parse_config(
     stack.push(resolved_path);
     let mut inherited = Raw::default();
     for extended_path in &extended_config_path {
-        let Some(extended) = parse_config(host, session, extended_path, stack, errors) else {
+        let cache = extended_config_cache;
+        let Some(extended) =
+            get_extended_config(host, session, extended_path, stack, cache, errors)
+        else {
             continue;
         };
         // A property the extending file does not specify itself takes the value from the last of
@@ -539,6 +557,44 @@ fn parse_config(
     );
     own.compiler = inherited.compiler;
     Some(own)
+}
+
+/// `getExtendedConfig`
+fn get_extended_config(
+    host: &dyn Host,
+    session: &Session,
+    extended_config_file_name: &[u8],
+    stack: &mut Vec<Vec<u8>>,
+    extended_config_cache: &ExtendedConfigCache,
+    errors: &mut Vec<ConfigError>,
+) -> Option<Raw> {
+    let name = extended_config_file_name;
+    let path = to_path(name, host.is_case_sensitive()).into_owned();
+    // A cycle is for `parse_config` to report, by `stack`.
+    if stack.contains(&path) {
+        return parse_config(host, session, name, stack, extended_config_cache, errors);
+    }
+    let known = extended_config_cache.0.borrow().get(&path).cloned();
+    let entry = known.unwrap_or_else(|| {
+        let mut errors = Vec::new();
+        let extended_config = parse_config(
+            host,
+            session,
+            name,
+            stack,
+            extended_config_cache,
+            &mut errors,
+        );
+        let entry = Rc::new(ExtendedConfigCacheEntry {
+            extended_config,
+            errors,
+        });
+        let mut cache = extended_config_cache.0.borrow_mut();
+        cache.insert(path, entry.clone());
+        entry
+    });
+    errors.extend(entry.errors.iter().cloned());
+    entry.extended_config.clone()
 }
 
 /// `getExtendsConfigPath`
@@ -634,10 +690,12 @@ pub fn load_overriding(
     host: &dyn Host,
     session: &Session,
     path: &[u8],
+    extended_config_cache: &ExtendedConfigCache,
     over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
 ) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
-    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors);
+    let cache = extended_config_cache;
+    let raw = parse_config(host, session, path, &mut Vec::new(), cache, &mut errors);
     let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
         return Err(errors);
     };

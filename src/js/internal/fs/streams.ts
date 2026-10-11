@@ -476,6 +476,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
+    this._final = finalFast;
     if (fd != null) {
       // Already-open fd (stdio): skip the async _construct round-trip so the
       // stream is born constructed, like node's stdio streams (net.Socket /
@@ -558,6 +559,14 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
   });
 }
 
+// Like Writable's afterWrite: no 'drain' once the stream is ending or destroyed.
+function emitDrain(stream: FSStream) {
+  const state = stream._writableState;
+  if (state === undefined || !(state.ending || state.destroyed)) {
+    stream.emit("drain");
+  }
+}
+
 function _write(data, encoding, cb) {
   const fileSink = this[kWriteStreamFastPath];
 
@@ -566,7 +575,7 @@ function _write(data, encoding, cb) {
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
-          this.emit("drain"); // Emit drain event
+          emitDrain(this);
           cb(null);
         })
         .catch(cb);
@@ -612,7 +621,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       maybePromise.then(
         () => {
           if (cb) cb(null);
-          this.emit("drain");
+          emitDrain(this);
         },
         err => {
           if (cb) cb(err);
@@ -629,6 +638,25 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     require("internal/streams/destroy").errorOrDestroy(this, e, true);
     return false;
   }
+}
+
+function finalFast(this: FSStream, cb: (err?: any) => void) {
+  const fileSink = this[kWriteStreamFastPath];
+  if (!fileSink || fileSink === true) {
+    cb(null);
+    return;
+  }
+  try {
+    const maybePromise = fileSink.flush();
+    if ($isPromise(maybePromise)) {
+      maybePromise.then(() => cb(null), cb);
+      return;
+    }
+  } catch (err) {
+    cb(err);
+    return;
+  }
+  cb(null);
 }
 
 // This function implementation is not correct.
@@ -660,7 +688,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       // mistaken for a write failure.
       maybePromise.then(
         () => {
-          this.emit("drain"); // Emit drain event
+          emitDrain(this);
           cb(null);
         },
         err => {
@@ -703,7 +731,7 @@ writeStreamPrototype._writev = function (data, cb) {
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
-          this.emit("drain");
+          emitDrain(this);
           cb(null);
         })
         .catch(cb);

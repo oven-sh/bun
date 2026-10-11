@@ -7,6 +7,12 @@ import path from "node:path";
 import { DatabaseSync, Session, StatementSync, backup, constants } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
+declare module "node:sqlite" {
+  class Session {
+    private constructor();
+  }
+}
+
 // On macOS bun dlopens the system libsqlite3.dylib, which Apple builds
 // without SQLITE_ENABLE_SESSION. createSession()/applyChangeset() throw
 // with a hint to use Database.setCustomSQLite(); tests that need the
@@ -116,7 +122,7 @@ describe("DatabaseSync", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (b BLOB)");
     db.prepare("INSERT INTO t VALUES (?)").run(new Uint8Array([1, 2, 3]));
-    const row = db.prepare("SELECT b FROM t").get();
+    const row = db.prepare("SELECT b FROM t").get()!;
     expect(row.b).toBeInstanceOf(Uint8Array);
     expect(row.b).toEqual(new Uint8Array([1, 2, 3]));
     db.close();
@@ -129,14 +135,14 @@ describe("DatabaseSync", () => {
     // tag-bit isInt32() would also give literal 42 vs Float64Array[0]=42
     // different storage classes.
     const db = new DatabaseSync(":memory:");
-    expect(db.prepare("SELECT typeof(?) AS t").get(42).t).toBe("real");
-    expect(db.prepare("SELECT typeof(?) AS t").get(new Float64Array([42])[0]).t).toBe("real");
-    expect(db.prepare("SELECT typeof(?) AS t").get(1.5).t).toBe("real");
+    expect(db.prepare("SELECT typeof(?) AS t").get(42)!.t).toBe("real");
+    expect(db.prepare("SELECT typeof(?) AS t").get(new Float64Array([42])[0])!.t).toBe("real");
+    expect(db.prepare("SELECT typeof(?) AS t").get(1.5)!.t).toBe("real");
     // BigInt is the way to bind an INTEGER.
-    expect(db.prepare("SELECT typeof(?) AS t").get(42n).t).toBe("integer");
+    expect(db.prepare("SELECT typeof(?) AS t").get(42n)!.t).toBe("integer");
     // UDF results follow the same rule.
     db.function("f", () => 42);
-    expect(db.prepare("SELECT typeof(f()) AS t").get().t).toBe("real");
+    expect(db.prepare("SELECT typeof(f()) AS t").get()!.t).toBe("real");
     // expandedSQL reflects the bound storage class.
     const stmt = db.prepare("SELECT ?");
     stmt.get(42);
@@ -154,9 +160,9 @@ describe("DatabaseSync", () => {
     // Detach by transferring the underlying ArrayBuffer to a MessageChannel port.
     structuredClone(buf.buffer, { transfer: [buf.buffer] });
     expect(buf.byteLength).toBe(0);
-    expect(db.prepare("SELECT typeof(?) AS t").get(buf).t).toBe("blob");
+    expect(db.prepare("SELECT typeof(?) AS t").get(buf)!.t).toBe("blob");
     expect(() => db.prepare("INSERT INTO t VALUES (?)").run(buf)).not.toThrow();
-    expect(db.prepare("SELECT length(b) AS n FROM t").get().n).toBe(0);
+    expect(db.prepare("SELECT length(b) AS n FROM t").get()!.n).toBe(0);
     db.close();
   });
 
@@ -164,13 +170,13 @@ describe("DatabaseSync", () => {
     // Regression: WTF::String::fromUTF8 returns null on invalid bytes and
     // jsString(null) becomes "". Matches bun:sqlite (#31514) and Node.
     const db = new DatabaseSync(":memory:");
-    expect(db.prepare("SELECT CAST(x'4A6F73E9' AS TEXT) AS v").get().v).toBe("Jos�");
+    expect(db.prepare("SELECT CAST(x'4A6F73E9' AS TEXT) AS v").get()!.v).toBe("Jos�");
     // >64-byte variant to ensure the slow decode path is covered.
-    const long = db.prepare("SELECT CAST((? || x'E9') AS TEXT) AS v").get("x".repeat(80)).v;
+    const long = db.prepare("SELECT CAST((? || x'E9') AS TEXT) AS v").get("x".repeat(80))!.v;
     expect(long).toBe("x".repeat(80) + "�");
     // UDF argv path (sqliteValueToJS) hits the same replacement decode.
     let seen: string | undefined;
-    db.function("cap", v => void (seen = v));
+    db.function("cap", v => void (seen = v as string) as any);
     db.prepare("SELECT cap(CAST(x'4A6F73E9' AS TEXT))").get();
     expect(seen).toBe("Jos�");
     db.close();
@@ -180,6 +186,7 @@ describe("DatabaseSync", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a, b)");
     const stmt = db.prepare("INSERT INTO t VALUES (?, ?)");
+    // @ts-expect-error
     expect(() => stmt.run(1, Symbol())).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_ARG_TYPE",
@@ -242,6 +249,7 @@ describe("DatabaseSync", () => {
   });
 
   test("StatementSync cannot be constructed directly", () => {
+    // @ts-expect-error
     expect(() => new StatementSync()).toThrow(/Illegal constructor/);
   });
 
@@ -296,12 +304,13 @@ describe("DatabaseSync", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (x)");
     const s1 = db.prepare("INSERT INTO t VALUES (?)");
+    // @ts-expect-error
     expect(() => s1.run([99])).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_STATE", message: "Unknown named parameter '0'" }),
     );
     const s2 = db.prepare("INSERT INTO t VALUES (?)");
     s2.setAllowUnknownNamedParameters(true);
-    expect(s2.run([99])).toEqual({ changes: 1, lastInsertRowid: 1 });
+    expect(s2.run([99] as any)).toEqual({ changes: 1, lastInsertRowid: 1 });
     expect(db.prepare("SELECT x FROM t").all()).toEqual([{ x: null }]);
     db.close();
   });
@@ -325,6 +334,7 @@ describe("DatabaseSync", () => {
 
   test("constructor rejects non-int32 timeout values", () => {
     for (const timeout of [Infinity, -Infinity, 2 ** 32, 1.5, NaN, "100"]) {
+      // @ts-expect-error
       expect(() => new DatabaseSync(":memory:", { timeout })).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
       );
@@ -336,9 +346,11 @@ describe("DatabaseSync", () => {
   });
 
   test("constructor rejects non-Uint8Array TypedArray paths", () => {
+    // @ts-expect-error
     expect(() => new DatabaseSync(new Float64Array([1.5]))).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
+    // @ts-expect-error
     expect(() => new DatabaseSync(new Int32Array([65, 66]))).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
@@ -371,22 +383,27 @@ describe("DatabaseSync", () => {
     });
 
     expect(() => new DatabaseSync(":memory:", undefined)).toThrow(invalidOptions);
+    // @ts-expect-error
     expect(() => new DatabaseSync(":memory:", null)).toThrow(invalidOptions);
     new DatabaseSync(":memory:").close();
 
     const db = new DatabaseSync(":memory:");
     try {
+      // @ts-expect-error
       expect(() => db.function("f", undefined, () => 1)).toThrow(invalidOptions);
+      // @ts-expect-error
       expect(() => db.function("f", null, () => 1)).toThrow(invalidOptions);
       db.function("f", () => 1);
 
       if (sqliteHasSession) {
         expect(() => db.createSession(undefined)).toThrow(invalidOptions);
+        // @ts-expect-error
         expect(() => db.createSession(null)).toThrow(invalidOptions);
         db.createSession();
       }
 
       expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
+      // @ts-expect-error
       expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
 
       // Controls: these are value-gated in Node (explicit undefined is the
@@ -534,7 +551,7 @@ describe("DatabaseSync", () => {
     const db = new DatabaseSync(":memory:", { open: false });
     db.open();
     const stmt = db.prepare("SELECT 1 AS v");
-    expect(stmt.get().v).toBe(1);
+    expect(stmt.get()!.v).toBe(1);
     db.close();
     db.open();
     // Statement was prepared on the *previous* (now-zombie) connection.
@@ -558,7 +575,7 @@ describe("DatabaseSync", () => {
   test("database-level defaults flow to prepared statements", () => {
     const db = new DatabaseSync(":memory:", { readBigInts: true, returnArrays: true });
     const row = db.prepare("SELECT 42 AS v").get();
-    expect(row).toEqual([42n]);
+    expect(row).toEqual<unknown>([42n]);
     // per-statement override beats the db default
     const stmt = db.prepare("SELECT 42 AS v", { readBigInts: false, returnArrays: false });
     expect(stmt.get()).toEqual({ __proto__: null, v: 42 });
@@ -584,11 +601,11 @@ describe("DatabaseSync", () => {
 describe("DatabaseSync.prototype.function()", () => {
   test("registers scalar UDFs and propagates JS exceptions", () => {
     const db = new DatabaseSync(":memory:");
-    db.function("double_it", x => x * 2);
-    expect(db.prepare("SELECT double_it(21) AS v").get().v).toBe(42);
+    db.function("double_it", x => (x as number) * 2);
+    expect(db.prepare("SELECT double_it(21) AS v").get()!.v).toBe(42);
 
     db.function("join_args", { varargs: true }, (...a) => a.join("-"));
-    expect(db.prepare("SELECT join_args('a','b','c') AS v").get().v).toBe("a-b-c");
+    expect(db.prepare("SELECT join_args('a','b','c') AS v").get()!.v).toBe("a-b-c");
 
     // An exception thrown inside the UDF surfaces as-is, not wrapped
     // in ERR_SQLITE_ERROR.
@@ -603,11 +620,11 @@ describe("DatabaseSync.prototype.function()", () => {
 
   test("deterministic flag permits use in generated columns", () => {
     const db = new DatabaseSync(":memory:");
-    db.function("square", { deterministic: true }, (x: number) => x * x);
+    db.function("square", { deterministic: true }, (x: any) => x * x);
     // Deterministic UDFs are allowed in generated-column expressions.
     db.exec("CREATE TABLE t (n INTEGER, sq INTEGER GENERATED ALWAYS AS (square(n)))");
     db.prepare("INSERT INTO t (n) VALUES (?)").run(7);
-    expect(db.prepare("SELECT sq FROM t").get().sq).toBe(49);
+    expect(db.prepare("SELECT sq FROM t").get()!.sq).toBe(49);
 
     db.function("rnd", { deterministic: false }, () => Math.random());
     expect(() => db.exec("CREATE TABLE u (n INTEGER, r REAL GENERATED ALWAYS AS (rnd()))")).toThrow(
@@ -618,6 +635,7 @@ describe("DatabaseSync.prototype.function()", () => {
 
   test("unsupported return types produce ERR_SQLITE_ERROR", () => {
     const db = new DatabaseSync(":memory:");
+    // @ts-expect-error
     db.function("bad", () => ({ nope: true }));
     expect(() => db.prepare("SELECT bad()").get()).toThrow(
       expect.objectContaining({
@@ -625,6 +643,7 @@ describe("DatabaseSync.prototype.function()", () => {
         message: expect.stringMatching(/cannot be converted to a SQLite value/),
       }),
     );
+    // @ts-expect-error
     db.function("async_bad", () => Promise.resolve(1));
     expect(() => db.prepare("SELECT async_bad()").get()).toThrow(
       /Asynchronous user-defined functions are not supported/,
@@ -639,7 +658,7 @@ describe("DatabaseSync.prototype.function()", () => {
     const db = new DatabaseSync(":memory:");
     const longName = "a".repeat(300);
     expect(() => db.function(longName, () => 0)).toThrow(expect.objectContaining({ code: "ERR_SQLITE_ERROR" }));
-    expect(() => db.aggregate(longName, { start: 0, step: (a, n) => a + n })).toThrow(
+    expect(() => db.aggregate(longName, { start: 0, step: (a: number, n: any) => a + n })).toThrow(
       expect.objectContaining({ code: "ERR_SQLITE_ERROR" }),
     );
     db.close();
@@ -695,16 +714,16 @@ describe("DatabaseSync.prototype.function()", () => {
     const it = db.prepare("SELECT reenter3() AS r FROM t").iterate();
     expect(it.next().value).toEqual({ r: "ERR_INVALID_STATE" });
     expect(iterCaught).toBe("ERR_INVALID_STATE");
-    it.return();
+    it.return!();
     // Iterator return() while stepping skips the sqlite3_reset (tolerant)
     // and just marks done; the outer next() still yields the in-flight row.
     db.function("reenter4", () => {
-      it2.return();
+      it2.return!();
       return "r";
     });
     const it2 = db.prepare("SELECT reenter4() AS r FROM t").iterate();
     expect(it2.next()).toEqual({ done: false, value: { r: "r" } });
-    expect(it2.next()).toEqual({ done: true, value: null });
+    expect(it2.next()).toEqual<unknown>({ done: true, value: null });
     db.close();
   });
 
@@ -837,6 +856,7 @@ describe("DatabaseSync.prototype.function()", () => {
     // deferred handle until the BusyScope unwinds.
     for (const fn of ["run", "get", "all"] as const) {
       const db = new DatabaseSync(":memory:");
+      // @ts-expect-error
       db.function("f", () => {
         db.close();
         return {};
@@ -861,8 +881,8 @@ describe("DatabaseSync.prototype.aggregate()", () => {
 
   test("basic sum aggregate", () => {
     const db = setup();
-    db.aggregate("my_sum", { start: 0, step: (acc: number, n: number) => acc + n });
-    expect(db.prepare("SELECT my_sum(n) AS s FROM t").get().s).toBe(10);
+    db.aggregate("my_sum", { start: 0, step: (acc: number, n: any) => acc + n });
+    expect(db.prepare("SELECT my_sum(n) AS s FROM t").get()!.s).toBe(10);
     db.close();
   });
 
@@ -872,8 +892,8 @@ describe("DatabaseSync.prototype.aggregate()", () => {
       start: () => [0, 0] as [number, number],
       step: (acc, n: number) => [acc[0] + n, acc[1] + 1] as [number, number],
       result: acc => acc[0] / acc[1],
-    });
-    expect(db.prepare("SELECT my_avg(n) AS s FROM t").get().s).toBe(2.5);
+    } as any);
+    expect(db.prepare("SELECT my_avg(n) AS s FROM t").get()!.s).toBe(2.5);
     db.close();
   });
 
@@ -881,8 +901,8 @@ describe("DatabaseSync.prototype.aggregate()", () => {
     const db = setup();
     db.aggregate("win_sum", {
       start: 0,
-      step: (acc: number, n: number) => acc + n,
-      inverse: (acc: number, n: number) => acc - n,
+      step: (acc: number, n: any) => acc + n,
+      inverse: (acc: number, n: any) => acc - n,
     });
     const rows = db.prepare("SELECT win_sum(n) OVER (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS s FROM t").all();
     expect(rows.map(r => r.s)).toEqual([3, 6, 9, 7]);
@@ -893,7 +913,7 @@ describe("DatabaseSync.prototype.aggregate()", () => {
     const db = setup();
     db.aggregate("step_throw", {
       start: 0,
-      step: (_acc: number, _n: number) => {
+      step: (_acc: number, _n: any) => {
         throw new Error("step failed");
       },
     });
@@ -903,7 +923,7 @@ describe("DatabaseSync.prototype.aggregate()", () => {
       start: () => {
         throw new Error("start failed");
       },
-      step: (_acc: number, _n: number) => 0,
+      step: (_acc: number, _n: any) => 0,
     });
     expect(() => db.prepare("SELECT start_throw(n) FROM t").get()).toThrow("start failed");
     db.close();
@@ -924,7 +944,7 @@ describe("StatementSync.prototype.iterate()", () => {
     expect(iter[Symbol.iterator]()).toBe(iter);
     expect([...iter].map(r => r.n)).toEqual([1, 2, 3, 4]);
     // Exhausted iterator keeps returning done.
-    expect(iter.next()).toEqual({ __proto__: null, done: true, value: null });
+    expect(iter.next()).toEqual<unknown>({ __proto__: null, done: true, value: null });
     db.close();
   });
 
@@ -933,7 +953,7 @@ describe("StatementSync.prototype.iterate()", () => {
     const stmt = db.prepare("SELECT n FROM t ORDER BY n");
     const seen: number[] = [];
     for (const row of stmt.iterate()) {
-      seen.push(row.n);
+      seen.push(row.n as number);
       if (seen.length === 2) break;
     }
     expect(seen).toEqual([1, 2]);
@@ -946,7 +966,7 @@ describe("StatementSync.prototype.iterate()", () => {
     const db = setup();
     const stmt = db.prepare("SELECT n FROM t ORDER BY n");
     const iter = stmt.iterate();
-    expect(iter.next().value.n).toBe(1);
+    expect(iter.next().value!.n).toBe(1);
     // Calling run()/all()/get() on the same statement resets it, so the
     // iterator's cursor position is no longer meaningful.
     stmt.all();
@@ -965,10 +985,10 @@ describe("StatementSync.prototype.iterate()", () => {
     // mid-iteration.
     const stmt = db.prepare("SELECT boom(n) AS v FROM t");
     const iter = stmt.iterate();
-    expect(iter.next().value.v).toBe(1);
+    expect(iter.next().value!.v).toBe(1);
     expect(() => iter.next()).toThrow(/boom at row 2/);
     // Catching the error and continuing must not silently restart from row 1.
-    expect(iter.next()).toEqual({ done: true, value: null });
+    expect(iter.next()).toEqual<unknown>({ done: true, value: null });
     db.close();
   });
 
@@ -981,11 +1001,11 @@ describe("StatementSync.prototype.iterate()", () => {
       // the implicit return() from `break` (IteratorClose) on the stale
       // iterator must not reset the statement under the newer one.
       newer = stmt.iterate();
-      expect(newer.next().value.n).toBe(1);
+      expect(newer.next().value!.n).toBe(1);
       break;
     }
-    expect(newer!.next().value.n).toBe(2);
-    expect(newer!.next().value.n).toBe(3);
+    expect(newer!.next().value!.n).toBe(2);
+    expect(newer!.next().value!.n).toBe(3);
     db.close();
   });
 
@@ -1004,7 +1024,7 @@ describe("StatementSync.prototype.iterate()", () => {
       }
     }).not.toThrow();
     // Explicit return() on the now-finalized iterator likewise succeeds.
-    expect(iter.return()).toEqual({ __proto__: null, done: true, value: null });
+    expect(iter.return!()).toEqual<unknown>({ __proto__: null, done: true, value: null });
   });
 });
 
@@ -1074,7 +1094,7 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     expect(ok).toBe(true);
     expect(observed).toBe(constants.SQLITE_CHANGESET_CONFLICT);
     // Row was omitted, original preserved.
-    expect(dst.prepare("SELECT v FROM s WHERE id = 1").get().v).toBe("already there");
+    expect(dst.prepare("SELECT v FROM s WHERE id = 1").get()!.v).toBe("already there");
     src.close();
     dst.close();
   });
@@ -1093,8 +1113,8 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     dst.applyChangeset(session.changeset(), {
       filter: table => table === "a",
     });
-    expect(dst.prepare("SELECT count(*) AS c FROM a").get().c).toBe(1);
-    expect(dst.prepare("SELECT count(*) AS c FROM b").get().c).toBe(0);
+    expect(dst.prepare("SELECT count(*) AS c FROM a").get()!.c).toBe(1);
+    expect(dst.prepare("SELECT count(*) AS c FROM b").get()!.c).toBe(0);
     src.close();
     dst.close();
   });
@@ -1127,8 +1147,8 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
         return true;
       },
     });
-    expect(dst.prepare("SELECT count(*) AS c FROM a").get().c).toBe(1);
-    expect(dst.prepare("SELECT count(*) AS c FROM b").get().c).toBe(1);
+    expect(dst.prepare("SELECT count(*) AS c FROM a").get()!.c).toBe(1);
+    expect(dst.prepare("SELECT count(*) AS c FROM b").get()!.c).toBe(1);
     src.close();
     dst.close();
   });
@@ -1151,7 +1171,7 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
         },
       }),
     ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
-    expect(dst.prepare("SELECT count(*) AS c FROM t").get().c).toBe(0);
+    expect(dst.prepare("SELECT count(*) AS c FROM t").get()!.c).toBe(0);
     src.close();
     dst.close();
   });
@@ -1377,7 +1397,7 @@ describe("backup()", () => {
     expect(progressCalls).toBeGreaterThan(0);
 
     const dst = new DatabaseSync(destPath);
-    expect(dst.prepare("SELECT count(*) AS c FROM t").get().c).toBe(3);
+    expect(dst.prepare("SELECT count(*) AS c FROM t").get()!.c).toBe(3);
     src.close();
     dst.close();
     // The temporary statement above is not yet GC'd, so sqlite3_close_v2
@@ -1647,7 +1667,7 @@ describe("createTagStore()", () => {
     expect(it2.next().value).toEqual({ n: 1 });
     sql.get`SELECT n FROM t WHERE n > 1`;
     expect(it2.next().value).toEqual({ n: 2 });
-    it2.return();
+    it2.return!();
     db.close();
   });
 
@@ -1720,19 +1740,19 @@ describe("createTagStore()", () => {
     // must evict the stale entry and re-prepare on the new connection.
     const db = new DatabaseSync(":memory:");
     const sql = db.createTagStore();
-    expect(sql.get`SELECT 1 AS v`.v).toBe(1);
+    expect(sql.get`SELECT 1 AS v`!.v).toBe(1);
     expect(sql.size).toBe(1);
     db.close();
     db.open();
-    expect(sql.get`SELECT 1 AS v`.v).toBe(1);
+    expect(sql.get`SELECT 1 AS v`!.v).toBe(1);
     expect(sql.size).toBe(1);
     // deserialize() bumps the generation without a close()/open() cycle.
     db.exec("CREATE TABLE t (x INTEGER)");
     db.exec("INSERT INTO t VALUES (7)");
-    expect(sql.get`SELECT x FROM t`.x).toBe(7);
+    expect(sql.get`SELECT x FROM t`!.x).toBe(7);
     const buf = db.serialize();
     db.deserialize(buf);
-    expect(sql.get`SELECT x FROM t`.x).toBe(7);
+    expect(sql.get`SELECT x FROM t`!.x).toBe(7);
     db.close();
   });
 });
@@ -1810,7 +1830,7 @@ describe("row-shape structure caching", () => {
     // calls V8 Object::Set()/CreateDataProperty() each time, which
     // overwrites on a repeat key. The cached-offset path must agree
     // with the generic putDirect() fallback, so both yield {x: 2}.
-    const dup = db.prepare("SELECT 1 AS x, 2 AS x").get();
+    const dup = db.prepare("SELECT 1 AS x, 2 AS x").get()!;
     expect(Object.keys(dup)).toEqual(["x"]);
     expect(dup.x).toBe(2);
     db.close();
@@ -1863,7 +1883,7 @@ describe("row-shape structure caching", () => {
     // putDirect both assert !parseIndex(), so the fast path must
     // bail and the fallback must use putDirectMayBeIndex().
     const db = new DatabaseSync(":memory:");
-    const row = db.prepare('SELECT 7 AS "0", 8 AS one').get();
+    const row = db.prepare('SELECT 7 AS "0", 8 AS one').get()!;
     expect(row["0"]).toBe(7);
     expect(row[0]).toBe(7);
     expect(row.one).toBe(8);
@@ -1886,7 +1906,7 @@ test("SQLTagStore binds via the same JS→SQLite bridge as StatementSync", () =>
   expect(() => sql.run`INSERT INTO t VALUES (${undefined as any})`).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
-  expect(db.prepare("SELECT COUNT(*) AS c FROM t").get().c).toBe(0);
+  expect(db.prepare("SELECT COUNT(*) AS c FROM t").get()!.c).toBe(0);
   db.close();
 });
 
@@ -1909,13 +1929,13 @@ describe("StatementSync.prototype.columns()", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)");
     const cols = db.prepare("SELECT id, name AS display FROM t").columns();
-    expect(cols).toEqual([
+    expect(cols).toEqual<unknown>([
       { __proto__: null, column: "id", database: "main", name: "id", table: "t", type: "INTEGER" },
       { __proto__: null, column: "name", database: "main", name: "display", table: "t", type: "TEXT" },
     ]);
     // Computed expressions have no origin column/table.
     const exprCols = db.prepare("SELECT 1 + 1 AS two").columns();
-    expect(exprCols[0]).toEqual({
+    expect(exprCols[0]).toEqual<unknown>({
       __proto__: null,
       column: null,
       database: null,
@@ -2104,8 +2124,8 @@ describe("GC lifetime", () => {
       const db = new DatabaseSync(":memory:");
       db.exec("CREATE TABLE t (x INTEGER)");
       db.exec("INSERT INTO t VALUES (1), (2)");
-      db.function("lookup", id => db.prepare("SELECT 1 AS v").get()!.v + id);
-      db.aggregate("agg", { start: 0, step: (acc, x) => acc + (db ? x : 0) });
+      db.function("lookup", id => (db.prepare("SELECT 1 AS v").get()!.v as number) + (id as number));
+      db.aggregate("agg", { start: 0, step: (acc: number, x: any) => acc + (db ? x : 0) });
       expect(db.prepare("SELECT lookup(1) AS v").get()!.v).toBe(2);
       expect(db.prepare("SELECT agg(x) AS v FROM t").get()!.v).toBe(3);
     }
@@ -2127,7 +2147,7 @@ describe("GC lifetime", () => {
     db.exec("INSERT INTO t VALUES (1), (2)");
     for (let i = 0; i < 500; i++) {
       db.function("f", () => i);
-      db.aggregate("agg", { start: 0, step: (acc, _x) => acc + i });
+      db.aggregate("agg", { start: 0, step: (acc: number, _x) => acc + i });
     }
     expect(db.prepare("SELECT f() AS v").get()!.v).toBe(499);
     expect(db.prepare("SELECT agg(x) AS v FROM t").get()!.v).toBe(998);
@@ -2146,7 +2166,7 @@ describe("GC lifetime", () => {
     // were registered. That deferred teardown must not touch the cell.
     const db = new DatabaseSync(":memory:");
     db.function("f", () => 1);
-    let stmt: InstanceType<typeof StatementSync> | null = db.prepare("SELECT 1 AS v");
+    let stmt: StatementSync | null = db.prepare("SELECT 1 AS v");
     expect(stmt.get()!.v).toBe(1);
     db.close(); // zombie: stmt is still unfinalized
     db.open();
@@ -2209,6 +2229,7 @@ describe("GC lifetime", () => {
 describe("module exports", () => {
   test("Session is exported and instanceof works; SQLTagStore is not exported", () => {
     expect(typeof Session).toBe("function");
+    // @ts-expect-error
     expect(() => new Session()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
     // SQLTagStore is Bun-internal (createTagStore()) — not a Node export.
     expect(Object.keys(require("node:sqlite")).sort()).toEqual([
@@ -2277,6 +2298,7 @@ describe("loadExtension() / enableLoadExtension()", () => {
 
   test.skipIf(!sqliteHasLoadExtension)("enableLoadExtension() with no argument throws ERR_INVALID_ARG_TYPE", () => {
     const db = new DatabaseSync(":memory:", { allowExtension: true });
+    // @ts-expect-error
     expect(() => db.enableLoadExtension()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     db.close();
   });
@@ -2427,7 +2449,7 @@ describe("GC stress", () => {
     for (let i = 0; i < 500; i++) {
       db.function("f", () => i);
       Bun.gc(true);
-      expect(stmt.get().v).toBe(i);
+      expect(stmt.get()!.v).toBe(i);
     }
     db.close();
   }, 30_000);
@@ -2438,7 +2460,7 @@ describe("GC stress", () => {
     for (let i = 0; i < 500; i++) {
       // Rotate the SQL text so the LRU inserts/evicts every iteration.
       const j = i % 8;
-      const v = sql.get(["SELECT ", ` + ${j} AS v`], i).v;
+      const v = sql.get(["SELECT ", ` + ${j} AS v`] as any, i)!.v;
       Bun.gc(true);
       expect(v).toBe(i + j);
     }
@@ -2451,13 +2473,13 @@ describe("GC stress", () => {
     db.exec(`WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c LIMIT 100) INSERT INTO t SELECT x FROM c`);
     db.aggregate("gcsum", {
       start: 0,
-      step: (acc, x) => {
+      step: (acc: number, x: any) => {
         Bun.gc(true);
         return acc + x;
       },
     });
     // The Strong<> in sqlite3_aggregate_context must survive GC between xStep calls.
-    expect(db.prepare("SELECT gcsum(x) AS s FROM t").get().s).toBe(5050);
+    expect(db.prepare("SELECT gcsum(x) AS s FROM t").get()!.s).toBe(5050);
     db.close();
   });
 

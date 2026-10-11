@@ -169,15 +169,9 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
         while (pulls === 0 && performance.now() < deadline) await Bun.sleep(1);
         const before = pulls;
         await res.body.cancel(new Error("nope"));
-        // Poll for quiescence: once cancel has reached the transport, pulls stop growing.
+        // Wait for the abort itself: pulls also stop from backpressure, so a quiet period proves nothing.
         // Bail early if pulls run away so the failing case reports instead of timing out.
-        let last = pulls;
-        let stable = 0;
-        while (stable < 5 && pulls - before < 2000 && performance.now() < deadline) {
-          await Bun.sleep(10);
-          if (pulls === last) stable++;
-          else { stable = 0; last = pulls; }
-        }
+        while (!aborted && pulls - before < 2000 && performance.now() < deadline) await Bun.sleep(1);
         const after = pulls - before;
         const timedOut = performance.now() >= deadline;
         console.log(JSON.stringify({ after, aborted, timedOut }));
@@ -191,9 +185,9 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
 
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const { after, aborted, timedOut } = JSON.parse(stdout.trim());
-  // When the cancel reaches the fetch tasklet the server sees the abort and pulls stop
-  // within a bounded window. Without the fix the client keeps draining and `after`
-  // grows into the thousands (the poll loop above never stabilizes).
+  // When the cancel reaches the fetch tasklet the server sees the abort after a bounded
+  // number of pulls. Without the fix the client keeps draining and `after` grows into
+  // the thousands (the poll loop above bails out with no abort).
   expect({ aborted, afterBounded: after < 200, timedOut, exitCode }).toEqual({
     aborted: true,
     afterBounded: true,

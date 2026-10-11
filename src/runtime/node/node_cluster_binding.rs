@@ -776,7 +776,6 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
     }
     #[cfg(windows)]
     {
-        let _ = value;
         Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL))
     }
 }

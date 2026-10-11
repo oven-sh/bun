@@ -25,7 +25,9 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
@@ -872,6 +874,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if is_call_target {
                         p.call_target = dot.data;
+                    }
+                    if is_template_tag {
+                        p.template_tag = dot.data;
                     }
                     if is_delete_target {
                         p.delete_target = dot.data;
@@ -2701,7 +2706,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
-        p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
+        // A method cannot be wrapped in a call. Like react-refresh/babel, ignore its hook calls.
+        let is_method = e_
+            .func
+            .flags
+            .contains(Flags::Function::IsUniqueFormalParameters);
+        p.react_refresh.hook_ctx_storage = if is_method {
+            None
+        } else {
+            Some(core::ptr::NonNull::from(&mut react_hook_data))
+        };
 
         // For function *expressions* the .function_args scope is pushed at the
         // `function` keyword loc, not at open_parens_loc. (s_function correctly

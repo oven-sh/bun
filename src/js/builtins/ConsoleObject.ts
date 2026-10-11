@@ -129,23 +129,15 @@ export function write(this: Console & { $writer: ConsoleWriter | undefined }, in
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
-  // A backed-up writer (FileSink) returns a Promise instead of a count: one Promise, the same for every write made
-  // while it is backed up, of the bytes those writes added. The caller gets a Promise of the total then, because
-  // awaiting it waits for the drain and is where a write error (EPIPE from a reader that hung up) arrives.
-  var wrote = 0;
-  var pending: Promise<number> | undefined;
+  var wrote = writer.write(input) as number;
+
   const count = $argumentCount();
-  var i = 0;
-  do {
-    const result = writer.write(arguments[i]);
-    if (typeof result === "number") wrote += result;
-    else pending = result;
-  } while (++i < count);
+  for (var i = 1; i < count; i++) {
+    wrote += writer.write(arguments[i]) as number;
+  }
 
   writer.flush(true);
-  if (pending === undefined) return wrote;
-  if (wrote === 0) return pending;
-  return pending.then(n => wrote + n);
+  return wrote;
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

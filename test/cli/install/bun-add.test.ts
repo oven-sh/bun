@@ -1313,7 +1313,7 @@ describe("npm aliases", () => {
     setHandler(async request => {
       const response = await registry(request);
       if (request.url.endsWith(".tgz")) return response;
-      const manifest = await response.json();
+      const manifest: any = await response.json();
       manifest["dist-tags"].rc = "0.0.5-rc.123456789";
       return Response.json(manifest);
     });

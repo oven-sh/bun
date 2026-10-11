@@ -116,8 +116,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -342,7 +340,6 @@ impl From<Error> for bun_uws_sys::Error {
 }
 
 impl Error {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
             Self::SnapshotFailed => "SnapshotFailed",
@@ -405,7 +402,6 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",

@@ -625,7 +625,9 @@ impl Variables {
             }
             (it.pos, it.scope)
         };
-        let declared_at = declared.map(note).collect();
+        // Nearly all declare something: room for all of them is made at once.
+        let mut declared_at = Vec::with_capacity(in_order.len());
+        declared_at.extend(declared.map(note));
 
         // The variables name by name.
         let mut by_name = vec![0u32; list.len()];

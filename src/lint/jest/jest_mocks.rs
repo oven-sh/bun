@@ -9,7 +9,7 @@ use crate::jest::{
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
-use bun_lint_oxlint::import::{import_declarations, import_entries_of};
+use bun_lint_oxlint::import::import_entries_of;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -64,7 +64,7 @@ pub(crate) mod no_mocks_import {
     );
 
     pub(crate) fn run_once(ctx: &Ctx) {
-        for declaration in import_declarations(ctx.file) {
+        for declaration in ctx.file.body().iter().filter_map(Stmt::as_import) {
             if contains_mocks_dir(declaration.spec().bytes())
                 && let Some(span) = declaration.spec_span()
             {
@@ -97,7 +97,8 @@ pub(crate) mod no_mocks_import {
     }
 
     fn contains_mocks_dir(value: &[u8]) -> bool {
-        strings::contains(value, b"__mocks__")
+        strings::contains_char(value, b'_')
+            && strings::contains(value, b"__mocks__")
             && strings::split(value, b"/").any(|it| it == b"__mocks__")
     }
 }

@@ -7223,6 +7223,7 @@ pub fn set_file_offset(fd: Fd, offset: u64) -> Maybe<()> {
 }
 
 /// macOS and FreeBSD open these exact names as a dup of that descriptor: `O_TRUNC` is ignored.
+#[inline]
 pub fn path_opens_as_dup(path: &[u8]) -> bool {
     cfg!(any(target_os = "macos", target_os = "freebsd"))
         && (matches!(path, b"/dev/stdin" | b"/dev/stdout" | b"/dev/stderr")

@@ -5183,7 +5183,11 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     needs_async: &mut bool,
 ) -> JSValue {
     // A dup is not resized after the write. O_TRUNC in its open is for a new file at that name.
-    let dest_is_dup = NEEDS_OPEN && bun_sys::path_opens_as_dup(pathlike.path().slice());
+    let dest_is_dup = NEEDS_OPEN
+        && matches!(
+            pathlike,
+            PathOrFileDescriptor::Path(path) if bun_sys::path_opens_as_dup(path.slice())
+        );
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
@@ -5270,7 +5274,11 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     needs_async: &mut bool,
 ) -> JSValue {
     // A dup is not resized after the write. O_TRUNC in its open is for a new file at that name.
-    let dest_is_dup = NEEDS_OPEN && bun_sys::path_opens_as_dup(pathlike.path().slice());
+    let dest_is_dup = NEEDS_OPEN
+        && matches!(
+            pathlike,
+            PathOrFileDescriptor::Path(path) if bun_sys::path_opens_as_dup(path.slice())
+        );
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {

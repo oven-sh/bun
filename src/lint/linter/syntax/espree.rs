@@ -356,7 +356,11 @@ impl Candidates {
         {
             return Candidates::of(file);
         }
-        let count_of = |tag: ExprTag| counts.get(2 * tag as usize).map_or(0, |&count| count as usize);
+        let count_of = |tag: ExprTag| {
+            counts
+                .get(2 * tag as usize)
+                .map_or(0, |&count| count as usize)
+        };
         let mut found = Vec::with_capacity(tags.iter().map(|&tag| count_of(tag)).sum());
         for &tag in tags {
             let kind = 2 * tag as u8;

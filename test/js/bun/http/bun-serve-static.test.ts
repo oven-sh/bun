@@ -436,8 +436,10 @@ describe("a Response whose .body was read stays the program's after it is used a
     const stream = response.body!;
     sendRest();
     // A route needs the whole body. Until the rest arrives, Bun.serve refuses
-    // the Response and leaves it as it is.
+    // the Response and leaves it as it is. Nothing else shows that the rest
+    // arrived, so this polls. After the deadline the refusal is the failure.
     const serveOnceArrived = async () => {
+      const deadline = Date.now() + 4000;
       for (;;) {
         try {
           return Bun.serve({
@@ -446,6 +448,7 @@ describe("a Response whose .body was read stays the program's after it is used a
             fetch: () => new Response("not found", { status: 404 }),
           });
         } catch (error) {
+          if (Date.now() > deadline) throw error;
           expect(String(error)).toContain("Body must be fully buffered");
           await new Promise(resolve => setImmediate(resolve));
         }

@@ -1,7 +1,9 @@
 import type { Subprocess } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "node:path";
+import { htmlPagesOf } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join, relative } from "node:path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>) {
   // Read the port number from stdout
@@ -714,4 +716,186 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
   const buttons = await fetch(new URL("/components/buttons", serverUrl));
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
+});
+
+const page = (title: string) => `<!doctype html><html><head><title>${title}</title></head><body></body></html>`;
+
+// Replaces `Bun.serve`: a run prints the pages that it serves, then exits. The pages are sorted before that, and a
+// debug build takes a second to load the collation data for it, so they are sorted without it.
+const printPages = /*js*/ `
+  String.prototype.localeCompare = function (other) {
+    return this < other ? -1 : this > other ? 1 : 0;
+  };
+  Bun.serve = options => {
+    console.log(JSON.stringify(Object.values(options.routes).map(page => page.index)));
+    process.exit(0);
+  };
+`;
+
+// What `bun <how> --preload print-pages.js <args>` serves in `cwd`, or how it fails.
+async function pagesServed(root: string, cwd: string, how: string[], args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...how, "--preload", join(root, "print-pages.js"), ...args],
+    cwd: join(root, cwd),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const pages: string[] = stdout ? JSON.parse(stdout) : [];
+  return {
+    pages: pages.map(page => relative(root, page).replaceAll("\\", "/")).sort(),
+    error: /Cannot find module|Module not found|ENOENT/.exec(stderr)?.[0],
+    exitCode,
+  };
+}
+
+// The pages of `{a,b}/app` are served. As a pattern, `{a,b}` matches `a`, which has pages with the same names.
+describe("pages under a directory named {a,b}", () => {
+  const pagesUnder = () =>
+    tempDir("html-entry-ünder-braces", {
+      "print-pages.js": printPages,
+      "push-about.js": /*js*/ `process.argv.push(require("node:path").join(process.cwd(), "about.html"));`,
+      "{a,b}/app/index.html": page("index"),
+      "{a,b}/app/about.html": page("about"),
+      "{a,b}/app/sub/index.html": page("sub"),
+      "{a,b}/site/package.json": JSON.stringify({ main: "./index.html" }),
+      "{a,b}/site/index.html": page("site"),
+      "a/app/index.html": page("not served"),
+      "a/app/about.html": page("not served"),
+      "a/app/missing.html": page("not served"),
+      "a/site/index.html": page("not served"),
+    });
+  const app = "{a,b}/app";
+  const index = [`${app}/index.html`];
+  const both = [`${app}/about.html`, `${app}/index.html`];
+  type Form = [name: string, cwd: string, how: string[], args: (root: string) => string[], pages: string[]];
+  const forms: Form[] = [
+    ["bun ./index.html", app, [], () => ["./index.html"], index],
+    ["bun index.html", app, [], () => ["index.html"], index],
+    ["bun run ./index.html", app, ["run"], () => ["./index.html"], index],
+    ["bun <absolute page>", ".", [], root => [join(root, app, "index.html")], index],
+    ["bun <page below>", ".", [], () => [`./${app}/index.html`], index],
+    ["bun <directory with a package.json>", "{a,b}", [], () => ["./site"], ["{a,b}/site/index.html"]],
+    ["bun ./index.html ./about.html", app, [], () => ["./index.html", "./about.html"], both],
+    ["bun ./about.html <absolute page>", app, [], root => ["./about.html", join(root, app, "index.html")], both],
+    ["bun ./index.html '{about,none}.html'", app, [], () => ["./index.html", "{about,none}.html"], both],
+    [
+      "a page that a preload adds to process.argv",
+      app,
+      [],
+      root => ["--preload", join(root, "push-about.js"), "./index.html"],
+      both,
+    ],
+    ["node ./index.html", app, ["--bun", "node"], () => ["./index.html"], index],
+    // These never had the name of the directory in them.
+    ["bun './*.html'", app, [], () => ["./*.html"], both],
+    ["bun './**/*.html'", app, [], () => ["./**/*.html"], [...both, `${app}/sub/index.html`]],
+  ];
+  test.concurrent.each(forms)("%s", async (_, cwd, how, args, pages) => {
+    using root = pagesUnder();
+    const result = await pagesServed(String(root), cwd, how, args(String(root)));
+    expect(result).toEqual({ pages, error: undefined, exitCode: 0 });
+  });
+
+  test.concurrent.skipIf(isWindows)("bun <symbolic link to a page>", async () => {
+    using root = pagesUnder();
+    symlinkSync(join(String(root), app, "index.html"), join(String(root), "link.html"));
+    const result = await pagesServed(String(root), ".", [], ["./link.html"]);
+    expect(result).toEqual({ pages: index, error: undefined, exitCode: 0 });
+  });
+
+  // What does not name a file is read as before.
+  type Failure = [name: string, args: (root: string) => string[], error: string];
+  const failures: Failure[] = [
+    ["bun <absolute page that is missing>", root => [join(root, app, "missing.html")], "Module not found"],
+    [
+      "bun ./index.html <pattern in a directory that is missing>",
+      root => ["./index.html", join(root, "missing", "*.html")],
+      "ENOENT",
+    ],
+    // Not the first: `bun` looks for a file with that name.
+    ["bun './{index,about}.html'", () => ["./{index,about}.html"], "Module not found"],
+  ];
+  test.concurrent.each(failures)("%s", async (_, args, error) => {
+    using root = pagesUnder();
+    const result = await pagesServed(String(root), app, [], args(String(root)));
+    expect(result).toEqual({ pages: [], error, exitCode: 1 });
+  });
+});
+
+// As a pattern, `p{1}.html` matches `p1.html`, and not the page with that name.
+test.concurrent.each([
+  [["./p{1}.html"], ["p{1}.html"]],
+  [
+    ["./index.html", "./p{1}.html"],
+    ["index.html", "p{1}.html"],
+  ],
+])("bun %j serves the page named p{1}.html", async (args, pages) => {
+  using root = tempDir("html-entry-named-page", {
+    "print-pages.js": printPages,
+    "index.html": page("index"),
+    "p{1}.html": page("p{1}"),
+    "p1.html": page("not served"),
+  });
+  const result = await pagesServed(String(root), ".", [], args);
+  expect(result).toEqual({ pages, error: undefined, exitCode: 0 });
+});
+
+// A pattern that matches its own text stays a pattern: it finds the file with that name too.
+test.concurrent.skipIf(isWindows)("bun './pages/*.html' beside a page named *.html", async () => {
+  using root = tempDir("html-entry-star-page", {
+    "print-pages.js": printPages,
+    "pages/*.html": page("star"),
+    "pages/a.html": page("a"),
+    "pages/b.html": page("b"),
+  });
+  const result = await pagesServed(String(root), ".", [], ["./pages/*.html"]);
+  expect(result).toEqual({ pages: ["pages/*.html", "pages/a.html", "pages/b.html"], error: undefined, exitCode: 0 });
+});
+
+test("which pages an argument names", () => {
+  using root = tempDir("html-entry-ärguments", {
+    "index.html": "",
+    "about.html": "",
+    "p{1}.html": "",
+    "p1.html": "",
+    "{a,b}/index.html": "",
+    "a/index.html": "",
+    "a/other.html": "",
+    ...(isWindows ? {} : { "pages/*.html": "", "pages/a.html": "" }),
+  });
+  const pagesOf = (arg: string) =>
+    htmlPagesOf(arg, String(root))
+      ?.map(page => page.replaceAll("\\", "/"))
+      .sort();
+  expect({
+    "./index.html": pagesOf("./index.html"),
+    "./missing.html": pagesOf("./missing.html"),
+    "./*.html": pagesOf("./*.html"),
+    "{about,none}.html": pagesOf("{about,none}.html"),
+    // The path of a page, which the pattern cannot find.
+    "./p{1}.html": pagesOf("./p{1}.html"),
+    "{a,b}/index.html": pagesOf("{a,b}/index.html"),
+    "<absolute>": pagesOf(join(String(root), "{a,b}", "index.html")),
+    // No page has that path.
+    "p{2}.html": pagesOf("p{2}.html"),
+    "{a,b}/other.html": pagesOf("{a,b}/other.html"),
+    // Longer than a path can be.
+    "<long>": pagesOf(`{${Buffer.alloc(200_000, "a").toString()}}.html`),
+  }).toEqual({
+    "./index.html": undefined,
+    "./missing.html": undefined,
+    "./*.html": ["./about.html", "./index.html", "./p1.html", "./p{1}.html"],
+    "{about,none}.html": ["about.html"],
+    "./p{1}.html": undefined,
+    "{a,b}/index.html": undefined,
+    "<absolute>": undefined,
+    "p{2}.html": [],
+    "{a,b}/other.html": ["a/other.html"],
+    "<long>": [],
+  });
+  // A pattern that matches its own text finds the page with that name, and the others.
+  if (!isWindows) expect(pagesOf("./pages/*.html")).toEqual(["./pages/*.html", "./pages/a.html"]);
+  expect(() => pagesOf(join(String(root), "missing", "*.html"))).toThrow(expect.objectContaining({ code: "ENOENT" }));
 });

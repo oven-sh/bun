@@ -1462,10 +1462,6 @@ pub(crate) fn build_store(
             peers: node_peers[entry.node_id.get() as usize].clone(),
         });
 
-        debug_assert!(
-            !new_entry_nested_folder || node_nodes[entry.node_id.get() as usize].is_empty(),
-            "a folder declared by a remote package is resolved without dependencies"
-        );
         for &child_node_id in &node_nodes[entry.node_id.get() as usize] {
             entry_queue.write_item(QueuedEntry {
                 node_id: child_node_id,

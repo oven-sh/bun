@@ -1907,6 +1907,16 @@ impl Stream {
         self.js_context.deinit();
     }
 
+    /// Moves the callbacks of the queued writes into `callbacks`, so that `clean_queue` runs none.
+    fn take_write_callbacks(&mut self, callbacks: &mut Vec<StrongOptional>) {
+        let queue = &mut self.data_frame_queue;
+        for frame in &mut queue.data[queue.front..] {
+            if frame.callback.has() {
+                callbacks.push(core::mem::take(&mut frame.callback));
+            }
+        }
+    }
+
     fn clean_queue<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
         bun_output::scoped_log!(
             H2FrameParser,
@@ -2131,17 +2141,15 @@ impl H2FrameParser {
         stream.rst_code = value;
         value = value.swap_bytes();
         let _ = writer_stream.write_all(&value.to_ne_bytes());
-        let old_state = stream.state;
         stream.state = StreamState::CLOSED;
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
+        // A dropped write's callback can end the writable that JS reads to decide 'aborted'.
+        let mut callbacks = Vec::new();
+        stream.take_write_callbacks(&mut callbacks);
         stream.free_resources::<false>(self);
-        self.dispatch_with_2_extra(
-            JSH2FrameParser::Gc::onAborted,
-            identifier,
-            abort_reason,
-            JSValue::js_number(old_state as u8 as f64),
-        );
+        self.dispatch_with_extra(JSH2FrameParser::Gc::onAborted, identifier, abort_reason);
+        self.run_write_callbacks(callbacks);
         let _ = self.write(&buffer);
     }
 
@@ -2426,6 +2434,19 @@ impl H2FrameParser {
     pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
         let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_write_callback(callback, &[]);
+    }
+
+    /// Runs what `Stream::take_write_callbacks` took. A callback can destroy the session.
+    fn run_write_callbacks(&self, callbacks: Vec<StrongOptional>) {
+        if callbacks.is_empty() {
+            return;
+        }
+        let _keepalive = self.keepalive();
+        for callback in callbacks {
+            if let Some(callback) = callback.get() {
+                self.dispatch_write_callback(callback);
+            }
+        }
     }
 
     pub(crate) fn dispatch_with_extra(
@@ -4240,13 +4261,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             self.rewrite_pending_push.set(0);
         }
-        // Bridge: mark the legacy stream closed with the rst code (capturing the prior state for
-        // the aborted dispatch below).
-        let mut old_state: u8 = StreamState::OPEN as u8;
+        // Bridge: mark the legacy stream closed with the rst code.
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe {
-                old_state = (*stream).state as u8;
                 (*stream).state = StreamState::CLOSED;
                 (*stream).rst_code = code;
             }
@@ -4255,11 +4273,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if code == crate::api::h2::wire::ErrorCode::Cancel.as_u32() {
             // A peer CANCEL is an abort, not an error (node emits 'aborted' and closes with
             // rstCode 8 without an 'error' event).
-            self.dispatch_with_2_extra(
+            self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onAborted,
                 stream_ctx,
                 JSValue::UNDEFINED,
-                JSValue::js_number(old_state as f64),
             );
         } else {
             self.dispatch_with_extra(
@@ -6436,6 +6453,8 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // A dropped write's callback can end any of these streams, so the callbacks run after the last dispatch.
+        let mut callbacks = Vec::new();
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
@@ -6452,20 +6471,20 @@ impl H2FrameParser {
                 continue;
             }
             if stream.state != StreamState::CLOSED {
-                let old_state = stream.state;
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::CANCEL.0;
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
+                stream.take_write_callbacks(&mut callbacks);
                 stream.free_resources::<false>(this);
-                this.dispatch_with_2_extra(
+                this.dispatch_with_extra(
                     JSH2FrameParser::Gc::onAborted,
                     identifier,
                     JSValue::UNDEFINED,
-                    JSValue::js_number(old_state as u8 as f64),
                 );
             }
         }
+        this.run_write_callbacks(callbacks);
         Ok(JSValue::UNDEFINED)
     }
 

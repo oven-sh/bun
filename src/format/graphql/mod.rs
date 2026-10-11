@@ -16,6 +16,7 @@ use crate::ir::element::{Align, FormatElement, LineMode, Tag};
 use crate::js::context::JsFormatContext;
 use crate::options::LineEnding;
 use crate::range::{Offsets, alignment_size, normalized_len, write_with_line_ending};
+use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
 
@@ -85,6 +86,14 @@ pub fn format(
     format_normalized(text, 0, &options, scratch, out).map_err(in_original)
 }
 
+/// Why the parser has refused the text.
+fn because_of(error: SyntaxError) -> FormatError {
+    match error {
+        SyntaxError(Message::NestedTooDeeply, _) => FormatError::NestedTooDeeply,
+        error => FormatError::SyntaxErrorAt(error),
+    }
+}
+
 /// Prettier's `formatRange`
 fn format_range(
     text: &[u8],
@@ -94,7 +103,7 @@ fn format_range(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    parser::parse(text, &mut scratch.tree).map_err(FormatError::SyntaxErrorAt)?;
+    parser::parse(text, &mut scratch.tree).map_err(because_of)?;
     let range = range::calculate_range(text, &scratch.tree, start, end).unwrap_or_default();
     let (before, rest) = text.split_at((range.start as usize).min(text.len()));
     let (slice, after) = rest.split_at((range.len() as usize).min(rest.len()));
@@ -135,7 +144,7 @@ fn format_normalized(
         attached,
         document,
     } = scratch;
-    parser::parse(text, tree).map_err(FormatError::SyntaxErrorAt)?;
+    parser::parse(text, tree).map_err(because_of)?;
     comments::attach(text, tree, attached);
 
     // Prettier's `addAlignmentToDoc`. The line break makes the indentation take effect.

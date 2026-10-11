@@ -94,7 +94,7 @@ impl Rule for Radix {
                 cx.report(e, MISSING_PARAMETERS);
             }
             (Some(_), None) if is_as_needed => {}
-            (Some(_), Some(radix)) if is_as_needed && matches!(radix.kind(), ExprKind::Number(it) if it == 10.0) => {
+            (Some(_), Some(radix)) if is_as_needed && radix.as_number() == Some(10.0) => {
                 cx.report(e, REDUNDANT_RADIX);
             }
             (Some(_), None) => {

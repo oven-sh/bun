@@ -102,7 +102,7 @@ impl Rule for NoScriptUrl {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Template(template) = e.kind()
+        if let Some(template) = e.as_template()
             && template.as_static().is_some_and(is_script_url)
             && !matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
         {

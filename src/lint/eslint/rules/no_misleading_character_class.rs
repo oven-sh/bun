@@ -427,14 +427,14 @@ impl Rule for NoMisleadingCharacterClass {
                     };
                     return Some(fixer.insert_after(penultimate_token, argument));
                 };
-                matches!(flags_node.kind(), ExprKind::String(_) | ExprKind::Template(_))
+                matches!(flags_node.tag(), ExprTag::String | ExprTag::Template)
                     .then(|| fixer.insert_before(Span::empty(flags_node.span().end - 1), "u"))
             };
             self.verify(pattern_node, &pattern, &flags, unicode_fixer, cx);
         }
 
         for e in std::mem::take(&mut cx.state) {
-            if let ExprKind::Regex(literal) = e.kind()
+            if let Some(literal) = e.as_regex()
                 && !checked_pattern_nodes.contains(&e)
             {
                 let is_valid = OnceCell::new();

@@ -43,7 +43,7 @@ impl PreferPromiseRejectErrors {
             return;
         };
         let callee = call.callee();
-        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
+        let Some(obj) = callee.object() else {
             return;
         };
         if !is_static_member_access_of_value(callee, &["reject"]) {
@@ -57,7 +57,7 @@ impl PreferPromiseRejectErrors {
 
     /// `new Promise((resolve, reject) => reject(..))`
     fn check_new<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(new) = node.kind() else {
+        let Some(new) = node.as_new() else {
             return;
         };
         let Some(executor) = new.args().first().and_then(Expr::as_fn) else {

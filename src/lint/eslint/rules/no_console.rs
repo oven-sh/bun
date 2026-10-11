@@ -37,7 +37,7 @@ fn removable_statement(member: Expr<'_>) -> Option<Stmt<'_>> {
         return None;
     }
     let statement = call.parent().as_stmt()?;
-    (matches!(statement.kind(), StmtKind::Expr(_))
+    (statement.tag() == StmtTag::Expr
         && ast_utils::is_statement_list_parent(statement.parent())
         && !maybe_asi_hazard(statement))
     .then_some(statement)
@@ -54,7 +54,7 @@ fn change_of_oxlint(member: Expr) -> Option<(Span, &'static str)> {
         matches!(it.tag(), StmtTag::If | StmtTag::While | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf)
     };
     let text = match call.parent() {
-        Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Expr(_)) => {
+        Node::Stmt(statement) if statement.tag() == StmtTag::Expr => {
             let is_body = matches!(statement.parent(), Node::Stmt(parent) if needs_statement(parent));
             return Some((statement.span(), if is_body { "{}" } else { "" }));
         }

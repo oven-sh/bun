@@ -16,7 +16,7 @@ impl Rule for NoNestedTernary {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Cond { yes, no, .. } = e.kind()
+        if let Some((_, yes, no)) = e.as_cond()
             && (no.tag() == ExprTag::Cond || yes.tag() == ExprTag::Cond)
         {
             cx.report(e, NO_NESTED_TERNARY);

@@ -17,7 +17,7 @@ impl Rule for NoEmptyCharacterClass {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Regex(literal) = e.kind() else {
+        let Some(literal) = e.as_regex() else {
             return;
         };
         let pattern = literal.pattern();

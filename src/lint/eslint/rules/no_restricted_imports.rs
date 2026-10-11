@@ -768,7 +768,7 @@ impl Restrictions {
         // By the name here, the first of each. `None`: `* as a`, which is a local export there.
         let mut entries: FxHashMap<&'a [u8], Option<(Stmt<'a>, Specifier<'a>)>> = FxHashMap::default();
         for statement in file.body() {
-            let StmtKind::Import(import) = statement.kind() else {
+            let Some(import) = statement.as_import() else {
                 continue;
             };
             let mut add = |local: Ident<'a>, imported: Option<Ident<'a>>, is_type_only: bool| {
@@ -790,7 +790,7 @@ impl Restrictions {
         // Where each `import` is in `again`, by where it starts.
         let mut places: FxHashMap<u32, usize> = FxHashMap::default();
         for statement in file.body() {
-            let StmtKind::ExportNamed(export) = statement.kind() else {
+            let Some(export) = statement.as_export_named() else {
                 continue;
             };
             for item in export.items().iter().filter(|_| export.spec().is_none()) {
@@ -842,7 +842,7 @@ impl Restrictions {
 
     /// What oxlint does with `import("m")`: as with `import "m"`, without the restrictions that are about names.
     pub fn check_import_call<'a, R: Rule>(&self, cx: &Cx<'a, R>, call: Expr<'a>) {
-        let ExprKind::ImportCall { args } = call.kind() else {
+        let Some(args) = call.as_import_call() else {
             return;
         };
         let Some(source) = args.first().and_then(Expr::as_string) else {

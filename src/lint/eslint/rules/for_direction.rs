@@ -78,7 +78,7 @@ fn direction_of(update: Expr<'_>) -> i32 {
 /// clause that is one expression. Of what is added it looks at how it is written: a number, or an operator before
 /// something. In parentheses it knows nothing.
 fn check_as_oxlint<'a>(test: Expr<'a>, update: Expr<'a>, cx: &Cx<'a, ForDirection>) {
-    let ExprKind::Binary { op, left, right } = test.kind() else {
+    let Some((op, left, right)) = test.as_binary() else {
         return;
     };
     let is_less = match op {
@@ -157,7 +157,7 @@ impl Rule for ForDirection {
         if cx.language().is_oxlint {
             return check_as_oxlint(test, update, cx);
         }
-        let ExprKind::Binary { op, left, right } = test.kind() else {
+        let Some((op, left, right)) = test.as_binary() else {
             return;
         };
         // The direction that is wrong for a counter on the left.

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap};
 use bun_lint_oxlint::ast_util::{
     get_declaration_of_variable, is_reference_to_global_variable, is_specific_id, static_property_name,
@@ -42,17 +43,6 @@ fn get_report_node_name(callee: Expr<'_>) -> Cow<'_, [u8]> {
 
 /// The objects that oxlint knows.
 const OXLINT_GLOBAL_OBJECTS: [&str; 5] = ["Atomics", "Intl", "JSON", "Math", "Reflect"];
-
-/// Whether a variable of another name may stand for one of the objects: `resolve_global_binding` gets to them through a
-/// variable whose value is the name of one, or a member of `globalThis`.
-fn may_have_other_names<'a>(file: &'a File<'a>) -> bool {
-    let mentions_global_this = file.mentions("globalThis");
-    let declarators = file.stmts_of_kind(StmtTag::Var).filter_map(Stmt::as_var).flatten();
-    declarators.filter_map(VarDecl::init).any(|init| match init.as_ident() {
-        Some(name) => name.is_any(&OXLINT_GLOBAL_OBJECTS),
-        None => mentions_global_this && init.object().is_some(),
-    })
-}
 
 /// What is asked of every call with a configuration of oxlint.
 pub struct Oxlint<'a> {
@@ -110,8 +100,15 @@ impl NoObjCalls {
         let (Some(callee), Some(oxlint)) = (e.as_call_like().map(|it| it.callee()), &cx.state) else {
             return;
         };
+        // Under another name only a variable stands for one of them.
+        let may_be_one = |name: Name<'a>| {
+            oxlint.objects.contains(&name)
+                || callee.symbol().is_some_and(|it| it.declaration_kinds().contains(DeclarationKinds::VARIABLE))
+        };
         let found = match callee.as_ident() {
-            Some(name) if !callee.is_parenthesized() => oxlint.resolve_global_binding(callee).map(|global| (name, global)),
+            Some(name) if may_be_one(name) && !callee.is_parenthesized() => {
+                oxlint.resolve_global_binding(callee).map(|global| (name, global))
+            }
             Some(_) => None,
             None => oxlint.global_this_member(callee).filter(|_| !callee.is_parenthesized()).map(|name| (name, name)),
         };
@@ -147,9 +144,6 @@ impl Rule for NoObjCalls {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         if !file.language().is_oxlint {
             return On::new().finish();
-        }
-        if file.mentions_any(&OXLINT_GLOBAL_OBJECTS) && !may_have_other_names(file) {
-            return On::new().calls_named(&OXLINT_GLOBAL_OBJECTS).exprs(&[ExprTag::New]);
         }
         On::new().exprs(&[ExprTag::Call, ExprTag::New])
     }

@@ -18,7 +18,7 @@ fn calls_boolean(call: Call) -> bool {
 }
 
 fn is_sequence(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
+    e.binary_op() == Some(BinOp::Comma)
 }
 
 /// ESLint's `isInBooleanContext`. `parent`: the parent of `e`.
@@ -154,7 +154,7 @@ impl NoExtraBooleanCast {
                 // `!Boolean()` is `true`. The parent of `Boolean?.()` is a `ChainExpression`.
                 if !call.is_optional()
                     && let Node::Expr(parent) = e.parent()
-                    && matches!(parent.kind(), ExprKind::Unary { op: UnOp::Not, .. })
+                    && parent.unary_op() == Some(UnOp::Not)
                 {
                     if has_comments_inside(parent) {
                         return None;

@@ -104,7 +104,7 @@ impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
 
     /// The `b` of `a.b`: reading it is allowed, the object may not be the user's.
     fn check_property_name<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Dot { name, .. } = e.kind() else {
+        let Some(name) = e.member_name() else {
             return;
         };
         if !self.is_restricted(name.name()) {

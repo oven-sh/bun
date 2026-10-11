@@ -39,7 +39,7 @@ impl Rule for NoIterator {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Dot => {
-                if let ExprKind::Dot { obj, name, .. } = e.kind()
+                if let Some((obj, name, _)) = e.as_dot()
                     && name.name().is("__iterator__")
                     && is_member_expression(e)
                 {
@@ -47,7 +47,7 @@ impl Rule for NoIterator {
                 }
             }
             ExprTag::Index => {
-                if let ExprKind::Index { obj, index, .. } = e.kind()
+                if let Some((obj, index, _)) = e.as_index()
                     && matches!(index.tag(), ExprTag::String | ExprTag::Template)
                     && get_static_string_value(index).is_some_and(|name| &*name == b"__iterator__")
                 {

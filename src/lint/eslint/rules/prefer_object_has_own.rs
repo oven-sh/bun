@@ -20,7 +20,7 @@ fn is_named(member: Expr<'_>, name: &str) -> bool {
 
 /// Whether `object` is `Object`, `Object.prototype` or `{}`.
 fn is_left_hand_object(object: Expr<'_>) -> bool {
-    if let ExprKind::Object(props) = object.kind() {
+    if let Some(props) = object.as_object() {
         return props.is_empty();
     }
     match object_of_member(object) {

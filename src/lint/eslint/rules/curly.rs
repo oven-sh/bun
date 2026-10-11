@@ -110,7 +110,7 @@ fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
     // A `;` after a block would be a statement of its own, which an `else` cannot follow. After the
     // body of a function expression or an arrow function it ends the statement.
     let ends_with_block = match utils::get_node_by_range_index(file, before.start()) {
-        Node::Stmt(last) => matches!(last.kind(), StmtKind::Block(_)),
+        Node::Stmt(last) => last.as_block().is_some(),
         Node::Func(func) => {
             func.kind() == FnKind::Decl && func.body_span().is_some_and(|body| body.end == before.end())
         }

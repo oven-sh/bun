@@ -24,7 +24,7 @@ const VALID_TYPES: [&str; 8] = [
 ];
 
 fn is_typeof_expression(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Unary { op: UnOp::Typeof, .. })
+    e.unary_op() == Some(UnOp::Typeof)
 }
 
 /// oxlint's `help` names the type that `value` is nearly.

@@ -145,7 +145,7 @@ fn is_range_test(node: Node) -> bool {
     let Node::Expr(e) = node else {
         return false;
     };
-    let ExprKind::Binary { op, left, right } = e.kind() else {
+    let Some((op, left, right)) = e.as_binary() else {
         return false;
     };
     let (Some(left), Some(right)) = (as_range_comparison(left), as_range_comparison(right)) else {

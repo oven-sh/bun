@@ -104,7 +104,7 @@ pub struct State<'a> {
 
 /// Whether ESLint before 10 counts `node` where it ends.
 fn ends_a_block_before_10(node: Node) -> bool {
-    matches!(node, Node::Stmt(stmt) if !matches!(stmt.kind(), StmtKind::Block(_)))
+    matches!(node, Node::Stmt(stmt) if stmt.as_block().is_none())
 }
 
 impl MaxDepth {
@@ -114,7 +114,7 @@ impl MaxDepth {
         let (Some(max), Node::Stmt(stmt), true) = (self.max, node, ends_a_block_before_10(node)) else {
             return;
         };
-        let is_if = |it: Stmt| matches!(it.kind(), StmtKind::If { .. });
+        let is_if = |it: Stmt| it.tag() == StmtTag::If;
         if is_if(stmt) && matches!(stmt.parent(), Node::Stmt(parent) if is_if(parent)) {
             return;
         }

@@ -26,7 +26,7 @@ fn is_init_or_update_of_for(e: Expr<'_>) -> bool {
     let StmtKind::For { init, update, .. } = parent.kind() else {
         return false;
     };
-    update == Some(e) || init.is_some_and(|init| matches!(init.kind(), StmtKind::Expr(init) if init == e))
+    update == Some(e) || init.is_some_and(|init| init.as_expr() == Some(e))
 }
 
 impl Rule for NoSequences {

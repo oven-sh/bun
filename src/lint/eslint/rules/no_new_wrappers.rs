@@ -24,7 +24,7 @@ impl Rule for NoNewWrappers {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(call) = e.kind() else {
+        let Some(call) = e.as_new() else {
             return;
         };
         let Some(name) = call.callee().as_ident() else {

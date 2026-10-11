@@ -21,7 +21,7 @@ impl Rule for NoConstructorReturn {
             return;
         }
         for stmt in func.returns() {
-            if matches!(stmt.kind(), StmtKind::Return(Some(_))) {
+            if matches!(stmt.as_return(), Some(Some(_))) {
                 cx.report(stmt, UNEXPECTED);
             }
         }

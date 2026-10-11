@@ -40,7 +40,7 @@ fn statement_list_owner(statement: Stmt<'_>) -> Option<Node<'_>> {
         parent @ (Node::File(_) | Node::Func(_)) => Some(parent),
         Node::Case(case) => Some(case.parent()).filter(|it| it.as_stmt().is_some_and(|it| it.tag() == StmtTag::Switch)),
         Node::Stmt(parent) => {
-            matches!(parent.kind(), StmtKind::Block(_) | StmtKind::Module(_)).then_some(Node::Stmt(parent))
+            (parent.as_block().is_some() || parent.tag() == StmtTag::Module).then_some(Node::Stmt(parent))
         }
         _ => None,
     }
@@ -48,9 +48,7 @@ fn statement_list_owner(statement: Stmt<'_>) -> Option<Node<'_>> {
 
 fn overloads<'a>(file: &'a File<'a>) -> FxHashSet<(Node<'a>, Name<'a>, bool)> {
     let signatures = file.stmts_of_kind(StmtTag::Fn).filter_map(|statement| {
-        let StmtKind::Fn(func) = statement.kind() else {
-            return None;
-        };
+        let func = statement.as_fn()?;
         let flags = func.flags();
         if func.has_body() || flags.contains(Flags::EXPORT | Flags::DEFAULT) {
             return None;
@@ -78,7 +76,7 @@ fn is_overloaded_function<'a>(
 
 impl FuncStyle {
     fn check_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Fn(func) = e.kind() else {
+        let Some(func) = e.as_fn() else {
             return;
         };
         if func.is_arrow() && self.allow_arrow_functions {
@@ -183,7 +181,7 @@ impl Rule for FuncStyle {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Fn(func) = statement.kind() else {
+        let Some(func) = statement.as_fn() else {
             return;
         };
         let flags = func.flags();

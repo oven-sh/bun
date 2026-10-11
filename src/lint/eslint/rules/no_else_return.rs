@@ -84,7 +84,7 @@ fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Optio
         false => start_token,
     };
 
-    let if_block_maybe_unsafe = !matches!(consequent.kind(), StmtKind::Block(_)) && !last_if_token.is(";");
+    let if_block_maybe_unsafe = consequent.as_block().is_none() && !last_if_token.is(";");
     if if_block_maybe_unsafe && can_continue_statement(first_token_of_else_block) {
         return None;
     }
@@ -136,7 +136,7 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>
     };
     let (start, end) = (consequent.span().end, else_node.span().end);
     let needs_newline =
-        matches!(consequent.kind(), StmtKind::Expr(_) | StmtKind::Return(_)) && !consequent.text().ends_with(b";");
+        matches!(consequent.tag(), StmtTag::Expr | StmtTag::Return) && !consequent.text().ends_with(b";");
     let is_open = last.is_some_and(|it| !matches!(it.text().trim_ascii_end().last(), Some(b';' | b'}')));
     let after = file.text().get(end as usize..).unwrap_or_default();
     let next = after.iter().copied().find(|it| !matches!(it, b' ' | b'\t' | 0x0b | 0x0c));

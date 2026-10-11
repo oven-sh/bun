@@ -69,12 +69,12 @@ impl PreferPromiseRejectErrors {
             for reference in rest.pat().symbol().into_iter().flat_map(Symbol::references) {
                 if let Some(identifier) = reference.expr().filter(|it| !it.is_parenthesized())
                     && let Node::Expr(member) = identifier.parent()
-                    && let ExprKind::Index { obj, index, .. } = member.kind()
+                    && let Some((obj, index, _)) = member.as_index()
                     && obj == identifier
-                    && matches!(index.kind(), ExprKind::Number(it) if it == position)
+                    && index.as_number() == Some(position)
                     && !index.is_parenthesized()
                     && let Node::Expr(parent) = member.parent()
-                    && let ExprKind::Call(call) = parent.kind()
+                    && let Some(call) = parent.as_call()
                     && call.callee() == member
                 {
                     self.check_reject_call(parent, call, cx);
@@ -102,7 +102,7 @@ impl PreferPromiseRejectErrors {
         for reference in variable.references().filter(|reference| reference.is_read()) {
             if let Some(identifier) = reference.expr()
                 && let Node::Expr(parent) = identifier.parent()
-                && let ExprKind::Call(call) = parent.kind()
+                && let Some(call) = parent.as_call()
                 && call.callee() == identifier
             {
                 self.check_reject_call(parent, call, cx);

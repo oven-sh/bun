@@ -1,10 +1,9 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync, writeFileSync } from "fs";
+import { mkdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { pathToFileURL } from "url";
 const preloadModule = `
 import {plugin} from 'bun';
 
@@ -232,6 +231,8 @@ plugin({
     test.each(["--preload", "--import", "--require", "bunfig.toml"])(
       "%s does not run a file that the resolver has for that name",
       async how => {
+        // A package that is no builtin, and a file, are still the resolver's.
+        const preloads = [...builtins, "lodashy", "./setup.js"];
         using dir = tempDir("preload-builtin-name-resolver", {
           ...packages("path", "fs", "abort-controller", "lodashy"),
           "node_modules/fs/promises.js": `console.log("node_modules/fs/promises.js ran");`,
@@ -239,12 +240,8 @@ plugin({
           "src/events.js": `console.log("src/events.js ran");`,
           "setup.js": `console.log("setup.js ran");`,
           "main.js": `console.log("main ran");`,
+          ...(how === "bunfig.toml" ? { "bunfig.toml": `preload = ${JSON.stringify(preloads)}` } : {}),
         });
-        // A package that is no builtin, and a file, are still the resolver's.
-        const preloads = [...builtins, "lodashy", pathToFileURL(join(String(dir), "setup.js")).href];
-        if (how === "bunfig.toml") {
-          writeFileSync(join(String(dir), "bunfig.toml"), `preload = ${JSON.stringify(preloads)}`);
-        }
 
         const args = how === "bunfig.toml" ? [] : preloads.flatMap(name => [how, name]);
         expect(await run(String(dir), args)).toEqual({

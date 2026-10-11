@@ -5,7 +5,7 @@
 use super::estree::sibling_statements;
 use super::misc::NodeWithKey;
 use super::predicates::is_function_type;
-use crate::ast::{Expr, ExprKind, Flags, Func, KeyKind, Member, Node, Stmt, StmtKind};
+use crate::ast::{Expr, Flags, Func, KeyKind, Member, Node, Stmt};
 use crate::utils::eslint_utils::{StaticSymbol, StaticValue, get_static_value};
 use std::borrow::Cow;
 
@@ -92,9 +92,7 @@ fn object_of_called_method<'a>(call: Expr<'a>, names: &[&str]) -> Option<Expr<'a
     if callee.is_chain_root() {
         return None;
     }
-    let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
-        return None;
-    };
+    let obj = callee.object()?;
     is_static_member_access_of_value(callee, names).then_some(obj)
 }
 
@@ -135,8 +133,8 @@ pub fn is_promise_aggregator_method<'a>(
 
 /// A `TSDeclareFunction`, with the flags of its statement.
 fn as_declare_function(statement: Stmt<'_>) -> Option<(Func<'_>, Flags)> {
-    match statement.kind() {
-        StmtKind::Fn(func) if !func.has_body() => Some((func, statement.flags())),
+    match statement.as_fn() {
+        Some(func) if !func.has_body() => Some((func, statement.flags())),
         _ => None,
     }
 }
@@ -180,8 +178,8 @@ pub fn has_overload_signatures<'a>(node: impl Into<Node<'a>>) -> bool {
             Node::Member(member) => method_has_overload_signatures(member),
             _ => false,
         },
-        Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Fn(func) => function_has_overload_signatures(statement, func),
+        Node::Stmt(statement) => match statement.as_fn() {
+            Some(func) => function_has_overload_signatures(statement, func),
             _ => false,
         },
         _ => false,

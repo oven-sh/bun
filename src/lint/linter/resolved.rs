@@ -166,6 +166,7 @@ pub(super) struct Slot {
     pub(super) number: u16,
     /// With a configuration of oxlint: when oxlint reports what the rule reports.
     pub(super) when: When,
+    pub(super) severity: Severity,
 }
 
 /// Whether the rule finds the files that imports name as `settings["import/resolver"]` says.

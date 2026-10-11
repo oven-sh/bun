@@ -76,8 +76,8 @@ impl<'a> Node<'a> {
         }
         /// What is in the head of a `for`: a `Var`, or the expression in a wrapper.
         fn head(statement: super::Stmt) -> Node {
-            match statement.kind() {
-                StmtKind::Expr(e) => Node::Expr(e),
+            match statement.as_expr() {
+                Some(e) => Node::Expr(e),
                 _ => Node::Stmt(statement),
             }
         }

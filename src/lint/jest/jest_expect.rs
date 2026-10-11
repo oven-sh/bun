@@ -680,10 +680,13 @@ pub(crate) mod expect_expect {
         }
     }
 
-    /// Whether what follows the first name of a chain makes no difference to any of `matchers`.
+    /// Whether each of `matchers` needs a chain to have a name, and what follows the first makes no difference to it.
     fn look_at_first_name_only(matchers: &[AssertFunctionMatcher]) -> bool {
-        matchers.iter().all(|it| {
-            matches!(it, AssertFunctionMatcher::Exact(expected) if !strings::contains_char(expected.as_bytes(), b'.'))
+        matchers.iter().all(|it| match it {
+            AssertFunctionMatcher::Exact(expected) => {
+                !expected.is_empty() && !strings::contains_char(expected.as_bytes(), b'.')
+            }
+            AssertFunctionMatcher::Pattern(_) => false,
         })
     }
 
@@ -829,8 +832,12 @@ pub(crate) mod expect_expect {
             tasks: impl Iterator<Item = Task<'a>>,
         ) -> bool {
             if self.has_assertion.is_none() {
+                // The first name of a chain is one of the texts of the file.
+                let may_have_one = !self.first_name_only
+                    || (file.own_names())
+                        .is_none_or(|mut texts| texts.any(|it| self.is_match(&[it.bytes()])));
                 let mut calls = file.exprs_of_kind(ExprTag::Call).filter_map(Expr::as_call);
-                self.has_assertion = Some(calls.any(|it| self.is_assertion(it)));
+                self.has_assertion = Some(may_have_one && calls.any(|it| self.is_assertion(it)));
             }
             if self.has_assertion == Some(false) {
                 return false;
@@ -857,19 +864,20 @@ pub(crate) mod expect_expect {
             is_found
         }
 
+        fn is_match(&self, names: &[&[u8]]) -> bool {
+            self.assert_function_matchers
+                .iter()
+                .any(|matcher| matcher.is_match(names))
+        }
+
         fn is_assertion(&self, call_expr: Call) -> bool {
-            let is_match = |names: &[&[u8]]| {
-                self.assert_function_matchers
-                    .iter()
-                    .any(|matcher| matcher.is_match(names))
-            };
             match self.first_name_only {
-                true => is_match(
+                true => self.is_match(
                     get_first_node_name(call_expr.callee())
                         .map(Name::bytes)
                         .as_slice(),
                 ),
-                false => is_match(&get_node_name_vec(call_expr.callee())),
+                false => self.is_match(&get_node_name_vec(call_expr.callee())),
             }
         }
 

@@ -527,10 +527,9 @@ impl<'a> ImportAttributes<'a> {
 
     /// `key: "value"`. The key is a name or a string.
     pub fn entries(self) -> List<'a, Prop<'a>> {
-        match self.object.kind() {
-            super::ExprKind::Object(entries) => entries,
-            _ => List::empty(self.object.file()),
-        }
+        self.object
+            .as_object()
+            .unwrap_or_else(|| List::empty(self.object.file()))
     }
 }
 

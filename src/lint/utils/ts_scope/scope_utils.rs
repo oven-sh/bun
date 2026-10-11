@@ -1,6 +1,6 @@
 //! typescript-eslint's `util/scopeUtils.ts`.
 
-use crate::ast::{ExprKind, FnKind, KeyKind, Name, Node};
+use crate::ast::{ExprTag, FnKind, KeyKind, Name, Node};
 use crate::semantic::Reference;
 use smallvec::SmallVec;
 
@@ -48,12 +48,12 @@ fn visit_rank<'a>(parent: Node<'a>, child: Node<'a>) -> u8 {
         (Node::Member(_), Node::Func(_)) => 1,
         (Node::Member(_), _) => 3,
         (Node::Expr(e), Node::Type(_)) => u8::from(matches!(
-            e.kind(),
-            ExprKind::Call(_)
-                | ExprKind::New(_)
-                | ExprKind::TaggedTemplate(_)
-                | ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
+            e.tag(),
+            ExprTag::Call
+                | ExprTag::New
+                | ExprTag::TaggedTemplate
+                | ExprTag::As
+                | ExprTag::Satisfies
         )),
         _ => 0,
     }

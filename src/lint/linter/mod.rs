@@ -192,20 +192,39 @@ struct Running<'r, S> {
 }
 
 impl<'r, S> Running<'r, S> {
+    #[inline]
+    fn ran(&self) -> Ran<'r> {
+        Ran {
+            entry: self.entry,
+            configured: self.configured,
+            severity: self.severity,
+        }
+    }
+}
+
+/// What of a [`Running`] is read when the rules have run.
+#[derive(Copy, Clone)]
+struct Ran<'r> {
+    entry: &'static RuleEntry,
+    configured: Option<&'r ConfiguredRule>,
+    severity: Severity,
+}
+
+impl<'r> Ran<'r> {
     /// [`ConfiguredRule::reported_as`]
     #[inline]
-    fn reported_as(&self) -> &'static Meta {
+    fn reported_as(self) -> &'static Meta {
         (self.configured).map_or(self.entry.meta, ConfiguredRule::reported_as)
     }
 
     /// [`ConfiguredRule::name`]
     #[inline]
-    fn name(&self) -> Option<&'r Arc<[u8]>> {
+    fn name(self) -> Option<&'r Arc<[u8]>> {
         self.configured.and_then(ConfiguredRule::name)
     }
 
     /// ESLint's `ruleId` of what it reports.
-    fn id(&self) -> RuleId {
+    fn id(self) -> RuleId {
         match self.name() {
             Some(name) => RuleId::Named(self.entry.meta, Arc::clone(name)),
             None => RuleId::Known(self.reported_as()),
@@ -364,7 +383,13 @@ impl<S: RuleSet> Linter<S> {
                 false => (rule.entry.meta.reports, 0),
             };
             let at = at as u32;
-            let slot = Slot { at, number, when };
+            let severity = rule.severity;
+            let slot = Slot {
+                at,
+                number,
+                when,
+                severity,
+            };
             order.push((oxlint_number, slot, Arc::clone(instance)));
             if rule.entry.meta.requires_types {
                 typed.push(rule.entry.meta);
@@ -474,13 +499,26 @@ impl<S: RuleSet> Linter<S> {
             Some(listening) => listening.0.iter().map(|it| it.count_ones() as usize).sum(),
             None => prepared.order.len(),
         };
-        let mut running: Vec<Running<S>> = Vec::with_capacity(count);
         let made = prepared.rules.downcast_ref::<Vec<Arc<S>>>();
         let made = made.map_or(&[][..], |it| &it[..]);
-        for (slot, instance) in prepared.order.iter().zip(made) {
-            if listening.as_ref().is_some_and(|it| !it.has(slot.number)) {
-                continue;
+        // The rules that run: where `is_plain`, their places in `prepared.order`. Else `running`.
+        let (mut places, mut running): (Vec<u32>, Vec<Running<S>>) = (Vec::new(), Vec::new());
+        let mut enabled: Vec<Enabled<S>> = Vec::with_capacity(count);
+        if let Some(listening) = &listening {
+            places.reserve(count);
+            for ((slot, instance), place) in prepared.order.iter().zip(made).zip(0..) {
+                if listening.has(slot.number) {
+                    places.push(place);
+                    enabled.push(Enabled {
+                        rule: &**instance,
+                        severity: slot.severity,
+                    });
+                }
             }
+        }
+        running.reserve(if is_plain { 0 } else { count });
+        let others = (prepared.order.iter().zip(made)).filter(|_| !is_plain);
+        for (slot, instance) in others {
             let Some(rule) = config.rules.get(slot.at as usize) else {
                 continue;
             };
@@ -491,10 +529,7 @@ impl<S: RuleSet> Linter<S> {
                     severity: rule.severity,
                     when: slot.when,
                     rule: RuleRef::Shared(instance),
-                    refusal: match is_plain {
-                        true => None,
-                        false => self.refusal(rule).map(Cow::Borrowed),
-                    },
+                    refusal: self.refusal(rule).map(Cow::Borrowed),
                 });
             }
         }
@@ -554,7 +589,7 @@ impl<S: RuleSet> Linter<S> {
         let ignores_what_is_filtered = !config.language.is_oxlint;
         if let Some(filter) = options.rule_filter {
             running.retain(|it| {
-                let id = it.id();
+                let id = it.ran().id();
                 let runs = it.severity == Severity::Off || filter(&id, it.severity);
                 if !runs && ignores_what_is_filtered {
                     rules_to_ignore.push(id);
@@ -669,17 +704,15 @@ impl<S: RuleSet> Linter<S> {
         if let Some(module) = &config.package_module {
             file.set_package_module(Arc::clone(module));
         }
-        let mut enabled: Vec<Enabled<S>> = (running.iter())
-            .map(|it| Enabled {
+        // A rule for which the file has nothing is not started.
+        if !is_plain {
+            enabled.extend(running.iter().map(|it| Enabled {
                 rule: match &it.rule {
                     RuleRef::Shared(rule) => *rule,
                     RuleRef::Own(rule) => &**rule,
                 },
                 severity: it.severity,
-            })
-            .collect();
-        // A rule for which the file has nothing is not started.
-        if !is_plain {
+            }));
             let mut on = RuleBits::EMPTY;
             for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
                 let number = it.rule.number();
@@ -709,12 +742,24 @@ impl<S: RuleSet> Linter<S> {
         file.sink.wants_help.set(options.wants_help);
         file.sink.drops_messages.set(!options.wants_messages);
         (file.sink.drops_texts_of_fixes).set(!options.wants_texts_of_fixes);
+        let ran = |index: usize| -> Option<Ran> {
+            if !is_plain {
+                return running.get(index).map(Running::ran);
+            }
+            let slot = prepared.order.get(*places.get(index)? as usize)?;
+            let rule = config.rules.get(slot.at as usize)?;
+            Some(Ran {
+                entry: rule.entry,
+                configured: Some(rule),
+                severity: slot.severity,
+            })
+        };
         let mut diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
         if let Some(thrown) = file.sink.thrown.take() {
             let said = [&thrown.error[..], b"\nOccurred while linting ", file.path()];
             let mut said = said.concat();
             if let Some(at) = thrown.at {
-                let id = running.get(thrown.rule as usize).map(|it| it.id().to_vec());
+                let id = ran(thrown.rule as usize).map(|it| it.id().to_vec());
                 let line = file.line_of(at).to_string();
                 said.extend_from_slice(b":");
                 said.extend_from_slice(line.as_bytes());
@@ -730,7 +775,11 @@ impl<S: RuleSet> Linter<S> {
         problems.reserve(diagnostics.len());
         let order: Vec<u32> = match (wants_places, file.language().is_oxlint) {
             (true, true) => {
-                let when: Vec<When> = running.iter().map(|it| it.when).collect();
+                let of_place = |it: &u32| prepared.order.get(*it as usize).map(|it| it.when);
+                let when: Vec<When> = match is_plain {
+                    true => places.iter().filter_map(of_place).collect(),
+                    false => running.iter().map(|it| it.when).collect(),
+                };
                 crate::runner::sorted(&diagnostics, &when)
             }
             (true, false) => crate::runner::sorted(&diagnostics, &[]),
@@ -743,7 +792,7 @@ impl<S: RuleSet> Linter<S> {
             let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
                 continue;
             };
-            let Some(rule) = running.get(diagnostic.rule as usize) else {
+            let Some(rule) = ran(diagnostic.rule as usize) else {
                 continue;
             };
             let changes_something = diagnostic.fix.is_some() || !diagnostic.suggestions.is_empty();
@@ -780,7 +829,8 @@ impl<S: RuleSet> Linter<S> {
         if let Some(reason) = file.handed_back() {
             result.handed_back = Some(reason);
             // Each with the id of the rule for which it stands in, which is what the comments name.
-            let back: Vec<(RunningJs, RuleId)> = (running.iter())
+            let back: Vec<(RunningJs, RuleId)> = (0..enabled.len())
+                .filter_map(ran)
                 .filter(|it| it.entry.meta.hands_back && it.severity != Severity::Off)
                 .filter_map(|it| {
                     let rule = RunningJs {
@@ -1294,7 +1344,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 }
             };
             let name = existing.and_then(ConfiguredRule::name);
-            let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.name() == name;
+            let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.ran().name() == name;
             let linter = self.linter;
             let shared = existing
                 .filter(|_| keeps_options)

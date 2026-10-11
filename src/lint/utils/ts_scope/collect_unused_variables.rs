@@ -467,6 +467,8 @@ fn is_assigned_by_loop_that_only_returns(reference: Reference) -> bool {
 struct Marker<'a> {
     marks: UsedMarks,
     unshared: Vec<Symbol<'a>>,
+    /// [`scope_of_parameters`] of the function whose parameters are looked at.
+    scope: Option<Scope<'a>>,
 }
 
 impl<'a> Marker<'a> {
@@ -515,7 +517,7 @@ fn has_marked_parameters(func: Func) -> bool {
 
 fn mark_identifier<'a>(name: Name<'a>, holder: Node<'a>, marks: &mut Marker<'a>) {
     // Inside a class its name is the other variable, which counts as used anyway.
-    if let Some(symbol) = holder.scope().resolve_name(name)
+    if let Some(symbol) = (marks.scope.unwrap_or_else(|| holder.scope())).resolve_name(name)
         && !marks.contains(symbol)
         && Variable::new(symbol).has_reference_at(holder.span().start)
     {
@@ -623,6 +625,16 @@ fn mark_identifiers_of<'a>(
     node.for_each_child(|child| pending.push(child));
 }
 
+/// What [`Node::scope`] says for everything in the parameters of `func`, where that is plain: its scope, if no scope starts
+/// before they end. The decorators of the parameters of a method are in the scope of the class.
+fn scope_of_parameters(func: Func<'_>) -> Option<Scope<'_>> {
+    let scope = func.scope()?;
+    let end = func.params().last().or_else(|| func.this_param())?.span().end;
+    let is_plain = scope.children().next().is_none_or(|it| it.span().start >= end)
+        && (!func.has_body() || func.params().iter().all(|it| it.modifiers().is_empty()));
+    is_plain.then_some(scope)
+}
+
 /// Upstream's `visitFunctionTypeSignature` and `visitSetter`. They mean to mark the parameters, and
 /// visit each with a `PatternVisitor` that, with the option `visitChildrenEvenIfSelectorExists` of
 /// the visitor around it, goes on into type annotations and default values.
@@ -633,9 +645,11 @@ fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut Marker<'a>
             && !matches!(func.owner(), Node::File(_))
             && !func.is_synthetic()
         {
+            marks.scope = scope_of_parameters(func);
             for param in func.this_param().into_iter().chain(func.params()) {
                 mark_identifiers(Node::Param(param), marks);
             }
+            marks.scope = None;
         }
     }
 }
@@ -1061,6 +1075,7 @@ fn collect<'a>(
     let mut marks = Marker {
         marks: eslint_used,
         unshared: Vec::new(),
+        scope: None,
     };
     marks.marks.mark_exported_variables(file);
     mark_global_augmentations(file, &mut marks);

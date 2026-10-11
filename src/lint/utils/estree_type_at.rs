@@ -2,7 +2,7 @@
 
 use super::estree_compat::{estree_type_name, get_node_by_range_index};
 use crate::ast::{
-    Class, EntityName, Expr, ExprKind, File, FnKind, Func, Ident, ImportAttributes,
+    Class, EntityName, Expr, ExprKind, ExprTag, File, FnKind, Func, Ident, ImportAttributes,
     ImportEqualsTarget, Jsx, JsxChild, Key, KeyKind, List, Member, Modifier, ModuleName, Node,
     Param, Prop, Stmt, StmtKind, TypeKind, TypeNode,
 };
@@ -252,9 +252,9 @@ impl At {
     /// What the braces of `{e}`, `{}` and `{...e}` in JSX are.
     fn jsx_container(self, e: Expr<'_>) -> Option<&'static str> {
         let braces = e.jsx_container_span().filter(|it| self.is_in(*it))?;
-        Some(match e.kind() {
-            ExprKind::Missing if self.is_in(braces.shrink(1, 1)) => "JSXEmptyExpression",
-            ExprKind::Spread(_) if !matches!(e.parent(), Node::Prop(_)) => "JSXSpreadChild",
+        Some(match e.tag() {
+            ExprTag::Missing if self.is_in(braces.shrink(1, 1)) => "JSXEmptyExpression",
+            ExprTag::Spread if !matches!(e.parent(), Node::Prop(_)) => "JSXSpreadChild",
             _ => "JSXExpressionContainer",
         })
     }

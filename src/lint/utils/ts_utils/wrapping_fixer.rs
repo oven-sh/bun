@@ -1,7 +1,9 @@
 //! `getWrappingFixer.ts`.
 
 use super::precedence::parenthesize;
-use crate::ast::{BinOp, Expr, ExprKind, FnBody, FnKind, Node, Stmt, StmtKind, TypeKind, UnOp};
+use crate::ast::{
+    BinOp, Expr, ExprKind, ExprTag, FnBody, FnKind, Node, Stmt, StmtTag, TypeKind, UnOp,
+};
 use crate::context::IntoText;
 use crate::fix::{Fix, Fixer};
 use crate::utils::ast_utils::is_member_expression;
@@ -36,7 +38,7 @@ fn inner_codes<'a>(
         .iter()
         .map(|&inner| {
             let needs_parentheses = match is_in_chain_expression {
-                true if inner == node => matches!(inner.kind(), ExprKind::NonNull(_)),
+                true if inner == node => matches!(inner.tag(), ExprTag::NonNull),
                 true => !is_strong_precedence_node(inner),
                 false => {
                     !is_strong_precedence_node(inner)
@@ -167,24 +169,22 @@ pub fn is_strong_precedence_node<'a>(node: impl Into<Node<'a>>) -> bool {
 
 fn has_strong_precedence(node: Node<'_>) -> bool {
     match node {
-        Node::Expr(e) => match e.kind() {
-            ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex(_)
-            | ExprKind::Ident(_)
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-            | ExprKind::New(_)
-            | ExprKind::TaggedTemplate(_)
-            | ExprKind::Instantiation { .. } => true,
-            ExprKind::Call(_) => !e.is_chain_root(),
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                !e.is_chain_root() && is_member_expression(e)
-            }
+        Node::Expr(e) => match e.tag() {
+            ExprTag::Null
+            | ExprTag::True
+            | ExprTag::False
+            | ExprTag::Number
+            | ExprTag::String
+            | ExprTag::BigInt
+            | ExprTag::Regex
+            | ExprTag::Ident
+            | ExprTag::Array
+            | ExprTag::Object
+            | ExprTag::New
+            | ExprTag::TaggedTemplate
+            | ExprTag::Instantiation => true,
+            ExprTag::Call => !e.is_chain_root(),
+            ExprTag::Dot | ExprTag::Index => !e.is_chain_root() && is_member_expression(e),
             _ => false,
         },
         Node::Type(ty) => matches!(ty.kind(), TypeKind::Ref { .. }),
@@ -228,7 +228,7 @@ pub fn is_missing_semicolon_before(node: Expr<'_>) -> bool {
     loop {
         let parent = match node.parent() {
             Node::Stmt(statement) => {
-                return matches!(statement.kind(), StmtKind::Expr(_))
+                return matches!(statement.tag(), StmtTag::Expr)
                     && previous_statement_in_block(statement)
                         .is_some_and(|previous| !previous.text().ends_with(b";"));
             }
@@ -248,8 +248,8 @@ fn previous_statement_in_block(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     let siblings = match statement.parent() {
         Node::File(file) => file.body(),
         Node::Func(func) if func.kind() != FnKind::StaticBlock => func.body_statements()?,
-        Node::Stmt(block) => match block.kind() {
-            StmtKind::Block(statements) => statements,
+        Node::Stmt(block) => match block.as_block() {
+            Some(statements) => statements,
             _ => return None,
         },
         _ => return None,
@@ -289,7 +289,7 @@ pub fn is_left_hand_side(node: Expr<'_>) -> bool {
 /// typescript-eslint's `isObjectExpressionInOneLineReturn`: `node` is the body of an arrow function
 /// and `inner_node` is an object literal, which would be taken for a block there.
 fn is_object_expression_in_one_line_return(node: Expr<'_>, inner_node: Expr<'_>) -> bool {
-    matches!(inner_node.kind(), ExprKind::Object(_))
+    matches!(inner_node.tag(), ExprTag::Object)
         && matches!(
             node.parent(),
             Node::Func(func) if matches!(func.body(), FnBody::Expr(body) if body == node)

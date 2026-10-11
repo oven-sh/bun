@@ -165,10 +165,7 @@ impl<'a> TrackedReference<'a, '_> {
 
     /// The callee and the arguments, if `kind` is `Call` or `Construct`.
     pub fn call(&self) -> Option<Call<'a>> {
-        match self.expr()?.kind() {
-            ExprKind::Call(call) | ExprKind::New(call) => Some(call),
-            _ => None,
-        }
+        self.expr()?.as_call_or_new()
     }
 }
 

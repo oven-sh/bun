@@ -2,7 +2,7 @@
 
 use super::{
     Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportSpec, Member, Param, Pat, PatElem,
-    PatProp, Prop, Stmt, StmtKind, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
+    PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 use crate::span::{Span, Spanned};
 use bun_sema::bind::{MemberOwner, Parent, PatParent};
@@ -497,8 +497,8 @@ impl<'a> Stmt<'a> {
     fn parent_in_rare_cases(self, parent: Option<&Parent>) -> Node<'a> {
         match Node::of_parent(self.file, parent) {
             // The binder records the `switch` for what is in a clause.
-            Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.kind() {
-                StmtKind::Switch { cases, .. } => cases
+            Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.as_switch() {
+                Some((_, cases)) => cases
                     .around(self.span().start)
                     .map_or(Node::Stmt(parent), Node::Case),
                 _ => Node::Stmt(parent),

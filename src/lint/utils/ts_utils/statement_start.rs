@@ -1,7 +1,7 @@
 //! `isStartOfExpressionStatementNeedingParentheses.ts`,
 //! `isStartOfArrowFunctionBodyNeedingParentheses.ts`, `needsPrecedingSemiColon.ts`.
 
-use crate::ast::{ExprKind, FnBody, FnKind, Node, StmtKind};
+use crate::ast::{ExprTag, FnBody, FnKind, Node, StmtKind};
 use crate::tokens::{Token, TokenKind};
 use crate::utils::ast_utils::is_start_of_expression_statement;
 use crate::utils::estree_compat::{estree_span, get_node_by_range_index};
@@ -112,7 +112,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
             Node::Class(class) => {
                 class.span().end == previous.end() && matches!(class.owner(), Node::Expr(_))
             }
-            Node::Expr(e) => matches!(e.kind(), ExprKind::Object(_)),
+            Node::Expr(e) => matches!(e.tag(), ExprTag::Object),
             _ => false,
         };
     }
@@ -133,7 +133,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
             (b"do", _) => !matches!(previous_statement, Some(StmtKind::DoWhile { .. })),
             (b"else", _) => !matches!(previous_statement, Some(StmtKind::If { .. })),
             (b"return", _) => !matches!(previous_statement, Some(StmtKind::Return(_))),
-            (b"yield", Node::Expr(e)) => !matches!(e.kind(), ExprKind::Yield { .. }),
+            (b"yield", Node::Expr(e)) => !matches!(e.tag(), ExprTag::Yield),
             _ => true,
         };
     }

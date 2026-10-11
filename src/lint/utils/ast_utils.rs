@@ -762,7 +762,7 @@ pub fn is_directive(statement: Stmt<'_>) -> bool {
     if !file.uses_typescript_parser() {
         return file.language().ecma_version >= 5 && statement.directive().is_some();
     }
-    let is_string = |it: &Stmt<'_>| matches!(it.kind(), StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized());
+    let is_string = |it: &Stmt<'_>| matches!(it.as_expr(), Some(e) if e.as_string().is_some() && !e.is_parenthesized());
     match statement.parent() {
         Node::Func(block) if block.kind() == FnKind::StaticBlock => {
             let statements = block.body_statements().into_iter().flatten();
@@ -779,7 +779,7 @@ pub fn is_top_level_expression_statement(statement: Stmt<'_>) -> bool {
         && match statement.parent() {
             Node::File(_) => true,
             Node::Func(func) => func.kind() != FnKind::StaticBlock,
-            Node::Stmt(parent) => matches!(parent.kind(), StmtKind::Module(_)),
+            Node::Stmt(parent) => matches!(parent.tag(), StmtTag::Module),
             _ => false,
         }
 }
@@ -1297,7 +1297,7 @@ pub fn is_property_descriptor(e: Expr<'_>) -> bool {
     };
     prop.value() == Some(e)
         && prop.kind() != PropKind::Spread
-        && matches!(object.kind(), ExprKind::Object(_))
+        && matches!(object.tag(), ExprTag::Object)
         && !is_assignment_target(object)
         && (is_argument_of_global_method_call(object, "Object", "create", 1)
             || is_argument_of_global_method_call(object, "Object", "defineProperties", 1))
@@ -1314,12 +1314,12 @@ pub fn is_import_attribute_key(prop: Prop<'_>) -> bool {
         let Node::Expr(object) = prop.parent() else {
             return false;
         };
-        if !matches!(object.kind(), ExprKind::Object(_)) {
+        if !matches!(object.tag(), ExprTag::Object) {
             return false;
         }
         match object.parent() {
             Node::Expr(parent) => {
-                return matches!(parent.kind(), ExprKind::ImportCall { args } if args.get(1) == Some(object));
+                return matches!(parent.as_import_call(), Some(args) if args.get(1) == Some(object));
             }
             Node::Prop(outer) if outer.value() == Some(object) => prop = outer,
             _ => {
@@ -2051,7 +2051,7 @@ pub fn is_default_this_binding_with<'a>(
                 }
                 _ => return true,
             },
-            Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Return(_)) => {
+            Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Return) => {
                 let upper_function = (memo.upper_function)
                     .find(Node::Stmt(statement), |_, parent| as_function(parent));
                 match upper_function.and_then(call_of) {
@@ -2129,9 +2129,9 @@ fn is_in_type(node: Node<'_>) -> bool {
             && match parent {
                 Node::VarDecl(_) | Node::Param(_) | Node::Member(_) | Node::Func(_) => true,
                 Node::Expr(e) => {
-                    matches!(e.kind(), ExprKind::As { .. } | ExprKind::Satisfies { .. })
+                    matches!(e.tag(), ExprTag::As | ExprTag::Satisfies)
                 }
-                Node::Stmt(statement) => matches!(statement.kind(), StmtKind::TypeAlias(_)),
+                Node::Stmt(statement) => matches!(statement.tag(), StmtTag::TypeAlias),
                 Node::Type(ty) => matches!(ty.kind(), crate::ast::TypeKind::Predicate { .. }),
                 _ => false,
             }
@@ -2174,15 +2174,9 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     let is_type_syntax = match at {
         Node::Type(_) | Node::TypeParam(_) | Node::TupleElem(_) => is_in_type(at),
         Node::Func(func) => func.kind() == FnKind::Decl && !func.has_body(),
-        Node::Expr(e) => matches!(
-            e.kind(),
-            ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. }
-        ),
+        Node::Expr(e) => matches!(e.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies),
         Node::Stmt(statement) => {
-            matches!(
-                statement.kind(),
-                StmtKind::ImportEquals(_) | StmtKind::TypeAlias(_)
-            )
+            matches!(statement.tag(), StmtTag::ImportEquals | StmtTag::TypeAlias)
         }
         _ => false,
     };
@@ -2213,7 +2207,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
                 _ => false,
             },
             Node::Class(class) => matches!(class.owner(), Node::Expr(_)),
-            Node::Expr(e) => matches!(e.kind(), ExprKind::Object(_)) && !is_assignment_target(e),
+            Node::Expr(e) => matches!(e.tag(), ExprTag::Object) && !is_assignment_target(e),
             _ => false,
         };
     }
@@ -2230,7 +2224,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
                     | (StmtKind::If { .. }, b"else")
                     | (StmtKind::Return(_), b"return")
             ),
-            Node::Expr(e) => !(matches!(e.kind(), ExprKind::Yield { .. }) && previous.is("yield")),
+            Node::Expr(e) => !(matches!(e.tag(), ExprTag::Yield) && previous.is("yield")),
             _ => true,
         };
     }

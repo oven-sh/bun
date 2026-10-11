@@ -5,7 +5,8 @@
 
 use super::estree::is_expression_statement;
 use crate::ast::{
-    Expr, ExprKind, Flags, FnBody, Func, Member, MemberKind, Node, Prop, PropKind, Stmt, StmtKind,
+    Expr, ExprKind, ExprTag, Flags, FnBody, Func, Member, MemberKind, Node, Prop, PropKind, Stmt,
+    StmtTag,
 };
 use crate::span::Span;
 use crate::utils::ast_utils::is_property_definition;
@@ -84,19 +85,19 @@ fn parent_of_expr(e: Expr<'_>) -> Parent<'_> {
         },
         Node::Member(member) => parent_of_method(member),
         Node::Prop(prop) => match (prop.parent(), prop.kind()) {
-            (Node::Expr(owner), PropKind::Spread) if matches!(owner.kind(), ExprKind::Jsx(_)) => {
+            (Node::Expr(owner), PropKind::Spread) if matches!(owner.tag(), ExprTag::Jsx) => {
                 Parent::Jsx
             }
             (Node::Expr(owner), kind)
-                if kind != PropKind::Spread && matches!(owner.kind(), ExprKind::Object(_)) =>
+                if kind != PropKind::Spread && matches!(owner.tag(), ExprTag::Object) =>
             {
                 Parent::Property(prop)
             }
             _ => Parent::Other,
         },
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Return(_) => Parent::ReturnStatement(parent),
-            StmtKind::ExportDefault(_) => Parent::ExportDefaultDeclaration,
+        Node::Stmt(parent) => match parent.tag() {
+            StmtTag::Return => Parent::ReturnStatement(parent),
+            StmtTag::ExportDefault => Parent::ExportDefaultDeclaration,
             _ => Parent::Other,
         },
         Node::Func(func) if func.is_arrow() => Parent::ArrowFunctionExpression(func),
@@ -163,7 +164,7 @@ pub fn does_immediately_return_function_expression(func: FunctionInfo) -> bool {
     let mut returns = func.returns().peekable();
     returns.peek().is_some()
         && returns.all(|statement| {
-            matches!(statement.kind(), StmtKind::Return(Some(value)) if value.as_fn().is_some())
+            matches!(statement.as_return(), Some(Some(value)) if value.as_fn().is_some())
         })
 }
 
@@ -202,10 +203,10 @@ pub fn is_valid_function_expression_return_type(func: Func, options: ReturnTypeO
     let FnBody::Expr(mut body) = func.body() else {
         return false;
     };
-    while let ExprKind::Satisfies { expr, .. } = body.kind() {
+    while let Some((expr, _)) = body.as_satisfies() {
         body = expr;
     }
-    matches!(body.kind(), ExprKind::AsConst(_))
+    matches!(body.tag(), ExprTag::AsConst)
 }
 
 fn is_valid_function_return_type(func: FunctionInfo, options: ReturnTypeOptions) -> bool {

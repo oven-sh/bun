@@ -685,9 +685,9 @@ impl<'a> Analyzer<'a> {
             Some(&Parent::PatPropDefault(it)) => Some(PatProp::new(file, it).value()),
             Some(&Parent::PatElemDefault(it)) => PatElem::new(file, it).pat(),
             Some(&Parent::Expr(parent)) => {
-                if let ExprKind::Assign { target, value, .. } = Expr::new(file, parent).kind()
+                if let Some((_, target, value)) = Expr::new(file, parent).as_assign()
                     && value == this
-                    && let ExprKind::Object(props) = target.kind()
+                    && let Some(props) = target.as_object()
                 {
                     let props = props.iter().filter(|it| it.kind() != PropKind::Spread);
                     self.this_destructuring(this.span().start, props.map(|it| it.key()));
@@ -720,7 +720,7 @@ fn is_in_type_query(mut e: Expr) -> bool {
             return true;
         }
         match e.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == e) => {
+            Node::Expr(parent) if matches!(parent.as_dot(), Some((obj, _, _)) if obj == e) => {
                 e = parent;
             }
             _ => return false,
@@ -784,7 +784,7 @@ pub fn analyze_class_member_usage<'a>(
         }
     }
     for e in file.exprs_of_kind(ExprTag::PrivateIdentifier) {
-        if let ExprKind::PrivateIdentifier(name) = e.kind()
+        if let Some(name) = e.as_private_identifier()
             && names.contains(name.atom())
         {
             analyzer.private_identifier(name.atom(), e.span().start, e.parent().as_expr());

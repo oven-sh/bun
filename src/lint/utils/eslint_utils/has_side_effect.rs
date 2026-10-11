@@ -1,6 +1,8 @@
 //! `has-side-effect.mjs`
 
-use crate::ast::{BinOp, Expr, ExprKind, File, Flags, FnKind, Key, KeyKind, Node, TypeKind, UnOp};
+use crate::ast::{
+    BinOp, Expr, ExprKind, ExprTag, File, Flags, FnKind, Key, KeyKind, Node, TypeKind, UnOp,
+};
 use crate::tokens::skip_trivia;
 use crate::utils::estree_compat::is_assignment_target;
 
@@ -31,14 +33,14 @@ fn visit_children(node: Node<'_>, options: HasSideEffectOptions) -> bool {
 /// ESTree's `Literal`.
 fn is_literal(e: Expr<'_>) -> bool {
     matches!(
-        e.kind(),
-        ExprKind::String(_)
-            | ExprKind::Number(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex(_)
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Null
+        e.tag(),
+        ExprTag::String
+            | ExprTag::Number
+            | ExprTag::BigInt
+            | ExprTag::Regex
+            | ExprTag::True
+            | ExprTag::False
+            | ExprTag::Null
     )
 }
 

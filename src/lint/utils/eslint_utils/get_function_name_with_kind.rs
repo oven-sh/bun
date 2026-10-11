@@ -2,8 +2,7 @@
 
 use super::get_property_name::property_name_of_key;
 use crate::ast::{
-    Expr, ExprKind, File, Flags, FnKind, Func, Key, KeyKind, MemberKind, Name, Node, PropKind,
-    StmtKind,
+    Expr, File, Flags, FnKind, Func, Key, KeyKind, MemberKind, Name, Node, PropKind, StmtKind,
 };
 use crate::tokens::{skip_trivia, token_len};
 use bun_core::strings;
@@ -28,8 +27,8 @@ fn assigned_name(e: Expr<'_>) -> Option<Name<'_>> {
         Node::Param(param) => param.pat().as_ident(),
         Node::PatElem(element) => element.pat()?.as_ident(),
         Node::PatProp(prop) if prop.default() == Some(e) => prop.value().as_ident(),
-        Node::Expr(parent) => match parent.kind() {
-            ExprKind::Assign { target, .. } => target.as_ident(),
+        Node::Expr(parent) => match parent.as_assign() {
+            Some((_, target, _)) => target.as_ident(),
             _ => None,
         },
         _ => None,

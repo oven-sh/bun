@@ -6,8 +6,8 @@ use super::find_variable::find_variable_of;
 use super::operators::{binary, unary};
 use super::static_value::{Eval, MAX_LEN, PropertyKey, StaticValue, Stop, parse_bigint_digits};
 use crate::ast::{
-    BinOp, Call, Chain, Expr, ExprKind, Key, KeyKind, List, Node, PropKind, Stmt, StmtKind,
-    Template, UnOp, VarKind,
+    BinOp, Call, Chain, Expr, ExprKind, ExprTag, Key, KeyKind, List, Node, PropKind, Stmt,
+    StmtKind, Template, UnOp, VarKind,
 };
 use crate::semantic::{Declaration, Scope, Symbol};
 use crate::utils::estree_compat::is_assignment_target;
@@ -31,15 +31,13 @@ use std::borrow::Cow;
 /// Upstream's `optional`, which tells that the value is the `undefined` of a `?.` that cut the
 /// evaluation short, is only used inside: no rule reads it.
 pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<StaticValue<'a>> {
-    match expr.kind() {
+    match expr.tag() {
         // ESTree has a pattern there, which has no value.
-        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. }
-            if is_assignment_target(expr) =>
-        {
+        ExprTag::Array | ExprTag::Object | ExprTag::Assign if is_assignment_target(expr) => {
             return None;
         }
         // `JSXText`, and the name of an element.
-        ExprKind::String(_) | ExprKind::Ident(_) | ExprKind::Dot { .. }
+        ExprTag::String | ExprTag::Ident | ExprTag::Dot
             if matches!(
                 expr.parent().as_expr().map(Expr::kind),
                 Some(ExprKind::Jsx(_))
@@ -245,7 +243,7 @@ impl<'a> Evaluator<'a> {
                 continue;
             };
             while let Some(parent) = node.parent().as_expr()
-                && matches!(parent.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+                && matches!(parent.tag(), ExprTag::Dot | ExprTag::Index)
             {
                 node = parent;
             }
@@ -314,7 +312,7 @@ impl<'a> Evaluator<'a> {
     }
 
     fn member(&mut self, e: Expr<'a>, obj: Expr<'a>) -> Eval<Link<'a>> {
-        if matches!(e.kind(), ExprKind::Dot { name, .. } if name.bytes().starts_with(b"#")) {
+        if matches!(e.as_dot(), Some((_, name, _)) if name.bytes().starts_with(b"#")) {
             return Err(Stop::NotStatic);
         }
         let (object, is_optional) = self.eval_object(obj)?;
@@ -330,10 +328,9 @@ impl<'a> Evaluator<'a> {
         let args = self.elements(call_.args())?;
         // ESTree has a `ChainExpression` around the callee of `(a?.b)()`, which is then not a member access.
         let is_chain = callee.is_parenthesized() && callee.chain() != Chain::No;
-        let (function, this) = match callee.kind() {
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if !is_chain => {
-                if matches!(callee.kind(), ExprKind::Dot { name, .. } if name.bytes().starts_with(b"#"))
-                {
+        let (function, this) = match callee.object() {
+            Some(obj) if !is_chain => {
+                if matches!(callee.as_dot(), Some((_, name, _)) if name.bytes().starts_with(b"#")) {
                     return Err(Stop::NotStatic);
                 }
                 let (object, is_optional) = self.eval_object(obj)?;
@@ -365,7 +362,7 @@ impl<'a> Evaluator<'a> {
     }
 
     fn object(&mut self, e: Expr<'a>) -> Eval<StaticValue<'a>> {
-        let ExprKind::Object(props) = e.kind() else {
+        let Some(props) = e.as_object() else {
             return Err(Stop::NotStatic);
         };
         let mut properties = Vec::with_capacity(props.len());

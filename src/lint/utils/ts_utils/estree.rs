@@ -1,6 +1,6 @@
 //! Which node of typescript-estree a handle stands for, where that decides an answer.
 
-use crate::ast::{Expr, ExprKind, List, Node, PropKind, Stmt, StmtKind};
+use crate::ast::{Expr, ExprKind, ExprTag, List, Node, PropKind, Stmt, StmtKind};
 
 /// Whether typescript-estree converts `e` as a pattern: it is the left of an assignment or of a
 /// `for`-`in` or `for`-`of`, or an element, a property value or a rest argument of such a pattern.
@@ -19,9 +19,7 @@ pub(super) fn is_pattern(e: Expr<'_>) -> bool {
             },
             Node::Prop(prop) => {
                 // The `a = 1` of `{ a = 1 }` is an `AssignmentPattern` wherever the object is.
-                if prop.kind() == PropKind::Shorthand
-                    && matches!(at.kind(), ExprKind::Assign { .. })
-                {
+                if prop.kind() == PropKind::Shorthand && matches!(at.tag(), ExprTag::Assign) {
                     return true;
                 }
                 match prop.parent() {
@@ -35,7 +33,7 @@ pub(super) fn is_pattern(e: Expr<'_>) -> bool {
                 return matches!(
                     statement.kind(),
                     StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }
-                        if matches!(left.kind(), StmtKind::Expr(head) if head == at)
+                        if matches!(left.as_expr(), Some(head) if head == at)
                 );
             }
             _ => return false,

@@ -1,6 +1,6 @@
 //! `@typescript-eslint/utils`' `ast-utils/predicates.ts`.
 
-use crate::ast::{BinOp, Expr, ExprKind, FnKind, Func, Node, StmtKind, TypeKind};
+use crate::ast::{BinOp, Expr, FnKind, Func, Node, TypeKind};
 use crate::tokens::{Token, TokenKind};
 use crate::utils::ast_utils::is_function;
 
@@ -10,10 +10,7 @@ fn func_of(node: Node<'_>) -> Option<Func<'_>> {
     match node {
         Node::Func(func) => Some(func),
         Node::Expr(e) => e.as_fn(),
-        Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Fn(func) => Some(func),
-            _ => None,
-        },
+        Node::Stmt(statement) => statement.as_fn(),
         Node::Type(ty) => match ty.kind() {
             TypeKind::Fn(func) => Some(func),
             _ => None,
@@ -26,7 +23,7 @@ fn func_of(node: Node<'_>) -> Option<Func<'_>> {
 /// typescript-eslint's `isLogicalOrOperator`.
 #[inline]
 pub fn is_logical_or_operator(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op: BinOp::Or, .. })
+    matches!(e.as_binary(), Some((BinOp::Or, _, _)))
 }
 
 /// typescript-eslint's `isFunctionType`: a `TSCallSignatureDeclaration`, a `TSConstructorType`, a

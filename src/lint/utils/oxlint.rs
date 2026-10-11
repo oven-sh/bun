@@ -62,8 +62,8 @@ pub fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
                 | StmtTag::ExportAsNamespace
         ) || stmt.is_exported()
     };
-    let is_await_using = |stmt: &Stmt| match stmt.kind() {
-        StmtKind::Var(declarations) => {
+    let is_await_using = |stmt: &Stmt| match stmt.as_var() {
+        Some(declarations) => {
             (declarations.first()).is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
         }
         _ => false,
@@ -195,8 +195,8 @@ impl<'a> AmbientAncestors<'a> {
     /// Whether `node` is in a `declare namespace`, a `declare module` or a `global`.
     pub fn has_ambient_typescript_ancestor(&mut self, node: Node<'a>) -> bool {
         let is_ambient = |_, parent: Node<'a>| match parent {
-            Node::Stmt(statement) => match statement.kind() {
-                StmtKind::Module(module) => {
+            Node::Stmt(statement) => match statement.as_module() {
+                Some(module) => {
                     let is_ambient = matches!(module.name(), ModuleName::Global)
                         || statement.flags().contains(Flags::AMBIENT);
                     is_ambient.then_some(())

@@ -38,13 +38,7 @@ pub fn is_chain_root(e: Expr<'_>) -> bool {
 
 #[inline]
 fn is_comma(e: Expr<'_>) -> bool {
-    matches!(
-        e.kind(),
-        ExprKind::Binary {
-            op: BinOp::Comma,
-            ..
-        }
-    )
+    matches!(e.as_binary(), Some((BinOp::Comma, _, _)))
 }
 
 /// Whether `e` is the `a, b` of `a, b, c`, which ESTree has no node for.
@@ -81,12 +75,10 @@ pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
             if !is_sequence_root(root) {
                 continue;
             }
-            let inner = std::iter::successors(Some(root), |it| match it.kind() {
-                ExprKind::Binary {
-                    op: BinOp::Comma,
-                    left,
-                    ..
-                } if is_comma(left) && !left.is_parenthesized() => Some(left),
+            let inner = std::iter::successors(Some(root), |it| match it.as_binary() {
+                Some((BinOp::Comma, left, _)) if is_comma(left) && !left.is_parenthesized() => {
+                    Some(left)
+                }
                 _ => None,
             });
             roots.extend(inner.skip(NEAR).map(|it| (it.id(), id)));
@@ -107,12 +99,8 @@ pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
 /// ESTree's `SequenceExpression.expressions.at(-1)`.
 #[inline]
 pub fn last_sequence_expression(e: Expr<'_>) -> Expr<'_> {
-    match e.kind() {
-        ExprKind::Binary {
-            op: BinOp::Comma,
-            right,
-            ..
-        } => right,
+    match e.as_binary() {
+        Some((BinOp::Comma, _, right)) => right,
         _ => e,
     }
 }
@@ -133,7 +121,7 @@ pub fn is_for_init(statement: Stmt<'_>) -> bool {
 /// head of a `for`.
 #[inline]
 pub fn is_expression_statement(statement: Stmt<'_>) -> bool {
-    matches!(statement.kind(), StmtKind::Expr(_)) && !statement.is_wrapper()
+    matches!(statement.tag(), StmtTag::Expr) && !statement.is_wrapper()
 }
 
 // ───────────────────────────── patterns ─────────────────────────────
@@ -268,12 +256,8 @@ impl<'a> Target<'a> {
 
     /// Splits the `a = 1` of an assignment target into the target and the default value.
     fn split_default(e: Expr<'a>) -> (Expr<'a>, Option<Expr<'a>>) {
-        match e.kind() {
-            ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } => (target, Some(value)),
+        match e.as_assign() {
+            Some((None, target, value)) => (target, Some(value)),
             _ => (e, None),
         }
     }
@@ -311,8 +295,8 @@ impl<'a> Target<'a> {
                 ExprKind::Array(elements) => elements
                     .iter()
                     .map(|it| {
-                        let (inner, is_rest) = match it.kind() {
-                            ExprKind::Spread(inner) => (inner, true),
+                        let (inner, is_rest) = match it.as_spread() {
+                            Some(inner) => (inner, true),
                             _ => (it, false),
                         };
                         let (target, default) = Self::split_default(inner);
@@ -503,7 +487,7 @@ fn type_name_of_type(ty: TypeNode<'_>) -> &'static str {
             Node::Class(class) if class.implements().iter().any(|it| it == ty) => {
                 "TSClassImplements"
             }
-            Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Interface(_)) => {
+            Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Interface) => {
                 "TSInterfaceHeritage"
             }
             _ => "TSTypeReference",
@@ -625,8 +609,8 @@ pub fn estree_type_name(node: Node<'_>) -> &'static str {
             }
         }
         Node::Prop(prop) => match (prop.kind(), prop.parent()) {
-            (PropKind::Spread, Node::Expr(owner)) => match owner.kind() {
-                ExprKind::Jsx(_) => "JSXSpreadAttribute",
+            (PropKind::Spread, Node::Expr(owner)) => match owner.tag() {
+                ExprTag::Jsx => "JSXSpreadAttribute",
                 _ if is_assignment_target(owner) => "RestElement",
                 _ => "SpreadElement",
             },
@@ -655,7 +639,7 @@ pub fn estree_type_name(node: Node<'_>) -> &'static str {
 
 /// Whether `declaration` is the `e` of `catch (e)`, which in ESTree is the pattern alone.
 fn is_catch_param(declaration: VarDecl<'_>) -> bool {
-    matches!(declaration.parent(), Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Try { .. }))
+    matches!(declaration.parent(), Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Try))
 }
 
 fn span_of_pat(pat: Pat<'_>) -> Span {
@@ -680,8 +664,8 @@ fn span_of_pat(pat: Pat<'_>) -> Span {
 ///   [`estree_type_name`].
 pub fn estree_span(node: Node<'_>) -> Span {
     match node {
-        Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Expr(e) if is_for_init(statement) => e.span(),
+        Node::Stmt(statement) => match statement.as_expr() {
+            Some(e) if is_for_init(statement) => e.span(),
             _ => statement.span_without_export(),
         },
         Node::VarDecl(declaration) if is_catch_param(declaration) => span_of_pat(declaration.pat()),

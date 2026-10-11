@@ -1,6 +1,6 @@
 //! `getOperatorPrecedence.ts`, `getWrappedCode.ts`, `isHigherPrecedenceThanAwait.ts`.
 
-use crate::ast::{BinOp, Expr, ExprKind, FnKind, Node, PropKind, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, ExprTag, FnKind, Node, PropKind, UnOp};
 use crate::types::SyntaxKind;
 use crate::utils::ast_utils::is_member_expression;
 use std::borrow::Cow;
@@ -249,13 +249,13 @@ fn ts_parent_expression(e: Expr<'_>) -> Option<Expr<'_>> {
         }
         _ => return None,
     };
-    match parent.kind() {
-        ExprKind::Template(_) => None,
-        ExprKind::Jsx(_) => (matches!(e.kind(), ExprKind::Jsx(_))
-            && e.jsx_container_span().is_none())
-        .then_some(parent),
-        ExprKind::Dot { .. } if !is_member_expression(parent) => None,
-        ExprKind::Assign { .. } if matches!(parent.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand) => {
+    match parent.tag() {
+        ExprTag::Template => None,
+        ExprTag::Jsx => {
+            (matches!(e.tag(), ExprTag::Jsx) && e.jsx_container_span().is_none()).then_some(parent)
+        }
+        ExprTag::Dot if !is_member_expression(parent) => None,
+        ExprTag::Assign if matches!(parent.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand) => {
             None
         }
         _ => Some(parent),
@@ -282,8 +282,7 @@ pub fn get_operator_precedence_of_ts_parent(e: Expr<'_>) -> OperatorPrecedence {
     get_operator_precedence(
         ts_parent_syntax_kind(e),
         parent.map_or(SyntaxKind::Unknown, ts_operator_kind),
-        parent
-            .is_some_and(|it| matches!(it.kind(), ExprKind::New(call) if !call.args().is_empty())),
+        parent.is_some_and(|it| matches!(it.as_new(), Some(call) if !call.args().is_empty())),
     )
 }
 

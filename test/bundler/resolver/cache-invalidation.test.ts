@@ -577,10 +577,23 @@ describe("a build reads the file system as it is when Bun.build() is called", ()
     test("package installed", async () => {
       using tmp = tempDir("build-fresh-runtime-install", { "index.ts": usesPackage, "package.json": "{}" });
       const dir = String(tmp);
-      expect(() => Bun.resolveSync("./node_modules/pkg/index.js", dir)).toThrow();
+      expect(() => Bun.resolveSync("./node_modules/pkg/index.js", dir)).toThrow(
+        expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" }),
+      );
       write(dir, "node_modules/pkg/index.js", exportsFrom("pkg"));
       write(dir, "node_modules/pkg/package.json", `{ "name": "pkg", "main": "./index.js" }`);
       expect(await bundled(dir)).toBe('"from pkg"');
+    });
+
+    // The build resolves the macro file. A VM of the process loads it, and
+    // the process listed the directory before the file was there.
+    test("macro file written after the runtime listed its directory", async () => {
+      using tmp = tempDir("build-fresh-runtime-macro", { "seen.ts": `export {};` });
+      const dir = String(tmp);
+      const resolved = path.relative(dir, Bun.resolveSync("./seen.ts", dir));
+      write(dir, "macro.ts", `export const from = () => "from macro";`);
+      write(dir, "index.ts", `import { from } from "./macro.ts" with { type: "macro" }; console.log(from());`);
+      expect([resolved, await bundled(dir)]).toEqual(["seen.ts", '"from macro"']);
     });
 
     // The runtime reads "main" from the package.json. The build is for the

@@ -5149,8 +5149,11 @@ impl VirtualMachine {
 
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
-        // the first miss.
-        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        // the first miss. The directory to forget comes from an absolute
+        // specifier alone: the entry point of a macro imports the file that a
+        // build resolved, and that build did not read this resolver's cache.
+        let mut retry_on_not_found =
+            bun_paths::is_absolute(source_to_use) || bun_paths::is_absolute(normalized_specifier);
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt

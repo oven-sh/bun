@@ -1976,11 +1976,12 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         }
         this.overflow_list.for_each(free_spilled);
         // SAFETY: both buffers came from `Box::into_raw` in `init_at_heap`, and
-        // the overflow list is not used again.
+        // the list is not used again. The drop of the fields frees the overflow
+        // blocks and the mutex (boxed on Apple targets).
         unsafe {
             drop(Box::from_raw(this.backing_buf.as_ptr()));
             drop(Box::from_raw(this.slice_buf.as_ptr()));
-            core::ptr::drop_in_place(addr_of_mut!(this.overflow_list));
+            core::ptr::drop_in_place(slot);
         }
     }
 

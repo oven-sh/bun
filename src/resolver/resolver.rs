@@ -726,6 +726,10 @@ impl<'a> Resolver<'a> {
     /// resolver must not have resolved anything yet: what it returned so far
     /// points into the cache it had.
     pub fn bind_dir_cache(&mut self, cache: DirCacheRef) {
+        debug_assert!(
+            self.dir_cache.is_process(),
+            "bind_dir_cache: this resolver has a cache of its own already"
+        );
         self.dir_cache = cache;
     }
 

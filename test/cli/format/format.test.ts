@@ -1890,6 +1890,30 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       expect(result.exitCode).toBe(2);
     });
 
+    // The guard of a case was written without asking whether there is stack for it: between the depth that the printer
+    // refuses and the one that the parser refuses it ran out. The threads that format files have stack to spare, so this
+    // is the main thread, with half of what it has.
+    test.skipIf(isWindows || isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091, 5_218])(
+      "Flow's match with %d guards in each other, on a stack of 4 MB",
+      async depth => {
+        using dir = tempDir("bun-format-small-stack", {});
+        await using proc = spawn({
+          cmd: ["sh", "-c", `ulimit -s 4096 && exec "$0" "$@"`, ...command, "--stdin-filepath", "a.js"],
+          env,
+          cwd: String(dir),
+          stdin: Buffer.from(nested("// @flow\nx = ", "match (a) {b if (", "c", ") => d}", ";\n", depth)),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toBeOneOf(["", "[error] a.js: RangeError: The code is nested too deeply.\n"]);
+        expect({ exitCode, signalCode: proc.signalCode }).toEqual({
+          exitCode: stderr === "" ? 0 : 2,
+          signalCode: null,
+        });
+      },
+    );
+
     test("a text that is longer than a string of JavaScript can be is refused in the words of Prettier", async () => {
       // 560 MB. Prettier prints 490 MB.
       const text = `<img srcset="${"u".repeat(70_000)} 1w${", a 2w".repeat(8_000)}">\n`;

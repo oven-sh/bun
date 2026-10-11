@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::Output;
@@ -16,7 +16,7 @@ use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
-    BuntagHashBuf, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
+    BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
 };
 
@@ -36,6 +36,15 @@ pub struct PackageInstall<'a> {
 
     pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
+}
+
+/// The file work of a `PackageInstall`: a folder of the cache into its destination. It has
+/// nothing of the lockfile or the manager, so any thread can do it.
+#[derive(Clone, Copy)]
+pub(crate) struct PackageFiles<'a> {
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: &'a ZStr,
+    pub(crate) destination_dir_subpath: &'a ZStr,
 }
 
 #[derive(Clone, Copy)]
@@ -170,20 +179,16 @@ impl Method {
     }
 }
 
-#[derive(Copy, Clone)]
 pub struct Failure {
     pub(crate) err: crate::Error,
     pub(crate) step: Step,
+    /// The file the copyfile backend stopped at, for `InstallResult::report`.
+    pub(crate) file: Vec<u8>,
     #[cfg(bun_debug)]
     pub(crate) debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
-    // `Failure` is `Copy` and tiny without the `#[cfg(bun_debug)]` trace
-    // field; clippy's trivially_copy_pass_by_ref fires in that config but
-    // `&self` is correct when the trace field is present. Allow it rather
-    // than vary the signature per-config.
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
         (self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
@@ -207,6 +212,21 @@ impl InstallResult {
     ) -> InstallResult {
         InstallResult::Failure(Failure::boxed(err, step, trace))
     }
+
+    /// What a backend has to say beyond the failure itself. Not said where it fails: that can
+    /// be a thread of the pool, ahead of the package's turn.
+    pub(crate) fn report(self) -> InstallResult {
+        if let InstallResult::Failure(failure) = &self
+            && !failure.file.is_empty()
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>{}<r>: copying file {}",
+                failure.err.name(),
+                bstr::BStr::new(&failure.file)
+            );
+        }
+        self
+    }
 }
 
 impl Failure {
@@ -219,6 +239,7 @@ impl Failure {
         Box::new(Failure {
             err,
             step,
+            file: Vec::new(),
             #[cfg(bun_debug)]
             debug_trace: match _trace {
                 Some(t) => bun_core::StoredTrace::from(Some(t)),
@@ -329,13 +350,11 @@ pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) ->
         .map_err(|err| err.err)
 }
 
-// PORTING.md §Global mutable state: install-main-thread enum. `RacyCell`
-// (no `Atomic<Method>`) — writers are the CLI option-load and the
-// clonefile/hardlink fallback in `install_with_method`, all on the install
-// main thread; isolated_install workers snapshot via `supported_method()`
-// once at startup. Stored as the `repr(u8)` discriminant so reads/writes are
-// lock-free atomics (S015: AtomicU8 instead of RacyCell — single-writer path
-// so `Relaxed` adds no contention).
+// Writers are the CLI option-load and the clonefile/hardlink fallback in
+// `link_files_into`, on the install main thread or a thread of the pool
+// (`LinkBatch`, `PatchTask`); isolated_install workers snapshot via
+// `supported_method()` once at startup. Stored as the `repr(u8)` discriminant.
+// A hint: whoever reads the old value finds out for itself, so `Relaxed`.
 pub(crate) static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
     Method::Clonefile as u8
 } else {
@@ -351,7 +370,7 @@ impl PackageInstall<'_> {
     }
 
     /// Write accessor for [`SUPPORTED_METHOD`] (fallback path when
-    /// clonefile/hardlink fails). Relaxed — single-writer, advisory hint.
+    /// clonefile/hardlink fails). Relaxed — advisory hint.
     #[inline]
     #[cfg(not(windows))]
     pub(crate) fn set_supported_method(m: Method) {
@@ -813,6 +832,26 @@ impl HardLinkWindowsInstallTask {
 
 // ───────────────────────────── UninstallTask ─────────────────────────────
 
+/// From any thread.
+fn wake_main_thread() {
+    // SAFETY: the manager lives as long as the process. `wake_raw` is the documented
+    // thread-safe wake path that never forms `&mut PackageManager` (the main thread
+    // holds the install borrow).
+    unsafe { PackageManager::wake_raw(crate::package_manager::get()) };
+}
+
+/// Counts a task of the thread pool out of `pending_tasks` and wakes the main thread.
+struct PendingTaskDone;
+
+impl Drop for PendingTaskDone {
+    fn drop(&mut self) {
+        PackageManager::get()
+            .pending_tasks
+            .fetch_sub(1, Ordering::Release);
+        wake_main_thread();
+    }
+}
+
 struct UninstallTask {
     absolute_path: Box<[u8]>,
     task: WorkPoolTask,
@@ -826,17 +865,7 @@ impl UninstallTask {
         // declared *before* the Box is reclaimed so it drops *after* the
         // Box — Rust drops locals in reverse declaration order. The task must be freed
         // before the main thread can observe pending_tasks==0.
-        scopeguard::defer! {
-            let pm = crate::package_manager::get();
-            // SAFETY: `pending_tasks` is `AtomicU32`; raw-pointer field projection
-            // avoids materializing `&mut PackageManager` from a worker thread (the
-            // main thread holds the install borrow). `wake_raw` is the documented
-            // thread-safe wake path that never forms `&mut PackageManager`.
-            unsafe {
-                (*pm).pending_tasks.fetch_sub(1, Ordering::Release);
-                PackageManager::wake_raw(pm);
-            }
-        }
+        let _done = PendingTaskDone;
 
         // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
         let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
@@ -887,6 +916,88 @@ impl UninstallTask {
                 debug_timer
             );
         }
+    }
+}
+
+// ───────────────────────────── LinkBatch ─────────────────────────────
+
+/// One package of a `LinkBatch`.
+pub(crate) struct LinkJob {
+    pub(crate) dependency_id: DependencyID,
+    /// The `node_modules` it goes into. Whoever made the batch keeps it open.
+    pub(crate) tree_dir: Fd,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: bun_core::ZBox,
+    pub(crate) destination_dir_subpath: bun_core::ZBox,
+    /// See `PackageInstaller::copy_trees`.
+    pub(crate) copy: bool,
+    pub(crate) resolution_tag: resolution::Tag,
+    pub(crate) result: std::sync::OnceLock<InstallResult>,
+}
+
+/// Packages of the cache that the thread pool links, several at the same time. No destination
+/// is another's, or inside another's, and none has to be deleted first.
+pub(crate) struct LinkBatch {
+    pub(crate) jobs: Vec<LinkJob>,
+    pub(crate) staging: Staging,
+    /// The job that the next free thread takes.
+    pub(crate) next: AtomicUsize,
+    /// The threads that are not done. The last one wakes the main thread.
+    pub(crate) remaining: AtomicUsize,
+}
+
+impl LinkBatch {
+    fn link(&self, job: &LinkJob) {
+        let method = if job.copy {
+            Method::Copyfile
+        } else {
+            PackageInstall::supported_method()
+        };
+        let skip_delete = true;
+        let result = PackageFiles {
+            cache_dir: job.cache_dir,
+            cache_dir_subpath: &job.cache_dir_subpath,
+            destination_dir_subpath: &job.destination_dir_subpath,
+        }
+        .install(
+            self.staging,
+            skip_delete,
+            Dir::borrow(&job.tree_dir),
+            method,
+            job.resolution_tag,
+            None,
+        );
+        let _ = job.result.set(result);
+    }
+
+    /// Every job has its result when this returns. Meanwhile `while_linking` runs on this
+    /// thread; it is to return when `remaining` is 0.
+    pub(crate) fn run(&self, while_linking: &mut dyn FnMut()) {
+        // Every package is made in and renamed within the one `node_modules`, where the kernel
+        // lets one thread in at a time. 600 packages of 31 files on 64 cores (xfs): 111 ms on
+        // 1 thread, 20 ms on 8, 26 ms on 64; of 7 files, 64 threads burn 20 times the CPU time.
+        const MAX_THREADS: usize = 8;
+
+        // Not worth waking a thread for.
+        if let [job] = self.jobs.as_slice() {
+            return self.link(job);
+        }
+        let pool = &PackageManager::get().thread_pool;
+        let threads = MAX_THREADS.min(pool.max_threads()).min(self.jobs.len());
+        self.remaining.store(threads, Ordering::Relaxed);
+        pool.each_while(
+            self,
+            |batch, (), _| {
+                while let Some(job) = batch.jobs.get(batch.next.fetch_add(1, Ordering::Relaxed)) {
+                    batch.link(job);
+                }
+                if batch.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
+                    wake_main_thread();
+                }
+            },
+            &mut vec![(); threads],
+            while_linking,
+        );
     }
 }
 
@@ -1162,7 +1273,9 @@ impl<'a> PackageInstall<'a> {
         package_json_checker.found_name()
             == self.package_name.slice(&self.lockfile.buffers.string_bytes)
     }
+}
 
+impl PackageFiles<'_> {
     // ───────────────────────────── install backends ─────────────────────────────
 
     #[cfg(target_os = "macos")]
@@ -1420,17 +1533,24 @@ impl<'a> PackageInstall<'a> {
         };
 
         #[cold]
-        fn copy_failed(err: crate::Error, path: &OSPathSlice) -> crate::Error {
-            bun_core::pretty_errorln!(
-                "<r><red>{}<r>: copying file {}",
-                err.name(),
+        fn copy_failed(err: crate::Error, path: &OSPathSlice, file: &mut Vec<u8>) -> crate::Error {
+            use std::io::Write;
+            write!(
+                file,
+                "{}",
                 bun_core::fmt::fmt_os_path(path, Default::default())
-            );
+            )
+            .expect("infallible: in-memory write");
             err
         }
+        let mut failed_file = Vec::new();
 
         #[cfg(not(windows))]
-        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
+        fn copy(
+            destination_dir_: &Dir,
+            walker: &mut Walker,
+            failed_file: &mut Vec<u8>,
+        ) -> crate::Result<()> {
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
             while let Some(entry) = walker.next()? {
@@ -1477,8 +1597,9 @@ impl<'a> PackageInstall<'a> {
                                 entry_dirname,
                             );
                         }
-                        create(entry.path)
-                            .map_err(|err| copy_failed(err.into(), entry.path.as_bytes()))?
+                        create(entry.path).map_err(|err| {
+                            copy_failed(err.into(), entry.path.as_bytes(), failed_file)
+                        })?
                     }
                 };
                 let _close_out = sys::CloseOnDrop::new(outfile);
@@ -1488,7 +1609,7 @@ impl<'a> PackageInstall<'a> {
                 let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
 
                 bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
-                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes()))?;
+                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
             }
 
             Ok(())
@@ -1513,13 +1634,19 @@ impl<'a> PackageInstall<'a> {
                     return Ok(());
                 }
             }
-            Err(copy_failed(windows::last_system_errno().into(), entry_path))
+            Err(copy_failed(
+                windows::last_system_errno().into(),
+                entry_path,
+                &mut failed_file,
+            ))
         });
         #[cfg(not(windows))]
-        let result = copy(&state.subdir, &mut state.walker);
+        let result = copy(&state.subdir, &mut state.walker, &mut failed_file);
 
         if let Err(err) = result {
-            return InstallResult::fail(err, Step::CopyingFiles, None);
+            let mut failure = Failure::boxed(err, Step::CopyingFiles, None);
+            failure.file = failed_file;
+            return InstallResult::Failure(failure);
         }
 
         InstallResult::Success
@@ -1813,6 +1940,16 @@ impl<'a> PackageInstall<'a> {
         }
 
         Ok(InstallResult::Success)
+    }
+}
+
+impl<'a> PackageInstall<'a> {
+    fn files(&self) -> PackageFiles<'a> {
+        PackageFiles {
+            cache_dir: self.cache_dir,
+            cache_dir_subpath: self.cache_dir_subpath,
+            destination_dir_subpath: self.destination_dir_subpath,
+        }
     }
 
     pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
@@ -2151,12 +2288,15 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
         resolution_tag: resolution::Tag,
+        // See `LinkedAhead::missing`.
+        was_missing: bool,
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
         match state {
             // no entry name until extraction records a tarball's integrity
             _ if self.cache_dir_subpath.is_empty() => true,
             crate::PreinstallState::Done => false,
+            _ if was_missing => true,
             _ => {
                 let exists = if self.patch.is_none() {
                     crate::package_manager::directories::is_package_in_cache_at(
@@ -2199,39 +2339,6 @@ impl<'a> PackageInstall<'a> {
         !exists
     }
 
-    /// Makes `staging` anew: under `Staging::Locked` an install that died may have left it.
-    fn make_staging_dir(
-        destination_dir: &Dir,
-        staging: &ZStr,
-        method: Method,
-        skip_delete: bool,
-    ) -> sys::Maybe<()> {
-        // `init_install_dir` makes it, and the name is this install's own.
-        if cfg!(windows) {
-            return Ok(());
-        }
-        // clonefile has to make it itself.
-        if cfg!(target_os = "macos") && method == Method::Clonefile {
-            if !skip_delete {
-                destination_dir.delete_tree(staging.as_bytes())?;
-            }
-            return Ok(());
-        }
-        match sys::mkdirat(destination_dir, staging, 0o755) {
-            Err(err) if err.get_errno() == sys::E::EEXIST => {
-                destination_dir.delete_tree(staging.as_bytes())?;
-            }
-            Err(err) if err.get_errno() == sys::E::ENOENT => {
-                let Some(slash) = strings::last_index_of_char(staging.as_bytes(), b'/') else {
-                    return Err(err);
-                };
-                destination_dir.make_path(&staging.as_bytes()[..slash])?;
-            }
-            result => return result,
-        }
-        sys::mkdirat(destination_dir, staging, 0o755)
-    }
-
     pub(crate) fn install(
         &mut self,
         staging_mode: Staging,
@@ -2240,52 +2347,22 @@ impl<'a> PackageInstall<'a> {
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
-        let _tracer = bun_core::perf::trace("PackageInstaller.install");
-
         // If this fails, we don't care.
         // we'll catch it the next error
         if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
             self.uninstall_before_install(destination_dir);
         }
 
-        let dest = self.destination_dir_subpath;
-        let mut staging_buf = path::path_buffer_pool::get();
-        if staging_mode != Staging::Off
-            && let Ok(staging) = bun_core::fmt::buf_print_z(
-                &mut staging_buf[..],
-                format_args!("{}", StagingPath(dest.as_bytes(), staging_mode)),
+        self.files()
+            .install(
+                staging_mode,
+                skip_delete,
+                destination_dir,
+                method_,
+                resolution_tag,
+                Some(&*self),
             )
-            && Self::make_staging_dir(destination_dir, staging, method_, skip_delete).is_ok()
-        {
-            let staged = PackageInstall {
-                destination_dir_subpath: staging,
-                ..*self
-            }
-            .install_into(destination_dir, method_, resolution_tag);
-            if let failure @ InstallResult::Failure(_) = staged {
-                let _ = destination_dir.delete_tree(staging.as_bytes());
-                return failure;
-            }
-            if rename_staging_into_place(destination_dir.fd(), staging, dest).is_ok() {
-                return InstallResult::Success;
-            }
-            let _ = destination_dir.delete_tree(staging.as_bytes());
-        }
-        // No staging (`Staging::Off`, `dest` is occupied, the rename is refused): link in place.
-        self.install_into(destination_dir, method_, resolution_tag)
-    }
-
-    fn install_into(
-        &mut self,
-        destination_dir: &Dir,
-        method_: Method,
-        resolution_tag: resolution::Tag,
-    ) -> InstallResult {
-        let result = self.link_files_into(destination_dir, method_, resolution_tag);
-        if resolution_tag == resolution::Tag::Folder && matches!(result, InstallResult::Success) {
-            self.link_bundled_into(destination_dir);
-        }
-        result
+            .report()
     }
 
     /// See `Lockfile::bundled_by_folder`. The links are relative, and hold after the rename: a
@@ -2325,6 +2402,102 @@ impl<'a> PackageInstall<'a> {
             }
         }
     }
+}
+
+impl PackageFiles<'_> {
+    /// Makes `staging` anew: under `Staging::Locked` an install that died may have left it.
+    fn make_staging_dir(
+        destination_dir: &Dir,
+        staging: &ZStr,
+        method: Method,
+        skip_delete: bool,
+    ) -> sys::Maybe<()> {
+        // `init_install_dir` makes it, and the name is this install's own.
+        if cfg!(windows) {
+            return Ok(());
+        }
+        // clonefile has to make it itself.
+        if cfg!(target_os = "macos") && method == Method::Clonefile {
+            if !skip_delete {
+                destination_dir.delete_tree(staging.as_bytes())?;
+            }
+            return Ok(());
+        }
+        match sys::mkdirat(destination_dir, staging, 0o755) {
+            Err(err) if err.get_errno() == sys::E::EEXIST => {
+                destination_dir.delete_tree(staging.as_bytes())?;
+            }
+            Err(err) if err.get_errno() == sys::E::ENOENT => {
+                let Some(slash) = strings::last_index_of_char(staging.as_bytes(), b'/') else {
+                    return Err(err);
+                };
+                destination_dir.make_path(&staging.as_bytes()[..slash])?;
+            }
+            result => return result,
+        }
+        sys::mkdirat(destination_dir, staging, 0o755)
+    }
+
+    /// Nothing is at the destination that has to go first. `owner`: the install this is the
+    /// file work of, which has the lockfile; a thread of the pool has none to give.
+    pub(crate) fn install(
+        &mut self,
+        staging_mode: Staging,
+        skip_delete: bool,
+        destination_dir: &Dir,
+        method_: Method,
+        resolution_tag: resolution::Tag,
+        owner: Option<&PackageInstall<'_>>,
+    ) -> InstallResult {
+        let _tracer = bun_core::perf::trace("PackageInstaller.install");
+
+        let dest = self.destination_dir_subpath;
+        let mut staging_buf = path::path_buffer_pool::get();
+        if staging_mode != Staging::Off
+            && let Ok(staging) = bun_core::fmt::buf_print_z(
+                &mut staging_buf[..],
+                format_args!("{}", StagingPath(dest.as_bytes(), staging_mode)),
+            )
+            && Self::make_staging_dir(destination_dir, staging, method_, skip_delete).is_ok()
+        {
+            let staged = PackageFiles {
+                destination_dir_subpath: staging,
+                ..*self
+            }
+            .install_into(destination_dir, method_, resolution_tag, owner);
+            if let failure @ InstallResult::Failure(_) = staged {
+                let _ = destination_dir.delete_tree(staging.as_bytes());
+                return failure;
+            }
+            if rename_staging_into_place(destination_dir.fd(), staging, dest).is_ok() {
+                return InstallResult::Success;
+            }
+            let _ = destination_dir.delete_tree(staging.as_bytes());
+        }
+        // No staging (`Staging::Off`, `dest` is occupied, the rename is refused): link in place.
+        self.install_into(destination_dir, method_, resolution_tag, owner)
+    }
+
+    fn install_into(
+        &mut self,
+        destination_dir: &Dir,
+        method_: Method,
+        resolution_tag: resolution::Tag,
+        owner: Option<&PackageInstall<'_>>,
+    ) -> InstallResult {
+        let result = self.link_files_into(destination_dir, method_, resolution_tag);
+        if resolution_tag == resolution::Tag::Folder
+            && matches!(result, InstallResult::Success)
+            && let Some(owner) = owner
+        {
+            PackageInstall {
+                destination_dir_subpath: self.destination_dir_subpath,
+                ..*owner
+            }
+            .link_bundled_into(destination_dir);
+        }
+        result
+    }
 
     fn link_files_into(
         &mut self,
@@ -2358,7 +2531,7 @@ impl<'a> PackageInstall<'a> {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
-                                Self::set_supported_method(Method::Copyfile);
+                                PackageInstall::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
@@ -2381,7 +2554,7 @@ impl<'a> PackageInstall<'a> {
                         Err(err) => {
                             if err == crate::Error::NotSupported {
                                 if !is_folder {
-                                    Self::set_supported_method(Method::Copyfile);
+                                    PackageInstall::set_supported_method(Method::Copyfile);
                                 }
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -2406,7 +2579,7 @@ impl<'a> PackageInstall<'a> {
                         {
                             if err == crate::Error::NotSameFileSystem {
                                 if !is_folder {
-                                    Self::set_supported_method(Method::Copyfile);
+                                    PackageInstall::set_supported_method(Method::Copyfile);
                                 }
                                 supported_method_to_use = Method::Copyfile;
                                 break 'outer;

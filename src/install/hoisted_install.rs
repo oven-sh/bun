@@ -1,6 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
 use bun_core::strings;
@@ -20,7 +20,7 @@ use crate::{DependencyID, ExtractData, PackageID};
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::package_install;
-use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
+use crate::package_installer::{LinkedAhead, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
@@ -44,6 +44,128 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
         log_level: package_manager::Options::LogLevel,
     ) {
         ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
+    }
+}
+
+/// Puts back the trees that `Lockfile::filter` replaced for the install pass.
+struct RestoreBuffers {
+    manager: *mut PackageManager,
+    trees: Vec<tree::Tree>,
+    hoisted_dependencies: Vec<DependencyID>,
+}
+
+impl Drop for RestoreBuffers {
+    fn drop(&mut self) {
+        // SAFETY: `manager` is the provenance root for every access of
+        // `install_hoisted_packages` to its `this`; this runs after all of
+        // its borrows have ended.
+        let this = unsafe { &mut *self.manager };
+        this.lockfile.buffers.trees = core::mem::take(&mut self.trees);
+        this.lockfile.buffers.hoisted_dependencies =
+            core::mem::take(&mut self.hoisted_dependencies);
+    }
+}
+
+struct EndProgress {
+    manager: *mut PackageManager,
+    log_level: package_manager::Options::LogLevel,
+}
+
+impl Drop for EndProgress {
+    fn drop(&mut self) {
+        // SAFETY: see `RestoreBuffers`.
+        let this = unsafe { &mut *self.manager };
+        if self.log_level.show_progress() {
+            this.progress.root.end();
+            this.progress = Progress::default();
+        }
+        // Defensive: the stored progress-node pointers target stack locals of
+        // `install_hoisted_packages`; clear them so `scripts_node_mut()` / `downloads_node_mut()`
+        // can't observe a dangling pointer after the install pass returns.
+        this.scripts_node = None;
+        this.downloads_node = None;
+    }
+}
+
+/// Sleeps, and runs tasks whenever the event loop wakes up, until `links` is 0. `None`: until
+/// no task and no lifecycle script is pending.
+fn run_tasks_until_done(
+    mgr: *mut PackageManager,
+    installer: &mut PackageInstaller<'_>,
+    links: Option<&AtomicUsize>,
+) -> crate::Result<()> {
+    struct Closure<'a, 'b> {
+        installer: &'a mut PackageInstaller<'b>,
+        err: Option<crate::Error>,
+        // raw `*mut` — `sleep_until`
+        // also receives this pointer, so `&mut` here would alias.
+        manager: *mut PackageManager,
+        links: Option<&'a AtomicUsize>,
+    }
+
+    impl<'a, 'b> Closure<'a, 'b> {
+        fn is_done(closure: &mut Self) -> bool {
+            // SAFETY: `closure.manager` is the raw provenance root set
+            // below; `sleep_until`/`tick_raw` hold no `&mut` across
+            // this callback, so this is the unique live borrow.
+            let manager = unsafe { &mut *closure.manager };
+            let log_level = manager.options.log_level;
+            if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
+                manager,
+                closure.installer,
+                true,
+                log_level,
+            ) {
+                closure.err = Some(err);
+            }
+
+            if closure.err.is_some() {
+                return true;
+            }
+
+            manager.report_slow_lifecycle_scripts();
+
+            if PackageManager::verbose_install() && manager.pending_task_count() > 0 {
+                let pending_task_count = manager.pending_task_count();
+                if pending_task_count > 0
+                    && PackageManager::has_enough_time_passed_between_waiting_messages()
+                {
+                    bun_core::pretty_errorln!(
+                        "<d>[PackageManager]<r> waiting for {} tasks\n",
+                        pending_task_count
+                    );
+                }
+            }
+
+            match closure.links {
+                Some(links) => links.load(Ordering::Acquire) == 0,
+                None => {
+                    manager.pending_task_count() == 0
+                        && manager.has_no_more_pending_lifecycle_scripts()
+                }
+            }
+        }
+    }
+
+    let mut closure = Closure {
+        installer,
+        err: None,
+        manager: mgr,
+        links,
+    };
+
+    // Whenever the event loop wakes up, we need to call `run_tasks`
+    // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
+    // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
+    // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow;
+    // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
+    // `Closure::is_done`, so the callback's `&mut *closure.manager`
+    // is the unique live borrow.
+    unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
+
+    match closure.err {
+        Some(err) => Err(err),
+        None => Ok(()),
     }
 }
 
@@ -107,17 +229,11 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
-    let _restore_buffers = scopeguard::guard(
-        (original_trees, original_tree_dep_ids),
-        move |(trees, dep_ids)| {
-            // SAFETY: `mgr_ptr` is the provenance root for every body access to
-            // `this` (see shadow-reborrow above); guard runs after all body
-            // borrows have ended.
-            let this = unsafe { &mut *mgr_ptr };
-            this.lockfile.buffers.trees = trees;
-            this.lockfile.buffers.hoisted_dependencies = dep_ids;
-        },
-    );
+    let _restore_buffers = RestoreBuffers {
+        manager: mgr_ptr,
+        trees: original_trees,
+        hoisted_dependencies: original_tree_dep_ids,
+    };
 
     let mut download_node: ProgressNode;
     let mut install_node: ProgressNode = ProgressNode::default();
@@ -144,22 +260,10 @@ pub(crate) fn install_hoisted_packages(
         this.scripts_node = NonNull::new(&raw mut scripts_node);
     }
 
-    // `defer { progress.root.end(); progress = .{} }`
-    let _end_progress = scopeguard::guard(log_level, move |log_level| {
-        if log_level.show_progress() {
-            // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-            let this = unsafe { &mut *mgr_ptr };
-            this.progress.root.end();
-            this.progress = Progress::default();
-        }
-        // Defensive: the stored progress-node pointers target stack locals in
-        // this frame; clear them so `scripts_node_mut()` / `downloads_node_mut()`
-        // can't observe a dangling pointer after the install pass returns.
-        // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
-        let this = unsafe { &mut *mgr_ptr };
-        this.scripts_node = None;
-        this.downloads_node = None;
-    });
+    let _end_progress = EndProgress {
+        manager: mgr_ptr,
+        log_level,
+    };
 
     // A partial install (security scanner) runs ahead of the real one and must not touch the layout.
     // Without an explicit `hoisted`, `install_with_manager` came here because there is no store.
@@ -387,6 +491,9 @@ pub(crate) fn install_hoisted_packages(
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
                 tree_dir: None,
+                // On Windows the hardlink backend has one queue of its own, a task for each file.
+                linked_ahead: (cfg!(not(windows)) && skip_delete)
+                    .then(|| LinkedAhead::init(&lockfile_ref)),
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
@@ -448,6 +555,22 @@ pub(crate) fn install_hoisted_packages(
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
+            if installer.links_ahead_from(node_modules.tree_id)
+                && let Some(links) = installer.collect_links(node_modules.tree_id)
+            {
+                // What was started before goes on while the pool links.
+                let mut ran_tasks = Ok(());
+                links.run(&mut || {
+                    ran_tasks =
+                        run_tasks_until_done(mgr_ptr, &mut installer, Some(&links.remaining));
+                });
+                ran_tasks?;
+                if !this.options.do_.install_packages() {
+                    return Err(crate::Error::InstallFailed);
+                }
+                installer.set_linked_ahead(links);
+            }
+
             installer.node_modules.path.truncate(top_level_len);
             installer
                 .node_modules
@@ -507,75 +630,7 @@ pub(crate) fn install_hoisted_packages(
         }
 
         while this.pending_task_count() > 0 && this.options.do_.install_packages() {
-            struct Closure<'a, 'b> {
-                installer: &'a mut PackageInstaller<'b>,
-                err: Option<crate::Error>,
-                // raw `*mut` — `sleep_until`
-                // also receives this pointer, so `&mut` here would alias.
-                manager: *mut PackageManager,
-            }
-
-            impl<'a, 'b> Closure<'a, 'b> {
-                fn is_done(closure: &mut Self) -> bool {
-                    // SAFETY: `closure.manager` is the raw provenance root set
-                    // below; `sleep_until`/`tick_raw` hold no `&mut` across
-                    // this callback, so this is the unique live borrow.
-                    let manager = unsafe { &mut *closure.manager };
-                    let log_level = manager.options.log_level;
-                    if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                        manager,
-                        closure.installer,
-                        true,
-                        log_level,
-                    ) {
-                        closure.err = Some(err);
-                    }
-
-                    if closure.err.is_some() {
-                        return true;
-                    }
-
-                    manager.report_slow_lifecycle_scripts();
-
-                    if PackageManager::verbose_install() && manager.pending_task_count() > 0 {
-                        let pending_task_count = manager.pending_task_count();
-                        if pending_task_count > 0
-                            && PackageManager::has_enough_time_passed_between_waiting_messages()
-                        {
-                            bun_core::pretty_errorln!(
-                                "<d>[PackageManager]<r> waiting for {} tasks\n",
-                                pending_task_count
-                            );
-                        }
-                    }
-
-                    manager.pending_task_count() == 0
-                        && manager.has_no_more_pending_lifecycle_scripts()
-                }
-            }
-
-            // Derive the raw provenance root *before* building the closure so
-            // both `sleep_until`'s `this` arg and `closure.manager` share the
-            // same SRW tag.
-            let mgr: *mut PackageManager = mgr_ptr;
-            let mut closure = Closure {
-                installer: &mut installer,
-                err: None,
-                manager: mgr,
-            };
-
-            // Whenever the event loop wakes up, we need to call `run_tasks`
-            // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
-            // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
-            // SAFETY: `mgr` is derived from the live exclusive `this` borrow;
-            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-            // `Closure::is_done`, so the callback's `&mut *closure.manager`
-            // is the unique live borrow.
-            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
-
-            if let Some(err) = closure.err {
-                return Err(err);
-            }
+            run_tasks_until_done(mgr_ptr, &mut installer, None)?;
         }
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
@@ -590,6 +645,7 @@ pub(crate) fn install_hoisted_packages(
         // Every package is linked; the scripts still to run need no lock.
         installer.staging_lock = None;
         installer.tree_dir = None;
+        installer.linked_ahead = None;
 
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);

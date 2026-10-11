@@ -95,6 +95,8 @@ pub struct PackageInstaller<'a> {
     pub(crate) staging_lock: Option<package_install::StagingLock>,
     /// The `node_modules` the last package was linked into, left open for the next one.
     pub(crate) tree_dir: Option<TreeDir>,
+    /// `None`: there may be something to delete first, and every package is linked in its turn.
+    pub(crate) linked_ahead: Option<LinkedAhead>,
     pub(crate) summary: &'a mut package_install::Summary,
     // No `options` backref field — every caller reads via
     // `self.manager().options` so the shared borrow stays a child of the live
@@ -153,6 +155,81 @@ pub struct TreeDir {
     dir: Dir,
     /// The last `@scope` in it that was seen to be no link.
     scope: Vec<u8>,
+}
+
+/// What the thread pool has linked ahead of the walk over the trees. All else about these
+/// packages happens in their turn of the walk, which finds the files in place.
+pub struct LinkedAhead {
+    /// The trees below this id have had their chance.
+    until: lockfile::tree::Id,
+    /// In the order of the walk.
+    jobs: std::vec::IntoIter<package_install::LinkJob>,
+    /// What `jobs` were linked into.
+    tree_dirs: Vec<TreeDir>,
+    /// Trees whose directory is another tree's too: a member that goes by two names is linked
+    /// twice, and both links lead to one `node_modules`. Only the walk writes there.
+    shared_trees: Bitset,
+    /// Packages that `collect_links` did not find in the cache, so that the walk need not look
+    /// again. What puts one there is a task of this install, which ends in `PreinstallState::Done`.
+    missing: Bitset,
+}
+
+impl LinkedAhead {
+    pub(crate) fn init(lockfile: &Lockfile) -> LinkedAhead {
+        let trees = lockfile.buffers.trees.as_slice();
+        let resolutions = lockfile.packages.items_resolution();
+        // The package whose `node_modules` a tree is, if its folder can be a link to it.
+        let local_package = |tree: &Tree| -> Option<usize> {
+            let package_id =
+                *(lockfile.buffers.resolutions.as_slice()).get(tree.dependency_id as usize)?;
+            let resolution = resolutions.get(package_id as usize)?;
+            (!resolution.tag.can_enqueue_install_task()).then_some(package_id as usize)
+        };
+
+        let mut seen = Bitset::init_empty(resolutions.len()).unwrap_or_oom();
+        let mut seen_twice = Bitset::init_empty(resolutions.len()).unwrap_or_oom();
+        // The root's is tree 0.
+        if !resolutions.is_empty() {
+            seen.set(0);
+        }
+        for package_id in trees.iter().filter_map(&local_package) {
+            if seen.is_set(package_id) {
+                seen_twice.set(package_id);
+            }
+            seen.set(package_id);
+        }
+
+        // A parent comes before its children.
+        let mut shared_trees = Bitset::init_empty(trees.len()).unwrap_or_oom();
+        for tree in trees {
+            if (tree.parent != lockfile::tree::INVALID_ID
+                && shared_trees.is_set(tree.parent as usize))
+                || local_package(tree).is_some_and(|package_id| seen_twice.is_set(package_id))
+            {
+                shared_trees.set(tree.id as usize);
+            }
+        }
+
+        LinkedAhead {
+            until: 0,
+            jobs: Vec::new().into_iter(),
+            tree_dirs: Vec::new(),
+            shared_trees,
+            missing: Bitset::init_empty(resolutions.len()).unwrap_or_oom(),
+        }
+    }
+
+    /// It is the turn of `dependency_id`: the `node_modules` it was linked into and how that went.
+    fn take(
+        &mut self,
+        dependency_id: DependencyID,
+    ) -> Option<(Fd, package_install::InstallResult)> {
+        if self.jobs.as_slice().first()?.dependency_id != dependency_id {
+            return None;
+        }
+        let job = self.jobs.next()?;
+        Some((job.tree_dir, job.result.into_inner()?.report()))
+    }
 }
 
 impl NodeModulesFolder {
@@ -1154,6 +1231,232 @@ impl<'a> PackageInstaller<'a> {
         Ok(open.dir.fd())
     }
 
+    /// The entry of the cache that a package which `can_enqueue_install_task` is linked from.
+    fn cache_entry_name(
+        &self,
+        package_id: PackageID,
+        pkg_name: String,
+        resolution: &Resolution,
+        patch_contents_hash: Option<u64>,
+    ) -> &'static ZStr {
+        match resolution.tag {
+            resolution::Tag::Npm => package_manager::cached_npm_package_folder_name(
+                self.manager(),
+                pkg_name.slice(self.lockfile().buffers.string_bytes.as_slice()),
+                resolution.npm().version,
+                patch_contents_hash,
+            ),
+            resolution::Tag::Git => package_manager::cached_git_folder_name(
+                self.manager(),
+                resolution.git(),
+                patch_contents_hash,
+            ),
+            resolution::Tag::Github => package_manager::cached_github_folder_name(
+                self.manager(),
+                resolution.github(),
+                patch_contents_hash,
+            ),
+            _ => package_manager::cached_tarball_folder_name(
+                &self.metas[package_id as usize].integrity,
+                patch_contents_hash,
+            ),
+        }
+    }
+
+    /// Whether the walk, about to enter `tree_id`, is to call `collect_links` first.
+    pub(crate) fn links_ahead_from(&self, tree_id: lockfile::tree::Id) -> bool {
+        (self.linked_ahead.as_ref()).is_some_and(|ahead| ahead.until <= tree_id)
+    }
+
+    /// The packages of `from` and of the trees after it that only need their files linked: in
+    /// the cache, not patched, and every tree above is complete, so that the folder their
+    /// `node_modules` is in is there as a whole. Reports and counts nothing: what is not
+    /// taken is dealt with in its turn of the walk, like the rest about what is taken. The
+    /// directories are made and looked at here, before a thread writes below them.
+    pub(crate) fn collect_links(
+        &mut self,
+        from: lockfile::tree::Id,
+    ) -> Option<package_install::LinkBatch> {
+        // Each is an open directory.
+        const MAX_TREES: usize = 64;
+
+        let lockfile = self.lockfile();
+        let trees = lockfile.buffers.trees.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let resolutions = self.resolutions;
+        // Put back at the only exit.
+        let mut ahead = self.linked_ahead.take()?;
+        debug_assert!(ahead.jobs.as_slice().is_empty());
+        ahead.tree_dirs.clear();
+        let has_patches = lockfile.patched_dependencies.count() > 0
+            || self.manager().patched_dependencies_to_remove.count() > 0;
+
+        let mut jobs: Vec<package_install::LinkJob> = Vec::new();
+        let mut tree_dirs: Vec<TreeDir> = Vec::new();
+        let mut name_and_version: Vec<u8> = Vec::new();
+        let mut depth_buf = lockfile::tree::depth_buf_uninit();
+        let mut rel_path_buf = bun_paths::path_buffer_pool::get();
+        rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+        let mut node_modules = NodeModulesFolder {
+            tree_id: 0,
+            path: strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec(),
+        };
+        node_modules.path.push(SEP);
+        let top_level_len = node_modules.path.len();
+
+        let mut until = from;
+        while (until as usize) < trees.len() && tree_dirs.len() < MAX_TREES {
+            let tree = trees[until as usize];
+
+            // Below a tree that waits for a download it is left to the walk. Below a tree
+            // of this batch it is for the next one, when that tree has had its turn.
+            let mut is_left_to_the_walk = ahead.shared_trees.is_set(until as usize);
+            let mut is_for_the_next_batch = false;
+            let mut parent = tree.parent;
+            while parent != lockfile::tree::INVALID_ID {
+                if !self.completed_trees.is_set(parent as usize) {
+                    if parent < from {
+                        is_left_to_the_walk = true;
+                    } else {
+                        is_for_the_next_batch = true;
+                    }
+                }
+                parent = trees[parent as usize].parent;
+            }
+            if is_for_the_next_batch && !is_left_to_the_walk {
+                break;
+            }
+            until += 1;
+            if is_left_to_the_walk || tree.dependencies.len == 0 {
+                continue;
+            }
+
+            node_modules.tree_id = tree.id;
+            node_modules.path.truncate(top_level_len);
+            let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
+                { lockfile::tree::IteratorPathStyle::NodeModules },
+            >(
+                trees,
+                dependencies,
+                string_buf,
+                tree.id,
+                &mut rel_path_buf,
+                &mut depth_buf,
+            );
+            node_modules.path.extend_from_slice(rel_path.as_bytes());
+            let copy = (tree.id as usize) < self.copy_trees.bit_length()
+                && self.copy_trees.is_set(tree.id as usize);
+
+            let mut tree_dir: Option<TreeDir> = None;
+            for &dependency_id in tree
+                .dependencies
+                .get(lockfile.buffers.hoisted_dependencies.as_slice())
+            {
+                let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
+                let resolution = &resolutions[package_id as usize];
+                let alias = dependencies[dependency_id as usize].name.slice(string_buf);
+                if !resolution.tag.can_enqueue_install_task()
+                    || !alias_is_safe_install_target(alias)
+                {
+                    continue;
+                }
+
+                let pkg_name = self.names[package_id as usize];
+                if has_patches {
+                    use std::io::Write;
+                    name_and_version.clear();
+                    write!(
+                        &mut name_and_version,
+                        "{}@{}",
+                        bstr::BStr::new(pkg_name.slice(string_buf)),
+                        resolution.fmt(string_buf, PathSep::Posix),
+                    )
+                    .expect("unreachable");
+                    let hash = bun_semver::string::Builder::string_hash(&name_and_version);
+                    if lockfile.patched_dependencies.get(&hash).is_some()
+                        || (self.manager().patched_dependencies_to_remove).contains(&hash)
+                    {
+                        continue;
+                    }
+                }
+
+                let destination_dir_subpath = bun_core::ZBox::from_bytes(alias);
+                let mut install = PackageInstall {
+                    cache_dir: package_manager::get_cache_directory(self.manager_mut()),
+                    cache_dir_subpath: self
+                        .cache_entry_name(package_id, pkg_name, resolution, None),
+                    destination_dir_subpath: &destination_dir_subpath,
+                    package_name: pkg_name,
+                    patch: None,
+                    package_version: b"",
+                    node_modules: &node_modules,
+                    lockfile,
+                };
+                if install.package_missing_from_cache(
+                    self.manager_mut(),
+                    package_id,
+                    resolution.tag,
+                    (ahead.missing).is_set_allow_out_of_bound(package_id as usize, false),
+                ) {
+                    // A checkout does not end in `Done`.
+                    if resolution.tag != resolution::Tag::Git
+                        && (package_id as usize) < ahead.missing.bit_length()
+                    {
+                        ahead.missing.set(package_id as usize);
+                    }
+                    continue;
+                }
+                let cache_dir = install.cache_dir;
+                let cache_dir_subpath =
+                    bun_core::ZBox::from_bytes(install.cache_dir_subpath.as_bytes());
+
+                // The walk comes to the same error, and reports it.
+                let Ok(tree_dir_fd) = Self::open_tree_dir(
+                    &mut tree_dir,
+                    &node_modules,
+                    &self.root_node_modules_folder,
+                    alias,
+                ) else {
+                    continue;
+                };
+                jobs.push(package_install::LinkJob {
+                    dependency_id,
+                    tree_dir: tree_dir_fd,
+                    cache_dir,
+                    cache_dir_subpath,
+                    destination_dir_subpath,
+                    copy,
+                    resolution_tag: resolution.tag,
+                    result: Default::default(),
+                });
+            }
+            tree_dirs.extend(tree_dir);
+        }
+
+        ahead.until = until;
+        ahead.tree_dirs = tree_dirs;
+        self.linked_ahead = Some(ahead);
+        if jobs.is_empty() {
+            return None;
+        }
+        Some(package_install::LinkBatch {
+            jobs,
+            staging: self
+                .staging_lock
+                .get_or_insert_with(package_install::StagingLock::acquire)
+                .mode,
+            next: Default::default(),
+            remaining: Default::default(),
+        })
+    }
+
+    pub(crate) fn set_linked_ahead(&mut self, batch: package_install::LinkBatch) {
+        if let Some(ahead) = &mut self.linked_ahead {
+            ahead.jobs = batch.jobs.into_iter();
+        }
+    }
+
     /// Trees are visited in id order, so the parent's `replaced` is complete.
     pub(crate) fn set_inside_replaced_folder(&mut self, tree_id: lockfile::tree::Id) {
         let lockfile = self.lockfile();
@@ -1540,29 +1843,13 @@ impl<'a> PackageInstaller<'a> {
         );
 
         match resolution.tag {
-            resolution::Tag::Npm => {
-                installer.cache_dir_subpath = package_manager::cached_npm_package_folder_name(
-                    self.manager_mut(),
-                    pkg_name.slice(string_buf!()),
-                    resolution.npm().version,
-                    patch_contents_hash,
-                );
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
-            }
-            resolution::Tag::Git => {
-                installer.cache_dir_subpath = package_manager::cached_git_folder_name(
-                    self.manager_mut(),
-                    resolution.git(),
-                    patch_contents_hash,
-                );
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
-            }
-            resolution::Tag::Github => {
-                installer.cache_dir_subpath = package_manager::cached_github_folder_name(
-                    self.manager_mut(),
-                    resolution.github(),
-                    patch_contents_hash,
-                );
+            resolution::Tag::Npm
+            | resolution::Tag::Git
+            | resolution::Tag::Github
+            | resolution::Tag::LocalTarball
+            | resolution::Tag::RemoteTarball => {
+                installer.cache_dir_subpath =
+                    self.cache_entry_name(package_id, pkg_name, resolution, patch_contents_hash);
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }
             resolution::Tag::Folder => {
@@ -1612,13 +1899,6 @@ impl<'a> PackageInstaller<'a> {
                     // cache_dir might not be created yet (if it's in node_modules)
                     installer.cache_dir = Fd::cwd();
                 }
-            }
-            resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => {
-                installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
-                    &self.metas[package_id as usize].integrity,
-                    patch_contents_hash,
-                );
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }
             resolution::Tag::Workspace => {
                 let folder_str = *resolution.workspace();
@@ -1757,6 +2037,11 @@ impl<'a> PackageInstaller<'a> {
                     self.manager_mut(),
                     package_id,
                     resolution.tag,
+                    // After its download the package is there, and not `Done` yet.
+                    needs_verify
+                        && self.linked_ahead.as_ref().is_some_and(|ahead| {
+                            (ahead.missing).is_set_allow_out_of_bound(package_id as usize, false)
+                        }),
                 )
             {
                 debug_assert!(resolution.can_enqueue_install_task());
@@ -1961,12 +2246,20 @@ impl<'a> PackageInstaller<'a> {
                 return;
             }
 
+            let linked_ahead = (self.linked_ahead.as_mut())
+                .and_then(|linked_ahead| linked_ahead.take(dependency_id));
+
             // creating this directory now, right before installing package
-            let destination_fd = match Self::open_tree_dir(
-                &mut self.tree_dir,
-                &self.node_modules,
-                &self.root_node_modules_folder,
-                alias.slice(string_buf!()),
+            let destination_fd = match linked_ahead.as_ref().map_or_else(
+                || {
+                    Self::open_tree_dir(
+                        &mut self.tree_dir,
+                        &self.node_modules,
+                        &self.root_node_modules_folder,
+                        alias.slice(string_buf!()),
+                    )
+                },
+                |(tree_dir, _)| Ok(*tree_dir),
             ) {
                 Ok(fd) => fd,
                 Err(err) => {
@@ -1999,6 +2292,10 @@ impl<'a> PackageInstaller<'a> {
                     installer.install_from_link(self.skip_delete, &destination_dir)
                 }
                 _ => 'result: {
+                    if let Some((_, result)) = linked_ahead {
+                        break 'result result;
+                    }
+
                     let staging = self
                         .staging_lock
                         .get_or_insert_with(package_install::StagingLock::acquire)

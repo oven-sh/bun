@@ -1,3 +1,4 @@
+use core::fmt::Write as _;
 use core::marker::ConstParamTy;
 use core::mem::MaybeUninit;
 
@@ -537,6 +538,82 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         }
     }
 
+    /// `Some(n)` when the `n` trees from `parent` up and the `n` above those belong to the same edges and hold
+    /// the same entries (an upper one may hold more by now: a bundle's dependencies arrive later), and a tree
+    /// for `dependency_id` in `parent` would start a third round. Placement only looks at the nearest entry of
+    /// a name, so every further round comes out like the last: a@1 -> b@1 -> a@2 -> b@2 -> a@1 nests forever.
+    /// A package below a copy of itself is not enough, such a layout can still end.
+    fn repeating_period(&self, parent: Id, dependency_id: DependencyID) -> Option<usize> {
+        let trees = self.list.items_tree();
+        let entries = self.list.items_dependencies();
+
+        let mut period: usize = 1;
+        let mut round_start = parent;
+        while round_start != INVALID_ID {
+            let above = trees[round_start as usize].parent;
+            if trees[round_start as usize].dependency_id == dependency_id {
+                let (mut lower, mut upper) = (parent, above);
+                let mut same: usize = 0;
+                while same < period
+                    && upper != INVALID_ID
+                    && trees[lower as usize].dependency_id == trees[upper as usize].dependency_id
+                    && entries[upper as usize].starts_with(&entries[lower as usize])
+                {
+                    lower = trees[lower as usize].parent;
+                    upper = trees[upper as usize].parent;
+                    same += 1;
+                }
+                if same == period {
+                    return Some(period);
+                }
+            }
+            round_start = above;
+            period += 1;
+        }
+
+        None
+    }
+
+    #[cold]
+    fn crash_on_endless_nesting(
+        &self,
+        parent: Id,
+        dependency_id: DependencyID,
+        period: usize,
+    ) -> ! {
+        let lockfile = self.lockfile();
+        let buf = self.buf();
+        let pkg_names = lockfile.packages.items_name();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let trees = self.list.items_tree();
+
+        let mut round = vec![dependency_id];
+        let mut tree_id = parent;
+        for _ in 0..period {
+            round.push(trees[tree_id as usize].dependency_id);
+            tree_id = trees[tree_id as usize].parent;
+        }
+
+        let mut cycle = String::new();
+        for &dep_id in round.iter().rev() {
+            let pkg_id = self.resolutions[dep_id as usize] as usize;
+            let separator = if cycle.is_empty() { "" } else { " > " };
+            let _ = write!(
+                cycle,
+                "{}{}@{}",
+                separator,
+                pkg_names[pkg_id].fmt(buf),
+                pkg_resolutions[pkg_id].fmt(buf, PathSep::Posix),
+            );
+        }
+
+        Output::err_generic("dependency cycle cannot be laid out in node_modules: {}", (cycle,));
+        bun_core::note!(
+            "each of these needs the next one nested inside it, without end. \"overrides\" in package.json can keep a single version of one of them"
+        );
+        bun_core::Global::crash();
+    }
+
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
@@ -695,20 +772,8 @@ impl Tree {
             return Ok(());
         }
 
-        // Below another copy of itself a package's dependencies are already placed; a cycle through two
-        // versions (a@1 -> b@1 -> a@2 -> b@2 ...) would re-nest forever. bun.lock.rs skips these copies too.
-        {
-            let trees = builder.list.items_tree();
-            let mut ancestor_id = self.id;
-            while ancestor_id != INVALID_ID {
-                let ancestor = &trees[ancestor_id as usize];
-                if (ancestor.dependency_id as usize) < builder.resolutions.len()
-                    && builder.resolutions[ancestor.dependency_id as usize] == parent_pkg_id
-                {
-                    return Ok(());
-                }
-                ancestor_id = ancestor.parent;
-            }
+        if let Some(period) = builder.repeating_period(self.id, dependency_id) {
+            builder.crash_on_endless_nesting(self.id, dependency_id, period);
         }
 
         builder.list.append(BuilderEntry {
@@ -1167,26 +1232,28 @@ impl Tree {
             }
         }
 
-        // a bundle's dependency stops here, but must not shadow what resolves through here
-        if !AS_DEFINED
-            && this.id == hoist_root_id
-            && Tree::hoist_root_resolves_elsewhere(
-                this.id,
-                package_id,
-                dependency.name_hash,
-                builder,
-            )
-        {
-            return HoistDependencyResult::DependencyLoop; // 3
-        }
+        // A hoist root is a bundle in the saved tree and a self-contained workspace in the installed one.
+        if METHOD == BuilderMethod::Resolvable && this.id == hoist_root_id {
+            // a bundle's dependency stops here, but must not shadow what resolves through here
+            if !AS_DEFINED
+                && Tree::hoist_root_resolves_elsewhere(
+                    this.id,
+                    package_id,
+                    dependency.name_hash,
+                    builder,
+                )
+            {
+                return HoistDependencyResult::DependencyLoop; // 3
+            }
 
-        // A bundled dependency depending back on the bundling package resolves it from inside; copying it
-        // into itself would recurse forever.
-        if (this.dependency_id as usize) < deps.len()
-            && builder.resolutions[this.dependency_id as usize] == package_id
-            && deps[this.dependency_id as usize].name_hash == target_name_hash
-        {
-            return HoistDependencyResult::Hoisted; // 1
+            // A bundled dependency depending back on the bundling package resolves it from inside; copying it
+            // into itself would recurse forever.
+            if (this.dependency_id as usize) < deps.len()
+                && builder.resolutions[this.dependency_id as usize] == package_id
+                && deps[this.dependency_id as usize].name_hash == target_name_hash
+            {
+                return HoistDependencyResult::Hoisted; // 1
+            }
         }
 
         // place the dependency in the current tree

@@ -1844,22 +1844,6 @@ impl<T> PkgMap<T> {
     }
 }
 
-impl PkgMap<PackageID> {
-    /// Whether a folder on the way down to `pkg_path` holds `pkg_id` too. Each of those
-    /// folders is a key of its own; a prefix ending inside a scoped name matches nothing.
-    fn is_below_copy_of(&self, pkg_path: &[u8], pkg_id: PackageID) -> bool {
-        let mut end: usize = 0;
-        while let Some(i) = strings::index_of_char_usize(&pkg_path[end..], b'/') {
-            end += i;
-            if self.get(&pkg_path[..end]) == Some(&pkg_id) {
-                return true;
-            }
-            end += 1;
-        }
-        false
-    }
-}
-
 // const PkgMap = struct {};
 
 fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
@@ -3237,12 +3221,6 @@ pub(crate) fn parse_into_binary_lockfile(
 
             if res.tag == ResolutionTag::Workspace {
                 // we've already resolved the workspace dependencies above
-                continue;
-            }
-
-            // A copy below another copy of itself has no node_modules of its own (`Tree::process_subtree`);
-            // the copy above binds the package's edges.
-            if pkg_map.is_below_copy_of(pkg_path, pkg_id) {
                 continue;
             }
 

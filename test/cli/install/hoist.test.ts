@@ -1,8 +1,8 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { exists, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isASAN, runBunInstall } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -96,36 +96,52 @@ test("tree written after a ranged peer gains a higher candidate is the tree the 
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });
 
-// The hoist-*-cycle-* fixtures are described in registry/packages/create-hoist-cycle-packages.ts.
-//
-// These graphs can only be laid out by nesting: every package in the cycle conflicts with the
-// version of its name one level up, so each copy used to get another copy nested below it and
-// `bun install` never finished. The tree now ends at the first copy of a package that is nested
-// below another copy of itself; that copy gets no node_modules of its own, so its dependency in
-// the cycle resolves to the conflicting version next to it (no finite layout of these graphs avoids
-// that). The trees below are what that produces, keyed the way bun.lock keys `packages`.
-//
-// bun.lock has to load back into the same tree. That copy's row resolves its dependencies to the
-// wrong versions by path, so the loader has to bind the package from the copy above it instead; the
-// reload half of each test fails if it does not, without --frozen-lockfile noticing.
-
 type Linker = "hoisted" | "isolated";
 
-async function install(cwd: string, ...args: string[]) {
+// `createTestDir` hands back a plain path, so nothing removes the directory. Each case below
+// installs into two of them, with a cache inside each.
+const createdDirs: string[] = [];
+async function createTestDir(opts: Parameters<typeof registry.createTestDir>[0]) {
+  const { packageDir } = await registry.createTestDir(opts);
+  createdDirs.push(packageDir);
+  return packageDir;
+}
+afterAll(async () => {
+  await Promise.all(createdDirs.map(dir => rm(dir, { recursive: true, force: true })));
+});
+
+// The timeout only matters if an install never returns. The runner does not clean up the children
+// of concurrent tests, so without it a layout that stops terminating would keep running, and
+// growing, after its test has failed.
+//
+// CI exports one BUN_INSTALL_CACHE_DIR per test file, which overrides the per-directory cache in
+// bunfig.toml. These cases run concurrently and install the same packages, and on Windows installs
+// racing on one cache fail with "Failed to install 1 package", so each directory gets its own.
+async function spawnBun(cwd: string, ...cmd: string[]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...cmd],
     cwd,
-    env: bunEnv,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: isASAN ? 90_000 : 30_000,
+    killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ args, stdout, stderr, exitCode }).toMatchObject({
-    stderr: expect.not.stringContaining("error:"),
-    exitCode: 0,
-  });
+  return { cmd, stdout, stderr, signalCode: proc.signalCode, exitCode };
 }
 
+async function run(cwd: string, ...cmd: string[]) {
+  const result = await spawnBun(cwd, ...cmd);
+  expect(result).toMatchObject({
+    stderr: expect.not.stringContaining("error:"),
+    signalCode: null,
+    exitCode: 0,
+  });
+  return result.stdout;
+}
+
+// bun.lock keys `packages` by node_modules path; this maps each path to what is installed there.
 async function lockfileTree(dir: string) {
   const { packages } = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as {
     packages: Record<string, [string, ...unknown[]]>;
@@ -139,147 +155,394 @@ async function installedPackageJsons(dir: string) {
   return paths.map(path => path.replaceAll("\\", "/")).sort();
 }
 
-// Installs `files` from scratch, then again in a new directory from the bun.lock that produced,
-// and returns the first install's directory.
-async function installFreshAndFromLockfile(
-  files: Record<string, string>,
-  linker: Linker,
-  expectedTree: Record<string, string>,
-) {
-  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files });
-  await install(packageDir);
-  const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
-  expect(await lockfileTree(packageDir)).toEqual(expectedTree);
+// The same `edges()` every below-self-* and self-contained-* fixture exports. The project gets one
+// too, because under the isolated linker only the project itself goes through the links in its node_modules.
+const edgesJs = `exports.edges = () => {
+  const { dependencies = {}, peerDependencies = {} } = require("./package.json");
+  return Object.fromEntries(
+    Object.keys({ ...dependencies, ...peerDependencies }).map(name => [name, require(name + "/package.json").version]),
+  );
+};
+`;
 
-  const { packageDir: reloadDir } = await registry.createTestDir({
-    bunfigOpts: { linker },
-    files: { ...files, "bun.lock": lockfile },
+// Loads the project and every installed fixture package from where it is on disk and lets each
+// resolve its own dependencies. Returns one entry per project and per installed copy: what it is,
+// and any dependency that resolved to a version other than the exact one it declares.
+const probe = `
+  const { join, dirname } = require("node:path");
+  const { existsSync } = require("node:fs");
+  const [projects, roots] = JSON.parse(process.argv[1]);
+  const dirs = [...projects];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const rel of new Bun.Glob("**/package.json").scanSync({ cwd: root, dot: true })) dirs.push(dirname(join(root, rel)));
+  }
+  const out = dirs.map(dir => {
+    const pkg = require(join(dir, "package.json"));
+    const declared = { ...pkg.dependencies, ...pkg.peerDependencies };
+    let wrong;
+    try {
+      const edges = require(join(dir, "index.js")).edges();
+      wrong = Object.keys(declared).filter(name => edges[name] !== declared[name]).map(name => name + ": wanted " + declared[name] + ", got " + edges[name]);
+    } catch (e) {
+      // Also for a package without dependencies: a copy that cannot be loaded is not a good copy.
+      wrong = ["edges() failed: " + String(e)];
+    }
+    return { id: pkg.version ? pkg.name + "@" + pkg.version : pkg.name, wrong };
   });
-  await install(reloadDir, "--frozen-lockfile");
-  expect(await installedPackageJsons(reloadDir)).toEqual(await installedPackageJsons(packageDir));
+  console.log(JSON.stringify(out.sort((a, b) => a.id.localeCompare(b.id))));
+`;
 
-  // --lockfile-only always writes, so this is the tree a reload builds, printed back.
-  await install(reloadDir, "--lockfile-only");
-  expect(await Bun.file(join(reloadDir, "bun.lock")).text()).toBe(lockfile);
-
-  return packageDir;
+async function installedCopies(dir: string, project: string, nodeModules: string[]) {
+  const args = [[join(dir, project)], nodeModules.map(rel => join(dir, rel))];
+  return JSON.parse(await run(dir, "-e", probe, JSON.stringify(args))) as { id: string; wrong: string[] }[];
 }
 
-test.each(["hoisted", "isolated"] as const)(
-  "a dependency cycle through two versions of the same packages is installed (%s linker)",
-  async linker => {
-    const packageDir = await installFreshAndFromLockfile(
-      { "package.json": JSON.stringify({ name: "pkg", dependencies: { "hoist-cycle-x": "1.0.0" } }) },
-      linker,
+// Installs `files` from scratch, then in a new directory from the bun.lock that produced.
+// `project` is the directory of the package whose dependencies are installed: "." or a workspace.
+async function installFreshAndFromLockfile(opts: {
+  files: Record<string, string>;
+  linker: Linker;
+  tree: Record<string, string>;
+  copies: string[];
+  project?: string;
+  nodeModules?: string[];
+}) {
+  const project = opts.project ?? ".";
+  const nodeModules = opts.nodeModules ?? ["node_modules"];
+  // Keys of `files` use "/" on every platform, so they are not built with path.join.
+  const prefix = project === "." ? "" : `${project}/`;
+  const files = { ...opts.files, [`${prefix}index.js`]: edgesJs };
+  const { name, version } = JSON.parse(files[`${prefix}package.json`]);
+
+  const packageDir = await createTestDir({ bunfigOpts: { linker: opts.linker }, files });
+  await run(packageDir, "install");
+  const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+  expect(await lockfileTree(packageDir)).toEqual(opts.tree);
+
+  // The project and every copy are there, and each resolves every dependency to the version it asks for.
+  const expected = [version ? `${name}@${version}` : name, ...opts.copies]
+    .map(id => ({ id, wrong: [] }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  expect(await installedCopies(packageDir, project, nodeModules)).toEqual(expected);
+
+  const reloadDir = await createTestDir({
+    bunfigOpts: { linker: opts.linker },
+    files: { ...files, "bun.lock": lockfile },
+  });
+  await run(reloadDir, "install", "--frozen-lockfile");
+  expect(await installedCopies(reloadDir, project, nodeModules)).toEqual(expected);
+
+  // --lockfile-only always writes, so this is the tree a reload builds, printed back.
+  await run(reloadDir, "install", "--lockfile-only");
+  expect(await Bun.file(join(reloadDir, "bun.lock")).text()).toBe(lockfile);
+
+  return { packageDir, reloadDir };
+}
+
+// The hoist-*-cycle-* fixtures are described in registry/packages/create-hoist-cycle-packages.ts.
+//
+// Every package of these cycles conflicts with the version of its name one level up, so each copy
+// needs another copy nested below it and no finite node_modules holds them. bun.lock is keyed by
+// node_modules path, so the isolated linker cannot install them either. `bun install` used to nest
+// until it ran out of memory.
+describe.concurrent("a dependency cycle that nests without end is an error", () => {
+  const x = "hoist-cycle-x";
+  const y = "hoist-cycle-y";
+  const peer = "hoist-optional-peer-cycle-";
+  const twoVersions = `${y}@1.0.0 > ${x}@2.0.0 > ${y}@2.0.0 > ${x}@1.0.0 > ${y}@1.0.0`;
+
+  test.each([
+    [
+      "through two versions of the same packages (hoisted linker)",
+      "hoisted",
+      { "package.json": JSON.stringify({ name: "pkg", dependencies: { [x]: "1.0.0" } }) },
+      twoVersions,
+    ],
+    [
+      "through two versions of the same packages (isolated linker)",
+      "isolated",
+      { "package.json": JSON.stringify({ name: "pkg", dependencies: { [x]: "1.0.0" } }) },
+      twoVersions,
+    ],
+    [
+      "entered at both of its versions, from the root and from a workspace",
+      "hoisted",
       {
-        "hoist-cycle-x": "hoist-cycle-x@1.0.0",
-        "hoist-cycle-y": "hoist-cycle-y@1.0.0",
-        "hoist-cycle-y/hoist-cycle-x": "hoist-cycle-x@2.0.0",
-        "hoist-cycle-y/hoist-cycle-x/hoist-cycle-y": "hoist-cycle-y@2.0.0",
-        "hoist-cycle-y/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x": "hoist-cycle-x@1.0.0",
-        // This y@1.0.0 is below the y@1.0.0 at the root, so it gets no node_modules of its own.
-        "hoist-cycle-y/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x/hoist-cycle-y": "hoist-cycle-y@1.0.0",
+        "package.json": JSON.stringify({ name: "pkg", workspaces: ["packages/*"], dependencies: { [x]: "1.0.0" } }),
+        "packages/app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { [x]: "2.0.0" } }),
       },
-    );
-
-    if (linker === "hoisted") {
-      expect(await installedPackageJsons(packageDir)).toEqual([
-        "hoist-cycle-x/package.json",
-        "hoist-cycle-y/node_modules/hoist-cycle-x/node_modules/hoist-cycle-y/node_modules/hoist-cycle-x/node_modules/hoist-cycle-y/package.json",
-        "hoist-cycle-y/node_modules/hoist-cycle-x/node_modules/hoist-cycle-y/node_modules/hoist-cycle-x/package.json",
-        "hoist-cycle-y/node_modules/hoist-cycle-x/node_modules/hoist-cycle-y/package.json",
-        "hoist-cycle-y/node_modules/hoist-cycle-x/package.json",
-        "hoist-cycle-y/package.json",
-      ]);
+      twoVersions,
+    ],
+    [
+      "closed through an optional peer",
+      "hoisted",
+      {
+        "package.json": JSON.stringify({
+          name: "pkg",
+          dependencies: { [`${peer}x`]: "2.0.0" },
+          devDependencies: { [`${peer}entry`]: "1.0.0" },
+        }),
+      },
+      `${peer}y@1.0.0 > ${peer}x@2.0.0 > ${peer}y@2.0.0 > ${peer}x@1.0.0 > ${peer}y@1.0.0`,
+    ],
+  ] as const)("%s", async (_, linker, files, cycle) => {
+    for (const args of [[], ["--lockfile-only"]]) {
+      const packageDir = await createTestDir({ bunfigOpts: { linker }, files });
+      expect(await spawnBun(packageDir, "install", ...args)).toMatchObject({
+        stderr: expect.stringContaining(`error: dependency cycle cannot be laid out in node_modules: ${cycle}\n`),
+        signalCode: null,
+        exitCode: 1,
+      });
+      expect({
+        lockfile: existsSync(join(packageDir, "bun.lock")),
+        nodeModules: existsSync(join(packageDir, "node_modules")),
+      }).toEqual({ lockfile: false, nodeModules: false });
     }
-  },
-);
-
-test("a cycle entered at both of its versions, from the root and from a workspace, is installed", async () => {
-  await installFreshAndFromLockfile(
-    {
-      "package.json": JSON.stringify({
-        name: "pkg",
-        workspaces: ["packages/*"],
-        dependencies: { "hoist-cycle-x": "1.0.0" },
-      }),
-      "packages/app/package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        dependencies: { "hoist-cycle-x": "2.0.0" },
-      }),
-    },
-    "hoisted",
-    {
-      "app": "app@workspace:packages/app",
-      "hoist-cycle-x": "hoist-cycle-x@1.0.0",
-      "hoist-cycle-y": "hoist-cycle-y@1.0.0",
-      "hoist-cycle-y/hoist-cycle-x": "hoist-cycle-x@2.0.0",
-      "hoist-cycle-y/hoist-cycle-x/hoist-cycle-y": "hoist-cycle-y@2.0.0",
-      "hoist-cycle-y/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x": "hoist-cycle-x@1.0.0",
-      "hoist-cycle-y/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x/hoist-cycle-y": "hoist-cycle-y@1.0.0",
-      // The workspace's branch enters the cycle at x@2.0.0, so it is x@2.0.0's copy that ends it.
-      "app/hoist-cycle-x": "hoist-cycle-x@2.0.0",
-      "app/hoist-cycle-x/hoist-cycle-y": "hoist-cycle-y@2.0.0",
-      "app/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x": "hoist-cycle-x@1.0.0",
-      "app/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x/hoist-cycle-y": "hoist-cycle-y@1.0.0",
-      "app/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x/hoist-cycle-y/hoist-cycle-x": "hoist-cycle-x@2.0.0",
-    },
-  );
+  });
 });
 
-test.each(["hoisted", "isolated"] as const)(
+test.concurrent.each(["hoisted", "isolated"] as const)(
   "a bundled dependency with a peer on the package bundling it is installed (%s linker)",
   async linker => {
     // The plugin's peer is satisfied by the host it is bundled in. The host used to be copied into
     // its own node_modules instead, and the copy bundled the plugin again below it, and so on.
-    await installFreshAndFromLockfile(
-      { "package.json": JSON.stringify({ name: "pkg", dependencies: { "hoist-bundled-cycle-host": "1.0.0" } }) },
-      linker,
-      {
-        "hoist-bundled-cycle-host": "hoist-bundled-cycle-host@1.0.0",
-        "hoist-bundled-cycle-host/hoist-bundled-cycle-plugin": "hoist-bundled-cycle-plugin@1.0.0",
-      },
-    );
+    const files = {
+      "package.json": JSON.stringify({ name: "pkg", dependencies: { "hoist-bundled-cycle-host": "1.0.0" } }),
+    };
+
+    const packageDir = await createTestDir({ bunfigOpts: { linker }, files });
+    await run(packageDir, "install");
+    const lockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(await lockfileTree(packageDir)).toEqual({
+      "hoist-bundled-cycle-host": "hoist-bundled-cycle-host@1.0.0",
+      "hoist-bundled-cycle-host/hoist-bundled-cycle-plugin": "hoist-bundled-cycle-plugin@1.0.0",
+    });
+
+    const reloadDir = await createTestDir({ bunfigOpts: { linker }, files: { ...files, "bun.lock": lockfile } });
+    await run(reloadDir, "install", "--frozen-lockfile");
+    expect(await installedPackageJsons(reloadDir)).toEqual(await installedPackageJsons(packageDir));
+
+    await run(reloadDir, "install", "--lockfile-only");
+    expect(await Bun.file(join(reloadDir, "bun.lock")).text()).toBe(lockfile);
   },
 );
 
-test("a cycle closed through an optional peer is installed", async () => {
-  await installFreshAndFromLockfile(
-    {
-      "package.json": JSON.stringify({
-        name: "pkg",
-        dependencies: { "hoist-optional-peer-cycle-x": "2.0.0" },
-        devDependencies: { "hoist-optional-peer-cycle-entry": "1.0.0" },
-      }),
-    },
-    "hoisted",
-    {
-      "hoist-optional-peer-cycle-entry": "hoist-optional-peer-cycle-entry@1.0.0",
-      "hoist-optional-peer-cycle-x": "hoist-optional-peer-cycle-x@2.0.0",
-      "hoist-optional-peer-cycle-y": "hoist-optional-peer-cycle-y@2.0.0",
-      "hoist-optional-peer-cycle-z": "hoist-optional-peer-cycle-z@2.0.0",
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x": "hoist-optional-peer-cycle-x@1.0.0",
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-y":
-        "hoist-optional-peer-cycle-y@1.0.0",
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-z":
-        "hoist-optional-peer-cycle-z@1.0.0",
-      // y@1.0.0's peer on x@2.0.0, nested because x@1.0.0 is above it.
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-y/hoist-optional-peer-cycle-x":
-        "hoist-optional-peer-cycle-x@2.0.0",
-      // z@1.0.0's y@2.0.0, whose optional peer binds to the x@1.0.0 above it here.
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-z/hoist-optional-peer-cycle-y":
-        "hoist-optional-peer-cycle-y@2.0.0",
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-y/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-y":
-        "hoist-optional-peer-cycle-y@2.0.0",
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-y/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-z":
-        "hoist-optional-peer-cycle-z@2.0.0",
-      // That y@2.0.0 sits below x@2.0.0, so the bound x@1.0.0 is nested under it; this x@1.0.0 is
-      // below the x@1.0.0 under `entry` and is where the tree ends.
-      "hoist-optional-peer-cycle-entry/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-y/hoist-optional-peer-cycle-x/hoist-optional-peer-cycle-y/hoist-optional-peer-cycle-x":
-        "hoist-optional-peer-cycle-x@1.0.0",
+// The below-self-* and self-contained-* fixtures are described in
+// registry/packages/create-hoist-below-self-packages.ts.
+//
+// These layouts end, so the error above must leave them alone: a package installed a second time
+// below another copy of itself still has to get its own node_modules, because what was nested in
+// between shadows some of its dependencies.
+describe.concurrent("a package installed again below another copy of itself", () => {
+  test.each(["hoisted", "isolated"] as const)(
+    "gets the dependency that the versions nested in between shadow (%s linker)",
+    async linker => {
+      const a1 = "below-self-a@1.0.0";
+      const e1 = "below-self-e@1.0.0";
+      await installFreshAndFromLockfile({
+        linker,
+        files: {
+          "package.json": JSON.stringify({
+            name: "pkg",
+            dependencies: {
+              "below-self-a": "1.0.0",
+              "below-self-b": "2.0.0",
+              "below-self-c": "2.0.0",
+              "below-self-e": "2.0.0",
+            },
+          }),
+        },
+        tree: {
+          "below-self-a": a1,
+          "below-self-b": "below-self-b@2.0.0",
+          "below-self-c": "below-self-c@2.0.0",
+          "below-self-e": "below-self-e@2.0.0",
+          "below-self-a/below-self-b": "below-self-b@1.0.0",
+          "below-self-a/below-self-e": e1,
+          "below-self-a/below-self-b/below-self-a": "below-self-a@2.0.0",
+          "below-self-a/below-self-b/below-self-a/below-self-c": "below-self-c@1.0.0",
+          "below-self-a/below-self-b/below-self-a/below-self-e": "below-self-e@3.0.0",
+          // a@1.0.0 again, now below a@2.0.0's e@3.0.0, so it needs an e@1.0.0 of its own.
+          "below-self-a/below-self-b/below-self-a/below-self-c/below-self-a": a1,
+          "below-self-a/below-self-b/below-self-a/below-self-c/below-self-a/below-self-e": e1,
+        },
+        copies:
+          linker === "hoisted"
+            ? [
+                a1,
+                a1,
+                "below-self-a@2.0.0",
+                "below-self-b@1.0.0",
+                "below-self-b@2.0.0",
+                "below-self-c@1.0.0",
+                "below-self-c@2.0.0",
+                e1,
+                e1,
+                "below-self-e@2.0.0",
+                "below-self-e@3.0.0",
+              ]
+            : [
+                a1,
+                "below-self-a@2.0.0",
+                "below-self-b@1.0.0",
+                "below-self-b@2.0.0",
+                "below-self-c@1.0.0",
+                "below-self-c@2.0.0",
+                e1,
+                "below-self-e@2.0.0",
+                "below-self-e@3.0.0",
+              ],
+      });
     },
   );
+
+  test.each(["hoisted", "isolated"] as const)(
+    "has its dependencies laid out again, and the layout ends where one is found (%s linker)",
+    async linker => {
+      const a1 = "below-self-again-a@1.0.0";
+      const a2 = "below-self-again-a@2.0.0";
+      const b1 = "below-self-again-b@1.0.0";
+      const b3 = "below-self-again-b@3.0.0";
+      await installFreshAndFromLockfile({
+        linker,
+        files: {
+          "package.json": JSON.stringify({
+            name: "pkg",
+            dependencies: {
+              "below-self-again-a": "1.0.0",
+              "below-self-again-b": "2.0.0",
+              "below-self-again-c": "2.0.0",
+            },
+          }),
+        },
+        tree: {
+          "below-self-again-a": a1,
+          "below-self-again-b": "below-self-again-b@2.0.0",
+          "below-self-again-c": "below-self-again-c@2.0.0",
+          "below-self-again-a/below-self-again-b": b1,
+          "below-self-again-a/below-self-again-b/below-self-again-a": a2,
+          "below-self-again-a/below-self-again-b/below-self-again-a/below-self-again-b": b3,
+          "below-self-again-a/below-self-again-b/below-self-again-a/below-self-again-c": "below-self-again-c@1.0.0",
+          // a@1.0.0 again, below a@2.0.0's b@3.0.0: its b@1.0.0, and what that needs, are nested once more.
+          "below-self-again-a/below-self-again-b/below-self-again-a/below-self-again-c/below-self-again-a": a1,
+          "below-self-again-a/below-self-again-b/below-self-again-a/below-self-again-c/below-self-again-a/below-self-again-b":
+            b1,
+          "below-self-again-a/below-self-again-b/below-self-again-a/below-self-again-c/below-self-again-a/below-self-again-b/below-self-again-a":
+            a2,
+          "below-self-again-a/below-self-again-b/below-self-again-a/below-self-again-c/below-self-again-a/below-self-again-b/below-self-again-a/below-self-again-b":
+            b3,
+        },
+        copies:
+          linker === "hoisted"
+            ? [
+                a1,
+                a1,
+                a2,
+                a2,
+                b1,
+                b1,
+                "below-self-again-b@2.0.0",
+                b3,
+                b3,
+                "below-self-again-c@1.0.0",
+                "below-self-again-c@2.0.0",
+              ]
+            : [a1, a2, b1, "below-self-again-b@2.0.0", b3, "below-self-again-c@1.0.0", "below-self-again-c@2.0.0"],
+      });
+    },
+  );
+});
+
+// docs/pm/workspaces.mdx: nothing a self-contained workspace depends on is placed above its own
+// node_modules. That includes the workspace itself when one of its dependencies depends back on it.
+describe.concurrent("a self-contained workspace", () => {
+  const rootPackageJson = JSON.stringify({
+    name: "root",
+    private: true,
+    workspaces: { packages: ["apps/*"], selfContained: ["apps/desktop"] },
+  });
+
+  test.each([
+    ["a dependency", "self-contained-plugin"],
+    ["a peer dependency", "self-contained-peer-plugin"],
+  ])("is linked into its own node_modules for a package with %s on it", async (_, plugin) => {
+    const { packageDir, reloadDir } = await installFreshAndFromLockfile({
+      linker: "hoisted",
+      files: {
+        "package.json": rootPackageJson,
+        "apps/desktop/package.json": JSON.stringify({
+          name: "self-contained-app",
+          version: "1.0.0",
+          dependencies: { [plugin]: "1.0.0" },
+        }),
+      },
+      tree: {
+        "self-contained-app": "self-contained-app@workspace:apps/desktop",
+        [plugin]: `${plugin}@1.0.0`,
+      },
+      copies: [`${plugin}@1.0.0`],
+      project: "apps/desktop",
+      nodeModules: ["node_modules", "apps/desktop/node_modules"],
+    });
+
+    for (const dir of [packageDir, reloadDir]) {
+      const desktop = join(dir, "apps", "desktop");
+      // bun.lock is the same with and without `selfContained`, so where the plugin is placed
+      // only shows on disk: inside the workspace, and not above it.
+      expect({
+        inWorkspace: existsSync(join(desktop, "node_modules", plugin, "package.json")),
+        aboveWorkspace: existsSync(join(dir, "node_modules", plugin)),
+      }).toEqual({ inWorkspace: true, aboveWorkspace: false });
+      expect(realpathSync(join(desktop, "node_modules", "self-contained-app"))).toBe(realpathSync(desktop));
+    }
+  });
+
+  // What keeps a bundle's dependency out of the bundling package's node_modules does not apply here.
+  const versionIn = async (dir: string, ...path: string[]) => {
+    const packageJson = join(dir, "apps", "desktop", "node_modules", ...path, "no-deps", "package.json");
+    return existsSync(packageJson) ? (await file(packageJson).json()).version : null;
+  };
+
+  test("hoists one of two versions its dependencies need to the top of its node_modules", async () => {
+    const packageDir = await createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": rootPackageJson,
+        // one-dep depends on no-deps@1.0.1, one-fixed-dep on no-deps@1.0.0
+        "apps/desktop/package.json": JSON.stringify({
+          name: "desktop",
+          dependencies: { "one-dep": "1.0.0", "one-fixed-dep": "1.0.0" },
+        }),
+      },
+    });
+    await run(packageDir, "install");
+    expect({
+      top: await versionIn(packageDir),
+      "one-dep": await versionIn(packageDir, "one-dep", "node_modules"),
+      "one-fixed-dep": await versionIn(packageDir, "one-fixed-dep", "node_modules"),
+    }).toEqual({ top: "1.0.1", "one-dep": null, "one-fixed-dep": "1.0.0" });
+  });
+
+  test("hoists a dependency's version of a name whose own devDependency --production leaves out", async () => {
+    const packageDir = await createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": rootPackageJson,
+        "apps/desktop/package.json": JSON.stringify({
+          name: "desktop",
+          dependencies: { "one-dep": "1.0.0" },
+          devDependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+    await run(packageDir, "install", "--lockfile-only");
+    await run(packageDir, "install", "--production");
+    expect({
+      top: await versionIn(packageDir),
+      "one-dep": await versionIn(packageDir, "one-dep", "node_modules"),
+    }).toEqual({ top: "1.0.1", "one-dep": null });
+  });
 });
 
 // A peer whose own resolution conflicts with the copy the root package.json put

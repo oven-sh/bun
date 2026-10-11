@@ -144,6 +144,18 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
+const ObjectHasOwn = Object.hasOwn;
+
+// https.Agent applies `agent.options` to every tls.connect() it makes.
+function tlsFromAgent(agent, url) {
+  if ($isCallable(agent)) {
+    const href = $isObject(url) ? (url.href ?? url.url) : url;
+    if (typeof href !== "string" || !URL.canParse(href)) return undefined;
+    agent = agent.$call(undefined, new URL(href));
+  }
+  if (!$isObject(agent) || !ObjectHasOwn(agent, "options") || !$isObject(agent.options)) return undefined;
+  return require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...agent.options });
+}
 
 class Request extends WebRequest {
   [kUrl]?: string;
@@ -190,6 +202,10 @@ async function fetch(
       const readable = initBody instanceof Readable ? initBody : readableFromOldStyleStream(initBody);
       init = { ...init, body: Readable.toWeb(readable) };
     }
+  }
+  if (init && ObjectHasOwn(init, "agent") && (init as any).agent && (init as any).tls === undefined) {
+    const tls = tlsFromAgent((init as any).agent, url);
+    if (tls !== undefined) init = { ...init, tls } as any;
   }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);

@@ -155,8 +155,7 @@ extern "C" fn select_alpn_callback(
             // handler, the selection's `toString`, the scope's checkpoint), and
             // restore it on every path back to BoringSSL — after the scope guard
             // below has exited, since this guard is declared first. Connected
-            // usockets only: UpgradedDuplex/Pipe own mem BIOs whose BIO_get_data
-            // is a BUF_MEM*, not loop_ssl_data.
+            // usockets only: the BIO_get_data of an UpgradedDuplex/Pipe is not loop_ssl_data.
             const LOOP_STATE_SLOTS: usize = 6; // US_SSL_LOOP_STATE_SLOTS
             debug_assert_eq!(
                 LOOP_STATE_SLOTS as core::ffi::c_int,
@@ -279,6 +278,19 @@ extern "C" fn select_alpn_callback(
     } else {
         boringssl_sys::SSL_TLSEXT_ERR_NOACK
     }
+}
+
+/// BoringSSL reads the server ALPN callback off the *current* `ssl->ctx`, and
+/// SNI replaces that with `SSL_set_SSL_CTX` before ALPN negotiation.
+pub(in crate::socket) fn install_sni_alpn_selector(ctx: *mut boringssl_sys::SSL_CTX) {
+    if ctx.is_null() {
+        return;
+    }
+    tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
+        SSL_CTX::opaque_ref(ctx),
+        Some(select_alpn_callback),
+        ptr::null_mut(),
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -910,6 +922,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             core::ptr::null_mut()
         };
+        install_sni_alpn_selector(ctx_ptr);
         socket.sni_resolve(ctx_ptr, is_error);
         Ok(JSValue::UNDEFINED)
     }
@@ -1794,6 +1807,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
             return Ok(());
         }
+        let first_report = !this.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
         this.socket.set(s);
         if this.socket.get().is_detached() {
@@ -1913,9 +1927,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
+        // A TLS error on the established session. With no `error` handler it stays silent: the peer chose it.
+        let is_error = !first_report && success == 0;
+        if is_error {
+            callback = handlers.on_error();
+        }
+
         // Use open callback when handshake is not provided
         if callback.is_empty() {
-            callback = handlers.on_open();
+            if first_report {
+                callback = handlers.on_open();
+            }
             if callback.is_empty() {
                 if reject_unauthorized {
                     this.reject_unauthorized_connection();
@@ -1938,7 +1960,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let result: JSValue;
         // open callback only have 1 parameters and its the socket
         // you should use getAuthorizationError and authorized getter to get those values in this case
-        if is_open {
+        if is_error {
+            // `call_error_handler` below takes it.
+            result = super::uws_jsc::verify_error_to_js(&ssl_error, &global);
+        } else if is_open {
             result = match callback.call(&global, this_value, &[this_value]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
@@ -2494,7 +2519,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
+                // The errno of a fatal send (< -1) is for node:net; this API documents -1.
+                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
     }
@@ -2654,8 +2680,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
         // (`s->ssl` is set) but must write raw bytes: write_check_error would
-        // route it through the SSL-encrypting us_socket_write, and its fatal
-        // signal is never set for TLS sockets anyway.
+        // route it through the SSL-encrypting us_socket_write.
         if flags.contains(Flags::BYPASS_TLS) {
             let res = self.do_socket_write(buffer);
             let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -3153,8 +3178,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
             // kept this buffer parked forever (the FIN-terminated-response hang).
-            // BYPASS_TLS twins keep the raw write path; TLS errors propagate
-            // through the SSL layer.
+            // BYPASS_TLS twins keep the raw write path.
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
                 self.do_socket_write(self.buffered_data_for_node_net.get().slice())
             } else {
@@ -3299,7 +3323,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
                 }
-                JSValue::js_number(wrote as f64)
+                JSValue::js_number_from_int32(wrote.max(-1))
             }
         };
         Ok(result)
@@ -3524,6 +3548,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         VirtualMachine::get().as_mut(),
                         global,
                         t,
+                        is_server,
                     )?;
                 }
             }
@@ -3534,9 +3559,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     VirtualMachine::get().as_mut(),
                     global,
                     tls_js,
+                    is_server,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
+                ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -3746,8 +3772,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
         tls.twin
             .set(Some(unsafe { RefPtr::from_raw(raw.as_ptr()) }));
-        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
         let tls_js_value = tls.get_this_value(global);
         let raw_js_value = raw_ref.get_this_value(global);
@@ -3789,6 +3813,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !initial_data.is_empty() {
             bun_opaque::opaque_deref_mut(new_raw.as_ptr()).tls_feed(initial_data.as_slice());
         }
+        // After the feed: `raw` handed those bytes over, it is not shown them again.
+        bun_opaque::opaque_deref_mut(new_raw.as_ptr()).set_ssl_raw_tap(true);
 
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, raw_js_value)?;
@@ -4216,20 +4242,19 @@ fn upgrade_reject_policy(
     }
 }
 
-/// A bare server-side `secureContext` carries no parsed config, so the policy
-/// comes from the ctx itself: `us_ssl_ctx_from_options` sets
-/// `FAIL_IF_NO_PEER_CERT` iff the context was created with `rejectUnauthorized`.
-fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
+/// The policy a server-side `SSL_CTX` was built with: `us_ssl_ctx_from_options` sets
+/// `FAIL_IF_NO_PEER_CERT` iff the context was created with `requestCert` and `rejectUnauthorized`.
+pub(crate) fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     const MODE: c_int =
         boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
 }
 
-fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
+pub(crate) fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
-    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
 }
 
@@ -4656,6 +4681,37 @@ pub(crate) fn js_upgrade_tls_deferred(
     Err(global.throw(format_args!("Expected a socket instance")))
 }
 
+/// node:net's `destroy()`: drops the handshake flight held for the handshake callback.
+#[bun_jsc::host_fn]
+pub(crate) fn js_release_held_flight(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket] = callframe.arguments_as_array::<1>();
+    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        this.socket.get().release_held_flight();
+    } else if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
+        this.socket.get().release_held_flight();
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+/// node:tls with the built-in `checkServerIdentity`: `server_identity` refuses a wrong name like Bun.connect's.
+#[bun_jsc::host_fn]
+pub(crate) fn js_check_server_identity_in_handshake(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket, in_handshake] = callframe.arguments_as_array::<2>();
+    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, in_handshake != JSValue::TRUE));
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 /// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
 #[bun_jsc::host_fn]
 pub(crate) fn js_first_flight_before_fin(
@@ -4752,9 +4808,9 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     // Drop frees ssl_opts on error.
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
-            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls)?;
+            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls, is_server)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm));
+            ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
@@ -5194,11 +5250,13 @@ pub(crate) mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if syscall_str.eq_ascii(b"ssl_write") {
+                fi::SSL_WRITE
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, ssl_write"
                 )));
             };
 

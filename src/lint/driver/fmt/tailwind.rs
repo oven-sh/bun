@@ -176,15 +176,6 @@ impl Orders for OfGroup {
     }
 }
 
-/// Where the packages are, of which Tailwind is one.
-fn packages(environment: &Environment) -> Option<Vec<u8>> {
-    let has_packages = |directory: &&[u8]| {
-        fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory)
-    };
-    let root = paths::ancestors(&environment.cwd).find(has_packages)?;
-    Some(paths::join(root, b"node_modules"))
-}
-
 impl Known {
     /// Takes in what the script has answered. Returns what it says about each Tailwind that cannot be asked, if there are
     /// classes that it has to be asked about.
@@ -295,9 +286,6 @@ impl Classes {
         };
         let mut known = self.known.lock();
         let without_package = known.without_package.as_deref().map(needs_package);
-        let Some(packages) = packages(environment) else {
-            return Err(without_package.unwrap_or_else(|| needs_package(&environment.cwd)));
-        };
         if !known.groups.values().any(|it| !it.missing.is_empty()) {
             return without_package.map_or(Ok(()), Err);
         }
@@ -319,8 +307,8 @@ impl Classes {
             &mut text,
             &Json::Object(vec![(b"groups".to_vec(), Json::Array(groups.collect()))]),
         );
-        let answer =
-            evaluate_input(environment, SCRIPT, &packages, &text).map_err(|why| fail(&why))?;
+        let answer = evaluate_input(environment, SCRIPT, &environment.cwd, &text)
+            .map_err(|why| fail(&why))?;
         let failures: Vec<Vec<u8>> = (without_package.into_iter())
             .chain(known.take_in(&answer).iter().map(|it| fail(it)))
             .collect();

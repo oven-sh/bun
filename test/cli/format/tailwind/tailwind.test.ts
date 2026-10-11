@@ -163,7 +163,6 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     const result = await format(
       {
         ".oxfmtrc.json": '{ "sortTailwindcss": true }',
-        "node_modules/.keep": "",
         ...inPackage({ ...version4, "a.jsx": input }, "packages/four"),
         ...inPackage(
           { ...version3, "tailwind.config.js": "module.exports = { reversed: true };\n", "a.jsx": sorted },
@@ -203,6 +202,15 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(allowed.stderr).toContain("[warn] sortTailwindcss: It needs the package tailwindcss");
     expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
     expect(allowed.exitCode).toBe(0);
+  });
+
+  // An editor in a repository whose root has no packages.
+  test("a text from stdin, for a file of a project below the working directory", async () => {
+    const inWeb = Object.entries(version4).map(([name, text]) => [`web/${name}`, text]);
+    const files = { "web/.oxfmtrc.json": '{ "sortTailwindcss": true }', ...Object.fromEntries(inWeb) };
+    using dir = tempDir("bun-format-tailwind", files);
+    const result = await formatIn(String(dir), [], ["--stdin-filepath", "web/a.jsx"], input);
+    expect(result).toMatchObject({ stderr: "", stdout: sorted, exitCode: 0 });
   });
 
   // What an editor runs.

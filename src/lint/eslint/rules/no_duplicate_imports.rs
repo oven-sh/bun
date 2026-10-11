@@ -104,11 +104,7 @@ impl NoDuplicateImports {
     /// statement is reported. It looks at the imports without names only if the file has no others.
     fn check_imports_as_oxlint<'a>(&self, cx: &Cx<'a, Self>) {
         let imports = || {
-            let imports = cx.file().body().iter().filter(|it| it.tag() == StmtTag::Import);
-            imports.filter_map(|it| match it.kind() {
-                StmtKind::Import(import) => Some((it, import)),
-                _ => None,
-            })
+            cx.file().body().iter().filter_map(|it| Some((it, it.as_import()?)))
         };
         // Nothing is said about a module that is imported from once.
         let mut modules: SmallVec<[u32; 32]> = imports().map(|it| it.1.spec().atom().0).collect();
@@ -255,7 +251,7 @@ impl Rule for NoDuplicateImports {
         let is_oxlint = cx.language().is_oxlint;
         if is_oxlint && !self.include_exports {
             let names_module = |it: Stmt| {
-                matches!(it.kind(), StmtKind::Import(import) if !strings::trim_js_whitespace(import.spec().bytes()).is_empty())
+                it.as_import().is_some_and(|import| !strings::trim_js_whitespace(import.spec().bytes()).is_empty())
             };
             if cx.file().stmts_of_kind(StmtTag::Import).any(names_module) {
                 self.check_imports_as_oxlint(cx);

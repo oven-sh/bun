@@ -105,7 +105,7 @@ impl SortImports {
 
     /// How the import declaration `statement` is placed after the one before it in the source.
     fn check_declaration<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Import(import) = statement.kind() else {
+        let Some(import) = statement.as_import() else {
             return;
         };
         if import.span().start >= cx.state.1 {
@@ -199,7 +199,7 @@ impl Rule for SortImports {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Import(import) = statement.kind() else {
+        let Some(import) = statement.as_import() else {
             return;
         };
         if import.span().start >= cx.state.1 {

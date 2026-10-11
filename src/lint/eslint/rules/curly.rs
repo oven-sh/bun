@@ -154,7 +154,7 @@ impl Curly {
                 body,
                 name,
                 has_condition,
-                actual: body.tag() == StmtTag::Block && (body.text().starts_with(b"{") || body.as_block().is_some()),
+                actual: body.as_block().is_some(),
                 expected: Some(true),
             };
         }
@@ -230,14 +230,13 @@ impl Curly {
     /// The whole chain of `if`, `else if` and `else` that starts with `first`.
     fn check_if<'a>(&self, first: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if let Node::Stmt(parent) = first.parent()
-            && parent.tag() == StmtTag::If
-            && matches!(parent.kind(), StmtKind::If { no, .. } if no == Some(first))
+            && parent.as_if().is_some_and(|it| it.2 == Some(first))
         {
             return;
         }
         let mut checks: SmallVec<[Check<'a>; 4]> = SmallVec::new();
         let mut current = Some(first);
-        while let Some(StmtKind::If { yes, no, .. }) = current.map(Stmt::kind) {
+        while let Some((_, yes, no)) = current.and_then(Stmt::as_if) {
             checks.push(self.prepare_check(yes, "if", true));
             current = no;
         }

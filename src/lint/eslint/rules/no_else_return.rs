@@ -153,26 +153,25 @@ fn is_return(statement: Stmt) -> bool {
 
 /// ESLint's `naiveHasReturn`: it is a `return`, or a block that ends with one.
 fn naive_has_return(statement: Stmt) -> bool {
-    match statement.kind() {
-        StmtKind::Block(body) => body.last().is_some_and(is_return),
-        _ => is_return(statement),
+    match statement.as_block() {
+        Some(body) => body.last().is_some_and(is_return),
+        None => is_return(statement),
     }
 }
 
 /// ESLint's `checkForReturnOrIf`: a `return`, or an `if` that returns on both branches.
 fn check_for_return_or_if(statement: Stmt) -> bool {
-    match statement.kind() {
-        StmtKind::Return(_) => true,
-        StmtKind::If { yes, no: Some(no), .. } => naive_has_return(no) && naive_has_return(yes),
-        _ => false,
+    match statement.as_if() {
+        Some((_, yes, Some(no))) => naive_has_return(no) && naive_has_return(yes),
+        _ => is_return(statement),
     }
 }
 
 /// ESLint's `alwaysReturns`.
 fn always_returns(statement: Stmt) -> bool {
-    match statement.kind() {
-        StmtKind::Block(body) => body.iter().any(check_for_return_or_if),
-        _ => check_for_return_or_if(statement),
+    match statement.as_block() {
+        Some(body) => body.iter().any(check_for_return_or_if),
+        None => check_for_return_or_if(statement),
     }
 }
 
@@ -196,8 +195,8 @@ impl Rule for NoElseReturn {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let (mut consequent, mut else_node) = match statement.kind() {
-            StmtKind::If { yes, no: Some(no), .. } if always_returns(yes) => (yes, no),
+        let (mut consequent, mut else_node) = match statement.as_if() {
+            Some((_, yes, Some(no))) if always_returns(yes) => (yes, no),
             _ => return,
         };
         // Not the `if` of an `else if`, and not where removing the `else` would change what the
@@ -206,7 +205,7 @@ impl Rule for NoElseReturn {
             return;
         }
         if self.allows_else_if {
-            while let StmtKind::If { yes, no, .. } = else_node.kind() {
+            while let Some((_, yes, no)) = else_node.as_if() {
                 let Some(no) = no.filter(|_| always_returns(yes)) else {
                     return;
                 };

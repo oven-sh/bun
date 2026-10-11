@@ -20,7 +20,7 @@ fn keyword_of(stmt: Stmt) -> Option<&'static str> {
             // For oxlint neither that of `if (a) if (b) ..`.
             let is_oxlint = stmt.file().language().is_oxlint;
             let is_else_if = matches!(stmt.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::If
-                && (is_oxlint || matches!(parent.kind(), StmtKind::If { no, .. } if no == Some(stmt))));
+                && (is_oxlint || parent.as_if().is_some_and(|it| it.2 == Some(stmt))));
             if is_else_if {
                 return None;
             }
@@ -30,7 +30,7 @@ fn keyword_of(stmt: Stmt) -> Option<&'static str> {
         StmtTag::Try => "try",
         StmtTag::DoWhile => "do",
         StmtTag::While => "while",
-        StmtTag::Block if stmt.text().starts_with(b"w") && matches!(stmt.kind(), StmtKind::With { .. }) => "with",
+        StmtTag::Block if stmt.is_with() => "with",
         StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => "for",
         _ => return None,
     })
@@ -145,14 +145,14 @@ const STATEMENTS: &[StmtTag] = &[
     StmtTag::For,
     StmtTag::ForIn,
     StmtTag::ForOf,
-    // `with`
-    StmtTag::Block,
 ];
-const WALKED: NodeTags = NodeTags::FILE.union(NodeTags::FUNC).stmts(STATEMENTS);
+/// The tag of a `with` statement.
+const WITH: &[StmtTag] = &[StmtTag::Block];
+const WALKED: NodeTags = NodeTags::FILE.union(NodeTags::FUNC).stmts(STATEMENTS).stmts(WITH);
 
 impl Rule for MaxDepth {
     const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
-    const ON: On = On::new().stmts(STATEMENTS).enter(WALKED).exit(WALKED);
+    const ON: On = On::new().stmts(STATEMENTS).stmts(WITH).enter(WALKED).exit(WALKED);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -168,6 +168,7 @@ impl Rule for MaxDepth {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         match file.language().eslint_major < 10 {
             true => On::new().enter(WALKED).exit(WALKED),
+            false if file.has_with_statements() => On::new().stmts(STATEMENTS).stmts(WITH),
             false => On::new().stmts(STATEMENTS),
         }
     }

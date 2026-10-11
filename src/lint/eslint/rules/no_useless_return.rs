@@ -303,7 +303,7 @@ fn is_known_to_be_useful<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool
                 | StmtTag::ForOf
                 | StmtTag::While
                 | StmtTag::DoWhile
-        ) || matches!(next.kind(), StmtKind::Return(Some(_)));
+        ) || matches!(next.as_return(), Some(Some(_)));
         return Some(is_executed);
     }
     match parent {
@@ -438,12 +438,12 @@ impl Rule for NoUselessReturn {
         NoUselessReturn
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        file.has_stmts([StmtTag::Return]).then(State::default)
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !matches!(statement.kind(), StmtKind::Return(None))
+        if !matches!(statement.as_return(), Some(None))
             || cx.state.useful.find(statement.into(), is_known_to_be_useful) == Some(true)
         {
             return;

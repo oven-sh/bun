@@ -15,6 +15,31 @@ const SET: u8 = 1 << 1;
 
 /// Whether two of `props` may have the same name. Names that are known without looking at an expression compare as numbers.
 fn may_have_same_name<'a>(props: List<'a, Prop<'a>>) -> bool {
+    // A bit for the number of each name so far: names that have no bit in common differ.
+    let mut names = 0u128;
+    for prop in props {
+        match prop.key().map(Key::kind) {
+            Some(KeyKind::Computed(_)) => return true,
+            Some(KeyKind::Private(_)) | None => {}
+            Some(
+                KeyKind::Ident(name)
+                | KeyKind::String(name)
+                | KeyKind::Number(name)
+                | KeyKind::ComputedString(name)
+                | KeyKind::ComputedNumber(name),
+            ) => {
+                let bit = 1 << (name.atom().0 % u128::BITS);
+                if names & bit != 0 {
+                    return may_have_same_name_among_few(props);
+                }
+                names |= bit;
+            }
+        }
+    }
+    false
+}
+
+fn may_have_same_name_among_few<'a>(props: List<'a, Prop<'a>>) -> bool {
     let mut names: SmallVec<[u32; 16]> = SmallVec::new();
     for prop in props {
         match prop.key().map(Key::kind) {

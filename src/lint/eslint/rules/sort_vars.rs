@@ -105,7 +105,7 @@ impl Rule for SortVars {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Var(all) = statement.kind() else {
+        let Some(all) = statement.as_var() else {
             return;
         };
         if all.len() < 2 {

@@ -63,12 +63,12 @@ impl DirectDependencies {
         out
     }
 
-    /// Edges still resolving to the previous package of a direct dependency that moved follow it when their range allows.
-    pub fn redirect_dependents(&self, lockfile: &mut Lockfile) {
+    /// Edges still resolving to the previous package of a direct dependency that moved follow it when their range allows; with `direct_only` (`--depth 0`) only root and workspace edges do.
+    pub fn redirect_dependents(&self, lockfile: &mut Lockfile, direct_only: bool) {
         if self.owners.is_empty() || lockfile.loaded_package_count == 0 {
             return;
         }
-        redirect(lockfile, self.moved_pairs(lockfile));
+        redirect(lockfile, self.moved_pairs(lockfile), direct_only);
     }
 
     fn moved_pairs(&self, lockfile: &Lockfile) -> Vec<(PackageID, PackageID)> {
@@ -205,10 +205,18 @@ fn named_pairs(
 }
 
 /// Every edge still resolving to an `old` package whose range accepts its `new` npm package is re-pointed at it.
-fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
+fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>, direct_only: bool) {
     if pairs.is_empty() {
         return;
     }
+    let transitive_rows = direct_only.then(|| {
+        let mut rows =
+            DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
+        for owner in 0..lockfile.packages.len() {
+            set_rows_of(&mut rows, lockfile, owner);
+        }
+        rows
+    });
     let mut new_of: Vec<PackageID> = vec![invalid_package_id; lockfile.packages.len()];
     for (old, new) in pairs {
         let slot = &mut new_of[old as usize];
@@ -231,7 +239,7 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
                 continue;
             }
             let dep = &deps[j];
-            if dep.behavior.is_bundled() {
+            if dep.behavior.is_bundled() || transitive_rows.as_ref().is_some_and(|r| r.is_set(j)) {
                 continue;
             }
             let Some(range) = dedupe::effective_npm_range(lockfile, j as DependencyID, dep) else {
@@ -389,7 +397,7 @@ impl TransitiveUpdate {
     pub fn redirect_dependents(&self, lockfile: &mut Lockfile) {
         let moved: Vec<(DependencyID, PackageID)> =
             self.pins.iter().map(|pin| (pin.dep_id, pin.from)).collect();
-        redirect_moved_edges(lockfile, &moved);
+        redirect_moved_edges(lockfile, &moved, false);
     }
 }
 
@@ -471,7 +479,11 @@ fn print_log(manager: &PackageManager) -> crate::Result<()> {
 }
 
 /// `moved` pairs an invalidated edge with the package it used to resolve to; every other edge still on that package follows it to the edge's new npm resolution when its range allows.
-pub(crate) fn redirect_moved_edges(lockfile: &mut Lockfile, moved: &[(DependencyID, PackageID)]) {
+pub(crate) fn redirect_moved_edges(
+    lockfile: &mut Lockfile,
+    moved: &[(DependencyID, PackageID)],
+    direct_only: bool,
+) {
     let pairs: Vec<(PackageID, PackageID)> = {
         let pkg_res = lockfile.packages.items_resolution();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -485,7 +497,7 @@ pub(crate) fn redirect_moved_edges(lockfile: &mut Lockfile, moved: &[(Dependency
             })
             .collect()
     };
-    redirect(lockfile, pairs);
+    redirect(lockfile, pairs, direct_only);
 }
 
 /// Packages of `cleaned` that the `moved` edges of `before_clean` resolved to, for seeding the security scan.
@@ -694,7 +706,7 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// After `bun update` cleaned the lockfile: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package.
+/// After the lockfile is cleaned: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     if manager.lockfile.patched_dependencies.count() == 0
         || manager.options.log_level == LogLevel::Silent

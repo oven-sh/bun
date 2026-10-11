@@ -10,7 +10,9 @@ use bun_core::fmt::PathSep;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile, bun_lock};
+use crate::lockfile::{
+    DepSorter, DependencyIDList, DependencyIDSlice, Lockfile, bun_lock, pruned_workspaces,
+};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
     Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
@@ -739,6 +741,19 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
+    // Not a peer: an ancestor's copy can satisfy one, so `process_subtree` and `build_store` decide.
+    if !dep.behavior.is_peer()
+        && pruned_workspaces::skips_link_to_pruned_workspace(
+            manager,
+            lockfile,
+            parent_pkg_id,
+            dep,
+            pkg_id,
+        )
+    {
+        return true;
+    }
+
     if parent_pkg_id != 0 {
         return false;
     }
@@ -873,6 +888,17 @@ impl Tree {
                 // unresolved packages are skipped when filtering. they already had
                 // their chance to resolve.
                 if pkg_id == invalid_package_id {
+                    continue;
+                }
+
+                // Only a peer that `bind_peer` found no other copy for is skipped here.
+                if pruned_workspaces::skips_link_to_pruned_workspace(
+                    builder.manager.expect("manager set when METHOD == Filter"),
+                    lockfile,
+                    parent_pkg_id,
+                    &dependencies[dep_id as usize],
+                    pkg_id,
+                ) {
                     continue;
                 }
             }

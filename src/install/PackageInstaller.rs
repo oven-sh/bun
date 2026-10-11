@@ -4,10 +4,10 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
+use bun_paths::resolve_path::{dirname, join_z_buf};
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
-use bun_sys::{self as Syscall, Dir, Fd};
+use bun_sys::{Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -15,14 +15,14 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
+use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
 // which are the same types re-exported through `crate::lockfile`.
 use crate::lockfile::Lockfile;
 use crate::lockfile_real::package::{
-    self as Package, PackageColumns, scripts::Scripts as PackageScripts,
+    self as Package, PackageColumns, scripts::Gypfile, scripts::Scripts as PackageScripts,
 };
 use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
@@ -46,6 +46,27 @@ pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
+    pub(crate) unfinished: UnfinishedScripts,
+}
+
+impl PendingLifecycleScript {
+    fn spawn(
+        self,
+        manager: &mut PackageManager,
+        ctx: Command::Context<'_>,
+    ) -> Result<(), crate::Error> {
+        let output_in_foreground = false;
+        manager.spawn_package_lifecycle_scripts(
+            ctx,
+            self.list,
+            self.optional,
+            output_in_foreground,
+            Some(InstallCtx::Hoisted {
+                tree_id: self.tree_id,
+                unfinished: self.unfinished,
+            }),
+        )
+    }
 }
 
 pub struct PackageInstaller<'a> {
@@ -107,6 +128,7 @@ pub struct PackageInstaller<'a> {
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
+    pub(crate) unfinished_scripts: UnfinishedScripts,
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
@@ -365,10 +387,24 @@ fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let top = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    let mut abs = AbsPath::from(top).unwrap_or_oom();
+    let mut abs = AbsPath::init_top_level_dir();
     abs.append(rel.as_bytes()).unwrap_or_oom();
     abs
+}
+
+/// Removes what the hoisted linker placed for `alias` in `tree_id`: `node_modules/<alias>`
+/// (for a workspace or `link:` package only the link) and the `.bin` links into it.
+pub(crate) fn discard_failed_optional(
+    lockfile: &Lockfile,
+    tree_id: lockfile::tree::Id,
+    alias: &[u8],
+) {
+    let path = abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
+    let Ok(node_modules) = Dir::open(path.slice()) else {
+        return;
+    };
+    let _ = node_modules.delete_tree(alias);
+    crate::prune::prune_bins(&node_modules);
 }
 
 /// The alias is the install destination inside `node_modules` (renamed aside,
@@ -777,21 +813,13 @@ impl<'a> PackageInstaller<'a> {
         while i > 0 {
             i -= 1;
             let tree_id = self.pending_lifecycle_scripts[i].tree_id;
-            let optional = self.pending_lifecycle_scripts[i].optional;
             if self.can_run_scripts(tree_id) {
                 let entry = self.pending_lifecycle_scripts.swap_remove(i);
                 // reshaped for borrowck — `package_name` is `Box<[u8]>`;
                 // clone it for the error message since `entry.list` is moved into `spawn`.
                 let name: Box<[u8]> = entry.list.package_name.clone();
-                let output_in_foreground = false;
 
-                if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
-                    self.command_ctx,
-                    entry.list,
-                    optional,
-                    output_in_foreground,
-                    None,
-                ) {
+                if let Err(err) = entry.spawn(self.manager_mut(), self.command_ctx) {
                     if log_level != Options::LogLevel::Silent {
                         if log_level.show_progress() {
                             if Output::enable_ansi_colors_stderr() {
@@ -913,15 +941,7 @@ impl<'a> PackageInstaller<'a> {
                 self.manager_mut().sleep();
             }
 
-            let optional = entry.optional;
-            let output_in_foreground = false;
-            if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
-                self.command_ctx,
-                entry.list,
-                optional,
-                output_in_foreground,
-                None,
-            ) {
+            if let Err(err) = entry.spawn(self.manager_mut(), self.command_ctx) {
                 if log_level != Options::LogLevel::Silent {
                     if log_level.show_progress() {
                         if Output::enable_ansi_colors_stderr() {
@@ -1092,7 +1112,7 @@ impl<'a> PackageInstaller<'a> {
         // If a newly computed integrity hash is available (e.g. for a GitHub
         // tarball) and the lockfile doesn't already have one, persist it so
         // the lockfile gets re-saved with the hash. Must happen before the
-        // callbacks below: a local tarball's cache entry is named after it.
+        // callbacks below: a `file:` / URL tarball's cache entry is named after it.
         if data.integrity.tag.is_supported() {
             let pkg_metas = self.lockfile_mut().packages.items_meta_mut();
             if !pkg_metas[package_id as usize].integrity.tag.is_supported() {
@@ -1180,10 +1200,10 @@ impl<'a> PackageInstaller<'a> {
         debug_assert!(resolution_tag != resolution::Tag::Workspace);
         debug_assert!(package_id != 0);
         let mut count: usize = 0;
-        let scripts = 'brk: {
+        let (scripts, gypfile) = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
             if scripts.filled {
-                break 'brk scripts;
+                break 'brk (scripts, Gypfile::Unread);
             }
 
             let mut temp = PackageScripts::default();
@@ -1192,21 +1212,23 @@ impl<'a> PackageInstaller<'a> {
             // `defer temp_lockfile.deinit()` — Lockfile impls Drop.
             let mut string_builder = temp_lockfile.string_builder();
             let log = self.manager().log_mut();
-            if let Err(err) = temp.fill_from_package_json(&mut string_builder, log, folder_path) {
-                if log_level != Options::LogLevel::Silent {
-                    Output::err_generic(
-                        "failed to fill lifecycle scripts for <b>{}<r>: {}",
-                        (bstr::BStr::new(alias), err.name()),
-                    );
-                }
+            match temp.fill_from_package_json(&mut string_builder, log, folder_path) {
+                Ok(gypfile) => break 'brk (temp, gypfile),
+                Err(err) => {
+                    if log_level != Options::LogLevel::Silent {
+                        Output::err_generic(
+                            "failed to fill lifecycle scripts for <b>{}<r>: {}",
+                            (bstr::BStr::new(alias), err.name()),
+                        );
+                    }
 
-                if self.manager().options.enable.fail_early() {
-                    Global::crash();
-                }
+                    if self.manager().options.enable.fail_early() {
+                        Global::crash();
+                    }
 
-                return 0;
+                    return 0;
+                }
             }
-            break 'brk temp;
         };
 
         debug_assert!(scripts.filled);
@@ -1225,13 +1247,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        if scripts.preinstall.is_empty() && scripts.install.is_empty() {
-            let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-                self.node_modules.path.as_slice(),
-                &[alias, b"binding.gyp"],
-            );
-            count += Syscall::exists(binding_dot_gyp_path) as usize;
-        }
+        count += scripts.wants_default_node_gyp(folder_path.slice(), gypfile) as usize;
 
         count
     }
@@ -1482,17 +1498,9 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = Fd::cwd();
                 }
             }
-            resolution::Tag::LocalTarball => {
-                installer.cache_dir_subpath = package_manager::cached_local_tarball_folder_name(
-                    &self.metas[package_id as usize].integrity,
-                    patch_contents_hash,
-                );
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
-            }
-            resolution::Tag::RemoteTarball => {
+            resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => {
                 installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
-                    self.manager_mut(),
-                    *resolution.remote_tarball(),
+                    &self.metas[package_id as usize].integrity,
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
@@ -1578,7 +1586,11 @@ impl<'a> PackageInstaller<'a> {
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
-            || !installer.verify(resolution, &self.root_node_modules_folder);
+            || !installer.verify(
+                resolution,
+                &self.metas[package_id as usize].integrity,
+                &self.root_node_modules_folder,
+            );
         self.summary.skipped += (!needs_install) as u32;
 
         // `install_from_link` (symlink/workspace) re-points one symlink; everything else
@@ -1962,7 +1974,6 @@ impl<'a> PackageInstaller<'a> {
 
                     let dep =
                         &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
-                    let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
@@ -1985,80 +1996,14 @@ impl<'a> PackageInstaller<'a> {
                     if resolution.tag != resolution::Tag::Root
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                     {
-                        let mut folder_path =
-                            AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                        // `defer folder_path.deinit()` — AbsPath impls Drop.
-                        folder_path
-                            .append(alias.slice(string_buf!()))
-                            .unwrap_or_oom();
-
-                        'enqueue_lifecycle_scripts: {
-                            if self
-                                .manager()
-                                .postinstall_optimizer
-                                .should_ignore_lifecycle_scripts(
-                                    &postinstall_optimizer::PkgInfo {
-                                        name_hash: pkg_name_hash,
-                                        version: if resolution.tag == resolution::Tag::Npm {
-                                            Some(resolution.npm().version)
-                                        } else {
-                                            None
-                                        },
-                                        version_buf: string_buf!(),
-                                    },
-                                    self.lockfile().packages.items_resolutions()
-                                        [package_id as usize]
-                                        .get(self.lockfile().buffers.resolutions.as_slice()),
-                                    self.lockfile().packages.items_meta(),
-                                    self.manager().options.cpu,
-                                    self.manager().options.os,
-                                    self.manager().options.libc,
-                                )
-                            {
-                                if PackageManager::verbose_install() {
-                                    bun_core::pretty_errorln!(
-                                        "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
-                                        bstr::BStr::new(pkg_name.slice(string_buf!())),
-                                    );
-                                }
-                                break 'enqueue_lifecycle_scripts;
-                            }
-
-                            if self.enqueue_lifecycle_scripts(
-                                alias.slice(string_buf!()),
-                                log_level,
-                                &mut folder_path,
-                                package_id,
-                                dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
-                                resolution,
-                            ) {
-                                if is_trusted_through_update_request {
-                                    let (trusted_name, trusted_name_hash) =
-                                        if resolution.tag == resolution::Tag::Npm {
-                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
-                                        } else {
-                                            (alias, truncated_dep_name_hash)
-                                        };
-                                    self.manager_mut()
-                                        .trusted_deps_to_add_to_package_json
-                                        .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
-
-                                    if self.lockfile().trusted_dependencies.is_none() {
-                                        self.lockfile_mut().trusted_dependencies =
-                                            Some(Default::default());
-                                    }
-                                    self.lockfile_mut()
-                                        .trusted_dependencies
-                                        .as_mut()
-                                        .unwrap()
-                                        .put(
-                                            trusted_name_hash,
-                                            Box::<[u8]>::from(trusted_name.slice(string_buf!())),
-                                        )
-                                        .unwrap_or_oom();
-                                }
-                            }
-                        }
+                        self.enqueue_lifecycle_scripts_for_trusted(
+                            log_level,
+                            dependency_id,
+                            package_id,
+                            pkg_name,
+                            resolution,
+                            is_trusted_through_update_request,
+                        );
                     }
 
                     match resolution.tag {
@@ -2245,113 +2190,48 @@ impl<'a> PackageInstaller<'a> {
             }
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
-            let dep_behavior = dep.behavior;
-            let truncated_dep_name_hash: TruncatedPackageNameHash =
-                dep.name_hash as TruncatedPackageNameHash;
-            let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
+            let (trusted_name, trusted_name_hash) = resolution.trusted_name(
+                (alias, dep.name_hash as TruncatedPackageNameHash),
+                (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
+            );
+            let (is_trusted, is_trusted_through_update_request) = 'brk: {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
                     .trusted_dependencies_from_update_requests
                     .contains(&package_id)
                 {
-                    break 'brk (true, true, true);
+                    break 'brk (true, true);
                 }
 
                 if let Some(added) = self
                     .manager()
                     .summary
                     .added_trusted_dependencies
-                    .get(&truncated_dep_name_hash)
+                    .get(&trusted_name_hash)
                 {
-                    // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    if *added.name == *alias.slice(string_buf!())
+                    // is a new trusted dependency. need to enqueue scripts
+                    if **added == *trusted_name.slice(string_buf!())
                         && self.lockfile().has_trusted_dependency(
                             alias.slice(string_buf!()),
                             pkg_name.slice(string_buf!()),
                             resolution,
                         )
                     {
-                        break 'brk (true, false, added.add_to_lockfile);
+                        break 'brk (true, false);
                     }
                 }
-                break 'brk (false, false, false);
+                break 'brk (false, false);
             };
 
             if resolution.tag != resolution::Tag::Root && is_trusted {
-                let mut folder_path =
-                    AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                folder_path
-                    .append(alias.slice(string_buf!()))
-                    .unwrap_or_oom();
-
-                'enqueue_lifecycle_scripts: {
-                    if self
-                        .manager()
-                        .postinstall_optimizer
-                        .should_ignore_lifecycle_scripts(
-                            &postinstall_optimizer::PkgInfo {
-                                name_hash: pkg_name_hash,
-                                version: if resolution.tag == resolution::Tag::Npm {
-                                    Some(resolution.npm().version)
-                                } else {
-                                    None
-                                },
-                                version_buf: string_buf!(),
-                            },
-                            self.lockfile().packages.items_resolutions()[package_id as usize]
-                                .get(self.lockfile().buffers.resolutions.as_slice()),
-                            self.lockfile().packages.items_meta(),
-                            self.manager().options.cpu,
-                            self.manager().options.os,
-                            self.manager().options.libc,
-                        )
-                    {
-                        if PackageManager::verbose_install() {
-                            bun_core::pretty_errorln!(
-                                "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
-                                bstr::BStr::new(pkg_name.slice(string_buf!())),
-                            );
-                        }
-                        break 'enqueue_lifecycle_scripts;
-                    }
-
-                    if self.enqueue_lifecycle_scripts(
-                        alias.slice(string_buf!()),
-                        log_level,
-                        &mut folder_path,
-                        package_id,
-                        dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
-                        resolution,
-                    ) {
-                        let (trusted_name, trusted_name_hash) =
-                            if resolution.tag == resolution::Tag::Npm {
-                                (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
-                            } else {
-                                (alias, truncated_dep_name_hash)
-                            };
-
-                        if is_trusted_through_update_request {
-                            self.manager_mut()
-                                .trusted_deps_to_add_to_package_json
-                                .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
-                        }
-
-                        if add_to_lockfile {
-                            if self.lockfile().trusted_dependencies.is_none() {
-                                self.lockfile_mut().trusted_dependencies = Some(Default::default());
-                            }
-                            self.lockfile_mut()
-                                .trusted_dependencies
-                                .as_mut()
-                                .unwrap()
-                                .put(
-                                    trusted_name_hash,
-                                    Box::<[u8]>::from(trusted_name.slice(string_buf!())),
-                                )
-                                .unwrap_or_oom();
-                        }
-                    }
-                }
+                self.enqueue_lifecycle_scripts_for_trusted(
+                    log_level,
+                    dependency_id,
+                    package_id,
+                    pkg_name,
+                    resolution,
+                    is_trusted_through_update_request,
+                );
             }
 
             self.increment_tree_install_count(
@@ -2359,6 +2239,85 @@ impl<'a> PackageInstaller<'a> {
                 self.current_tree_id,
                 log_level,
             );
+        }
+    }
+
+    /// Enqueues the lifecycle scripts of a trusted (or workspace) dependency. `record_trust`:
+    /// `--trust` named it, so its name goes into package.json and the lockfile.
+    fn enqueue_lifecycle_scripts_for_trusted(
+        &mut self,
+        log_level: Options::LogLevel,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        pkg_name: String,
+        resolution: &Resolution,
+        record_trust: bool,
+    ) {
+        // SAFETY: `buffers.string_bytes` is append-only and never freed
+        // for the lifetime of this `PackageInstaller`.
+        let string_buf_ptr =
+            bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+        let string_buf = string_buf_ptr.slice();
+
+        let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
+        let (alias, alias_hash) = (dep.name, dep.name_hash);
+        let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
+
+        let mut folder_path = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+        folder_path.append(alias.slice(string_buf)).unwrap_or_oom();
+
+        if self
+            .manager()
+            .postinstall_optimizer
+            .should_ignore_lifecycle_scripts(
+                &postinstall_optimizer::PkgInfo {
+                    name_hash: pkg_name_hash,
+                    version: if resolution.tag == resolution::Tag::Npm {
+                        Some(resolution.npm().version)
+                    } else {
+                        None
+                    },
+                    version_buf: string_buf,
+                },
+                self.lockfile().packages.items_resolutions()[package_id as usize]
+                    .get(self.lockfile().buffers.resolutions.as_slice()),
+                self.lockfile().packages.items_meta(),
+                self.manager().options.cpu,
+                self.manager().options.os,
+                self.manager().options.libc,
+            )
+        {
+            if PackageManager::verbose_install() {
+                bun_core::pretty_errorln!(
+                    "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
+                    bstr::BStr::new(pkg_name.slice(string_buf)),
+                );
+            }
+            return;
+        }
+
+        if self.enqueue_lifecycle_scripts(
+            alias.slice(string_buf),
+            log_level,
+            &mut folder_path,
+            dependency_id,
+            package_id,
+            resolution,
+        ) && record_trust
+        {
+            let (trusted_name, trusted_name_hash) = resolution.trusted_name(
+                (alias, alias_hash as TruncatedPackageNameHash),
+                (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
+            );
+            let trusted_name = trusted_name.slice(string_buf);
+            self.manager_mut()
+                .trusted_deps_to_add_to_package_json
+                .push(Box::<[u8]>::from(trusted_name));
+            self.lockfile_mut()
+                .trusted_dependencies
+                .get_or_insert_with(Default::default)
+                .put(trusted_name_hash, Box::<[u8]>::from(trusted_name))
+                .unwrap_or_oom();
         }
     }
 
@@ -2381,12 +2340,17 @@ impl<'a> PackageInstaller<'a> {
         folder_name: &[u8],
         log_level: Options::LogLevel,
         package_path: &mut bun_paths::AutoAbsPath,
+        dependency_id: DependencyID,
         package_id: PackageID,
-        optional: bool,
         resolution: &Resolution,
     ) -> bool {
         let mut scripts: PackageScripts =
             self.lockfile().packages.items_scripts()[package_id as usize];
+        // Only a workspace gets here without being trusted.
+        let trusted = resolution.tag != resolution::Tag::Workspace
+            || self
+                .lockfile()
+                .has_trusted_dependency(folder_name, folder_name, resolution);
         let log = self.manager().log_mut();
         let scripts_list = match scripts.get_list(
             log,
@@ -2394,6 +2358,7 @@ impl<'a> PackageInstaller<'a> {
             package_path,
             folder_name,
             resolution,
+            trusted,
         ) {
             Ok(v) => v,
             Err(err) => {
@@ -2468,10 +2433,17 @@ impl<'a> PackageInstaller<'a> {
                         + scripts_list.total as usize,
                 );
             }
+            let optional = !self
+                .manager()
+                .is_package_required(dependency_id, package_id);
+            self.unfinished_scripts
+                .borrow_mut()
+                .push((self.current_tree_id, scripts_list.package_name.clone()));
             self.pending_lifecycle_scripts.push(PendingLifecycleScript {
                 list: scripts_list,
                 tree_id: self.current_tree_id,
                 optional,
+                unfinished: self.unfinished_scripts.clone(),
             });
 
             return true;

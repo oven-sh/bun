@@ -26,7 +26,6 @@ use crate::{
 // `MultiArrayList<Package>` / `Slice<Package>`.
 use super::{Command, PackageJSONEditor};
 use crate::PackageManager;
-use crate::config_version::ConfigVersion;
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
 use crate::lockfile_real::package::Diff;
@@ -245,6 +244,8 @@ pub fn install_with_manager(
                 for key in lockfile.self_contained_workspaces.keys() {
                     manager.lockfile.self_contained_workspaces.put(*key, ())?;
                 }
+                // Nor is the lockfile's record of `trustedDependencies` what decides: it cannot hold `[]`.
+                manager.lockfile.trusted_dependencies = lockfile.trusted_dependencies.take();
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
@@ -353,14 +354,6 @@ pub fn install_with_manager(
                         &lockfile.buffers.string_bytes,
                         builder,
                     )?;
-
-                    // `ArrayHashMap::clone()` is an inherent fallible method,
-                    // not the `Clone` trait, so
-                    // `Option::clone` won't see it — map by hand.
-                    *lf.trusted_dependencies = match &lockfile.trusted_dependencies {
-                        Some(td) => Some(td.clone()?),
-                        None => None,
-                    };
 
                     lf.dependencies.reserve(len as usize);
                     lf.resolutions.reserve(len as usize);
@@ -607,9 +600,11 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
-    direct_deps_before.redirect_dependents(&mut manager.lockfile);
+    // `--depth 0`: a transitive edge that shared the old package with a moved direct entry stays on it.
+    let direct_only = manager.options.do_.update_direct_only();
+    direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
-    redirect_moved_edges(&mut manager.lockfile, &named.moved);
+    redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
     // `bun audit fix` moved its rows to the fixed versions on purpose.
     if !matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit) {
         crate::dedupe::collapse_appended(manager);
@@ -617,12 +612,26 @@ pub fn install_with_manager(
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 
+    match core::mem::take(&mut manager.deprecated_transitive) {
+        0 => {}
+        count => manager.log_mut().add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{} deprecated {} among the dependencies of dependencies (--verbose lists them)",
+                count,
+                if count == 1 { "version" } else { "versions" },
+            ),
+        ),
+    }
+
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
         .log_mut()
         .print(std::ptr::from_mut(Output::error_writer()))?;
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
+    super::package_json_write_back::fold_resolved_positionals(manager);
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // Both old and new lockfiles must stay live for the later
@@ -647,7 +656,7 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
-    if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
+    if !manager.options.dry_run {
         Output::flush();
         crate::update_transitive::warn_orphaned_patches(manager);
     }
@@ -838,26 +847,12 @@ pub fn install_with_manager(
         loop {
             match linker {
                 NodeLinker::Auto => {
-                    let isolated_by_default = match config_version {
-                        ConfigVersion::V0 => false,
-                        ConfigVersion::V1 => {
-                            !load_result.migrated_from_npm()
-                                && manager.lockfile.workspace_paths.len() > 0
-                        }
-                    };
-                    // Neither a flag nor the config names a linker, so the tree that
-                    // `bun install --linker=isolated` laid out stays isolated.
-                    linker = if isolated_by_default
-                        || bun_sys::directory_exists_at(
-                            bun_sys::Fd::cwd(),
-                            bun_paths::path_literal!("node_modules/.bun"),
-                        )
-                        .unwrap_or(false)
-                    {
-                        NodeLinker::Isolated
-                    } else {
-                        NodeLinker::Hoisted
-                    };
+                    linker = crate::lockfile_real::resolve_node_linker(
+                        linker,
+                        config_version,
+                        !load_result.migrated_from_npm()
+                            && manager.lockfile.workspace_paths.len() > 0,
+                    );
                     continue;
                 }
 
@@ -894,6 +889,15 @@ pub fn install_with_manager(
         }
     };
 
+    // Not by a run that had nothing to resolve and nothing to link.
+    if manager.options.do_.install_packages()
+        && (install_summary.success > 0
+            || had_any_diffs
+            || !manager.update_requests.is_empty()
+            || !matches!(load_result, lockfile::LoadResult::Ok { .. }))
+    {
+        warn_unsupported_platform(manager, &workspace_filters, install_root_dependencies);
+    }
     if log_level != Options::LogLevel::Silent {
         manager
             .log_mut()
@@ -926,7 +930,8 @@ pub fn install_with_manager(
     // It's unnecessary work to re-save the lockfile if there are no changes.
     // A loaded text lockfile is never re-saved just to bump its version: an
     // existing `bun.lock` keeps the version it was written with.
-    let should_save_lockfile = converts_binary_lockfile_to_text(&load_result, save_format)
+    let should_save_lockfile = (!manager.options.dry_run
+        && converts_binary_lockfile_to_text(&load_result, save_format))
         // check `save_lockfile` after checking if loaded from binary and save format is text
         // because `save_lockfile` is set to false for `--frozen-lockfile`
         || (manager.options.do_.save_lockfile()
@@ -1100,7 +1105,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, true>::run_and_wait(this)
 }
-fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
+pub(crate) fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
     RunAndWaitClosure::<false, false>::run_and_wait(this)
 }
 fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {
@@ -1386,6 +1391,81 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     }
 }
 
+/// Both linkers leave out a package that cannot run on the target, whatever kind of dependency names
+/// it. For one the project itself requires that is worth a word; `--verbose` lists the others.
+#[cold]
+#[inline(never)]
+fn warn_unsupported_platform(
+    manager: &PackageManager,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+) {
+    use crate::npm::Negatable;
+
+    let lockfile: &Lockfile = &manager.lockfile;
+    let options = &manager.options;
+    let pkgs = lockfile.packages.slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let rows_of = |id: PackageID| {
+        let list = pkgs.items_dependencies()[id as usize];
+        list.off..list.off + list.len
+    };
+
+    let members = rows_of(0).filter(|&row| {
+        dependencies[row as usize].behavior.is_workspace()
+            && !lockfile::tree::is_filtered_dependency_or_workspace(
+                row,
+                0,
+                workspace_filters,
+                install_root_dependencies,
+                manager,
+                lockfile,
+                resolutions,
+            )
+    });
+    let importers = (install_root_dependencies.then_some(0).into_iter())
+        .chain(members.map(|row| resolutions[row as usize]));
+
+    let mut warned: Vec<PackageID> = Vec::new();
+    for row in importers.flat_map(rows_of) {
+        let (dep, id) = (&dependencies[row as usize], resolutions[row as usize]);
+        if id as usize >= pkgs.len()
+            || dep.behavior.is_optional()
+            || dep.behavior.is_optional_peer()
+            || !dep.behavior.is_placed(options.local_package_features)
+            || warned.contains(&id)
+        {
+            continue;
+        }
+        let meta = &pkgs.items_meta()[id as usize];
+        let mut wants = String::new();
+        if !meta.os.is_match(options.os) {
+            wants.push_str("os ");
+            let _ = Negatable::to_json(meta.os, &mut wants);
+        }
+        if !meta.arch.is_match(options.cpu) {
+            wants.push_str(if wants.is_empty() { "cpu " } else { ", cpu " });
+            let _ = Negatable::to_json(meta.arch, &mut wants);
+        }
+        if wants.is_empty() {
+            continue;
+        }
+        warned.push(id);
+        manager.log_mut().add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{}@{} was not installed: unsupported platform (wants {})",
+                pkgs.items_name()[id as usize].fmt(string_buf),
+                pkgs.items_resolution()[id as usize].fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                wants,
+            ),
+        );
+    }
+}
+
 pub(crate) fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
@@ -1477,6 +1557,13 @@ fn report_lockfile_load_error(
     if log_level != Options::LogLevel::Silent
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
+        if manager.log_mut().errors > 0 {
+            manager
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()))?;
+            manager.log_mut().reset();
+        }
+
         Output::err(
             cause.value,
             "failed to {} lockfile: '{}'",
@@ -1486,13 +1573,6 @@ fn report_lockfile_load_error(
         if !manager.options.enable.fail_early() {
             Output::print_errorln("");
             bun_core::warn!("Ignoring lockfile");
-        }
-
-        if manager.log_mut().errors > 0 {
-            manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
-            manager.log_mut().reset();
         }
         Output::flush();
     }
@@ -1567,7 +1647,9 @@ fn enqueue_named_updates(
 ) -> crate::Result<NamedUpdates> {
     let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
     let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
-    let collect_latest_rows = manager.options.do_.update_to_latest();
+    // `--depth 0` keeps the children of a moved package at their locked versions: nothing to refresh.
+    let collect_latest_rows =
+        manager.options.do_.update_to_latest() && !manager.options.do_.update_direct_only();
     let requests = manager.update_requests.len();
     let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();

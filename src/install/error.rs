@@ -454,6 +454,7 @@ impl From<Error> for bun_core::Error {
             Error::Alloc(a) => bun_core::Error::Alloc(a),
             Error::WriteFailed => bun_core::Error::WriteFailed,
             Error::InvalidCharacter => bun_core::Error::InvalidCharacter,
+            Error::FileNotFound => bun_core::Error::FileNotFound,
             _ => bun_core::Error::Unexpected,
         }
     }

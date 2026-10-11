@@ -22,7 +22,9 @@ use crate::cli::pm_cache_prune_command::{DEFAULT_MAX_AGE_DAYS, PmCachePruneComma
 use crate::cli::pm_diff_command as PmDiffCommand;
 use crate::cli::pm_licenses_command::{BunStore, LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
-use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
+use crate::cli::pm_trusted_command::{
+    DefaultTrustedCommand, TrustCommand, UntrustedCommand, read_trusted_dependencies,
+};
 use crate::cli::pm_version_command::PmVersionCommand;
 use crate::cli::pm_view_command as PmViewCommand;
 use crate::cli::pm_why_command::PmWhyCommand;
@@ -661,6 +663,10 @@ impl PackageManagerCommand {
                 Global::exit(0);
             }
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
+            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+            if trusted_only {
+                read_trusted_dependencies(pm);
+            }
 
             Output::flush();
             Output::disable_buffering();
@@ -713,8 +719,6 @@ impl PackageManagerCommand {
             if first_directory.dependencies.len() > 1 {
                 more_packages[0] = true;
             }
-
-            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
 
             if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
                 if trusted_only {
@@ -902,6 +906,9 @@ impl PackageManagerCommand {
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
             PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
+            Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"fetch") {
+            crate::cli::pm_fetch_command::exec(ctx, pm, &cwd)?;
             Global::exit(0);
         }
 

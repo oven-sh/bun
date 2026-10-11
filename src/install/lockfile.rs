@@ -483,21 +483,37 @@ impl<'a> LoadResult<'a> {
 
     /// Resolves `Auto` the way `bun install` picks the linker for this lockfile; never returns `Auto`.
     pub fn node_linker(&self, configured: NodeLinker) -> NodeLinker {
-        if configured != NodeLinker::Auto {
-            return configured;
-        }
-        if self.choose_config_version().0 != ConfigVersion::V1 {
-            return NodeLinker::Hoisted;
-        }
-        match self {
-            LoadResult::Ok(ok) if ok.lockfile.workspace_paths.len() > 0 => NodeLinker::Isolated,
-            _ => NodeLinker::Hoisted,
-        }
+        resolve_node_linker(
+            configured,
+            self.choose_config_version().0,
+            matches!(self, LoadResult::Ok(ok) if ok.lockfile.workspace_paths.len() > 0),
+        )
     }
 
     // Callers reach this only after `handleLoadLockfileErrors` has exited on
     // the `NotFound`/`Err` arms, so the variant is known-`Ok`.
     bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
+}
+
+/// The linker for the project in the cwd; never returns `Auto`.
+pub(crate) fn resolve_node_linker(
+    configured: NodeLinker,
+    config_version: ConfigVersion,
+    has_workspaces: bool,
+) -> NodeLinker {
+    if configured != NodeLinker::Auto {
+        return configured;
+    }
+    // Neither a flag nor the config names a linker, so the tree that
+    // `bun install --linker=isolated` laid out stays isolated.
+    if (config_version == ConfigVersion::V1 && has_workspaces)
+        || sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
+            .unwrap_or(false)
+    {
+        NodeLinker::Isolated
+    } else {
+        NodeLinker::Hoisted
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1068,6 +1084,15 @@ impl Lockfile {
             .contains_name(dep.name_hash, dep.name.slice(buf), buf)
     }
 
+    /// `is_trusted_folder_dependency` for any dependency, installed or filtered out, that
+    /// resolves to folder package `id`.
+    pub(crate) fn is_trusted_folder_package(&self, id: PackageID) -> bool {
+        (0..self.buffers.resolutions.len()).any(|dep_id| {
+            self.buffers.resolutions[dep_id] == id
+                && self.is_trusted_folder_dependency(dep_id as DependencyID)
+        })
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
@@ -1163,6 +1188,8 @@ impl Lockfile {
                     }
                     if update.matches(dep, string_buf) {
                         if package_id as usize > self.packages.len() {
+                            // Not the package another workspace's entry bound (`-r` binds once per workspace).
+                            update.package_id = invalid_package_id;
                             continue;
                         }
                         update.version_buf = string_buf_ptr;
@@ -1677,12 +1704,21 @@ impl Lockfile {
         &mut self,
         manager: &mut PackageManager,
     ) -> Result<(), AllocError> {
-        if populate_manifest_cache::populate_manifest_cache(
+        // `bun why` and `bun pm diff` load into a lockfile they took out of `manager`, and the manifests
+        // fetched are those of `manager.lockfile`. Without them there is no integrity to fill in.
+        let detached =
+            FILL_INTEGRITY && !core::ptr::eq(&raw const *self, &raw const *manager.lockfile);
+        if detached {
+            core::mem::swap(self, &mut *manager.lockfile);
+        }
+        let populated = populate_manifest_cache::populate_manifest_cache(
             manager,
             populate_manifest_cache::Packages::All,
-        )
-        .is_err()
-        {
+        );
+        if detached {
+            core::mem::swap(self, &mut *manager.lockfile);
+        }
+        if populated.is_err() {
             return Ok(());
         }
         // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
@@ -2016,16 +2052,13 @@ impl<'a> Printer<'a> {
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        env_loader.load(
-            &entries,
-            &[] as &[&[u8]],
-            DotEnv::DotEnvFileSuffix::Production,
-            false,
-        )?;
+        let env_suffix = crate::package_manager_real::default_env_file_suffix(&env_loader);
+        env_loader.load(&entries, &[] as &[&[u8]], env_suffix, false)?;
         let mut log = bun_ast::Log::init();
         options.load(
             &mut log,
             &mut env_loader,
+            None,
             None,
             None,
             crate::Subcommand::Install,
@@ -2839,7 +2872,6 @@ impl Lockfile {
                 workspace_paths: &mut self.workspace_paths,
                 workspace_versions: &mut self.workspace_versions,
                 patched_dependencies: &mut self.patched_dependencies,
-                trusted_dependencies: &mut self.trusted_dependencies,
             },
         )
     }
@@ -2895,7 +2927,6 @@ pub(crate) struct LockfileFields<'a> {
     pub(crate) workspace_paths: &'a mut NameHashMap,
     pub(crate) workspace_versions: &'a mut VersionHashMap,
     pub(crate) patched_dependencies: &'a mut PatchedDependenciesMap,
-    pub(crate) trusted_dependencies: &'a mut Option<TrustedDependenciesSet>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -3638,6 +3669,43 @@ impl Lockfile {
             .is_some_and(|trusted| trusted.contains(&hash))
     }
 
+    /// Replaces the set with the root's and the members' `trustedDependencies`, which is where an
+    /// install takes it from. Returns what the lockfile had recorded.
+    pub fn read_trusted_dependencies_from_manifests(
+        &mut self,
+        manifests: &mut crate::package_manager::WorkspacePackageJSONCache,
+        log: &mut bun_ast::Log,
+    ) -> Result<Option<TrustedDependenciesSet>, BunError> {
+        let bump = bun_alloc::Arena::new();
+        let mut trusted: Option<TrustedDependenciesSet> = None;
+        let string_bytes = self.buffers.string_bytes.as_slice();
+        let members = self.workspace_paths.values().iter();
+        for relative_dir in
+            core::iter::once(b"".as_slice()).chain(members.map(|p| p.slice(string_bytes)))
+        {
+            let mut package_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
+            let _ = package_json_path.append(relative_dir);
+            let _ = package_json_path.append(b"package.json");
+            let path = package_json_path.slice();
+            let entry = match manifests.get_with_path(log, path, Default::default()) {
+                crate::GetJsonResult::Entry(entry) => entry,
+                // An install skips a member that is not on disk, too.
+                crate::GetJsonResult::ReadErr(_) if !relative_dir.is_empty() => continue,
+                crate::GetJsonResult::ReadErr(err) | crate::GetJsonResult::ParseErr(err) => {
+                    return Err(err);
+                }
+            };
+            package::parse_append_trusted_dependencies(
+                &mut trusted,
+                log,
+                &entry.source,
+                entry.root,
+                &bump,
+            )?;
+        }
+        Ok(core::mem::replace(&mut self.trusted_dependencies, trusted))
+    }
+
     pub fn has_trusted_dependency(
         &self,
         alias: &[u8],
@@ -3645,11 +3713,7 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let trusted_name = if resolution.tag == ResolutionTag::Npm {
-                pkg_name
-            } else {
-                alias
-            };
+            let trusted_name = resolution.trusted_name(alias, pkg_name);
             let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
             let name_is_trusted = match trusted_dependencies.get(&hash) {
                 Some(name) => !name.is_empty() && **name == *trusted_name,
@@ -3695,9 +3759,7 @@ impl Lockfile {
         ) else {
             return false;
         };
-        // Older yarn.lock migrations stored yarn's `#<sha1>` on the URL. A fragment is
-        // never sent to the registry, so it cannot change which tarball is downloaded.
-        crate::yarn::Entry::url_without_hash(url) == canonical_url.as_slice()
+        url == canonical_url.as_slice()
     }
 
     fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {

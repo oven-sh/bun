@@ -172,6 +172,67 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "package",
+          "shortName": "p",
+          "description": "Specify package to install when binary name differs from package name",
+          "hasValue": true,
+          "valueType": "package",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-install",
+          "description": "Skip installation if package is not already installed",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set the working directory",
+          "hasValue": true,
+          "valueType": "path",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "env-file",
+          "description": "Load environment variables from the specified file(s)",
+          "hasValue": true,
+          "valueType": "file",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "seconds",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Run the lifecycle scripts of the package and of ALL of its dependencies during installation",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Enable verbose output during installation",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Suppress output during installation",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -532,6 +593,52 @@
           "valueType": "val",
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -853,6 +960,52 @@
           "valueType": "val",
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -1127,6 +1280,52 @@
           "name": "filter",
           "shortName": "F",
           "description": "Remove the package(s) from the matching workspaces instead of the current package",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1482,6 +1681,20 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -1567,6 +1780,21 @@
           "name": "help",
           "shortName": "h",
           "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Show what bun audit fix would change without changing anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "latest",
+          "shortName": "L",
+          "description": "Also apply fixes your declared ranges exclude, rewriting package.json",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2272,6 +2500,52 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -2538,6 +2812,52 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -2795,6 +3115,52 @@
           "shortName": "h",
           "description": "Print this help menu",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }
@@ -3092,6 +3458,76 @@
           "defaultValue": "9",
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tolerate-republish",
+          "description": "Don't exit with code 1 when republishing over an existing version number",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "filter",
+          "shortName": "F",
+          "description": "Publish each matching workspace package",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "recursive",
+          "shortName": "r",
+          "description": "Publish every workspace package whose version is not on the registry",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [
@@ -3365,6 +3801,52 @@
         {
           "name": "patches-dir",
           "description": "The directory to put the patch file in (only if --commit is used)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3814,6 +4296,52 @@
           "name": "json",
           "description": "Output in JSON format",
           "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "offline",
+          "description": "Never touch the network: resolve and install only from the local cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "prefer-offline",
+          "description": "Use cached package metadata regardless of age; only fetch what is missing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimum-release-age",
+          "description": "Only install packages published at least N seconds ago (security feature)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cpu",
+          "description": "Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "os",
+          "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         }

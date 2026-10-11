@@ -802,6 +802,10 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }
+    // The OS ends a path at a NUL, so `..\0x` is one component below but opens `..`.
+    if strings::contains_char(target, 0) {
+        return true;
+    }
     // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
     // (no separator after the colon) and their `C:..` component is not a bare
     // `..`, so they would slip past the depth walk below while still resolving
@@ -943,7 +947,7 @@ impl<'a> Linker<'a> {
 
     /// Whether the symlink at `abs_dest` with the text `link` leads into `abs_dir`. Lexical.
     #[cfg(not(windows))]
-    fn link_leads_into(abs_dest: &ZStr, link: &[u8], abs_dir: &[u8]) -> bool {
+    pub(crate) fn link_leads_into(abs_dest: &ZStr, link: &[u8], abs_dir: &[u8]) -> bool {
         let mut resolved_buf = path::path_buffer_pool::get();
         resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
             resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
@@ -1034,12 +1038,12 @@ impl<'a> Linker<'a> {
             if (target_stat.st_mode as Mode) & 0o777 != mode {
                 let _ = sys::lchmod(abs_target, mode);
             }
-            Self::try_normalize_shebang(abs_target);
+            Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
         }
     }
 
     #[cfg(not(windows))]
-    fn try_normalize_shebang(abs_target: &ZStr) {
+    fn try_normalize_shebang(abs_target: &ZStr, size: u64) {
         let mut shebang_buf = [0u8; 2048];
 
         // any error here is ignored
@@ -1048,9 +1052,16 @@ impl<'a> Linker<'a> {
             else {
                 return;
             };
-            let Ok(read) = bin_for_reading.read_all(&mut shebang_buf) else {
+            let Ok(mut read) = bin_for_reading.read(&mut shebang_buf) else {
                 return;
             };
+            // `size` tells the end of a small file from a short read, without a second read.
+            if (read as u64) < size.min(shebang_buf.len() as u64) {
+                let Ok(rest) = bin_for_reading.read_all(&mut shebang_buf[read..]) else {
+                    return;
+                };
+                read += rest;
+            }
             break 'brk read;
         };
         let chunk = &shebang_buf[0..chunk_len];

@@ -28,7 +28,6 @@ _bun_add_completion() {
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' \
         '--dev[Add dependence to "devDependencies]' \
         '-d[Add dependence to "devDependencies]' \
@@ -82,7 +81,6 @@ _bun_unlink_completion() {
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -126,7 +124,6 @@ _bun_link_completion() {
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -399,7 +396,6 @@ _bun_install_completion() {
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' \
         '--dev[Add dependence to "devDependencies]' \
         '-d[Add dependence to "devDependencies]' \
@@ -449,7 +445,6 @@ _bun_remove_completion() {
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' \
         '*--filter[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' \
         '*-F[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' &&
@@ -666,7 +661,6 @@ _bun_update_completion() {
         '--global[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
-        '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -683,6 +677,39 @@ _bun_outdated_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--verbose[Excessively verbose logging]' \
         '--no-progress[Disable the progress bar]' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_publish_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '2:tarball:_files -g "*.tgz"' \
+        '-r[Publish every workspace package whose version is not on the registry]' \
+        '--recursive[Publish every workspace package whose version is not on the registry]' \
+        '*-F[Publish each matching workspace package]:workspace pattern' \
+        '*--filter[Publish each matching workspace package]:workspace pattern' \
+        '--access[Set access level for scoped packages]:access:(public restricted)' \
+        '--tag[Tag the release. Default is "latest"]:tag' \
+        '--otp[Provide a one-time password for authentication]:otp' \
+        '--auth-type[Specify the type of one-time password authentication]:auth-type:(web legacy)' \
+        '--gzip-level[Specify a custom compression level for gzip. Default is 9.]:level' \
+        '--tolerate-republish[Don'"'"'t exit with code 1 when republishing over an existing version number]' \
+        '--dry-run[Perform a dry run without making changes]' \
+        '--ignore-scripts[Skip lifecycle scripts]' \
+        '--registry[Use a specific registry by default]:registry' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--cwd[Set a specific cwd]:cwd' \
         '--help[Print this help menu]' &&
         ret=0
 
@@ -911,6 +938,7 @@ _bun() {
             'dedupe\:"Remove duplicate versions from the lockfile" '
             'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
+            'publish\:"Publish a package to the npm registry" '
             'link\:"Link an npm package globally" '
             'unlink\:"Globally unlink an npm package" '
             'pm\:"More commands for managing packages" '
@@ -952,8 +980,22 @@ _bun() {
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
-                '*: :->args' &&
+                '*: :->args' \
+                '--bun[Force the command to run with Bun instead of Node.js]' \
+                '-p[Package to install when the binary name differs from the package name]:package' \
+                '--package[Package to install when the binary name differs from the package name]:package' \
+                '--no-install[Skip installation if the package is not already installed]' \
+                '--cwd[Set the working directory]:cwd:_files -/' \
+                '*--env-file[Load environment variables from the specified file(s)]:env-file:_files' \
+                '--minimum-release-age[Only install packages published at least N seconds ago]:seconds' \
+                '--trust[Run the lifecycle scripts of the package and of ALL of its dependencies]' \
+                '--verbose[Enable verbose output during installation]' \
+                '--silent[Suppress output during installation]' &&
                 ret=0
+            ;;
+        publish)
+            _bun_publish_completion
+
             ;;
         pm)
             _bun_pm_completion

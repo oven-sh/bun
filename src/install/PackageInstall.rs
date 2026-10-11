@@ -17,7 +17,7 @@ use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
-    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
+    BuntagHashBuf, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
 };
 
@@ -324,28 +324,9 @@ impl core::fmt::Display for StagingPath<'_> {
 
 /// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`, which has to be free.
 pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
-    #[cfg(windows)]
-    {
-        // A scanner still holding a just-written file open fails the rename for a
-        // few milliseconds (#11250 is the same failure for the cache). An occupied
-        // `dest` fails with the same errors and is not worth waiting on.
-        const RETRIES: u32 = 6;
-        for attempt in 0..RETRIES {
-            match sys::renameat(dir, staging, dir, dest) {
-                Err(err)
-                    if matches!(
-                        err.get_errno(),
-                        sys::E::EPERM | sys::E::EACCES | sys::E::EBUSY
-                    ) && !sys::directory_exists_at(dir, dest).unwrap_or(false) =>
-                {
-                    // 10ms, 20ms, ... 320ms: 630ms in total.
-                    std::thread::sleep(std::time::Duration::from_millis(10u64 << attempt));
-                }
-                result => return result,
-            }
-        }
-    }
-    sys::renameat(dir, staging, dir, dest)
+    crate::cache_publish::RenameRetry::new()
+        .rename(dir, staging, dir, dest)
+        .map_err(|err| err.err)
 }
 
 // PORTING.md §Global mutable state: install-main-thread enum. `RacyCell`
@@ -864,8 +845,8 @@ impl<'a> PackageInstall<'a> {
     }
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
-    // 2. check .bun-tag against the resolved version
-    fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
+    // 2. check .bun-tag against what bun.lock records: the commit, or a tarball's integrity
+    fn verify_bun_tag(&mut self, expected: &[u8], root_node_modules_dir: &Dir) -> bool {
         let mut spill = Vec::new();
         let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
             &mut spill,
@@ -878,21 +859,30 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
-        strings::eql_long(
-            repo.resolved.slice(&self.lockfile.buffers.string_bytes),
-            &bun_tag_file.bytes,
-            true,
-        )
+        strings::eql_long(expected, &bun_tag_file.bytes, true)
     }
 
-    pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
+    pub(crate) fn verify(
+        &mut self,
+        resolution: &Resolution,
+        integrity: &Integrity,
+        root_node_modules_dir: &Dir,
+    ) -> bool {
         let verified = match resolution.tag {
-            resolution::Tag::Git => {
-                self.verify_git_resolution(resolution.git(), root_node_modules_dir)
+            resolution::Tag::Git | resolution::Tag::Github => {
+                let lockfile = self.lockfile;
+                self.verify_bun_tag(
+                    resolution
+                        .repository()
+                        .resolved
+                        .slice(&lockfile.buffers.string_bytes),
+                    root_node_modules_dir,
+                )
             }
-            resolution::Tag::Github => {
-                self.verify_git_resolution(resolution.github(), root_node_modules_dir)
-            }
+            resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball => self.verify_bun_tag(
+                integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]),
+                root_node_modules_dir,
+            ),
             resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
             resolution::Tag::Folder => {
                 if self
@@ -2320,7 +2310,7 @@ impl<'a> PackageInstall<'a> {
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
         match state {
-            // no entry name until extraction records a local tarball's integrity
+            // no entry name until extraction records a tarball's integrity
             _ if self.cache_dir_subpath.is_empty() => true,
             crate::PreinstallState::Done => false,
             _ => {

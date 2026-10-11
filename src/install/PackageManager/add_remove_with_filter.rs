@@ -56,8 +56,7 @@ impl WorkspaceTarget {
             ResolutionTag::Root => Some(WorkspaceTarget::root()),
             ResolutionTag::Workspace => {
                 let buf = lockfile.buffers.string_bytes.as_slice();
-                let top_level =
-                    strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+                let top_level = FileSystem::instance().top_level_dir();
                 let mut path_buf = path_buffer_pool::get();
                 Some(WorkspaceTarget {
                     name: Box::from(lockfile.packages.items_name()[pkg_id as usize].slice(buf)),
@@ -76,7 +75,7 @@ impl WorkspaceTarget {
 }
 
 pub(crate) fn root_package_json_path() -> Box<[u8]> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let mut buf = path_buffer_pool::get();
     let path: Box<[u8]> =
         join_abs_string_buf::<platform::Auto>(top_level, &mut buf.0, &[b"package.json"]).into();
@@ -191,7 +190,7 @@ pub(crate) fn select_targets(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<Vec<WorkspaceTarget>, Error> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let WorkspaceMembers {
         root_path,
         root_name,
@@ -444,8 +443,20 @@ fn assign_requests(
             requests.push(request);
             continue;
         };
-        let abs: Box<[u8]> =
-            join_abs_string_buf::<platform::Auto>(original_cwd, &mut buf.0, &[path]).into();
+        let Some(abs) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            original_cwd,
+            &mut buf.0,
+            &[path],
+        ) else {
+            Output::err_generic(
+                "Dependency \"{}\" has an unsafe folder path",
+                (BStr::new(
+                    request.version.literal.slice(request.version_buf()),
+                ),),
+            );
+            Global::crash();
+        };
+        let abs: Box<[u8]> = abs.into();
         slots.push(Slot::PerTarget(
             targets
                 .iter()

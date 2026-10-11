@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -73,4 +73,99 @@ test("auto-install with cached manifest but missing tarball does not read a dang
     expect(stdout).toContain("ok");
     expect(exitCode).toBe(0);
   }
+});
+
+// https://github.com/oven-sh/bun/issues/10411
+// A manifest from the disk cache resolves the version at once, before anything is downloaded.
+describe.concurrent("auto-install with the manifest in the cache", () => {
+  /** A registry with these versions of `pkg`, each exporting its version, and a directory to run scripts in. */
+  async function sandbox(...versions: string[]) {
+    const tarballs = new Map<string, Uint8Array>();
+    for (const version of versions) {
+      const files = {
+        "package/package.json": JSON.stringify({ name: "pkg", version }),
+        "package/index.js": `module.exports = ${JSON.stringify(version)};\n`,
+      };
+      tarballs.set(`/pkg/-/pkg-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+    }
+    const downloads: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        const tarball = tarballs.get(pathname);
+        if (tarball) {
+          downloads.push(pathname);
+          return new Response(tarball);
+        }
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: versions.at(-1) },
+          versions: Object.fromEntries(
+            versions.map(version => [
+              version,
+              { name: "pkg", version, dist: { tarball: `${server.url}pkg/-/pkg-${version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+    const dir = tempDir("autoinstall-cached-manifest", {
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: server.url.href } }),
+      cache: {},
+    });
+    const cache = join(String(dir), "cache");
+    return {
+      cache,
+      downloads,
+      /** What a fresh process gets from `import(specifier)`. */
+      async load(specifier: string) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--install=auto", "-e", `console.log((await import(${JSON.stringify(specifier)})).default)`],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cache },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      },
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const loaded = (version: string) => ({ stdout: version + "\n", stderr: "", exitCode: 0 });
+
+  test("installs another version of a package", async () => {
+    using box = await sandbox("1.0.0", "2.0.0");
+    expect(await box.load("pkg@1.0.0")).toEqual(loaded("1.0.0"));
+    expect(readdirSync(box.cache).filter(name => name.endsWith(".npm"))).toHaveLength(1);
+
+    expect(await box.load("pkg@2.0.0")).toEqual(loaded("2.0.0"));
+    expect(box.downloads).toEqual(["/pkg/-/pkg-1.0.0.tgz", "/pkg/-/pkg-2.0.0.tgz"]);
+  });
+
+  test("downloads a package again that is gone from the cache", async () => {
+    using box = await sandbox("1.0.0");
+    expect(await box.load("pkg")).toEqual(loaded("1.0.0"));
+    for (const name of readdirSync(box.cache)) {
+      if (!name.endsWith(".npm")) rmSync(join(box.cache, name), { recursive: true });
+    }
+    expect(readdirSync(box.cache)).toHaveLength(1);
+
+    expect(await box.load("pkg")).toEqual(loaded("1.0.0"));
+    expect(box.downloads).toEqual(["/pkg/-/pkg-1.0.0.tgz", "/pkg/-/pkg-1.0.0.tgz"]);
+  });
+
+  // The link in `<cache>/pkg/` is made after the package is in place, so another process can see one without the other.
+  test("loads a package that the index of versions does not list", async () => {
+    using box = await sandbox("1.0.0");
+    expect(await box.load("pkg")).toEqual(loaded("1.0.0"));
+    rmSync(join(box.cache, "pkg"), { recursive: true });
+
+    expect(await box.load("pkg")).toEqual(loaded("1.0.0"));
+    expect(box.downloads).toEqual(["/pkg/-/pkg-1.0.0.tgz"]);
+  });
 });

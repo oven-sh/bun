@@ -534,7 +534,7 @@ frozenLockfile = false
 
 ### `install.dryRun`
 
-Whether `bun install` resolves dependencies without installing them. Default `false`. When `true`, it's equivalent to passing `--dry-run` to all `bun install` commands.
+Whether `bun install` resolves dependencies without installing them. Default `false`. When `true`, it's equivalent to passing `--dry-run` to every package manager command, including `bun publish`, `bun pm pack`, `bun prune`, `bun dedupe` and `bun audit fix`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -545,9 +545,11 @@ dryRun = false
 
 The directory where Bun puts globally installed packages.
 
+Set it in the global `.bunfig.toml` (see [Global vs. local](#global-vs-local)) or in a file passed with `--config`. Bun ignores it in a project's `bunfig.toml`.
+
 Environment variable: `BUN_INSTALL_GLOBAL_DIR`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where `bun install --global` installs packages
 globalDir = "~/.bun/install/global"
@@ -557,9 +559,11 @@ globalDir = "~/.bun/install/global"
 
 The directory where Bun links the binaries of globally installed packages.
 
+Like `globalDir`, Bun ignores it in a project's `bunfig.toml`.
+
 Environment variable: `BUN_INSTALL_BIN`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where globally-installed package bins are linked
 globalBinDir = "~/.bun/bin"
@@ -618,6 +622,8 @@ ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 cafile = "path/to/cafile"
 ```
 
+Set one of the two. If both are set, only `cafile` is used. `--ca` or `--cafile` on the command line replaces both.
+
 ### `install.cache`
 
 To configure the cache behavior:
@@ -628,8 +634,8 @@ To configure the cache behavior:
 # the directory to use for the cache
 dir = "~/.bun/install/cache"
 
-# when true, don't load from the global cache.
-# Bun may still write to node_modules/.cache
+# when true, don't use the global cache or cached registry metadata (same as `cache = false`).
+# Bun extracts packages to node_modules/.cache instead
 disable = false
 
 # when true, always resolve the latest versions from the registry
@@ -765,7 +771,7 @@ See [Minimum release age](/pm/cli/install#minimum-release-age).
 
 ### `install.minimumReleaseAgeExcludes`
 
-An array of packages that are exempt from the `minimumReleaseAge` check. A package name exempts every version of the package; `name@version` (or `name@1.0.0 || 1.0.1`) exempts only the listed exact versions. Default `[]`.
+An array of packages that are exempt from the `minimumReleaseAge` check. A package name exempts every version of the package; `name@version` (or `name@1.0.0 || 1.0.1`) exempts only the listed exact versions. Default `[]`. The `--minimum-release-age-excludes` flag replaces this list.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

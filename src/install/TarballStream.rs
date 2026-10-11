@@ -36,6 +36,7 @@ use bun_threading::{Mutex, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
+use crate::cache_publish::StagedEntry;
 use crate::integrity::{self, Integrity};
 use crate::package_manager_real::PackageManager;
 
@@ -51,7 +52,7 @@ type OSPathZMut<'a> = &'a mut OSPathSliceZ;
 enum Phase {
     /// Call `archive_read_next_header` next.
     WantHeader,
-    /// Currently writing the body of `out_fd`; call
+    /// Currently writing the body of `out`; call
     /// `archive_read_data_block` next.
     WantData,
     /// `archive_read_next_header` returned EOF; we are done.
@@ -114,17 +115,11 @@ pub struct TarballStream {
     phase: Phase,
 
     /// Output file for the entry currently being written. `None` while
-    /// between entries or when the current entry is being skipped.
-    out_fd: Option<Fd>,
-    #[cfg(unix)]
-    use_pwrite: bool,
-    use_lseek: bool,
-    /// Per-entry write cursors, carried across `write_data_block` calls so
-    /// the sparse-file handling in `close_output_file` matches
-    /// `Archive.readDataIntoFd` exactly (which tracks these across its own
-    /// block loop). Reset in `begin_entry` when a new output file is opened.
-    entry_actual_offset: i64,
-    entry_final_offset: i64,
+    /// between entries or when the current entry is being skipped. The
+    /// writer is the one the buffered extractor uses, kept here so a block
+    /// can be written on each side of an ARCHIVE_RETRY yield.
+    out: Option<lib::EntryWriter>,
+    write_strategy: lib::WriteStrategy,
 
     /// Temp directory files are written into before being renamed into the
     /// cache. Lazily opened on the first drain so the HTTP thread never
@@ -133,8 +128,6 @@ pub struct TarballStream {
     /// Owned copy of the temp-directory name.
     // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.
     tmpname: ZBox,
-    /// Captured in `init`, before the first byte is extracted.
-    cache_publish: CachePublish,
 
     /// Incremental SHA over the *compressed* bytes, matching
     /// `Integrity.verify` / `Integrity.forBytes` in the buffered path.
@@ -145,11 +138,6 @@ pub struct TarballStream {
     resolved_github_dirname: &'static [u8],
     want_first_dirname: bool,
     npm_mode: bool,
-
-    /// Symlink entries accepted so far; written to disk only after every
-    /// other entry.
-    #[cfg(unix)]
-    deferred_symlinks: Vec<bun_libarchive::DeferredSymlink>,
 
     bytes_received: usize,
     /// Compressed bytes handed to libarchive by the read callback so far.
@@ -250,7 +238,6 @@ impl TarballStream {
             },
             compute_if_missing,
         );
-        let cache_publish = tarball.cache_publish();
 
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(...)). Pointer is
         // recovered via `container_of` from the thread-pool callback and
@@ -267,21 +254,14 @@ impl TarballStream {
             archive_holds_reading: false,
             archive: None,
             phase: Phase::WantHeader,
-            out_fd: None,
-            #[cfg(unix)]
-            use_pwrite: true,
-            use_lseek: true,
-            entry_actual_offset: 0,
-            entry_final_offset: 0,
+            out: None,
+            write_strategy: lib::WriteStrategy::default(),
             dest: None,
             tmpname: ZBox::from_bytes(b""),
-            cache_publish,
             hasher,
             resolved_github_dirname,
             want_first_dirname,
             npm_mode,
-            #[cfg(unix)]
-            deferred_symlinks: Vec::new(),
             bytes_received: 0,
             bytes_consumed: 0,
             content_length: None,
@@ -544,7 +524,7 @@ impl TarballStream {
         // `&mut TarballStream` is held across any libarchive call (which may
         // re-enter `archive_read_callback` and access `*this` via the same
         // provenance). Transient `&mut *this` for `open_destination` /
-        // `begin_entry` / `write_data_block` / `close_output_file` is sound:
+        // `begin_entry` / `write_block` / `finish_output_file` is sound:
         // those do not call into libarchive.
         unsafe {
             if (*this).archive.is_none() {
@@ -568,13 +548,10 @@ impl TarballStream {
                             lib::Result::Retry if (*this).archive_holds_reading => continue,
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Eof => {
-                                #[cfg(unix)]
-                                {
-                                    let dest = (*this).dest.unwrap();
-                                    let symlinks = core::mem::take(&mut (*this).deferred_symlinks);
-                                    bun_libarchive::create_deferred_symlinks(
-                                        dest, &symlinks, false,
-                                    );
+                                // The gzip filter reads a body that is not gzip as the end of its input.
+                                if (*this).entry_count == 0 {
+                                    (*this).fail_detail = b"the archive holds no files".to_vec();
+                                    return Err(crate::Error::Fail);
                                 }
                                 (*this).phase = Phase::Done;
                                 return Ok(());
@@ -595,17 +572,15 @@ impl TarballStream {
                     Phase::WantData => {
                         let mut offset: i64 = 0;
                         let Some(block) = archive.next(&mut offset) else {
-                            // End of this entry's data.
-                            (*this).close_output_file();
+                            // End of this entry's data; `offset` is its length.
+                            (*this).finish_output_file(offset)?;
                             (*this).phase = Phase::WantHeader;
                             continue;
                         };
                         match block.result {
                             lib::Result::Retry if !(*this).archive_holds_reading => return Ok(()),
                             lib::Result::Ok | lib::Result::Warn => {
-                                if let Some(fd) = (*this).out_fd {
-                                    (*this).write_data_block(fd, &block)?;
-                                }
+                                (*this).write_block(&block)?;
                             }
                             _ => {
                                 (*this).fail_detail = archive.error_string().to_vec();
@@ -728,22 +703,35 @@ impl TarballStream {
         Ok(())
     }
 
+    /// The current entry's data ended at `end`. Gives the output file that
+    /// length, then closes it.
+    fn finish_output_file(&mut self, end: i64) -> crate::Result<()> {
+        let Some(mut out) = self.out.take() else {
+            return Ok(());
+        };
+        let result = out.finish(end);
+        out.fd().close();
+        result.map_err(|e| e.to_zig_err().into())
+    }
+
+    /// Closes the output file of an entry that did not reach its end. The
+    /// file keeps the bytes that were written and nothing more.
     fn close_output_file(&mut self) {
-        if let Some(fd) = self.out_fd {
-            // Same trailing-hole handling as `Archive.readDataIntoFd`:
-            // extend the file to cover the furthest block we were asked
-            // to write even if the pwrite/lseek fallback path left
-            // `actual_offset` behind.
-            if self.entry_final_offset > self.entry_actual_offset {
-                let _ = bun_sys::ftruncate(fd, self.entry_final_offset);
-            }
-            fd.close();
-            self.out_fd = None;
+        if let Some(out) = self.out.take() {
+            out.fd().close();
         }
     }
 
+    fn write_block(&mut self, block: &lib::Block<'_>) -> crate::Result<()> {
+        let Some(out) = self.out.as_mut() else {
+            return Ok(());
+        };
+        out.write(&mut self.write_strategy, block.offset, block.bytes)
+            .map_err(|e| e.to_zig_err().into())
+    }
+
     /// Process one entry header returned by `read_next_header`. Opens the
-    /// output file (or creates the directory/symlink) and transitions to
+    /// output file (or creates the directory) and transitions to
     /// `WantData` so the next `step()` iteration starts pulling its body.
     fn begin_entry(&mut self, entry: &mut lib::Entry) -> crate::Result<()> {
         #[cfg(windows)]
@@ -786,7 +774,7 @@ impl TarballStream {
             // npm tarballs only contain files; matching the libarchive path
             // in Archiver.extractToDir we skip everything else.
             self.phase = Phase::WantData;
-            self.out_fd = None;
+            self.out = None;
             return Ok(());
         }
 
@@ -798,7 +786,7 @@ impl TarballStream {
             .filter(|s| !s.is_empty());
         if tokenizer.next().is_none() {
             self.phase = Phase::WantData;
-            self.out_fd = None;
+            self.out = None;
             return Ok(());
         }
         // tokenizeScalar.rest() — need byte offset of remainder, not just
@@ -816,7 +804,7 @@ impl TarballStream {
                 bun_core::fmt::fmt_os_path(rest, Default::default()),
             );
             self.phase = Phase::WantData;
-            self.out_fd = None;
+            self.out = None;
             return Ok(());
         }
         let normalized =
@@ -828,7 +816,7 @@ impl TarballStream {
             unsafe { OSPathSliceZ::from_raw_mut(norm_buf.as_mut_ptr(), norm_len) };
         if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
             self.phase = Phase::WantData;
-            self.out_fd = None;
+            self.out = None;
             return Ok(());
         }
         // `normalize_buf_t` collapses interior `..` but leaves a leading `..`
@@ -842,14 +830,14 @@ impl TarballStream {
             && (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar)
         {
             self.phase = Phase::WantData;
-            self.out_fd = None;
+            self.out = None;
             return Ok(());
         }
         #[cfg(windows)]
         {
             if bun_paths::is_absolute_windows_wtf16(&path[..]) {
                 self.phase = Phase::WantData;
-                self.out_fd = None;
+                self.out = None;
                 return Ok(());
             }
             if self.npm_mode {
@@ -867,19 +855,7 @@ impl TarballStream {
             FileKind::Directory => {
                 make_directory(entry, dest, path, path_slice);
                 self.phase = Phase::WantData;
-                self.out_fd = None;
-            }
-            FileKind::SymLink => {
-                #[cfg(unix)]
-                if bun_libarchive::is_symlink_target_safe(path_slice, entry.symlink(), &mut None) {
-                    self.deferred_symlinks
-                        .push(bun_libarchive::DeferredSymlink::new(
-                            path_slice,
-                            entry.symlink().as_bytes(),
-                        ));
-                }
-                self.phase = Phase::WantData;
-                self.out_fd = None;
+                self.out = None;
             }
             FileKind::File => {
                 #[cfg(windows)]
@@ -890,98 +866,15 @@ impl TarballStream {
                 let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
                 let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
-
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    let size: usize = usize::try_from(entry.size().max(0)).expect("int cast");
-                    if size > 1_000_000 {
-                        let _ = bun_sys::preallocate_file(
-                            fd.native(),
-                            0,
-                            i64::try_from(size).expect("int cast"),
-                        );
-                    }
-                }
-
-                self.out_fd = Some(fd);
-                self.entry_actual_offset = 0;
-                self.entry_final_offset = 0;
+                self.out = Some(lib::EntryWriter::new(fd));
                 self.phase = Phase::WantData;
             }
             _ => {
                 self.phase = Phase::WantData;
-                self.out_fd = None;
+                self.out = None;
             }
         }
         Ok(())
-    }
-
-    /// Write one data block from `archive_read_data_block`. Mirrors the
-    /// sparse/pwrite handling in `Archive.readDataIntoFd` but operates on a
-    /// single block so it can be interleaved with ARCHIVE_RETRY yields.
-    /// `entry_actual_offset` / `entry_final_offset` persist across calls so
-    /// `close_output_file` can perform the same trailing `ftruncate` the
-    /// buffered path does after its block loop.
-    fn write_data_block(&mut self, fd: Fd, block: &lib::Block) -> crate::Result<()> {
-        let file = bun_sys::File::borrow(&fd);
-        let data = block.bytes;
-        if data.is_empty() {
-            return Ok(());
-        }
-
-        self.entry_final_offset = self
-            .entry_final_offset
-            .max(block.offset + i64::try_from(data.len()).expect("int cast"));
-
-        #[cfg(unix)]
-        {
-            if self.use_pwrite {
-                match file.pwrite_all(data, block.offset) {
-                    Ok(_) => {
-                        self.entry_actual_offset = self
-                            .entry_actual_offset
-                            .max(block.offset + i64::try_from(data.len()).expect("int cast"));
-                        return Ok(());
-                    }
-                    Err(_) => self.use_pwrite = false,
-                }
-            }
-        }
-
-        'seek: {
-            if block.offset == self.entry_actual_offset {
-                break 'seek;
-            }
-            if self.use_lseek {
-                match file.seek_to(u64::try_from(block.offset).expect("int cast")) {
-                    Ok(_) => {
-                        self.entry_actual_offset = block.offset;
-                        break 'seek;
-                    }
-                    Err(_) => self.use_lseek = false,
-                }
-            }
-            if block.offset > self.entry_actual_offset {
-                let zero_count: usize =
-                    usize::try_from(block.offset - self.entry_actual_offset).expect("int cast");
-                match lib::Archive::write_zeros_to_file(file, zero_count) {
-                    lib::Result::Ok => {
-                        self.entry_actual_offset = block.offset;
-                    }
-                    _ => return Err(crate::Error::Fail),
-                }
-            } else {
-                return Err(crate::Error::Fail);
-            }
-        }
-
-        match file.write_all(data) {
-            Ok(_) => {
-                self.entry_actual_offset += i64::try_from(data.len()).expect("int cast");
-                Ok(())
-            }
-            Err(e) => Err(e.to_zig_err().into()),
-        }
     }
 
     /// # Safety
@@ -1210,12 +1103,11 @@ impl TarballStream {
             let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
             let mut result = match tarball.move_to_cache_directory(
                 &mut (*task).log,
-                self.tmpname.as_zstr(),
+                StagedEntry::new(tarball.temp_dir, self.tmpname.as_zstr()),
                 name,
                 basename,
                 self.resolved_github_dirname,
                 &integrity,
-                self.cache_publish,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -1259,8 +1151,8 @@ impl TarballStream {
 
 impl Drop for TarballStream {
     fn drop(&mut self) {
-        if let Some(fd) = self.out_fd {
-            fd.close();
+        if let Some(out) = self.out.take() {
+            out.fd().close();
         }
         if let Some(d) = self.dest {
             d.close();
@@ -1488,6 +1380,5 @@ fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
 
 // Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
 // discriminant; Data/Status live on PackageManagerTask.
-use crate::extract_tarball::CachePublish;
 use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 use crate::resolution::Tag as ResolutionTag;

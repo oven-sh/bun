@@ -6,7 +6,6 @@ use bun_core::{Global, Output, env_var};
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
-use crate::network_task::Authorization;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
 
@@ -167,9 +166,7 @@ impl Default for Options {
             json_output: false,
             max_retry_count: 5,
             min_simultaneous_requests: 4,
-            // Placeholder only — every constructor supplies the real value
-            // (`cli.concurrent_scripts` or `cpu_count * 2`).
-            max_concurrent_lifecycle_scripts: 0,
+            max_concurrent_lifecycle_scripts: usize::from(bun_core::get_thread_count()) * 2,
             publish_config: PublishConfig::default(),
             ca: Box::default(),
             ca_file_name: b"",
@@ -292,134 +289,149 @@ impl Options {
         }
     }
 
-    /// `scope`'s credentials only go to its own origin (the registry controls `dist.tarball`);
-    /// any other origin gets exactly what `.npmrc` configures for it, or nothing.
-    pub(crate) fn tarball_credentials<'a>(
+    /// npm's `getAuth` order: the tarball's own `.npmrc` line, else the registry's credentials on its origin.
+    pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
         tarball: &bun_url::URL,
+        // `tarball` is the WHATWG serialisation the request goes to; a URL one parse could not settle gets no line.
+        normalized: bool,
     ) -> Option<&'a Npm::registry::Scope> {
-        if scope.has_credentials() && is_same_origin(tarball, &scope.url.url()) {
-            return Some(scope);
+        // A manifest or a lockfile names this URL, and a key has no scheme: a line never follows it into cleartext.
+        let own = if normalized && tarball.is_https() {
+            Npm::registry::UrlAuth::find_entry_serialized(&self.url_auth, tarball)
+        } else {
+            None
+        };
+        if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
+            // The key the registry itself resolved to is already reflected in `scope`, behind any bunfig, env or CLI credential.
+            return match own {
+                Some(entry) if scope.url_auth_key.as_deref() != Some(entry.key()) => {
+                    Some(entry.credentials())
+                }
+                _ => Some(scope),
+            };
         }
-        Npm::registry::UrlAuth::find(&self.url_auth, tarball)
+        own.map(|entry| entry.credentials())
     }
 
-    /// Appended to the `GET <url> - 401` line of a request bun sent without `Authorization`:
-    /// which `.npmrc` line would have supplied one. Empty when credentials were sent.
-    pub(crate) fn missing_credentials_note(
-        &self,
-        package_name: &[u8],
-        url: &[u8],
-        request: RequestKind,
-    ) -> Vec<u8> {
-        use std::io::Write as _;
-
-        let scope = self.scope_for_package_name(package_name);
-        let mut note = Vec::new();
-        match request {
-            RequestKind::Manifest if !scope.has_credentials() => {
-                let registry = scope.url.url();
-                let path = registry
-                    .pathname
-                    .strip_suffix(b"/")
-                    .unwrap_or(registry.pathname);
-                let _ = write!(
-                    note,
-                    "\n  no credentials are configured for this registry; add //{}{}/:_authToken=<token> to .npmrc",
-                    bstr::BStr::new(registry.host),
-                    bstr::BStr::new(path),
-                );
-            }
-            RequestKind::Tarball(Authorization::AllowAuthorization) => {
-                let url = bun_url::URL::parse(url);
-                if self.tarball_credentials(scope, &url).is_some() {
-                    return note;
-                }
-                if scope.has_credentials() {
-                    let _ = write!(
-                        note,
-                        "\n  the credentials configured for {} are not sent to {}; add //{}/:_authToken=<token> to .npmrc if this host needs them",
-                        bstr::BStr::new(scope.url.url().host),
-                        bstr::BStr::new(url.host),
-                        bstr::BStr::new(url.host),
-                    );
-                } else {
-                    let _ = write!(
-                        note,
-                        "\n  no credentials are configured for {}; add //{}/:_authToken=<token> to .npmrc",
-                        bstr::BStr::new(url.host),
-                        bstr::BStr::new(url.host),
-                    );
-                }
-            }
-            _ => {}
-        }
-        note
-    }
-
-    /// How `--registry` and `$NPM_CONFIG_REGISTRY` pick up a `//host/:_authToken=` line.
+    /// After every source of a registry URL (bunfig, `.npmrc`, environment, command line) was applied.
     fn fill_credentials_from_url_auth(&mut self) {
+        if self.url_auth.is_empty() {
+            return;
+        }
         let url_auth = &self.url_auth;
         for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
-            if !scope.has_credentials() {
-                if let Some(found) = Npm::registry::UrlAuth::find(url_auth, &scope.url.url()) {
-                    scope.copy_credentials_from(found);
-                }
-            }
+            fill_scope_from_url_auth(url_auth, scope);
         }
     }
 }
 
-/// Component-wise, so `https://host:443/` in `dist.tarball` matches `https://host/` in `.npmrc`.
-fn is_same_origin(a: &bun_url::URL, b: &bun_url::URL) -> bool {
-    a.protocol.eq_ignore_ascii_case(b.protocol)
-        && a.hostname.eq_ignore_ascii_case(b.hostname)
-        && a.get_port_auto() == b.get_port_auto()
+/// Gives `scope` the credentials `.npmrc` configures for its URL, by npm's key walk, unless it has some from
+/// `bunfig.toml`, the environment or the command line. One written into a `.npmrc` `registry=` URL yields.
+fn fill_scope_from_url_auth(url_auth: &[Npm::registry::UrlAuth], scope: &mut Npm::registry::Scope) {
+    let own = Npm::registry::UrlAuth::find_entry(url_auth, &scope.url.url());
+    scope.url_auth_key = own.map(|entry| Box::from(entry.key()));
+    if scope.has_credentials() && !scope.declared_in_npmrc {
+        return;
+    }
+    if let Some(entry) = own {
+        scope.copy_credentials_from(entry.credentials());
+    }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum RequestKind {
-    Manifest,
-    /// What the request was enqueued with (`NetworkTask::authorization`).
-    Tarball(Authorization),
+/// Same scheme, host and effective port (some registries spell out `:443` in `dist.tarball`).
+fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
+    !base.hostname.is_empty()
+        && url.protocol.eq_ignore_ascii_case(base.protocol)
+        && url.hostname.eq_ignore_ascii_case(base.hostname)
+        && url.get_port_auto() == base.get_port_auto()
+}
+
+/// `url` names the registry `base` or one below it: same host and port text, no https-to-http downgrade, and `base`'s
+/// path is a segment-wise prefix of `url`'s. A sibling path inherits nothing; its own `.npmrc` line applies by the walk.
+fn registry_under(url: &bun_url::URL, base: &bun_url::URL) -> bool {
+    bun_core::without_trailing_slash(url.host) == bun_core::without_trailing_slash(base.host)
+        && (url.is_https() || !base.is_https())
+        && path_under(
+            Npm::registry::query_free_path(url),
+            Npm::registry::query_free_path(base),
+        )
+}
+
+/// Segment-wise, so `/npm/team-ab/x` is not under `/npm/team-a/`.
+fn path_under(path: &[u8], base: &[u8]) -> bool {
+    let mut segments = bun_core::strings::tokenize(path, b"/");
+    bun_core::strings::tokenize(base, b"/").all(|expected| segments.next() == Some(expected))
 }
 
 impl Options {
-    /// The scope for `url` once it replaces `current`, with the credentials configured for `url`.
+    /// The scope for `url` once it replaces `current` (`--registry`, `$BUN_CONFIG_REGISTRY`, `publishConfig`): the credentials
+    /// written into `url`, else those of a registry configured under the same URL, else `current`'s. `.npmrc` lines come after.
     fn scope_for_registry_url(
         &self,
         name: &[u8],
         current: &Npm::registry::Scope,
         url: &[u8],
-    ) -> Npm::registry::Scope {
-        let mut scope = Npm::registry::Scope {
-            name: name.into(),
-            ..Default::default()
-        };
-        scope.set_url(url.into());
-        let configured = core::iter::once(&self.scope)
-            .chain(self.registries.values())
-            .find(|configured| configured.url_hash == scope.url_hash)
-            .or_else(|| Npm::registry::UrlAuth::find(&self.url_auth, &scope.url.url()));
-        if let Some(configured) = configured {
-            scope.copy_credentials_from(configured);
-            return scope;
+        env: Option<&mut DotEnvLoader>,
+    ) -> crate::Result<Npm::registry::Scope> {
+        let registry = Api::NpmRegistry::from_url(url);
+        let has_userinfo = registry.has_credentials();
+        let mut scope = Npm::registry::Scope::from_api(name, registry, env)?;
+        if has_userinfo && scope.has_credentials() {
+            return Ok(scope);
         }
-        // Unconfigured `url`: `current`'s credentials follow it only same-host, and never to http.
-        let (new_url, current_url) = (scope.url.url(), current.url.url());
-        if bun_core::without_trailing_slash(new_url.host)
-            == bun_core::without_trailing_slash(current_url.host)
-            && (new_url.is_https() || !current_url.is_https())
-        {
-            scope.copy_credentials_from(current);
+        if !scope.has_credentials() {
+            let configured = core::iter::once(&self.scope)
+                .chain(self.registries.values())
+                .find(|configured| {
+                    configured.url_hash == scope.url_hash && configured.has_credentials()
+                });
+            if let Some(configured) = configured {
+                scope.copy_credentials_from(configured);
+                return Ok(scope);
+            }
         }
-        scope
+        if self.inherits_credentials(current, &scope.url.url()) {
+            if scope.has_credentials() {
+                // Embedded in the path of `url`: as weak as one in the `registry=` line that `url` stands in for.
+                scope.declared_in_npmrc = current.declared_in_npmrc;
+            } else {
+                scope.copy_credentials_from(current);
+            }
+        }
+        Ok(scope)
     }
 
-    fn set_default_registry(&mut self, url: &[u8]) {
-        self.scope = self.scope_for_registry_url(b"", &self.scope, url);
-        self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
+    /// A registry at or under `old` keeps its credentials, unless `.npmrc` has a deeper line for it.
+    fn inherits_credentials(&self, old: &Npm::registry::Scope, new_url: &bun_url::URL) -> bool {
+        let old_url = old.url.url();
+        if !registry_under(new_url, &old_url) {
+            return false;
+        }
+        match Npm::registry::UrlAuth::find_entry(&self.url_auth, new_url) {
+            Some(own) => Npm::registry::UrlAuth::find_entry(&self.url_auth, &old_url)
+                .is_some_and(|old| old.key() == own.key()),
+            None => true,
+        }
+    }
+
+    /// `url` is package data, like a tarball URL: no variable of this process is expanded into it, and a `.npmrc` line
+    /// follows it only over https.
+    fn scope_for_publish_config(
+        &self,
+        name: &[u8],
+        current: &Npm::registry::Scope,
+        url: &[u8],
+    ) -> Npm::registry::Scope {
+        let mut scope = self
+            .scope_for_registry_url(name, current, url, None)
+            // `refuse_credential` has said why.
+            .unwrap_or_else(|_| Global::crash());
+        if scope.url.url().is_https() {
+            fill_scope_from_url_auth(&self.url_auth, &mut scope);
+        }
+        scope
     }
 
     /// Applies the `publishConfig` of the package being published; command-line flags win over it.
@@ -451,7 +463,9 @@ impl Options {
         // As in npm, `registry` replaces only the default registry; `@scope:registry` the scope's.
         if !self.registry_from_command_line {
             if let Some(url) = publish_config_registry(&config, bump, b"registry")? {
-                self.set_default_registry(url);
+                self.scope = self.scope_for_publish_config(b"", &self.scope, url);
+                self.did_override_default_scope =
+                    self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
             }
         }
 
@@ -460,7 +474,7 @@ impl Options {
             let key = [b"@".as_slice(), scope_name, b":registry"].concat();
             if let Some(url) = publish_config_registry(&config, bump, &key)? {
                 let current = self.scope_for_package_name(package_name);
-                let scope = self.scope_for_registry_url(scope_name, current, url);
+                let scope = self.scope_for_publish_config(scope_name, current, url);
                 self.registries
                     .put(Npm::registry::Scope::hash(scope_name), scope)?;
             }
@@ -596,7 +610,10 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
 
     if !explicit_global_dir.is_empty() {
         return Dir::cwd()
-            .make_open_path(explicit_global_dir, OpenDirOptions::default())
+            .make_open_path(
+                &expand_home_tilde(explicit_global_dir),
+                OpenDirOptions::default(),
+            )
             .map(|d| d.into_raw())
             .map_err(Into::into);
     }
@@ -629,7 +646,7 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
         if let Some(home_dir) = &opts.global_bin_dir {
             if !home_dir.is_empty() {
                 return Dir::cwd()
-                    .make_open_path(home_dir, OpenDirOptions::default())
+                    .make_open_path(&expand_home_tilde(home_dir), OpenDirOptions::default())
                     .map(|d| d.into_raw())
                     .map_err(Into::into);
             }
@@ -658,6 +675,20 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
+/// `~` and `~/<rest>` in a path from bunfig.toml or .npmrc are below `$HOME`. `~user` is not expanded.
+fn expand_home_tilde(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    match (path, env_var::HOME.get_not_empty()) {
+        ([b'~', rest @ ..], Some(home))
+            if rest
+                .first()
+                .is_none_or(|&c| bun_core::path_sep::is_sep_any(c)) =>
+        {
+            [home, rest].concat().into()
+        }
+        _ => path.into(),
+    }
+}
+
 impl Options {
     pub(crate) fn load(
         &mut self,
@@ -668,10 +699,16 @@ impl Options {
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
+        // Runtime auto-install, which cannot merge it under a `bun_install_` it only borrows: what `.npmrc` configures,
+        // of which only the registries and their credentials are read.
+        runtime_npmrc: Option<&Api::BunInstall>,
         subcommand: Subcommand,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> crate::Result<()> {
         let mut base = Api::NpmRegistry::default();
         let bun_install_ref = bun_install_;
+        if let Some(registry) = runtime_npmrc.and_then(|npmrc| npmrc.default_registry.as_ref()) {
+            base = registry.clone();
+        }
         if let Some(config) = bun_install_ref {
             if let Some(registry) = &config.default_registry {
                 base = registry.clone();
@@ -686,15 +723,12 @@ impl Options {
         }
         // Clone so the
         // `base.url` fallback below in the scoped-registry loop stays valid.
-        self.scope = Npm::registry::Scope::from_api(b"", base.clone(), env)?;
+        self.scope = Npm::registry::Scope::from_api(b"", base.clone(), Some(&mut *env))?;
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
-        if let Some(config) = bun_install_ref {
-            if let Some(cache_directory) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(cache_directory);
-            }
-
+        // npmrc < bunfig
+        for config in [runtime_npmrc, bun_install_ref].into_iter().flatten() {
             if let Some(scoped) = &config.scoped {
                 for (name, registry_) in scoped.scopes.keys().iter().zip(scoped.scopes.values()) {
                     debug_assert_eq!(scoped.scopes.keys().len(), scoped.scopes.values().len());
@@ -704,7 +738,7 @@ impl Options {
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
-                        Npm::registry::Scope::from_api(name, registry, env)?,
+                        Npm::registry::Scope::from_api(name, registry, Some(&mut *env))?,
                     )?;
                 }
             }
@@ -713,6 +747,12 @@ impl Options {
                 if let Some(url_auth) = Npm::registry::UrlAuth::from_api(url_auth, env)? {
                     self.url_auth.push(url_auth);
                 }
+            }
+        }
+
+        if let Some(config) = bun_install_ref {
+            if let Some(cache_directory) = config.cache_directory.as_deref() {
+                self.cache_directory = leak_static(&expand_home_tilde(cache_directory));
             }
 
             if let Some(ca) = &config.ca {
@@ -744,17 +784,22 @@ impl Options {
                 self.offline = OfflineMode::Offline;
             }
 
+            if config.dry_run == Some(true) {
+                self.dry_run = true;
+            }
+
             if let Some(security_scanner) = config.security_scanner.as_deref() {
                 self.security_scanner = Some(leak_static(security_scanner));
                 self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
             }
 
             if let Some(cafile) = config.cafile.as_deref() {
-                self.ca_file_name = leak_static(cafile);
+                self.ca_file_name = leak_static(&expand_home_tilde(cafile));
             }
 
             if config.disable_cache.unwrap_or(false) {
                 self.enable.set(Enable::CACHE, false);
+                self.enable.set(Enable::MANIFEST_CACHE, false);
             }
 
             if config.disable_manifest_cache.unwrap_or(false) {
@@ -874,22 +919,13 @@ impl Options {
 
             for registry_key in REGISTRY_KEYS {
                 if let Some(registry_) = env.get(registry_key) {
-                    if !registry_.is_empty()
-                        && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
-                    {
-                        let mut api_registry = Api::NpmRegistry::from_url(registry_);
-                        // Credentials in the URL win, as they do for `registry=` in .npmrc.
-                        if !api_registry.has_credentials() {
-                            let prev_url = self.scope.url.url();
-                            let new_url = bun_url::URL::parse(&api_registry.url);
-                            if bun_core::without_trailing_slash(new_url.host)
-                                == bun_core::without_trailing_slash(prev_url.host)
-                                && (new_url.is_https() || !prev_url.is_https())
-                            {
-                                api_registry.token = core::mem::take(&mut self.scope.token);
-                            }
-                        }
-                        self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                    // Any non-empty value is the registry, as for `registry=` in .npmrc and `install.registry` in bunfig.toml:
+                    // an unusable one is refused when it is requested, not replaced in silence by the next layer's registry.
+                    let registry_ = bun_core::strings::trim(registry_, b" \t\r\n");
+                    if !registry_.is_empty() {
+                        let url: Box<[u8]> = registry_.into();
+                        self.scope =
+                            self.scope_for_registry_url(b"", &self.scope, &url, Some(&mut *env))?;
                         break;
                     }
                 }
@@ -898,12 +934,8 @@ impl Options {
 
         if let Some(cli) = &maybe_cli {
             if !cli.registry.is_empty() {
-                let api_registry = Api::NpmRegistry::from_url(cli.registry);
-                if api_registry.has_credentials() {
-                    self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                } else {
-                    self.set_default_registry(&api_registry.url);
-                }
+                self.scope =
+                    self.scope_for_registry_url(b"", &self.scope, cli.registry, Some(&mut *env))?;
                 self.registry_from_command_line = true;
             }
         }
@@ -918,7 +950,14 @@ impl Options {
             for token_key in TOKEN_KEYS {
                 if let Some(token) = env.get(token_key) {
                     if !token.is_empty() {
+                        if bun_http::async_http::breaks_header_line(token) {
+                            return Err(Npm::registry::refuse_credential(format_args!(
+                                "${}",
+                                bstr::BStr::new(token_key)
+                            )));
+                        }
                         self.scope.token = token.into();
+                        self.scope.declared_in_npmrc = false;
                         break;
                     }
                 }
@@ -970,10 +1009,6 @@ impl Options {
 
             if cli.exact {
                 self.enable.set(Enable::EXACT_VERSIONS, true);
-            }
-
-            if !cli.token.is_empty() {
-                self.scope.token = cli.token.into();
             }
 
             if cli.no_save {
@@ -1032,8 +1067,25 @@ impl Options {
                 self.save_text_lockfile = Some(save_text_lockfile);
             }
 
+            if let Some(concurrent_scripts) = cli.concurrent_scripts {
+                self.max_concurrent_lifecycle_scripts = concurrent_scripts;
+            }
+
             if let Some(min_age_ms) = cli.minimum_release_age_ms {
                 self.minimum_release_age_ms = Some(min_age_ms);
+            }
+
+            if !cli.minimum_release_age_excludes.is_empty() {
+                let entries: Vec<&'static [u8]> = cli
+                    .minimum_release_age_excludes
+                    .iter()
+                    .flat_map(|&list| bun_core::strings::split(list, b","))
+                    .map(<[u8]>::trim_ascii)
+                    .filter(|entry| !entry.is_empty())
+                    .collect();
+                self.minimum_release_age_excludes = Some(&*bun_core::heap::release(Box::new(
+                    Npm::MinimumReleaseAgeExcludes::parse(&entries, log),
+                )));
             }
 
             self.lockfile_only = cli.lockfile_only;
@@ -1085,6 +1137,11 @@ impl Options {
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);
+            // The only depth `bun update` accepts is 0.
+            self.do_.set(
+                Do::UPDATE_DIRECT_ONLY,
+                subcommand == Subcommand::Update && cli.depth.is_some(),
+            );
 
             if !cli.positionals.is_empty() {
                 self.positionals = cli.positionals;
@@ -1134,10 +1191,9 @@ impl Options {
             }
             self.publish_config.tolerate_republish = cli.tolerate_republish;
 
-            if !cli.ca.is_empty() {
+            // `--ca` / `--cafile` replace the config file's `ca` + `cafile` as a whole.
+            if !cli.ca.is_empty() || !cli.ca_file_name.is_empty() {
                 self.ca = cli.ca.iter().map(|s| Box::<[u8]>::from(*s)).collect();
-            }
-            if !cli.ca_file_name.is_empty() {
                 self.ca_file_name = cli.ca_file_name;
             }
 
@@ -1214,7 +1270,9 @@ bitflags::bitflags! {
         const ANALYZE                      = 1 << 11;
         const RECURSIVE                    = 1 << 12;
         const PREFETCH_RESOLVED_TARBALLS   = 1 << 13;
-        // _: u2 padding
+        /// `bun update --depth 0`: only root and workspace rows re-resolve.
+        const UPDATE_DIRECT_ONLY           = 1 << 14;
+        // _: u1 padding
     }
 }
 
@@ -1308,16 +1366,16 @@ impl Do {
     pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
     }
+    #[inline]
+    pub fn update_direct_only(self) -> bool {
+        self.contains(Do::UPDATE_DIRECT_ONLY)
+    }
 }
 
 // Field-style accessors (`options.enable.cache = false` /
 // `if options.enable.manifest_cache { ... }`). The bitflags struct is `Copy`,
 // so getters return by value and setters take `&mut self`.
 impl Enable {
-    #[inline]
-    pub(crate) fn cache(self) -> bool {
-        self.contains(Enable::CACHE)
-    }
     #[inline]
     pub(crate) fn manifest_cache(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE)

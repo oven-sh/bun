@@ -112,6 +112,7 @@ pub mod audit_fix;
 #[path = "bin.rs"]
 pub mod bin_real;
 pub mod cache_pack;
+pub(crate) mod cache_publish;
 pub mod dedupe;
 pub mod git_runner;
 pub mod hoisted_install;
@@ -127,6 +128,7 @@ pub mod pnpm;
 pub mod prune;
 #[path = "repository.rs"]
 pub mod repository_real;
+pub(crate) mod retry_timer;
 pub mod update_scope;
 pub mod update_transitive;
 pub mod yarn;
@@ -328,22 +330,6 @@ pub use package_manager_real::{
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
-/// `crate::ci_info` — install-tier shim for `bun_runtime::cli::ci_info`
-/// (`src/runtime/cli/ci_info.rs`). Only `detect_ci_name` is exposed; the
-/// CI-probe table itself is generated at build time in `bun_runtime` and is
-/// not reachable from this tier, so the shim returns the `CI` env var name
-/// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
-pub(crate) mod ci_info {
-    pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
-        // The per-vendor probes live in `bun_runtime` (T6) and are wired in
-        // there; install only needs *some* answer for the user-agent string.
-        if bun_core::env_var::CI::get().is_some() {
-            return Some(b"ci");
-        }
-        None
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Only the `Shell` enum (variant detection) is consumed here — the embedded
 // completion script bodies stay in bun_cli (they pull in embedded script assets).
@@ -405,17 +391,14 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
-    /// at runtime via GetTempPathW, so this constant is POSIX-only.
+    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). Only its owner uses the
+    /// directory, and `/tmp` is everybody's. Windows: `windows_node_shim_dir`.
     ///
     /// NOTE: the SHA alone does not uniquely identify a binary — two local
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = {
-        // `const_format::concatcp!` cannot host
-        // `if` expressions inline, so split into helper consts.
-        use const_format::concatcp;
+    pub fn bun_node_dir() -> &'static ZStr {
         const TMP: &str = if cfg!(target_os = "macos") {
             "/private/tmp"
         } else if cfg!(target_os = "android") {
@@ -424,14 +407,17 @@ impl RunCommand {
             "/tmp"
         };
         const SUFFIX: &str = if bun_core::env::IS_DEBUG {
-            "/bun-node-debug"
+            "-debug"
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "/bun-node"
+            ""
         } else {
-            concatcp!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
+            const_format::concatcp!("-", bun_core::env::GIT_SHA_SHORT)
         };
-        concatcp!(TMP, SUFFIX)
-    };
+        static DIR: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
+        DIR.get_or_init(|| {
+            bun_core::ZBox::from_bytes(format!("{TMP}/bun-node-{}{SUFFIX}", bun_sys::c::getuid()))
+        })
+    }
 
     /// Where the `node.exe` and `bun.exe` hard links to the running bun go: `%TEMP%\bun-node-<sha>`,
     /// or `<directory of bun.exe>\bun-node` when `%TEMP%` is on another drive, which a hard link
@@ -569,9 +555,8 @@ impl RunCommand {
 
         #[cfg(not(windows))]
         {
-            use const_format::concatcp;
-
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+            let dir = Self::bun_node_dir();
 
             // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
             // OUTER bun prepends `BUN_NODE_DIR` to `PATH` and the INNER bun is
@@ -602,7 +587,7 @@ impl RunCommand {
                     }
                     result => {
                         let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                        if argv0_bytes.starts_with(dir.as_bytes()) {
                             // `self_exe_path()` failed and `argv[0]` is the shim
                             // under `BUN_NODE_DIR` (nested `--bun`). Using it as
                             // the target would recreate the #30711 self-loop; the
@@ -625,29 +610,16 @@ impl RunCommand {
                 }
             };
 
-            const NODE_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const BUN_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const DIR_Z: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
+            let links = [&b"/node"[..], b"/bun"]
+                .map(|name| bun_core::ZBox::from_vec([dir.as_bytes(), name].concat()));
 
             // Don't trust attacker-created entries in a shared temp dir
             // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
             // already exists, refuse to use it unless it's a directory we own
             // with no group/other write bits.
-            match bun_sys::mkdir(DIR_Z, 0o700) {
+            match bun_sys::mkdir(dir, 0o700) {
                 Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir) {
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
@@ -658,13 +630,13 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK] {
+            for dest in &links {
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on GIT_SHA_SHORT, so two
+                            // The dir is keyed only on the uid and GIT_SHA_SHORT, so two
                             // different binaries built at the same commit (e.g.
                             // side-by-side local builds being benchmarked)
                             // collide here. Blindly reusing the existing link
@@ -694,7 +666,7 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
+            path.extend_from_slice(dir.as_bytes());
             path.push(bun_paths::DELIMITER);
             Ok(())
         }

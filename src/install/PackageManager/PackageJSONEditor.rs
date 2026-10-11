@@ -983,6 +983,77 @@ fn resolve_catalog_literals(
     }
 }
 
+/// Removes every `name` entry of the dependency list `list`, and the list once nothing is left in it. What stays keeps its order, in the list and in `package_json`. Returns whether `name` was there.
+pub(crate) fn remove_entry(package_json: &mut Expr, list: &[u8], name: &[u8]) -> bool {
+    let Some(query) = package_json.as_property(list) else {
+        return false;
+    };
+    let Some(mut entries) = query.expr.data.e_object() else {
+        return false;
+    };
+    let before = entries.properties.len();
+    entries.properties.retain(|property| {
+        !property
+            .key
+            .and_then(|key| key.data.e_string())
+            .is_some_and(|key| key.eql_bytes(name))
+    });
+    if entries.properties.len() == before {
+        return false;
+    }
+    if entries.properties.is_empty() {
+        let _ = package_json
+            .data
+            .as_e_object_mut()
+            .properties
+            .remove(query.i as usize);
+    }
+    true
+}
+
+fn string_entry(
+    package_json: &Expr,
+    list: &[u8],
+    name: &[u8],
+) -> Option<bun_ast::StoreRef<E::EString>> {
+    let entry = package_json.as_property(list)?.expr.as_property(name)?;
+    entry.expr.data.e_string()
+}
+
+/// `--dev` / `--optional` / `--peer` moves an entry that another list has into that list; a bare `bun add` leaves it where it is.
+pub(crate) fn moves_to_target(manager: &PackageManager) -> bool {
+    !manager.options.enable.only_missing()
+        && manager.options.update.prop != DependencyGroup::DEPENDENCIES.prop
+}
+
+pub(crate) enum Declared {
+    Stays,
+    TakesSpec,
+    Removed,
+}
+
+/// What becomes of the entry that `list` already has for a package `bun add` puts into `target`. Without `move_to_target` this is only asked for a spec without a name (`package_json_write_back::fold_resolved_positionals`).
+pub(crate) fn fate_of_declared(list: &[u8], target: &[u8], move_to_target: bool) -> Declared {
+    let peer = DependencyGroup::PEER.prop;
+    if list == target {
+        Declared::TakesSpec
+    } else if !move_to_target {
+        // A peer entry and the entry of another list may share a name, so neither replaces the other.
+        if (list == peer) == (target == peer) {
+            Declared::TakesSpec
+        } else {
+            Declared::Stays
+        }
+    } else if list == peer {
+        Declared::Stays
+    } else if target == peer && list == DependencyGroup::DEV.prop {
+        // What provides the peer during development follows its range.
+        Declared::TakesSpec
+    } else {
+        Declared::Removed
+    }
+}
+
 /// Edits the dependency lists for `updates` and returns whether anything was rewritten; `trustedDependencies` is added later by `package_json_write_back::flush`.
 pub(crate) fn edit(
     manager: &mut PackageManager,
@@ -1025,6 +1096,13 @@ pub(crate) fn edit(
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.only_missing();
+    let move_to_target = moves_to_target(manager);
+    // `package_json_write_back::fold_resolved_positionals` did this to the lockfile rows.
+    let fold_positionals = !options.before_install
+        && manager.subcommand == Subcommand::Add
+        && manager.options.add_catalog.is_none();
+    // `(slot of a request, another slot that takes what it gets)`
+    let mut also_declared = Vec::new();
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -1036,7 +1114,59 @@ pub(crate) fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
-                // order-insensitive scan: `FOUR` is fine here
+                // A spec without a name (`bun add ./folder`, a tarball, a git URL) was written as `"<spec>": "<spec>"` before the install. It has a name now, which the file may declare already.
+                let resolved_name = if fold_positionals
+                    && !request.is_aliased
+                    && string_entry(current_package_json, dependency_list, request.get_name())
+                        .is_some()
+                {
+                    request
+                        .get_name_in_lockfile(&manager.lockfile)
+                        .filter(|name| !name.is_empty() && *name != request.get_name())
+                        .map(|name| arena_dup(arena, name))
+                } else {
+                    None
+                };
+                if let Some(name) = resolved_name {
+                    // The row of an optional peer is not folded into, so its entry is left to the rebuild below.
+                    let optional_peer = current_package_json
+                        .as_property(b"peerDependenciesMeta")
+                        .and_then(|meta| meta.expr.as_property(name))
+                        .and_then(|entry| entry.expr.as_property(b"optional"))
+                        .is_some_and(|optional| {
+                            matches!(&optional.expr.data, bun_ast::ExprData::EBoolean(b) if b.value)
+                        });
+                    let mut slot = None;
+                    for list in DependencyGroup::FOUR.map(|g| g.prop) {
+                        if optional_peer && list == DependencyGroup::PEER.prop {
+                            continue;
+                        }
+                        let Some(declared) = string_entry(current_package_json, list, name) else {
+                            continue;
+                        };
+                        match fate_of_declared(list, dependency_list, move_to_target) {
+                            Declared::Stays => {}
+                            Declared::Removed => {
+                                changed |= remove_entry(current_package_json, list, name);
+                            }
+                            // The dev entry beside a new peer entry follows it at the end.
+                            Declared::TakesSpec if move_to_target && list != dependency_list => {}
+                            Declared::TakesSpec => match slot {
+                                None => slot = Some(declared),
+                                Some(first) => also_declared.push((first, declared)),
+                            },
+                        }
+                    }
+                    if let Some(slot) = slot {
+                        remove_entry(current_package_json, dependency_list, request.get_name());
+                        request.e_string = Some(slot.as_ptr());
+                        remaining -= 1;
+                        changed = true;
+                        i += 1;
+                        continue 'loop_;
+                    }
+                }
+                // `move_to_target` visits every list; otherwise the first match ends the scan, so `FOUR` is fine here
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
@@ -1053,14 +1183,23 @@ pub(crate) fn edit(
                                                     == dependency::Tag::Catalog
                                             },
                                         );
+                                    let in_target_list =
+                                        strings::eql_long(list, dependency_list, true);
 
                                     // `bun update <name>` edits the slot in place; the rebuild below re-sorts the keys.
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && manager.subcommand != Subcommand::Update
-                                        && strings::eql_long(list, dependency_list, true)
+                                        && in_target_list
                                         && !keep_catalog_reference
                                     {
                                         replacing += 1;
+                                    } else if move_to_target && !in_target_list {
+                                        if let Declared::Removed =
+                                            fate_of_declared(list, dependency_list, true)
+                                        {
+                                            changed |=
+                                                remove_entry(current_package_json, list, name);
+                                        }
                                     } else {
                                         if manager.subcommand == Subcommand::Update
                                             && options.before_install
@@ -1120,6 +1259,9 @@ pub(crate) fn edit(
                                         }
                                     }
                                 }
+                                if move_to_target {
+                                    continue 'dependency_group;
+                                }
                                 break;
                             } else {
                                 // For non-aliased positionals where `get_name()` returns the
@@ -1134,6 +1276,7 @@ pub(crate) fn edit(
                                 // earlier dependency list isn't re-counted across iterations.
                                 if request.e_string.is_none()
                                     && !request.is_aliased
+                                    && (!move_to_target || list == dependency_list)
                                     && (request.version.tag == dependency::Tag::Github
                                         || request.version.tag == dependency::Tag::Git
                                         || request.version.tag == dependency::Tag::Tarball
@@ -1430,9 +1573,20 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
+                // Still unresolved after the install: an optional or peer dependency that nothing satisfies. The entry stays as declared.
+                if manager.subcommand == Subcommand::Update && !options.before_install {
+                    // --latest put `latest` over the declared literal before the install.
+                    if update_to_latest
+                        && let Some(entry) = manager.updating_packages.get(request.name)
+                        && e_string.data.slice() != &*entry.original_version_literal
+                    {
+                        changed = true;
+                        e_string.data = arena_dup(arena, &entry.original_version_literal).into();
+                    }
+                    continue;
+                }
                 // The entry `bun update` is updating keeps its alias target whatever gets resolved.
                 let existing: Option<&[u8]> = (manager.subcommand == Subcommand::Update
-                    && options.before_install
                     && !e_string.is_blank())
                 .then(|| e_string.data.slice());
                 let requested: &[u8] = request.version.literal.slice(request.version_buf());
@@ -1549,6 +1703,24 @@ pub(crate) fn edit(
                 changed = true;
                 e_string.data = bun_ast::StoreStr::new(new_literal);
             }
+        }
+    }
+    if move_to_target && dependency_list == DependencyGroup::PEER.prop {
+        for request in updates.iter() {
+            let name = request.get_resolved_name(&manager.lockfile);
+            also_declared.extend(
+                string_entry(current_package_json, dependency_list, name).zip(string_entry(
+                    current_package_json,
+                    DependencyGroup::DEV.prop,
+                    name,
+                )),
+            );
+        }
+    }
+    for (slot, mut other) in also_declared {
+        if other.data.slice() != slot.data.slice() {
+            changed = true;
+            other.data = slot.data;
         }
     }
     Ok(changed)

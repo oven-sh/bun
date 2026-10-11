@@ -1091,6 +1091,61 @@ test("bun pm whoami still works", async () => {
   expect(exitCode).toBe(1);
 });
 
+describe.concurrent("bun pm whoami user-agent", () => {
+  // The host may itself be a CI runner. Drop its `CI` so each case decides.
+  // AGOLA_GIT_REF is the first probe in the vendor table, so no other marker
+  // that leaks from the host can shadow it.
+  const cleanEnv = { ...bunEnv };
+  delete cleanEnv.CI;
+
+  async function whoamiUserAgent(extraEnv: Record<string, string>): Promise<string | null> {
+    let userAgent: string | null = null;
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        userAgent = req.headers.get("user-agent");
+        return Response.json({ username: "whoami-ua" });
+      },
+    });
+    using dir = tempDir("bun-pm-whoami-ua", {
+      "package.json": JSON.stringify({ name: "whoami-ua", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${registry.port}`, token: "whoami-ua-token" },
+        },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...cleanEnv, ...extraEnv },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("whoami-ua\n");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return userAgent;
+  }
+
+  const baseUserAgent = `Bun/${Bun.version} ${process.platform} ${process.arch} workspaces/false`;
+
+  test("names the CI vendor", async () => {
+    expect(await whoamiUserAgent({ AGOLA_GIT_REF: "refs/heads/main" })).toBe(`${baseUserAgent} ci/agola-ci`);
+  });
+
+  test("CI=false is not CI", async () => {
+    expect(await whoamiUserAgent({ CI: "false" })).toBe(baseUserAgent);
+  });
+
+  test("CI=false wins over a vendor variable", async () => {
+    expect(await whoamiUserAgent({ CI: "false", AGOLA_GIT_REF: "refs/heads/main" })).toBe(baseUserAgent);
+  });
+});
+
 describe.concurrent("bun pm whoami against a registry with a self-signed certificate", () => {
   async function whoami(env: NodeJS.Dict<string>) {
     const requests: string[] = [];
@@ -1459,7 +1514,7 @@ it("bun install treats an empty BUN_INSTALL_CACHE_DIR as unset instead of cachin
   const isManifest = (name: string) => name.endsWith(".npm");
   expect((await readdirSorted(package_dir)).filter(name => name.includes("@@") || isManifest(name))).toEqual([]);
   const homeCache = await readdirSorted(join(String(side), "home", ".bun", "install", "cache"));
-  expect(homeCache).toContain("bar@0.0.2@@localhost@@@1");
+  expect(homeCache).toContainEqual(expect.stringMatching(/^bar@0\.0\.2@@localhost__[0-9a-f]{16}@@@1$/));
   // The manifest name hashes the registry URL, which includes the port.
   expect(homeCache.filter(isManifest)).toHaveLength(1);
 });
@@ -1834,6 +1889,29 @@ describe.concurrent("bun pm cache prune", () => {
     });
     expect(await readdirSorted(join(cache, "old-pkg"))).toEqual(["1.0.0@@@1"]);
     expect(await readdirSorted(join(cache, "old-pkg@1.0.0@@@1"))).toEqual(["index.js"]);
+  });
+
+  test("tarball entries and the entries of a registry that shares its host are packages", async () => {
+    const stale = [
+      // Named by the integrity in bun.lock, and by a hash of the path or URL as Bun 1.4 did.
+      "@T@sha512-00112233445566778899aabbccddeeff@@@1",
+      "@T@85f77fa09e18a07f@@@1",
+      "pkg@1.0.0@@localhost__0123456789abcdef@@@1",
+    ];
+    const recent = ["@T@sha512-ffeeddccbbaa99887766554433221100@@@1", "pkg@2.0.0@@localhost__0123456789abcdef@@@1"];
+    using dir = tempDir("pm-cache-prune-names", {
+      "package.json": JSON.stringify({ name: "cache-prune-names" }),
+      cache: Object.fromEntries([...stale, ...recent].map(entry => [entry, { "package.json": "{}" }])),
+    });
+    const cache = join(String(dir), "cache");
+    for (const entry of stale) utimesSync(join(cache, entry), daysAgo(40), daysAgo(40));
+
+    expect(await prune(String(dir), cache)).toEqual({
+      stdout: "Removed 3 packages older than 30 days (6 bytes)\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await readdirSorted(cache)).toEqual(recent.toSorted());
   });
 
   test("--max-age selects the age threshold", async () => {

@@ -11,7 +11,7 @@ use bun_http::{
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
 use bun_threading::thread_pool::Batch;
-use bun_url::URL;
+use bun_url::{PercentEncoding, URL};
 use std::io::Write as _;
 
 use crate::extract_tarball;
@@ -59,8 +59,6 @@ pub struct NetworkTask {
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
     pub(crate) header_buf: Box<[u8]>,
-    /// Read back when a 401/403 is reported (`Options::missing_credentials_note`).
-    pub(crate) authorization: Authorization,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -385,30 +383,26 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 );
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
-fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
+/// What `Scope::authorization_parts` returned for the URL of the request.
+type AuthorizationParts<'a> = Option<(&'static [u8], &'a [u8])>;
+
+fn append_auth(header_builder: &mut HeaderBuilder, authorization: AuthorizationParts<'_>) {
     // Routing through `format_args!`/`BStr` Display would be
     // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
     // exact byte count reserved by `count_auth`. Use raw-byte append.
-    if !scope.token.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Bearer ", &scope.token);
-    } else if !scope.auth.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Basic ", &scope.auth);
-    } else {
+    let Some((scheme, value)) = authorization else {
         return;
-    }
+    };
+    header_builder.append_bytes_value("Authorization", scheme, value);
     header_builder.append("npm-auth-type", "legacy");
 }
 
-fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    if !scope.token.is_empty() {
-        header_builder.count("Authorization", "");
-        header_builder.content.cap += "Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
-        header_builder.count("Authorization", "");
-        header_builder.content.cap += "Basic ".len() + scope.auth.len();
-    } else {
+fn count_auth(header_builder: &mut HeaderBuilder, authorization: AuthorizationParts<'_>) {
+    let Some((scheme, value)) = authorization else {
         return;
-    }
+    };
+    header_builder.count("Authorization", "");
+    header_builder.content.cap += scheme.len() + value.len();
     header_builder.count("npm-auth-type", "legacy");
 }
 
@@ -425,11 +419,10 @@ fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     Some((&rest[..at], without_userinfo.into_boxed_slice()))
 }
 
-/// `Basic base64(userinfo)` as written (no percent-decoding, `user` means `user:`), matching what npm sends via node's `auth` option.
+/// `Basic base64(user:pass)` with the userinfo percent-decoded, as curl and node's `http.get` send it. `user` alone means `user:`.
 fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
     const SCHEME: &[u8] = b"Basic ";
-    let mut user_pass = Vec::with_capacity(userinfo.len() + 1);
-    user_pass.extend_from_slice(userinfo);
+    let mut user_pass = PercentEncoding::decode_lenient_alloc(userinfo).into_vec();
     if !strings::contains_char(userinfo, b':') {
         user_pass.push(b':');
     }
@@ -549,8 +542,25 @@ impl NetworkTask {
                 name
             };
 
+            // The registry is a directory: with a "/"-terminated base the WHATWG join appends the name instead of
+            // replacing the last segment. It discards a query or fragment anyway, so they are cut first.
+            let registry_href = scope.url.href();
+            let base_storage;
+            let base: &[u8] = if scope.url.url().has_http_like_protocol() {
+                let path_end =
+                    strings::index_of_any(registry_href, b"?#").unwrap_or(registry_href.len());
+                base_storage = [
+                    strings::without_trailing_slash(&registry_href[..path_end]),
+                    b"/",
+                ]
+                .concat();
+                &base_storage
+            } else {
+                registry_href
+            };
+
             let tmp = bun_url::join(
-                &bun_core::String::borrow_utf8(scope.url.href()),
+                &bun_core::String::borrow_utf8(base),
                 &bun_core::String::borrow_utf8(encoded_name),
             );
 
@@ -609,7 +619,8 @@ impl NetworkTask {
 
             {
                 let joined = URL::parse(&url_bytes);
-                let registry = scope.url.url();
+                // The base the join used, so that ".." cannot escape a slash-less registry path.
+                let registry = URL::parse(base);
                 let registry_dir_end =
                     strings::last_index_of_char(registry.pathname, b'/').map_or(0, |i| i + 1);
                 let registry_dir = &registry.pathname[..registry_dir_end];
@@ -659,11 +670,11 @@ impl NetworkTask {
             }
         }
 
-        self.authorization = Authorization::AllowAuthorization;
+        let authorization = scope.authorization_parts(&URL::parse(&self.url_buf));
 
         let mut header_builder = HeaderBuilder::default();
 
-        count_auth(&mut header_builder, scope);
+        count_auth(&mut header_builder, authorization);
 
         if !etag.is_empty() {
             header_builder.count("If-None-Match", etag);
@@ -684,7 +695,7 @@ impl NetworkTask {
             }
             header_builder.allocate()?;
 
-            append_auth(&mut header_builder, scope);
+            append_auth(&mut header_builder, authorization);
 
             if !etag.is_empty() {
                 header_builder.append("If-None-Match", etag);
@@ -837,7 +848,8 @@ impl NetworkTask {
         let pm = self.pm_mut();
 
         let tarball_url = tarball_.url.slice();
-        self.url_buf = if tarball_url.is_empty() {
+        let built_from_registry_url = tarball_url.is_empty();
+        self.url_buf = if built_from_registry_url {
             // SAFETY: `value` is the `Npm` variant on this code path —
             // `for_tarball` is only reached for npm tarball downloads
             // (callers gate on `resolution.tag == .npm`).
@@ -885,46 +897,48 @@ impl NetworkTask {
             None => None,
         };
 
-        self.authorization = authorization;
+        // One parse decides the authority, the wire path and the `.npmrc` key; a URL it cannot settle is requested as written with no line.
+        let normalized = if built_from_registry_url {
+            npm::registry::is_normalized_tarball_url(&self.url_buf)
+        } else if let Some(normalized) = npm::registry::normalize_tarball_url(&self.url_buf) {
+            self.url_buf = normalized;
+            true
+        } else {
+            false
+        };
+
         let credentials = match authorization {
             Authorization::NoAuthorization => None,
-            Authorization::AllowAuthorization => pm
-                .options
-                .tarball_credentials(scope, &URL::parse(&self.url_buf)),
+            Authorization::AllowAuthorization => {
+                let url = URL::parse(&self.url_buf);
+                pm.options
+                    .tarball_credentials(scope, &url, normalized)
+                    .and_then(|credentials| credentials.authorization_parts(&url))
+            }
         };
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if let Some(credentials) = credentials {
-            count_auth(&mut header_builder, credentials);
+        // Configured credentials win over the URL's userinfo, as in npm.
+        match (credentials, &url_authorization) {
+            (Some(_), _) => {
+                count_auth(&mut header_builder, credentials);
+                header_builder.allocate()?;
+                append_auth(&mut header_builder, credentials);
+            }
+            (None, Some(value)) => {
+                header_builder.count("Authorization", value);
+                header_builder.allocate()?;
+                header_builder.append("Authorization", value);
+            }
+            (None, None) => {}
         }
-
-        // Registry credentials win over URL userinfo, as in npm.
-        let url_authorization = match url_authorization {
-            Some(value) if header_builder.header_count == 0 => {
-                header_builder.count("Authorization", &value);
-                Some(value)
-            }
-            _ => None,
-        };
-
-        let header_buf: &'static [u8] = if header_builder.header_count > 0 {
-            header_builder.allocate()?;
-            match (&url_authorization, credentials) {
-                (Some(value), _) => header_builder.append("Authorization", value),
-                (None, Some(credentials)) => append_auth(&mut header_builder, credentials),
-                (None, None) => {}
-            }
-            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
-            self.header_buf = header_builder.content.move_to_slice();
-            // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
-            unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
-        } else {
-            self.header_buf = Box::default();
-            b""
-        };
+        debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
+        self.header_buf = header_builder.content.move_to_slice();
+        // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
+        let header_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&*self.header_buf) };
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
@@ -1079,7 +1093,6 @@ impl NetworkTask {
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
-            addr_of_mut!((*slot).authorization).write(Authorization::NoAuthorization);
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

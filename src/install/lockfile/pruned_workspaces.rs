@@ -6,8 +6,8 @@ use bun_semver::string::Builder as StringBuilderNs;
 use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile_real::{CatalogMap, Lockfile};
-use crate::{PackageID, PackageNameHash, ResolutionTag};
+use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock};
+use crate::{PackageID, PackageManager, PackageNameHash, ResolutionTag};
 
 pub(crate) fn workspace_is_missing_on_disk(
     lockfile: &Lockfile,
@@ -21,6 +21,28 @@ pub(crate) fn workspace_is_missing_on_disk(
         package_json_path.append(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()));
     let _ = package_json_path.append(b"package.json");
     !bun_sys::exists_z(package_json_path.slice_z())
+}
+
+/// An edge bun.lock may leave unresolved (`may_stay_unresolved`) is treated as unresolved when
+/// `target` is a pruned workspace. Not an edge of a local package: its package.json is on disk
+/// and names a workspace that is not (`exit_if_survivor_depends_on_missing`).
+pub(crate) fn skips_link_to_pruned_workspace(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    dependent: PackageID,
+    dep: &Dependency,
+    target: PackageID,
+) -> bool {
+    let pruned = &manager.summary.pruned_workspaces;
+    if pruned.is_empty() || !bun_lock::may_stay_unresolved(dep) {
+        return false;
+    }
+    let pkgs = lockfile.packages.slice();
+    let resolutions = pkgs.items_resolution();
+    // A registry package can share the name of a pruned workspace.
+    resolutions[target as usize].tag == ResolutionTag::Workspace
+        && pruned.contains(&pkgs.items_name_hash()[target as usize])
+        && !resolutions[dependent as usize].tag.is_local_package()
 }
 
 pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path: &[u8]) -> bool {

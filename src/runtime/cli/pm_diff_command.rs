@@ -11,13 +11,13 @@ use bun_core::fmt as bun_fmt;
 use bun_core::strings::{self, StringOrTinyString};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
-use bun_install::dependency;
+use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::npm::{self, PackageManifest};
+use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
 use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
-use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
@@ -101,13 +101,15 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
+    // Two folders compare as written: the patch between them has to apply to the files on disk.
+    let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
     if let (Spec::Dir(_) | Spec::Tarball(_), Spec::Registry { name, .. }) =
         (&left_spec, &mut right_spec)
     {
         if name.is_empty() {
-            let local = materialize(pm, &left_spec)?;
+            let local = materialize(pm, &left_spec, as_published)?;
             *name = package_name_in(&local).unwrap_or_else(|| {
                 Status::clear();
                 Output::err_generic(
@@ -119,7 +121,7 @@ pub(crate) fn exec(
             left_early = Some(local);
         }
     }
-    let mut right = materialize(pm, &right_spec)?;
+    let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
             *name = package_name_in(&right).unwrap_or_else(|| {
@@ -134,7 +136,7 @@ pub(crate) fn exec(
     }
     let mut left = match left_early {
         Some(tree) => tree,
-        None => materialize(pm, &left_spec)?,
+        None => materialize(pm, &left_spec, as_published)?,
     };
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
@@ -280,7 +282,8 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
         },
         [a, b] => {
             let left = classify(a);
-            let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && Semver::Version::parse(Semver::SlicedString::init(name, name)).valid);
+            // `2`, `^2`, `>=2 <4`: what package.json would read as a version or range, not a name or dist-tag.
+            let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && dependency::Tag::infer(name) == dependency::Tag::Npm);
             let right = match (classify(b), &left) {
                 // `name@1 2` — a bare second version reuses the first name.
                 (r, Spec::Registry { name, .. }) if is_bare_version(&r) => {
@@ -454,7 +457,11 @@ impl Drop for Status {
     }
 }
 
-fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Error> {
+fn materialize(
+    pm: &mut PackageManager,
+    spec: &Spec,
+    as_published: bool,
+) -> Result<Tree, crate::Error> {
     let _status = match spec {
         Spec::Registry { name, version } => {
             Status::show("fetching", &[&name[..], b"@", &version[..]].concat())
@@ -480,7 +487,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
             read_tarball_into(&bytes, &mut tree)?;
             Ok(tree)
         }
-        Spec::Dir(path) => read_dir_tree(path),
+        Spec::Dir(path) => read_dir_tree(path, as_published.then_some(pm)),
     }
 }
 
@@ -541,7 +548,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
     Ok(())
 }
 
-fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
+/// With `as_published_by`, `workspace:` and `catalog:` versions read as `bun pm pack` publishes them.
+fn read_dir_tree(
+    root: &[u8],
+    as_published_by: Option<&mut PackageManager>,
+) -> Result<Tree, crate::Error> {
     let mut tree = Tree {
         label: root.to_vec(),
         files: BTreeMap::new(),
@@ -569,6 +580,8 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+            // Before the parse below: this one parses other package.json files.
+            let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
             if let Ok(json) = bun_parsers::json::parse_utf8(
@@ -613,6 +626,10 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                         Err(err) => fail(err, rel),
                     }
                 }
+                let pkg = match &manifests {
+                    Some(manifests) => with_published_versions(pkg, json, manifests, root),
+                    None => pkg,
+                };
                 tree.files.insert(b"package.json".to_vec(), pkg);
                 root_fd.close();
                 return Ok(tree);
@@ -694,6 +711,76 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     Ok(tree)
 }
 
+/// What `bun pm pack` in `dir` resolves `workspace:` and `catalog:` through: this project's package.json files, if
+/// `dir` is its root or one of its workspaces. `manifest` is `dir`'s package.json.
+fn manifests_for(
+    pm: &mut PackageManager,
+    dir: &[u8],
+    manifest: &[u8],
+) -> Option<WorkspaceManifests> {
+    if !strings::contains(manifest, b"workspace:") && !strings::contains(manifest, b"catalog:") {
+        return None;
+    }
+    // The manager is in the project's root. Run outside of a project, there is no package.json to load.
+    if !bun_sys::exists_z(bun_core::zstr!("package.json")) {
+        return None;
+    }
+    WorkspaceManifests::try_load(pm)
+        .ok()
+        .filter(|manifests| manifests.contains_package_dir(dir))
+}
+
+/// `manifest` (`dir`'s package.json, parsed as `json`) with its `workspace:` and `catalog:` versions as published.
+fn with_published_versions(
+    manifest: Vec<u8>,
+    json: bun_ast::Expr,
+    manifests: &WorkspaceManifests,
+    dir: &[u8],
+) -> Vec<u8> {
+    use crate::cli::pack_command::{Substitution, for_each_dependency};
+    // The string token of each version to replace (its start and end in `manifest`), and what replaces it.
+    let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+    for_each_dependency(json, |_, dependency| {
+        let (Some(name), Some(version)) = (&dependency.key, &dependency.value) else {
+            return;
+        };
+        let (Some(name), Some(spec)) = (
+            name.as_utf8_string_literal(),
+            version.as_utf8_string_literal(),
+        ) else {
+            return;
+        };
+        // A version that does not resolve stays as written: pack refuses to publish it.
+        let Some(Ok(published)) =
+            Substitution::for_spec(spec).map(|found| found.published(manifests, dir, name))
+        else {
+            return;
+        };
+        // So does one spelled with JSON escapes.
+        let Ok(at) = usize::try_from(version.loc.start) else {
+            return;
+        };
+        let end = at + spec.len() + 2;
+        if manifest.get(at + 1..end - 1) == Some(spec) {
+            edits.push((at, end, published));
+        }
+    });
+    bun_collections::index_sort::sort_vec_unstable_by(&mut edits, |a, b| a.0.cmp(&b.0));
+    let mut out: Vec<u8> = Vec::with_capacity(manifest.len());
+    let mut copied = 0usize;
+    for (at, end, published) in &edits {
+        out.extend_from_slice(&manifest[copied..*at]);
+        let _ = write!(
+            out,
+            "{}",
+            bun_fmt::format_json_string_utf8(published, Default::default())
+        );
+        copied = *end;
+    }
+    out.extend_from_slice(&manifest[copied..]);
+    out
+}
+
 /// Fetches `name`'s manifest, resolves `version` (exact, range, or dist-tag), downloads that tarball and unpacks it in memory.
 fn fetch_registry_tree(
     pm: &mut PackageManager,
@@ -721,6 +808,7 @@ fn fetch_registry_tree(
         pm,
         scope,
         URL::parse(manifest_url),
+        true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         Some((name, version)),
@@ -816,10 +904,16 @@ fn fetch_registry_tree(
             },
         )?;
     }
+    // The same serialisation `bun install` requests and keys `.npmrc` lines by.
+    let (tarball_url, normalized) = match npm::registry::normalize_tarball_url(&tarball_url) {
+        Some(normalized) => (normalized, true),
+        None => (tarball_url.into_boxed_slice(), false),
+    };
     let tarball = registry_get(
         pm,
         scope,
         URL::parse(&tarball_url),
+        normalized,
         b"application/octet-stream",
         None,
     )?;
@@ -844,40 +938,27 @@ fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
     url: URL<'_>,
+    normalized: bool,
     accept: &[u8],
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
-    // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
-    let same_origin = {
-        let registry = scope.url.url();
-        url.protocol == registry.protocol
-            && url.hostname == registry.hostname
-            && url.get_port_auto() == registry.get_port_auto()
-    };
-    let (token, auth): (&[u8], &[u8]) = if same_origin {
-        (&scope.token, &scope.auth)
-    } else {
-        (b"", b"")
-    };
-    if !token.is_empty() {
+    // The same rule as `bun install` decides which credentials, if any, follow the URL.
+    let authorization = pm
+        .options
+        .tarball_credentials(scope, &url, normalized)
+        .and_then(|credentials| credentials.authorization_parts(&url));
+    if let Some((scheme, value)) = authorization {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + token.len();
-        headers.count(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + auth.len();
+        headers.content.cap += scheme.len() + value.len();
         headers.count(b"npm-auth-type", b"legacy");
     }
     headers.allocate()?;
     headers.append(b"Accept", accept);
     // Raw-byte append: a non-UTF-8 token through Display would grow past the reserved count.
-    if !token.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Bearer ", token);
-        headers.append(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Basic ", auth);
+    if let Some((scheme, value)) = authorization {
+        headers.append_bytes_value(b"Authorization", scheme, value);
         headers.append(b"npm-auth-type", b"legacy");
     }
 

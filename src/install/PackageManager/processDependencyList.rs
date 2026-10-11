@@ -3,11 +3,7 @@ use core::cmp::Ordering;
 
 use bun_collections::index_sort;
 use bun_core::{Global, Output, strings};
-use bun_paths::dirname;
-use bun_paths::platform;
-use bun_paths::resolve_path::join_abs_string_z;
 use bun_semver::{ExternalString, String as SemverString};
-use bun_sys as sys;
 
 use crate::bun_json as json;
 use crate::bun_json::Expr;
@@ -128,16 +124,34 @@ impl PackageManager {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
-            let is_git = matches!(
-                existing.resolution.tag,
-                ResolutionTag::Git | ResolutionTag::Github
-            );
-            // A nested git ref can move, so `bun update` resolves the dependencies again.
-            if !(self.to_update && from_lockfile && is_git) {
+            let moved = match existing.resolution.tag {
+                // A nested git ref can move, so `bun update` resolves the dependencies again.
+                ResolutionTag::Git | ResolutionTag::Github => self.to_update,
+                // Only `repins_tarball` reads one again that bun.lock has.
+                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                    existing.meta.integrity != data.integrity
+                }
+                _ => false,
+            };
+            if !(from_lockfile && moved) {
                 return existing;
+            }
+            if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
+                let name = self.lockfile.str(&existing.name).to_vec();
+                self.log_mut().add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "\"{}\" has changed: bun.lock recorded {}, now {}",
+                        bstr::BStr::new(&name),
+                        existing.meta.integrity,
+                        data.integrity,
+                    ),
+                );
             }
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
+            existing.bin = package.bin;
             if data.integrity.tag.is_supported() {
                 existing.meta.integrity = data.integrity;
             }
@@ -215,16 +229,6 @@ impl PackageManager {
                             self.crash();
                         }
 
-                        let has_scripts = pkg.scripts.has_any() || {
-                            let dir = dirname(&json.path).unwrap_or(b"");
-                            let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-                                dir,
-                                &[b"binding.gyp" as &[u8]],
-                            );
-                            sys::exists(binding_dot_gyp_path.as_bytes())
-                        };
-
-                        pkg.meta.set_has_install_script(has_scripts);
                         break 'package pkg;
                     }
 
@@ -283,15 +287,6 @@ impl PackageManager {
                     }
                     self.crash();
                 }
-
-                let has_scripts = package.scripts.has_any() || {
-                    let dir = dirname(&json.path).unwrap_or(b"");
-                    let binding_dot_gyp_path =
-                        join_abs_string_z::<platform::Auto>(dir, &[b"binding.gyp" as &[u8]]);
-                    sys::exists(binding_dot_gyp_path.as_bytes())
-                };
-
-                package.meta.set_has_install_script(has_scripts);
 
                 Some(self.append_extracted_package(package, data, package_id))
             }

@@ -1228,6 +1228,8 @@ pub struct Features {
     pub workspaces: bool,
     pub patched_dependencies: bool,
     pub check_for_duplicate_dependencies: bool,
+    /// The members' versions are not known to this parse, so a `workspace:` range counts as satisfied.
+    pub unchecked_workspace_ranges: bool,
 }
 impl Default for Features {
     fn default() -> Self {
@@ -1243,6 +1245,7 @@ impl Default for Features {
             workspaces: false,
             patched_dependencies: false,
             check_for_duplicate_dependencies: false,
+            unchecked_workspace_ranges: false,
         }
     }
 }
@@ -1266,6 +1269,7 @@ impl Features {
             workspaces: false,
             patched_dependencies: false,
             check_for_duplicate_dependencies: false,
+            unchecked_workspace_ranges: false,
         }
     }
 

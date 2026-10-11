@@ -120,6 +120,11 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
+    /// `open` found no file at the path, as opposed to one it could not read.
+    pub fn is_missing_file(&self) -> bool {
+        matches!(self.get_errno(), E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG)
+    }
+
     /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context. (The `Box<[u8]>`
     /// fields prevent a true `const` item.)
     #[inline]

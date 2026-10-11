@@ -13,6 +13,7 @@ use bun_sys::{self as sys, Fd};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 
+use crate::cache_publish::StagedEntry;
 use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{
@@ -432,6 +433,7 @@ impl PatchTask {
             };
 
         let system_tmpdir = self.tempdir;
+        let staging = StagedEntry::new(system_tmpdir, tempdir_name);
 
         let pkg_name = patch.pkgname;
 
@@ -556,35 +558,14 @@ impl PatchTask {
             }
         }
 
-        // 6. rename to cache dir
-        let mut path_in_tmpdir_buf = bun_paths::path_buffer_pool::get();
-        let path_in_tmpdir = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut path_in_tmpdir_buf.0,
-            &[
-                tempdir_name.as_bytes(),
-                // tempdir_name,
-            ],
-        );
-
+        // 6. rename to cache dir; the name holds the hash of the patch, and a folder there is a hit
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
-        if let Err(e) = sys::renameat_concurrently(
-            system_tmpdir,
-            path_in_tmpdir,
-            patch.cache_dir,
-            cache_dir_subpath_z,
-            sys::RenameOptions {
-                move_fallback: true,
-                ..Default::default()
-            },
-        ) {
+        if let Err(mut e) = staging.publish(patch.cache_dir, cache_dir_subpath_z, &|_| true) {
+            e.err = e.err.with_path(cache_dir_subpath_z.as_bytes());
             log.add_error_fmt_opts(
-                format_args!(
-                    "renaming changes to cache dir: {}",
-                    e.with_path(cache_dir_subpath_z.as_bytes())
-                ),
+                format_args!("renaming changes to cache dir: {}", e),
                 Default::default(),
             );
-            return Ok(());
         }
         Ok(())
     }

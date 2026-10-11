@@ -838,6 +838,12 @@ describe("bun pm cache pack", () => {
       expect(r.code).toBe(0);
       expect(entries(restored)).toEqual(entries(box.cache));
       expect(readdirSync(box.tmp)).toEqual([]);
+      // Tarballs by the integrity in bun.lock, and a registry that is one of several its host can have.
+      expect(entryNames(restored)).toEqual([
+        expect.stringMatching(/^@T@sha512-[0-9a-f]{32}@@@1$/),
+        expect.stringMatching(/^@T@sha512-[0-9a-f]{32}@@@1$/),
+        ...Array.from({ length: installedCount - 2 }, () => expect.stringMatching(/@@localhost__[0-9a-f]{16}@@@1$/)),
+      ]);
 
       // The index the extractor leaves next to each npm entry.
       for (const name of entryNames(restored).filter(name => !name.startsWith("@T@"))) {

@@ -4060,10 +4060,14 @@ patchedDependencies:
 
   // The YAML parser charges an alias the depth of what it names, so these are too deep like the same tree written out.
   describe("a deep chain of YAML aliases", () => {
-    test.concurrent("in pnpm-lock.yaml is a parse error", async () => {
+    test.concurrent.each([
+      ["", undefined],
+      // The parser gives `&b` no node, and what came before it in `&a` still counts.
+      [", each link followed by an anchor on an alias", "{&b\n      *scalar : 1}"],
+    ])("in pnpm-lock.yaml%s is a parse error", async (_, sibling) => {
       using dir = tempDir("pnpm-v9-alias-chain-lockfile", {
         "package.json": JSON.stringify({ name: "alias-chain" }),
-        "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\n${yamlAliasChain("unused")}`,
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\nscalar: &scalar 1\n${yamlAliasChain("unused", sibling)}`,
       });
 
       const { stderr, exitCode } = await migrate(String(dir));
@@ -4072,6 +4076,19 @@ patchedDependencies:
       expect(stderr).toContain("error: failed to migrate lockfile: InvalidLockfile");
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
       expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("is not what more aliases than the stack has levels are when they do not nest", async () => {
+      const pairs = Array.from({ length: 12_000 }, (_, i) => `  x${i}: &x${i} {z: 1}\n  y${i}: &y${i} {w: *x${i}}\n`);
+      using dir = tempDir("pnpm-v9-alias-pairs", {
+        "package.json": JSON.stringify({ name: "alias-pairs" }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\nunused:\n${pairs.join("")}`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
     });
 
     test.concurrent("in pnpm-workspace.yaml fails the install", async () => {
@@ -4089,6 +4106,30 @@ patchedDependencies:
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
       expect(exitCode).toBe(1);
     });
+  });
+
+  // How deep the parser goes depends on the build. Whatever it accepts the migration has to cope with.
+  test.concurrent("pnpm-lock.yaml nested as deep as the YAML parser accepts is migrated", async () => {
+    const depths = [250, 500, 750, 1000, 1500, ...Array.from({ length: 17 }, (_, i) => 2000 + 500 * i)];
+    // One at a time: a debug build takes 250 MB per process.
+    const outcomes: string[] = [];
+    for (const depth of depths) {
+      using dir = tempDir("pnpm-v9-deep-literal", {
+        "package.json": JSON.stringify({ name: "deep-literal" }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\nunused: ${Buffer.alloc(depth * 4, "{a: ")}1${Buffer.alloc(depth, "}")}\n`,
+      });
+      const { stderr, exitCode } = await migrate(String(dir));
+      outcomes.push(
+        stderr.includes("migrated lockfile from pnpm-lock.yaml") && exitCode === 0
+          ? "migrated"
+          : stderr.includes("warn: Failed to parse pnpm-lock.yaml.") && exitCode === 1
+            ? "refused"
+            : `depth ${depth}: exit ${exitCode}\n${stderr.slice(-600)}`,
+      );
+    }
+
+    const refusedFrom = outcomes.indexOf("refused");
+    expect(outcomes).toEqual(depths.map((_, i) => (refusedFrom === -1 || i < refusedFrom ? "migrated" : "refused")));
   });
 
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {
@@ -5055,7 +5096,7 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).toContain(
-        "pnpm.onlyBuiltDependencies to trustedDependencies, pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json",
+        "copied pnpm.onlyBuiltDependencies to trustedDependencies, copied pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json",
       );
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);

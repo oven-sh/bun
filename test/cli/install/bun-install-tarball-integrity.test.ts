@@ -1,10 +1,10 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { rm, writeFile } from "fs/promises";
+import { realpath, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { join } from "path";
+import { dirname, join } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -305,7 +305,11 @@ describe.concurrent("tarball integrity", () => {
       expect(err).not.toContain("error:");
       expect(await proc.exited).toBe(0);
       // Package should be installed
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
     });
   });
 
@@ -515,23 +519,30 @@ describe.concurrent("tarball integrity", () => {
       expect(err).not.toContain("Integrity check failed");
       expect(err).not.toContain("error:");
       expect(await proc.exited).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
     });
   });
 });
 
-// A `file:` tarball's resolution is the path written in package.json (`pkg.tgz`),
-// which names a different tarball in every project sharing the cache, and an
-// install from a lockfile never reads the tarball itself. So the cache entry is
-// keyed by the integrity the lockfile pins, not by that path: two projects (or two
-// branches of one project) with different tarballs at the same path get separate
-// entries, and a lockfile that does not pin an integrity cannot name an entry and
-// has the tarball read instead.
-describe.concurrent.each(["hoisted", "isolated"] as const)("local tarball cache entries (%s)", linker => {
-  async function tarball(exported: string) {
+// A `file:` path or a URL says where a tarball is, not which bytes it holds: the path
+// written in package.json (`pkg.tgz`) names another tarball in every project that
+// shares the cache, and both can hold other bytes tomorrow. Only the integrity in
+// bun.lock says which bytes were meant, so that names the cache entry. Two projects,
+// or two branches of one, get separate entries, an entry is never replaced, and a
+// lockfile that does not record an integrity cannot name one and has the tarball read.
+describe.concurrent.each(
+  (["file:", "URL"] as const).flatMap(kind =>
+    (["hoisted", "isolated"] as const).map(linker => [kind, linker] as const),
+  ),
+)("%s tarball cache entries (%s)", (kind, linker) => {
+  async function tarball(exported: string, manifest: object = {}, name = "pkg") {
     const tgz = await new Bun.Archive(
       {
-        "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        "package/package.json": JSON.stringify({ name, version: "1.0.0", ...manifest }),
         "package/index.js": `module.exports = ${JSON.stringify(exported)};\n`,
       },
       { compress: "gzip" },
@@ -543,106 +554,334 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("local tarball cache 
       cacheEntry: `@T@sha512-${digest.subarray(0, 16).toString("hex")}@@@1`,
     };
   }
+  type Tarball = Awaited<ReturnType<typeof tarball>>;
 
-  function project(tgz: Buffer, extraFiles: Record<string, string> = {}) {
+  /**
+   * Projects next to each other that share `cache/`. Each depends on `pkg.tgz`: a file of its own, or the one URL.
+   * `put` makes a tarball what that path or URL holds from now on.
+   */
+  function sandbox(name: string, projects: Record<string, Record<string, string>>) {
+    const served = new Map<string, Buffer>();
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        const body = served.get(pathname);
+        return body ? new Response(body) : new Response("not found", { status: 404 });
+      },
+    });
+    const spec = kind === "URL" ? `${server.url}pkg.tgz` : "file:pkg.tgz";
+    const dir = tempDir(
+      name,
+      Object.fromEntries(
+        Object.entries(projects).map(([project, files]) => [
+          project,
+          {
+            "package.json": JSON.stringify({ name: "app", dependencies: { pkg: spec } }),
+            "bunfig.toml": Bun.TOML.stringify({ install: { linker } }),
+            ...files,
+          },
+        ]),
+      ),
+    );
+    const root = String(dir);
+    async function run(project: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: join(root, project),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    async function ok(project: string, ...args: string[]) {
+      const result = await run(project, ...args);
+      expect(result.stderr).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
+      return result;
+    }
     return {
-      "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:pkg.tgz" } }),
-      "pkg.tgz": tgz,
-      "bunfig.toml": Bun.TOML.stringify({ install: { linker } }),
-      ...extraFiles,
+      root,
+      spec,
+      /** The resolution as bun.lock writes it. */
+      resolution: kind === "URL" ? spec : "pkg.tgz",
+      server,
+      served,
+      requests,
+      run,
+      ok,
+      put: async (project: string, tgz: Tarball) =>
+        kind === "URL" ? void served.set("/pkg.tgz", tgz.file) : writeFile(join(root, project, "pkg.tgz"), tgz.file),
+      installed: (project: string, alias = "pkg") =>
+        file(join(root, project, "node_modules", alias, "index.js")).text(),
+      lockfile: (project: string) => file(join(root, project, "bun.lock")).text(),
+      reinstall: (project: string, ...args: string[]) =>
+        rm(join(root, project, "node_modules"), { recursive: true }).then(() => ok(project, "install", ...args)),
+      cacheEntries: async () => (await readdirSorted(join(root, "cache"))).filter(entry => entry.startsWith("@T@")),
+      /** What a project holds: the three must always agree. */
+      state: async (project: string) => ({
+        installed: await file(join(root, project, "node_modules", "pkg", "index.js")).text(),
+        tag: await file(join(root, project, "node_modules", "pkg", ".bun-tag")).text(),
+        locked: (Bun.JSONC.parse(await file(join(root, project, "bun.lock")).text()) as any).packages.pkg.at(-1),
+      }),
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
     };
   }
-
-  // The projects under `root` share `root/cache`.
-  async function install(root: string, name: string, ...args: string[]) {
-    await using proc = spawn({
-      cmd: [bunExe(), "install", ...args],
-      cwd: join(root, name),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  }
-
-  const installedExport = (root: string, name: string) =>
-    file(join(root, name, "node_modules", "pkg", "index.js")).text();
-  const lockfile = (root: string, name: string) => file(join(root, name, "bun.lock")).text();
-  const reinstall = (root: string, name: string, ...args: string[]) =>
-    rm(join(root, name, "node_modules"), { recursive: true }).then(() => install(root, name, ...args));
-  const cacheEntries = async (root: string) =>
-    (await readdirSorted(join(root, "cache"))).filter(entry => entry.startsWith("@T@"));
-
-  it("keeps the tarballs of two projects that both depend on file:pkg.tgz apart", async () => {
-    const one = await tarball("one");
-    const two = await tarball("two");
-    using root = tempDir("local-tarball-two-projects", { one: project(one.file), two: project(two.file) });
-
-    await install(String(root), "one");
-    await install(String(root), "two");
-    expect(await lockfile(String(root), "one")).toContain(one.integrity);
-
-    await reinstall(String(root), "one");
-    expect(await installedExport(String(root), "one")).toBe('module.exports = "one";\n');
-    expect(await installedExport(String(root), "two")).toBe('module.exports = "two";\n');
-    expect(await cacheEntries(String(root))).toEqual([one.cacheEntry, two.cacheEntry].sort());
+  const stateOf = (exported: string, tgz: Tarball) => ({
+    installed: `module.exports = ${JSON.stringify(exported)};\n`,
+    tag: tgz.integrity,
+    locked: tgz.integrity,
   });
 
-  it("installs the tarball the lockfile pins after another build of it was extracted from the same path", async () => {
+  it("keeps the tarballs of two projects apart that depend on the same path or URL", async () => {
+    const one = await tarball("one");
+    const two = await tarball("two");
+    using box = sandbox("tarball-two-projects", { one: {}, two: {} });
+
+    await box.put("one", one);
+    await box.ok("one", "install");
+    await box.put("two", two);
+    await box.ok("two", "install");
+    expect(await box.lockfile("one")).toContain(one.integrity);
+
+    await box.reinstall("one");
+    expect(await box.installed("one")).toBe('module.exports = "one";\n');
+    expect(await box.installed("two")).toBe('module.exports = "two";\n');
+    expect(await box.cacheEntries()).toEqual([one.cacheEntry, two.cacheEntry].sort());
+  });
+
+  it("installs the tarball the lockfile pins after another build of it was extracted from the same place", async () => {
     const v1 = await tarball("v1");
     const v2 = await tarball("v2");
-    using root = tempDir("local-tarball-two-builds", { app: project(v1.file) });
-    const app = join(String(root), "app");
+    using box = sandbox("tarball-two-builds", { app: {} });
+    const app = join(box.root, "app");
 
-    await install(String(root), "app");
-    const v1Lockfile = await lockfile(String(root), "app");
+    await box.put("app", v1);
+    await box.ok("app", "install");
+    const v1Lockfile = await box.lockfile("app");
     expect(v1Lockfile).toContain(v1.integrity);
 
     // Like checking out a branch that ships v2: the rebuilt tarball is resolved and extracted.
-    await writeFile(join(app, "pkg.tgz"), v2.file);
+    await box.put("app", v2);
     await rm(join(app, "bun.lock"));
-    await reinstall(String(root), "app");
-    expect(await installedExport(String(root), "app")).toBe('module.exports = "v2";\n');
-    expect(await lockfile(String(root), "app")).toContain(v2.integrity);
+    await box.reinstall("app");
+    expect(await box.installed("app")).toBe('module.exports = "v2";\n');
+    expect(await box.lockfile("app")).toContain(v2.integrity);
 
-    // Back on the v1 branch, pkg.tgz and bun.lock are v1's again.
-    await writeFile(join(app, "pkg.tgz"), v1.file);
+    // Back on the v1 branch, bun.lock is v1's again. The entry is still there, whatever the path or URL holds now.
     await writeFile(join(app, "bun.lock"), v1Lockfile);
-    await reinstall(String(root), "app");
-    expect(await installedExport(String(root), "app")).toBe('module.exports = "v1";\n');
-    expect(await cacheEntries(String(root))).toEqual([v1.cacheEntry, v2.cacheEntry].sort());
+    await box.reinstall("app");
+    expect(await box.installed("app")).toBe('module.exports = "v1";\n');
+    expect(await box.cacheEntries()).toEqual([v1.cacheEntry, v2.cacheEntry].sort());
+  });
+
+  it("without a lockfile, node_modules gets the bytes whose integrity lands in bun.lock", async () => {
+    const v1 = await tarball("v1");
+    const v2 = await tarball("v2");
+    using box = sandbox("tarball-rebuilt-no-lockfile", { app: {} });
+
+    await box.put("app", v1);
+    await box.ok("app", "install");
+    expect(await box.state("app")).toEqual(stateOf("v1", v1));
+
+    await box.put("app", v2);
+    await rm(join(box.root, "app", "bun.lock"));
+    await box.ok("app", "install");
+    expect(await box.state("app")).toEqual(stateOf("v2", v2));
   });
 
   it("reads the tarball when the lockfile does not record its integrity, then records it", async () => {
     const other = await tarball("other");
     const mine = await tarball("mine");
-    using root = tempDir("local-tarball-unpinned", {
-      other: project(other.file),
-      app: project(mine.file, {
-        // Written before bun recorded the integrity of tarball packages.
-        "bun.lock": JSON.stringify({
-          lockfileVersion: 1,
-          configVersion: 1,
-          workspaces: { "": { name: "app", dependencies: { pkg: "file:pkg.tgz" } } },
-          packages: { pkg: ["pkg@pkg.tgz", {}] },
-        }),
+    using box = sandbox("tarball-unpinned", { other: {}, app: {} });
+    // Written before bun recorded the integrity of tarball packages.
+    await writeFile(
+      join(box.root, "app", "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { pkg: box.spec } } },
+        packages: { pkg: [`pkg@${box.resolution}`, {}] },
       }),
+    );
+
+    await box.put("other", other);
+    await box.ok("other", "install");
+    await box.put("app", mine);
+    await box.ok("app", "install");
+    expect(await box.state("app")).toEqual(stateOf("mine", mine));
+    expect(await box.cacheEntries()).toEqual([mine.cacheEntry, other.cacheEntry].sort());
+
+    // The recorded integrity names the entry that extraction created: this install is
+    // served from it without reading the tarball (which would no longer match the pin).
+    await box.put("app", other);
+    await box.reinstall("app");
+    expect(await box.installed("app")).toBe('module.exports = "mine";\n');
+  });
+
+  // https://github.com/oven-sh/bun/issues/8260
+  it("an install that changes nothing installs nothing", async () => {
+    const v1 = await tarball("v1");
+    using box = sandbox("tarball-no-op", { app: {} });
+    await box.put("app", v1);
+    await box.ok("app", "install");
+    expect(await box.state("app")).toEqual(stateOf("v1", v1));
+    const lockfile = await box.lockfile("app");
+    const requests = box.requests.length;
+
+    for (const args of [[], ["--frozen-lockfile"]]) {
+      const { stdout } = await box.ok("app", "install", ...args);
+      expect(stdout).toContain("(no changes)");
+      expect(stdout).not.toContain("pkg@");
+    }
+    expect(box.requests.length).toBe(requests);
+    expect(await box.lockfile("app")).toBe(lockfile);
+  });
+
+  // The isolated linker names its entry after the path or URL and only asks whether it exists.
+  it.todoIf(linker === "isolated")("a bun.lock that pins another build replaces what is installed", async () => {
+    const v1 = await tarball("v1");
+    const v2 = await tarball("v2");
+    using box = sandbox("tarball-pulled-lockfile", { app: {}, teammate: {} });
+    await box.put("app", v1);
+    await box.ok("app", "install");
+    await box.put("teammate", v2);
+    await box.ok("teammate", "install");
+
+    await box.put("app", v2);
+    await writeFile(join(box.root, "app", "bun.lock"), await box.lockfile("teammate"));
+    await box.ok("app", "install");
+    expect(await box.state("app")).toEqual(stateOf("v2", v2));
+  });
+
+  it("does not look at what an older version cached under a hash of the path or URL", async () => {
+    const v1 = await tarball("v1");
+    using box = sandbox("tarball-old-cache", { app: {} });
+    // What Bun 1.4 called the entry of `pkg.tgz`.
+    const oldEntry = "@T@85f77fa09e18a07f@@@1";
+    const oldFiles = {
+      "package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+      "index.js": 'module.exports = "whatever was there last";\n',
+    };
+    for (const [name, text] of Object.entries(oldFiles)) await Bun.write(join(box.root, "cache", oldEntry, name), text);
+    await box.put("app", v1);
+    await box.ok("app", "install");
+    const lockfile = await box.lockfile("app");
+
+    await box.reinstall("app", "--frozen-lockfile");
+    expect(await box.state("app")).toEqual(stateOf("v1", v1));
+    expect(await box.lockfile("app")).toBe(lockfile);
+    expect(await box.cacheEntries()).toEqual([oldEntry, v1.cacheEntry].sort());
+    expect(await readdirSorted(join(box.root, "cache", oldEntry))).toEqual(["index.js", "package.json"]);
+    expect(await file(join(box.root, "cache", oldEntry, "index.js")).text()).toBe(oldFiles["index.js"]);
+  });
+
+  // https://github.com/oven-sh/bun/issues/31864
+  describe("when the path or URL holds other bytes than bun.lock records", () => {
+    async function changed(name: string) {
+      const v1 = await tarball("v1");
+      const v2 = await tarball("v2");
+      const box = sandbox(name, { app: {} });
+      await box.put("app", v1);
+      await box.ok("app", "install");
+      expect(await box.state("app")).toEqual(stateOf("v1", v1));
+      await box.put("app", v2);
+      return { box, v1, v2, lockfile: await box.lockfile("app"), requests: box.requests.length };
+    }
+
+    it.each([
+      ["install --force", (_spec: string) => ["install", "--force"]],
+      ["update", (_spec: string) => ["update"]],
+      ["update pkg", (_spec: string) => ["update", "pkg"]],
+      ["add <the same path or URL>", (spec: string) => ["add", spec]],
+    ] as const)("bun %s takes them and records their integrity", async (label, command) => {
+      const { box, v1, v2 } = await changed(`tarball-refresh-${label.replaceAll(/\W+/g, "-")}`);
+      using _ = box;
+
+      const { stderr } = await box.ok("app", ...command(box.spec));
+      expect(stderr).toContain(`warn: "pkg" has changed: bun.lock recorded ${v1.integrity}, now ${v2.integrity}`);
+      expect(await box.state("app")).toEqual(stateOf("v2", v2));
+      expect(JSON.parse(await file(join(box.root, "app", "package.json")).text()).dependencies).toEqual({
+        pkg: box.spec,
+      });
+      // Nothing was replaced: a project that still pins v1 keeps its entry.
+      expect(await box.cacheEntries()).toEqual([v1.cacheEntry, v2.cacheEntry].sort());
+
+      // bun.lock describes what the path or URL holds, so a machine with nothing cached can install it.
+      await rm(join(box.root, "cache"), { recursive: true });
+      await box.reinstall("app", "--frozen-lockfile");
+      expect(await box.state("app")).toEqual(stateOf("v2", v2));
     });
 
-    await install(String(root), "other");
-    await install(String(root), "app");
-    expect(await installedExport(String(root), "app")).toBe('module.exports = "mine";\n');
-    expect(await lockfile(String(root), "app")).toContain(mine.integrity);
-    expect(await cacheEntries(String(root))).toEqual([mine.cacheEntry, other.cacheEntry].sort());
+    it.each(["install", "install --force --frozen-lockfile", "install --force --no-save", "install --force --offline"])(
+      "bun %s keeps what bun.lock records",
+      async command => {
+        const { box, v1, lockfile, requests } = await changed(`tarball-keep-${command.replaceAll(/\W+/g, "-")}`);
+        using _ = box;
 
-    // The recorded integrity names the entry that extraction created: this
-    // install is served from it without reading pkg.tgz (which would no longer
-    // match the pin).
-    await writeFile(join(String(root), "app", "pkg.tgz"), other.file);
-    await reinstall(String(root), "app");
-    expect(await installedExport(String(root), "app")).toBe('module.exports = "mine";\n');
+        await box.ok("app", ...command.split(" "));
+        expect(await box.state("app")).toEqual(stateOf("v1", v1));
+        expect(await box.lockfile("app")).toBe(lockfile);
+        expect(box.requests.length).toBe(requests);
+        expect(await box.cacheEntries()).toEqual([v1.cacheEntry]);
+      },
+    );
+
+    it("another dependency on the same path or URL gets what bun.lock records, without reading it again", async () => {
+      const { box, v1, requests } = await changed("tarball-second-dependent");
+      using _ = box;
+
+      await writeFile(
+        join(box.root, "app", "package.json"),
+        JSON.stringify({ name: "app", dependencies: { pkg: box.spec, alias: box.spec } }),
+      );
+      await box.ok("app", "install");
+      expect(await box.state("app")).toEqual(stateOf("v1", v1));
+      expect(await box.installed("app", "alias")).toBe('module.exports = "v1";\n');
+      expect(box.requests.length).toBe(requests);
+      expect(await box.cacheEntries()).toEqual([v1.cacheEntry]);
+    });
+
+    it("fails a clean install, and names no other bytes in bun.lock", async () => {
+      const { box, lockfile } = await changed("tarball-changed-clean-install");
+      using _ = box;
+
+      await rm(join(box.root, "cache"), { recursive: true });
+      await rm(join(box.root, "app", "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await box.run("app", "install");
+      expect(stderr).toContain("Integrity check failed for tarball: pkg");
+      expect(await box.lockfile("app")).toBe(lockfile);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it("bun update installs what the new build of the tarball depends on", async () => {
+    const dep = await tarball("dep", {}, "dep");
+    using box = sandbox("tarball-refresh-dependencies", { app: {} });
+    box.served.set("/dep.tgz", dep.file);
+    const info = { dependencies: { dep: `${box.server.url}dep.tgz` }, bin: { "pkg-bin": "index.js" } };
+    const v1 = await tarball("v1");
+    const v2 = await tarball("v2", info);
+
+    await box.put("app", v1);
+    await box.ok("app", "install");
+    await box.put("app", v2);
+    await box.ok("app", "update");
+    expect(await box.state("app")).toEqual(stateOf("v2", v2));
+    expect((Bun.JSONC.parse(await box.lockfile("app")) as any).packages).toEqual({
+      dep: [`dep@${box.server.url}dep.tgz`, {}, dep.integrity],
+      pkg: [`pkg@${box.resolution}`, info, v2.integrity],
+    });
+    // Next to `pkg`, wherever the linker put that.
+    const siblings = dirname(await realpath(join(box.root, "app", "node_modules", "pkg")));
+    expect(await file(join(siblings, "dep", "index.js")).text()).toBe('module.exports = "dep";\n');
   });
 });
 
@@ -1016,6 +1255,81 @@ describe.concurrent("tarball integrity metadata forms", () => {
   });
 });
 
+// bun writes a hash that it can check, or none. Reading anything else as "none" would let an edit of
+// bun.lock turn the check off, and for a tarball have whatever is there now installed and recorded.
+describe.concurrent("an integrity in bun.lock that is not one", () => {
+  const tgz = tarball({ "package.json": Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" })) });
+  const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
+  const rows = {
+    "npm package": ["1.0.0", (hash: string) => ["pkg@1.0.0", "", {}, hash]],
+    "file: tarball": ["file:pkg.tgz", (hash: string) => ["pkg@pkg.tgz", {}, hash]],
+    "GitHub package": [
+      "github:owner/pkg#abc1234",
+      (hash: string) => ["pkg@github:owner/pkg#abc1234", {}, "owner-pkg-abc1234", hash],
+    ],
+  } as const;
+
+  async function install(kind: keyof typeof rows, lockfileVersion: number, hash: string, ...args: string[]) {
+    const [dependency, row] = rows[kind];
+    const requests: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(req.url);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    using dir = tempDir("lockfile-integrity", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pkg: dependency } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url.href, cache: false } }),
+      "pkg.tgz": tgz,
+      "bun.lock": JSON.stringify({
+        lockfileVersion,
+        configVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { pkg: dependency } } },
+        packages: { pkg: row(hash) },
+      }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const locked = (Bun.JSONC.parse(await file(join(String(dir), "bun.lock")).text()) as any).packages.pkg.at(-1);
+    return { stderr, exitCode, locked, requests, installed: await readdirSorted(String(dir)) };
+  }
+
+  describe.each(Object.keys(rows) as (keyof typeof rows)[])("%s", kind => {
+    it.each(["md5-AAAAAAAAAAAAAAAAAAAAAA==", "sha512-!!!", "none"])("%s fails a frozen install", async hash => {
+      const result = await install(kind, 2, hash, "--frozen-lockfile");
+      expect(result.stderr).toContain("error: Unsupported or malformed integrity hash\n");
+      expect(result).toMatchObject({
+        exitCode: 1,
+        locked: hash,
+        requests: [],
+        installed: ["bun.lock", "bunfig.toml", "package.json", "pkg.tgz"],
+      });
+    });
+  });
+
+  it("is reported, and bun.lock written anew, by an install that may do so", async () => {
+    const result = await install("file: tarball", 2, "md5-AAAAAAAAAAAAAAAAAAAAAA==");
+    expect(result.stderr).toContain("error: Unsupported or malformed integrity hash\n");
+    expect(result.stderr).toContain("Ignoring lockfile");
+    expect(result).toMatchObject({ exitCode: 0, locked: integrity });
+  });
+
+  it("is ignored with a warning in a lockfile from before version 2", async () => {
+    const result = await install("file: tarball", 1, "md5-AAAAAAAAAAAAAAAAAAAAAA==");
+    expect(result.stderr).toContain("warn: Unsupported or malformed integrity hash; ignoring\n");
+    expect(result.stderr).not.toContain("error:");
+    expect(result).toMatchObject({ exitCode: 0, locked: integrity });
+  });
+});
+
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {
   it("should fail (not hang) when registry returns 404 for tarball", async () => {
     await withContext({ linker }, async ctx => {
@@ -1111,11 +1425,10 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
   });
 });
 
-// A `file:` or URL tarball is cached under a folder named after its path or
-// URL, so installing without a lockfile extracts it again over the folder from
-// the previous install. The fresh copy must win (the tarball may have been
-// repacked) and the copy it displaces must not be left behind in the temp dir,
-// which used to grow by one extracted tarball per install.
+// Installing without a lockfile extracts a `file:` or URL tarball again. The same
+// bytes have the same cache folder, which stays as it is, and the fresh copy must not
+// be left behind in the temp dir, which used to grow by one extracted tarball per
+// install. A repacked tarball gets a folder of its own.
 describe.concurrent("tarball re-extraction over an existing cache folder", () => {
   function tarballOfVersion(version: string, padding: Record<string, Buffer> = {}) {
     return tarball({ "package.json": Buffer.from(JSON.stringify({ name: "pkg", version }) + "\n"), ...padding });
@@ -1165,7 +1478,6 @@ describe.concurrent("tarball re-extraction over an existing cache folder", () =>
     expect(await installFresh(String(dir))).toBe("1.0.0");
     expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
 
-    // A file: tarball is cached under its integrity, so the new contents get a folder of their own.
     await writeFile(join(String(dir), "pkg.tgz"), tarballOfVersion("2.0.0"));
     expect(await installFresh(String(dir))).toBe("2.0.0");
     expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 2 });
@@ -1202,6 +1514,6 @@ describe.concurrent("tarball re-extraction over an existing cache folder", () =>
 
     tgz = tarballOfVersion("2.0.0", padding);
     expect(await installFresh(String(dir))).toBe("2.0.0");
-    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 2 });
   });
 });

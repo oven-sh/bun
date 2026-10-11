@@ -2137,10 +2137,9 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub(crate) stack_check: StackCheck,
-    /// `stack_check.remaining()` where the innermost `parse_node` began.
-    node_stack_left: usize,
-    /// The least of those inside that node so far, an alias counting as the
-    /// stack its target took (`Anchored::stack`).
+    /// The least `stack_check.remaining()` a `parse_node` began with since the
+    /// innermost `PendingAnchor` was scanned, an alias counting as the stack
+    /// its target took (`Anchored::stack`).
     least_stack_left: usize,
 
     pub(crate) merge_props_budget: usize,
@@ -2186,7 +2185,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
-            node_stack_left: usize::MAX,
             least_stack_left: usize::MAX,
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
@@ -2486,7 +2484,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match self.token.data {
                 TokenData::Anchor(name) if scanned_anchor.is_none() => {
-                    scanned_anchor = Some(PendingAnchor::new(&self.token, name));
+                    scanned_anchor = Some(PendingAnchor::new(
+                        &self.token,
+                        name,
+                        self.stack_check.remaining(),
+                        &mut self.least_stack_left,
+                    ));
                 }
                 TokenData::Tag(_) if scanned_tag.is_none() => {
                     scanned_tag = Some(self.token.clone());
@@ -3250,14 +3253,25 @@ pub(crate) struct PendingAnchor {
     name: StringRange,
     start: Pos,
     line: Line,
+    /// `stack_check.remaining()` where the annotated node begins.
+    stack_left: usize,
+    /// `Parser::least_stack_left` as it was; see `Parser::close_anchor`.
+    outer_least_stack_left: usize,
 }
 
 impl PendingAnchor {
-    fn new<Enc: Encoding>(token: &Token<Enc>, name: StringRange) -> Self {
+    fn new<Enc: Encoding>(
+        token: &Token<Enc>,
+        name: StringRange,
+        stack_left: usize,
+        least_stack_left: &mut usize,
+    ) -> Self {
         Self {
             name,
             start: token.start,
             line: token.line,
+            stack_left,
+            outer_least_stack_left: core::mem::replace(least_stack_left, stack_left),
         }
     }
 }
@@ -3324,10 +3338,30 @@ impl CollectionData for E::Object {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    /// The stack used since `anchor` was scanned. That also counts for the
+    /// anchor scanned before it, so every anchor comes through here unless the
+    /// parse fails.
+    fn close_anchor(&mut self, anchor: &PendingAnchor) -> usize {
+        let stack = anchor.stack_left.saturating_sub(self.least_stack_left);
+        self.least_stack_left = self.least_stack_left.min(anchor.outer_least_stack_left);
+        stack
+    }
+
+    /// For an alias returned as it is: the anchors on the lines before it
+    /// annotate nothing.
+    fn drop_anchors(&mut self, props: NodeProperties<Enc>) {
+        for anchor in [props.has_anchor, props.has_mapping_anchor]
+            .into_iter()
+            .flatten()
+        {
+            self.close_anchor(&anchor);
+        }
+    }
+
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
-        let stack = self.node_stack_left - self.least_stack_left;
+        let stack = self.close_anchor(&anchor);
         self.anchors.put(
             Enc::key_bytes(anchor.name.slice(self.input)),
             Anchored { node, stack },
@@ -3713,7 +3747,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             match self.token.data {
                 TokenData::Anchor(name) if value_anchor.is_none() => {
-                    value_anchor = Some(PendingAnchor::new(&self.token, name));
+                    value_anchor = Some(PendingAnchor::new(
+                        &self.token,
+                        name,
+                        self.stack_check.remaining(),
+                        &mut self.least_stack_left,
+                    ));
                 }
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
@@ -3869,17 +3908,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         if stack_left == 0 {
             return Err(ParseError::StackOverflow);
         }
-        let outer_node_stack_left = core::mem::replace(&mut self.node_stack_left, stack_left);
-        let outer_least_stack_left = core::mem::replace(&mut self.least_stack_left, stack_left);
-        // An error ends the parse, so only a parsed node restores these.
-        let node = self.parse_node_unchecked(opts)?;
-        self.node_stack_left = outer_node_stack_left;
-        self.least_stack_left = self.least_stack_left.min(outer_least_stack_left);
-        Ok(node)
-    }
+        self.least_stack_left = self.least_stack_left.min(stack_left);
 
-    #[inline(always)]
-    fn parse_node_unchecked(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
 
@@ -3899,7 +3929,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::Anchor(name) => {
-                    node_props.set_anchor(PendingAnchor::new(&self.token, *name))?;
+                    node_props.set_anchor(PendingAnchor::new(
+                        &self.token,
+                        *name,
+                        stack_left,
+                        &mut self.least_stack_left,
+                    ))?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
                         ..Default::default()
@@ -3940,8 +3975,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         stack,
                     } = self.resolve_alias(alias)?;
 
-                    self.least_stack_left = self
-                        .node_stack_left
+                    self.least_stack_left = stack_left
                         .checked_sub(stack)
                         .filter(|stack_left| *stack_left > 0)
                         .ok_or(ParseError::StackOverflow)?
@@ -3962,6 +3996,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node copy;
                         }
                         if self.context.get() == Context::FlowKey {
+                            self.drop_anchors(node_props);
                             return Ok(copy);
                         }
                         // [154] ns-s-implicit-yaml-key uses s-separate-in-line
@@ -3981,12 +4016,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == alias_indent {
+                                self.drop_anchors(node_props);
                                 return Ok(copy);
                             }
                         }
 
                         // [147] flow-map value is ns-flow-node, not a pair.
                         if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            self.drop_anchors(node_props);
                             return Ok(copy);
                         }
 

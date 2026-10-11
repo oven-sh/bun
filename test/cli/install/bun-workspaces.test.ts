@@ -11,6 +11,7 @@ import {
   readdirSorted,
   runBunInstall,
   runBunUpdate,
+  tempDir,
   toMatchNodeModulesAt,
 } from "harness";
 import { join } from "path";
@@ -488,7 +489,7 @@ test.concurrent.each([
 });
 
 // A member's plain dependency takes the root's `npm:` alias of the same name when the two ranges
-// overlap. `>1` starts at 2.0.0, the same as a written `>=2.0.0`.
+// overlap and the member's holds a bound of the alias's. `>1` starts at 2.0.0, the same as a written `>=2.0.0`.
 test.concurrent.each([
   { member: "^2.0.0", memberSees: { name: "no-deps", version: "2.0.0" } },
   { member: "^1.0.0", memberSees: { name: "a-dep", version: "1.0.10" } },
@@ -3296,6 +3297,53 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(cached).toHaveLength(1);
   expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
+});
+
+// The npm lockfile migration reads each workspace package.json through the cache of the package manager.
+test.concurrent("the package.json cache keeps no mimalloc heap for each file", async () => {
+  await acquireSlot();
+  using _slot = { [Symbol.dispose]: releaseSlot };
+  const files: Record<string, string> = {};
+  for (const workspaces of [1, 5, 50]) {
+    const packages: Record<string, object> = { "": { name: "root", workspaces: ["packages/*"] } };
+    for (let i = 0; i < workspaces; i++) {
+      files[`${workspaces}/packages/p${i}/package.json`] = JSON.stringify({ name: `p${i}`, version: "1.0.0" });
+      packages[`node_modules/p${i}`] = { resolved: `packages/p${i}`, link: true };
+      packages[`packages/p${i}`] = { name: `p${i}`, version: "1.0.0" };
+    }
+    files[`${workspaces}/package.json`] = JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] });
+    files[`${workspaces}/package-lock.json`] = JSON.stringify({ name: "root", lockfileVersion: 3, packages });
+  }
+  using dir = tempDir("workspace-package-json-heap-count", files);
+
+  const count = `
+    const { heapStats } = require("bun:jsc");
+    const { parseLockfile } = require("bun:internal-for-testing").install_test_helpers;
+    const [root] = process.argv.slice(1);
+    const result = {};
+    // The call for 1 workspace also creates the heaps of the package manager itself.
+    for (const workspaces of [1, 5, 50]) {
+      const before = heapStats().mimalloc.heaps;
+      const lockfile = parseLockfile(root + "/" + workspaces);
+      const after = heapStats().mimalloc.heaps;
+      result[workspaces] = { packages: lockfile.packages.length, live: after.current - before.current };
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", count, String(dir)],
+    env: baseEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error");
+  const result = JSON.parse(stdout.trim().split("\n").at(-1) || "null");
+  expect({
+    packages: [result[5].packages, result[50].packages],
+    liveGrowth: result[50].live - result[5].live,
+  }).toEqual({ packages: [6, 51], liveGrowth: 0 });
+  expect(exitCode).toBe(0);
 });
 
 // The hoisted installer links a workspace package into node_modules under its name. A name

@@ -8,7 +8,7 @@ use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
     LoadResult, Lockfile,
     package::PackageColumns as _,
-    package::scripts::{List as ScriptsList, PrintFormat, Scripts},
+    package::scripts::{List as ScriptsList, PrintFormat},
     tree,
 };
 use bun_install::package_manager_real::{
@@ -17,14 +17,194 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    PackageID, PackageManager, ResolutionTag,
 };
+use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::AutoAbsPath;
 
 use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
 
-type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
+type TrustedDependenciesSet =
+    ArrayHashMap<install::TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
+
+/// Trust is what the package.json files say now, as for an install. Returns what the lockfile recorded.
+pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<TrustedDependenciesSet> {
+    let log = pm.log_mut();
+    match pm
+        .lockfile
+        .read_trusted_dependencies_from_manifests(&mut pm.workspace_package_json_cache, log)
+    {
+        Ok(recorded) => recorded,
+        Err(err) => {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Output::err(err, "failed to read trustedDependencies", ());
+            Global::crash();
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Skip,
+    Run,
+    /// Trusted, but the next install runs the scripts: see `Blocked::in_global_store`.
+    Defer,
+}
+
+/// An installed dependency whose lifecycle scripts the installers do not run.
+struct Blocked {
+    dep_id: DependencyID,
+    package_id: PackageID,
+    /// Scripts run deepest first, like during an install.
+    depth: usize,
+    scripts_list: ScriptsList,
+    /// Other projects share the directory, so nothing runs there. An install gives a trusted
+    /// package a directory inside the project.
+    in_global_store: bool,
+    action: Action,
+}
+
+impl Blocked {
+    /// The installers' gate: the project's and its workspaces' scripts always run, every other package needs trust.
+    fn scripts_at(
+        log: &mut bun_ast::Log,
+        lockfile: &Lockfile,
+        dep_id: DependencyID,
+        package_id: PackageID,
+        folder: &mut AutoAbsPath,
+    ) -> crate::Result<Option<ScriptsList>> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let packages = lockfile.packages.slice();
+        let package_id = package_id as usize;
+        // called alias because a dependency name is not always the package name
+        let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
+            .name
+            .slice(buf);
+        let resolution = &packages.items_resolution()[package_id];
+        if matches!(
+            resolution.tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        ) || lockfile.has_trusted_dependency(
+            alias,
+            packages.items_name()[package_id].slice(buf),
+            resolution,
+        ) {
+            return Ok(None);
+        }
+
+        let mut scripts = packages.items_scripts()[package_id];
+        // `true`: the scripts that run once it is trusted.
+        match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
+            Ok(list) => Ok(list.filter(|list| list.total > 0)),
+            Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn find_all(pm: &PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
+        let log = pm.log_mut();
+        let lockfile: &Lockfile = &pm.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+
+        let mut blocked: Vec<Blocked> = Vec::new();
+        let mut path = AutoAbsPath::init_top_level_dir();
+        let top_level_len = path.len();
+
+        // Without a store another tool laid out node_modules: look where a package resolves from.
+        let _ = path.append(b"node_modules/.bun");
+        if linker == NodeLinker::Isolated && bun_sys::exists(path.slice()) {
+            let mut link_buf = bun_paths::path_buffer_pool::get();
+            for folder in bun_install::isolated_install::store_folders(pm, lockfile)? {
+                path.set_length(top_level_len);
+                let _ = path.append(folder.entry_dir.as_slice());
+                let entry_dir_len = path.len();
+                let _ = path.append(b"node_modules");
+                let _ =
+                    path.append(lockfile.packages.items_name()[folder.pkg_id as usize].slice(buf));
+                let Some(scripts_list) =
+                    Self::scripts_at(log, lockfile, folder.dep_id, folder.pkg_id, &mut path)?
+                else {
+                    continue;
+                };
+                path.set_length(entry_dir_len);
+                blocked.push(Blocked {
+                    dep_id: folder.dep_id,
+                    package_id: folder.pkg_id,
+                    depth: folder.depth,
+                    scripts_list,
+                    in_global_store: bun_sys::readlink(path.slice_z(), &mut link_buf[..]).is_ok(),
+                    action: Action::Skip,
+                });
+            }
+            return Ok(blocked);
+        }
+
+        let mut tree_iterator =
+            tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
+        while let Some(node_modules) = tree_iterator.next(None) {
+            path.set_length(top_level_len);
+            let _ = path.append(node_modules.relative_path.as_bytes());
+            if !bun_sys::exists(path.slice()) {
+                continue;
+            }
+            let node_modules_len = path.len();
+
+            for &dep_id in node_modules.dependencies {
+                let package_id = resolutions[dep_id as usize];
+                if package_id as usize >= lockfile.packages.len() {
+                    continue;
+                }
+                path.set_length(node_modules_len);
+                let _ = path.append(
+                    lockfile.buffers.dependencies.as_slice()[dep_id as usize]
+                        .name
+                        .slice(buf),
+                );
+                if let Some(scripts_list) =
+                    Self::scripts_at(log, lockfile, dep_id, package_id, &mut path)?
+                {
+                    blocked.push(Blocked {
+                        dep_id,
+                        package_id,
+                        depth: node_modules.depth,
+                        scripts_list,
+                        in_global_store: false,
+                        action: Action::Skip,
+                    });
+                }
+            }
+        }
+        Ok(blocked)
+    }
+
+    /// (dependency name, the name `trustedDependencies` knows the package by)
+    fn names<'a>(&self, lockfile: &'a Lockfile) -> (&'a [u8], &'a [u8]) {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let alias = lockfile.buffers.dependencies.as_slice()[self.dep_id as usize]
+            .name
+            .slice(buf);
+        let pkg_name = lockfile.packages.items_name()[self.package_id as usize].slice(buf);
+        let trusted_name = lockfile.packages.items_resolution()[self.package_id as usize]
+            .trusted_name(alias, pkg_name);
+        (alias, trusted_name)
+    }
+
+    fn print(&self, lockfile: &Lockfile, format: PrintFormat) {
+        self.scripts_list.print_scripts(
+            &lockfile.packages.items_resolution()[self.package_id as usize],
+            lockfile.buffers.string_bytes.as_slice(),
+            format,
+        );
+        // `print_scripts` names the package by its folder.
+        let (alias, trusted_name) = self.names(lockfile);
+        if trusted_name != alias {
+            bun_core::pretty!(" <d>alias of<r> {}\n", bun_core::fmt::quote(trusted_name));
+        }
+        bun_core::pretty!("\n");
+    }
+}
 
 pub(crate) struct DefaultTrustedCommand;
 
@@ -63,8 +243,10 @@ impl UntrustedCommand {
         // as `package_manager_command.rs::print_hash`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
+        let configured_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
+        let linker = load_lockfile.node_linker(configured_linker);
         // SAFETY: `pm_raw` derived from `pm` above; `update_lockfile_if_needed`
         // reads `load_result.serializer_result` (no `ok.lockfile` deref) and
         // writes through `manager.lockfile`, which is the same heap allocation
@@ -76,113 +258,22 @@ impl UntrustedCommand {
         // only path to the singleton for the rest of this fn (same as the
         // original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
-        let log: &mut bun_ast::Log = pm.log_mut();
-        let lockfile: &Lockfile = &pm.lockfile;
+        read_trusted_dependencies(pm);
 
-        let packages = lockfile.packages.slice();
-        let scripts: &[Scripts] = packages.items_scripts();
-        let resolutions: &[Resolution] = packages.items_resolution();
-        let buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut untrusted_dep_ids: DepIdSet = DepIdSet::new();
-
-        // loop through dependencies and get trusted and untrusted deps with lifecycle scripts
-        for (i, dep) in lockfile.buffers.dependencies.as_slice().iter().enumerate() {
-            let dep_id: DependencyID = DependencyID::try_from(i).expect("int cast");
-            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-            if package_id == install::INVALID_PACKAGE_ID {
-                continue;
-            }
-
-            // called alias because a dependency name is not always the package name
-            let alias = dep.name.slice(buf);
-            let pkg_name = packages.items_name()[package_id as usize].slice(buf);
-            let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
-                untrusted_dep_ids.put(dep_id, ())?;
-            }
-        }
-
-        if untrusted_dep_ids.count() == 0 {
-            Self::print_zero_untrusted_dependencies_found();
+        let blocked = Blocked::find_all(pm, linker)?;
+        if blocked.is_empty() {
+            bun_core::pretty!(
+                "Found <b>0<r> untrusted dependencies with scripts.\n\
+                 \n\
+                 This means all packages with scripts are in \"trustedDependencies\" or none of your dependencies have scripts.\n\
+                 \n\
+                 For more information, visit <magenta>https://bun.com/docs/install/lifecycle#trusteddependencies<r>\n"
+            );
             return Ok(());
         }
 
-        let mut untrusted_deps: ArrayHashMap<DependencyID, ScriptsList, ArrayIdentityContext> =
-            ArrayHashMap::new();
-
-        let mut tree_iterator =
-            tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
-
-        let mut node_modules_path = AutoAbsPath::init_top_level_dir();
-
-        while let Some(node_modules) = tree_iterator.next(None) {
-            // `ResetScope`
-            // exclusively borrows the path, so save/restore the length
-            // explicitly. Restored at end of each iteration; the inner-loop
-            // `continue`/`return` paths only need the inner `folder_saved`
-            // restore (done immediately after `get_list`).
-            let nm_saved = node_modules_path.len();
-            let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
-
-            for &dep_id in node_modules.dependencies {
-                if !untrusted_dep_ids.contains(&dep_id) {
-                    continue;
-                }
-                let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
-                let alias = dep.name.slice(buf);
-                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-
-                if package_id as usize >= packages.len() {
-                    continue;
-                }
-
-                let resolution = &resolutions[package_id as usize];
-                let mut package_scripts = scripts[package_id as usize];
-
-                let folder_saved = node_modules_path.len();
-                let _ = node_modules_path.append(alias);
-
-                let result = package_scripts.get_list(
-                    log,
-                    lockfile,
-                    &mut node_modules_path,
-                    alias,
-                    resolution,
-                );
-                node_modules_path.set_length(folder_saved);
-
-                let maybe_scripts_list = match result {
-                    Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
-                    Err(e) => return Err(e.into()),
-                };
-
-                if let Some(scripts_list) = maybe_scripts_list {
-                    if scripts_list.total == 0 || scripts_list.items.is_empty() {
-                        continue;
-                    }
-                    untrusted_deps.put(dep_id, scripts_list)?;
-                }
-            }
-
-            node_modules_path.set_length(nm_saved);
-        }
-
-        if untrusted_deps.count() == 0 {
-            Self::print_zero_untrusted_dependencies_found();
-            return Ok(());
-        }
-
-        let mut iter = untrusted_deps.iterator();
-        while let Some(entry) = iter.next() {
-            let dep_id = *entry.key_ptr;
-            let scripts_list = &*entry.value_ptr;
-            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-            let resolution = &lockfile.packages.items_resolution()[package_id as usize];
-
-            scripts_list.print_scripts(resolution, buf, PrintFormat::Untrusted);
-            bun_core::pretty!("\n");
+        for info in &blocked {
+            info.print(&pm.lockfile, PrintFormat::Untrusted);
         }
 
         bun_core::pretty!(
@@ -195,26 +286,9 @@ impl UntrustedCommand {
         let _ = ctx;
         Ok(())
     }
-
-    fn print_zero_untrusted_dependencies_found() {
-        bun_core::pretty!(
-            "Found <b>0<r> untrusted dependencies with scripts.\n\
-             \n\
-             This means all packages with scripts are in \"trustedDependencies\" or none of your dependencies have scripts.\n\
-             \n\
-             For more information, visit <magenta>https://bun.com/docs/install/lifecycle#trusteddependencies<r>\n"
-        );
-    }
 }
 
 pub(crate) struct TrustCommand;
-
-/// Value type stored in `scripts_at_depth`.
-struct ScriptInfo {
-    package_id: PackageID,
-    scripts_list: ScriptsList,
-    skip: bool,
-}
 
 impl TrustCommand {
     fn error_expected_args() -> ! {
@@ -240,31 +314,38 @@ impl TrustCommand {
         }
     }
 
+    fn print_aliased_args(aliased_args: &StringArrayHashMap<Box<[u8]>>) {
+        if aliased_args.count() == 0 {
+            return;
+        }
+        // the listing above went to stdout; keep the notes after it on a terminal
+        Output::flush();
+        for (alias, trusted_name) in aliased_args.keys().iter().zip(aliased_args.values()) {
+            bun_core::note!(
+                "{} is an alias of {}, run 'bun pm trust {}' to trust it",
+                bun_core::fmt::quote(alias),
+                bun_core::fmt::quote(trusted_name),
+                bun_core::fmt::quote(trusted_name),
+            );
+        }
+    }
+
     fn print_dry_run(
         lockfile: &Lockfile,
-        scripts_at_depth: &ArrayHashMap<usize, Vec<ScriptInfo>>,
+        blocked: &[Blocked],
         package_names_to_add: &StringArrayHashMap<()>,
     ) {
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let resolutions = lockfile.packages.items_resolution();
         let mut total_scripts: usize = 0;
         let mut total_packages: usize = 0;
 
         Output::print(format_args!("\n"));
-        for entry in scripts_at_depth.values().iter().rev() {
-            for info in entry.iter() {
-                if info.skip {
-                    continue;
-                }
-                total_packages += 1;
-                total_scripts += info.scripts_list.total as usize;
-                info.scripts_list.print_scripts(
-                    &resolutions[info.package_id as usize],
-                    buf,
-                    PrintFormat::Untrusted,
-                );
-                Output::print(format_args!("\n"));
+        for info in blocked {
+            if info.action != Action::Run {
+                continue;
             }
+            total_packages += 1;
+            total_scripts += info.scripts_list.total as usize;
+            info.print(lockfile, PrintFormat::Untrusted);
         }
 
         bun_core::prettyln!(
@@ -296,14 +377,24 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
+        if !pm.options.do_.run_scripts() {
+            Output::err_generic(
+                "lifecycle scripts are turned off (ignore-scripts), so bun pm trust cannot run any",
+                (),
+            );
+            Global::crash();
+        }
+
         // Reshaped for borrowck — see `UntrustedCommand::exec`.
         // `load_lockfile` lives until `save_to_disk` near the end, so every
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let dry_run = pm.options.dry_run;
+        let configured_linker = pm.options.node_linker;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
+        let linker = load_lockfile.node_linker(configured_linker);
         // `update_lockfile_if_needed` consumes `LoadResult` but we
         // need it again for `save_to_disk`; inline the body (it only flips
         // `meta.has_install_script` when `packages_need_update`).
@@ -316,6 +407,8 @@ impl TrustCommand {
                 meta.set_has_install_script(false);
             }
         }
+        // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
+        let recorded = read_trusted_dependencies(unsafe { &mut *pm_raw });
 
         let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
         for arg in &args[2..] {
@@ -330,161 +423,51 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
-        // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
-        let log: *mut bun_ast::Log = unsafe { (*pm_raw).log };
-        // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow for the discovery phase.
-        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
-
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
-        let resolutions: &[Resolution] = packages.items_resolution();
-        let scripts: &[Scripts] = packages.items_scripts();
-
-        let mut untrusted_dep_ids: DepIdSet = DepIdSet::new();
-
-        debug_assert_eq!(
-            lockfile.buffers.dependencies.as_slice().len(),
-            lockfile.buffers.resolutions.as_slice().len()
-        );
-        for (i, (dep, &package_id)) in lockfile
-            .buffers
-            .dependencies
-            .as_slice()
-            .iter()
-            .zip(lockfile.buffers.resolutions.as_slice())
-            .enumerate()
-        {
-            let dep_id: u32 = u32::try_from(i).expect("int cast");
-            if package_id == install::INVALID_PACKAGE_ID {
-                continue;
-            }
-
-            let alias = dep.name.slice(buf);
-            let pkg_name = packages.items_name()[package_id as usize].slice(buf);
-            let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
-                untrusted_dep_ids.put(dep_id, ())?;
-            }
-        }
-
-        if untrusted_dep_ids.count() == 0 {
-            Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
-            Global::crash();
-        }
-
         // Instead of running them right away, we group scripts by depth in the node_modules
         // file structure, then run them starting at max depth. This ensures lifecycle scripts are run
         // in the correct order as they would during a normal install
-        let mut tree_iter =
-            tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
+        // SAFETY: `pm_raw` singleton; the discovery phase only reads it.
+        let mut blocked = Blocked::find_all(unsafe { &*pm_raw }, linker)?;
+        blocked.sort_by(|a, b| b.depth.cmp(&a.depth));
 
-        let mut node_modules_path = AutoAbsPath::init_top_level_dir();
+        // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow until the scripts have run.
+        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
 
         let mut package_names_to_add: StringArrayHashMap<()> = StringArrayHashMap::new();
-        let mut scripts_at_depth: ArrayHashMap<usize, Vec<ScriptInfo>> = ArrayHashMap::new();
-
+        // alias given on the command line -> the name its package is trusted under
+        let mut aliased_args: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
         let mut scripts_count: usize = 0;
 
-        while let Some(node_modules) = tree_iter.next(None) {
-            let nm_saved = node_modules_path.len();
-            let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
-
-            let _node_modules_dir = match bun_sys::Dir::cwd()
-                .open_at(node_modules.relative_path.as_bytes())
-                .map_err(crate::Error::from)
-            {
-                Ok(d) => d,
-                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
-                    node_modules_path.set_length(nm_saved);
-                    continue;
+        let named = |name: &[u8]| {
+            packages_to_trust
+                .iter()
+                .any(|package_name_from_cli| strings::eql_long(package_name_from_cli, name, true))
+        };
+        for info in &mut blocked {
+            let (alias, trusted_name) = info.names(lockfile);
+            if !trust_all && !named(trusted_name) {
+                if trusted_name != alias && named(alias) {
+                    aliased_args.put(alias, Box::<[u8]>::from(trusted_name))?;
                 }
-                Err(e) => return Err(e),
-            };
-
-            for &dep_id in node_modules.dependencies {
-                if !untrusted_dep_ids.contains(&dep_id) {
-                    continue;
-                }
-                let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
-                let alias = dep.name.slice(buf);
-                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-
-                if package_id as usize >= packages.len() {
-                    continue;
-                }
-
-                let resolution = &resolutions[package_id as usize];
-                let mut package_scripts = scripts[package_id as usize];
-
-                let folder_saved = node_modules_path.len();
-                let _ = node_modules_path.append(alias);
-
-                // SAFETY: `log` derived from `pm.log`; single-threaded CLI.
-                let result = package_scripts.get_list(
-                    unsafe { &mut *log },
-                    lockfile,
-                    &mut node_modules_path,
-                    alias,
-                    resolution,
-                );
-                node_modules_path.set_length(folder_saved);
-
-                let maybe_scripts_list = match result {
-                    Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
-                    Err(e) => return Err(e.into()),
-                };
-
-                if let Some(scripts_list) = maybe_scripts_list {
-                    let skip = 'brk: {
-                        if trust_all {
-                            break 'brk false;
-                        }
-
-                        for package_name_from_cli in &packages_to_trust {
-                            if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
-                                    alias,
-                                    packages.items_name()[package_id as usize].slice(buf),
-                                    resolution,
-                                )
-                            {
-                                break 'brk false;
-                            }
-                        }
-
-                        true
-                    };
-
-                    let total = scripts_list.total as usize;
-                    // even if it is skipped we still add to scripts_at_depth for logging later
-                    let entry = scripts_at_depth.get_or_put(node_modules.depth)?;
-                    if !entry.found_existing {
-                        *entry.value_ptr = Vec::new();
-                    }
-                    entry.value_ptr.push(ScriptInfo {
-                        package_id,
-                        scripts_list,
-                        skip,
-                    });
-
-                    if !skip {
-                        package_names_to_add.put(alias, ())?;
-                        scripts_count += total;
-                    }
-                }
+                continue;
             }
-
-            node_modules_path.set_length(nm_saved);
+            package_names_to_add.put(trusted_name, ())?;
+            if info.in_global_store {
+                info.action = Action::Defer;
+            } else {
+                info.action = Action::Run;
+                scripts_count += info.scripts_list.total as usize;
+            }
         }
 
-        if scripts_at_depth.count() == 0 || package_names_to_add.count() == 0 {
+        if package_names_to_add.count() == 0 {
             Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
+            Self::print_aliased_args(&aliased_args);
             Global::crash();
         }
 
         if dry_run {
-            Self::print_dry_run(lockfile, &scripts_at_depth, &package_names_to_add);
+            Self::print_dry_run(lockfile, &blocked, &package_names_to_add);
             return Ok(());
         }
 
@@ -526,13 +509,11 @@ impl TrustCommand {
             }
         }
 
-        // `scripts_at_depth.values()` is taken twice (run, then
-        // print). We can't move `scripts_list: List` out for
-        // `spawn_package_lifecycle_scripts` and still print it later, so clone
-        // the `List` per spawn.
-        for entry in scripts_at_depth.values().iter().rev() {
-            for info in entry.iter() {
-                if info.skip {
+        // `spawn_package_lifecycle_scripts` takes the `List` by value and it is
+        // printed later, so clone it per spawn.
+        for same_depth in blocked.chunk_by(|a, b| a.depth == b.depth) {
+            for info in same_depth {
+                if info.action != Action::Run {
                     continue;
                 }
 
@@ -636,41 +617,38 @@ impl TrustCommand {
             }
         };
 
-        // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
-        debug_assert!(!package_names_to_add.keys().is_empty());
-
-        // could be null if these are the first packages to be trusted
-        // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
-        unsafe {
-            if (*pm_raw).lockfile.trusted_dependencies.is_none() {
-                (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
-            }
-        }
-
         let mut total_scripts_ran: usize = 0;
         let mut total_packages_with_scripts: usize = 0;
         let mut total_skipped_packages: usize = 0;
+        let mut total_deferred_packages: usize = 0;
+        // The lockfile records whose scripts ran: an install runs those of a name it does not record.
+        let mut ran = recorded.unwrap_or_default();
 
         Output::print(format_args!("\n"));
 
-        // SAFETY: `pm_raw` singleton; read-only borrow for printing.
-        let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        for entry in scripts_at_depth.values().iter().rev() {
-            for info in entry.iter() {
-                let resolution = &lockfile.packages.items_resolution()[info.package_id as usize];
-                if info.skip {
-                    info.scripts_list
-                        .print_scripts(resolution, buf, PrintFormat::Untrusted);
-                    total_skipped_packages += 1;
-                } else {
+        for info in &blocked {
+            match info.action {
+                Action::Skip => total_skipped_packages += 1,
+                Action::Defer => total_deferred_packages += 1,
+                Action::Run => {
                     total_packages_with_scripts += 1;
                     total_scripts_ran += info.scripts_list.total as usize;
-                    info.scripts_list
-                        .print_scripts(resolution, buf, PrintFormat::Completed);
+                    let (_, trusted_name) = info.names(lockfile);
+                    ran.put(
+                        bun_semver::string::Builder::string_hash(trusted_name)
+                            as install::TruncatedPackageNameHash,
+                        Box::<[u8]>::from(trusted_name),
+                    )?;
                 }
-                Output::print(format_args!("\n"));
             }
+            info.print(
+                lockfile,
+                if info.action == Action::Run {
+                    PrintFormat::Completed
+                } else {
+                    PrintFormat::Untrusted
+                },
+            );
         }
 
         PackageJSONEditor::edit_trusted_dependencies(
@@ -678,32 +656,19 @@ impl TrustCommand {
             package_names_to_add.keys_mut(),
         )?;
 
-        for name in package_names_to_add.keys() {
-            // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
+        if total_scripts_ran > 0 {
+            // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
+            // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
+            // holds the only `&mut`. Same projection pattern as `migrate` in
+            // `package_manager_command.rs`.
+            // SAFETY: `load_lockfile` is `Ok` (errors exited in
+            // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
+            // only for `save_format()` (scalar `format`/`migrated` fields).
             unsafe {
-                (*pm_raw)
-                    .lockfile
-                    .trusted_dependencies
-                    .as_mut()
-                    .unwrap()
-                    .put(
-                        bun_semver::string::Builder::string_hash(name)
-                            as install::TruncatedPackageNameHash,
-                        Box::<[u8]>::from(&**name),
-                    )?;
+                let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
+                (*lf).trusted_dependencies = Some(ran);
+                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }
-        }
-
-        // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
-        // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
-        // holds the only `&mut`. Same projection pattern as `migrate` in
-        // `package_manager_command.rs`.
-        // SAFETY: `load_lockfile` is `Ok` (errors exited in
-        // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
-        // only for `save_format()` (scalar `format`/`migrated` fields).
-        unsafe {
-            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
         }
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
@@ -738,22 +703,36 @@ impl TrustCommand {
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
         let _ = root_file.close();
 
-        debug_assert!(total_scripts_ran > 0);
+        if total_scripts_ran > 0 {
+            bun_core::pretty!(
+                " <green>{}<r> script{} ran across {} package{} ",
+                total_scripts_ran,
+                if total_scripts_ran > 1 { "s" } else { "" },
+                total_packages_with_scripts,
+                if total_packages_with_scripts > 1 {
+                    "s"
+                } else {
+                    ""
+                },
+            );
 
-        bun_core::pretty!(
-            " <green>{}<r> script{} ran across {} package{} ",
-            total_scripts_ran,
-            if total_scripts_ran > 1 { "s" } else { "" },
-            total_packages_with_scripts,
-            if total_packages_with_scripts > 1 {
-                "s"
-            } else {
-                ""
-            },
-        );
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+            Output::print(format_args!("\n"));
+        }
 
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
-        Output::print(format_args!("\n"));
+        if total_deferred_packages > 0 {
+            if total_scripts_ran > 0 {
+                Output::print(format_args!("\n"));
+            }
+            bun_core::prettyln!(
+                " <yellow>{}<r> trusted package{} linked from the global store: run <d>`<r><blue>bun install<r><d>`<r> to run the scripts inside this project",
+                total_deferred_packages,
+                if total_deferred_packages > 1 { "s" } else { "" },
+            );
+        }
 
         if total_skipped_packages > 0 {
             Output::print(format_args!("\n"));
@@ -763,6 +742,7 @@ impl TrustCommand {
                 if total_skipped_packages > 1 { "s" } else { "" },
             );
         }
+        Self::print_aliased_args(&aliased_args);
 
         Ok(())
     }

@@ -116,6 +116,26 @@ it("should continue using a binary lockfile if it exists", async () => {
   expect(thirdLockfile).not.toBe(secondLockfile);
 });
 
+it("--dry-run does not convert bun.lockb to bun.lock", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+  await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+  await runBunInstall(env, packageDir);
+  const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--dry-run", "--save-text-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+  expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+  expect(exitCode).toBe(0);
+});
+
 it("migrating bun.lockb keeps a peer required when it is satisfied only by the dependent's own nested copy", async () => {
   // a `file:` override never hoists, so the only no-deps entry is `peer-deps/no-deps`
   const files = {

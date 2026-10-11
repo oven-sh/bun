@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use core::ffi::CStr;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -32,7 +33,7 @@ use bun_ptr::{RefCount, RefPtr};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnEnv,
     SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
@@ -101,28 +102,25 @@ fn do_partial_install_of_security_scanner(
 
     let packages_to_install: Option<&[PackageID]> = Some(&[security_scanner_pkg_id]);
 
-    let summary = match manager.options.node_linker {
-        bun_install_types::NodeLinker::NodeLinker::Hoisted
-        // TODO
-        | bun_install_types::NodeLinker::NodeLinker::Auto => {
-            HoistedInstall::install_hoisted_packages(
-                manager,
-                ctx,
-                &[],
-                true,
-                log_level,
-                packages_to_install,
-            )?
-        }
-        bun_install_types::NodeLinker::NodeLinker::Isolated => {
-            IsolatedInstall::install_isolated_packages(
-                manager,
-                ctx,
-                true,
-                &[],
-                packages_to_install,
-            )?
-        }
+    // The linker of the install that follows. `bun pm scan` has not chosen a configVersion.
+    let linker = crate::lockfile_real::resolve_node_linker(
+        manager.options.node_linker,
+        (manager.options.config_version)
+            .or(manager.lockfile.saved_config_version)
+            .unwrap_or(crate::config_version::ConfigVersion::V0),
+        manager.lockfile.workspace_paths.len() > 0,
+    );
+    let summary = if linker == bun_install_types::NodeLinker::NodeLinker::Isolated {
+        IsolatedInstall::install_isolated_packages(manager, ctx, true, &[], packages_to_install)?
+    } else {
+        HoistedInstall::install_hoisted_packages(
+            manager,
+            ctx,
+            &[],
+            true,
+            log_level,
+            packages_to_install,
+        )?
     };
 
     if cfg!(debug_assertions) {
@@ -1073,36 +1071,31 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Build
-        // owned NUL-terminated buffers so the pointers stay valid across the
-        // `spawn_process` FFI boundary.
-        let mut argv0_buf: Vec<u8> = exec_path.as_bytes().to_vec();
-        argv0_buf.push(0);
-        let mut argv3_buf: Vec<u8> = self.code.to_vec();
-        argv3_buf.push(0);
-        // Element type MUST be bare `*const c_char` (null sentinel), never
-        // `Option<*const c_char>`: raw pointers are already nullable, and
-        // `Option<*const T>` is a 2-word (tag, ptr) pair — casting that to
-        // `Argv` interleaves discriminant words and EFAULTs in the kernel.
-        let mut argv: [*const core::ffi::c_char; 5] = [
-            argv0_buf.as_ptr().cast(),
-            c"--no-install".as_ptr(),
-            c"-e".as_ptr(),
-            argv3_buf.as_ptr().cast(),
-            core::ptr::null(),
+        // Like a lifecycle script: the environment install resolved, and no `.env` file on top of it.
+        let code =
+            std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
+        let argv = [
+            exec_path.as_cstr(),
+            c"--no-install",
+            c"--no-env-file",
+            c"-e",
+            code.as_c_str(),
         ];
-        const _: () = assert!(
-            core::mem::size_of::<[*const core::ffi::c_char; 5]>()
-                == 5 * core::mem::size_of::<usize>()
-        );
+        let env = self.manager.env_mut();
+        // Set in the process environment after the loader copied it.
+        if bun_io::parent_death_watchdog::is_enabled() {
+            env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
+        }
+        let envp = env.map.create_null_delimited_env_map()?;
+        let envp: Vec<&CStr> = envp.iter().collect();
 
         #[cfg(windows)]
         {
-            self.spawn_windows(&mut argv, ipc_output_fds)?;
+            self.spawn_windows(&argv, &envp, ipc_output_fds)?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&mut argv, ipc_output_fds)?;
+            self.spawn_posix(&argv, &envp, ipc_output_fds)?;
         }
 
         Ok(())
@@ -1115,7 +1108,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(unix)]
     fn spawn_posix(
         &mut self,
-        argv: &mut [*const core::ffi::c_char; 5],
+        argv: &[&CStr],
+        envp: &[&CStr],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -1132,16 +1126,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+            .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1165,7 +1151,8 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
-        argv: &mut [*const core::ffi::c_char; 5],
+        argv: &[&CStr],
+        envp: &[&CStr],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         use bun_sys::ReturnCodeExt as _;
@@ -1244,16 +1231,8 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // SAFETY: `argv` is a local null-terminated C-string array with a
-        // non-null argv[0]; `environ_ptr()` is the process environ block.
-        let mut spawned = unsafe {
-            spawn::spawn_process(
-                &spawn_options,
-                argv.as_mut_ptr().cast(),
-                bun_sys::environ_ptr(),
-            )
-        }?
-        .map_err(|e| e.to_zig_err())?;
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+            .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();

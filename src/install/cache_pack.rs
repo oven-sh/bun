@@ -165,7 +165,7 @@ fn without_hex16(s: &[u8], sigil: u8, is_hex: impl Fn(&u8) -> bool) -> Option<&[
     (s.len() > 16 && s[1..17].iter().all(is_hex)).then(|| &s[17..])
 }
 
-/// `<major>.<minor>.<patch>[-<16 hex>][+<16 HEX>][@@<host>]@@@<n>`
+/// `<major>.<minor>.<patch>[-<16 hex>][+<16 HEX>][@@<host>[__<16 hex>]]@@@<n>`
 fn is_npm_entry_version(mut s: &[u8]) -> bool {
     let separators: [&[u8]; 3] = [b".", b".", b""];
     for separator in separators {
@@ -260,8 +260,8 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
             continue;
         }
         let integrity = pm.lockfile.packages.items_meta()[i].integrity;
-        // Has no entry name yet, and the tarball is on disk anyway.
-        if resolution.tag == ResolutionTag::LocalTarball && !integrity.tag.is_supported() {
+        // Has no entry name until an install records what it extracted.
+        if resolution.tag.is_tarball() && !integrity.tag.is_supported() {
             continue;
         }
         let name = pm
@@ -864,7 +864,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
 fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::Maybe<bool> {
     let mut to_buf = bun_paths::w_path_buffer_pool::get();
     let to_w = bun_paths::strings::to_wpath_normalized(&mut to_buf, to.as_bytes());
-    // A scanner or indexer may hold the new files open for a moment; see `move_to_cache_directory`.
+    // A scanner or indexer may hold the new files open for a moment; see `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
         let dir = sys::open_dir_at_windows_a(
@@ -892,45 +892,22 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
     }
 }
 
-/// The `<cache>/<name>/<version…>` link of `move_to_cache_directory`, which auto-install resolves through.
-fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) -> Option<()> {
-    let name_len = strings::index_of_char_pos(entry.as_bytes(), b'@', 1)?;
-    let (name, version) = (
+fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
+    let Some(name_len) = strings::index_of_char_pos(entry.as_bytes(), b'@', 1) else {
+        return;
+    };
+    let mut target_buf = bun_paths::path_buffer_pool::get();
+    crate::cache_publish::create_index_link(
+        cache_dir,
+        cache_dir_path,
         &entry.as_bytes()[..name_len],
         &entry.as_bytes()[name_len + 1..],
-    );
-    let mut target_buf = bun_paths::path_buffer_pool::get();
-    let target = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-        cache_dir_path,
-        &mut target_buf[..],
-        &[entry.as_bytes()],
-    );
-    let mut link_buf = bun_paths::path_buffer_pool::get();
-    #[cfg(windows)]
-    {
-        Dir::borrow(&cache_dir).make_path(name).ok()?;
-        let link = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Windows>(
+        bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
             cache_dir_path,
-            &mut link_buf[..],
-            &[name, version],
-        );
-        return sys::sys_uv::symlink_uv(target, link, sys::windows::libuv::UV_FS_SYMLINK_JUNCTION)
-            .ok();
-    }
-    #[cfg(not(windows))]
-    {
-        let link = bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
-            &mut link_buf[..],
-            &[name, version],
-        );
-        match sys::symlinkat(target, cache_dir, link) {
-            Err(err) if err.get_errno() == E::ENOENT => {
-                Dir::borrow(&cache_dir).make_path(name).ok()?;
-                sys::symlinkat(target, cache_dir, link).ok()
-            }
-            result => result.ok(),
-        }
-    }
+            &mut target_buf[..],
+            &[entry.as_bytes()],
+        ),
+    );
 }
 
 /// Restore the entries of the pack at `pack_path` that the cache does not have.
@@ -984,9 +961,6 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
         }
     }
 
-    let make_index = !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX
-        .get()
-        .unwrap_or(false);
     let mut cache_dir_path_buf = bun_paths::path_buffer_pool::get();
     let cache_dir_path: &[u8] = sys::get_fd_path(cache_dir, &mut cache_dir_path_buf)?;
 
@@ -1005,8 +979,8 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
             continue;
         }
         summary.created += 1;
-        if make_index && *tag == ResolutionTag::Npm {
-            let _ = create_index_link(cache_dir, cache_dir_path, name);
+        if *tag == ResolutionTag::Npm {
+            create_index_link(cache_dir, cache_dir_path, name);
         }
     }
     Ok(summary)

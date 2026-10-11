@@ -16,6 +16,7 @@ use crate::{
 
 use super::PackageManager;
 use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry, root_package_json_path};
+use super::workspace_package_json_cache::GetJSONOptions;
 use super::workspace_selection::WorkspaceGraph;
 
 /// Root + member package.json files parsed the way `bun install` parses them, into a throw-away lockfile.
@@ -60,10 +61,83 @@ impl ScratchManifests {
         self.fail_on_logged_errors()
     }
 
+    /// `parse_root(Features::main())` minus its `workspaces` walk, which reads every member's package.json:
+    /// `workspace:` rows resolve through the paths `manager.lockfile` recorded. The versions it recorded may
+    /// be behind the files, so they are left out and no `workspace:` range is checked.
+    fn parse_root_alone(&mut self, manager: &mut PackageManager) -> crate::Result<()> {
+        let installed = &manager.lockfile;
+        let buf = installed.buffers.string_bytes.as_slice();
+        let (mut builder, scratch) = self.lockfile.string_builder_split();
+        for path in installed.workspace_paths.values() {
+            builder.count(path.slice(buf));
+        }
+        builder.allocate()?;
+        for (name_hash, path) in installed
+            .workspace_paths
+            .keys()
+            .iter()
+            .zip(installed.workspace_paths.values())
+        {
+            let path = builder.append::<Semver::String>(path.slice(buf));
+            scratch.workspace_paths.put(*name_hash, path)?;
+        }
+        builder.clamp();
+
+        self.parse_root(
+            manager,
+            Features {
+                workspaces: false,
+                unchecked_workspace_ranges: true,
+                ..Features::main()
+            },
+        )
+    }
+
+    /// `parse_member` after `parse_root_alone`, for a caller that goes on without the file: nothing is printed
+    /// and `log` is left clean.
+    fn try_parse_member(
+        &mut self,
+        manager: &mut PackageManager,
+        target: &WorkspaceTarget,
+    ) -> crate::Result<Package> {
+        manager
+            .workspace_package_json_cache
+            .get_with_path(
+                &mut bun_ast::Log::init(),
+                &target.package_json_path,
+                GetJSONOptions {
+                    init_reset_store: false,
+                    guess_indentation: true,
+                },
+            )
+            .unwrap()?;
+        let parsed = self.parse_member_as(
+            manager,
+            target,
+            Features {
+                unchecked_workspace_ranges: true,
+                ..Features::WORKSPACE
+            },
+        );
+        if parsed.is_err() {
+            self.log = bun_ast::Log::init();
+        }
+        parsed
+    }
+
     pub(crate) fn parse_member(
         &mut self,
         manager: &mut PackageManager,
         target: &WorkspaceTarget,
+    ) -> crate::Result<Package> {
+        self.parse_member_as(manager, target, Features::WORKSPACE)
+    }
+
+    fn parse_member_as(
+        &mut self,
+        manager: &mut PackageManager,
+        target: &WorkspaceTarget,
+        features: Features,
     ) -> crate::Result<Package> {
         let (source, json) = {
             let entry = fetch_entry(manager, target);
@@ -79,7 +153,7 @@ impl ScratchManifests {
             source.get(),
             json,
             &mut resolver,
-            Features::WORKSPACE,
+            features,
         )?;
         self.fail_on_logged_errors()?;
         Ok(pkg)
@@ -116,11 +190,28 @@ pub struct DeclaredDependencies {
     rows: Vec<DeclaredDependency>,
 }
 
+/// What a member's package.json that cannot be read or parsed does to [`DeclaredDependencies::load`].
+#[derive(Clone, Copy)]
+pub enum BrokenMember {
+    /// The command installs afterwards, which reads every member: selected or not, exit with `bun install`'s errors.
+    Fatal,
+    /// The command only reports: a selected one is named on stderr and left out, the others are never read.
+    LeftOut,
+}
+
 impl DeclaredDependencies {
-    /// Exits with `bun install`'s errors when a package.json does not parse. Declared but not installed: no row.
-    pub fn load(manager: &mut PackageManager, workspace_pkg_ids: &[PackageID]) -> Self {
+    /// Exits with `bun install`'s errors when the root package.json does not parse. Declared but not installed: no row.
+    pub fn load(
+        manager: &mut PackageManager,
+        workspace_pkg_ids: &[PackageID],
+        broken_member: BrokenMember,
+    ) -> Self {
         let mut scratch = ScratchManifests::new();
-        if let Err(err) = scratch.parse_root(manager, Features::main()) {
+        let root = match broken_member {
+            BrokenMember::Fatal => scratch.parse_root(manager, Features::main()),
+            BrokenMember::LeftOut => scratch.parse_root_alone(manager),
+        };
+        if let Err(err) = root {
             crash(
                 &mut scratch.log,
                 err,
@@ -137,16 +228,28 @@ impl DeclaredDependencies {
             let pkg = if target.name_hash.is_none() {
                 scratch.root
             } else {
-                match scratch.parse_member(manager, &target) {
-                    Ok(pkg) => pkg,
-                    Err(err) => crash(
-                        &mut scratch.log,
-                        err,
-                        format_args!(
-                            "failed to read package.json for workspace '{}'",
-                            BStr::new(&target.name)
+                match broken_member {
+                    BrokenMember::Fatal => match scratch.parse_member(manager, &target) {
+                        Ok(pkg) => pkg,
+                        Err(err) => crash(
+                            &mut scratch.log,
+                            err,
+                            format_args!(
+                                "failed to read package.json for workspace '{}'",
+                                BStr::new(&target.name)
+                            ),
                         ),
-                    ),
+                    },
+                    BrokenMember::LeftOut => match scratch.try_parse_member(manager, &target) {
+                        Ok(pkg) => pkg,
+                        Err(err) => {
+                            Output::err_generic(
+                                "failed to load {}: {}",
+                                (BStr::new(&target.package_json_path), err.name()),
+                            );
+                            continue;
+                        }
+                    },
                 }
             };
             let installed =
@@ -261,6 +364,19 @@ pub struct WorkspaceManifests {
 impl WorkspaceManifests {
     /// Exits with `bun install`'s errors when the root package.json or a workspace does not parse.
     pub fn load(manager: &mut PackageManager) -> WorkspaceManifests {
+        Self::try_load(manager).unwrap_or_else(|(mut log, err)| {
+            crash(
+                &mut log,
+                err,
+                format_args!("failed to read the workspace's package.json files"),
+            )
+        })
+    }
+
+    /// `load` for a caller that goes on without them. A root package.json that cannot be read still exits.
+    pub fn try_load(
+        manager: &mut PackageManager,
+    ) -> Result<WorkspaceManifests, (bun_ast::Log, crate::Error)> {
         // Only what pack reads, so `bun install`'s checks on the root's own dependency lists do not fail a pack.
         let features = Features {
             is_main: true,
@@ -271,17 +387,13 @@ impl WorkspaceManifests {
         };
         let mut scratch = ScratchManifests::new();
         if let Err(err) = scratch.parse_root(manager, features) {
-            crash(
-                &mut scratch.log,
-                err,
-                format_args!("failed to read the workspace's package.json files"),
-            );
+            return Err((scratch.log, err));
         }
-        WorkspaceManifests {
+        Ok(WorkspaceManifests {
             lockfile: scratch.lockfile,
             root_dependencies: scratch.root.dependencies,
             root_package_json_path: root_package_json_path(),
-        }
+        })
     }
 
     /// Whether `name` is one of the workspaces (the root package is not one).
@@ -307,6 +419,14 @@ impl WorkspaceManifests {
                     && dependency.version.workspace().slice(string_buf) == relative_directory
             })
             .map(|dependency| dependency.name.slice(string_buf))
+    }
+
+    /// Whether `package_dir` is the root package's folder or a workspace's.
+    pub fn contains_package_dir(&self, package_dir: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        folder_relative_to_top_level_dir(package_dir, b".", &mut buf[..])
+            .is_some_and(|relative| relative == b".")
+            || self.workspace_name_at_path(package_dir, b".").is_some()
     }
 
     /// The package.json whose `workspaces` and catalogs these are (the packed package's own when it is no workspace).

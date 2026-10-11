@@ -10,6 +10,7 @@ import {
   normalizeBunSnapshot,
   pack,
   runBunInstall,
+  substDrive,
   tempDir,
   tls,
   unprivilegedSpawnOptions,
@@ -104,10 +105,13 @@ type MockRegistry = {
 /** A registry that records what `bun publish` sends. `respond` picks the response, the default accepts everything. */
 function mockRegistry(
   respond?: (req: Request, recorded: RegistryRequest, mock: MockRegistry) => Response | Promise<Response>,
+  /** Serve over https with the harness certificate, which the test passes as `--ca`. */
+  secure = false,
 ): MockRegistry {
   const requests: RegistryRequest[] = [];
   const server = Bun.serve({
     port: 0,
+    ...(secure ? { tls } : {}),
     async fetch(req) {
       const recorded: RegistryRequest = {
         method: req.method,
@@ -625,6 +629,51 @@ describe.concurrent("otp", () => {
       request("GET", "/done", { userAgent: ciUserAgent }),
       request("PUT", "/otp-pkg-4", { authType: "legacy", otp, userAgent: ciUserAgent }),
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `--otp` is written into `npm-otp: <value>` as it is, so a CR or LF in it ends that header line and what follows
+  // goes out as more header lines.
+  test.each([
+    ["CRLF", "abc\r\nX-Injected: 1"],
+    ["a bare LF", "abc\ndef"],
+    ["a bare CR", "abc\rdef"],
+  ])("--otp containing %s is rejected", async (_, otp) => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-otp-crlf", {
+      "package.json": JSON.stringify({ name: "otp-pkg-crlf", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir), "--otp", otp);
+    expect(err).toBe("error: invalid `otp` value: must not contain a newline or NUL byte\n");
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("can publish with only _auth from .npmrc", () => {
+  // npm forwards whatever `_auth` holds as `Basic <value>`, decodable or not.
+  test.each([
+    ["decodable base64", Buffer.from("alice:s3cret").toString("base64")],
+    ["opaque non-base64", "!!not-base64!!"],
+  ])("%s reaches the registry verbatim", async (_, blob) => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-npmrc-auth", {
+      "package.json": JSON.stringify({ name: "npmrc-auth-pkg", version: "1.0.0" }),
+      ".npmrc": `registry=http://localhost:${mock.port}/\n//localhost:${mock.port}/:_auth=${blob}\n`,
+      // An empty home so the developer's own `.npmrc` / global bunfig cannot leak in.
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+
+    const { out, err, exitCode } = await publish(
+      { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, NPM_CONFIG_USERCONFIG: undefined },
+      String(dir),
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ npmrc-auth-pkg@1.0.0");
+    expect(mock.requests).toEqual([request("PUT", "/npmrc-auth-pkg", { authorization: `Basic ${blob}` })]);
     expect(exitCode).toBe(0);
   });
 });
@@ -2074,12 +2123,15 @@ describe.concurrent("tag", () => {
 describe("publishConfig registry", () => {
   // Every request a registry receives, so a test can assert that a registry
   // received exactly one PUT carrying its own token, or nothing at all.
-  function mockRegistry() {
+  // `secure`: over https with the harness certificate (`ca`). What a package.json pins is data, like a tarball URL,
+  // so a `.npmrc` line follows it only there.
+  function mockRegistry({ secure = false } = {}) {
     const requests: { method: string; path: string; authorization: string | null }[] = [];
     let manifest: any;
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
+      ...(secure ? { tls } : {}),
       async fetch(req) {
         requests.push({
           method: req.method,
@@ -2091,7 +2143,8 @@ describe("publishConfig registry", () => {
       },
     });
     return {
-      url: `http://127.0.0.1:${server.port}/`,
+      url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/`,
+      host: `127.0.0.1:${server.port}`,
       // What `//host/path/:_authToken=` lines in .npmrc key on.
       npmrcToken: `//127.0.0.1:${server.port}/:_authToken=token-for-${server.port}`,
       token: `token-for-${server.port}`,
@@ -2106,10 +2159,11 @@ describe("publishConfig registry", () => {
   }
 
   const put = (path: string, token: string) => [{ method: "PUT", path, authorization: `Bearer ${token}` }];
+  const ca = ["--ca", tls.cert];
 
   test.concurrent("is published to, with the credentials .npmrc configures for it", async () => {
     using configured = mockRegistry();
-    using pinned = mockRegistry();
+    using pinned = mockRegistry({ secure: true });
     using dir = tempDir("publish-config-registry", {
       ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
       "package.json": JSON.stringify({
@@ -2119,7 +2173,7 @@ describe("publishConfig registry", () => {
       }),
     });
 
-    const { out, err, exitCode } = await publish(env, String(dir));
+    const { out, err, exitCode } = await publish(env, String(dir), ...ca);
     expect(err).not.toContain("error:");
     expect(out).toContain(`Tag: internal\nAccess: restricted\nRegistry: ${pinned.url}\n`);
     expect(out).toContain(" + @corp/secretpkg@1.0.0");
@@ -2130,13 +2184,13 @@ describe("publishConfig registry", () => {
     expect(pinned.manifest).toMatchObject({
       "dist-tags": { internal: "1.0.0" },
       access: "restricted",
-      versions: { "1.0.0": { dist: { tarball: `${pinned.url}@corp/secretpkg/-/@corp/secretpkg-1.0.0.tgz` } } },
+      versions: { "1.0.0": { dist: { tarball: `http://${pinned.host}/@corp/secretpkg/-/@corp/secretpkg-1.0.0.tgz` } } },
     });
   });
 
   test.concurrent("is published to when publishing a tarball", async () => {
     using configured = mockRegistry();
-    using pinned = mockRegistry();
+    using pinned = mockRegistry({ secure: true });
     using dir = tempDir("publish-config-registry-tarball", {
       ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
       "package.json": JSON.stringify({
@@ -2147,7 +2201,7 @@ describe("publishConfig registry", () => {
     });
     await pack(String(dir), env);
 
-    const { out, err, exitCode } = await publish(env, String(dir), "./corp-secretpkg-1.0.0.tgz");
+    const { out, err, exitCode } = await publish(env, String(dir), "./corp-secretpkg-1.0.0.tgz", ...ca);
     expect(err).not.toContain("error:");
     expect(out).toContain(`Tag: internal\nAccess: restricted\nRegistry: ${pinned.url}\n`);
     expect(out).toContain(" + @corp/secretpkg@1.0.0");
@@ -2158,13 +2212,13 @@ describe("publishConfig registry", () => {
     expect(pinned.manifest).toMatchObject({
       "dist-tags": { internal: "1.0.0" },
       access: "restricted",
-      versions: { "1.0.0": { dist: { tarball: `${pinned.url}@corp/secretpkg/-/@corp/secretpkg-1.0.0.tgz` } } },
+      versions: { "1.0.0": { dist: { tarball: `http://${pinned.host}/@corp/secretpkg/-/@corp/secretpkg-1.0.0.tgz` } } },
     });
   });
 
   test.concurrent("is what --dry-run reports", async () => {
     using configured = mockRegistry();
-    using pinned = mockRegistry();
+    using pinned = mockRegistry({ secure: true });
     using dir = tempDir("publish-config-registry-dry-run", {
       ".npmrc": `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
       "package.json": JSON.stringify({
@@ -2303,7 +2357,7 @@ describe("publishConfig registry", () => {
 
   test.concurrent("@scope:registry overrides the registry configured for the scope", async () => {
     using scoped = mockRegistry();
-    using pinned = mockRegistry();
+    using pinned = mockRegistry({ secure: true });
     using dir = tempDir("publish-config-scope-registry", {
       ".npmrc": `@corp:registry=${scoped.url}\n${scoped.npmrcToken}\n${pinned.npmrcToken}\n`,
       "package.json": JSON.stringify({
@@ -2313,12 +2367,110 @@ describe("publishConfig registry", () => {
       }),
     });
 
-    const { out, err, exitCode } = await publish(env, String(dir));
+    const { out, err, exitCode } = await publish(env, String(dir), ...ca);
     expect(err).not.toContain("error:");
     expect(out).toContain(`Registry: ${pinned.url}\n`);
     expect(exitCode).toBe(0);
     expect(scoped.requests).toEqual([]);
     expect(pinned.requests).toEqual(put("/@corp%2fpinned-scope", pinned.token));
+  });
+
+  // Which credential goes to the URL a package.json (for `bun publish x.tgz`, the one in the tarball) pins.
+  // `configured` is the default registry, https, mounted at /reg/, with the token DEF on its own key.
+  type Mock = ReturnType<typeof mockRegistry>;
+  type Pin = {
+    registry: string;
+    npmrc?: string;
+    env?: Record<string, string>;
+    /** Who gets the PUT, where and with which `Authorization`. Nobody: "missing authentication", no request at all. */
+    sent?: [to: Mock, path: string, authorization: string];
+  };
+  const pins: [string, (configured: Mock, pinned: Mock, plain: Mock) => Pin][] = [
+    [
+      "another https host with a line on an ancestor key",
+      (_, pinned) => ({
+        registry: `${pinned.url}pub/`,
+        npmrc: `//${pinned.host}/:_authToken=PUB\n`,
+        sent: [pinned, "/pub/pinned-pkg", "Bearer PUB"],
+      }),
+    ],
+    ["another https host without a line", (_, pinned) => ({ registry: `${pinned.url}pub/` })],
+    [
+      "another https host, with only $BUN_CONFIG_TOKEN",
+      (_, pinned) => ({ registry: `${pinned.url}pub/`, env: { BUN_CONFIG_TOKEN: "ENV" } }),
+    ],
+    [
+      "a path below the configured registry",
+      configured => ({
+        registry: `${configured.url}reg/pub/`,
+        sent: [configured, "/reg/pub/pinned-pkg", "Bearer DEF"],
+      }),
+    ],
+    ["a sibling path of the configured registry", configured => ({ registry: `${configured.url}pub/` })],
+    [
+      "an http host that has a line",
+      (_, __, plain) => ({ registry: plain.url, npmrc: `//${plain.host}/:_authToken=PLAIN\n` }),
+    ],
+    [
+      "an http URL the user configured as a registry too",
+      (_, __, plain) => ({
+        registry: plain.url,
+        npmrc: `@other:registry=${plain.url}\n//${plain.host}/:_authToken=PLAIN\n`,
+        sent: [plain, "/pinned-pkg", "Bearer PLAIN"],
+      }),
+    ],
+    [
+      "userinfo",
+      (_, pinned) => ({
+        registry: `https://u:p@${pinned.host}/pub/`,
+        sent: [pinned, "/pub/pinned-pkg", `Basic ${btoa("u:p")}`],
+      }),
+    ],
+    [
+      "userinfo that names a variable of this process",
+      (_, pinned) => ({
+        registry: `https://:$PUBLISH_SECRET@${pinned.host}/pub/`,
+        env: { PUBLISH_SECRET: "must-not-leak" },
+        sent: [pinned, "/pub/pinned-pkg", "Bearer $PUBLISH_SECRET"],
+      }),
+    ],
+    [
+      "a token after the path",
+      (_, pinned) => ({
+        registry: `${pinned.url}pub/:_authToken=EMBEDDED`,
+        sent: [pinned, "/pub/pinned-pkg", "Bearer EMBEDDED"],
+      }),
+    ],
+  ];
+
+  describe.each(["a directory", "a tarball"])("from %s, pinned to", from => {
+    test.concurrent.each(pins)("%s", async (_, pin) => {
+      using configured = mockRegistry({ secure: true });
+      using pinned = mockRegistry({ secure: true });
+      using plain = mockRegistry();
+      const { registry, npmrc = "", env: extraEnv, sent } = pin(configured, pinned, plain);
+      using dir = tempDir("publish-config-registry-pin", {
+        ".npmrc": `registry=${configured.url}reg/\n//${configured.host}/reg/:_authToken=DEF\n${npmrc}`,
+        "package.json": JSON.stringify({ name: "pinned-pkg", version: "1.0.0", publishConfig: { registry } }),
+      });
+      if (from === "a tarball") await pack(String(dir), env);
+
+      const { err, exitCode } = await publish(
+        { ...env, ...extraEnv },
+        String(dir),
+        ...(from === "a tarball" ? ["./pinned-pkg-1.0.0.tgz"] : []),
+        ...ca,
+      );
+
+      if (sent === undefined) expect(err).toContain("error: missing authentication");
+      else expect(err).not.toContain("error:");
+      for (const mock of [configured, pinned, plain]) {
+        expect(mock.requests).toEqual(
+          mock === sent?.[0] ? [{ method: "PUT", path: sent[1], authorization: sent[2] }] : [],
+        );
+      }
+      expect(exitCode).toBe(sent === undefined ? 1 : 0);
+    });
   });
 
   const expected = "expected a URL starting with 'https://' or 'http://'";
@@ -2418,6 +2570,25 @@ test.concurrent("$npm_lifecycle_event is accurate during publish", async () => {
     2 publish
     3 postpublish"
   `);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/29273
+// `C:` is the current directory of drive C, it is not the root `C:\`.
+test.concurrent.skipIf(!isWindows)("publishes a package in the root of a drive", async () => {
+  using dir = await registryPackage({
+    name: "publish-pkg-drive-root",
+    version: "1.0.0",
+    scripts: { prepack: "touch prepack.txt", publish: "touch publish.txt" },
+  });
+  using drive = substDrive(String(dir));
+
+  const { out, err, exitCode } = await publish(env, drive.root);
+  expect(err).toBe("$ touch prepack.txt\n$ touch publish.txt\n");
+  expect(out).toContain(" + publish-pkg-drive-root@1.0.0");
+  // Each script ran in the root.
+  expect(existsSync(join(String(dir), "prepack.txt"))).toBe(true);
+  expect(existsSync(join(String(dir), "publish.txt"))).toBe(true);
   expect(exitCode).toBe(0);
 });
 
@@ -2944,7 +3115,7 @@ describe.concurrent("--tolerate-republish", () => {
 describe.concurrent("--recursive and --filter", () => {
   // `asked`: every request as `METHOD name`, in order. `known`: the name@version pairs the registry already has.
   // `reject`: the names whose PUT it answers with 403. `manifests`: the bodies of the PUTs it accepted, by name.
-  function workspaceRegistry() {
+  function workspaceRegistry(secure = false) {
     const asked: string[] = [];
     const known: string[] = [];
     const reject: string[] = [];
@@ -2960,7 +3131,7 @@ describe.concurrent("--recursive and --filter", () => {
       if (reject.includes(name)) return Response.json({ error: `${name} is not yours` }, { status: 403 });
       manifests[name] = recorded.manifest;
       return new Response("OK");
-    });
+    }, secure);
     return { mock, asked, known, reject, manifests, [Symbol.dispose]: () => mock[Symbol.dispose]() };
   }
 
@@ -3211,12 +3382,19 @@ describe.concurrent("--recursive and --filter", () => {
     "the publishConfig of one package applies to it alone: $what",
     async ({ members, filters, first, second, tag }) => {
       using configured = workspaceRegistry();
-      using pinned = workspaceRegistry();
-      using dir = workspace(configured.mock, members(`http://localhost:${pinned.mock.port}/`), {
+      // https: a `.npmrc` line does not follow a URL that a package.json names into cleartext.
+      using pinned = workspaceRegistry(true);
+      using dir = workspace(configured.mock, members(`https://localhost:${pinned.mock.port}/`), {
         ".npmrc": `//localhost:${pinned.mock.port}/:_authToken=token-of-pinned\n`,
       });
 
-      const { out, exitCode } = await publish(env, String(dir), ...filters.flatMap(filter => ["--filter", filter]));
+      const { out, exitCode } = await publish(
+        env,
+        String(dir),
+        "--ca",
+        tls.cert,
+        ...filters.flatMap(filter => ["--filter", filter]),
+      );
       expect(published(out)).toEqual([` + ${first}@1.0.0`, ` + ${second}@1.0.0`]);
       expect(pinned.asked).toEqual([`GET ${first}`, `PUT ${first}`]);
       expect(configured.asked).toEqual([`GET ${second}`, `PUT ${second}`]);

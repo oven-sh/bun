@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicU8, Ordering};
+use std::collections::VecDeque;
 use std::io::Write as _;
 
 use bun_ast::Log;
@@ -8,12 +9,13 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{Mutex, UnboundedQueue, thread_pool};
+use bun_threading::{UnboundedQueue, thread_pool};
 
 use bun_semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
 
 use crate::bin_real;
+use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
 use crate::package_install::{
@@ -68,13 +70,11 @@ macro_rules! debug {
 }
 
 pub struct Installer<'a> {
-    pub(crate) trusted_dependencies_mutex: Mutex,
     /// BACKREF. Raw pointer (not `&'a mut`) for the same
     /// reason as `manager`: `Task::run` executes concurrently on the thread
     /// pool and each task derefs this field; a `&'a mut` would assert
-    /// exclusivity every concurrent task violates. Mutated only for
-    /// `lockfile.trusted_dependencies` (under `trusted_dependencies_mutex`,
-    /// narrowed via `addr_of_mut!`) and in `record_extracted_integrity` (main
+    /// exclusivity every concurrent task violates. Task threads only read it;
+    /// while they run it is mutated only in `record_extracted_integrity` (main
     /// thread, one row). Never null. Read via `lockfile()`.
     pub lockfile: *mut Lockfile,
 
@@ -127,6 +127,10 @@ pub struct Installer<'a> {
 
     /// Main-thread only: entries deleted by `on_optional_dependency_scripts_failed`.
     pub(crate) failed_optional_entries: Vec<StoreEntryId>,
+
+    /// Main-thread only: entries that returned `Result::RunScripts`, in that order. `run_tasks`
+    /// spawns them while fewer than `max_concurrent_lifecycle_scripts` scripts run.
+    pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
 }
 
 impl<'a> Installer<'a> {
@@ -153,11 +157,7 @@ impl<'a> Installer<'a> {
     #[inline]
     pub fn lockfile(&self) -> &'a Lockfile {
         // SAFETY: BACKREF — never null; pointee outlives `'a`. Never aliased by
-        // a *whole-struct* `&mut Lockfile`; the single mutated field
-        // (`trusted_dependencies`) is written under
-        // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
-        // (Task::run), not a `&mut Lockfile`. Callers must not project into
-        // `trusted_dependencies` from this `&Lockfile` across a tick.
+        // a *whole-struct* `&mut Lockfile` while a task runs.
         unsafe { &*self.lockfile }
     }
 
@@ -183,11 +183,46 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread, for an existing project-local store entry.
     pub(crate) fn start_relink_task(&mut self, entry_id: StoreEntryId) {
-        self.tasks[entry_id.get() as usize].relink = Relink::Pending;
+        let newly_trusted = self.is_newly_trusted(entry_id);
+        let task = &mut self.tasks[entry_id.get() as usize];
+        task.relink = Relink::Pending;
+        task.newly_trusted = newly_trusted;
         // .monotonic is okay because the task isn't running yet.
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::SymlinkDependencies as u32, Ordering::Relaxed);
         self.start_task(entry_id);
+    }
+
+    /// Named by `--trust`, or by a `trustedDependencies` entry the lockfile has not recorded: the
+    /// scripts an earlier install blocked run now. `Step::RunPreinstall` still asks whether it is trusted.
+    fn is_newly_trusted(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        if self
+            .trusted_dependencies_from_update_requests
+            .contains(&pkg_id)
+        {
+            return true;
+        }
+
+        let added = &self.manager().summary.added_trusted_dependencies;
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        if added.count() == 0 || dep_id == invalid_dependency_id {
+            return false;
+        }
+        let lockfile = self.lockfile();
+        let dep = &lockfile.buffers.dependencies[dep_id as usize];
+        let pkgs = lockfile.packages.slice();
+        let (name, name_hash) = pkgs.items_resolution()[pkg_id as usize].trusted_name(
+            (dep.name, dep.name_hash),
+            (
+                pkgs.items_name()[pkg_id as usize],
+                pkgs.items_name_hash()[pkg_id as usize],
+            ),
+        );
+        added
+            .get(&(name_hash as TruncatedPackageNameHash))
+            .is_some_and(|added| **added == *name.slice(lockfile.buffers.string_bytes.as_slice()))
     }
 
     pub(crate) fn on_package_extracted(
@@ -645,12 +680,107 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Called from main thread once the package is deleted; dependents finish without it.
-    pub(crate) fn on_optional_dependency_scripts_failed(&mut self, entry_id: StoreEntryId) {
+    /// Called from main thread; dependents finish without the entry. Returns `delete_store_copy`.
+    pub(crate) fn on_optional_dependency_scripts_failed(&mut self, entry_id: StoreEntryId) -> bool {
+        // deleted first so the resumed dependents do not link its binaries
+        let deleted = self.delete_store_copy(entry_id);
         self.failed_optional_entries.push(entry_id);
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::Done as u32, Ordering::Release);
         self.on_task_complete(entry_id, CompleteState::Skipped);
+        deleted
+    }
+
+    /// False for an entry without a copy in this project's store: a root, workspace or `link:`
+    /// entry is the user's own folder.
+    pub(crate) fn delete_store_copy(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let is_store_copy = !self.entry_uses_global_store(entry_id)
+            && matches!(
+                self.lockfile().packages.items_resolution()[pkg_id as usize].tag,
+                ResolutionTag::Npm
+                    | ResolutionTag::Git
+                    | ResolutionTag::Github
+                    | ResolutionTag::LocalTarball
+                    | ResolutionTag::RemoteTarball
+                    | ResolutionTag::Folder
+            );
+        if is_store_copy {
+            let mut path = AutoAbsPath::init_top_level_dir();
+            self.append_store_path(&mut path, entry_id);
+            let _ = Fd::cwd().delete_tree(path.slice());
+        }
+        is_store_copy
+    }
+
+    /// Main thread; a script of `failed` ends the install. An entry that is in place counts as
+    /// installed, so those whose scripts have not all run go: the next install links them again.
+    pub(crate) fn discard_entries_with_unfinished_scripts(&self, failed: StoreEntryId) {
+        let entries = &self.store.entries;
+        let pkg_metas = self.lockfile().packages.items_meta();
+        for (index, (step, node_id)) in (entries.items_step().iter())
+            .zip(entries.items_node_id())
+            .enumerate()
+        {
+            let entry_id = StoreEntryId::from(index as u32);
+            let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+            if entry_id == failed
+                || (step.load(Ordering::Acquire) != Step::Done as u32
+                    && pkg_metas[pkg_id as usize].has_install_script())
+            {
+                self.delete_store_copy(entry_id);
+            }
+        }
+    }
+
+    /// Main thread, once no task runs: tasks read `lockfile.trusted_dependencies` without a lock.
+    /// Records the `--trust` packages that had scripts, in bun.lock and for package.json.
+    pub(crate) fn record_update_request_trust(&mut self) {
+        if self.trusted_dependencies_from_update_requests.is_empty() {
+            return;
+        }
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_names = lockfile.packages.items_name();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let entries = &self.store.entries;
+
+        let mut names: Vec<Box<[u8]>> = Vec::new();
+        for (scripts, node_id) in entries.items_scripts().iter().zip(entries.items_node_id()) {
+            let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+            if scripts.get().is_none()
+                || !self
+                    .trusted_dependencies_from_update_requests
+                    .contains(&pkg_id)
+            {
+                continue;
+            }
+            let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+            let name = pkg_resolutions[pkg_id as usize].trusted_name(
+                lockfile.buffers.dependencies[dep_id as usize].name,
+                pkg_names[pkg_id as usize],
+            );
+            names.push(Box::from(name.slice(string_buf)));
+        }
+        if names.is_empty() {
+            return;
+        }
+
+        let manager = self.manager_mut();
+        let trusted = manager
+            .lockfile
+            .trusted_dependencies
+            .get_or_insert_with(Default::default);
+        for name in &names {
+            trusted.insert(
+                bun_semver::semver_string::Builder::string_hash(name) as TruncatedPackageNameHash,
+                name.clone(),
+            );
+        }
+        manager
+            .trusted_deps_to_add_to_package_json
+            .append(&mut names);
     }
 
     /// Main thread only: `completed` just reached `Step::Done`; re-check every entry waiting on it.
@@ -742,6 +872,8 @@ pub struct Task {
 
     pub(crate) result: Result,
     pub(crate) relink: Relink,
+    /// A relink task goes on to the lifecycle script steps. See `Installer::is_newly_trusted`.
+    pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
 }
@@ -871,7 +1003,7 @@ impl Task {
             Step::SymlinkDependencies => Step::CheckIfBlocked,
             Step::CheckIfBlocked => Step::SymlinkDependencyBinaries,
             Step::SymlinkDependencyBinaries => {
-                if self.relink == Relink::Off {
+                if self.relink == Relink::Off || self.newly_trusted {
                     Step::RunPreinstall
                 } else {
                     Step::Done
@@ -911,36 +1043,26 @@ impl Task {
         // materializing `&mut Installer` here would alias both. Instead:
         //   * `installer` is a shared `&Installer`; every Installer method called
         //     below takes `&self`.
-        //   * `manager_ptr` / `lockfile_ptr` are reached by raw-reading their
-        //     pointer fields. They point to allocations *outside* `Installer`, so
-        //     they do not overlap `installer`. They stay RAW for the whole body —
-        //     binding a function-scoped `&mut PackageManager` / `&mut Lockfile`
-        //     here would mean every concurrent task thread holds an aliased
-        //     `&mut` to the same object (UB regardless of mutex discipline).
-        //     Per-site reborrows below are `&*manager_ptr` for read-only access,
-        //     and mutation is narrowed via `addr_of_mut!` to the single field
-        //     being written while `trusted_dependencies_mutex` is held.
-        //   * Never access `installer.manager.*` / mutate `installer.lockfile.*`
-        //     while these locals are live — that would reborrow through
-        //     `&Installer` and alias `*manager_ptr` / `*lockfile_ptr`.
+        //   * `manager_ptr` is reached by raw-reading its pointer field. It points
+        //     to an allocation *outside* `Installer`, so it does not overlap
+        //     `installer`. It stays RAW for the whole body — binding a
+        //     function-scoped `&mut PackageManager` here would mean every
+        //     concurrent task thread holds an aliased `&mut` to the same object.
+        //     Per-site reborrows below are `&*manager_ptr` for read-only access.
+        //   * Never access `installer.manager.*` while this local is live — that
+        //     would reborrow through `&Installer` and alias `*manager_ptr`.
+        //   * The lockfile is only read: see `record_update_request_trust`.
         let installer_ptr = self.installer;
         let installer = installer_ptr.get();
         let manager_ptr: *mut PackageManager = installer.manager;
-        let lockfile_ptr: *mut Lockfile = installer.lockfile;
         // BACKREF — `manager_ptr` is non-null and the `PackageManager` outlives
         // every `Task` (see top-of-fn note). Wrapped once as `ParentRef` so the
         // read-only deref sites below go through safe `Deref`/`get()` instead
-        // of per-site `unsafe { &* }`. Mutation and narrowed `addr_of_mut!`
-        // field projections still go through the raw `manager_ptr` directly
-        // (same provenance tag as `manager_ref.ptr`). Safe `From<NonNull>`
+        // of per-site `unsafe { &* }`. Safe `From<NonNull>`
         // construction — non-null is guaranteed by the BACKREF field invariant.
         let manager_ref = bun_ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("Installer.manager BACKREF is non-null"),
         );
-        // Read-only `&Lockfile` via the BACKREF accessor (centralised deref);
-        // same provenance as `&*lockfile_ptr`. `lockfile_ptr` itself is kept
-        // raw for the narrowed `addr_of_mut!((*lockfile_ptr).trusted_dependencies)`
-        // write under `trusted_dependencies_mutex` below.
         let lockfile: &Lockfile = installer.lockfile();
 
         let pkgs = lockfile.packages.slice();
@@ -1166,6 +1288,15 @@ impl Task {
                                 }
                             }
 
+                            // Both walks only visit the names the folder has now.
+                            let mut dest = AutoPath::init();
+                            installer.append_store_path(&mut dest, self.entry_id);
+                            if let (Ok(src), Ok(dest)) =
+                                (sys::Dir::open(path), sys::Dir::open(dest.slice()))
+                            {
+                                crate::prune::remove_entries_missing_from(&src, &dest);
+                            }
+
                             step = self.next_step(current_step);
                             continue;
                         }
@@ -1200,20 +1331,13 @@ impl Task {
                                     pkg_res.github(),
                                     patch_info.contents_hash(),
                                 ),
-                                ResolutionTag::LocalTarball => {
+                                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                                     // recorded by the lockfile or `on_package_extracted`
                                     debug_assert!(
                                         pkg_metas[pkg_id as usize].integrity.tag.is_supported()
                                     );
-                                    directories::cached_local_tarball_folder_name(
-                                        &pkg_metas[pkg_id as usize].integrity,
-                                        patch_info.contents_hash(),
-                                    )
-                                }
-                                ResolutionTag::RemoteTarball => {
                                     directories::cached_tarball_folder_name(
-                                        manager,
-                                        *pkg_res.remote_tarball(),
+                                        &pkg_metas[pkg_id as usize].integrity,
                                         patch_info.contents_hash(),
                                     )
                                 }
@@ -1571,13 +1695,16 @@ impl Task {
                     };
 
                     if relinking {
-                        if !changed {
+                        if changed {
+                            self.relink = Relink::Changed;
+                        } else {
                             self.relink = Relink::Unchanged;
-                            entry_steps[self.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            return Ok(Yield::Done);
+                            if !self.newly_trusted {
+                                entry_steps[self.entry_id.get() as usize]
+                                    .store(Step::Done as u32, Ordering::Release);
+                                return Ok(Yield::Done);
+                            }
                         }
-                        self.relink = Relink::Changed;
                     } else if installer.entry_uses_global_store(self.entry_id) {
                         match installer.link_project_to_global_store(self.entry_id) {
                             sys::Result::Ok(()) => {}
@@ -1652,25 +1779,15 @@ impl Task {
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
-                    let truncated_dep_name_hash: TruncatedPackageNameHash =
-                        dep.name_hash as TruncatedPackageNameHash;
 
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if installer
-                            .trusted_dependencies_from_update_requests
-                            .contains(&pkg_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if lockfile.has_trusted_dependency(
+                    let is_trusted = installer
+                        .trusted_dependencies_from_update_requests
+                        .contains(&pkg_id)
+                        || lockfile.has_trusted_dependency(
                             dep.name.slice(string_buf),
                             pkg_name.slice(string_buf),
                             &pkg_res,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
+                        );
 
                     if !(pkg_res.tag != ResolutionTag::Root
                         && (pkg_res.tag == ResolutionTag::Workspace || is_trusted))
@@ -1737,6 +1854,7 @@ impl Task {
                             &mut pkg_cwd,
                             dep.name.slice(string_buf),
                             &pkg_res,
+                            is_trusted,
                         ) {
                             Ok(v) => v,
                             Err(err) => {
@@ -1757,51 +1875,6 @@ impl Task {
                             // is `Cell<Option<*mut _>>` (see Store.rs) so writing
                             // through `&Store` provenance is a safe `.set()`.
                             entry_scripts[self.entry_id.get() as usize].set(Some(clone));
-
-                            if is_trusted_through_update_request {
-                                let (trusted_name, trusted_name_hash) =
-                                    if pkg_res.tag == ResolutionTag::Npm {
-                                        (
-                                            pkg_name.slice(string_buf),
-                                            pkg_name_hash as TruncatedPackageNameHash,
-                                        )
-                                    } else {
-                                        (dep.name.slice(string_buf), truncated_dep_name_hash)
-                                    };
-                                let trusted_dep_to_add: Box<[u8]> = Box::from(trusted_name);
-
-                                let _unlock = installer.trusted_dependencies_mutex.lock_guard();
-
-                                // SAFETY: `trusted_dependencies_mutex` is held. Narrow the
-                                // exclusive borrow to the single Vec field via raw place so
-                                // no `&mut PackageManager` is formed — concurrent task
-                                // threads' `&*manager_ptr` reborrows of other fields stay
-                                // valid.
-                                unsafe {
-                                    (*core::ptr::addr_of_mut!(
-                                        (*manager_ptr).trusted_deps_to_add_to_package_json
-                                    ))
-                                    .push(trusted_dep_to_add);
-                                }
-                                // SAFETY: `trusted_dependencies_mutex` is held, serializing
-                                // writers. Narrow to the single `trusted_dependencies` field
-                                // via raw place so no `&mut Lockfile` is ever formed — other
-                                // task threads hold `&Lockfile` (and the `pkgs`/`pkg_*`
-                                // slices above borrow it) for their entire run(), and those
-                                // borrows never touch `trusted_dependencies`.
-                                let trusted = unsafe {
-                                    &mut *core::ptr::addr_of_mut!(
-                                        (*lockfile_ptr).trusted_dependencies
-                                    )
-                                };
-                                if trusted.is_none() {
-                                    *trusted = Some(Default::default());
-                                }
-                                trusted
-                                    .as_mut()
-                                    .unwrap()
-                                    .insert(trusted_name_hash, Box::from(trusted_name));
-                            }
 
                             if first_index != 0 {
                                 // has scripts but not a preinstall
@@ -2030,7 +2103,8 @@ impl Task {
         installer.append_real_store_path(&mut pkg_dir, self.entry_id, which);
 
         let mut log = Log::init();
-        match pkg_scripts.get_list(&mut log, lockfile, &mut pkg_dir, dep_name, pkg_res) {
+        // `true`: what would run, as the hoisted installer counts.
+        match pkg_scripts.get_list(&mut log, lockfile, &mut pkg_dir, dep_name, pkg_res, true) {
             Ok(Some(list)) => {
                 if manager.options.log_level.is_verbose() {
                     bun_core::pretty_error!(
@@ -2731,12 +2805,13 @@ impl<'a> Installer<'a> {
         let mut final_ = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut final_, entry_id, Which::Final);
 
-        match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
-            sys::Result::Ok(()) => sys::Result::Ok(()),
-            sys::Result::Err(err) => {
-                if !is_rename_collision(&err) {
+        let mut retry = RenameRetry::new();
+        match retry.rename(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
+            Ok(()) => sys::Result::Ok(()),
+            Err(err) => {
+                if !is_rename_collision(&err.err, final_.slice_z()) {
                     let _ = Fd::cwd().delete_tree(staging.slice());
-                    return sys::Result::Err(err);
+                    return sys::Result::Err(global_store_publish_error(err, &final_));
                 }
                 // Under --force, the existing entry may be the corrupt one
                 // we were asked to replace. Swap it aside (atomic from a
@@ -2754,27 +2829,27 @@ impl<'a> Installer<'a> {
                         store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
                         bun_core::fast_random(),
                     ));
-                    if let Some(swap_err) =
-                        sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).err()
+                    if let Err(swap_err) =
+                        retry.rename(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z())
                     {
                         let _ = Fd::cwd().delete_tree(staging.slice());
-                        return sys::Result::Err(swap_err);
+                        return sys::Result::Err(global_store_publish_error(swap_err, &final_));
                     }
-                    match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
-                        sys::Result::Ok(()) => {
+                    match retry.rename(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
+                        Ok(()) => {
                             let _ = Fd::cwd().delete_tree(old.slice());
                             return sys::Result::Ok(());
                         }
-                        sys::Result::Err(publish_err) => {
+                        Err(publish_err) => {
                             // Another --force install raced us in the window
                             // between swap-out and publish. Theirs is fresh
                             // too; clean up both temp trees.
                             let _ = Fd::cwd().delete_tree(staging.slice());
                             let _ = Fd::cwd().delete_tree(old.slice());
-                            return if is_rename_collision(&publish_err) {
+                            return if is_rename_collision(&publish_err.err, final_.slice_z()) {
                                 sys::Result::Ok(())
                             } else {
-                                sys::Result::Err(publish_err)
+                                sys::Result::Err(global_store_publish_error(publish_err, &final_))
                             };
                         }
                     }
@@ -3216,13 +3291,25 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
     sys::unlink(path)
 }
 
-fn is_rename_collision(err: &sys::Error) -> bool {
+fn is_rename_collision(err: &sys::Error, final_: &ZStr) -> bool {
     match err.get_errno() {
         sys::Errno::EEXIST | sys::Errno::ENOTEMPTY => true,
-        // Windows maps a rename onto an in-use directory to
-        // ERROR_ACCESS_DENIED; on POSIX PERM/ACCES are real
-        // permission failures and must propagate.
-        sys::Errno::EPERM | sys::Errno::EACCES => cfg!(windows),
+        // Windows reports both "a directory is there" and "a scanner has one of
+        // the staged files open" as ERROR_ACCESS_DENIED; only the first is a
+        // collision. On POSIX PERM/ACCES are real permission failures.
+        sys::Errno::EPERM | sys::Errno::EACCES => cfg!(windows) && sys::exists_z(final_),
         _ => false,
     }
+}
+
+/// The caller prints the errno alone, which does not say that bun waited.
+fn global_store_publish_error(err: RenameError, final_: &AutoAbsPath) -> sys::Error {
+    if err.gave_up_after_ms.is_some() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: publishing {} to the global store failed: {}",
+            bstr::BStr::new(final_.slice()),
+            err,
+        );
+    }
+    err.err
 }

@@ -380,7 +380,7 @@ pub fn do_patch_commit(
         cache_result.cache_dir_subpath.as_bytes(),
     ])
     .to_vec();
-    let new_folder = real_folder(&cache_path, &target.folder);
+    let new_folder = real_folder(&cache_path, &target.folder, false);
 
     let Some(patchfile_contents) = diff_against_cache(manager, &old_folder, &new_folder) else {
         Global::crash();
@@ -470,7 +470,6 @@ pub fn do_patch_commit(
         path_in_patches_dir,
         sys::RenameOptions {
             move_fallback: true,
-            ..Default::default()
         },
     ) {
         Output::err(e, "failed renaming patch file to patches dir", ());
@@ -811,7 +810,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         &mut folder_path_buf,
         existing_patchfile_hash,
     );
-    let folder = real_folder(&cache_dir_path(cache_result.cache_dir), &target.folder);
+    let folder = real_folder(
+        &cache_dir_path(cache_result.cache_dir),
+        &target.folder,
+        true,
+    );
 
     // The package may be installed using the hard link method,
     // meaning that changes to the folder will also change the package in the cache.
@@ -897,25 +900,55 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
 /// The folder that holds the package's files. The isolated linker's link to the package, a
 /// workspace link or a symlinked `node_modules` on the way to it stay as they are: what
 /// `bun patch` replaces and `--commit` reads is the folder behind them.
-fn real_folder(cache_path: &[u8], folder: &[u8]) -> Vec<u8> {
-    let real = match resolve_links(folder) {
+///
+/// With `globalStore = true` that folder is shared with other projects, and an install puts the
+/// link to the shared entry back over a `node_modules/.bun/<entry>` of the project's own. There
+/// `bun patch` (`replaces_folder`) replaces the project's link to the package instead.
+fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u8> {
+    let resolve = |path: &[u8]| match resolve_links(path) {
         Ok(real) => real,
         Err(e) => {
             Output::err(e, "failed to resolve <b>{s}<r>", (bstr::BStr::new(folder),));
             Global::crash();
         }
     };
-    if resolve_path::is_parent_or_equal(cache_path, &real) != resolve_path::ParentEqual::Unrelated {
-        bun_core::pretty_errorln!(
-            "<r><red>error<r>: <b>{}<r> resolves into the global store, which other projects share; refusing to patch through it",
-            bstr::BStr::new(folder),
-        );
+    let is_shared = |real: &[u8]| {
+        resolve_path::is_parent_or_equal(cache_path, real) != resolve_path::ParentEqual::Unrelated
+    };
+
+    let real = resolve(folder);
+    if !is_shared(&real) {
+        return real;
+    }
+    if replaces_folder {
+        let link = strings::without_trailing_slash(folder);
+        let link = resolve_path::join::<platform::Auto>(&[
+            &resolve(resolve_path::dirname::<platform::Auto>(link)),
+            bun_paths::basename(link),
+        ])
+        .to_vec();
+        if !is_shared(&link) {
+            return link;
+        }
+    }
+
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: <b>{}<r> resolves into the global store, which other projects share; refusing to patch through it",
+        bstr::BStr::new(folder),
+    );
+    if replaces_folder {
         bun_core::note!(
             "set <b>globalStore = false<r> under <b>[install]<r> in bunfig.toml, run <cyan>bun install<r> and patch the package again"
         );
-        Global::crash();
+    } else {
+        bun_core::note!("run <cyan>bun patch<r> on the package first, it makes the copy to edit");
     }
-    real
+    Global::crash();
+}
+
+fn is_link(path: &[u8]) -> bool {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    sys::readlink(&ZBox::from_bytes(path), &mut buf[..]).is_ok()
 }
 
 /// A path next to `folder`, named like an install's staging folder so that `bun prune` collects
@@ -1049,7 +1082,10 @@ fn replace_with_cache_copy(
     }
 
     if has_old {
-        if let Err(e) = keep_nested_packages(&old.0, folder) {
+        // Behind a link is the global store, which is not the project's to move or delete.
+        if is_link(&old.0) {
+            let _ = crate::isolated_install::installer::remove_link(&old_z);
+        } else if let Err(e) = keep_nested_packages(&old.0, folder) {
             bun_core::warn!(
                 "failed to keep the packages installed under {}, run bun install to get them back: {}",
                 bstr::BStr::new(folder),
@@ -1085,11 +1121,22 @@ fn installed_module_folder(
     workspace_package_id: PackageID,
     hoisted_folder: Vec<u8>,
 ) -> (Vec<u8>, Vec<Vec<u8>>) {
-    if sys::exists(&hoisted_folder) {
+    let exists = sys::exists(&hoisted_folder);
+    if exists && !is_link(&hoisted_folder) {
         return (hoisted_folder, Vec::new());
     }
-    let mut store_folders =
-        isolated_store_folders(manager, lockfile, pkg_id, workspace_package_id).into_iter();
+    let store_folders = isolated_store_folders(manager, lockfile, pkg_id, workspace_package_id);
+    // A link that `publicHoistPattern` made can lead to another version than the hoisted tree has there.
+    if exists {
+        let real = resolve_links(&hoisted_folder).ok();
+        if store_folders
+            .iter()
+            .any(|folder| resolve_links(folder).ok() == real)
+        {
+            return (hoisted_folder, Vec::new());
+        }
+    }
+    let mut store_folders = store_folders.into_iter();
     match store_folders.next() {
         Some(folder) => (folder, store_folders.collect()),
         None => (hoisted_folder, Vec::new()),
@@ -1126,11 +1173,16 @@ fn isolated_store_folders(
         let mut folder = Vec::new();
         write!(
             folder,
-            "node_modules/.bun/{}/node_modules/{}",
+            "node_modules/.bun/{}",
             store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
-            bstr::BStr::new(name),
         )
         .expect("formatting into a Vec is infallible");
+        // A link into the global store: the project has no folder of the package.
+        if is_link(&folder) {
+            return None;
+        }
+        write!(folder, "/node_modules/{}", bstr::BStr::new(name))
+            .expect("formatting into a Vec is infallible");
         sys::exists(&folder).then_some(folder)
     };
 

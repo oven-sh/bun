@@ -45,6 +45,22 @@ bun publish ./package.tgz
   provide a tarball path. Scripts run only when `bun publish` packs the package itself.
 </Note>
 
+<Note>
+  `bun publish` cannot generate provenance statements yet. `--provenance` and `"provenance": true` in `publishConfig`
+  are errors; `NPM_CONFIG_PROVENANCE` is ignored with a warning.
+</Note>
+
+### `--recursive` and `--filter`
+
+In a monorepo, `--recursive` (`-r`) publishes the root package and every workspace package, dependencies before their dependents. `--filter` (`-F`) does the same for the matching workspace packages only.
+
+```sh terminal icon="terminal"
+bun publish --recursive
+bun publish --filter "@acme/*"
+```
+
+Packages that are `"private"` or whose version is already on the registry are skipped. Every package is packed before the first one is published, and the first failure ends the run; running the command again skips what was published.
+
 ### `--access`
 
 `--access` sets the access level of the package being published, either `public` or `restricted`. Unscoped packages are always public, and publishing an unscoped package with `--access restricted` is an error.

@@ -219,13 +219,13 @@ test.concurrent("-F alias with --dev and --exact", async () => {
     expect(await pkg(dir, "web")).toStrictEqual(WEB);
   }
 
-  // Same as unfiltered `bun add -d`: an entry that already exists in another list is updated in place.
+  // Same as unfiltered `bun add -d`: an entry that already exists in another list is moved to the requested one.
   {
     const { stderr, exitCode } = await run(["add", "a-dep", "-F", "web", "-d", "-E"], dir);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "web")).toStrictEqual({ name: "web", dependencies: { "a-dep": "1.0.10" } });
+    expect(await pkg(dir, "web")).toStrictEqual({ name: "web", devDependencies: { "a-dep": "1.0.10" } });
     expect(await pkg(dir, "api")).toStrictEqual({ name: "api", devDependencies: { "a-dep": "1.0.10" } });
     expect(await pkg(dir, "root")).toStrictEqual(ROOT);
   }
@@ -1888,6 +1888,35 @@ test.concurrent("a file: path keeps its prefix and resolves from a nested cwd", 
   ]);
 });
 
+test.concurrent("a local path replaces the entry a target already declares for that package", async () => {
+  const declared = { name: "api", dependencies: { foo: "file:../../vendor/old-foo" } };
+  const dir = await makeMonorepo({ api: declared, web: { name: "web" } });
+  await addVendorFoo(dir);
+  await write(join(dir, "vendor", "old-foo", "package.json"), JSON.stringify({ ...VENDOR_FOO, version: "0.9.0" }));
+  await installOk(dir, "hoisted");
+
+  const { stderr, exitCode } = await run(["add", "./vendor/foo", "--filter", "root", "--filter", "api"], dir, {
+    linker: "hoisted",
+  });
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, dependencies: { foo: "./vendor/foo" } });
+  expect(await pkg(dir, "api")).toStrictEqual({ name: "api", dependencies: { foo: "../../vendor/foo" } });
+  // `JSON.parse` keeps the last of two equal keys, so the keys are counted in the text: root, api, and one package.
+  const lockfileText = await file(join(dir, "bun.lock")).text();
+  expect(lockfileText.match(/"foo":/g)).toHaveLength(3);
+  const { workspaces, packages } = await lockfileJson(dir);
+  expect(workspaces[""].dependencies).toStrictEqual({ foo: "./vendor/foo" });
+  expect(workspaces["packages/api"].dependencies).toStrictEqual({ foo: "../../vendor/foo" });
+  expect(packages.foo).toStrictEqual(["foo@file:vendor/foo", {}]);
+  expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
+
+  const frozen = await run(["install", "--frozen-lockfile"], dir, { linker: "hoisted" });
+  expect(frozen.stderr).not.toContain("error:");
+  expect(frozen.exitCode).toBe(0);
+});
+
 test.concurrent("a local path that does not exist relative to the cwd fails and writes nothing", async () => {
   const dir = await makeMonorepo();
   await addVendorFoo(dir);
@@ -2142,6 +2171,24 @@ test.concurrent(
     expect(stderr).toBe(
       'error: "myfoo@file:../../vendor/foo" is spelled differently relative to each selected workspace; add it to one workspace at a time\n',
     );
+    expect(exitCode).toBe(1);
+
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+    expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+    expect(await exists(join(dir, "node_modules"))).toBeFalse();
+  },
+);
+
+// Windows is left out: its path buffer holds more than any path the OS accepts.
+test.concurrent.skipIf(isWindows)(
+  "a local path longer than the path buffer is rejected before anything is written",
+  async () => {
+    const dir = await makeMonorepo();
+    const before = await allPackageJsonTexts(dir);
+
+    const path = "./" + Buffer.alloc(4200, "a").toString();
+    const { stderr, exitCode } = await run(["add", path, "--filter", "api"], dir);
+    expect(stderr).toBe(`error: Dependency "${path}" has an unsafe folder path\n`);
     expect(exitCode).toBe(1);
 
     expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
@@ -2424,12 +2471,11 @@ test.concurrent("a name declared in two groups stays in sync with bun.lock after
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  // Same as an unfiltered add: the entry that already exists (in dependencies) is updated in place.
+  // Same as an unfiltered add: the dependencies entry is dropped and the existing peer entry takes the new range.
   const api = await pkg(dir, "api");
   expect(api).toStrictEqual({
     name: "api",
-    dependencies: { "no-deps": "^2.0.0" },
-    peerDependencies: { "no-deps": "*" },
+    peerDependencies: { "no-deps": "^2.0.0" },
   });
   const { workspaces } = await lockfileJson(dir);
   expect(workspaces["packages/api"]).toStrictEqual(api);

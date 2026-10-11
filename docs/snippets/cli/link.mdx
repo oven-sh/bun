@@ -7,7 +7,7 @@ bun link <packages>
 ### Installation Scope
 
 <ParamField path="--global" type="boolean">
-  Install globally. Alias: <code>-g</code>
+  Has no effect: `bun link` always registers packages in the global folder. Alias: <code>-g</code>
 </ParamField>
 
 ### Dependency Management
@@ -159,6 +159,14 @@ bun link <packages>
 
 <ParamField path="--cwd" type="string">
   Set a specific current working directory
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
 </ParamField>
 
 ### Help

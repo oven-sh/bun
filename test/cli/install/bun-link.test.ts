@@ -7,6 +7,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  substDrive,
   tempDir,
   tmpdirSync,
   toBeValidBin,
@@ -477,6 +478,40 @@ it("should link dependency without crashing", async () => {
 // fixed-size buffers (the normalizer's is 1024 bytes, the others are a path
 // buffer). These used to be written without a length check, so a long enough
 // specifier aborted `bun install` instead of failing the dependency.
+// https://github.com/oven-sh/bun/issues/29273
+// `C:` is the current directory of drive C, it is not the root `C:\`.
+it.skipIf(!isWindows)("should link a package in the root of a drive", async () => {
+  const link_name = basename(link_dir).slice("bun-link.".length) + "-drive-root";
+  await writeFile(join(link_dir, "package.json"), JSON.stringify({ name: link_name, version: "0.0.1" }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "bar", version: "0.0.2" }));
+  using drive = substDrive(link_dir);
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stdin: "ignore", stderr: "pipe", env });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const registered = await run(drive.root, "link");
+  expect(registered.stderr).toBe("");
+  expect(registered.stdout).toContain(`Success! Registered "${link_name}"`);
+  expect(registered.exitCode).toBe(0);
+
+  const linked = await run(package_dir, "link", link_name);
+  expect(linked.stderr).toBe("");
+  expect(linked.stdout).toContain(`installed ${link_name}@link:${link_name}`);
+  expect(await file(join(package_dir, "node_modules", link_name, "package.json")).json()).toEqual({
+    name: link_name,
+    version: "0.0.1",
+  });
+  expect(linked.exitCode).toBe(0);
+
+  const unlinked = await run(drive.root, "unlink");
+  expect(unlinked.stderr).toBe("");
+  expect(unlinked.stdout).toContain(`success: unlinked package "${link_name}"`);
+  expect(unlinked.exitCode).toBe(0);
+});
+
 describe("link: specifier longer than the path buffers", () => {
   // Longer than every buffer on every platform (the Windows path buffer is ~96 KiB).
   const LONG_SPEC_BYTES = 100_000;
@@ -748,6 +783,41 @@ it("link and unlink ignore -g", async () => {
     exitCode: 0,
   });
   expect(await readdirSorted(join(global, "node_modules"))).toEqual([]);
+});
+
+describe.each(["link", "unlink"])("bun %s", command => {
+  it.each([
+    [{ version: "0.0.1" }, 'error: package.json missing "name"'],
+    [{ name: "NOT a valid name!", version: "0.0.1" }, 'error: invalid package.json name "NOT a valid name!"'],
+  ])("refuses %j", async (packageJson, message) => {
+    using dir = tempDir("link-bad-name", { "package.json": JSON.stringify(packageJson) });
+    await using proc = spawn({
+      cmd: [bunExe(), command],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: join(String(dir), "bun-install") },
+    });
+    const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).toContain(message);
+    expect(exitCode).toBe(1);
+  });
+
+  it("--dry-run creates no package.json", async () => {
+    using dir = tempDir("link-dry-run-empty", {});
+    using bunInstall = tempDir("link-dry-run-empty-install", {});
+    await using proc = spawn({
+      cmd: [bunExe(), command, "--dry-run"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: String(bunInstall) },
+    });
+    const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).toContain("could not find a package.json");
+    expect(await readdirSorted(String(dir))).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe("global bin dir", () => {

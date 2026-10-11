@@ -3500,7 +3500,7 @@ test.concurrent(
     expect(lines(stdout)).toStrictEqual([BANNER, "", "- no-deps@1.0.0", REMOVED(1, 3)]);
     expect(exitCode).toBe(0);
     expect(storeEntries(dir)).toStrictEqual([entry]);
-    expect(readdirSync(own)).toStrictEqual(["package.json"]);
+    expect(readdirSync(own).toSorted()).toStrictEqual([".bun-tag", "package.json"]);
     expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, "--omit=optional"));
 
     await install(dir, "--linker", "isolated");
@@ -3718,6 +3718,186 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
   expect(existsSync(nested)).toBeFalse();
   expect(isSymlink(join(nm, "linked"))).toBeTrue();
   expect(await file(join(dir, "linked", "package.json")).json()).toStrictEqual({ name: "linked", version: "1.0.0" });
+});
+
+// Behind a workspace's `node_modules` that is a link are entries the workspace does not own (the root's, for one),
+// and an install writes the workspace's own entries through the link into a folder that another importer is pruned
+// by. So a project with such a link is not pruned at all.
+const REFUSED = (...folders: string[]) =>
+  [
+    ...folders.map(folder => `error: ${folder} is a symlink, so nothing was pruned`),
+    "note: to prune this project, remove the link and run 'bun install'",
+  ].join("\n");
+
+// Every path below `dir`. A link is listed and not followed.
+function listing(dir: string, prefix = ""): string[] {
+  return readdirSync(join(dir, prefix), { withFileTypes: true })
+    .flatMap(entry => {
+      const path = join(prefix, entry.name);
+      return entry.isDirectory() ? [path, ...listing(dir, path)] : [path];
+    })
+    .toSorted();
+}
+
+// Puts a link at the workspace's `node_modules`. What the install wrote there moves to `storage`, which the link leads to.
+function linkToOwnStorage(dir: string, workspace: string) {
+  const workspaceModules = join(dir, "packages", workspace, "node_modules");
+  const storage = join(dir, "packages", workspace, "storage");
+  if (existsSync(workspaceModules)) renameSync(workspaceModules, storage);
+  else mkdirSync(storage);
+  symlinkSync(storage, workspaceModules, "junction");
+  return storage;
+}
+
+const linkedWorkspaceCases: [string, (dir: string, elsewhere: string) => string][] = [
+  ["the root's", dir => join(dir, "node_modules")],
+  ["a sibling's", dir => join(dir, "packages", "b", "node_modules")],
+  ["a scope folder of the root", dir => join(dir, "node_modules", "@types")],
+  ["a folder elsewhere", (_, elsewhere) => elsewhere],
+];
+
+for (const linker of linkers) {
+  for (const [name, target] of linkedWorkspaceCases) {
+    for (const [after, reinstall] of [
+      ["", false],
+      [", also after an install wrote through it", true],
+    ] as const) {
+      const title = `${linker}: nothing is pruned when a workspace node_modules is a link to ${name}${after}`;
+      test.concurrent(title, async () => {
+        const dir = await setupWorkspaces(linker, {
+          root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0", "@types/is-number": "1.0.0" } },
+          packages: {
+            a: { dependencies: { "what-bin": "1.5.0" }, devDependencies: { "a-dep": "1.0.1" } },
+            b: { dependencies: { "no-deps": "2.0.0" } },
+          },
+        });
+        using elsewhere = tempDir("prune-elsewhere", {
+          "first/package.json": JSON.stringify({ name: "first" }),
+          "second/index.js": "",
+        });
+        const workspaceModules = join(dir, "packages", "a", "node_modules");
+        rmSync(workspaceModules, { recursive: true, force: true });
+        symlinkSync(target(dir, String(elsewhere)), workspaceModules, "junction");
+        if (reinstall) await install(dir, "--linker", linker);
+        plant(dir, "node_modules/stray-root");
+        plant(dir, "node_modules/@types/stray-scoped");
+        plant(dir, "node_modules/no-deps/node_modules/stray-nested");
+        plant(dir, "packages/b/node_modules/stray-b");
+        const before = { project: listing(dir), elsewhere: listing(String(elsewhere)) };
+
+        for (const flags of [["--dry-run"], ["--check"], ["--production"], []]) {
+          const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker, ...flags);
+          expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+          expect(out(stdout)).toBe(BANNER);
+          expect({ project: listing(dir), elsewhere: listing(String(elsewhere)) }).toEqual(before);
+          expect(exitCode).toBe(1);
+        }
+      });
+    }
+  }
+}
+
+// `b` has a tree and is reached first. `a` has none and is reached last. `one-dep` has a tree below `b`'s, so two
+// walks reach that link. The errors come sorted, one per folder.
+test.concurrent("hoisted: two workspaces behind links get one error each and one note", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "one-dep": "npm:a-dep@1.0.1", "no-deps": "2.0.0" } },
+    packages: {
+      a: { dependencies: { "a-dep": "1.0.1" } },
+      b: { dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.0" } },
+    },
+  });
+  linkToOwnStorage(dir, "a");
+  const storage = linkToOwnStorage(dir, "b");
+  const nested = join(storage, "one-dep", "node_modules", "no-deps", "package.json");
+  expect((await file(nested).json()).version).toBe("1.0.1");
+  const stray = plant(dir, "packages/b/storage/stray");
+
+  const { stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(out(stderr)).toBe(REFUSED("packages/a/node_modules", "packages/b/node_modules"));
+  expect(existsSync(stray)).toBeTrue();
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("hoisted: a file at a workspace's node_modules is no error", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  writeFileSync(join(dir, "packages", "a", "node_modules"), "");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(stderr).toBe("");
+  expect(lines(stdout).at(-1)).toBe(NOTHING(3, 1));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("hoisted: --silent prints nothing for a workspace behind a link and exits 1", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  linkToOwnStorage(dir, "a");
+  const stray = plant(dir, "node_modules/stray-root");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted", "--silent");
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+  expect(existsSync(stray)).toBeTrue();
+  expect(exitCode).toBe(1);
+});
+
+// The pass that removes stale nested copies after a hoisted `bun update` (also `bun dedupe`, `bun audit fix`) walks the same folders.
+async function update(dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "update", "--linker", "hoisted"],
+    env: installEnv(dir),
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr: out(stderr), exitCode };
+}
+
+test.concurrent("hoisted: bun update does not look behind a workspace node_modules that is a link", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "1.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  symlinkSync(join(dir, "node_modules"), join(dir, "packages", "a", "node_modules"), "junction");
+  const before = listing(join(dir, "node_modules"));
+  expect(before).toContain(join("a-dep", "package.json"));
+
+  const { stderr, exitCode } = await update(dir);
+  expect(stderr).not.toContain("warn:");
+  expect(listing(join(dir, "node_modules"))).toEqual(before);
+  expect(exitCode).toBe(0);
+});
+
+// An install puts `a`'s own what-bin into `b`'s folder, through the link. There the pass takes it for a copy that hides the root's.
+test.concurrent("hoisted: bun update removes no copy while a workspace node_modules is a link", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" } },
+    packages: { a: { dependencies: { "what-bin": "1.5.0" } }, b: { dependencies: { "no-deps": "2.0.0" } } },
+  });
+  const siblingModules = join(dir, "packages", "b", "node_modules");
+  const workspaceModules = join(dir, "packages", "a", "node_modules");
+  rmSync(workspaceModules, { recursive: true, force: true });
+  symlinkSync(siblingModules, workspaceModules, "junction");
+  await install(dir, "--linker", "hoisted");
+  const versions = async () => ({
+    "no-deps": (await file(join(siblingModules, "no-deps", "package.json")).json()).version,
+    "what-bin": (await file(join(siblingModules, "what-bin", "package.json")).json()).version,
+  });
+  expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+
+  const { stderr, exitCode } = await update(dir);
+  expect(stderr).toContain(
+    "warn: packages/a/node_modules is a symlink, so stale copies in node_modules were not removed\n" +
+      "note: remove the link and run 'bun install', then 'bun prune'",
+  );
+  expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("hoisted: a nested copy left behind by an override to a tarball is removed", async () => {
@@ -4034,7 +4214,7 @@ test.concurrent(
   },
 );
 
-// The docs point at --omit=optional; like every other flag bun prune does not know, --no-optional is ignored rather than rejected.
+// The docs point at --omit=optional; like every other flag bun prune does not know, --no-optional is rejected.
 test.concurrent("--no-optional is not --omit=optional", async () => {
   const dir = await setup({
     name: "foo",
@@ -4042,10 +4222,11 @@ test.concurrent("--no-optional is not --omit=optional", async () => {
     optionalDependencies: { "a-dep": "1.0.1" },
   });
 
-  const noOptional = await prune(dir, "--no-optional", "--dry-run");
-  expect(noOptional.stderr).toBe("");
-  expect(out(noOptional.stdout)).toEndWith(NOTHING(2, 1));
-  expect(noOptional.exitCode).toBe(0);
+  expect(await prune(dir, "--no-optional", "--dry-run")).toEqual({
+    stdout: "",
+    stderr: "error: bun prune has no --no-optional flag.\nnote: Run 'bun prune --help' for more information\n",
+    exitCode: 1,
+  });
 
   const omit = await prune(dir, "--omit=optional", "--dry-run");
   expect(out(omit.stdout)).toMatchInlineSnapshot(`

@@ -1017,6 +1017,44 @@ describe("minimum-release-age", () => {
       expect(exitCode).toBe(1);
     });
 
+    // 1.0.0 is 30 days old, 2.0.0 10, 2.1.0 6 and 3.0.0 1.
+    test.each([
+      { range: "1.0.0 || ^2.0.0", resolved: "2.1.0" },
+      { range: "3.0.0 || ^2.0.0", resolved: "2.1.0" },
+      { range: "1.0.0 || 3.0.0", resolved: "1.0.0" },
+      { range: "1.0.0 >=2", resolved: null },
+    ])("an exact version that starts the range $range is not the whole range", async ({ range, resolved }) => {
+      using dir = tempDir("exact-version-first", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": range },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      if (resolved === null) {
+        expect(stderr).toContain(
+          `error: No version matching "${range}" found for specifier "regular-package" (but package exists)`,
+        );
+        expect(exitCode).toBe(1);
+      } else {
+        expect(stderr).not.toContain("error:");
+        expect((await Bun.file(`${dir}/bun.lock`).text()).match(/regular-package@[^"]+/g)).toEqual([
+          `regular-package@${resolved}`,
+        ]);
+        expect(exitCode).toBe(0);
+      }
+    });
+
     test("reports the range and package name when every version in a range is too recent", async () => {
       using dir = tempDir("range-all-too-recent", {
         "package.json": JSON.stringify({
@@ -1769,6 +1807,119 @@ describe("minimum-release-age", () => {
         expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
         expect(exitCode).toBe(0);
       });
+
+      // Without the flag's declaration its value is a positional: `bun install --minimum-release-age-excludes x` = `bun add x`.
+      describe("--minimum-release-age-excludes", () => {
+        const gated = { "excluded-package": "excluded-package@1.0.0", "regular-package": "regular-package@2.1.0" };
+        test.concurrent.each<[string, string[], string[], Record<string, string>]>([
+          [
+            "one name",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "=name",
+            [],
+            ["--minimum-release-age-excludes=excluded-package"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "a comma-separated list, spaces ignored",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package, regular-package,"],
+            { "excluded-package": "excluded-package@1.0.1", "regular-package": "regular-package@3.0.0" },
+          ],
+          [
+            "repeated",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package", "--minimum-release-age-excludes", "regular-package"],
+            { "excluded-package": "excluded-package@1.0.1", "regular-package": "regular-package@3.0.0" },
+          ],
+          [
+            "replaces the bunfig.toml list",
+            ["regular-package"],
+            ["--minimum-release-age-excludes", "excluded-package"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "an empty value clears the bunfig.toml list",
+            ["excluded-package"],
+            ["--minimum-release-age-excludes", ""],
+            gated,
+          ],
+          [
+            "name@version exempts that version only",
+            [],
+            ["--minimum-release-age-excludes", "excluded-package@1.0.1,regular-package@2.9.9"],
+            { ...gated, "excluded-package": "excluded-package@1.0.1" },
+          ],
+          [
+            "name@a || b",
+            [],
+            ["--minimum-release-age-excludes", "regular-package@2.9.9 || 3.0.0"],
+            { ...gated, "regular-package": "regular-package@3.0.0" },
+          ],
+        ])("%s", async (name, bunfigList, args, expected) => {
+          using dir = project(
+            `cli-${name.replace(/[^a-z]+/g, "-")}`,
+            { "excluded-package": "*", "regular-package": "*" },
+            5,
+            bunfigList,
+          );
+          const before = await Bun.file(join(String(dir), "package.json")).text();
+          const { stderr, exitCode, resolved } = await install(String(dir), { args });
+          expect(stderr).not.toContain("error:");
+          expect(stderr).not.toContain("minimumReleaseAgeExcludes");
+          expect(resolved).toEqual(expected);
+          expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(before);
+          expect(exitCode).toBe(0);
+        });
+
+        test.concurrent("an entry that is not an exact version is ignored with the bunfig.toml warning", async () => {
+          using dir = project("cli-malformed", { "excluded-package": "*" }, 5, []);
+          const { stderr, exitCode, resolved } = await install(String(dir), {
+            args: ["--minimum-release-age-excludes", "excluded-package@^1.0.0"],
+          });
+          expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual([
+            `warn: Ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+          ]);
+          expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
+          expect(exitCode).toBe(0);
+        });
+
+        test.concurrent("applies to bun add and bun update", async () => {
+          using dir = project("cli-add-update", { "regular-package": "^2.0.0" }, 5, []);
+          const run = async (...cmd: string[]) => {
+            await using proc = Bun.spawn({
+              cmd: [
+                bunExe(),
+                ...cmd,
+                "--no-verify",
+                "--minimum-release-age-excludes",
+                "excluded-package,regular-package",
+              ],
+              cwd: String(dir),
+              env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const { dependencies } = await Bun.file(join(String(dir), "package.json")).json();
+            return { stderr, exitCode, dependencies };
+          };
+          expect(await run("add", "excluded-package")).toEqual({
+            stderr: expect.not.stringContaining("error:"),
+            exitCode: 0,
+            dependencies: { "excluded-package": "^1.0.1", "regular-package": "^2.0.0" },
+          });
+          expect(await run("update", "--latest", "regular-package")).toEqual({
+            stderr: expect.not.stringContaining("error:"),
+            exitCode: 0,
+            dependencies: { "excluded-package": "^1.0.1", "regular-package": "^3.0.0" },
+          });
+        });
+      });
     });
   });
 
@@ -1866,7 +2017,6 @@ describe("minimum-release-age", () => {
     test.each([
       ["--minimum-release-age 0 over a bunfig gate", `${10 * SECONDS_PER_DAY}`, ["--minimum-release-age", "0"]],
       ["minimumReleaseAge = 0", "0", []],
-      ["minimumReleaseAge = nan", "nan", []],
     ])("%s is no gate, so the abbreviated manifest is requested", async (_, minimumReleaseAge, args) => {
       using dir = tempDir("no-gate", {
         "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
@@ -1890,6 +2040,28 @@ describe("minimum-release-age", () => {
       expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
       expect(exitCode).toBe(0);
     });
+
+    // `nan` compared false with everything, so it switched the gate off.
+    test.concurrent.each(["nan", "inf", "+inf", "-inf", "-1"])(
+      "minimumReleaseAge = %s is a config error",
+      async value => {
+        using dir = tempDir("not-a-finite-age", {
+          "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+          "bunfig.toml": `[install]\nminimumReleaseAge = ${value}\nregistry = "${mockRegistryUrl}"\n`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("error: Expected positive number of seconds for minimumReleaseAge");
+        expect(await Bun.file(`${dir}/bun.lock`).exists()).toBe(false);
+        expect(exitCode).toBe(1);
+      },
+    );
 
     test("global bunfig.toml configuration works", async () => {
       // Create a fake home directory with global bunfig
@@ -2818,6 +2990,62 @@ describe("minimum-release-age", () => {
       // Should fail with error about invalid value
       expect(exitCode).toBe(1);
       expect(stderr.toLowerCase()).toMatch(/invalid|error/);
+    });
+
+    // The number used to be read as a prefix: `5d` was 5 seconds, so a 5 day gate let a 1 day old version in.
+    describe.each(["install", "add", "update"])("bun %s", command => {
+      test.concurrent.each(["5d", "1 week", "5/../x", "5:6", "1e999", "NaN", "Infinity", "-0.5", "", " 5", "0x10"])(
+        "--minimum-release-age=%j is refused",
+        async value => {
+          using dir = tempDir("partly-numeric-age", {
+            "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+            ".npmrc": `registry=${mockRegistryUrl}`,
+          });
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              command,
+              ...(command === "add" ? ["excluded-package"] : []),
+              `--minimum-release-age=${value}`,
+            ],
+            cwd: String(dir),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          expect(stderr).toContain(`error: Expected --minimum-release-age to be a positive number: ${value}`);
+          expect(await Bun.file(join(String(dir), "bun.lock")).exists()).toBe(false);
+          expect(exitCode).toBe(1);
+        },
+      );
+
+      test.concurrent.each(["432000", "4.32e5", "432000.5", "+432000"])(
+        "--minimum-release-age=%s is a number",
+        async value => {
+          using dir = tempDir("numeric-age", {
+            "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+            ".npmrc": `registry=${mockRegistryUrl}`,
+          });
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              command,
+              ...(command === "add" ? ["excluded-package"] : []),
+              "--no-verify",
+              `--minimum-release-age=${value}`,
+            ],
+            cwd: String(dir),
+            env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          expect(stderr).not.toContain("error:");
+          expect(await Bun.file(join(String(dir), "bun.lock")).text()).toContain("regular-package@2.1.0");
+          expect(exitCode).toBe(0);
+        },
+      );
     });
   });
 

@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 strum.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
 thiserror.workspace = true
 bun_errno.workspace = true
 bun_core.workspace = true

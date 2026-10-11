@@ -5,10 +5,12 @@ import { dirname, join } from "path";
 /**
  * A YAML sequence under `key` in which each `&a` holds the one before it. No line is deep, but whoever follows the
  * last `*a` goes down `lines * levels` levels. Debug and ASAN builds have the stack for fewer levels in one line.
+ * `sibling` is a flow node that follows the deep one inside each `&a`.
  */
-export function yamlAliasChain(key: string) {
+export function yamlAliasChain(key: string, sibling?: string) {
   const [levels, lines] = isDebug || isASAN ? [300, 74] : [4000, 40];
-  const line = `  - &a ${Buffer.alloc(levels, "[")}*a${Buffer.alloc(levels, "]")}\n`;
+  const deep = `${Buffer.alloc(levels, "[")}*a${Buffer.alloc(levels, "]")}`;
+  const line = `  - &a ${sibling === undefined ? deep : `[${deep}, ${sibling}]`}\n`;
   return `${key}:\n  - &a [1]\n${Buffer.alloc(lines * line.length, line)}`;
 }
 

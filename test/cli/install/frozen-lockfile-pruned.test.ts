@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists, lstat, readdir } from "fs/promises";
+import { exists, lstat, readdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { dirname, join } from "path";
 import { TestRegistry } from "registry";
@@ -618,6 +618,27 @@ describe.each(linkers)("linker: %s", linker => {
     expect(await exists(join(dirname(aDep), "patched.txt"))).toBeFalse();
   });
 
+  // The root package.json of a pruned checkout keeps every patchedDependencies key.
+  test.concurrent("a patch for a package that only a pruned workspace depends on", async () => {
+    const tree: Tree = {
+      ...monorepo,
+      root: { ...rootPackageJson, patchedDependencies: { "left-pad@1.0.0": "patches/left-pad@1.0.0.patch" } },
+      files: { ...monorepo.files, "patches/left-pad@1.0.0.patch": aDepPatch },
+    };
+    const { packageDir, full } = await verbatimScenario(linker, tree, survivors);
+
+    // bun.lock still has left-pad@1.0.0: the key is not stale
+    await frozen(packageDir, linker, [prunedNote]);
+    expect(await lockText(packageDir)).toBe(full);
+
+    // a tool that also prunes bun.lock leaves a key that names nothing: said, and not a reason to fail
+    await write(join(packageDir, "bun.lock"), withoutOther(full));
+    await frozen(packageDir, linker, [
+      "warn: patches/left-pad@1.0.0.patch no longer applies (left-pad is no longer installed)",
+    ]);
+    expect(await installedPackages(packageDir, linker)).toEqual(survivorsInstalled(linker));
+  });
+
   test.concurrent("overrides added after bun.lock was written still fail --frozen-lockfile", async () => {
     const { packageDir, full } = await verbatimTree(linker);
     await write(
@@ -758,6 +779,80 @@ describe.each(linkers)("linker: %s", linker => {
 
     expect(await lockText(packageDir)).toBe(full);
     expect(await installedPackages(packageDir, linker)).toEqual(survivorsInstalled(linker));
+  });
+
+  // bun.lock may leave a peer or an optional dependency unresolved, and such an edge of a package that is
+  // not local is treated the same way when it is bound to a pruned workspace. peer-deps-fixed@1.0.0 has the
+  // peer no-deps@^1.0.0. The workspace packages/no-deps (1.5.0) satisfies it, so bun.lock binds the peer to
+  // the workspace. The workspace's own a-dep shows whether it was installed.
+  describe("a registry package's peer on a pruned workspace", () => {
+    const tree: Tree = {
+      root: { name: "mono", workspaces: ["packages/*"] },
+      packages: {
+        "packages/app": { name: "app", version: "1.0.0", dependencies: { "peer-deps-fixed": "1.0.0" } },
+        "packages/no-deps": { name: "no-deps", version: "1.5.0", dependencies: { "a-dep": "1.0.1" } },
+      },
+    };
+
+    // With --ignore-scripts the isolated linker exited 0 before, but it installed the pruned workspace:
+    // a-dep and packages/no-deps/node_modules.
+    test.concurrent.each([[frozenInstall], [[...frozenInstall, "--ignore-scripts"]]])(
+      "is left out and %j passes",
+      async cmd => {
+        const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+        expect(full).toContain('"no-deps": ["no-deps@workspace:packages/no-deps"]');
+        expect(full).not.toContain('"no-deps@1.');
+
+        await passes(packageDir, linker, cmd, [skippedNote("no-deps")]);
+
+        expect(await lockText(packageDir)).toBe(full);
+        expect(await installedPackages(packageDir, linker)).toEqual(
+          byLinker(linker, ["app", "peer-deps-fixed"], ["peer-deps-fixed@1.0.0"]),
+        );
+        if (linker === "isolated") {
+          const entry = join(packageDir, "node_modules", ".bun", "peer-deps-fixed@1.0.0", "node_modules");
+          expect(await readdir(entry)).toEqual(["peer-deps-fixed"]);
+        }
+        expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
+      },
+    );
+  });
+
+  // A local tarball has no package.json on disk, so it loses the link like a registry package.
+  test.concurrent("a tarball's optional dependency on a pruned workspace is left out", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+    const manifest = { name: "opt", version: "1.0.0", optionalDependencies: { "no-deps": "^1.0.0" } };
+    const tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify(manifest) },
+      { compress: "gzip" },
+    ).bytes();
+    await Promise.all([
+      writeTree(packageDir, {
+        root: { name: "mono", workspaces: ["packages/*"] },
+        packages: {
+          "packages/app": { name: "app", version: "1.0.0", dependencies: { opt: "file:../../opt.tgz" } },
+          "packages/no-deps": { name: "no-deps", version: "1.5.0", dependencies: { "a-dep": "1.0.1" } },
+        },
+      }),
+      write(join(packageDir, "opt.tgz"), tarball),
+    ]);
+    await install(packageDir, linker);
+    const full = await lockText(packageDir);
+    expect(full).toContain('"optionalDependencies": { "no-deps": "^1.0.0" }');
+    expect(full).not.toContain('"no-deps@1.');
+    await Promise.all(
+      ["node_modules", "packages/app/node_modules", "packages/no-deps"].map(path =>
+        rm(join(packageDir, path), { recursive: true, force: true }),
+      ),
+    );
+
+    await frozen(packageDir, linker, [skippedNote("no-deps")]);
+
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await installedPackages(packageDir, linker)).toEqual(
+      byLinker<unknown[]>(linker, ["app", "opt"], [expect.stringMatching(/^opt@/)]),
+    );
+    expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
   });
 });
 

@@ -82,6 +82,13 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
+// Every flag of `bun --help` (`AUTO_PARAMS` in runtime/cli/Arguments.rs) that takes no value and that no
+// table here has: `bun --bun install` is not a typo. They do nothing. Aliases of one hidden param, so
+// that the tables do not each carry 55 more.
+const RUNTIME_FLAGS_PARAM: ParamType = clap::param!(
+    "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--use-system-ca/--use-openssl-ca/--use-bundled-ca/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
+);
+
 const SHARED_HEAD_PARAMS: &[ParamType] = &[
     clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
@@ -135,6 +142,10 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     ),
     clap::param!("-g, --global                          Install globally"),
     clap::param!("--cwd <STR>                           Set a specific cwd"),
+    clap::param!(
+        "--env-file <STR>...                   Load environment variables from the specified file(s)"
+    ),
+    clap::param!("--no-env-file                         Disable automatic loading of .env files"),
     BACKEND_PARAM,
     clap::param!(
         "--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"
@@ -159,6 +170,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)"
     ),
     clap::param!(
+        "--minimum-release-age-excludes <STR>...  Packages exempt from --minimum-release-age (comma-separated or repeated; replaces the bunfig.toml list)"
+    ),
+    clap::param!(
         "--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)"
     ),
     clap::param!(
@@ -168,6 +182,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)"
     ),
     clap::param!("-h, --help                            Print this help menu"),
+    RUNTIME_FLAGS_PARAM,
 ];
 
 const SHARED_PARAMS: &[ParamType] =
@@ -238,6 +253,9 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
         clap::param!("-D, --development"),
         clap::param!("--no-optional                         Don't update optionalDependencies"),
         clap::param!(
+            "--depth <NUM>                         Only 0 is accepted: update direct dependencies and keep transitive dependencies at their locked versions"
+        ),
+        clap::param!(
             "-E, --exact                           Write exact versions to package.json instead of ^ or ~ ranges"
         ),
         clap::param!(
@@ -251,6 +269,8 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
     &[
         clap::param!("-a, --all"),
         clap::param!("--trusted"),
+        // `bun ./bun.lockb --hash` parses its argv with this table.
+        clap::param!("--hash"),
         clap::param!("--json                              Output in JSON format"),
         clap::param!(
             "--diff <STR>...                        A package spec or path to compare (bun pm diff; may be given twice)"
@@ -599,7 +619,6 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
 pub struct CommandLineArguments {
     pub(crate) cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
-    pub(crate) token: &'static [u8],
     pub(crate) global: bool,
     pub(crate) config: Option<&'static [u8]>,
     pub(crate) network_concurrency: Option<u16>,
@@ -613,7 +632,7 @@ pub struct CommandLineArguments {
     pub production: bool,
     pub(crate) frozen_lockfile: bool,
     pub(crate) no_save: bool,
-    pub(crate) dry_run: bool,
+    pub dry_run: bool,
     pub(crate) check: bool,
     pub(crate) force: bool,
     pub(crate) no_cache: bool,
@@ -662,6 +681,8 @@ pub struct CommandLineArguments {
     pub(crate) node_linker: Option<Options::NodeLinker>,
 
     pub(crate) minimum_release_age_ms: Option<f64>,
+    /// As typed: each value is a comma-separated list.
+    pub(crate) minimum_release_age_excludes: &'static [&'static [u8]],
 
     // `bun pm version` options
     pub(crate) git_tag_version: bool,
@@ -671,6 +692,7 @@ pub struct CommandLineArguments {
 
     // `bun pm why` options
     pub top_only: bool,
+    /// Also `bun update --depth 0`.
     pub(crate) depth: Option<usize>,
 
     // `bun pm licenses` options
@@ -700,6 +722,9 @@ pub struct CommandLineArguments {
     pub(crate) cpu: Npm::Architecture,
     pub(crate) os: Npm::OperatingSystem,
     pub(crate) libc: Npm::Libc,
+
+    pub(crate) env_files: &'static [&'static [u8]],
+    pub(crate) no_env_file: bool,
 }
 
 impl Default for CommandLineArguments {
@@ -707,7 +732,6 @@ impl Default for CommandLineArguments {
         Self {
             cache_dir: None,
             lockfile: b"",
-            token: b"",
             global: false,
             config: None,
             network_concurrency: None,
@@ -770,6 +794,7 @@ impl Default for CommandLineArguments {
             node_linker: None,
 
             minimum_release_age_ms: None,
+            minimum_release_age_excludes: &[],
 
             git_tag_version: true,
             allow_same_version: false,
@@ -799,6 +824,9 @@ impl Default for CommandLineArguments {
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
             libc: Npm::Libc::CURRENT,
+
+            env_files: &[],
+            no_env_file: false,
         }
     }
 }
@@ -927,6 +955,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 
   <d>Only update dependencies and optionalDependencies:<r>
   <b><green>bun update<r> <cyan>--prod<r>
+
+  <d>Only update direct dependencies, keep transitive dependencies locked:<r>
+  <b><green>bun update<r> <cyan>--depth 0<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
@@ -1368,29 +1399,44 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Audit => AUDIT_PARAMS,
             Subcommand::Info => INFO_PARAMS,
         };
+        debug_assert!(
+            (RUNTIME_FLAGS_PARAM.names.long_aliases.iter())
+                .all(|alias| params.iter().all(|param| param.names.long != Some(*alias))),
+            "RUNTIME_FLAGS_PARAM shadows a flag of this command",
+        );
 
         let mut diag = clap::Diagnostic::default();
 
         // `args` must stay alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
-        // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
-        // are parsed exactly once per process.
+        // `'static`; inner `&[u8]` are argv-backed and already `'static`. `update`,
+        // `link` and `unlink` parse the same argv twice: the first `Args` stays.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
+        let first_parse;
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
+                unknown_long_flags_are_errors: true,
                 ..Default::default()
             },
         ) {
             Ok(a) => {
-                // `set` only fails on second call; CLI parse runs once.
-                let _ = PARSED_ARGS.set(a);
+                first_parse = PARSED_ARGS.set(a).is_ok();
                 PARSED_ARGS.get().unwrap()
             }
             Err(err) => {
+                if let (clap::Error::InvalidArgument, Some(flag)) = (err, diag.long()) {
+                    let command: &'static str = subcommand.into();
+                    Output::err_generic(
+                        "bun {} has no <b>--{}<r> flag.",
+                        (command, bstr::BStr::new(flag)),
+                    );
+                    bun_core::note!("Run 'bun {} --help' for more information", command);
+                    Global::exit(1);
+                }
                 Self::print_help(subcommand);
                 let _ = diag.report(Output::error_writer(), err);
                 Global::exit(1);
@@ -1432,6 +1478,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         cli.no_summary = args.flag(b"--no-summary");
         cli.ca = args.options(b"--ca");
         cli.lockfile_only = args.flag(b"--lockfile-only");
+        cli.env_files = args.options(b"--env-file");
+        cli.no_env_file = args.flag(b"--no-env-file");
 
         if let Some(linker) = args.option(b"--linker") {
             cli.node_linker = Some(match Options::NodeLinker::from_str(linker) {
@@ -1473,26 +1521,20 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
-            let secs: f64 = match bun_core::parse_double(min_age_secs) {
-                Ok(s) => s,
-                Err(_) => {
-                    Output::err_generic(
-                        "Expected --minimum-release-age to be a positive number: {}",
-                        (bstr::BStr::new(min_age_secs),),
-                    );
-                    Global::crash();
-                }
-            };
-            if secs < 0.0 {
+            // The whole value: `5d` is not 5 seconds.
+            let Some(secs) =
+                bun_core::fmt::parse_f64(min_age_secs).filter(|s| *s >= 0.0 && s.is_finite())
+            else {
                 Output::err_generic(
                     "Expected --minimum-release-age to be a positive number: {}",
                     (bstr::BStr::new(min_age_secs),),
                 );
                 Global::crash();
-            }
+            };
             const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
             cli.minimum_release_age_ms = Some(secs * MS_PER_S);
         }
+        cli.minimum_release_age_excludes = args.options(b"--minimum-release-age-excludes");
 
         let omit_values = args.options(b"--omit");
 
@@ -1574,6 +1616,13 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
 
             if let Some(otp) = args.option(b"--otp") {
+                if bun_http::async_http::breaks_header_line(otp) {
+                    Output::err_generic(
+                        "invalid `otp` value: must not contain a newline or NUL byte",
+                        (),
+                    );
+                    Global::exit(1);
+                }
                 cli.publish_config.otp = otp;
             }
 
@@ -1677,10 +1726,14 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(concurrency) = args.option(b"--concurrent-scripts") {
-            cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
+            // 0 is the default, as `concurrentScripts = 0` in bunfig.toml: with a limit of 0 no script starts.
+            cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10)
+                .ok()
+                .filter(|&n| n != 0);
         }
 
-        if let Some(cwd_) = args.option(b"--cwd") {
+        // A second `chdir` would resolve a relative path from inside the first one's target.
+        if let Some(cwd_) = args.option(b"--cwd").filter(|_| first_parse) {
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut buf2 = bun_paths::path_buffer_pool::get();
 
@@ -1724,6 +1777,16 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 no_optional: args.flag(b"--no-optional"),
             };
             cli.production = false;
+            if let Some(depth) = args.option(b"--depth") {
+                if depth != b"0" {
+                    Output::err_generic(
+                        "bun update --depth only accepts 0 (update direct dependencies, keep transitive dependencies locked), got '{}'",
+                        (bstr::BStr::new(depth),),
+                    );
+                    Global::exit(1);
+                }
+                cli.depth = Some(0);
+            }
         }
 
         let specified_backend: Option<package_install::Method> = 'brk: {

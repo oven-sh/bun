@@ -6,6 +6,7 @@ use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
+use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
@@ -110,6 +111,24 @@ impl Scripts {
             }
         }
         false
+    }
+
+    /// npm's rule for the default `node-gyp rebuild` install script.
+    pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Gypfile) -> bool {
+        if !self.install.is_empty() || !self.preinstall.is_empty() {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let binding_gyp =
+            join_abs_string_buf_z::<platform::Auto>(package_dir, &mut buf.0, &[b"binding.gyp"]);
+        if !bun_sys::exists_z(binding_gyp) {
+            return false;
+        }
+        let gypfile = match gypfile {
+            Gypfile::Unread => Gypfile::read(package_dir, &mut buf.0),
+            known => known,
+        };
+        gypfile == Gypfile::Enabled
     }
 
     /// return: (first_index, total, entries)
@@ -239,6 +258,10 @@ impl Scripts {
                 items: scripts,
                 first_index: u8::try_from(first_index).expect("int cast"),
                 total,
+                is_dependency: !matches!(
+                    resolution_tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                ),
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
@@ -287,6 +310,8 @@ impl Scripts {
         }
     }
 
+    /// Runs on the isolated linker's task threads. `trusted` is the caller's verdict on the package,
+    /// or `true` to list what would run; without it there is no default `node-gyp rebuild`.
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
@@ -294,32 +319,9 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
+        trusted: bool,
     ) -> Result<Option<List>, crate::Error> {
-        if self.has_any() {
-            let add_node_gyp_rebuild_script =
-                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
-                    && self.install.is_empty()
-                    && self.preinstall.is_empty()
-                {
-                    // `defer save.restore()` — `save()` returns an RAII guard that
-                    // restores the path length on Drop and derefs to the path.
-                    let mut save = folder_path.save();
-                    let _ = save.append(b"binding.gyp");
-
-                    bun_sys::exists(save.slice())
-                } else {
-                    false
-                };
-
-            return Ok(self.create_list(
-                lockfile,
-                lockfile.buffers.string_bytes.as_slice(),
-                folder_path,
-                folder_name,
-                resolution.tag,
-                add_node_gyp_rebuild_script,
-            ));
-        } else if !self.filled {
+        if !self.has_any() && !self.filled {
             return self.create_from_package_json(
                 log,
                 lockfile,
@@ -329,15 +331,26 @@ impl Scripts {
             );
         }
 
-        Ok(None)
+        let add_node_gyp_rebuild_script =
+            trusted && self.wants_default_node_gyp(folder_path.slice(), Gypfile::Unread);
+
+        Ok(self.create_list(
+            lockfile,
+            lockfile.buffers.string_bytes.as_slice(),
+            folder_path,
+            folder_name,
+            resolution.tag,
+            add_node_gyp_rebuild_script,
+        ))
     }
 
+    /// Also returns the `gypfile` setting for `wants_default_node_gyp`.
     pub(crate) fn fill_from_package_json(
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<Gypfile, crate::Error> {
         let json_buf;
         let parsed;
         let json: Expr = {
@@ -358,7 +371,7 @@ impl Scripts {
         string_builder.allocate()?;
         self.parse_alloc(string_builder, json);
         self.filled = true;
-        Ok(())
+        Ok(Gypfile::from_json(json))
     }
 
     pub(crate) fn create_from_package_json(
@@ -373,18 +386,9 @@ impl Scripts {
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
         // auto-drop suffices; Lockfile has no `impl Drop`.
         let mut builder = tmp.string_builder();
-        self.fill_from_package_json(&mut builder, log, folder_path)?;
+        let gypfile = self.fill_from_package_json(&mut builder, log, folder_path)?;
 
-        let add_node_gyp_rebuild_script = if self.install.is_empty() && self.preinstall.is_empty() {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
-            let mut save = folder_path.save();
-            let _ = save.append(b"binding.gyp");
-
-            bun_sys::exists(save.slice())
-        } else {
-            false
-        };
+        let add_node_gyp_rebuild_script = self.wants_default_node_gyp(folder_path.slice(), gypfile);
 
         Ok(self.create_list(
             lockfile,
@@ -394,6 +398,39 @@ impl Scripts {
             resolution_tag,
             add_node_gyp_rebuild_script,
         ))
+    }
+}
+
+/// The `gypfile` property of a package.json. Only a literal `false` opts out.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Gypfile {
+    /// Read package.json only once a `binding.gyp` is found.
+    Unread,
+    Enabled,
+    Disabled,
+}
+
+impl Gypfile {
+    pub(crate) fn from_json(json: Expr) -> Gypfile {
+        match json.get(b"gypfile").and_then(|value| value.as_bool()) {
+            Some(false) => Gypfile::Disabled,
+            _ => Gypfile::Enabled,
+        }
+    }
+
+    /// An unreadable package.json keeps the default script.
+    fn read(package_dir: &[u8], buf: &mut [u8]) -> Gypfile {
+        let path = join_abs_string_buf_z::<platform::Auto>(package_dir, buf, &[b"package.json"]);
+        let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
+            return Gypfile::Enabled;
+        };
+        let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
+        let mut log = bun_ast::Log::init();
+        initialize_store();
+        match bun_json::ParsedJson::parse_package_json(&json_src, &mut log) {
+            Ok(parsed) => Gypfile::from_json(parsed.root),
+            Err(_) => Gypfile::Enabled,
+        }
     }
 }
 
@@ -414,6 +451,8 @@ pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub(crate) first_index: u8,
     pub total: u8,
+    /// Neither the project's nor a workspace's own scripts.
+    pub(crate) is_dependency: bool,
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,

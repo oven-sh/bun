@@ -322,14 +322,13 @@ Explain why a package is installed
                 Self::print_usage();
                 Global::exit(1);
             }
-            return Self::exec_with_manager(ctx, pm, positionals[1], top_only);
+            return Self::exec_with_manager(pm, positionals[1], top_only);
         }
 
-        Self::exec_with_manager(ctx, pm, positionals[0], top_only)
+        Self::exec_with_manager(pm, positionals[0], top_only)
     }
 
     pub(crate) fn exec_from_pm(
-        ctx: command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
     ) -> Result<(), crate::Error> {
@@ -338,29 +337,20 @@ Explain why a package is installed
             Global::exit(1);
         }
 
-        Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
+        Self::exec_with_manager(pm, positionals[1], pm.options.top_only)
     }
 
     fn exec_with_manager(
-        ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), crate::Error> {
-        // Detach the `Box<Lockfile>` from `pm`
-        // so `load_from_cwd` can take `Option<&mut PackageManager>` without
-        // overlapping the `&mut self` lockfile borrow.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
         let configured_linker = pm.options.node_linker;
-        // SAFETY: CLI dispatch is single-threaded and `log`'s last use is the
-        // `load_from_cwd` call below, which receives it as the sole `&mut Log`;
-        // no other path (`pm`, `ctx`) reborrows the process-static `Log` while
-        // this reference is live.
-        let log = unsafe { ctx.log_mut() };
 
-        let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
-        let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
+        // Into `pm.lockfile` itself: a migration fetches the manifests of the packages it finds there.
+        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         let linker = load_lockfile.node_linker(configured_linker);
 
@@ -372,7 +362,7 @@ Explain why a package is installed
             MAX_DEPTH.store(100, AtomicOrdering::Relaxed);
         }
 
-        let lockfile: &Lockfile = &lockfile_box;
+        let lockfile: &Lockfile = &pm.lockfile;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();
         let packages = lockfile.packages.slice();
         let dependencies_items = lockfile.buffers.dependencies.as_slice();
@@ -390,7 +380,7 @@ Explain why a package is installed
         // A peer edge leads to the copy each placement of its owner resolves, whichever one the resolver bound it to.
         let mut peer_targets: HashMap<DependencyID, Vec<PackageID>> = HashMap::default();
         let served_peers = if linker == NodeLinker::Isolated {
-            bun_install::isolated_install::served_peers(pm, lockfile)?
+            bun_install::isolated_install::served_peers(&*pm, lockfile)?
         } else {
             bun_install::lockfile::tree::served_peers(lockfile)
         };
@@ -583,9 +573,6 @@ Explain why a package is installed
             bun_core::prettyln!("");
             Output::flush();
         }
-
-        // Restore detached lockfile back onto the manager singleton.
-        pm.lockfile = lockfile_box;
 
         Ok(())
     }

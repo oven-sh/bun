@@ -584,6 +584,109 @@ describe("bun install --cpu and --os flags", () => {
     // Should skip x64 dep and install other CPU deps
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-arm64", "dep-ppc64"]);
   });
+
+  // Every package name resolves against this one version table. A skipped package needs no tarball.
+  const platformWarningRegistry = () =>
+    dummyRegistry([], {
+      "1.0.0": { os: ["win32"] },
+      "2.0.0": { cpu: ["arm64", "ppc64"], os: ["!linux"] },
+      "3.0.0": { dependencies: { "dep-win32-only": "1.0.0", "transitive-win32-only": "1.0.0" } },
+      "4.0.0": { cpu: ["s390x"] },
+    });
+  const warningLines = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("warn:"));
+  const installedNames = async () =>
+    (await readdirSorted(join(package_dir, "node_modules"))).filter(name => !name.startsWith("."));
+
+  // A dependency the project requires does not go missing without a word. Optional ones stay quiet, and so do the
+  // dependencies of dependencies, which the project cannot do anything about (--verbose lists them).
+  it.each(["hoisted", "isolated"])(
+    "warns about each direct required dependency left out for the target platform (%s linker)",
+    async linker => {
+      setHandler(platformWarningRegistry());
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "test-platform-warning",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: { "dep-win32-only": "1.0.0", "dep-universal": "3.0.0" },
+          devDependencies: { "dep-not-linux": "2.0.0" },
+          optionalDependencies: { "dep-s390x-only": "4.0.0" },
+        }),
+      );
+      await Bun.write(
+        join(package_dir, "packages", "member", "package.json"),
+        // one that the root names too, and one of its own
+        JSON.stringify({ name: "member", dependencies: { "dep-win32-only": "1.0.0", "member-s390x-only": "4.0.0" } }),
+      );
+      const install = async (...flags: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--os", "linux", "--cpu", "x64", "--linker", linker, ...flags],
+          cwd: package_dir,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(stdout).not.toContain("dep-win32-only");
+        expect(exitCode).toBe(0);
+        return warningLines(stderr).sort();
+      };
+      const win32 = `warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32")`;
+      const notLinux = `warn: dep-not-linux@2.0.0 was not installed: unsupported platform (wants os "!linux", cpu [ "arm64", "ppc64", ])`;
+      const s390x = `warn: member-s390x-only@4.0.0 was not installed: unsupported platform (wants cpu "s390x")`;
+
+      expect(await install()).toEqual([notLinux, win32, s390x]);
+      expect(await installedNames()).toEqual(linker === "hoisted" ? ["dep-universal", "member"] : ["dep-universal"]);
+      // a run with nothing to resolve and nothing to link does not repeat it
+      expect(await install()).toEqual([]);
+
+      const removeNodeModules = () => rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      // one that installs from the lockfile does; what is not asked for is not missed
+      await removeNodeModules();
+      expect(await install("--production")).toEqual([win32, s390x]);
+      await removeNodeModules();
+      expect(await install("--silent")).toEqual([]);
+
+      await removeNodeModules();
+      await rm(join(package_dir, "bun.lock"), { force: true });
+      await rm(join(package_dir, "bun.lockb"), { force: true });
+      expect(await install("--filter", "member")).toEqual([win32, s390x]);
+    },
+  );
+
+  // `bun add` printed `installed dep-win32-only@1.0.0` for a package it had left out.
+  it.each([
+    ["dependencies", [] as string[]],
+    ["optionalDependencies", ["--optional"]],
+  ])("bun add reports a package left out for the target platform as skipped (%s)", async (field, flags) => {
+    setHandler(platformWarningRegistry());
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "test-platform-add", version: "1.0.0" }));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "dep-win32-only@1.0.0", ...flags, "--os", "linux", "--cpu", "x64"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(warningLines(stderr)).toEqual(
+      field === "dependencies"
+        ? [`warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32")`]
+        : [],
+    );
+    expect(stdout).not.toContain("installed dep-win32-only");
+    expect(stdout).toContain("skipped dep-win32-only@1.0.0 (unsupported platform)\n");
+    expect(await installedNames()).toEqual([]);
+    expect(JSON.parse(await Bun.file(join(package_dir, "package.json")).text())[field]).toEqual({
+      "dep-win32-only": "1.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("bun install --libc flag and the libc field", () => {

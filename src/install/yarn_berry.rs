@@ -700,28 +700,30 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
     let silent = manager.options.log_level.is_silent();
 
-    // Later `workspace_package_json_cache.get_with_path` calls reset the Expr
-    // store, so clone the parsed tree into an arena that lives for the whole
-    // function (same as the pnpm migration).
     if may_hold_merge_key(data) {
         return Err(invalid_lockfile(
             log,
             format_args!("yarn.lock has a \"<<\" merge key, which yarn and bun read differently"),
         ));
     }
+    // Later `workspace_package_json_cache.get_with_path` calls reset the Expr
+    // store, so the nodes go to an arena that lives for the whole function
+    // (same as the pnpm migration).
     let source = bun_ast::Source::init_path_string(b"yarn.lock", data);
     let arena = bun_alloc::Arena::new();
-    let root: Expr = match bun_parsers::yaml::YAML::parse(
-        &source,
-        log,
-        &arena,
-        bun_parsers::yaml::CyclicAliases::Reject,
-    ) {
-        Ok(r) => bun_core::handle_oom(r.deep_clone(&arena)),
-        Err(_) => {
-            log.add_error(None, bun_ast::Loc::EMPTY, b"yarn.lock is not valid YAML");
-            return Err(Error::InvalidYarnBerryLockfile);
-        }
+    let mut allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let parsed = {
+        let _scope = allocator.enter();
+        bun_parsers::yaml::YAML::parse(
+            &source,
+            log,
+            &arena,
+            bun_parsers::yaml::CyclicAliases::Reject,
+        )
+    };
+    let Ok(root) = parsed else {
+        log.add_error(None, bun_ast::Loc::EMPTY, b"yarn.lock is not valid YAML");
+        return Err(Error::InvalidYarnBerryLockfile);
     };
     let ExprData::EObject(root_obj) = &root.data else {
         log.add_error(

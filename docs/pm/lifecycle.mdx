@@ -42,7 +42,7 @@ Bun is "default-secure": it only runs lifecycle scripts for packages on an allow
 }
 ```
 
-After adding the package to `trustedDependencies`, install or re-install it. Bun reads the field and runs its lifecycle scripts.
+After adding the package to `trustedDependencies`, run `bun install`. Bun reads the field and runs its lifecycle scripts. For a dependency installed under another name (`"alias": "npm:node-sass@^6.0.1"`), list the name of the package, not the alias.
 
 A curated list of popular npm packages with lifecycle scripts is allowed by default. See [the full list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
 
@@ -87,3 +87,11 @@ Or in `.npmrc`:
 ```ini .npmrc icon="npm"
 ignore-scripts=true
 ```
+
+Or with npm's environment variable, for example in a CI job:
+
+```bash terminal icon="terminal"
+NPM_CONFIG_IGNORE_SCRIPTS=true bun install
+```
+
+The variable only turns scripts off: `false`, `0` and an empty value do not undo a config file. Bun does not read it from `.env` files.

@@ -21,7 +21,7 @@ use super::directories;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
-use crate::lockfile_real::package::scripts::List as ScriptsList;
+use crate::lockfile_real::package::scripts::{Gypfile, List as ScriptsList};
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
@@ -155,15 +155,9 @@ impl PackageManager {
                             patch_hash,
                         )
                     }
-                    ResolutionTag::LocalTarball => directories::cached_local_tarball_folder_name(
-                        &pkg.meta.integrity,
-                        patch_hash,
-                    ),
-                    ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
-                        self,
-                        *pkg.resolution.remote_tarball(),
-                        patch_hash,
-                    ),
+                    ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                        directories::cached_tarball_folder_name(&pkg.meta.integrity, patch_hash)
+                    }
                     _ => ZStr::EMPTY,
                 };
 
@@ -309,11 +303,6 @@ impl PackageManager {
     }
 
     pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
-        let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &[b"binding.gyp"],
-        );
-
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
@@ -322,11 +311,11 @@ impl PackageManager {
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
         // `defer top_level_dir.deinit()` — handled by Drop
 
-        if root_package.scripts.has_any() {
-            let add_node_gyp_rebuild_script = root_package.scripts.install.is_empty()
-                && root_package.scripts.preinstall.is_empty()
-                && Syscall::exists(binding_dot_gyp_path.as_bytes());
+        let add_node_gyp_rebuild_script = root_package
+            .scripts
+            .wants_default_node_gyp(FileSystem::instance().top_level_dir(), Gypfile::Unread);
 
+        if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(
                 &self.lockfile,
                 buf,
@@ -334,16 +323,6 @@ impl PackageManager {
                 name,
                 ResolutionTag::Root,
                 add_node_gyp_rebuild_script,
-            );
-        } else if Syscall::exists(binding_dot_gyp_path.as_bytes()) {
-            // no scripts exist but auto node gyp script needs to be added
-            self.root_lifecycle_scripts = root_package.scripts.create_list(
-                &self.lockfile,
-                buf,
-                &mut top_level_dir,
-                name,
-                ResolutionTag::Root,
-                true,
             );
         }
     }
@@ -393,8 +372,18 @@ impl PackageManager {
         // `defer PATH.deinit()` — handled by Drop
 
         let mut parent: Option<&[u8]> = Some(cwd);
+        // Any installed package can link a `node` or `sh` into a `.bin` that packages share, so a
+        // dependency's script finds those only after its own `.bin`s and the inherited PATH.
+        let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
+        let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
         while let Some(dir) = parent {
+            if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
+                if let Some(inherited) = inherited_path.take() {
+                    append_path_without_ancestor_bins(&mut path, inherited, cwd)?;
+                }
+            }
+
             let mut builder = path.path_component_builder();
             builder.append(dir);
             builder.append(b"node_modules/.bin");
@@ -403,10 +392,14 @@ impl PackageManager {
             parent = bun_paths::dirname(dir);
         }
 
-        path.append(original_path.as_slice())?;
+        match inherited_path {
+            Some(inherited) => append_path_without_ancestor_bins(&mut path, inherited, cwd)?,
+            None if list.is_dependency => {}
+            None => path.append(original_path.as_slice())?,
+        }
         script_env.put(b"PATH", path.slice())?;
 
-        put_npm_package_config_env(&mut script_env, cwd)?;
+        put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
@@ -484,12 +477,22 @@ impl PackageManager {
     }
 }
 
-/// The package's own `config` strings as `npm_package_config_<key>`, the subset `bun run` exports.
-fn put_npm_package_config_env(
+/// `npm_package_json`, `npm_package_name`, `npm_package_version` and the `config` strings as
+/// `npm_package_config_<key>` (the subset `bun run` exports), all from the package.json of the
+/// package whose scripts run. What a `bun run` above this install set for its package goes.
+fn put_npm_package_env(
     script_env: &mut bun_dotenv::Map,
     package_dir: &[u8],
+    package_name: &[u8],
 ) -> Result<(), crate::Error> {
+    script_env
+        .map
+        .retain(|key, _| !key.starts_with(b"npm_package_"));
+
     let package_json_path = join_abs_string_z::<platform::Auto>(package_dir, &[b"package.json"]);
+    script_env.put(b"npm_package_json", package_json_path.as_bytes())?;
+    script_env.put(b"npm_package_name", package_name)?;
+
     let Ok(json_buf) = Syscall::File::read_from(Syscall::Fd::cwd(), package_json_path.as_bytes())
     else {
         return Ok(());
@@ -503,6 +506,17 @@ fn put_npm_package_config_env(
     let Ok(parsed) = bun_json::ParsedJson::parse_package_json(&json_src, &mut log) else {
         return Ok(());
     };
+    let own: [(&[u8], &[u8]); 2] = [
+        (b"npm_package_name", b"name"),
+        (b"npm_package_version", b"version"),
+    ];
+    for (variable, property) in own {
+        if let Some(value) = parsed.root.get(property) {
+            if let Some(value) = value.as_utf8_string_literal() {
+                script_env.put(variable, value)?;
+            }
+        }
+    }
     let Some(config) = parsed.root.get(b"config") else {
         return Ok(());
     };
@@ -513,6 +527,27 @@ fn put_npm_package_config_env(
         }
         _ => Ok(()),
     })?;
+    Ok(())
+}
+
+/// `inherited` without the `node_modules/.bin` of `cwd` and its ancestors, which a `bun run` above this install put in front.
+fn append_path_without_ancestor_bins(
+    path: &mut EnvPath,
+    inherited: &[u8],
+    cwd: &[u8],
+) -> Result<(), bun_alloc::AllocError> {
+    let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
+    for entry in strings::split(inherited, &[bun_paths::DELIMITER]) {
+        let is_ancestor_bin = strings::without_trailing_slash(entry)
+            .strip_suffix(bin)
+            .is_some_and(|dir| {
+                cwd.strip_prefix(dir)
+                    .is_some_and(|rest| rest.first().is_none_or(|&c| c == bun_paths::SEP))
+            });
+        if !is_ancestor_bin {
+            path.append(entry)?;
+        }
+    }
     Ok(())
 }
 

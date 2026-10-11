@@ -12,6 +12,7 @@ use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
+use crate::retry_timer;
 use crate::tarball_stream::TarballStream;
 use bun_install::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
@@ -22,10 +23,9 @@ use super::{
     Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
 };
 use super::{directories, enqueue};
-use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
-use crate::lifecycle_script_runner::InstallCtx;
+use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
@@ -34,7 +34,7 @@ use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
-use super::package_manager_options::{Do, Enable, RequestKind};
+use super::package_manager_options::{Do, Enable};
 use crate::isolated_install::store as Store;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -213,6 +213,34 @@ impl ErasedCallbacks {
         // `ctx` is the erased `&mut C::Ctx` (see `ErasedCallbacks::of`).
         unsafe { &mut *ctx.cast() }
     }
+
+    /// The tarball of `task_id` will not arrive. Marks the dedupe entry as failed, so
+    /// that a later `enqueue_package_for_download` fails fast instead of waiting for it
+    /// for ever (entry kept) or downloading it again (entry removed), then tells the
+    /// running installer. `false`: none is running, and the caller reports the failure.
+    fn dispatch_tarball_error(
+        &self,
+        manager: &mut PackageManager,
+        ctx: *mut (),
+        task_id: Task::Id,
+        dependency_id: DependencyID,
+        name: &[u8],
+        resolution: &bun_install::Resolution,
+        err: crate::Error,
+        url: &[u8],
+    ) -> bool {
+        manager.mark_network_task_failed(task_id);
+        if !self.has_on_package_download_error {
+            return false;
+        }
+        if self.is_store_installer {
+            (self.on_package_download_error_store)(ctx, task_id, name, resolution, err, url);
+        } else {
+            let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
+            (self.on_package_download_error_pkg)(ctx, package_id, name, resolution, err, url);
+        }
+        true
+    }
 }
 
 /// Called from isolated_install on the main thread.
@@ -242,8 +270,6 @@ fn run_tasks_erased(
     // while the loop body sets it — no raw-ptr provenance dance needed.
     let has_updated_this_run = Cell::new(false);
     let mut has_network_error = false;
-
-    let mut timestamp_this_tick: Option<u32> = None;
 
     // scopeguard captures `manager` via raw pointer because the loop
     // body holds `&mut` to it for the function's duration; `has_updated_this_run`
@@ -381,41 +407,8 @@ fn run_tasks_erased(
                 store_installer::Result::Blocked => {
                     installer.on_task_blocked(task.entry_id);
                 }
-                &store_installer::Result::RunScripts(list) => {
-                    let entry_id = task.entry_id;
-                    let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
-                    let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
-                    let optional = dep.behavior.contains(Behavior::OPTIONAL);
-                    // SAFETY: `list` is the per-entry scripts slot owned by
-                    // `store.entries.items_scripts()[entry_id]`; this Task is
-                    // its sole consumer (see Installer.rs Yield::RunScripts).
-                    let list_val = unsafe { (*list).clone() };
-                    // reshaped for borrowck — `Command::Context<'a>`
-                    // is `&'a mut ContextData`; reborrow instead of moving the
-                    // field out of `*installer`.
-                    let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
-                    // `installer.manager == manager` (same allocation,
-                    // see fn-signature note); call via the body shadow which is a
-                    // reborrow of `manager_ptr` — no extra unsafe alias needed.
-                    let spawn_res = manager.spawn_package_lifecycle_scripts(
-                        command_ctx,
-                        list_val,
-                        optional,
-                        false,
-                        Some(InstallCtx {
-                            entry_id,
-                            installer: installer_ptr,
-                        }),
-                    );
-                    if let Err(err) = spawn_res {
-                        // .monotonic is okay for the same reason as `.done`: we popped this
-                        // task from the `UnboundedQueue`, and the task is no longer running.
-                        installer.store.entries.items_step()[entry_id.get() as usize]
-                            .store(store_installer::Step::Done as u32, Ordering::Relaxed);
-                        installer
-                            .on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
-                    }
+                store_installer::Result::RunScripts(_) => {
+                    installer.pending_lifecycle_scripts.push_back(task.entry_id);
                 }
                 store_installer::Result::Done => {
                     if Environment::CI_ASSERT {
@@ -429,6 +422,51 @@ fn run_tasks_erased(
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
                 }
+            }
+        }
+
+        // A script that exited was handled in the event loop tick before this call.
+        // .monotonic is okay because scripts are spawned and reaped on this thread.
+        while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
+            < manager.options.max_concurrent_lifecycle_scripts
+        {
+            let Some(entry_id) = installer.pending_lifecycle_scripts.pop_front() else {
+                break;
+            };
+            let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
+            let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
+            let pkg_id = installer.store.nodes.items_pkg_id()[node_id.get() as usize];
+            let optional = !manager.is_package_required(dep_id, pkg_id);
+            let list = installer.store.entries.items_scripts()[entry_id.get() as usize]
+                .get()
+                .expect("a queued entry has a scripts list");
+            // SAFETY: `list` is the per-entry scripts slot owned by
+            // `store.entries.items_scripts()[entry_id]`; this Task is
+            // its sole consumer (see Installer.rs Yield::RunScripts).
+            let list_val = unsafe { (*list).clone() };
+            // reshaped for borrowck — `Command::Context<'a>`
+            // is `&'a mut ContextData`; reborrow instead of moving the
+            // field out of `*installer`.
+            let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
+            // `installer.manager == manager` (same allocation,
+            // see fn-signature note); call via the body shadow which is a
+            // reborrow of `manager_ptr` — no extra unsafe alias needed.
+            let spawn_res = manager.spawn_package_lifecycle_scripts(
+                command_ctx,
+                list_val,
+                optional,
+                false,
+                Some(InstallCtx::Isolated {
+                    entry_id,
+                    installer: installer_ptr,
+                }),
+            );
+            if let Err(err) = spawn_res {
+                // .monotonic is okay for the same reason as `.done`: we popped this
+                // task from the `UnboundedQueue`, and the task is no longer running.
+                installer.store.entries.items_step()[entry_id.get() as usize]
+                    .store(store_installer::Step::Done as u32, Ordering::Relaxed);
+                installer.on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
             }
         }
     }
@@ -480,7 +518,7 @@ fn run_tasks_erased(
                     failed: download_failed,
                     retry,
                 } = DownloadOutcome::of(&task.response);
-                if download_failed {
+                if download_failed && task.retried > 0 {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
@@ -494,18 +532,32 @@ fn run_tasks_erased(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        enqueue::enqueue_network_task(manager, task_ptr);
+                        let wait =
+                            retry_timer::retry(manager, task_ptr, task.retried, &task.response);
+                        // `notify` keeps the metadata it finds here when the next attempt gets none.
+                        task.response = Default::default();
 
-                        if manager.options.log_level.is_verbose() {
+                        if matches!(err, crate::Error::Http(http::Error::Timeout)) {
+                            warn_timeout_retry(
+                                &mut manager.progress,
+                                &manager.options,
+                                format_args!(
+                                    "package manifest {}",
+                                    bun_core::fmt::escape_control_chars(name),
+                                ),
+                                task.retried,
+                            );
+                        } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
                                 bun_ast::Loc::EMPTY,
-                                "{} downloading package manifest <b>{}<r>. Retry {}/{}...",
+                                "{} downloading package manifest <b>{}<r>. Retry {}/{} in {}ms...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(name),
                                 task.retried,
                                 manager.options.max_retry_count,
+                                wait.as_millis(),
                             );
                         }
 
@@ -586,34 +638,23 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    // What to configure, on 401/403.
-                    let note = match response.status_code {
-                        401 | 403 => manager.options.missing_credentials_note(
-                            name,
-                            &task.url_buf,
-                            RequestKind::Manifest,
-                        ),
-                        _ => Vec::new(),
-                    };
                     if manager.is_network_task_required(task.task_id) {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><red><b>GET<r><red> {}<d> - {}<r>{}",
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bun_core::fmt::redacted_npm_url(metadata.url.slice()),
                             response.status_code,
-                            bstr::BStr::new(&note),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>{}",
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bun_core::fmt::redacted_npm_url(metadata.url.slice()),
                             response.status_code,
-                            bstr::BStr::new(&note),
                         );
                     }
                     fail_update_requests(manager, task.task_id, name, None);
@@ -644,13 +685,8 @@ fn run_tasks_erased(
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
                         debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
 
-                        if timestamp_this_tick.is_none() {
-                            let now = u64::try_from(bun_core::time::timestamp().max(0))
-                                .expect("int cast");
-                            timestamp_this_tick = Some((now as u32).saturating_add(300));
-                        }
-
-                        manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
+                        manifest.pkg.public_max_age =
+                            npm::Registry::manifest_expiry(&response.headers);
 
                         // reshaped for borrowck —
                         // `bun_collections::HashMap` lacks `get_or_put` for
@@ -745,7 +781,7 @@ fn run_tasks_erased(
                     failed: download_failed,
                     retry,
                 } = DownloadOutcome::of(&task.response);
-                if download_failed {
+                if download_failed && task.retried > 0 {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
@@ -758,15 +794,30 @@ fn run_tasks_erased(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
+                        let wait =
+                            retry_timer::retry(manager, task_ptr, task.retried, &task.response);
                         task.reset_streaming_for_retry();
-                        enqueue::enqueue_network_task(manager, task_ptr);
 
-                        if manager.options.log_level.is_verbose() {
+                        if matches!(err, crate::Error::Http(http::Error::Timeout)) {
+                            warn_timeout_retry(
+                                &mut manager.progress,
+                                &manager.options,
+                                format_args!(
+                                    "tarball {}@{}",
+                                    bun_core::fmt::escape_control_chars(extract.name.slice()),
+                                    bun_core::fmt::for_terminal(extract.resolution.fmt(
+                                        &manager.lockfile.buffers.string_bytes,
+                                        PathSep::Auto
+                                    ),),
+                                ),
+                                task.retried,
+                            );
+                        } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
                                 bun_ast::Loc::EMPTY,
-                                "{} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                "{} downloading tarball <b>{}@{}<r>. Retrying {}/{} in {}ms...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bun_core::fmt::escape_control_chars(extract.name.slice()),
                                 bun_core::fmt::for_terminal(
@@ -776,6 +827,7 @@ fn run_tasks_erased(
                                 ),
                                 task.retried,
                                 manager.options.max_retry_count,
+                                wait.as_millis(),
                             );
                         }
 
@@ -798,39 +850,17 @@ fn run_tasks_erased(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
-                    // The download will not be retried for this task_id. Mark
-                    // the dedupe entry as failed so a later
-                    // `enqueuePackageForDownload` for the same package observes
-                    // the failure and fails fast instead of either waiting
-                    // forever on a callback that never arrives (entry kept) or
-                    // re-running the entire download+retry cycle (entry removed).
-                    // Runs before the callback branch so `Store.Installer`
-                    // (which `continue`s from the callback) is covered too.
                     let is_required = manager.is_network_task_required(task.task_id);
-                    manager.mark_network_task_failed(task.task_id);
-
-                    if cb.has_on_package_download_error {
-                        if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(
-                                extract_ctx,
-                                task.task_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
-                            (cb.on_package_download_error_pkg)(
-                                extract_ctx,
-                                package_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        }
+                    if cb.dispatch_tarball_error(
+                        manager,
+                        extract_ctx,
+                        task.task_id,
+                        extract.dependency_id,
+                        extract.name.slice(),
+                        &extract.resolution,
+                        err,
+                        &task.url_buf,
+                    ) {
                         continue;
                     }
 
@@ -880,16 +910,15 @@ fn run_tasks_erased(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    // Non-retryable HTTP error: mark the dedupe entry as failed
-                    // so a later enqueue for this task_id fails fast instead of
-                    // waiting on this failed one or re-downloading it. Runs
-                    // before the callback branch so `Store.Installer` (which
-                    // `continue`s from the callback) is covered too.
                     let is_required = manager.is_network_task_required(task.task_id);
-                    manager.mark_network_task_failed(task.task_id);
-
-                    if cb.has_on_package_download_error {
-                        let err = match response.status_code {
+                    if cb.dispatch_tarball_error(
+                        manager,
+                        extract_ctx,
+                        task.task_id,
+                        extract.dependency_id,
+                        extract.name.slice(),
+                        &extract.resolution,
+                        match response.status_code {
                             400 => crate::Error::TarballHTTP400,
                             401 => crate::Error::TarballHTTP401,
                             402 => crate::Error::TarballHTTP402,
@@ -897,63 +926,33 @@ fn run_tasks_erased(
                             404 => crate::Error::TarballHTTP404,
                             405..=499 => crate::Error::TarballHTTP4xx,
                             _ => crate::Error::TarballHTTP5xx,
-                        };
-
-                        if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(
-                                extract_ctx,
-                                task.task_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
-                            (cb.on_package_download_error_pkg)(
-                                extract_ctx,
-                                package_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        }
+                        },
+                        &task.url_buf,
+                    ) {
                         continue;
                     }
 
-                    let note = match response.status_code {
-                        401 | 403 => manager.options.missing_credentials_note(
-                            extract.name.slice(),
-                            &task.url_buf,
-                            RequestKind::Tarball(task.authorization),
-                        ),
-                        _ => Vec::new(),
-                    };
                     if is_required {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><red><b>GET<r><red> {}<d> - {}<r>{}",
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
                                 metadata.url.slice()
                             )),
                             response.status_code,
-                            bstr::BStr::new(&note),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>{}",
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
                                 metadata.url.slice()
                             )),
                             response.status_code,
-                            bstr::BStr::new(&note),
                         );
                     }
                     fail_update_requests(
@@ -1174,46 +1173,27 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
-                    // Extract-task failure (integrity check, libarchive error, etc.)
-                    // is symmetric with the HTTP 4xx/5xx branch above: mark the
-                    // dedupe entry as failed so a later `enqueuePackageForDownload`
-                    // for this `task_id` fails fast instead of waiting on this
-                    // failed one forever or re-downloading it. Runs before the
-                    // callback branch so `Store.Installer` (which `continue`s from
-                    // the callback) is covered too. The mark is a no-op for
-                    // `local_tarball` tasks (they never populate the map).
-                    manager.mark_network_task_failed(task.id);
-
-                    if cb.has_on_package_download_error {
-                        // SAFETY: `task.tag` selects the active `task.request` union arm.
-                        let fail_url: &[u8] = unsafe {
-                            match task.tag {
-                                Task::Tag::Extract => &(*task.request.extract.network).url_buf,
-                                Task::Tag::LocalTarball => {
-                                    task.request.local_tarball.tarball.url.slice()
-                                }
-                                _ => unreachable!(),
+                    // SAFETY: `task.tag` selects the active `task.request` union arm.
+                    let fail_url: &[u8] = unsafe {
+                        match task.tag {
+                            Task::Tag::Extract => &(*task.request.extract.network).url_buf,
+                            Task::Tag::LocalTarball => {
+                                task.request.local_tarball.tarball.url.slice()
                             }
-                        };
-                        if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(
-                                extract_ctx,
-                                task.id,
-                                alias,
-                                resolution,
-                                err,
-                                fail_url,
-                            );
-                        } else {
-                            (cb.on_package_download_error_pkg)(
-                                extract_ctx,
-                                package_id,
-                                alias,
-                                resolution,
-                                err,
-                                fail_url,
-                            );
+                            _ => unreachable!(),
                         }
+                    };
+                    // The mark is a no-op for `local_tarball` tasks (they never populate the map).
+                    if cb.dispatch_tarball_error(
+                        manager,
+                        extract_ctx,
+                        task.id,
+                        dependency_id,
+                        alias,
+                        resolution,
+                        err,
+                        fail_url,
+                    ) {
                         continue;
                     }
 
@@ -1603,6 +1583,9 @@ fn run_tasks_erased(
                     continue;
                 }
 
+                manager.extracted_count += 1;
+                bun_core::analytics::Features::extracted_packages_inc();
+
                 if cb.has_on_extract {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
@@ -1710,9 +1693,10 @@ fn run_tasks_erased(
 }
 
 /// `failed`: the connection died, before a response or under a 2xx/3xx one
-/// (an error status keeps its own handling). `retry`: that, or a 5xx from the
-/// registry or from a proxy answering CONNECT. A proxy's 4xx (407, 403) would
-/// be the answer to the retry too.
+/// (an error status keeps its own handling). `retry`: that, or a 5xx, 429 or 408
+/// from the registry or from a proxy answering CONNECT. Any other 4xx (a proxy's
+/// 407, 403) and a certificate the client refuses would be the answer to the
+/// retry too.
 struct DownloadOutcome {
     failed: bool,
     retry: bool,
@@ -1733,9 +1717,15 @@ impl DownloadOutcome {
             .as_ref()
             .map(|m| m.response.status_code)
             .or(proxy_status);
+        let bad_certificate = matches!(
+            response.fail,
+            Some(http::Error::Cert(_) | http::Error::ERR_TLS_CERT_ALTNAME_INVALID)
+        );
         Self {
             failed,
-            retry: failed || status.is_some_and(|status| status > 499),
+            retry: !bad_certificate
+                && (failed
+                    || status.is_some_and(|status| status > 499 || status == 429 || status == 408)),
         }
     }
 }
@@ -1755,7 +1745,7 @@ impl core::fmt::Display for DownloadFailure<'_> {
 
 #[inline]
 pub fn pending_task_count(manager: &PackageManager) -> u32 {
-    manager.pending_tasks.load(Ordering::Acquire)
+    manager.pending_tasks.load(Ordering::Acquire) + manager.retry_queue.len() as u32
 }
 
 #[inline]
@@ -1788,9 +1778,13 @@ impl PackageManager {
 }
 
 pub fn flush_network_queue(this: &mut PackageManager) {
-    while let Some(network_task) = this.network_task_fifo.read_item() {
-        // SAFETY: fifo stores live `*mut NetworkTask` pushed by
-        // `enqueue_network_task`; exclusive ownership transferred here.
+    while let Some(network_task) = this
+        .network_task_fifo
+        .read_item()
+        .or_else(|| this.retry_queue.pop_due())
+    {
+        // SAFETY: both queues store live `*mut NetworkTask` pushed by
+        // `enqueue_network_task` / `retry_timer::retry`; exclusive ownership transferred here.
         let nt = unsafe { &mut *network_task };
         nt.schedule(if matches!(nt.callback, NetworkTaskCallback::Extract(_)) {
             &mut this.network_tarball_batch
@@ -2036,17 +2030,47 @@ fn fail_update_requests(
     }
 }
 
-/// The first failed download in a `run_tasks` pass halves the number of
-/// concurrent requests (down to the configured minimum).
+/// A download that failed twice sheds a quarter of the concurrent requests, once
+/// per `run_tasks` pass, down to the configured minimum. Not under auto-install:
+/// the number is `fetch()`'s too, and nothing raises it again.
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
-    if core::mem::replace(has_network_error, true) {
+    if manager.options.runtime_auto_install || core::mem::replace(has_network_error, true) {
         return;
     }
     let min = manager.options.min_simultaneous_requests;
     let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
     if max > min {
-        AsyncHTTP::max_simultaneous_requests().store(min.max(max / 2), Ordering::Relaxed);
+        let lowered = min.max(max - max / 4);
+        AsyncHTTP::max_simultaneous_requests().store(lowered, Ordering::Relaxed);
+        if manager.options.log_level.is_verbose() {
+            bun_ast::add_warning_pretty!(
+                manager.log_mut(),
+                None,
+                bun_ast::Loc::EMPTY,
+                "A request failed twice. Sending at most {} requests at a time",
+                lowered,
+            );
+        }
     }
+}
+
+/// A host that accepts the connection and never answers costs minutes per attempt. Said at once,
+/// over the progress bar: the log is only printed when the phase ends.
+#[cold]
+fn warn_timeout_retry(
+    progress: &mut crate::bun_progress::Progress,
+    options: &Options::Options,
+    what: core::fmt::Arguments<'_>,
+    attempt: u16,
+) {
+    if options.log_level == Options::LogLevel::Silent {
+        return;
+    }
+    Output::flush();
+    progress.log(format_args!(
+        "warn: Timeout downloading {}. Retrying {}/{}...\n",
+        what, attempt, options.max_retry_count,
+    ));
 }
 
 pub fn generate_network_task_for_tarball<'a>(
@@ -2097,6 +2121,10 @@ pub fn generate_network_task_for_tarball<'a>(
     // `patched_dependencies_to_remove`. Install the package unpatched instead
     // of panicking.
     let patch = patch_name_and_version_hash.and_then(|h| {
+        // Its cache entry has no name until the integrity is known; the installers patch it after extraction.
+        if package.resolution.tag.is_tarball() {
+            return None;
+        }
         Some((
             h,
             this.lockfile
@@ -2179,7 +2207,12 @@ pub fn generate_network_task_for_tarball<'a>(
         },
     };
 
-    network_task.for_tarball(extract_tarball, scope, authorization)?;
+    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
+        // `has_created_network_task` recorded `task_id`, but no task exists to complete or
+        // fail it: a later enqueue would queue its callback behind it and wait for ever.
+        mark_network_task_failed(this, task_id);
+        return Err(err);
+    }
 
     if extract_tarball::uses_streaming_extraction() {
         // Pre-create the extract Task and streaming state here on the

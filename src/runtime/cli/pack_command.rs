@@ -2148,7 +2148,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         Global::crash();
     }
 
-    let abs_workspace_path: &[u8] = strings::without_trailing_slash(
+    let abs_workspace_path: &[u8] = path::string_paths::without_trailing_slash_windows_path(
         strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
     );
     // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
@@ -3199,7 +3199,7 @@ fn add_archive_entry(
 }
 
 /// What the tarball's package.json gets in place of a `workspace:` or `catalog:` spec.
-enum Substitution<'a> {
+pub(crate) enum Substitution<'a> {
     /// `workspace:^` / `~` / `*`: the workspace's current version behind that prefix.
     WorkspaceVersion(&'static str),
     /// `workspace:@acme/core@*` (alias), `workspace:../core`, or `workspace:1.x` on a workspace.
@@ -3209,7 +3209,7 @@ enum Substitution<'a> {
 }
 
 impl<'a> Substitution<'a> {
-    fn for_spec(spec: &'a [u8]) -> Option<Substitution<'a>> {
+    pub(crate) fn for_spec(spec: &'a [u8]) -> Option<Substitution<'a>> {
         let spec = bun_install::dependency::trim_literal(spec);
         if let Some(range) = strings::without_prefix_if_possible_comptime(spec, b"workspace:") {
             return Some(match range {
@@ -3225,10 +3225,47 @@ impl<'a> Substitution<'a> {
             &strings::WHITESPACE_CHARS,
         )))
     }
+
+    /// `Err`: which protocol does not resolve, and why.
+    pub(crate) fn published(
+        self,
+        manifests: &WorkspaceManifests,
+        package_dir: &[u8],
+        dependency_name: &[u8],
+    ) -> Result<Vec<u8>, (&'static str, String)> {
+        match self {
+            Substitution::WorkspaceVersion(prefix) => {
+                match manifests.workspace_version(dependency_name) {
+                    Some(version) => Ok(format!("{prefix}{version}").into_bytes()),
+                    None => Err((
+                        "workspace",
+                        format!(
+                            "\"{}\" has no workspace named \"{}\", or its package.json has no version",
+                            bstr::BStr::new(manifests.root_package_json_path()),
+                            bstr::BStr::new(dependency_name),
+                        ),
+                    )),
+                }
+            }
+            Substitution::WorkspaceRangeOrDirectory(spec) => {
+                publish_spec_for_workspace_range_or_directory(
+                    manifests,
+                    package_dir,
+                    dependency_name,
+                    spec,
+                )
+                .map_err(|why| ("workspace", why))
+            }
+            Substitution::Catalog(catalog_name) => manifests
+                .catalog_version(catalog_name, dependency_name)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| ("catalog", "no matching catalog dependency".to_owned())),
+        }
+    }
 }
 
 /// Section order is the order errors get reported in.
-fn for_each_dependency(
+pub(crate) fn for_each_dependency(
     package_json: Expr,
     mut f: impl FnMut(&'static [u8], &mut bun_ast::G::Property),
 ) {
@@ -3372,52 +3409,24 @@ fn edit_root_package_json(
             );
             Global::crash();
         };
-        let manifests =
-            || workspace_manifests.expect("pack() loads the manifests when a spec needs them");
-        let fail = |what: &str, why: fmt::Arguments<'_>| -> ! {
-            Output::err_generic(
-                "Failed to resolve {} version for \"{}\" in `{}` ({}).",
-                (
-                    what,
-                    bstr::BStr::new(dependency_name),
-                    bstr::BStr::new(dependency_group),
-                    why,
-                ),
-            );
-            Global::crash();
-        };
-
-        // `E::EString::init` keeps a pointer to the bytes, so they go into the pack arena.
-        let replacement: &[u8] = match substitution {
-            Substitution::WorkspaceVersion(prefix) => {
-                let Some(version) = manifests().workspace_version(dependency_name) else {
-                    fail(
-                        "workspace",
-                        format_args!(
-                            "\"{}\" has no workspace named \"{}\", or its package.json has no version",
-                            bstr::BStr::new(manifests().root_package_json_path()),
-                            bstr::BStr::new(dependency_name),
-                        ),
-                    )
-                };
-                bump.alloc_slice_copy(format!("{prefix}{version}").as_bytes())
-            }
-            Substitution::WorkspaceRangeOrDirectory(spec) => {
-                match publish_spec_for_workspace_range_or_directory(
-                    manifests(),
-                    package_dir,
-                    dependency_name,
-                    spec,
-                ) {
-                    Ok(published) => bump.alloc_slice_copy(&published),
-                    Err(why) => fail("workspace", format_args!("{why}")),
-                }
-            }
-            Substitution::Catalog(catalog_name) => {
-                match manifests().catalog_version(catalog_name, dependency_name) {
-                    Some(version) => bump.alloc_slice_copy(version),
-                    None => fail("catalog", format_args!("no matching catalog dependency")),
-                }
+        let replacement: &[u8] = match substitution.published(
+            workspace_manifests.expect("pack() loads the manifests when a spec needs them"),
+            package_dir,
+            dependency_name,
+        ) {
+            // `E::EString::init` keeps a pointer to the bytes, so they go into the pack arena.
+            Ok(published) => bump.alloc_slice_copy(&published),
+            Err((what, why)) => {
+                Output::err_generic(
+                    "Failed to resolve {} version for \"{}\" in `{}` ({}).",
+                    (
+                        what,
+                        bstr::BStr::new(dependency_name),
+                        bstr::BStr::new(dependency_group),
+                        why,
+                    ),
+                );
+                Global::crash();
             }
         };
         dependency.value = Some(Expr::init(

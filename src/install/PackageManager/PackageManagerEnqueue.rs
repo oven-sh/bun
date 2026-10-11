@@ -19,6 +19,7 @@ use crate::_folder_resolver::{
 use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::package::Package;
+use crate::lockfile::reachable;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
     self, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
@@ -60,6 +61,38 @@ pub(crate) type EnqueueTarballForDownloadError = crate::network_task::ForTarball
 const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// The callbacks waiting for `task_id`; an empty list if there was none.
+fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut TaskCallbackList {
+    this.task_queue
+        .get_or_put(task_id)
+        .expect("unreachable")
+        .value_ptr
+}
+
+/// False when `task_id` already had a list: the task was started before.
+fn push_task_callback(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    callback: TaskCallbackContext,
+) -> bool {
+    let entry = this.task_queue.get_or_put(task_id).expect("unreachable");
+    entry.value_ptr.push(callback);
+    !entry.found_existing
+}
+
+fn push_dependency_task_callback(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    id: DependencyID,
+    is_root: bool,
+) {
+    task_callback_list(this, task_id).push(if is_root {
+        TaskCallbackContext::RootDependency(id)
+    } else {
+        TaskCallbackContext::Dependency(id)
+    });
+}
 
 pub fn enqueue_dependency_with_main(
     this: &mut PackageManager,
@@ -165,14 +198,7 @@ pub fn enqueue_tarball_for_download(
             return Err(EnqueueTarballForDownloadError::Offline);
         }
     }
-    let task_queue = this.task_queue.get_or_put(task_id)?;
-    if !task_queue.found_existing {
-        *task_queue.value_ptr = TaskCallbackList::default();
-    }
-
-    task_queue.value_ptr.push(task_context);
-
-    if task_queue.found_existing {
+    if !push_task_callback(this, task_id, task_context) {
         return Ok(());
     }
 
@@ -221,14 +247,7 @@ pub fn enqueue_tarball_for_reading(
     // filename store before any append.
     let path = this.lockfile.str_detached(resolution.local_tarball());
     let task_id = Task::Id::for_tarball(path);
-    let task_queue = this.task_queue.get_or_put(task_id).expect("unreachable");
-    if !task_queue.found_existing {
-        *task_queue.value_ptr = TaskCallbackList::default();
-    }
-
-    task_queue.value_ptr.push(task_context);
-
-    if task_queue.found_existing {
+    if !push_task_callback(this, task_id, task_context) {
         return;
     }
 
@@ -284,17 +303,7 @@ pub fn enqueue_git_for_checkout(
     if repo_fd.is_none() && offline_git_miss(this, clone_id, alias, is_required) {
         return GitEnqueueResult::OfflineMiss;
     }
-    let checkout_queue = this
-        .task_queue
-        .get_or_put(checkout_id)
-        .expect("unreachable");
-    if !checkout_queue.found_existing {
-        *checkout_queue.value_ptr = TaskCallbackList::default();
-    }
-
-    checkout_queue.value_ptr.push(task_context);
-
-    if checkout_queue.found_existing {
+    if !push_task_callback(this, checkout_id, task_context) {
         return GitEnqueueResult::Queued;
     }
 
@@ -311,17 +320,10 @@ pub fn enqueue_git_for_checkout(
         );
         this.enqueue_git_task(task);
     } else {
-        let clone_queue = this.task_queue.get_or_put(clone_id).expect("unreachable");
-        if !clone_queue.found_existing {
-            *clone_queue.value_ptr = TaskCallbackList::default();
-        }
-
-        clone_queue
-            .value_ptr
-            .push(TaskCallbackContext::GitCheckout {
-                dependency_id,
-                package_id,
-            });
+        task_callback_list(this, clone_id).push(TaskCallbackContext::GitCheckout {
+            dependency_id,
+            package_id,
+        });
 
         if this.has_created_network_task(clone_id, is_required) {
             return GitEnqueueResult::Queued;
@@ -333,20 +335,40 @@ pub fn enqueue_git_for_checkout(
     GitEnqueueResult::Queued
 }
 
-/// False when only optional dependencies resolve to `package_id`: the install goes on without it.
-fn is_package_required(
+/// False when the install goes on without `package_id`: `dependency_id`, which asks for it, is
+/// optional (an optional peer is), and so is every other dependency on it of a package this
+/// install links. The root's edge to a workspace does not count: `--filter` decides on that one.
+pub(crate) fn is_package_required(
     this: &PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
 ) -> bool {
-    let dependencies = this.lockfile.buffers.dependencies.as_slice();
-    dependencies[dependency_id as usize].behavior.is_required()
-        || dependencies
-            .iter()
-            .zip(this.lockfile.buffers.resolutions.as_slice())
-            .any(|(dependency, &resolved)| {
-                resolved == package_id && dependency.behavior.is_required()
-            })
+    let lockfile = &*this.lockfile;
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    if !dependencies[dependency_id as usize]
+        .behavior
+        .contains(Behavior::OPTIONAL)
+    {
+        return true;
+    }
+    let features = this.options.local_package_features;
+    let linked = reachable::packages(lockfile, resolutions, reachable::Options::install(this));
+    lockfile
+        .packages
+        .items_dependencies()
+        .iter()
+        .enumerate()
+        .any(|(parent, slice)| {
+            linked.is_set(parent)
+                && (slice.begin() as usize..slice.end() as usize).any(|id| {
+                    let behavior = dependencies[id].behavior;
+                    resolutions[id] == package_id
+                        && !behavior.contains(Behavior::OPTIONAL)
+                        && !behavior.is_workspace()
+                        && behavior.is_placed(features)
+                })
+        })
 }
 
 /// Under `--offline`, an install-phase request for a package that is not in the cache
@@ -483,14 +505,7 @@ pub fn enqueue_package_for_download(
             return Err(EnqueuePackageForDownloadError::Offline);
         }
     }
-    let task_queue = this.task_queue.get_or_put(task_id)?;
-    if !task_queue.found_existing {
-        *task_queue.value_ptr = TaskCallbackList::default();
-    }
-
-    task_queue.value_ptr.push(task_context);
-
-    if task_queue.found_existing {
+    if !push_task_callback(this, task_id, task_context) {
         return Ok(());
     }
 
@@ -595,10 +610,11 @@ pub fn enqueue_dependency_to_root(
         }
     }
 
-    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
-        id if id == invalid_package_id => 'brk: {
-            this.drain_dependency_list();
+    // A manifest from the disk cache resolves the row at once and only queues the tarball.
+    this.drain_dependency_list();
 
+    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
+        id if id == invalid_package_id || this.pending_task_count() > 0 => 'brk: {
             struct Closure {
                 err: Option<crate::Error>,
                 // raw `*mut` — `sleep_until`
@@ -676,6 +692,11 @@ pub fn enqueue_dependency_to_root(
     };
 
     if resolution_id == invalid_package_id {
+        // This manager lives as long as the process: the next import asks the registry again.
+        let real_name = this.lockfile.buffers.dependencies[dep_id as usize].realname();
+        let task_id = Task::Id::for_manifest(this.lockfile.str(&real_name));
+        let _ = this.network_dedupe_map.remove(&task_id);
+        let _ = this.task_queue.remove(&task_id);
         return DependencyToEnqueue::NotFound;
     }
 
@@ -766,6 +787,33 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
+/// The `npm:` alias a plain dependency may follow. Every manifest writes `known_npm_aliases`;
+/// a row of the root package.json follows only an alias that the root package.json declares.
+fn followed_npm_alias(
+    this: &PackageManager,
+    id: DependencyID,
+    is_root: bool,
+    name_hash: PackageNameHash,
+) -> Option<dependency::Version> {
+    let known = this.known_npm_aliases.get(&name_hash)?;
+    let lockfile = &*this.lockfile;
+    // `is_root` is an import that the runtime resolves, not a row of the root package.json.
+    let Some(root_dependencies) = lockfile
+        .packages
+        .items_dependencies()
+        .first()
+        .filter(|root| !is_root && root.contains(id))
+    else {
+        return Some(known.clone());
+    };
+    root_dependencies
+        .get(lockfile.buffers.dependencies.as_slice())
+        .iter()
+        .filter(|dep| dep.name_hash == name_hash)
+        .filter_map(|dep| lockfile.resolve_catalog_dependency(dep))
+        .find(|version| version.tag == dependency::version::Tag::Npm && version.npm().is_alias)
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -804,14 +852,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         if dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
         {
-            if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
+            if let Some(aliased) = followed_npm_alias(this, id, is_root, name_hash) {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
-                if group.intersects(buf, &aliased.npm().version, buf) {
+                let alias_group = &aliased.npm().version;
+                // The bounds guess where the alias resolves. A peer is not held to its range.
+                if (dependency.behavior.is_peer() || group.intersects(buf, alias_group, buf))
+                    && group.is_satisfied_by_a_bound_of(buf, alias_group, buf)
+                {
                     name = aliased.npm().name;
                     name_hash = Semver::string::Builder::string_hash(this.lockfile.str(&name));
-                    break 'version aliased.clone();
+                    break 'version aliased;
                 }
 
                 // fallthrough. a package that matches the name of an alias but does not match
@@ -1375,18 +1427,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             return Ok(());
                         }
 
-                        let manifest_entry_parse =
-                            this.task_queue.get_or_put_context(task_id, ())?;
-                        if !manifest_entry_parse.found_existing {
-                            *manifest_entry_parse.value_ptr = TaskCallbackList::default();
-                        }
-
-                        let ctx = if is_root {
-                            TaskCallbackContext::RootDependency(id)
-                        } else {
-                            TaskCallbackContext::Dependency(id)
-                        };
-                        manifest_entry_parse.value_ptr.push(ctx);
+                        push_dependency_task_callback(this, task_id, id, is_root);
                     }
                     return Ok(());
                 }
@@ -1439,14 +1480,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let resolved = match this.git_commits.get(&commit_id) {
                     Some(resolved) => resolved.clone(),
                     None => {
-                        let entry = this
-                            .task_queue
-                            .get_or_put_context(commit_id, ())
-                            .expect("unreachable");
-                        if !entry.found_existing {
-                            *entry.value_ptr = TaskCallbackList::default();
-                        }
-                        entry.value_ptr.push(ctx);
+                        task_callback_list(this, commit_id).push(ctx);
 
                         if dependency.behavior.is_peer() && !install_peer {
                             this.peer_dependencies.write_item(id)?;
@@ -1474,15 +1508,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     }
                 }
 
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(checkout_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
+                let waiters = task_callback_list(this, checkout_id);
                 if needs_ctx {
-                    entry.value_ptr.push(ctx);
+                    waiters.push(ctx);
                 }
 
                 if dependency.behavior.is_peer() {
@@ -1508,14 +1536,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
                 this.enqueue_git_task(task);
             } else {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(clone_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
+                task_callback_list(this, clone_id).push(ctx);
 
                 if dependency.behavior.is_peer() {
                     if !install_peer {
@@ -1569,24 +1590,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
-            // reshaped for borrowck — `entry` mutably borrows
-            // `this.task_queue`; scope it tightly so the calls below can
-            // reborrow `*this`.
-            {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
-            }
+            push_dependency_task_callback(this, task_id, id, is_root);
 
             if dependency.behavior.is_peer() {
                 if !install_peer {
@@ -1773,6 +1777,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
+            // A row parsed from package.json does not know the package's name yet.
+            if !this.repins_tarball(
+                dependency,
+                this.lockfile.buffers.string_bytes.as_slice(),
+                true,
+            ) && let Some(pkg_id) = this.locked_tarball(&res)
+            {
+                success_fn(this, id, pkg_id);
+                return Ok(());
+            }
+
             // reshaped for borrowck — `url` borrows `string_bytes`;
             // detach the slice lifetime so the `&mut PackageManager` reborrows
             // for the enqueue callees below do not conflict.
@@ -1805,22 +1820,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
-            // reshaped for borrowck — scope `entry` tightly.
-            {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
-            }
+            push_dependency_task_callback(this, task_id, id, is_root);
 
             if dependency.behavior.is_peer() {
                 if !install_peer {
@@ -2379,6 +2379,32 @@ pub(crate) struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
+/// Once per version, when it is first resolved. What a package.json of the project names gets its
+/// line; the project can do little about the rest, which is counted (`--verbose`: a line each).
+#[cold]
+fn warn_deprecated(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    manifest: &Npm::PackageManifest,
+    found: Npm::FindResult,
+) {
+    if !this.lockfile.is_workspace_dependency(dependency_id) && !this.options.log_level.is_verbose()
+    {
+        this.deprecated_transitive += 1;
+        return;
+    }
+    this.log_mut().add_warning_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "deprecated {}@{}: {}",
+            bun_fmt::escape_control_chars(manifest.name()),
+            found.version.fmt(&manifest.string_buf),
+            bun_fmt::escape_control_chars(found.package.deprecated.slice(&manifest.string_buf)),
+        ),
+    );
+}
+
 fn get_or_put_resolved_package_with_find_result(
     this: &mut PackageManager,
     name_hash: PackageNameHash,
@@ -2527,6 +2553,8 @@ fn get_or_put_resolved_package_with_find_result(
         if inside_bundle {
             this.lockfile.mark_only_bundled(package.meta.id);
         }
+    } else if !find_result.package.deprecated.is_empty() && !this.options.runtime_auto_install {
+        warn_deprecated(this, dependency_id, manifest, find_result);
     }
 
     // non-null if the package is in "patchedDependencies"
@@ -3288,6 +3316,15 @@ fn would_revive_leftover(
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
+    #[inline]
+    pub(crate) fn is_package_required(
+        &self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    ) -> bool {
+        is_package_required(self, dependency_id, package_id)
+    }
+
     #[inline]
     pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
         enqueue_dependency_list(self, dependencies_list)

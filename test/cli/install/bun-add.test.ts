@@ -1842,7 +1842,7 @@ it("should let you add the same package twice", async () => {
       {
         name: "Foo",
         version: "0.0.1",
-        dependencies: {
+        devDependencies: {
           baz: "^0.0.3",
         },
       },
@@ -2669,7 +2669,11 @@ it("should add local tarball dependency", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual([
+    ".bun-tag",
+    "index.js",
+    "package.json",
+  ]);
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
@@ -3206,7 +3210,11 @@ it("should add an uncompressed .tar local tarball", async () => {
   expect(await exited).toBe(0);
   expect(urls).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toStrictEqual(["index.js", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toStrictEqual([
+    ".bun-tag",
+    "index.js",
+    "package.json",
+  ]);
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
@@ -3265,5 +3273,656 @@ it("bun add --trust keeps the new package when another --trust package is alread
       "a-scripted": "file:./a-scripted",
       "b-scripted": "file:./b-scripted",
     },
+  });
+});
+
+describe("should move existing dependency when an explicit group flag is given", () => {
+  const root = { name: "foo", version: "0.0.1" };
+  const pkgJson = (pkg: Record<string, unknown>) => JSON.stringify(pkg, null, 2);
+
+  async function add(
+    initial: Record<string, unknown> | string,
+    args: string[],
+    registry: Record<string, unknown> = { "0.0.2": {} },
+  ) {
+    setHandler(dummyRegistry([], registry));
+    await writeFile(join(package_dir, "package.json"), typeof initial === "string" ? initial : pkgJson(initial));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", ...args],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, , exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+    return await file(join(package_dir, "package.json")).text();
+  }
+
+  it.each([
+    ["dependencies", "devDependencies", "--dev"],
+    ["dependencies", "optionalDependencies", "--optional"],
+    ["dependencies", "peerDependencies", "--peer"],
+    ["devDependencies", "optionalDependencies", "--optional"],
+    ["optionalDependencies", "devDependencies", "--dev"],
+    ["optionalDependencies", "peerDependencies", "--peer"],
+  ])("%s -> %s with %s", async (from, to, flag) => {
+    expect(await add({ ...root, [from]: { BaR: "^0.0.2" } }, [flag, "BaR"])).toBe(
+      pkgJson({ ...root, [to]: { BaR: "^0.0.2" } }),
+    );
+  });
+
+  it("keeps the remaining entries of the source group in their original order", async () => {
+    const dependencies = { monkey: "^0.0.2", BaR: "^0.0.2", boba: "^0.0.2", "depends-on-monkey": "^0.0.2" };
+    expect(await add({ ...root, dependencies }, ["--dev", "BaR"])).toBe(
+      pkgJson({
+        ...root,
+        dependencies: { monkey: "^0.0.2", boba: "^0.0.2", "depends-on-monkey": "^0.0.2" },
+        devDependencies: { BaR: "^0.0.2" },
+      }),
+    );
+  });
+
+  it("keeps the other root keys in their original order when the source group becomes empty", async () => {
+    const rest = { type: "module", scripts: { test: "true" }, license: "MIT" };
+    expect(await add({ ...root, dependencies: { BaR: "^0.0.2" }, ...rest }, ["--dev", "BaR"])).toBe(
+      pkgJson({ ...root, ...rest, devDependencies: { BaR: "^0.0.2" } }),
+    );
+  });
+
+  it("moves several packages out of the same group", async () => {
+    expect(await add({ ...root, dependencies: { BaR: "^0.0.2", monkey: "^0.0.2" } }, ["--dev", "BaR", "monkey"])).toBe(
+      pkgJson({ ...root, devDependencies: { BaR: "^0.0.2", monkey: "^0.0.2" } }),
+    );
+  });
+
+  it("removes the other group when the package is already in the target group", async () => {
+    const initial = { ...root, devDependencies: { BaR: "^0.0.2" }, optionalDependencies: { BaR: "^0.0.2" } };
+    expect(await add(initial, ["--dev", "BaR"])).toBe(pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } }));
+  });
+
+  it("leaves a peerDependencies entry untouched when adding to devDependencies", async () => {
+    const initial = { ...root, peerDependencies: { baz: ">=0.0.3" } };
+    expect(await add(initial, ["--dev", "baz"], { "0.0.3": {}, "0.0.5": {} })).toBe(
+      pkgJson({ ...root, peerDependencies: { baz: ">=0.0.3" }, devDependencies: { baz: "^0.0.5" } }),
+    );
+  });
+
+  it("updates the devDependencies range when adding to peerDependencies", async () => {
+    const initial = { ...root, devDependencies: { baz: ">=0.0.3" } };
+    expect(await add(initial, ["--peer", "baz"], { "0.0.3": {}, "0.0.5": {} })).toBe(
+      pkgJson({ ...root, devDependencies: { baz: "^0.0.5" }, peerDependencies: { baz: "^0.0.5" } }),
+    );
+  });
+
+  it("does not move when no group flag is given", async () => {
+    const initial = { ...root, devDependencies: { BaR: "^0.0.2" } };
+    expect(await add(initial, ["BaR"])).toBe(pkgJson(initial));
+  });
+
+  it("does not move with --only-missing", async () => {
+    const initial = { ...root, dependencies: { BaR: "^0.0.2" } };
+    expect(await add(initial, ["--dev", "--only-missing", "BaR"])).toBe(pkgJson(initial));
+  });
+
+  it("moves the one package of two that another group has", async () => {
+    expect(await add({ ...root, dependencies: { BaR: "^0.0.2", boba: "^0.0.2" } }, ["--dev", "BaR", "monkey"])).toBe(
+      pkgJson({ ...root, dependencies: { boba: "^0.0.2" }, devDependencies: { BaR: "^0.0.2", monkey: "^0.0.2" } }),
+    );
+  });
+
+  it("moves an npm: alias under its own name", async () => {
+    expect(await add({ ...root, dependencies: { zz: "npm:BaR@^0.0.1" } }, ["--dev", "zz@npm:BaR@0.0.2"])).toBe(
+      pkgJson({ ...root, devDependencies: { zz: "npm:BaR@0.0.2" } }),
+    );
+  });
+
+  it("keeps tabs and a missing final newline", async () => {
+    const text = (...lines: string[]) => lines.join("\n");
+    expect(
+      await add(
+        text("{", '\t"name": "foo",', '\t"dependencies": {', '\t\t"BaR": "^0.0.2"', "\t},", '\t"license": "MIT"', "}"),
+        ["--dev", "BaR"],
+      ),
+    ).toBe(
+      text("{", '\t"name": "foo",', '\t"license": "MIT",', '\t"devDependencies": {', '\t\t"BaR": "^0.0.2"', "\t}", "}"),
+    );
+  });
+});
+
+describe("a spec without a name that resolves to a dependency package.json already declares", () => {
+  type Kind = "folder" | "tarball" | "git";
+  type Declared =
+    | "none"
+    | "dependencies"
+    | "devDependencies"
+    | "optionalDependencies"
+    | "peerDependencies"
+    | "optional peer";
+  type Flag = "" | "-d" | "--peer";
+
+  const gitEnv = {
+    ...env,
+    // Set on the asan lanes, where it makes `bun install` kill its own git clones (#33982).
+    BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+
+  const manifest = (version: string) => JSON.stringify({ name: "pkga", version });
+
+  async function commit(repo: string, version: string) {
+    await Bun.write(join(repo, "package.json"), manifest(version));
+    await $`git init -q && git add -A && git commit -q -m ${version} --no-gpg-sign`.cwd(repo).env(gitEnv).quiet();
+    return (await $`git rev-parse HEAD`.cwd(repo).env(gitEnv).text()).trim();
+  }
+
+  // Tarballs and git repositories live in `root`, next to the projects that use them, so two projects name the same bytes.
+  async function source(root: string, kind: Kind, label: string, version: string) {
+    if (kind === "tarball") {
+      await Bun.Archive.write(
+        join(root, `${label}.tgz`),
+        { "package/package.json": manifest(version) },
+        { compress: "gzip" },
+      );
+    } else if (kind === "git") {
+      await commit(join(root, label), version);
+    }
+    return async (project: string, prefix: string) => {
+      switch (kind) {
+        case "folder":
+          await Bun.write(join(project, label, "package.json"), manifest(version));
+          return `${prefix}./${label}`;
+        case "tarball":
+          await copyFile(join(root, `${label}.tgz`), join(project, `${label}.tgz`));
+          return `${prefix}./${label}.tgz`;
+        case "git":
+          return `git+${pathToFileURL(join(root, label)).href}`;
+      }
+    };
+  }
+
+  async function run(project: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: project,
+      env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(project, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  async function ok(project: string, ...args: string[]) {
+    const { out, err, exitCode } = await run(project, ...args);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  // Keys that one object of a JSON or JSONC text has twice. `JSON.parse` keeps the last one, so they are found in the text.
+  function duplicateKeys(text: string) {
+    const duplicates: string[] = [];
+    const open: (Set<string> | null)[] = [];
+    for (const [token, colon] of text.matchAll(/"(?:[^"\\]|\\.)*"(\s*:)?|[{}\[\]]/g)) {
+      if (token === "{") open.push(new Set());
+      else if (token === "[") open.push(null);
+      else if (token === "}" || token === "]") open.pop();
+      else if (colon) {
+        const key = token.slice(0, token.lastIndexOf('"') + 1);
+        if (open.at(-1)!.has(key)) duplicates.push(key);
+        open.at(-1)!.add(key);
+      }
+    }
+    return duplicates;
+  }
+
+  const state = async (project: string) => ({
+    packageJson: await file(join(project, "package.json")).text(),
+    lockfile: await file(join(project, "bun.lock")).text(),
+    installed: (await file(join(project, "node_modules", "pkga", "package.json")).json()).version,
+  });
+
+  // package.json, bun.lock and node_modules agree, and stay as they are: no key twice, a frozen install passes, a second install changes nothing.
+  async function settled(project: string, frozen = true) {
+    const after = await state(project);
+    expect(duplicateKeys(after.packageJson)).toEqual([]);
+    expect(duplicateKeys(after.lockfile)).toEqual([]);
+    if (frozen) await ok(project, "install", "--frozen-lockfile");
+    await ok(project, "install");
+    expect(await state(project)).toEqual(after);
+    return after;
+  }
+
+  // The lists that hold the spec afterwards. Without a flag the entry stays in its list; `-d` and `--peer` move it there, as
+  // they do for `bun add <flag> pkga@<spec>`. A peer entry and the entry of another list may share a name, so neither
+  // replaces the other ("keeps"), except that the devDependencies entry follows a new peer entry.
+  // `bun add --peer <spec>` over an optional peer of that name is left out: it still writes the name twice into bun.lock.
+  const outcomes: Record<Flag, Partial<Record<Declared, { lists: string[]; keeps?: true }>>> = {
+    "": {
+      "none": { lists: ["dependencies"] },
+      "dependencies": { lists: ["dependencies"] },
+      "devDependencies": { lists: ["devDependencies"] },
+      "optionalDependencies": { lists: ["optionalDependencies"] },
+      "peerDependencies": { lists: ["dependencies"], keeps: true },
+      "optional peer": { lists: ["dependencies"], keeps: true },
+    },
+    "-d": {
+      none: { lists: ["devDependencies"] },
+      dependencies: { lists: ["devDependencies"] },
+      devDependencies: { lists: ["devDependencies"] },
+      optionalDependencies: { lists: ["devDependencies"] },
+      peerDependencies: { lists: ["devDependencies"], keeps: true },
+    },
+    "--peer": {
+      none: { lists: ["peerDependencies"] },
+      dependencies: { lists: ["peerDependencies"] },
+      devDependencies: { lists: ["devDependencies", "peerDependencies"] },
+      optionalDependencies: { lists: ["peerDependencies"] },
+      peerDependencies: { lists: ["peerDependencies"] },
+    },
+  };
+  // Every cell with a folder. The other kinds only where the list can change the outcome, so that the file stays fast.
+  const cell = (declared: Declared, kind: Kind, flag: Flag) => ({ declared, kind, flag });
+  const cells = [
+    ...(Object.keys(outcomes) as Flag[]).flatMap(flag =>
+      (Object.keys(outcomes[flag]) as Declared[]).map(declared => cell(declared, "folder", flag)),
+    ),
+    ...(["none", "dependencies", "peerDependencies"] as Declared[]).flatMap(declared => [
+      cell(declared, "tarball", ""),
+      cell(declared, "git", ""),
+    ]),
+    cell("dependencies", "tarball", "-d"),
+    cell("dependencies", "git", "-d"),
+  ];
+
+  test.concurrent.each(cells)("bun add $flag <$kind>, declared: $declared", async ({ declared, kind, flag }) => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const root = String(dir);
+    const [oldSource, newSource] = await Promise.all([
+      source(root, "folder", "old-pkga", "1.0.0"),
+      source(root, kind, "new-pkga", "2.0.0"),
+    ]);
+
+    const declaredList = declared === "optional peer" ? "peerDependencies" : declared;
+    const { lists, keeps } = outcomes[flag][declared]!;
+
+    const add = async (name: string) => {
+      const project = join(root, name);
+      const siblings = { "other-a": "file:./other-a", "other-z": "file:./other-z" };
+      for (const sibling of Object.keys(siblings)) {
+        await Bun.write(join(project, sibling, "package.json"), JSON.stringify({ name: sibling, version: "1.0.0" }));
+      }
+      const before: Record<string, any> = { name: "app", dependencies: { ...siblings } };
+      if (declared !== "none") {
+        before[declaredList] = { ...before[declaredList], pkga: await oldSource(project, "file:") };
+        if (declared === "optional peer") before.peerDependenciesMeta = { pkga: { optional: true } };
+      }
+      await Bun.write(join(project, "package.json"), JSON.stringify(before));
+      if (declared !== "none") await ok(project, "install");
+
+      const spec = await newSource(project, "");
+      const out = await ok(project, "add", ...(flag ? [flag] : []), name === "named" ? `pkga@${spec}` : spec);
+      expect(out).toContain("installed pkga@");
+      return { project, before, spec };
+    };
+
+    // `bun add pkga@<spec>` never had the second row, so it is the oracle. Without a flag it writes over a peer entry, which a
+    // spec without a name leaves alone. One kind is enough: the kind does not change what the named spec writes.
+    const oracle = kind === "folder" && !(flag === "" && keeps);
+    const [bare, named] = await Promise.all([add("bare"), oracle ? add("named") : undefined]);
+
+    const expected = structuredClone(bare.before);
+    if (declared !== "none" && !keeps) {
+      delete expected[declaredList].pkga;
+      if (Object.keys(expected[declaredList]).length === 0) delete expected[declaredList];
+    }
+    for (const list of lists) expected[list] = { ...expected[list], pkga: bare.spec };
+    // Beside a peer entry with another source the result is what 1.4.3 writes, so one follow-up install is enough there.
+    const after = await settled(bare.project, !keeps);
+    expect(JSON.parse(after.packageJson)).toEqual(expected);
+    expect(after.installed).toBe("2.0.0");
+    if (named) expect(after).toEqual(await state(named.project));
+  });
+
+  test.concurrent.each([
+    { name: "./folder over a tarball", old: "tarball", add: "folder" },
+    { name: "./x.tgz over a git dependency", old: "git", add: "tarball" },
+  ] as { name: string; old: Kind; add: Kind }[])("bun add $name", async ({ old, add }) => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    const oldSpec = await (await source(project, old, "old-pkga", "1.0.0"))(project, "");
+    await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app", dependencies: { pkga: oldSpec } }));
+    await ok(project, "install");
+
+    const spec = await (await source(project, add, "new-pkga", "2.0.0"))(project, "file:");
+    await ok(project, "add", spec);
+    const after = await settled(project);
+    expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
+    expect(after.installed).toBe("2.0.0");
+  });
+
+  test.concurrent("bun add <git url>#<commit> over another commit of the same repository (#8031)", async () => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = join(String(dir), "app");
+    const repo = join(String(dir), "repo");
+    const url = `git+${pathToFileURL(repo).href}`;
+    await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }));
+
+    for (const version of ["1.0.0", "2.0.0"]) {
+      const spec = `${url}#${await commit(repo, version)}`;
+      await ok(project, "add", spec);
+      const after = await state(project);
+      expect(duplicateKeys(after.lockfile)).toEqual([]);
+      expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
+      expect(after.installed).toBe(version);
+    }
+    await settled(project);
+  });
+
+  test.concurrent("bun add <tarball url> over another url of the same package (#20647)", async () => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    const tarballs = new Map<string, Uint8Array>();
+    for (const version of ["1.0.0", "2.0.0"]) {
+      tarballs.set(
+        `/pkga-${version}.tgz`,
+        await new Bun.Archive({ "package/package.json": manifest(version) }, { compress: "gzip" }).bytes(),
+      );
+    }
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(tarballs.get(new URL(req.url).pathname.replace("/mirror", "")) ?? null),
+    });
+    await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }));
+
+    // `/mirror` is a second literal for the first tarball, as `?1` is in the report.
+    for (const [path, version] of [
+      ["/pkga-1.0.0.tgz", "1.0.0"],
+      ["/mirror/pkga-1.0.0.tgz", "1.0.0"],
+      ["/pkga-1.0.0.tgz", "1.0.0"],
+      ["/pkga-2.0.0.tgz", "2.0.0"],
+    ]) {
+      const spec = new URL(path, server.url).href;
+      await ok(project, "add", spec);
+      const after = await state(project);
+      expect(duplicateKeys(after.lockfile)).toEqual([]);
+      expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
+      expect(after.installed).toBe(version);
+    }
+    await settled(project);
+  });
+
+  // A folder in both `dependencies` and `devDependencies` is written to bun.lock twice by a plain install, so that pair uses tarballs.
+  test.concurrent.each([
+    { kind: "folder", groups: ["dependencies", "optionalDependencies"] },
+    { kind: "tarball", groups: ["dependencies", "devDependencies"] },
+  ] as { kind: Kind; groups: string[] }[])(
+    "bun add <$kind>, declared: $groups.0 and $groups.1",
+    async ({ kind, groups }) => {
+      using dir = tempDir("bun-add-declared-name", {});
+      const project = String(dir);
+      const oldSpec = await (await source(project, kind, "old-pkga", "1.0.0"))(project, "file:");
+      const declared = Object.fromEntries(groups.map(group => [group, { pkga: oldSpec }]));
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app", ...declared }));
+      await ok(project, "install");
+
+      const spec = await (await source(project, kind, "new-pkga", "2.0.0"))(project, "");
+      await ok(project, "add", spec);
+      const after = await settled(project);
+      // Each entry takes the spec, so the row bun.lock keeps for the name agrees with package.json whichever group wins.
+      expect(JSON.parse(after.packageJson)).toEqual({
+        name: "app",
+        ...Object.fromEntries(groups.map(group => [group, { pkga: spec }])),
+      });
+      expect(after.installed).toBe("2.0.0");
+    },
+  );
+
+  test.concurrent.each([
+    ["./a-v1", "./a-v2"],
+    ["./a-v1", "pkga@./a-v2"],
+    ["pkga@./a-v2", "./a-v1"],
+  ])("bun add %s %s is refused: one package, two specs", async (first, second) => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    const before = JSON.stringify({ name: "app" });
+    await Promise.all([
+      Bun.write(join(project, "package.json"), before),
+      Bun.write(join(project, "a-v1", "package.json"), manifest("1.0.0")),
+      Bun.write(join(project, "a-v2", "package.json"), manifest("2.0.0")),
+    ]);
+
+    const { err, exitCode } = await run(project, "add", first, second);
+    expect(err).toContain(`error: "${first}" and "${second}" both resolve to "pkga"\nnote: add one of them`);
+    expect(exitCode).toBe(1);
+    expect(await file(join(project, "package.json")).text()).toBe(before);
+    expect(await Bun.file(join(project, "bun.lock")).exists()).toBeFalse();
+  });
+});
+
+it("should replace a registry dependency when adding a local folder with the same package name", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await Promise.all([
+    writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    ),
+    Bun.write(join(package_dir, "bar-fork", "package.json"), JSON.stringify({ name: "bar", version: "0.0.2-fork" })),
+  ]);
+
+  for (const args of [["install"], ["add", "./bar-fork"], ["install", "--frozen-lockfile"]]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), ...args, "--save-text-lockfile"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { bar: "./bar-fork" },
+  });
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2-fork",
+  });
+  const lockfileText = await file(join(package_dir, "bun.lock")).text();
+  expect(lockfileText.match(/"bar":/g)).toHaveLength(2);
+  const lockfile = Bun.JSONC.parse(lockfileText) as BunLockFile;
+  expect(lockfile.workspaces[""].dependencies).toEqual({ bar: "./bar-fork" });
+  expect(lockfile.packages).toEqual({ bar: ["bar@file:bar-fork", {}] });
+});
+
+// https://github.com/oven-sh/bun/issues/13244
+describe("--dry-run in a folder without a package.json", () => {
+  it.each(["add", "install"])("`bun %s <package>` creates nothing", async command => {
+    setHandler(dummyRegistry([]));
+    using dir = tempDir("bun-add-dry-run", {});
+    using cache = tempDir("bun-add-dry-run-cache", {});
+
+    await using proc = spawn({
+      cmd: [bunExe(), command, "BaR", "--dry-run", "--registry", root_url + "/"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: String(cache) },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("Saved lockfile");
+    expect(out).toContain("installed BaR@0.0.2");
+    expect(await readdirSorted(String(dir))).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("`bun add -g <package>` leaves a new global directory empty", async () => {
+    using home = tempDir("bun-add-global-dry-run", {
+      "package.json": JSON.stringify({ name: "home-project" }),
+      "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+    });
+    const globalDir = join(String(home), ".bun", "install", "global");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "-g", "--dry-run", join(String(home), "pkg")],
+      cwd: String(home),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        HOME: String(home),
+        BUN_INSTALL: join(String(home), ".bun"),
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: join(String(home), ".bun", "bin"),
+      },
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(await readdirSorted(globalDir)).toEqual([]);
+    expect(await readdirSorted(String(home))).toEqual([".bun", "package.json", "pkg"]);
+    expect(await file(join(String(home), "package.json")).json()).toEqual({ name: "home-project" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// `-g` names its project: the global directory. A package.json above it (~/package.json) is another project's.
+describe("-g and a package.json above the global directory", () => {
+  const strayRoot = (fields: object = {}) => JSON.stringify({ name: "stray-root", version: "1.0.0", ...fields });
+
+  // Every global location is below `home`, so the ambient BUN_INSTALL* cannot redirect these tests. The registry
+  // knows no package: an `add` of one fails after `init` has chosen the project.
+  async function runGlobal(home: string, ...args: string[]) {
+    await using registry = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
+    await using proc = spawn({
+      cmd: [bunExe(), ...args, "-g", `--registry=${registry.url}`],
+      cwd: home,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        HOME: home,
+        BUN_INSTALL: join(home, ".bun"),
+        BUN_INSTALL_GLOBAL_DIR: join(home, ".bun", "install", "global"),
+        BUN_INSTALL_BIN: join(home, ".bun", "bin"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const globalDirOf = (home: string) => join(home, ".bun", "install", "global");
+
+  it.each(["add", "install"])("the first `bun %s -g` creates the global package.json", async command => {
+    using home = tempDir("bun-add-global-home-project", {
+      "package.json": strayRoot({ dependencies: { tool: "file:./tool" }, trustedDependencies: ["tool"] }),
+      "tool/package.json": JSON.stringify({
+        name: "tool",
+        version: "1.0.0",
+        scripts: { postinstall: "echo ran > ran.txt" },
+      }),
+      "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+    });
+    const before = await file(join(String(home), "package.json")).text();
+
+    const { stdout, stderr, exitCode } = await runGlobal(String(home), command, join(String(home), "pkg"));
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("installed pkg@");
+    expect(await file(join(globalDirOf(String(home)), "package.json")).json()).toEqual({
+      dependencies: { pkg: expect.any(String) },
+    });
+    expect(await readdirSorted(join(globalDirOf(String(home)), "node_modules"))).toEqual(["pkg"]);
+    // No lockfile, no node_modules, no script of that project.
+    expect(await readdirSorted(String(home))).toEqual([".bun", "package.json", "pkg", "tool"]);
+    expect(await readdirSorted(join(String(home), "tool"))).toEqual(["package.json"]);
+    expect(await file(join(String(home), "package.json")).text()).toBe(before);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    [
+      "a package-lock.json bun cannot migrate",
+      {
+        "package.json": strayRoot(),
+        "package-lock.json": JSON.stringify({ name: "stray-root", lockfileVersion: 1, dependencies: {} }),
+      },
+    ],
+    [
+      "workspaces",
+      {
+        "package.json": strayRoot({
+          workspaces: ["packages/*"],
+          dependencies: { "@scope/nonexistent": "workspace:*" },
+        }),
+      },
+    ],
+    [
+      "workspaces that list the global directory, which has a package.json",
+      {
+        "package.json": strayRoot({
+          workspaces: [".bun/install/global"],
+          dependencies: { "@scope/nonexistent": "workspace:*" },
+        }),
+        ".bun/install/global/package.json": JSON.stringify({ name: "g", version: "1.0.0" }),
+      },
+    ],
+  ])("`bun add -g` does not read a project with %s", async (_, files) => {
+    using home = tempDir("bun-add-global-parent", files);
+
+    const { stderr, exitCode } = await runGlobal(String(home), "add", "chalk");
+    expect(stderr).not.toContain("lockfileVersion");
+    expect(stderr).not.toContain("@scope/nonexistent");
+    // It got as far as asking the registry.
+    expect(stderr).toContain("chalk");
+    expect(stderr).toContain("404");
+    expect(await file(join(String(home), "package.json")).text()).toBe(files["package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
+  const lock = JSON.stringify({ lockfileVersion: 1, workspaces: { "": { dependencies: { pkg: "1.0.0" } } } });
+
+  // Nor do they create an empty global package.json, against which the lockfile would lose every package.
+  it.each([
+    [["update"], "nothing to update"],
+    [["remove", "pkg"], "nothing to remove"],
+    [["outdated"], "missing package.json"],
+  ])("`bun %p -g` has no project without a global package.json", async (args, message) => {
+    using home = tempDir("bun-global-lock-no-manifest", {
+      "package.json": strayRoot({ dependencies: { pkg: "1.0.0" } }),
+      ".bun/install/global/bun.lock": lock,
+    });
+
+    const { stderr, exitCode } = await runGlobal(String(home), ...args);
+    expect(stderr).toContain(message);
+    expect(await readdirSorted(globalDirOf(String(home)))).toEqual(["bun.lock"]);
+    expect(await file(join(globalDirOf(String(home)), "bun.lock")).text()).toBe(lock);
+    expect(await readdirSorted(String(home))).toEqual([".bun", "package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["before the first global install", {}, []],
+    ["beside a global bun.lock", { ".bun/install/global/bun.lock": lock }, ["bun.lock"]],
+  ])("`bun pm bin -g` writes nothing %s", async (_, files, entries) => {
+    using home = tempDir("bun-pm-bin-global", { "package.json": strayRoot(), ...files });
+
+    const { stdout, stderr, exitCode } = await runGlobal(String(home), "pm", "bin");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(join(String(home), ".bun", "bin"));
+    expect(await readdirSorted(globalDirOf(String(home)))).toEqual(entries);
+    expect(exitCode).toBe(0);
   });
 });

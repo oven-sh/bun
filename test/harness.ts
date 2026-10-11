@@ -91,6 +91,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   // The `bun install` "Slow filesystem detected" warning is timing-dependent
   // and flakes stderr assertions on slow CI filesystems.
   BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
+  // `bun install` waits 250ms, 500ms, ... between the attempts of a failed request:
+  // 7.75s for each request a test lets fail for good.
+  BUN_CONFIG_HTTP_RETRY_BACKOFF: "1",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
@@ -132,7 +135,7 @@ for (let key in bunEnv) {
   // directly, does not. Spawned buns honor them: NODE/npm_node_execpath decide whether
   // the node shim gets created, and most npm_* values (npm_config_user_agent,
   // npm_package_name, ...) are only set when absent.
-  if (key === "NODE" || key.startsWith("npm_")) {
+  if (key === "NODE" || key.startsWith("npm_") || key.startsWith("NPM_CONFIG_")) {
     delete ciEnv[key];
     delete bunEnv[key];
   }
@@ -611,6 +614,22 @@ export function tempDir(
   const base = tempDirWithFiles(basename, filesOrAbsolutePathToCopyFolderFrom);
 
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
+}
+
+/**
+ * Windows only. Makes `dir` the root of a new drive with `subst`, and removes the drive on dispose.
+ * A test cannot write to the root of a real drive.
+ */
+export function substDrive(dir: string): Disposable & { root: string } {
+  for (const letter of "ZYXWVUTSRQPONMLKJIHGFED") {
+    if (Bun.spawnSync({ cmd: ["subst", `${letter}:`, dir], env: bunEnv }).exitCode === 0) {
+      return {
+        root: `${letter}:\\`,
+        [Symbol.dispose]: () => void Bun.spawnSync({ cmd: ["subst", `${letter}:`, "/d"], env: bunEnv }),
+      };
+    }
+  }
+  throw new Error("no free drive letter for subst");
 }
 
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {

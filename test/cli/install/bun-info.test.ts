@@ -343,6 +343,62 @@ describe.concurrent("bun info", () => {
       expect(code).toBe(0);
     });
 
+    it("sends Basic <_auth> on the manifest request when only .npmrc _auth is configured", async () => {
+      const basic = Buffer.from("alice:hunter2").toString("base64");
+      const paths: string[] = [];
+      const authorizations: (string | null)[] = [];
+
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req, server) {
+          paths.push(new URL(req.url).pathname);
+          authorizations.push(req.headers.get("authorization"));
+          return Response.json({
+            "name": "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            "versions": {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                dist: {
+                  tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
+                  shasum: "0000000000000000000000000000000000000000",
+                },
+              },
+            },
+          });
+        },
+      });
+
+      const host = `127.0.0.1:${registry.port}`;
+      using testDir = tempDir("view-auth", {
+        ".npmrc": `registry=http://${host}/\n//${host}/:_auth=${basic}\n`,
+        "package.json": JSON.stringify({ name: "probe", version: "0.0.0" }),
+        // An empty home: the developer's own `.npmrc` declares a `registry=` that would replace the one under test.
+        "home/.gitkeep": "",
+      });
+      const home = join(String(testDir), "home");
+
+      await using proc = spawn({
+        cmd: [bunExe(), "pm", "view", "pkg", "version"],
+        cwd: String(testDir),
+        env: { ...bunEnv, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, NPM_CONFIG_USERCONFIG: undefined },
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+      });
+      const [output, error, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ paths, authorizations, output, error }).toEqual({
+        paths: ["/pkg"],
+        authorizations: [`Basic ${basic}`],
+        output: "1.0.0\n",
+        error: "",
+      });
+      expect(code).toBe(0);
+    });
+
     it("should handle dist-tags like latest", async () => {
       const testDir = await setupTest();
       const { output, error, code } = await runCommand([bunExe(), "pm", "view", "fs@latest"], testDir);

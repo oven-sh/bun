@@ -1373,7 +1373,6 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);
-    #[cfg(not(windows))]
     pub(crate) const ioctl: Tag = Tag(104);
     #[cfg(not(windows))]
     pub(crate) const getrlimit: Tag = Tag(105);
@@ -3923,6 +3922,30 @@ mod windows_impl {
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
             return Err(Error::new(rc, Tag::ftruncate).with_fd(fd));
+        }
+        Ok(())
+    }
+    /// `FSCTL_SET_SPARSE`. NTFS gives every byte below the end of a file real
+    /// clusters unless the file has this mark, so set it before a seek or an
+    /// `ftruncate` leaves a range that nothing writes to.
+    pub fn set_sparse(fd: Fd) -> Maybe<()> {
+        let mut returned: w::DWORD = 0;
+        // SAFETY: FFI; fd is a valid HANDLE, the call passes no buffer, and
+        // `returned` is valid for the call.
+        let ok = unsafe {
+            w::kernel32::DeviceIoControl(
+                fd.native(),
+                w::FSCTL_SET_SPARSE,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null_mut(),
+                0,
+                &mut returned,
+                core::ptr::null_mut(),
+            )
+        };
+        if ok == w::FALSE {
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::ioctl).with_fd(fd));
         }
         Ok(())
     }
@@ -8907,13 +8930,7 @@ pub fn exists(path: &[u8]) -> bool {
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(
-        from_dir,
-        filename,
-        to_dir,
-        destination,
-        RenameatConcurrentlyOptions::default(),
-    ) {
+    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
@@ -8994,8 +9011,6 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
-    /// If `to` already exists (another process won the race), delete `from` instead of replacing `to`.
-    pub keep_existing_destination: bool,
 }
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
 pub type RenameOptions = RenameatConcurrentlyOptions;
@@ -9023,7 +9038,7 @@ pub fn renameat_concurrently(
     to: &ZStr,
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to, opts) {
+    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
         Ok(()) => Ok(()),
         Err(e) => {
             if opts.move_fallback && e.get_errno() == E::EXDEV {
@@ -9043,7 +9058,6 @@ pub(crate) fn renameat_concurrently_without_fallback(
     from: &ZStr,
     to_dir_fd: Fd,
     to: &ZStr,
-    opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
     'attempt: {
         {
@@ -9059,21 +9073,6 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 }
                 Ok(()) => break 'attempt,
             };
-
-            // Not keyed on the errno: it varies across Windows and filesystems without RENAME_NOREPLACE.
-            let to_dir = if to_dir_fd.is_valid() {
-                to_dir_fd
-            } else {
-                Fd::cwd()
-            };
-            if opts.keep_existing_destination && exists_at_type(to_dir, to).is_ok() {
-                if from_dir_fd.is_valid() {
-                    let _ = Dir::borrow(&from_dir_fd).delete_tree(from.as_bytes());
-                } else {
-                    let _ = delete_tree_absolute(from.as_bytes());
-                }
-                break 'attempt;
-            }
 
             // Windows doesn't have any equivalent of renameat with swap
             #[cfg(not(windows))]
@@ -9456,7 +9455,6 @@ mod owned_handle_tests {
             b"sub",
             RenameatConcurrentlyOptions {
                 move_fallback: true,
-                ..Default::default()
             },
         )
         .expect("rename");
@@ -9468,42 +9466,6 @@ mod owned_handle_tests {
         );
 
         // Cleanup.
-        let _ = close(to_dir);
-        let _ = close(root);
-        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
-    }
-
-    #[test]
-    fn renameat_concurrently_keep_existing_destination() {
-        let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
-        tmp.extend_from_slice(b"/bun_sys_renameat_keep_existing_test");
-        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
-        let _ = mkdir_recursive_at(Fd::cwd(), &tmp);
-        let root = open_dir_at(Fd::cwd(), &tmp).expect("open root");
-        let _ = mkdir_recursive_at(root, b"from/sub");
-        let _ = mkdir_recursive_at(root, b"to/sub");
-        File::write_file(root, ZStr::from_static(b"from/sub/loser\0"), b"").expect("loser");
-        File::write_file(root, ZStr::from_static(b"to/sub/winner\0"), b"").expect("winner");
-        let to_dir = open_dir_at(root, b"to").expect("open to");
-
-        let opts = RenameatConcurrentlyOptions {
-            keep_existing_destination: true,
-            ..Default::default()
-        };
-
-        let kind = |p: &'static [u8]| exists_at_type(root, ZStr::from_static(p)).ok();
-        // Destination taken: it is kept as-is and the source goes away.
-        renameat_concurrently_a(root, b"from/sub", to_dir, b"sub", opts).expect("rename");
-        assert!(matches!(kind(b"to/sub/winner\0"), Some(ExistsAtType::File)));
-        assert!(kind(b"to/sub/loser\0").is_none() && kind(b"from/sub\0").is_none());
-
-        // Destination free: a plain rename.
-        let _ = mkdir_recursive_at(root, b"from/other");
-        renameat_concurrently_a(root, b"from/other", to_dir, b"other", opts).expect("rename");
-        assert!(matches!(kind(b"to/other\0"), Some(ExistsAtType::Directory)));
-        assert!(kind(b"from/other\0").is_none());
-
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));

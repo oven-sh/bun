@@ -1003,16 +1003,11 @@ impl TagExt for Tag {
             // newspeak/repo
             // npm:package@1.2.3
             b'n' => {
-                if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
-                    let remain =
-                        &dependency[b"npm:".len() + (dependency[b"npm:".len()] == b'@') as usize..];
-                    for (i, &c) in remain.iter().enumerate() {
-                        if c == b'@' {
-                            return Tag::infer(&remain[i + 1..]);
-                        }
-                    }
-
-                    return Tag::Npm;
+                if let Some(target) = dependency.strip_prefix(b"npm:") {
+                    return match split_npm_alias(target) {
+                        (_, Some(version)) => Tag::infer(version),
+                        (_, None) => Tag::Npm,
+                    };
                 }
             }
             // v1.2.3
@@ -1172,6 +1167,39 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
+/// What follows `npm:`: `@scope/name@version` -> (`@scope/name`, `version`).
+fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
+    let scope = target.starts_with(b"@") as usize;
+    match strings::index_of_char_usize(&target[scope..], b'@') {
+        Some(at) => (&target[..scope + at], Some(&target[scope + at + 1..])),
+        None => (target, None),
+    }
+}
+
+/// `split_npm_alias` for a name the registry can be asked for; the version is empty when there is none.
+fn npm_alias_target<'a>(
+    target: &'a [u8],
+    dependency: &[u8],
+    log: Option<&mut bun_ast::Log>,
+) -> Option<(&'a [u8], &'a [u8])> {
+    let (name, version) = split_npm_alias(target);
+    if is_scoped_package_name(name).is_ok() {
+        return Some((name, version.unwrap_or(&target[target.len()..])));
+    }
+    if let Some(log) = log {
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "invalid package name \"{}\" in dependency \"{}\"",
+                bun_core::fmt::escape_control_chars(name),
+                bun_core::fmt::escape_control_chars(dependency),
+            ),
+        );
+    }
+    None
+}
+
 pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,
@@ -1188,25 +1216,12 @@ pub(crate) fn parse_with_tag(
             let mut input = dependency;
 
             let mut is_alias = false;
-            let name = 'brk: {
-                if input.starts_with(b"npm:") {
-                    is_alias = true;
-                    let str = &input[b"npm:".len()..];
-                    let mut i: usize = (!str.is_empty() && str[0] == b'@') as usize;
-
-                    while i < str.len() {
-                        if str[i] == b'@' {
-                            input = &str[i + 1..];
-                            break 'brk sliced.sub(&str[0..i]).value();
-                        }
-                        i += 1;
-                    }
-
-                    input = &str[i..];
-
-                    break 'brk sliced.sub(&str[0..i]).value();
-                }
-
+            let name = if let Some(target) = input.strip_prefix(b"npm:") {
+                is_alias = true;
+                let (name, version) = npm_alias_target(target, dependency, log_)?;
+                input = version;
+                sliced.sub(name).value()
+            } else {
                 alias
             };
 
@@ -1250,35 +1265,14 @@ pub(crate) fn parse_with_tag(
         Tag::DistTag => {
             let mut tag_to_use = sliced.sub(dependency).value();
 
-            let actual = if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
+            let actual = if let Some(target) = dependency.strip_prefix(b"npm:") {
                 // npm:@foo/bar@latest
-                sliced
-                    .sub('brk: {
-                        let mut i = b"npm:".len();
-
-                        // npm:@foo/bar@latest
-                        //     ^
-                        i += (dependency[i] == b'@') as usize;
-
-                        while i < dependency.len() {
-                            // npm:@foo/bar@latest
-                            //             ^
-                            if dependency[i] == b'@' {
-                                break;
-                            }
-                            i += 1;
-                        }
-
-                        tag_to_use = sliced.sub(&dependency[i + 1..]).value();
-                        break 'brk &dependency[b"npm:".len()..i];
-                    })
-                    .value()
+                let (name, dist_tag) = npm_alias_target(target, dependency, log_)?;
+                tag_to_use = sliced.sub(dist_tag).value();
+                sliced.sub(name).value()
             } else {
                 alias
             };
-
-            // name should never be empty
-            debug_assert!(!actual.is_empty());
 
             Some(Version {
                 literal: sliced.value(),

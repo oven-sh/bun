@@ -176,7 +176,7 @@ Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or us
 
 If the project has a `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` but no `bun.lock`, `--frozen-lockfile` migrates that lockfile in memory and installs from it. The install fails if the migrated lockfile does not match `package.json`. Bun writes nothing in this case: no `bun.lock`, and none of the `package.json` edits a [pnpm migration](#pnpm-migration) or a [Yarn migration](#yarn-migration) makes. It prints a `note:` instead. To finish the migration, run `bun install` without the flag and commit the files it writes. The `bun.lockb` to `bun.lock` conversion described in [lockfile](/pm/lockfile) is the one write `--frozen-lockfile` still performs.
 
-`--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.
+`--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails. A registry package whose peer or optional dependency `bun.lock` links to a skipped workspace is installed without that link.
 
 To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`. The command exits with an error if `package.json` disagrees with `bun.lock`, and it does not run lifecycle scripts.
 
@@ -295,7 +295,12 @@ To protect against supply chain attacks where malicious packages are quickly pub
 ```bash terminal icon="terminal"
 # Only install package versions published at least 3 days ago
 bun add @types/bun --minimum-release-age 259200 # seconds
+
+# Exempt packages from the age gate (comma-separated, or repeat the flag)
+bun install --minimum-release-age 259200 --minimum-release-age-excludes @types/node,typescript@5.4.5
 ```
+
+`--minimum-release-age-excludes` takes the same entries as `minimumReleaseAgeExcludes` below and replaces that list.
 
 You can also configure this in `bunfig.toml`:
 
@@ -391,6 +396,10 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don’t save a lockfile                                     |
 | `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                     |
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
+| `BUN_CONFIG_HTTP_RETRY_COUNT`      | How often a failed request is retried (default: 5)        |
+| `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 250)         |
+
+A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 

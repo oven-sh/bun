@@ -12,9 +12,12 @@ use crate::dependency;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
-use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_package_id};
+use crate::{
+    DependencyID, GetJsonResult, PackageID, PackageNameHash, Resolution, invalid_package_id,
+};
 
 use super::PackageManager;
+use super::add_remove_with_filter::root_package_json_path;
 use super::options::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -304,6 +307,8 @@ impl PackageManager {
         let end: PackageID = lockfile.packages.len() as PackageID;
 
         let mut any_failed = false;
+        // Read for the first `catalog:` row without an entry.
+        let mut root_has_workspaces: Option<bool> = None;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
 
         debug_assert_eq!(resolutions_lists.len(), dependency_lists.len());
@@ -339,7 +344,32 @@ impl PackageManager {
                     if !any_failed {
                         Output::flush();
                     }
-                    if failed_dep.version.tag == dependency::Tag::Catalog {
+                    // A row whose entry exists failed on the entry's version, not on the catalog.
+                    let missing_entry = failed_dep.version.tag == dependency::Tag::Catalog
+                        && lockfile
+                            .catalogs
+                            .get_ref(string_buf, *failed_dep.version.catalog(), failed_dep.name)
+                            .is_none();
+                    if missing_entry && root_has_workspaces.is_none() {
+                        let log = self.log_mut();
+                        root_has_workspaces = Some(
+                            match self.workspace_package_json_cache.get_with_path(
+                                log,
+                                &root_package_json_path(),
+                                Default::default(),
+                            ) {
+                                GetJsonResult::Entry(entry) => {
+                                    entry.root.get(b"workspaces").is_some()
+                                }
+                                _ => true,
+                            },
+                        );
+                    }
+                    if missing_entry && root_has_workspaces == Some(true) {
+                        // `bun add --catalog` refuses the name of the root and of a workspace.
+                        let can_add = failed_dep.name_hash
+                            != lockfile.packages.items_name_hash()[0]
+                            && !lockfile.workspace_paths.contains(&failed_dep.name_hash);
                         let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
                         let literal = failed_dep.version.literal.fmt(string_buf);
                         let catalog_name = failed_dep.version.catalog().slice(string_buf);
@@ -361,17 +391,21 @@ impl PackageManager {
                                 "<b>{}@{}<r> is not in the catalog",
                                 (name, literal),
                             );
-                            bun_core::pretty_errorln!("  bun add --catalog {}", name);
+                            if can_add {
+                                bun_core::pretty_errorln!("  bun add --catalog {}", name);
+                            }
                         } else {
                             Output::err_generic(
                                 "<b>{}@{}<r> is not in catalog \"{}\"",
                                 (name, literal, bstr::BStr::new(catalog_name)),
                             );
-                            bun_core::pretty_errorln!(
-                                "  bun add --catalog={} {}",
-                                bstr::BStr::new(catalog_name),
-                                name
-                            );
+                            if can_add {
+                                bun_core::pretty_errorln!(
+                                    "  bun add --catalog={} {}",
+                                    bstr::BStr::new(catalog_name),
+                                    name
+                                );
+                            }
                         }
                     } else if failed_dep.name.is_empty()
                         || strings::eql_long(
@@ -406,6 +440,12 @@ impl PackageManager {
         }
 
         if any_failed {
+            if root_has_workspaces == Some(false) {
+                bun_core::note!(
+                    "catalogs require a \"workspaces\" field in the root package.json, and bun used {} as the root, which has none",
+                    bun_core::fmt::quote(&root_package_json_path()),
+                );
+            }
             self.crash();
         }
     }

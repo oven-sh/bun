@@ -355,6 +355,30 @@ fn parse_classic(
     Ok(out)
 }
 
+/// `root`, parsed from `source`, copied out of the thread-local `Store` into `bump`, for a tree
+/// that outlives the next reset of the `Store`. Fails the way parsing a document that is too deep does.
+pub fn clone_out_of_store(
+    root: &Expr,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> crate::Result<Expr> {
+    root.deep_clone(bump).map_err(|err| {
+        if let bun_ast::Error::Alloc(err) = err {
+            return err.into();
+        }
+        log.add_error_fmt_opts(
+            format_args!("JSON document is too deeply nested"),
+            bun_ast::AddErrorOptions {
+                source: Some(source),
+                loc: root.loc,
+                ..Default::default()
+            },
+        );
+        crate::Error::StackOverflow
+    })
+}
+
 impl ParsedJson {
     /// Strict JSON.
     pub fn parse_json(

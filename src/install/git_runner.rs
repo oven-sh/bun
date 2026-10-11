@@ -23,6 +23,7 @@ use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
+use crate::cache_publish::StagedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::package_manager_task::{self as Task, Tag};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -362,11 +363,8 @@ impl CacheStaging {
         let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(&self.tmp_name);
     }
 
-    /// Renames the staging folder to `folder_name` and opens it.
-    ///
-    /// Another install that shares the cache may publish `folder_name` first and
-    /// already be reading it. A folder there that passes `is_complete` is kept and
-    /// opened, and the staging folder is discarded. Only one that fails it is replaced.
+    /// Renames the staging folder to `folder_name`, unless a folder that passes
+    /// `is_complete` is there already, and opens it.
     fn publish(
         self,
         log: &mut bun_ast::Log,
@@ -374,60 +372,24 @@ impl CacheStaging {
         folder_name: &[u8],
         is_complete: fn(&bun_sys::Dir) -> bool,
     ) -> Result<bun_sys::Dir, Error> {
-        const MAX_ATTEMPTS: u32 = 4;
-        let cache_dir = bun_sys::Dir::borrow(&self.cache_dir);
-        let from = bun_core::ZBox::from_bytes(&self.tmp_name);
-        let to = bun_core::ZBox::from_bytes(folder_name);
-        let mut attempts = 0;
-        let err = loop {
-            // `rename` replaces a directory only when it is empty, so this never
-            // overwrites a published folder.
-            let Err(err) = bun_sys::renameat(self.cache_dir, &from, self.cache_dir, &to) else {
-                return cache_dir.open_at(folder_name).map_err(Error::from);
-            };
-            attempts += 1;
-            // What takes the name is removed in ways that cannot remove a published
-            // folder, one that appears under the name meanwhile included.
-            match cache_dir.open_at_with(
-                folder_name,
-                bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW,
-            ) {
-                Ok(published) if is_complete(&published) => {
-                    self.discard();
-                    return Ok(published);
-                }
-                _ if attempts == MAX_ATTEMPTS => break err,
-                // Emptied through its own handle; `rmdir` only removes an empty folder.
-                Ok(incomplete) => {
-                    delete_children(&incomplete);
-                    incomplete.close();
-                    let _ = bun_sys::rmdirat(self.cache_dir, &to);
-                }
-                // Not a folder, or gone by now; `unlink` never removes a folder.
-                Err(_) => {
-                    let _ = bun_sys::unlinkat(self.cache_dir, &to);
-                }
-            }
-        };
-        self.discard();
-        log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "moving \"{}\" to cache dir failed: {}",
-                BStr::new(name),
-                err
-            ),
-        );
-        Err(Error::InstallFailed)
-    }
-}
-
-/// Deletes what `dir` holds. Nothing is looked up through the name of `dir`.
-fn delete_children(dir: &bun_sys::Dir) {
-    let mut entries = bun_sys::iterate_dir(dir.fd());
-    while let Ok(Some(entry)) = entries.next() {
-        let _ = dir.delete_tree(entry.name.slice_u8());
+        StagedEntry::new(self.cache_dir, &bun_core::ZBox::from_bytes(&self.tmp_name))
+            .publish(
+                self.cache_dir,
+                &bun_core::ZBox::from_bytes(folder_name),
+                &is_complete,
+            )
+            .map_err(|err| {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "moving \"{}\" to cache dir failed: {}",
+                        BStr::new(name),
+                        err
+                    ),
+                );
+                Error::InstallFailed
+            })
     }
 }
 
@@ -586,7 +548,20 @@ impl GitSubprocess {
                 )
                 .to_vec();
                 this.step.set(Step::Fetch(dir));
-                Self::spawn(this, &[b"-C", &path, b"fetch", b"--quiet"])
+                // A bare clone has no fetch refspec; --prune clears refs renamed upstream.
+                Self::spawn(
+                    this,
+                    &[
+                        b"-C",
+                        &path,
+                        b"fetch",
+                        b"--quiet",
+                        b"--prune",
+                        b"origin",
+                        b"+refs/heads/*:refs/heads/*",
+                        b"+refs/tags/*:refs/tags/*",
+                    ],
+                )
             }
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                 if offline {
@@ -621,6 +596,9 @@ impl GitSubprocess {
                 b"core.longpaths=true",
                 b"--quiet",
                 b"--bare",
+                // The refresh fetches "origin" by name, whatever clone.defaultRemoteName says.
+                b"-o",
+                b"origin",
                 b"--",
                 &url,
                 &tmp_path,

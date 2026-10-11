@@ -322,7 +322,6 @@ dependencies = [
  "bun_standalone_graph",
  "bun_sys",
  "enum-map",
- "scopeguard",
  "thiserror",
 ]
 
@@ -1071,7 +1070,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_which",
- "scopeguard",
  "strum",
  "thiserror",
 ]

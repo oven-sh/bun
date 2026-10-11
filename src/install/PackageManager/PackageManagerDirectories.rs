@@ -5,15 +5,16 @@ use bun_alloc::AllocError;
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
+use crate::package_manager_task::Id as TaskId;
 use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{Integrity, PackageID, Resolution};
+use bun_install::{Dependency, Integrity, PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
-use bun_semver::{self as Semver, String as SemverString};
+use bun_semver as Semver;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
@@ -707,15 +708,21 @@ pub fn cached_npm_package_folder_name_print<'a>(
         at: spanned_len,
     };
     let available = w.buf.len() - spanned_len;
-    if scope_url.hostname.len() > 32 || available < 64 {
-        let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
-        w.put(b"@@");
-        w.put(visible_hostname);
+    let visible_len = if scope_url.hostname.len() > 32 || available < 64 {
+        scope_url.hostname.len().min(12)
+    } else {
+        scope_url.hostname.len()
+    };
+    w.put(b"@@");
+    w.put(&scope_url.hostname[..visible_len]);
+    // The host alone names `https://host/`. A port, a path or http is another registry on it.
+    if visible_len < scope_url.hostname.len()
+        || !scope_url.is_https()
+        || !scope_url.port.is_empty()
+        || scope_url.pathname.len() > 1
+    {
         w.put(b"__");
         w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(scope_url.href));
-    } else {
-        w.put(b"@@");
-        w.put(scope_url.hostname);
     }
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
@@ -789,36 +796,10 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@<hash of the URL>@@@1`; `file:` tarballs use [`cached_local_tarball_folder_name_print`].
+/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL names different bytes over time
+/// and, for a path, in every project sharing the cache, so a `file:` / URL tarball is cached under
+/// the integrity bun.lock pins. Empty while that is unknown, which callers treat as a cache miss.
 pub fn cached_tarball_folder_name_print<'a>(
-    buf: &'a mut [u8],
-    url: &[u8],
-    patch_hash: Option<u64>,
-) -> &'a ZStr {
-    let mut w = ByteCursor::new(buf);
-    w.put(b"@T@");
-    w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
-    w.put_cache_version(Some(CacheVersion::CURRENT));
-    w.put_patch_hash(patch_hash);
-    w.finish_z()
-}
-
-pub fn cached_tarball_folder_name(
-    this: &PackageManager,
-    url: SemverString,
-    patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_tarball_folder_name_print(
-        cached_package_folder_name_buf(),
-        this.lockfile.str(&url),
-        patch_hash,
-    )
-}
-
-/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a `file:` tarball's path names different bytes
-/// in every project sharing the cache, so it is cached under the integrity bun.lock pins instead.
-/// Empty while that integrity is unknown, which callers treat as a cache miss.
-pub fn cached_local_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
     patch_hash: Option<u64>,
@@ -837,21 +818,67 @@ pub fn cached_local_tarball_folder_name_print<'a>(
     w.finish_z()
 }
 
-pub fn cached_local_tarball_folder_name(
-    integrity: &Integrity,
-    patch_hash: Option<u64>,
-) -> &'static ZStr {
-    cached_local_tarball_folder_name_print(cached_package_folder_name_buf(), integrity, patch_hash)
+pub fn cached_tarball_folder_name(integrity: &Integrity, patch_hash: Option<u64>) -> &'static ZStr {
+    cached_tarball_folder_name_print(cached_package_folder_name_buf(), integrity, patch_hash)
+}
+
+impl PackageManager {
+    /// Only bun.lock's hash says which bytes a `file:` path or URL meant. `--force`, `bun update`
+    /// and naming the dependency on the command line read it again and pin what is there now.
+    /// `named_here`: the names on the command line are about the package.json `dependency` is in.
+    pub(crate) fn repins_tarball(
+        &self,
+        dependency: &Dependency,
+        string_buf: &[u8],
+        named_here: bool,
+    ) -> bool {
+        self.options.do_.save_lockfile()
+            && self.options.offline != options::OfflineMode::Offline
+            && (self.options.enable.force_install()
+                || if self.update_requests.is_empty() {
+                    self.to_update
+                } else {
+                    named_here
+                        && self
+                            .update_requests
+                            .iter()
+                            .any(|request| request.matches(dependency, string_buf))
+                })
+    }
+
+    /// The package the lockfile has for a `file:` / URL tarball.
+    pub(crate) fn locked_tarball(&self, resolution: &Resolution) -> Option<PackageID> {
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        self.lockfile
+            .packages
+            .items_resolution()
+            .iter()
+            .position(|locked| locked.eql(resolution, buf, buf))
+            .map(|id| id as PackageID)
+    }
+
+    /// Whether this run has read the `file:` / URL tarball, or is about to.
+    pub(crate) fn fetched_tarball(&self, resolution: &Resolution) -> bool {
+        let url = match resolution.tag {
+            ResolutionTag::LocalTarball => resolution.local_tarball(),
+            ResolutionTag::RemoteTarball => resolution.remote_tarball(),
+            _ => return false,
+        };
+        self.task_queue
+            .contains_key(&TaskId::for_tarball(self.lockfile.str(url)))
+    }
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
-/// Cache hit for an unpatched entry: npm folders must contain `package.json`, git checkouts the `.bun-tag` written last.
+/// Cache hit for an unpatched entry: npm and tarball folders must contain `package.json`, git checkouts the `.bun-tag` written last.
 pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
     let marker: &[u8] = match tag {
-        ResolutionTag::Npm => b"package.json",
+        ResolutionTag::Npm | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            b"package.json"
+        }
         ResolutionTag::Git => b".bun-tag",
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
@@ -874,6 +901,10 @@ pub fn is_package_in_cache(
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
+    // `bun pm -g fetch` gets here from both the `bun pm` dispatcher and `install_with_manager`.
+    if manager.options.global_bin_dir.is_valid() {
+        return Ok(());
+    }
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
     let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
@@ -948,62 +979,31 @@ pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
 
 // ────────────────────────── cached path resolution ────────────────────────────
 
+/// `FileNotFound` unless the package is in the cache.
 pub fn path_for_cached_npm_path<'a>(
     this: &mut PackageManager,
     buf: &'a mut PathBuffer,
     package_name: &[u8],
     version: Semver::Version,
 ) -> Result<&'a mut [u8], Error> {
-    let mut cache_path_buf = bun_paths::path_buffer_pool::get();
-
-    let cache_path = cached_npm_package_folder_name_print(
+    let mut folder_name_buf = bun_paths::path_buffer_pool::get();
+    let folder_name = cached_npm_package_folder_name_print(
         this,
-        &mut cache_path_buf.0[..],
+        &mut folder_name_buf.0[..],
         package_name,
         version,
         None,
     );
-    let cache_path_len = cache_path.as_bytes().len();
-    // reshaped for borrowck — drop borrow before mutating buffer
-
-    debug_assert!(cache_path_buf[package_name.len()] == b'@');
-
-    cache_path_buf[package_name.len()] = SEP;
-
-    let cache_dir: Fd = get_cache_directory(this);
-
-    #[cfg(windows)]
-    {
-        let _ = cache_dir;
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
-        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
-            &this.cache_directory_path,
-            &mut path_buf,
-            &[cache_path.as_bytes()],
-        );
-        return match sys::readlink(joined, &mut buf.0[..]) {
-            Ok(n) => Ok(&mut buf.0[..n]),
-            Err(err) => {
-                let _ = sys::unlink(joined);
-                Err(err.into())
-            }
-        };
+    if !is_package_in_cache(this, folder_name, ResolutionTag::Npm) {
+        return Err(Error::FileNotFound);
     }
-
-    #[cfg(not(windows))]
-    {
-        let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
-        match sys::readlinkat(cache_dir, cache_path, &mut buf.0[..]) {
-            Ok(n) => Ok(&mut buf.0[..n]),
-            Err(err) => {
-                // if we run into an error, delete the symlink
-                // so that we don't repeatedly try to read it
-                let _ = sys::unlinkat(cache_dir, cache_path);
-                Err(Error::from(err))
-            }
-        }
-    }
+    let len = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+        this.cache_directory_path.as_bytes(),
+        &mut buf.0[..],
+        &[folder_name.as_bytes()],
+    )
+    .len();
+    Ok(&mut buf.0[..len])
 }
 
 pub fn path_for_resolution<'a>(
@@ -1080,26 +1080,21 @@ pub fn compute_cache_dir_and_subpath<'a>(
             }
             cache_dir = Fd::cwd();
         }
-        ResolutionTag::LocalTarball => {
-            cache_dir_subpath = cached_local_tarball_folder_name(integrity, patch_hash);
+        ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            cache_dir_subpath = cached_tarball_folder_name(integrity, patch_hash);
             if cache_dir_subpath.is_empty() {
                 Output::err_generic(
                     "the lockfile does not record an integrity for <b>{}@{}<r>, run <cyan>bun install<r> first",
                     (
                         bun_fmt::s(name),
-                        resolution.fmt(
+                        bun_fmt::for_terminal(resolution.fmt(
                             manager.lockfile.buffers.string_bytes.as_slice(),
                             bun_fmt::PathSep::Posix,
-                        ),
+                        )),
                     ),
                 );
                 Global::exit(1);
             }
-            cache_dir = get_cache_directory(manager);
-        }
-        ResolutionTag::RemoteTarball => {
-            let tarball = *resolution.remote_tarball();
-            cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Workspace => {
@@ -1158,6 +1153,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
+pub(crate) const NEW_PACKAGE_JSON: &[u8] = b"{\"dependencies\": {}}";
+
 pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
@@ -1176,7 +1173,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
         }
     };
 
-    package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
+    package_json_file.pwrite_all(NEW_PACKAGE_JSON, 0)?;
 
     Ok(package_json_file)
 }

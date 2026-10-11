@@ -341,7 +341,9 @@ describe("yarn berry migration", () => {
       ["install --dry-run", ["install", "--dry-run"]],
       ["install --no-save", ["install", "--no-save"]],
       ["outdated", ["outdated"]],
+      // these two load into a lockfile that is not the manager's
       ["pm why no-deps", ["pm", "why", "no-deps"]],
+      ["why no-deps", ["why", "no-deps"]],
       ["pm migrate --dry-run", ["pm", "migrate", "--dry-run"]],
     ])("bun %s leaves package.json and bun.lock alone", async (_, args) => {
       const dir = await fixture("patch");

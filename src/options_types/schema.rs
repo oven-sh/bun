@@ -150,41 +150,66 @@ pub mod api {
         pub password: Box<[u8]>,
         /// token
         pub token: Box<[u8]>,
-        /// email
-        pub email: Box<[u8]>,
-        /// Set by `from_url` when the credentials were written into the URL.
-        /// `Scope::from_api` takes those as complete as written: `http://user@host/`
-        /// authenticates as `user` with an empty password (what npm sends for that
-        /// URL), whereas a `username` configured on its own (`.npmrc` `username`
-        /// without `_password`, bunfig `username` without `password`) sends nothing.
-        pub credentials_from_url: bool,
+        /// `.npmrc`'s `_auth`, sent verbatim as npm sends it. `bunfig.toml` has no key for it.
+        pub auth: Box<[u8]>,
+        /// Declared by a `.npmrc` `registry=` line: a credential inside that URL yields to any `.npmrc` line for it,
+        /// where one in a URL from `bunfig.toml`, the environment or the command line stands.
+        pub declared_in_npmrc: bool,
     }
 
     impl NpmRegistry {
+        /// The credentials in a URL are percent-encoded (RFC 3986 section 3.2.1: the password `p@ss` is written `p%40ss`)
+        /// and decoded here. The `username`, `password` and `token` config keys are not, and stay as written.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
+            use bun_url::PercentEncoding;
+
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();
 
-            if !url.username.is_empty() {
-                registry.username = Box::from(url.username);
-                registry.password = Box::from(url.password);
-                registry.credentials_from_url = true;
-                registry.url = url.href_without_auth();
+            if !url.username.is_empty() && !url.password.is_empty() {
+                registry.username = PercentEncoding::decode_lenient_alloc(url.username);
+                registry.password = PercentEncoding::decode_lenient_alloc(url.password);
+            } else if !url.username.is_empty() {
+                let username = PercentEncoding::decode_lenient_alloc(url.username);
+                if bun_core::strings::contains_any(&username, b"\r\n\0") {
+                    // What `Scope::from_api` refuses, left where it looks.
+                    registry.username = username;
+                } else {
+                    // `http://user@host/` is `user` with an empty password, as in npm; a `username` key on its own sends nothing.
+                    let user = [&*username, b":"].concat();
+                    let mut auth = vec![0u8; bun_core::base64::encode_len(&user)];
+                    let len = bun_core::base64::encode(&mut auth, &user);
+                    auth.truncate(len);
+                    registry.auth = auth.into_boxed_slice();
+                }
             } else if !url.password.is_empty() {
                 // `http://:token@host/`
-                registry.token = Box::from(url.password);
-                registry.credentials_from_url = true;
-                registry.url = url.href_without_auth();
+                registry.token = PercentEncoding::decode_lenient_alloc(url.password);
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = Box::from(url.href);
+                return registry;
             }
 
+            registry.url = Self::href_without_auth(&url);
             registry
         }
 
+        /// `URL::href_without_auth` invents `http://` for a URL without a scheme, which would turn a string bun
+        /// refuses to request into a request that carries the credential in cleartext.
+        pub fn href_without_auth(url: &bun_url::URL) -> Box<[u8]> {
+            let href = url.href_without_auth();
+            if !url.protocol.is_empty() {
+                return href;
+            }
+            href[url.display_protocol().len() + b"://".len()..].into()
+        }
+
         pub fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
+            !self.token.is_empty()
+                || !self.auth.is_empty()
+                || !self.username.is_empty()
+                || !self.password.is_empty()
         }
     }
 
@@ -194,21 +219,13 @@ pub mod api {
         pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
     }
 
-    /// The credentials `.npmrc` configures for one `//host/path/` prefix
-    /// (`//host/path/:_authToken=...`, `:_auth=`, `:username=` + `:_password=`).
-    ///
-    /// Unlike `default_registry` / `scoped`, these are not attached to a
-    /// registry declared in a config file: the package manager matches them
-    /// against the URL of each request, so they also apply to a registry
-    /// given on the command line or in the environment and to tarballs served
-    /// from a different host than the registry that published them.
-    #[derive(Default)]
+    /// The credential one `.npmrc` key resolved to (`//host/path/:_authToken=...`, `:_auth=`, `:username=` + `:_password=`),
+    /// kept past config loading: the package manager matches it against registry and tarball URLs it only learns later.
+    #[derive(Clone, Debug, Default)]
     pub struct NpmUrlAuth {
-        /// `host[:port]` as written between `//` and the first `/` of the key.
-        pub host: Box<[u8]>,
-        /// Pathname of the key without its trailing slash; `/` for a bare host.
-        pub pathname: Box<[u8]>,
-        /// Only the credential fields are set; `url` stays empty.
+        /// npm's config key as written between `//` and `:<opt>=`, e.g. `host/path/`.
+        pub key: Box<[u8]>,
+        /// Only `token`, `auth`, `username` and `password` are set; `url` stays empty.
         pub credentials: NpmRegistry,
     }
 
@@ -237,9 +254,7 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
-        /// Every `//host/path/` credential prefix found in the `.npmrc` files,
-        /// in file order (a later file's lines override an earlier file's for
-        /// the same prefix).
+        /// One entry per `.npmrc` key that carries a complete credential, after every file was collapsed into one map.
         pub url_auth: Vec<NpmUrlAuth>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,

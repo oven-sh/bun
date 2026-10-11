@@ -1056,6 +1056,48 @@ describe("`bun audit` with a secret in the registry URL", () => {
   });
 });
 
+// `bun audit` builds its header from the same credentials as `bun install`: a
+// `.npmrc` line on the registry's key, `_auth` sent as written.
+describe.concurrent("`bun audit` with a credential from a .npmrc line", () => {
+  test.each([
+    [":_authToken=npm_audit_token", "Bearer npm_audit_token"],
+    [":_auth=!!opaque-blob!!", "Basic !!opaque-blob!!"],
+  ])("%s reaches the bulk advisory endpoint as %s", async (line, header) => {
+    const seen: Array<string | null> = [];
+    using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.push(req.headers.get("authorization"));
+        return Response.json({});
+      },
+    });
+    const host = `127.0.0.1:${registry.port}`;
+    const dependencies = { "a-dep": "1.0.4" };
+    using dir = tempDir("audit-npmrc-line-", {
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies } },
+        packages: { "a-dep": ["a-dep@1.0.4", "", {}, ""] },
+      }),
+      ".npmrc": `registry=http://${host}/\n//${host}/${line}\n`,
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using proc = spawn({
+      cmd: [bunExe(), "audit"],
+      cwd: String(dir),
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, NPM_CONFIG_USERCONFIG: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(seen).toEqual([header]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+});
+
 describe("`bun audit --prod`", () => {
   // pnpm#13605: an optional peer that only a devDependency brought in is not a production dependency.
   test.concurrent("bun audit --prod skips a dev-only optional peer of a production package", async () => {
@@ -1304,29 +1346,23 @@ describe("`bun audit` report", () => {
     expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
   });
 
-  test.concurrent(
-    "`bun audit --fix` is not `bun audit fix`: the unknown flag is ignored and a plain audit runs",
-    async () => {
-      const bulkHits = { count: 0 };
-      await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
-      using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
-      const lockBefore = await lock(dir);
-      const pkgJsonBefore = await pkgJsonText(dir);
+  test.concurrent("`bun audit --fix` is not `bun audit fix`: the unknown flag is rejected", async () => {
+    const bulkHits = { count: 0 };
+    await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
+    using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
+    const lockBefore = await lock(dir);
+    const pkgJsonBefore = await pkgJsonText(dir);
 
-      const plain = await audit(dir);
-      expect(plain.stdout).toContain("1 vulnerability (1 high)");
-      expect(plain.exitCode).toBe(1);
-      expect(bulkHits.count).toBe(1);
-
-      const withFix = await audit(dir, "--fix");
-      expect(withFix.stdout).toBe(plain.stdout);
-      expect(withFix.stderr).not.toContain("--fix");
-      expect(withFix.exitCode).toBe(1);
-      expect(bulkHits.count).toBe(2);
-      expect(await lock(dir)).toBe(lockBefore);
-      expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
-    },
-  );
+    const withFix = await audit(dir, "--fix");
+    expect(withFix.stdout).toBe("");
+    expect(withFix.stderr).toBe(
+      "error: bun audit has no --fix flag.\nnote: Run 'bun audit --help' for more information\n",
+    );
+    expect(withFix.exitCode).toBe(1);
+    expect(bulkHits.count).toBe(0);
+    expect(await lock(dir)).toBe(lockBefore);
+    expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+  });
 
   test.concurrent("`bun audit -L` is rejected before the registry is contacted", async () => {
     const bulkHits = { count: 0 };

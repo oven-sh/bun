@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, linkSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
 const bunEnv: typeof bunEnv_ = {
@@ -327,6 +327,36 @@ describe.concurrent("bun run", () => {
     expect(stdout).toMatch(/subdir/);
     // The exit code will not be 1 if it panics.
     expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/29273
+  // `C:` is the current directory of drive C, it is not the root `C:\`.
+  it.skipIf(!isWindows)("runs a script of a package.json in the root of a drive", async () => {
+    using dir = tempDir("bun-run-drive-root", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "0.0.0",
+        scripts: { prehello: "echo pre", hello: "pwd" },
+      }),
+      "subdir/.keep": "",
+    });
+    using drive = substDrive(String(dir));
+
+    for (const cwd of [drive.root, join(drive.root, "subdir")]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "hello"],
+        cwd,
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ cwd, stderr }).toEqual({ cwd, stderr: "$ echo pre\n$ pwd\n" });
+      expect(stdout.replaceAll("\r\n", "\n")).toBe(`pre\n${drive.root}\n`);
+      expect(exitCode).toBe(0);
+    }
   });
 
   describe("--cwd longer than the OS path limit", () => {
@@ -667,6 +697,88 @@ describe.concurrent("bun run", () => {
         }
       });
     }
+  });
+
+  // https://github.com/oven-sh/bun/issues/33796
+  describe("npm workspace flags in scripts", () => {
+    // `start` is the script under test. Only apps/app has `hello`, only the root has `greet`.
+    async function runStart(start: string) {
+      const dir = tempDir("npm-workspace-flags", {
+        "package.json": JSON.stringify({
+          private: true,
+          workspaces: ["apps/*"],
+          scripts: { start, greet: "echo greet-done" },
+        }),
+        "apps/app/package.json": JSON.stringify({ name: "app", scripts: { hello: "echo workspace-ok" } }),
+        "apps/scoped/package.json": JSON.stringify({ name: "@apps/scoped", scripts: { scoped: "echo scoped-ok" } }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "start"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        // Without the rewrite the script runs itself again, without end.
+        timeout: 15_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { dir, stdout, stderr, exitCode };
+    }
+
+    it.each([
+      ["npm run hello -w app", " run --filter=app hello\n", "workspace-ok"],
+      ["npm run -w app hello", " run --filter=app hello\n", "workspace-ok"],
+      ["npm run hello --workspace app", " run --filter=app hello\n", "workspace-ok"],
+      ["npm run hello --workspace=app", " run --filter=app hello\n", "workspace-ok"],
+      ["npm run hello -w=app", " run --filter=app hello\n", "workspace-ok"],
+      ["npm run hello -w apps/app", " run --filter=./apps/app hello\n", "workspace-ok"],
+      ["npm run hello -w ./apps/app", " run --filter=./apps/app hello\n", "workspace-ok"],
+      ["npm run hello --workspace=apps/app", " run --filter=./apps/app hello\n", "workspace-ok"],
+      ["npm run scoped -w @apps/scoped", " run --filter=@apps/scoped scoped\n", "scoped-ok"],
+      ["npm run hello --ws --if-present", " run --workspaces --if-present hello\n", "workspace-ok"],
+      ["npm run hello --workspaces --if-present", " run --workspaces --if-present hello\n", "workspace-ok"],
+      ["echo chained && npm run hello --if-present --ws", " run --if-present --workspaces hello\n", "workspace-ok"],
+      ["npm run hello -w app && echo chained", " run --filter=app hello && echo chained\n", "chained"],
+    ])("%s runs the script of the workspace", async (start, rewritten, output) => {
+      const { dir, stdout, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain(rewritten);
+      expect(stdout).toContain(output);
+      expect(exitCode).toBe(0);
+    });
+
+    // What is not a workspace flag of this `npm run`, or cannot be told, stays where it is.
+    it.each([
+      "npm run greet -- -w app",
+      "npm run greet -w --if-present",
+      "(true && npm run greet -w app)",
+      "npm run greet -w $(echo app)",
+      "npm run greet # switch to -w app",
+      ...(isWindows ? [] : ["sh -c 'npm run greet -w app'"]),
+    ])("%s still runs the root's script", async start => {
+      const { dir, stdout, stderr, exitCode } = await runStart(start);
+      using _ = dir;
+      expect(stderr).not.toContain("--filter");
+      expect(stdout).toContain("greet-done");
+      expect(exitCode).toBe(0);
+    });
+
+    it("leaves a redirect that is glued to the workspace", async () => {
+      const { dir, stderr, exitCode } = await runStart("npm run greet -w app>out.txt");
+      using _ = dir;
+      expect(stderr).not.toContain("--filter");
+      expect(await Bun.file(join(String(dir), "out.txt")).text()).toContain("greet-done");
+      expect(exitCode).toBe(0);
+    });
+
+    it.skipIf(isWindows)("leaves an `npm run` that is only quoted text", async () => {
+      const { dir, stdout, exitCode } = await runStart("echo 'step: npm run build -w app' && echo 'ok; done'");
+      using _ = dir;
+      expect(stdout).toContain("-w app");
+      expect(stdout).not.toContain("--filter");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("'bun run' priority", async () => {
@@ -1429,5 +1541,37 @@ describe.concurrent("bun run", () => {
     expect(await run(launcher("bat-tool"), "%CMD_METACHAR_PROBE%")).toEqual(refused);
     // The same launcher runs inside bun.exe.
     expect(await run(bunExe(), "run", "cmd-tool", "%CMD_METACHAR_PROBE%")).toEqual(refused);
+  });
+
+  // https://github.com/oven-sh/bun/issues/7504: `/tmp/bun-node-<sha>` was one directory for
+  // all users. The first user to run `--bun` owned it (mode 0700), and every other user's
+  // `--bun` silently got the real `node`.
+  it.skipIf(isWindows)("--bun creates a per-user node shim directory", async () => {
+    using dir = tempDir("bun-run-node-shim-uid", {
+      "package.json": JSON.stringify({
+        name: "shim-uid",
+        scripts: {
+          go: `node -e 'console.log(process.env.PATH.split(":").find(e => /bun-node/.test(e))); console.log(typeof Bun);'`,
+        },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "go"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [shimDir, bunType] = stdout.trim().split("\n");
+
+    expect(stderr).not.toContain("error");
+    expect({ shimDir, bunType, exitCode }).toEqual({
+      shimDir: expect.stringMatching(new RegExp(`/bun-node-${process.getuid!()}(-|$)`)),
+      bunType: "object",
+      exitCode: 0,
+    });
   });
 });

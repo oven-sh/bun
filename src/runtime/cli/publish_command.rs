@@ -2,7 +2,6 @@ use bun_collections::VecExt;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::cli::ci_info as ci;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
@@ -740,10 +739,9 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let abs_workspace_path = strings::without_trailing_slash(strings::without_suffix_comptime(
-            abs_package_json_path.as_bytes(),
-            b"package.json",
-        ));
+        let abs_workspace_path = path::string_paths::without_trailing_slash_windows_path(
+            strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
+        );
         let script_env = manager.env_mut();
         // `pack()` left the last three describing the package it packed last.
         let variables: [(&[u8], &[u8]); 4] = [
@@ -820,40 +818,19 @@ impl PublishCommand {
             return false;
         };
 
+        let authorization = registry.authorization(&package_url);
         let mut headers = http::HeaderBuilder::default();
         headers.count(b"accept", b"application/json");
-
-        let mut auth_buf: Vec<u8> = Vec::new();
-
-        if !registry.token.is_empty() {
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return false;
-            }
-            headers.count(b"authorization", &auth_buf);
-        } else if !registry.auth.is_empty() {
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return false;
-            }
-            headers.count(b"authorization", &auth_buf);
+        if let Some(authorization) = &authorization {
+            headers.count(b"authorization", authorization);
         }
 
         if headers.allocate().is_err() {
             return false;
         }
         headers.append(b"accept", b"application/json");
-
-        if !registry.token.is_empty() {
-            auth_buf.clear();
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return false;
-            }
-            headers.append(b"authorization", &auth_buf);
-        } else if !registry.auth.is_empty() {
-            auth_buf.clear();
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return false;
-            }
-            headers.append(b"authorization", &auth_buf);
+        if let Some(authorization) = &authorization {
+            headers.append(b"authorization", authorization);
         }
 
         let http_proxy = manager.http_proxy(&package_url);
@@ -899,10 +876,7 @@ impl PublishCommand {
     }
 
     fn has_credentials(registry: &Npm::Registry::Scope) -> bool {
-        let registry_url = registry.url.url();
-        !registry.token.is_empty()
-            || !registry.auth.is_empty()
-            || (!registry_url.password.is_empty() && !registry_url.username.is_empty())
+        registry.authorization_parts(&registry.url.url()).is_some()
     }
 
     fn publish(manager: &PackageManager, ctx: &Context) -> Result<Published, PublishError> {
@@ -1949,20 +1923,16 @@ impl PublishCommand {
         } else {
             b"legacy"
         };
-        let ci_name = ci::detect_ci_name();
+        let ci_name = bun_core::ci_info::detect_ci_name();
+        // Every request these headers go on is on the registry's origin.
+        let authorization = registry.authorization(&registry.url.url());
 
         {
             headers.count(b"accept", b"*/*");
             headers.count(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
-                headers.count(b"authorization", &**print_buf);
-                print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
-                headers.count(b"authorization", &**print_buf);
-                print_buf.clear();
+            if let Some(authorization) = &authorization {
+                headers.count(b"authorization", authorization);
             }
 
             if maybe_json_len.is_some() {
@@ -2006,14 +1976,8 @@ impl PublishCommand {
             headers.append(b"accept", b"*/*");
             headers.append(b"accept-encoding", b"gzip,deflate");
 
-            if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
-                headers.append(b"authorization", &**print_buf);
-                print_buf.clear();
-            } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
-                headers.append(b"authorization", &**print_buf);
-                print_buf.clear();
+            if let Some(authorization) = &authorization {
+                headers.append(b"authorization", authorization);
             }
 
             if maybe_json_len.is_some() {

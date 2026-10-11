@@ -285,7 +285,7 @@ $ bun pm diff react-dom@18.2.0 18.3.1 '*.min.js'
 $ bun pm diff react-dom@18.2.0 18.3.1 'cjs/**/*.production.min.js'
 ```
 
-A local folder that has a `package.json` is read the way `bun pm pack` would publish it — the `files` field, `.npmignore` / `.gitignore`, `bin` — so diffing a checkout against the registry compares what would ship, not `node_modules/`, `vendor/` or build output.
+A local folder that has a `package.json` is read the way `bun pm pack` would publish it — the `files` field, `.npmignore` / `.gitignore`, `bin` — so diffing a checkout against the registry compares what would ship, not `node_modules/`, `vendor/` or build output. Against a tarball or a published version, the `workspace:` and `catalog:` versions of a package of the current project are compared as the versions `bun pm pack` writes in their place. Two folders are compared as written.
 
 Piped or with `NO_COLOR`, the output is a plain unified patch of the real file contents (so `bun pm diff a b > changes.patch` applies), and `--raw` turns the re-print off on a terminal too.
 
@@ -383,6 +383,28 @@ bun install --frozen-lockfile
   `bun install` trusts its cache, so a pack is as trusted as the cache directory itself. Its checksums detect damage,
   not tampering. Only unpack a file that you packed.
 </Warning>
+
+## fetch
+
+To download every dependency into Bun's global module cache without installing anything:
+
+```bash terminal icon="terminal"
+bun pm fetch
+```
+
+```txt
+bun pm fetch v1.5.0 (ca7428e9)
+
+Fetched 42 packages into cache [1.20s]
+Cache: /home/user/.bun/install/cache
+```
+
+- Dependencies resolve the way `bun install` resolves them, but `node_modules` is not created, lifecycle scripts do not run, and `package.json` and the lockfile are left untouched.
+- With a lockfile, only the tarballs missing from the cache are downloaded, from the URLs the lockfile records.
+- A later `bun install` (or `bun install --offline`) installs from the cache.
+- Packages for another operating system or CPU are skipped; pass `--os` / `--cpu` to fetch them.
+- `-g` fetches the dependencies of globally installed packages.
+- Git dependencies that are already in the lockfile are skipped with a note; `bun install` downloads them.
 
 ## migrate
 

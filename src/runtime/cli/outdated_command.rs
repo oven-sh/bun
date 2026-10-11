@@ -7,7 +7,9 @@ use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::package_manager::workspace_manifests::{DeclaredDependencies, DeclaredDependency};
+use bun_install::package_manager::workspace_manifests::{
+    BrokenMember, DeclaredDependencies, DeclaredDependency,
+};
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
@@ -27,11 +29,11 @@ struct GroupedOutdatedInfo {
 const ALIAS_SEPARATOR: &str = "@npm:";
 
 /// A name as a cell prints it. Widths are taken from this text, not from the raw name.
-fn printed(name: &[u8]) -> String {
+pub(crate) fn printed(name: &[u8]) -> String {
     escape_control_chars(name).to_string()
 }
 
-fn visible_width(printed: &str) -> usize {
+pub(crate) fn visible_width(printed: &str) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8(printed.as_bytes())
 }
 
@@ -390,7 +392,8 @@ impl OutdatedCommand {
 
         let mut version_buf: String = String::new();
 
-        let declared = DeclaredDependencies::load(manager, workspace_pkg_ids);
+        let declared =
+            DeclaredDependencies::load(manager, workspace_pkg_ids, BrokenMember::LeftOut);
         let mut outdated_ids: Vec<DeclaredDependency> = Vec::new();
 
         for row in declared.rows() {

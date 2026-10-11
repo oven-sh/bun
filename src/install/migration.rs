@@ -2,7 +2,6 @@ use crate::Error;
 use bun_ast::{E, ExprData};
 use bun_core::strings;
 use bun_core::{Output, ZStr, zstr};
-use bun_paths::AutoAbsPath;
 use bun_semver as Semver;
 use bun_semver::query::token::Wildcard;
 use bun_sys::{self, Fd, File, O};
@@ -11,8 +10,8 @@ use crate::install::{self as Install, PackageManager, Subcommand};
 use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile, Migrated,
 };
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
-use crate::lockfile_real::package::{PackageColumns as _, parse_append_trusted_dependencies};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -145,7 +144,11 @@ fn finish_migration<'a>(
         Ok(not_migrated) => return not_migrated,
         Err(err) => return migrating_error(err, lockfile_name),
     };
-    if let Err(err) = record_trusted_dependencies(&mut *ok.lockfile, manager, log) {
+    // Other lockfiles have no `trustedDependencies`, and `bun pm migrate` saves this one as-is.
+    if let Err(err) = ok
+        .lockfile
+        .read_trusted_dependencies_from_manifests(&mut manager.workspace_package_json_cache, log)
+    {
         print_errors_and_reset(manager, log);
         return migrating_error(err, lockfile_name);
     }
@@ -189,38 +192,6 @@ pub(crate) fn parse_root_overrides(
         &mut builder,
     )?;
     builder.clamp();
-    Ok(())
-}
-
-/// Other lockfiles have no `trustedDependencies`; read the root's and the members' from package.json like `Package::parse_with_json` does, since `bun pm migrate` saves this lockfile as-is.
-fn record_trusted_dependencies(
-    lockfile: &mut Lockfile,
-    manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
-) -> Result<(), Error> {
-    let bump = bun_alloc::Arena::new();
-    let string_bytes = lockfile.buffers.string_bytes.as_slice();
-    let members = lockfile.workspace_paths.values().iter();
-    for relative_dir in
-        core::iter::once(b"".as_slice()).chain(members.map(|p| p.slice(string_bytes)))
-    {
-        let mut package_json_path = AutoAbsPath::init_top_level_dir();
-        let _ = package_json_path.append(relative_dir);
-        let _ = package_json_path.append(b"package.json");
-        let crate::GetJsonResult::Entry(entry) = manager
-            .workspace_package_json_cache
-            .get_with_path(log, package_json_path.slice(), Default::default())
-        else {
-            continue;
-        };
-        parse_append_trusted_dependencies(
-            &mut lockfile.trusted_dependencies,
-            log,
-            &entry.source,
-            entry.root,
-            &bump,
-        )?;
-    }
     Ok(())
 }
 
@@ -295,6 +266,7 @@ fn report_migrated(
         return;
     }
     if log.warnings > 0 && !log.has_errors() {
+        Output::flush();
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         log.reset();
     }

@@ -675,6 +675,30 @@ describe.concurrent("bun pm version", () => {
         },
       });
     });
+
+    it("keeps the file valid JSON when a number literal overflows to Infinity", async () => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": `{
+  "name": "test",
+  "version": "1.0.0",
+  "config": { "max": 1e400, "min": -1e400 }
+}`,
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        String(testDir),
+      );
+      expect(error).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      expect(JSON.parse(await Bun.file(join(String(testDir), "package.json")).text())).toEqual({
+        name: "test",
+        version: "1.0.1",
+        config: { max: null, min: null },
+      });
+    });
   });
 
   describe("prerelease handling", () => {

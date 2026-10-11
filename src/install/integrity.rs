@@ -11,7 +11,7 @@ const SHA384_DIGEST_LEN: usize = 48;
 const SHA512_DIGEST_LEN: usize = 64;
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Integrity {
     pub tag: Tag,
     /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
@@ -48,6 +48,9 @@ const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
+    /// `sha512-`, 86 base64 digits, `==`.
+    pub(crate) const MAX_SRI_LEN: usize = 7 + 86 + 2;
+
     pub(crate) fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
         if buf.is_empty() {
             return Ok(Integrity {
@@ -189,6 +192,11 @@ impl Integrity {
             tag: Tag::SHA512,
             value,
         }
+    }
+
+    /// As bun.lock has it. An extracted `file:` / URL tarball carries it in `.bun-tag`.
+    pub(crate) fn sri<'a>(&self, buf: &'a mut [u8; Self::MAX_SRI_LEN]) -> &'a [u8] {
+        bun_core::fmt::buf_print_infallible(buf, format_args!("{self}"))
     }
 
     #[inline]

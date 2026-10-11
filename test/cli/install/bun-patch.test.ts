@@ -1088,9 +1088,13 @@ const bundledAndNested = { dependencies: { "bundled-transitive": "1.0.0", "one-d
 describe.concurrent("a step that fails leaves node_modules as it was", () => {
   // RLIMIT_FSIZE makes the copy of a file larger than the limit fail with EFBIG. pkg-to-patch needs
   // no-deps@1.0.0 and the root no-deps@2.0.0, so the hoisted linker nests the former under it.
-  test.skipIf(isWindows).each(["hoisted", "isolated"] as const)(
-    "bun patch when the copy from the cache fails (%s linker)",
-    async linker => {
+  test.skipIf(isWindows).each([
+    ["hoisted", false],
+    ["isolated", false],
+    ["isolated", true],
+  ] as const)(
+    "bun patch when the copy from the cache fails (%s linker, globalStore = %p)",
+    async (linker, globalStore) => {
       const tarball = await packTarball({
         "package.json": JSON.stringify({
           name: "pkg-to-patch",
@@ -1102,7 +1106,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
       });
       await using project = await installedProject(
         { dependencies: { "pkg-to-patch": "file:./dep.tgz", "no-deps": "2.0.0" } },
-        { linker, files: { "dep.tgz": tarball } },
+        { linker, globalStore, files: { "dep.tgz": tarball } },
       );
       const { dir, env } = project;
       const state = () => ({
@@ -1113,6 +1117,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
       const before = state();
       expect(before.kind).toBe(linker === "hoisted" ? "directory" : "link");
       expect(before.files).toEqual([
+        ".bun-tag",
         "big.js",
         "index.js",
         ...(linker === "hoisted" ? ["node_modules"] : []),
@@ -2140,14 +2145,138 @@ describe.concurrent("the links on the way to the package folder", () => {
     expect(await readdirSorted(join(dir, "real-node-modules", "no-deps"))).toEqual(["index.js", "package.json"]);
   });
 
-  // With `globalStore = true`, `node_modules/.bun/<entry>` is a link into `<cache>/links`, which
-  // every project on the machine links to. An install puts that link back over anything else it
-  // finds there, so there is no folder of the project's own to edit.
+  // A link that `publicHoistPattern` made stays when the pattern goes. The hoisted tree has
+  // no-deps@1.0.0 at `node_modules/no-deps`, and the link there leads to no-deps@1.0.1.
+  test("isolated linker: a link at the hoisted path that leads to another version is not followed", async () => {
+    const bunfig = (rest: string) => `[install]\nlinker = "isolated"\n${rest}`;
+    await using project = await installedProject(
+      { dependencies: { z: "npm:one-dep@1.0.0" } },
+      { files: { "bunfig.toml": bunfig(`publicHoistPattern = ["no-deps"]\n`) } },
+    );
+    const { dir, env } = project;
+    await Bun.write(join(dir, "bunfig.toml"), bunfig(""));
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "root", dependencies: { a: "npm:one-fixed-dep@1.0.0", z: "npm:one-dep@1.0.0" } }),
+    );
+    await bunOk(dir, env, "install");
+    expect(readlinkSync(join(dir, "node_modules", "no-deps"))).toContain("no-deps@1.0.1");
+
+    await expectPrepared(dir, env, "no-deps@1.0.0", "no-deps", storeFolder("no-deps@1.0.0", "no-deps"));
+    expect({
+      "1.0.0": await installedVersion(dir, storeFolder("no-deps@1.0.0", "no-deps")),
+      "1.0.1": await installedVersion(dir, storeFolder("no-deps@1.0.1", "no-deps")),
+    }).toEqual({ "1.0.0": "1.0.0", "1.0.1": "1.0.1" });
+  });
+});
+
+// With `globalStore = true`, `node_modules/.bun/<entry>` is a link into `<cache>/links`, which
+// every project on the machine links to. An install puts that link back over anything else it
+// finds there, and the entries in the store link to each other, so the copy to edit cannot be in a
+// store entry. `bun patch` puts it where the project's link to the package is, or at the hoisted
+// path when the project has none, and never writes into the store.
+describe.concurrent("isolated linker with the global store", () => {
+  /** What every project shares: each path in the store, and what the names next to each package are. */
+  function shared(dir: string) {
+    const links = join(dir, ".bun-cache", "links");
+    return {
+      tree: tree(links),
+      kinds: readdirSync(links)
+        .sort()
+        .flatMap(entry =>
+          readdirSync(join(links, entry, "node_modules"))
+            .sort()
+            .map(name => `${entry}/${name}: ${kind(links, entry, "node_modules", name)}`),
+        ),
+    };
+  }
+
   // The root takes no-deps@2.0.0, and two-range-deps@1.0.0 depends on no-deps@1.1.0.
+  const twoVersions = () =>
+    installedProject(
+      { dependencies: { "no-deps": "2.0.0", "two-range-deps": "1.0.0" } },
+      { linker: "isolated", globalStore: true },
+    );
+  const entryKinds = (dir: string) =>
+    ["two-range-deps@1.0.0", "no-deps@1.1.0"].map(entry => kind(dir, "node_modules", ".bun", entry));
+
+  test.each(["two-range-deps", "node_modules/two-range-deps", "node_modules/two-range-deps/"])(
+    "bun patch %s replaces the project's link to the package",
+    async arg => {
+      await using project = await twoVersions();
+      const { dir, env } = project;
+      const before = shared(dir);
+      const folder = join(dir, "node_modules", "two-range-deps");
+      expect([kind(folder), ...entryKinds(dir)]).toEqual(["link", "link", "link"]);
+
+      await expectPrepared(
+        dir,
+        env,
+        arg,
+        "two-range-deps",
+        arg.startsWith("node_modules") ? arg : "node_modules/two-range-deps",
+      );
+      expect([kind(folder), ...entryKinds(dir)]).toEqual(["directory", "link", "link"]);
+      expect(await readdirSorted(join(dir, "node_modules"))).toEqual([".bun", "no-deps", "two-range-deps"]);
+
+      // The edits survive an install, and do not reach the store.
+      await Bun.write(join(folder, "index.js"), patched);
+      await bunOk(dir, env, "install");
+      expect(await Bun.file(join(folder, "index.js")).text()).toBe(patched);
+      expect(shared(dir)).toEqual(before);
+
+      await bunOk(dir, env, "patch", "--commit", arg);
+      expect((await Bun.file(join(dir, "package.json")).json()).patchedDependencies).toEqual({
+        "two-range-deps@1.0.0": "patches/two-range-deps@1.0.0.patch",
+      });
+      // A patched package has an entry of the project's own.
+      expect(await Bun.file(join(dir, storeFolder("two-range-deps@1.0.0", "two-range-deps"), "index.js")).text()).toBe(
+        patched,
+      );
+      expect(kind(dir, "node_modules", ".bun", "two-range-deps@1.0.0")).toBe("directory");
+      expect(await bunOk(dir, env, "-e", `console.log(require("two-range-deps"))`)).toBe("patched\n");
+      expect(shared(dir)).toEqual(before);
+    },
+  );
+
+  test("bun patch <transitive dependency> makes the copy at the hoisted path", async () => {
+    await using project = await installedProject(
+      { dependencies: { "one-fixed-dep": "1.0.0" } },
+      { linker: "isolated", globalStore: true },
+    );
+    const { dir, env } = project;
+    const before = shared(dir);
+    expect(kind(dir, "node_modules", ".bun", "no-deps@1.0.0")).toBe("link");
+
+    await expectPrepared(dir, env, "no-deps", "no-deps", "node_modules/no-deps");
+    await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
+    await bunOk(dir, env, "install");
+    expect({
+      storeEntry: kind(dir, "node_modules", ".bun", "no-deps@1.0.0"),
+      copy: await Bun.file(join(dir, "node_modules", "no-deps", "index.js")).text(),
+      shared: shared(dir),
+    }).toEqual({ storeEntry: "link", copy: patched, shared: before });
+
+    await bunOk(dir, env, "patch", "--commit", "no-deps");
+    expect(await Bun.file(join(dir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'patched';",
+    );
+    expect(await bunOk(dir, env, "-e", "console.log(require('one-fixed-dep').dependencies['no-deps'])")).toBe(
+      "patched\n",
+    );
+    expect(shared(dir)).toEqual(before);
+  });
+
+  const refusal = (folder: string, commit: boolean) =>
+    `error: ${folder} resolves into the global store, which other projects share; refusing to patch through it\n` +
+    (commit
+      ? "note: run bun patch on the package first, it makes the copy to edit\n"
+      : "note: set globalStore = false under [install] in bunfig.toml, run bun install and patch the package again\n");
+
+  // None of these has a link of the project's own as its last part.
   test.each([
-    ["two-range-deps", "node_modules/two-range-deps"],
-    ["node_modules/two-range-deps/", "node_modules/two-range-deps/"],
-    ["no-deps@1.1.0", storeFolder("no-deps@1.1.0", "no-deps")],
+    // The hoisted tree nests it under two-range-deps, whose folder is in the store.
+    ["no-deps@1.1.0", "node_modules/two-range-deps/node_modules/no-deps"],
     [storeFolder("no-deps@1.1.0", "no-deps"), storeFolder("no-deps@1.1.0", "no-deps")],
     [
       "node_modules/./.bun/no-deps@1.1.0/node_modules/no-deps/",
@@ -2155,28 +2284,30 @@ describe.concurrent("the links on the way to the package folder", () => {
     ],
     // A dependency link inside the shared entry of two-range-deps.
     [storeFolder("two-range-deps@1.0.0", "no-deps"), storeFolder("two-range-deps@1.0.0", "no-deps")],
-  ])("global store: bun patch %s is refused", async (arg, folder) => {
-    await using project = await installedProject(
-      { dependencies: { "no-deps": "2.0.0", "two-range-deps": "1.0.0" } },
-      { linker: "isolated", globalStore: true },
-    );
+  ])("bun patch %s is refused", async (arg, folder) => {
+    await using project = await twoVersions();
     const { dir, env } = project;
-    const state = () => ({
-      project: tree(join(dir, "node_modules")),
-      entries: ["two-range-deps@1.0.0", "no-deps@1.1.0"].map(entry => kind(dir, "node_modules", ".bun", entry)),
-      shared: tree(join(dir, ".bun-cache", "links")),
-    });
+    const state = () => ({ project: tree(join(dir, "node_modules")), entries: entryKinds(dir), shared: shared(dir) });
     const before = state();
-    expect(before.entries).toEqual(["link", "link"]);
 
-    const refusal =
-      `error: ${folder} resolves into the global store, which other projects share; refusing to patch through it\n` +
-      "note: set globalStore = false under [install] in bunfig.toml, run bun install and patch the package again\n";
-    await expectRefused(dir, env, refusal, arg);
-    await expectRefused(dir, env, refusal, "--commit", arg);
+    await expectRefused(dir, env, refusal(folder, false), arg);
+    await expectRefused(dir, env, refusal(folder, true), "--commit", arg);
     expect(state()).toEqual(before);
     expect(await bunOk(dir, env, "-e", `console.log(require("two-range-deps/package.json").version)`)).toBe("1.0.0\n");
   });
+
+  // The diff would move files in and out of the shared folder. It used to be `new file mode 120000`.
+  test.each(["two-range-deps", "node_modules/two-range-deps"])(
+    "--commit %s without bun patch is refused",
+    async arg => {
+      await using project = await twoVersions();
+      const { dir, env } = project;
+      const before = shared(dir);
+      await expectRefused(dir, env, refusal("node_modules/two-range-deps", true), "--commit", arg);
+      expect(kind(dir, "node_modules", "two-range-deps")).toBe("link");
+      expect(shared(dir)).toEqual(before);
+    },
+  );
 });
 
 // A patched package carries an empty `.bun-tag-<hash>` marker file. `bun install` checks that

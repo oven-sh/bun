@@ -262,6 +262,65 @@ pub fn served_peers(
     Ok(served)
 }
 
+/// A dependency's directory under `node_modules/.bun`.
+pub struct StoreFolder {
+    /// One of the edges that resolve to it.
+    pub dep_id: DependencyID,
+    pub pkg_id: PackageID,
+    /// Edges between the root and `dep_id`'s owner.
+    pub depth: usize,
+    /// `node_modules/.bun/<entry>`, a link if the entry is in the global store. The package is in
+    /// `node_modules/<package name>` below it.
+    pub entry_dir: Vec<u8>,
+}
+
+pub fn store_folders(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+) -> Result<Vec<StoreFolder>, AllocError> {
+    let store = build_store(manager, lockfile, true, &[], None, Timings::Quiet)?;
+    let node_dep_ids = store.nodes.items_dep_id();
+    let node_pkg_ids = store.nodes.items_pkg_id();
+    let node_parent_ids = store.nodes.items_parent_id();
+    let entry_nested_folder = store.entries.items_nested_folder();
+    let pkg_resolutions = lockfile.packages.items_resolution();
+
+    let mut folders: Vec<StoreFolder> = Vec::new();
+    for (entry, node_id) in store.entries.items_node_id().iter().enumerate() {
+        let dep_id = node_dep_ids[node_id.get() as usize];
+        let pkg_id = node_pkg_ids[node_id.get() as usize];
+        if dep_id == invalid_dependency_id
+            || entry_nested_folder[entry]
+            || matches!(
+                pkg_resolutions[pkg_id as usize].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Symlink
+            )
+        {
+            continue;
+        }
+        let mut depth = 0;
+        let mut parent = node_parent_ids[node_id.get() as usize];
+        while parent != store::node::Id::ROOT && parent != store::node::Id::INVALID {
+            depth += 1;
+            parent = node_parent_ids[parent.get() as usize];
+        }
+        let mut entry_dir: Vec<u8> = Vec::new();
+        write!(
+            entry_dir,
+            "node_modules/.bun/{}",
+            store::entry::fmt_store_path(store::entry::Id::from(entry as u32), &store, lockfile),
+        )
+        .expect("formatting into a Vec is infallible");
+        folders.push(StoreFolder {
+            dep_id,
+            pkg_id,
+            depth,
+            entry_dir,
+        });
+    }
+    Ok(folders)
+}
+
 /// `dep` is a `file:` dependency whose path is relative to the package declaring it
 /// (resolved as `declarer`): `Package::from_npm` stores these paths as declared,
 /// `Package::parse` and `overrides` store top-level relative ones. Such a folder is
@@ -965,6 +1024,16 @@ pub(crate) fn build_store(
             if resolved_pkg_id == invalid_package_id {
                 // these are optional peers that failed to find any dependency with a matching
                 // name. they are completely excluded
+                continue;
+            }
+
+            if lockfile::pruned_workspaces::skips_link_to_pruned_workspace(
+                manager,
+                lockfile,
+                entry.pkg_id,
+                &dependencies[peer_dep_id as usize],
+                resolved_pkg_id,
+            ) {
                 continue;
             }
 
@@ -2037,6 +2106,7 @@ pub(crate) fn install_isolated_packages(
                     installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
                     relink: installer::Relink::Off,
+                    newly_trusted: false,
                     blocked_scripts: 0,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
@@ -2071,7 +2141,6 @@ pub(crate) fn install_isolated_packages(
             tasks,
             waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
-            trusted_dependencies_mutex: Default::default(),
             trusted_dependencies_from_update_requests,
             supported_backend: std::sync::atomic::AtomicU8::new(
                 PackageInstall::supported_method() as u8
@@ -2091,6 +2160,7 @@ pub(crate) fn install_isolated_packages(
             },
             task_queue: Default::default(),
             failed_optional_entries: Vec::new(),
+            pending_lifecycle_scripts: Default::default(),
         };
         // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
         // `on_task_complete()`, and `on_task_fail()` below all reach the manager through
@@ -2228,15 +2298,23 @@ pub(crate) fn install_isolated_packages(
                     continue;
                 }
                 ResolutionTag::Folder => {
-                    if entry_nested_folder[entry_id.get() as usize] {
-                        // linked by the packages containing it (`Installer::symlink_dependencies`)
-                        debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
-                        let folder = pkg_res.folder().slice(string_buf);
-                        let state = if crate::bin::bin_target_escapes_package_dir(folder) {
-                            // the resolver rejects these; only an edited or old lockfile gets here
+                    // linked by the packages containing it (`Installer::symlink_dependencies`)
+                    let nested = entry_nested_folder[entry_id.get() as usize];
+                    debug_assert!(
+                        !nested || entry_dependencies[entry_id.get() as usize].list.is_empty()
+                    );
+                    let folder = pkg_res.folder().slice(string_buf);
+                    // the resolver rejects these; only an edited or old lockfile gets here
+                    let refused = crate::bin::bin_target_escapes_package_dir(folder)
+                        && (nested || !lockfile_ro.is_trusted_folder_package(pkg_id));
+                    if nested || refused {
+                        let state = if refused {
                             Output::err_generic(
                                 "refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
-                                (BStr::new(pkg_name.slice(string_buf)), BStr::new(folder)),
+                                (
+                                    BStr::new(pkg_name.slice(string_buf)),
+                                    bun_core::fmt::escape_control_chars(folder),
+                                ),
                             );
                             Output::flush();
                             if installer.manager().options.enable.fail_early() {
@@ -2289,6 +2367,8 @@ pub(crate) fn install_isolated_packages(
                         // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, installer::PatchInfo::Remove(_))
+                        // The entry is named after a path or URL that the resolve phase read again.
+                        || (!uses_global_store && installer.manager().fetched_tarball(&pkg_res))
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
@@ -2415,16 +2495,9 @@ pub(crate) fn install_isolated_packages(
                             pkg_res.github(),
                             None,
                         ),
-                        ResolutionTag::LocalTarball => {
-                            package_manager::cached_local_tarball_folder_name(
-                                &pkgs.items_meta()[pkg_id as usize].integrity,
-                                None,
-                            )
-                        }
-                        ResolutionTag::RemoteTarball => {
+                        ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                             package_manager::cached_tarball_folder_name(
-                                installer.manager(),
-                                *pkg_res.remote_tarball(),
+                                &pkgs.items_meta()[pkg_id as usize].integrity,
                                 None,
                             )
                         }
@@ -2437,7 +2510,7 @@ pub(crate) fn install_isolated_packages(
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
-                        // no entry name until extraction records a local tarball's integrity
+                        // no entry name until extraction records a tarball's integrity
                         _ if cache_subpath_z.is_empty() => true,
                         install::PreinstallState::Done => false,
                         _ => {
@@ -2695,6 +2768,7 @@ pub(crate) fn install_isolated_packages(
         }
 
         installer.unlink_failed_optional_entries();
+        installer.record_update_request_trust();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

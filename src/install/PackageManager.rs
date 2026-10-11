@@ -23,6 +23,7 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
@@ -78,6 +79,8 @@ pub mod package_manager_resolution;
 pub mod patch_package;
 #[path = "PackageManager/PopulateManifestCache.rs"]
 pub mod populate_manifest_cache;
+#[path = "PackageManager/PopulatePackageCache.rs"]
+pub mod populate_package_cache;
 #[path = "PackageManager/processDependencyList.rs"]
 pub mod process_dependency_list;
 #[path = "PackageManager/ProgressStrings.rs"]
@@ -174,6 +177,7 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--max-age<r> <d>\<days\><r>          age threshold in days (default 30)
   <d>└<r> <cyan>--dry-run<r>                 print what would be removed without deleting anything
   <b><green>bun pm<r> <blue>cache pack<r><d>|<r><blue>unpack<r> <d>file<r>  save / restore the cache entries this lockfile needs as one file (for CI caches)
+  <b><green>bun pm<r> <blue>fetch<r>                download all dependencies into the cache without installing
   <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`
@@ -224,8 +228,7 @@ use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_local_tarball_folder_name,
-    cached_local_tarball_folder_name_print, cached_npm_package_folder_name,
+    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
     cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
     cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
     fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,
@@ -377,6 +380,7 @@ pub struct PackageManager {
     pub(crate) network_tarball_batch: thread_pool::Batch,
     pub(crate) network_resolve_batch: thread_pool::Batch,
     pub(crate) network_task_fifo: NetworkQueue,
+    pub(crate) retry_queue: crate::retry_timer::RetryQueue,
     pub(crate) patch_apply_batch: thread_pool::Batch,
     pub(crate) patch_calc_hash_batch: thread_pool::Batch,
     pub(crate) patch_task_fifo: PatchTaskFifo,
@@ -454,6 +458,9 @@ pub struct PackageManager {
     // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
+
+    // Newly resolved deprecated versions that no package.json of the project names: one summary line.
+    pub(crate) deprecated_transitive: u32,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
@@ -1107,7 +1114,7 @@ fn configure_env_for_scripts_run(
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(strings::without_trailing_slash(
+            value: Box::<[u8]>::from(without_trailing_slash_windows_path(
                 FileSystem::instance().top_level_dir(),
             )),
         };
@@ -1163,6 +1170,15 @@ fn configure_env_for_scripts_run(
 
 static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
 
+/// Scripts find the shim through PATH until the process ends.
+static NODE_GYP_TEMPDIR: std::sync::OnceLock<(Fd, Box<[u8]>)> = std::sync::OnceLock::new();
+
+extern "C" fn remove_node_gyp_tempdir() {
+    if let Some((tempdir, name)) = NODE_GYP_TEMPDIR.get() {
+        let _ = bun_sys::Dir::borrow(tempdir).delete_tree(name);
+    }
+}
+
 fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
     if !manager.node_gyp_tempdir_name.is_empty() {
         return Ok(());
@@ -1194,6 +1210,12 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
+    if NODE_GYP_TEMPDIR
+        .set((tempdir.handle.fd, manager.node_gyp_tempdir_name.clone()))
+        .is_ok()
+    {
+        Global::add_exit_callback(remove_node_gyp_tempdir);
+    }
 
     #[cfg(windows)]
     const FILE_NAME: &str = "node-gyp.cmd";
@@ -1449,6 +1471,12 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
 
     install.url_auth.extend(url_auth);
 
+    // `ca` + `cafile` are one setting: bunfig replaces both or neither.
+    if ca.is_some() || cafile.is_some() {
+        install.ca = ca;
+        install.cafile = cafile;
+    }
+
     macro_rules! overlay {
         ($($field:ident),* $(,)?) => {
             $( if $field.is_some() { install.$field = $field; } )*
@@ -1473,9 +1501,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         frozen_lockfile,
         exact,
         concurrent_scripts,
-        cafile,
         save_text_lockfile,
-        ca,
         ignore_scripts,
         link_workspace_packages,
         node_linker,
@@ -1488,6 +1514,54 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         hoist,
         offline,
     );
+}
+
+/// Appends `<separator>package.json\0` to a directory. The root of a Windows drive, `C:\`, has
+/// its separator already.
+fn push_package_json(path: &mut Vec<u8>) {
+    if !(cfg!(windows) && path.last().is_some_and(|&c| bun_paths::is_sep_native(c))) {
+        path.push(SEP);
+    }
+    path.extend_from_slice(b"package.json\0");
+}
+
+/// What the user's `.npmrc` and `project_npmrc` configure. A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`.
+fn load_npmrc_files(
+    bunfig: &Api::BunInstall,
+    env: &dot_env::Loader,
+    start_dir: &[u8],
+    project_npmrc: Option<&ZStr>,
+    diagnostics: ini::NpmrcDiagnostics,
+) -> Api::BunInstall {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let parts = [b"./.npmrc" as &[u8]];
+    // `None` (too long for `buf`) could not be opened either, so it counts as a missing file.
+    let join = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>;
+    // npm's `userconfig` replaces both candidates below (actions/setup-node exports it).
+    let userconfig = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
+        .into_iter()
+        .find_map(|key| env.get(key).filter(|path| !path.is_empty()));
+
+    // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
+    // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
+    let mut global_len: usize = 0;
+    if let Some(userconfig) = userconfig {
+        global_len = join(start_dir, &mut buf, &[userconfig]).map_or(0, ZStr::len);
+    } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+        global_len =
+            (join(xdg_dir, &mut buf, &parts).filter(|p| bun_sys::exists_z(p))).map_or(0, ZStr::len);
+    }
+    if global_len == 0 && userconfig.is_none() {
+        if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
+            global_len = join(home_dir, &mut buf, &parts).map_or(0, ZStr::len);
+        }
+    }
+
+    let user_npmrc = (global_len > 0).then(|| ZStr::from_buf(&buf[..], global_len));
+    let paths: Vec<&ZStr> = [user_npmrc, project_npmrc].into_iter().flatten().collect();
+    let mut install = Api::BunInstall::default();
+    ini::load_npmrc_config(&mut install, bunfig, env, true, diagnostics, &paths);
+    install
 }
 
 /// The one upward walk of [`init`], from the cwd to the filesystem root. Step 1 takes the first
@@ -1556,6 +1630,15 @@ fn is_shared_directory(_: &[u8]) -> bool {
     false
 }
 
+/// The default `.env` files are the production set unless `BUN_ENV` or `NODE_ENV` is `development`.
+pub(crate) fn default_env_file_suffix(env: &dot_env::Loader) -> dot_env::DotEnvFileSuffix {
+    if env.get_node_env() == Some(b"development") {
+        dot_env::DotEnvFileSuffix::Development
+    } else {
+        dot_env::DotEnvFileSuffix::Production
+    }
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1573,7 +1656,44 @@ pub fn init(
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+    // `.npmrc` is read below, before `Options::load` applies the log level.
+    if cli.log_level.is_silent() {
+        bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
+    }
+    // SAFETY: `init()` runs on the main thread before any other access to the
+    // loader. Allocate into a process-lifetime static (same pattern as
+    // `holder::RAW_PTR`) instead of `Box::leak`.
+    let env: &mut dot_env::Loader = unsafe {
+        let mut loader_ptr = holder::ENV_LOADER.load();
+        // `init()` runs again once a missing package.json is created. The cwd has moved by then, so
+        // that run keeps what the first one read from the `--env-file` paths.
+        if loader_ptr.is_null() || cli.env_files.is_empty() {
+            loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
+            holder::ENV_LOADER.store(loader_ptr);
+        }
+        &mut *loader_ptr
+    };
+    if !cli.env_files.is_empty() {
+        // Before the cwd they are relative to changes.
+        env.load_process()?;
+        env.load(
+            &dot_env::DirEntryKeys(Vec::new()),
+            cli.env_files,
+            dot_env::DotEnvFileSuffix::Production,
+            true,
+        )?;
+    }
+
+    const CONFIG_TAG: bun_options_types::command_tag::Tag =
+        bun_options_types::command_tag::Tag::InstallCommand;
     if cli.global {
+        // `globalDir` comes from the user's own file or `--config`, which is relative to this cwd.
+        if cli.config.is_some() {
+            ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+        } else {
+            ::bun_bunfig::arguments::load_global_bunfig(CONFIG_TAG, ctx);
+        }
+
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
         // `as_deref()` so the boxed config remains in `ctx` for the
@@ -1590,7 +1710,8 @@ pub fn init(
     // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::instance();
-    let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
+    // `C:\` keeps its separator: `C:` is the current directory of drive C, not its root.
+    let top_level_dir_no_trailing_slash = without_trailing_slash_windows_path(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
     // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
     unsafe {
@@ -1626,10 +1747,9 @@ pub fn init(
     let mut original_package_json_path_buf: Vec<u8> =
         Vec::with_capacity(top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len() + 1);
     original_package_json_path_buf.extend_from_slice(top_level_dir_no_trailing_slash);
-    original_package_json_path_buf.extend_from_slice(SEP_PACKAGE_JSON);
-    original_package_json_path_buf.push(0);
+    push_package_json(&mut original_package_json_path_buf);
 
-    let path_len = top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len();
+    let path_len = original_package_json_path_buf.len() - 1;
     // SAFETY: NUL written at `path_len` above. Not `from_buf`: this borrow is
     // intentionally detached — `original_package_json_path_buf` is mutated and
     // re-sliced below (the directory-walk rewrites the tail in place), and
@@ -1638,7 +1758,7 @@ pub fn init(
     let mut original_package_json_path =
         unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
     let original_cwd =
-        strings::without_suffix_comptime(original_package_json_path.as_bytes(), SEP_PACKAGE_JSON);
+        &original_package_json_path.as_bytes()[..top_level_dir_no_trailing_slash.len()];
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
@@ -1668,9 +1788,13 @@ pub fn init(
             } else {
                 bun_sys::O::RDONLY
             }) {
+                // `-g` names its project, the global directory. What is above it is another one's.
+                if cli.global {
+                    walk.next_dir = None;
+                }
                 match opened {
                     Ok(f) => {
-                        this_cwd = strings::without_trailing_slash(dir);
+                        this_cwd = without_trailing_slash_windows_path(dir);
                         break 'child f;
                     }
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
@@ -1701,6 +1825,21 @@ pub fn init(
                 }
             }
 
+            if cli.dry_run
+                && cli.filters.is_empty()
+                && (subcommand == Subcommand::Add
+                    || (subcommand == Subcommand::Install && cli.positionals.len() > 1))
+            {
+                // The package.json that `bun add <package>` would create here stays in memory.
+                workspace_package_json_cache.insert_unwritten(
+                    &mut bun_ast::Log::init(),
+                    original_package_json_path.as_bytes(),
+                    directories::NEW_PACKAGE_JSON,
+                )?;
+                this_cwd = original_cwd;
+                no_project = true;
+                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+            }
             if subcommand == Subcommand::Install {
                 if cli.positionals.len() > 1 && cli.filters.is_empty() {
                     // this is `bun add <package>`.
@@ -1727,11 +1866,9 @@ pub fn init(
             true,
         ));
         original_package_json_path_buf.truncate(this_cwd.len());
-        original_package_json_path_buf.push(SEP);
-        original_package_json_path_buf.extend_from_slice(b"package.json");
-        original_package_json_path_buf.push(0);
+        push_package_json(&mut original_package_json_path_buf);
 
-        let new_path_len = this_cwd.len() + "/package.json".len();
+        let new_path_len = original_package_json_path_buf.len() - 1;
         // SAFETY: NUL written above
         original_package_json_path =
             ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
@@ -1888,11 +2025,9 @@ pub fn init(
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
-    ::bun_bunfig::arguments::load_config(
-        bun_options_types::command_tag::Tag::InstallCommand,
-        cli.config,
-        ctx,
-    )?;
+    if !(cli.global && cli.config.is_some()) {
+        ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+    }
     // SAFETY: main-thread global
     unsafe {
         let tld = fs.top_level_dir();
@@ -1928,83 +2063,54 @@ pub fn init(
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
-    // SAFETY: `init()` runs once on the main thread before any other access to
-    // the singleton. Allocate into a process-lifetime static (same pattern as
-    // `holder::RAW_PTR`) instead of `Box::leak`.
-    let env: &mut dot_env::Loader = unsafe {
-        let loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
-        holder::ENV_LOADER.store(loader_ptr);
-        &mut *loader_ptr
-    };
-
     env.load_process()?;
-    // Copy the listing's basenames out under `entries_mutex`; `.data` must
-    // only be probed while the lock is held.
-    let env_probe_keys = {
-        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
-        dot_env::DirEntryKeys(
-            entries_option
-                .data
-                .iter()
-                .map(|(k, _)| Box::from(&**k))
-                .collect(),
-        )
-    };
-    env.load(
-        &env_probe_keys,
-        &[],
-        dot_env::DotEnvFileSuffix::Production,
-        false,
-    )?;
+    // npm's `ignore-scripts`, before the project's `.env` files load. It only turns scripts off:
+    // `false` does not undo a config file.
+    let env_ignores_scripts = [
+        b"NPM_CONFIG_IGNORE_SCRIPTS" as &[u8],
+        b"npm_config_ignore_scripts",
+    ]
+    .into_iter()
+    .filter_map(|key| env.get(key))
+    .any(|value| !matches!(value, b"" | b"false" | b"0"));
+    if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
+        // Copy the listing's basenames out under `entries_mutex`; `.data` must
+        // only be probed while the lock is held.
+        let env_probe_keys = {
+            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            dot_env::DirEntryKeys(
+                entries_option
+                    .data
+                    .iter()
+                    .map(|(k, _)| Box::from(&**k))
+                    .collect(),
+            )
+        };
+        let suffix = default_env_file_suffix(env);
+        env.load(&env_probe_keys, &[], suffix, false)?;
+    }
 
     initialize_store();
 
     {
         // npmrc < bunfig < CLI
-        let mut bunfig_install = ctx
+        let bunfig_install = ctx
             .install
             .take()
             .map_or_else(Api::BunInstall::default, |b| *b);
-        let mut install = Api::BunInstall::default();
         let npmrc_local = ZBox::from_bytes(b".npmrc");
+        let mut install = load_npmrc_files(
+            &bunfig_install,
+            env,
+            &original_cwd_clone,
+            Some(&npmrc_local),
+            ini::NpmrcDiagnostics::Print,
+        );
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let parts = [b"./.npmrc" as &[u8]];
-        // `None` (too long for `buf`) could not be opened either, so it counts as a missing file.
-        let join = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>;
-        // npm's `userconfig` replaces both candidates below (actions/setup-node exports it).
-        let userconfig = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
-            .into_iter()
-            .find_map(|key| env.get(key).filter(|path| !path.is_empty()));
-
-        // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
-        let mut global_len: usize = 0;
-        if let Some(userconfig) = userconfig {
-            global_len = join(&original_cwd_clone, &mut buf, &[userconfig]).map_or(0, ZStr::len);
-        } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
-            global_len = (join(xdg_dir, &mut buf, &parts).filter(|p| bun_sys::exists_z(p)))
-                .map_or(0, ZStr::len);
-        }
-        if global_len == 0 && userconfig.is_none() {
-            if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
-                global_len = join(home_dir, &mut buf, &parts).map_or(0, ZStr::len);
-            }
-        }
-
-        let registry_auth = if global_len > 0 {
-            ini::load_npmrc_config(
-                &mut install,
-                env,
-                true,
-                &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
-            )
-        } else {
-            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
-        };
-
-        ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
+        if env_ignores_scripts {
+            install.ignore_scripts = Some(true);
+        }
         ctx.install = Some(Box::new(install));
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
@@ -2013,9 +2119,6 @@ pub fn init(
 
     let options = Options {
         global: cli.global,
-        max_concurrent_lifecycle_scripts: cli
-            .concurrent_scripts
-            .unwrap_or((cpu_count * 2) as usize),
         ..Default::default()
     };
 
@@ -2089,6 +2192,7 @@ pub fn init(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
+        wr!(retry_queue, Default::default());
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, ctx.log);
         wr!(root_dir, entries_option);
@@ -2181,6 +2285,7 @@ pub fn init(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
+        wr!(deprecated_transitive, 0);
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
@@ -2264,11 +2369,6 @@ pub fn init(
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
         let manager = unsafe { &mut *manager_ptr };
-        if !manager.options.enable.cache() {
-            manager.options.enable.set_manifest_cache(false);
-            manager.options.enable.set_manifest_cache_control(false);
-        }
-
         if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
             if manifest_cache == b"1" {
                 manager.options.enable.set_manifest_cache(true);
@@ -2299,6 +2399,7 @@ pub fn init(
             env,
             Some(cli),
             ctx.install.as_deref(),
+            None,
             subcommand,
         )?;
 
@@ -2360,12 +2461,19 @@ pub fn init(
                 abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
                 let mut path_buf = bun_paths::path_buffer_pool::get();
-                abs_ca_file_name =
-                    ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
-                        &original_cwd_clone,
-                        &mut path_buf,
-                        &[options.ca_file_name],
-                    ));
+                let Some(joined) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                    &original_cwd_clone,
+                    &mut path_buf,
+                    &[options.ca_file_name],
+                ) else {
+                    Output::err(
+                        "HTTPThread",
+                        "could not find CA file: '{s}'",
+                        &[&bstr::BStr::new(options.ca_file_name)],
+                    );
+                    Global::crash();
+                };
+                abs_ca_file_name = ZBox::from_bytes(joined);
             }
         }
     }
@@ -2483,6 +2591,21 @@ fn init_with_runtime_once(
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
+    // bunfig.toml came from the start directory; `process.chdir()` moves `top_level_dir`.
+    let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
+    let mut project_npmrc = bun_paths::path_buffer_pool::get();
+    let npmrc = load_npmrc_files(
+        bun_install.unwrap_or(&Api::BunInstall::default()),
+        env,
+        start_dir,
+        resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+            start_dir,
+            &mut project_npmrc,
+            &[b".npmrc".as_slice()],
+        ),
+        ini::NpmrcDiagnostics::Discard,
+    );
+
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     allocate_package_manager();
     // SAFETY: holder::RAW_PTR was just set by allocate_package_manager() to a
@@ -2535,9 +2658,6 @@ fn init_with_runtime_once(
         wr!(
             options,
             Options {
-                max_concurrent_lifecycle_scripts: cli
-                    .concurrent_scripts
-                    .unwrap_or((cpu_count * 2) as usize),
                 runtime_auto_install: true,
                 ..Default::default()
             }
@@ -2550,6 +2670,7 @@ fn init_with_runtime_once(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
+        wr!(retry_queue, Default::default());
         wr!(log, std::ptr::from_mut(log));
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
@@ -2642,6 +2763,7 @@ fn init_with_runtime_once(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
+        wr!(deprecated_transitive, 0);
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
@@ -2669,11 +2791,6 @@ fn init_with_runtime_once(
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }
 
-    if !manager.options.enable.cache() {
-        manager.options.enable.set_manifest_cache(false);
-        manager.options.enable.set_manifest_cache_control(false);
-    }
-
     if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
         if manifest_cache == b"1" {
             manager.options.enable.set_manifest_cache(true);
@@ -2687,17 +2804,14 @@ fn init_with_runtime_once(
         }
     }
 
-    match manager
-        .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
-    {
-        Ok(()) => {}
-        Err(e) => {
-            // only error.OutOfMemory possible
-            let _ = e;
-            bun_core::out_of_memory();
-        }
-    }
+    manager.options.load(
+        log,
+        env,
+        Some(cli),
+        bun_install,
+        Some(&npmrc),
+        Subcommand::Install,
+    )?;
 
     manager.timestamp_for_manifest_cache_control =
         ((u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32)

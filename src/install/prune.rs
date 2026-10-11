@@ -70,9 +70,17 @@ struct Plan {
     checked: usize,
     /// No install is linking: a `StagingPath` or an `OldModules` is what one that died left.
     leftovers: bool,
+    /// The workspace `node_modules` that `open_workspace_folder` refused. A plan with one is not executed.
+    linked_folders: Vec<Box<[u8]>>,
 }
 
 impl Plan {
+    fn sorted_linked_folders(&mut self) -> &[Box<[u8]>] {
+        sort_names(&mut self.linked_folders);
+        self.linked_folders.dedup();
+        &self.linked_folders
+    }
+
     fn push_folder(&mut self, path: &[u8], kind: FolderKind) -> usize {
         self.folders.push(Folder {
             path: path.into(),
@@ -303,6 +311,18 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
+    if !plan.linked_folders.is_empty() {
+        if !quiet {
+            for folder in plan.sorted_linked_folders() {
+                Output::err_generic(
+                    "{} is a symlink, so nothing was pruned",
+                    (BStr::new(folder),),
+                );
+            }
+            bun_core::note!("to prune this project, remove the link and run 'bun install'");
+        }
+        Global::exit(1);
+    }
     Output::flush();
 
     let n = plan.removals.len();
@@ -483,7 +503,7 @@ fn detect_layout(manager: &PackageManager, node_modules: &Dir, configured: Layou
         let Some(folder) = workspace_node_modules(lockfile, pkg_id as PackageID) else {
             continue;
         };
-        if let Ok(dir) = Dir::open(&folder) {
+        if let Some(dir) = open_workspace_folder(&folder, &mut Vec::new()) {
             evidence.scan(&dir);
         }
     }
@@ -1014,7 +1034,7 @@ impl<'a> HoistedTree<'a> {
         else {
             return Installed::Mismatch;
         };
-        let Some(folder) = open_tree_folder(self.lockfile, tree_id) else {
+        let Some(folder) = open_tree_folder(self.lockfile, tree_id, &mut Vec::new()) else {
             return Installed::Missing;
         };
         let kind = entry_kind_of(&folder, alias);
@@ -1189,7 +1209,7 @@ fn plan_hoisted(
 
         let expected = hoisted.expected(tree_idx);
 
-        let Some(dir) = open_tree_folder(lockfile, tree_id) else {
+        let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
             continue;
         };
 
@@ -1253,7 +1273,7 @@ fn plan_hoisted(
         {
             continue;
         }
-        if let Ok(dir) = Dir::open(&folder_path) {
+        if let Some(dir) = open_workspace_folder(&folder_path, &mut plan.linked_folders) {
             scan_folder(
                 dir,
                 &folder_path,
@@ -1395,7 +1415,8 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         {
             continue;
         }
-        let Some(dir) = open_tree_folder(before, old_idx as tree::Id) else {
+        let Some(dir) = open_tree_folder(before, old_idx as tree::Id, &mut plan.linked_folders)
+        else {
             continue;
         };
         let folder_idx = plan.push_folder(old_path, FolderKind::NodeModules);
@@ -1459,7 +1480,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             None => &[],
         };
         let surviving = tree_at(&new_paths, &tree_path);
-        let Ok(dir) = Dir::open(&folder_path) else {
+        let Some(dir) = open_workspace_folder(&folder_path, &mut plan.linked_folders) else {
             continue;
         };
         scan_folder(
@@ -1488,6 +1509,18 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     if plan.removals.is_empty() {
         return;
     }
+    if !plan.linked_folders.is_empty() {
+        if !quiet {
+            for folder in plan.sorted_linked_folders() {
+                bun_core::warn!(
+                    "{} is a symlink, so stale copies in node_modules were not removed",
+                    BStr::new(folder)
+                );
+            }
+            bun_core::note!("remove the link and run 'bun install', then 'bun prune'");
+        }
+        return;
+    }
     execute(&plan, true);
     housekeeping(&plan, Layout::Hoisted, manager);
 }
@@ -1508,7 +1541,11 @@ fn tree_at(paths: &[(&[u8], tree::Id)], path: &[u8]) -> Option<tree::Id> {
         .map(|i| paths[i].1)
 }
 
-fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
+fn open_tree_folder(
+    lockfile: &Lockfile,
+    tree_id: tree::Id,
+    linked_folders: &mut Vec<Box<[u8]>>,
+) -> Option<Dir> {
     let trees = lockfile.buffers.trees.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -1522,7 +1559,7 @@ fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
     while let Some(id) = chain.pop() {
         // `node_modules/<workspace>` is a link `bun link` may point anywhere; the tree lives in the workspace folder.
         if let Some(folder) = workspace_node_modules(lockfile, tree_owner(lockfile, id as usize)) {
-            dir = Dir::open(&folder).ok()?;
+            dir = open_workspace_folder(&folder, linked_folders)?;
             continue;
         }
         let package = descend(&dir, trees[id as usize].folder_name(deps, buf))?;
@@ -1542,6 +1579,22 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
         return None;
     }
     Some(join(path, b"node_modules"))
+}
+
+/// The one way to open a workspace's `node_modules`. A link is not followed, it can lead to
+/// the root's `node_modules`: `linked_folders` gets its path.
+fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
+    let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
+    match sys::kind_from_mode(st.st_mode as sys::Mode) {
+        EntryKind::Directory => Dir::cwd()
+            .open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
+            .ok(),
+        EntryKind::SymLink => {
+            linked_folders.push(folder.into());
+            None
+        }
+        _ => None,
+    }
 }
 
 fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
@@ -1883,7 +1936,12 @@ fn plan_isolated(
         if is_pruned_workspace(manager, pkg_id) {
             continue;
         }
-        let Ok(dir) = Dir::open(&folder_path) else {
+        let dir = if pkg_id == 0 {
+            Dir::open(&folder_path).ok()
+        } else {
+            open_workspace_folder(&folder_path, &mut plan.linked_folders)
+        };
+        let Some(dir) = dir else {
             continue;
         };
         let direct = direct_aliases(manager, pkg_id as PackageID);
@@ -2059,31 +2117,60 @@ fn unlink_removed_dependencies(store: &Dir) {
     }
 }
 
-#[cfg(not(windows))]
-fn prune_bins(dir: &Dir) {
-    let Some(bin) = open_real_subdir(dir, b".bin") else {
+/// Removes the links in `node_modules/.bin` (on Windows the shim pairs) whose target is gone.
+pub(crate) fn prune_bins(node_modules: &Dir) {
+    if let Some(bin) = open_real_subdir(node_modules, b".bin") {
+        remove_dangling_bins(&bin, node_modules, None);
+    }
+}
+
+/// `prune_bins` for the global bin folder, which also holds what bun did not put there: only
+/// a link into `global_node_modules` goes. Both paths are absolute.
+pub(crate) fn prune_global_bins(bin_path: &[u8], global_node_modules: &[u8]) {
+    let Some(parent) = bun_paths::dirname(bin_path).and_then(|parent| Dir::open(parent).ok())
+    else {
         return;
     };
+    if let Ok(bin) = parent.open_at(bun_paths::basename(bin_path)) {
+        remove_dangling_bins(&bin, &parent, Some((bin_path, global_node_modules)));
+    }
+}
+
+#[cfg(not(windows))]
+fn remove_dangling_bins(bin: &Dir, _parent: &Dir, global: Option<(&[u8], &[u8])>) {
+    let mut link = bun_paths::path_buffer_pool::get();
     let mut dangling: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
-        if entry_kind(&bin, name, entry.kind) == EntryKind::SymLink && is_dangling(&bin, name) {
-            dangling.push(name.into());
+        if entry_kind(bin, name, entry.kind) != EntryKind::SymLink || !is_dangling(bin, name) {
+            continue;
         }
+        if let Some((bin_path, global_node_modules)) = global {
+            let dest = zname(&join(bin_path, name));
+            let dest = ZStr::from_slice_with_nul(&dest);
+            match sys::readlink(dest, link.as_mut_slice()) {
+                Ok(len)
+                    if crate::bin_real::Linker::link_leads_into(
+                        dest,
+                        &link[..len],
+                        global_node_modules,
+                    ) => {}
+                _ => continue,
+            }
+        }
+        dangling.push(name.into());
     }
     drop(iter);
     for name in &dangling {
-        let _ = remove_link(&bin, name);
+        let _ = remove_link(bin, name);
     }
 }
 
-// `.bunx` layout: windows-shim/BinLinkingShim.rs (target path is relative to this node_modules folder).
+// `.bunx` layout: windows-shim/BinLinkingShim.rs (a relative target path starts at `parent`, the folder that holds `bin`).
+// Only bun writes a `.bunx`, in the global bin folder too.
 #[cfg(windows)]
-fn prune_bins(dir: &Dir) {
-    let Some(bin) = open_real_subdir(dir, b".bin") else {
-        return;
-    };
+fn remove_dangling_bins(bin: &Dir, parent: &Dir, _global: Option<(&[u8], &[u8])>) {
     let mut shims: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
     while let Ok(Some(entry)) = iter.next() {
@@ -2105,13 +2192,64 @@ fn prune_bins(dir: &Dir) {
             continue;
         };
         let target = strings::to_utf8_alloc_from_le_bytes(&shim[..target_len * 2]);
-        if !is_dangling(dir, &target) {
+        if !is_dangling(parent, &target) {
             continue;
         }
-        let _ = remove_link(&bin, &file_name);
+        let _ = remove_link(bin, &file_name);
         file_name.truncate(stem.len());
         file_name.extend_from_slice(b".exe");
-        let _ = remove_link(&bin, &file_name);
+        let _ = remove_link(bin, &file_name);
+    }
+}
+
+/// Removes from `dest`, a copy of the folder `src`, what `src` no longer has. `node_modules` is
+/// no part of the copy. A folder that cannot be listed, or whose source cannot, stays as it is.
+pub(crate) fn remove_entries_missing_from(src: &Dir, dest: &Dir) {
+    let mut names: Vec<Box<[u8]>> = Vec::new();
+    let mut iter = sys::iterate_dir(src.fd());
+    loop {
+        match iter.next() {
+            Ok(Some(entry)) => names.push(entry.name.slice_u8().into()),
+            Ok(None) => break,
+            Err(_) => return,
+        }
+    }
+    drop(iter);
+    sort_names(&mut names);
+
+    let mut stale: Vec<Box<[u8]>> = Vec::new();
+    let mut folders: Vec<Box<[u8]>> = Vec::new();
+    let mut iter = sys::iterate_dir(dest.fd());
+    loop {
+        match iter.next() {
+            Ok(Some(entry)) => {
+                let name = entry.name.slice_u8();
+                if name == b"node_modules" {
+                    continue;
+                }
+                if !contains(&names, name) {
+                    stale.push(name.into());
+                } else if entry_kind(dest, name, entry.kind) == EntryKind::Directory {
+                    folders.push(name.into());
+                }
+            }
+            Ok(None) => break,
+            Err(_) => return,
+        }
+    }
+    drop(iter);
+
+    for name in &stale {
+        let _ = dest.delete_tree(name);
+    }
+    let flags = O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
+    for name in &folders {
+        if let (Ok(src), Ok(dest)) = (
+            src.open_at_with(name, flags),
+            dest.open_at_with(name, flags),
+        ) {
+            remove_entries_missing_from(&src, &dest);
+        }
     }
 }
 

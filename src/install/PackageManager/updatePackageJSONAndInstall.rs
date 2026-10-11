@@ -11,7 +11,6 @@ use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
-use bun_sys::{self, Fd, File};
 
 use super::add_catalog;
 use super::add_remove_with_filter::WorkspaceTarget;
@@ -67,30 +66,7 @@ pub(super) fn remove_dependencies_from_package_json(
     let mut any_changes = false;
     for request in updates.iter() {
         for list in LISTS {
-            let Some(query) = package_json.as_property(list) else {
-                continue;
-            };
-            let Some(mut e_object) = query.expr.data.e_object() else {
-                continue;
-            };
-            let before = e_object.properties.len();
-            e_object.properties.retain(|property| {
-                !property
-                    .key
-                    .and_then(|key| key.data.e_string())
-                    .is_some_and(|key| key.eql_bytes(request.name))
-            });
-            if e_object.properties.len() == before {
-                continue;
-            }
-            any_changes = true;
-            if e_object.properties.is_empty() {
-                let root = package_json.data.as_e_object_mut();
-                let _ = root.properties.swap_remove(query.i as usize);
-                root.package_json_sort();
-            } else {
-                e_object.alphabetize_properties();
-            }
+            any_changes |= PackageJSONEditor::remove_entry(package_json, list, request.name);
         }
     }
     any_changes
@@ -442,6 +418,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                         &stuff.patch_key,
                         &stuff.patchfile_path,
                     )?;
+                    any_changes = true;
                 }
             }
         }
@@ -498,11 +475,11 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    if matches!(
+    let received_requests = matches!(
         subcommand,
         Subcommand::Add | Subcommand::Update | Subcommand::Link
-    ) && manager.update_target_workspaces.is_none()
-    {
+    );
+    if (received_requests && manager.update_target_workspaces.is_none()) || any_changes {
         super::package_json_write_back::record(
             manager,
             WorkspaceTarget {
@@ -510,7 +487,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 name_hash: manager.workspace_name_hash,
                 package_json_path: manager.original_package_json_path.as_bytes().into(),
             },
-            true,
+            received_requests,
         );
     }
 
@@ -610,6 +587,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     .written_without_trailing_zero()
                     .to_vec(),
             );
+            super::package_json_write_back::record(manager, WorkspaceTarget::root(), false);
         }
 
         let root_is_targeted = manager
@@ -650,64 +628,17 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
 
-    if matches!(
-        subcommand,
-        Subcommand::Update | Subcommand::Add | Subcommand::Link
-    ) {
-        if manager.update_requests.iter().any(|request| request.failed) {
-            Global::exit(1);
-        }
-        return super::package_json_write_back::flush(manager);
+    if received_requests && manager.update_requests.iter().any(|request| request.failed) {
+        Global::exit(1);
     }
+    super::package_json_write_back::flush(manager)?;
 
-    if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        // `bun patch --commit` records the patch in the root package.json, even when run from a workspace.
-        let path: &ZStr = if matches!(manager.options.patch_features, PatchFeatures::Commit { .. })
-        {
-            root_package_json_path
-        } else {
-            manager.original_package_json_path.as_zstr()
-        };
-        // Written from the cache entry: a pnpm migration inside `install_with_manager` may have edited it since.
-        let entry = match manager
-            .workspace_package_json_cache
-            .get_with_path(
-                manager.log_mut(),
-                path.as_bytes(),
-                GetJSONOptions::default(),
-            )
-            .unwrap()
-        {
-            Ok(entry) => entry,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to read/parse package.json at '{s}'",
-                    (BStr::new(path.as_bytes()),),
-                );
-                Global::exit(1);
-            }
-        };
-        let source: &[u8] = &entry.source.contents;
-
-        // Now that we've run the install step
-        // We can save our in-memory package.json to disk
-        let workspace_package_json_file =
-            File::openat(Fd::cwd(), path, bun_sys::O::RDWR, 0).map_err(Error::from)?;
-
-        workspace_package_json_file
-            .pwrite_all(source, 0)
-            .map_err(Error::from)?;
-        let _ = bun_sys::ftruncate(workspace_package_json_file.handle, source.len() as i64);
-        let _ = workspace_package_json_file.close(); // close error is non-actionable
-
-        if subcommand == Subcommand::Remove {
-            if !any_changes {
-                Global::exit(0);
-            }
-            let updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
-            remove_leftover_node_modules(manager, &updates);
+    if subcommand == Subcommand::Remove && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+        if !any_changes {
+            Global::exit(0);
         }
+        let updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
+        remove_leftover_node_modules(manager, &updates);
     }
 
     Ok(())
@@ -717,60 +648,25 @@ pub(super) fn remove_leftover_node_modules(
     manager: &mut PackageManager,
     updates: &[UpdateRequest],
 ) {
-    let cwd = bun_sys::Dir::cwd();
-    let mut node_modules_buf = bun_paths::path_buffer_pool::get();
-    node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-    node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
+    let Ok(node_modules) = bun_sys::Dir::open(b"node_modules") else {
+        return;
+    };
     let name_hashes = manager.lockfile.packages.items_name_hash();
     for request in updates.iter() {
         // Only top-level folders are removed; nested copies are left alone.
         let name_hash = bun_semver::semver_string::Builder::string_hash(request.name);
         if !name_hashes.contains(&name_hash) {
-            let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
-            offset_buf[..request.name.len()].copy_from_slice(request.name);
-            let _ =
-                cwd.delete_tree(&node_modules_buf[..b"node_modules/".len() + request.name.len()]);
+            let _ = node_modules.delete_tree(request.name);
         }
     }
 
-    match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
-        Ok(node_modules_bin) => {
-            let mut iter = bun_sys::iterate_dir(node_modules_bin);
-            'iterator: loop {
-                let Ok(Some(entry)) = iter.next() else { break };
-                match entry.kind {
-                    bun_sys::EntryKind::SymLink => {
-                        // access(2) does not follow symlinks, so open() is the dangling check.
-                        let name = entry.name.slice_u8();
-                        node_modules_buf[..name.len()].copy_from_slice(name);
-                        node_modules_buf[name.len()] = 0;
-                        let buf: &ZStr = ZStr::from_buf(&node_modules_buf, name.len());
-
-                        match bun_sys::File::openat(node_modules_bin, buf, bun_sys::O::RDONLY, 0) {
-                            Ok(file) => {
-                                let _ = file.close();
-                            }
-                            Err(_) => {
-                                let _ = bun_sys::unlinkat(node_modules_bin, buf);
-                                continue 'iterator;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let _ = bun_sys::close(node_modules_bin);
-        }
-        Err(err) => {
-            if err.get_errno() != bun_sys::E::ENOENT {
-                Output::err(
-                    crate::Error::from(err),
-                    "while reading node_modules/.bin",
-                    (),
-                );
-                Global::crash();
-            }
-        }
+    crate::prune::prune_bins(&node_modules);
+    if manager.options.global {
+        let mut global_node_modules =
+            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
+        global_node_modules.push(bun_paths::SEP);
+        global_node_modules.extend_from_slice(b"node_modules");
+        crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
     }
 }
 

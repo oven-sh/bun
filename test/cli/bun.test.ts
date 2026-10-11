@@ -343,6 +343,77 @@ describe("bun", () => {
       expect(stderr).toContain("Could not get current working directory");
       expect(exitCode).toBe(1);
     });
+
+    // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
+    async function installCompletions(args: string[], env: Record<string, string | undefined>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "completions", ...args],
+        env: {
+          ...bunEnv,
+          BUN_INSTALL: undefined,
+          XDG_CONFIG_HOME: undefined,
+          XDG_DATA_HOME: undefined,
+          fpath: undefined,
+          IS_BUN_AUTO_UPDATE: "true",
+          ...env,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      return { stderr, exitCode };
+    }
+
+    // A fresh fish setup has `fish/` and no `fish/completions/`. The search then ended at /etc/fish/completions.
+    test.concurrent.each([
+      ["$HOME/.config", { ".config": { fish: {} } }, [".config", "fish", "completions"], "HOME"],
+      ["$XDG_CONFIG_HOME", { fish: {} }, ["fish", "completions"], "XDG_CONFIG_HOME"],
+    ])("fish: makes the completions directory of the fish config in %s", async (_, files, path, variable) => {
+      using dir = tempDir("completions-fish", files);
+      using empty = tempDir("completions-fish-home", {});
+      const completions = join(String(dir), ...path);
+
+      const { stderr, exitCode } = await installCompletions([], {
+        SHELL: "/usr/bin/fish",
+        HOME: String(empty),
+        [variable]: String(dir),
+      });
+      expect(stderr).toContain(`Installed completions to ${completions}/bun.fish`);
+      expect(fs.readFileSync(join(completions, "bun.fish"), "utf8")).toContain("bun");
+      expect(exitCode).toBe(0);
+    });
+
+    describe("zsh", () => {
+      const zsh = (home: string) =>
+        installCompletions([join(home, ".bun")], { HOME: home, ZDOTDIR: home, SHELL: "/bin/zsh" });
+
+      test.concurrent.each([
+        '[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"',
+        '[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"',
+        '[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"',
+        '# bun completions\r\n[ -s "$BUN_INSTALL/_bun" ] && source "$BUN_INSTALL/_bun"\r',
+      ])("leaves a .zshrc alone that already has %j", async snippet => {
+        const zshrc = `export PATH="/usr/local/bin:$PATH"\n\n${snippet}\n`;
+        using dir = tempDir("completions-zshrc", { ".bun/.keep": "", ".zshrc": zshrc });
+
+        const { exitCode } = await zsh(String(dir));
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(zshrc);
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("adds its line to a .zshrc once", async () => {
+        const zshrc = 'export PATH="/usr/local/bin:$PATH"\n';
+        using dir = tempDir("completions-zshrc-fresh", { ".bun/.keep": "", ".zshrc": zshrc });
+        const path = join(fs.realpathSync(String(dir)), ".bun", "_bun");
+        const added = `${zshrc}\n# bun completions\n[ -s "${path}" ] && source "${path}"\n`;
+
+        expect((await zsh(String(dir))).exitCode).toBe(0);
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+        expect((await zsh(String(dir))).exitCode).toBe(0);
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+      });
+    });
   });
   describe("--help preserves <placeholder> text", () => {
     const env = { ...bunEnv, NO_COLOR: "1" };

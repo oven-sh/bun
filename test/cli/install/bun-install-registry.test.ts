@@ -8,6 +8,7 @@ import {
   assertManifestsPopulated,
   bunEnv,
   bunExe,
+  isDebug,
   isFlaky,
   isLinux,
   isMacOS,
@@ -100,8 +101,10 @@ describe.concurrent("auto-install", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
 
-    expect(resolve(await readlink(join(packageDir, ".bun-cache", "is-number", "2.0.0@@localhost@@@1")))).toBe(
-      join(packageDir, ".bun-cache", "is-number@2.0.0@@localhost@@@1"),
+    const [version] = await readdirSorted(join(packageDir, ".bun-cache", "is-number"));
+    expect(version).toMatch(/^2\.0\.0@@localhost__[0-9a-f]{16}@@@1$/);
+    expect(resolve(await readlink(join(packageDir, ".bun-cache", "is-number", version)))).toBe(
+      join(packageDir, ".bun-cache", `is-number@${version}`),
     );
   });
 });
@@ -398,6 +401,56 @@ describe.concurrent("certificate authority", () => {
     const err = await stderr.text();
     expect(err).toContain(`HTTPThread: could not find CA file: '/does/not/exist'`);
     expect(await exited).toBe(1);
+  });
+
+  // A relative `cafile` is joined onto the cwd into a path buffer of MAX_PATH_BYTES (4096 bytes on
+  // Linux, 1024 on macOS). A joined path that fits reaches the HTTP thread, which reports it in
+  // full. One that does not fit is reported under the name the user gave. Windows is left out: its
+  // buffer holds more than any path the OS accepts.
+  describe.skipIf(isWindows)("relative cafile near the path buffer length", () => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+
+    // `cafile` brings `<packageDir>/<cafile>` to `maxPathBytes + delta` bytes.
+    // `--silent` keeps the main thread's "Resolving dependencies" line off stderr. Each thread
+    // writes to stderr on its own, so that line can otherwise land inside the HTTP thread's
+    // error message when the path is longer than the write buffer.
+    async function install(delta: number, from: "--cafile" | "bunfig") {
+      const { packageDir, packageJson, env } = await setupTest();
+      const cafile = Buffer.alloc(maxPathBytes + delta - Buffer.byteLength(packageDir + "/"), "a").toString();
+      await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.1.1" } }));
+      if (from === "bunfig") {
+        await write(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: registryUrl(), cafile } }),
+        );
+      }
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--silent", ...(from === "bunfig" ? [] : ["--cafile", cafile])],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(out).not.toContain("no-deps");
+      return { err, exitCode, cafile, joined: join(packageDir, cafile) };
+    }
+
+    test("non-existent --cafile that fits the buffer exactly", async () => {
+      const { err, exitCode, joined } = await install(0, "--cafile");
+      expect(err).toContain(`HTTPThread: could not find CA file: '${joined}'`);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      ["--cafile that is one byte past the buffer", 1, "--cafile"],
+      ["--cafile that is far past the buffer", 4090, "--cafile"],
+      ["cafile from bunfig that is one byte past the buffer", 1, "bunfig"],
+    ] as const)("non-existent %s", async (_, delta, from) => {
+      const { err, exitCode, cafile } = await install(delta, from);
+      expect(err).toContain(`HTTPThread: could not find CA file: '${cafile}'`);
+      expect(exitCode).toBe(1);
+    });
   });
 
   test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
@@ -5159,12 +5212,13 @@ test.concurrent("it should invalid cached package if package.json is missing", a
 
   let { out } = await runBunInstall(env, packageDir);
   expect(out).toContain("+ no-deps@2.0.0");
+  const cacheEntry = readdirSync(join(packageDir, ".bun-cache")).find(name => name.startsWith("no-deps@2.0.0@@"))!;
 
   // node_modules and cache should be populated
   expect(
     await Promise.all([
       readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+      readdirSorted(join(packageDir, ".bun-cache", cacheEntry)),
     ]),
   ).toEqual([
     ["index.js", "package.json"],
@@ -5181,13 +5235,13 @@ test.concurrent("it should invalid cached package if package.json is missing", a
   expect(out).not.toContain("+ no-deps@2.0.0");
 
   // with cache package.json deleted, install is a no-op and cache is untouched
-  await rm(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1", "package.json"));
+  await rm(join(packageDir, ".bun-cache", cacheEntry, "package.json"));
   ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
   expect(out).not.toContain("+ no-deps@2.0.0");
   expect(
     await Promise.all([
       readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+      readdirSorted(join(packageDir, ".bun-cache", cacheEntry)),
     ]),
   ).toEqual([["index.js", "package.json"], ["index.js"]]);
 
@@ -5199,7 +5253,7 @@ test.concurrent("it should invalid cached package if package.json is missing", a
   expect(
     await Promise.all([
       readdirSorted(join(packageDir, "node_modules", "no-deps")),
-      readdirSorted(join(packageDir, ".bun-cache", "no-deps@2.0.0@@localhost@@@1")),
+      readdirSorted(join(packageDir, ".bun-cache", cacheEntry)),
     ]),
   ).toEqual([
     ["index.js", "package.json"],
@@ -7622,8 +7676,8 @@ describe.concurrent("update", () => {
       expect(out).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        // The exact pin does not move; the minified package.json written above is re-printed.
-        "Checked 1 install across 2 packages (up to date, package.json synced)",
+        // The exact pin does not move, so the minified package.json written above stays as it is.
+        "Checked 1 install across 2 packages (no changes)",
       ]);
       await check(version);
 
@@ -8479,15 +8533,14 @@ describe.concurrent("update", () => {
       version: "1.0.0",
     });
 
-    // update no-deps, no range, no change to the resolved version (the re-printed
-    // package.json is still written back, which the summary reports)
+    // update no-deps, no range, no change to the resolved version
     let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(out).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "Checked 5 installs across 6 packages (up to date, package.json synced)",
+      "Checked 5 installs across 6 packages (no changes)",
     ]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
@@ -11051,6 +11104,22 @@ describe.concurrent("outdated", () => {
       expect(exitCode).toBe(0);
     });
   }
+  test("errors without a lockfile", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(packageJson, JSON.stringify({ name: "no-lockfile", version: "1.0.0" }));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).toContain("error: missing lockfile, nothing outdated");
+    expect(exitCode).toBe(1);
+  });
   test("in workspace", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
@@ -11606,6 +11675,184 @@ describe.concurrent("outdated", () => {
       "|----------------------------------------------------------|",
     ]);
     expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockfile);
+  });
+
+  async function outdatedResult(env: any, cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "outdated", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, NO_COLOR: "1" },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { table: tableLines(out), err, exitCode };
+  }
+
+  // A release bumps a member and the `workspace:` ranges on it before anybody runs `bun install`, so the version
+  // the lockfile recorded no longer satisfies them. `bun outdated` lists no `workspace:` dependency.
+  test.each(["workspace:^2.0.0", "workspace:2.0.0"])(
+    "a member bumped since the last install and depended on with %s",
+    async bumpedRange => {
+      const { packageDir, packageJson, env } = await setupTest();
+      const writeManifests = (version: string, range: string) =>
+        Promise.all([
+          write(
+            packageJson,
+            JSON.stringify({
+              name: "foo",
+              workspaces: ["packages/*"],
+              dependencies: { "no-deps": "1.0.0", lib: range },
+            }),
+          ),
+          write(join(packageDir, "packages", "lib", "package.json"), JSON.stringify({ name: "lib", version })),
+          write(
+            join(packageDir, "packages", "app", "package.json"),
+            JSON.stringify({
+              name: "app",
+              version: "1.0.0",
+              dependencies: { "a-dep": "1.0.1" },
+              // in two groups, the way a plugin lists its host
+              devDependencies: { lib: range },
+              peerDependencies: { lib: range },
+            }),
+          ),
+        ]);
+      await writeManifests("1.0.0", "workspace:^1.0.0");
+      await runBunInstall(env, packageDir);
+      await writeManifests("2.0.0", bumpedRange);
+
+      expect({
+        root: await outdatedResult(env, packageDir),
+        member: await outdatedResult(env, packageDir, "--filter", "app"),
+        all: await outdatedResult(env, packageDir, "--recursive"),
+      }).toEqual({
+        root: {
+          table: [
+            "|--------------------------------------|",
+            "| Package  | Current | Update | Latest |",
+            "|----------|---------|--------|--------|",
+            "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  |",
+            "|--------------------------------------|",
+          ],
+          err: "",
+          exitCode: 0,
+        },
+        member: {
+          table: [
+            "|--------------------------------------------------|",
+            "| Package  | Current | Update | Latest | Workspace |",
+            "|----------|---------|--------|--------|-----------|",
+            "| a-dep    | 1.0.1   | 1.0.1  | 1.0.10 | app       |",
+            "|--------------------------------------------------|",
+          ],
+          err: "",
+          exitCode: 0,
+        },
+        all: {
+          table: [
+            "|--------------------------------------------------|",
+            "| Package  | Current | Update | Latest | Workspace |",
+            "|----------|---------|--------|--------|-----------|",
+            "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  | foo       |",
+            "|----------|---------|--------|--------|-----------|",
+            "| a-dep    | 1.0.1   | 1.0.1  | 1.0.10 | app       |",
+            "|--------------------------------------------------|",
+          ],
+          err: "",
+          exitCode: 0,
+        },
+      });
+    },
+  );
+
+  // `bun outdated` only reports, so one bad package.json does not take the report of the other workspaces away.
+  describe.each([
+    { title: "does not parse", damage: (path: string) => write(path, "{ broken\n"), error: "ParserError" },
+    { title: "is gone", damage: (path: string) => rm(path), error: "ENOENT" },
+  ])("a workspace whose package.json $title", ({ damage, error }) => {
+    // Every other package.json refers to pkg1 and pkg2 by a `workspace:` or a plain range, which resolve
+    // through what the lockfile recorded: no package.json is read for them.
+    async function damagedWorkspace() {
+      const { packageDir, packageJson, env } = await setupTest();
+      const member = (name: string, dependencies: object) =>
+        write(
+          join(packageDir, "packages", name, "package.json"),
+          JSON.stringify({ name, version: "1.0.0", dependencies }),
+        );
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["packages/*"],
+            dependencies: { "no-deps": "1.0.0", pkg1: "workspace:^1.0.0", pkg2: "workspace:^1.0.0" },
+          }),
+        ),
+        member("pkg1", { "a-dep": "1.0.1", pkg2: "1.0.0" }),
+        member("pkg2", { "prereleases-1": "1.0.0-future.1", pkg1: "workspace:^1.0.0" }),
+        member("pkg3", { "no-deps": "1.0.0", pkg1: "workspace:^1.0.0", pkg2: "workspace:^1.0.0" }),
+      ]);
+      await runBunInstall(env, packageDir);
+      await damage(join(packageDir, "packages", "pkg2", "package.json"));
+
+      return (...args: string[]) => outdatedResult(env, packageDir, ...args);
+    }
+
+    test("has no effect when it is not selected", async () => {
+      const outdated = await damagedWorkspace();
+      expect({
+        root: await outdated(),
+        filtered: await outdated("--filter", "pkg1", "--filter", "pkg3"),
+      }).toEqual({
+        root: {
+          table: [
+            "|--------------------------------------|",
+            "| Package  | Current | Update | Latest |",
+            "|----------|---------|--------|--------|",
+            "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  |",
+            "|--------------------------------------|",
+          ],
+          err: "",
+          exitCode: 0,
+        },
+        filtered: {
+          table: [
+            "|--------------------------------------------------|",
+            "| Package  | Current | Update | Latest | Workspace |",
+            "|----------|---------|--------|--------|-----------|",
+            "| a-dep    | 1.0.1   | 1.0.1  | 1.0.10 | pkg1      |",
+            "|----------|---------|--------|--------|-----------|",
+            "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  | pkg3      |",
+            "|--------------------------------------------------|",
+          ],
+          err: "",
+          exitCode: 0,
+        },
+      });
+    });
+
+    test("is named on stderr and left out of the table when it is selected", async () => {
+      const outdated = await damagedWorkspace();
+      expect(await outdated("--recursive")).toEqual({
+        table: [
+          "|--------------------------------------------------|",
+          "| Package  | Current | Update | Latest | Workspace |",
+          "|----------|---------|--------|--------|-----------|",
+          "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  | foo       |",
+          "|----------|---------|--------|--------|-----------|",
+          "| a-dep    | 1.0.1   | 1.0.1  | 1.0.10 | pkg1      |",
+          "|----------|---------|--------|--------|-----------|",
+          "| no-deps  | 1.0.0   | 1.0.0  | 2.0.0  | pkg3      |",
+          "|--------------------------------------------------|",
+        ],
+        // one line
+        err: expect.stringMatching(
+          new RegExp(`^error: failed to load .*packages[\\\\/]pkg2[\\\\/]package\\.json: ${error}\\n$`),
+        ),
+        exitCode: 0,
+      });
+    });
   });
 
   test("scoped workspace names", async () => {
@@ -12617,7 +12864,7 @@ test.concurrent("npm manifest cache entries with invalid package version records
   readArray(8);
   const versionRecords = readArray(8);
   expect(versionRecords.byteLength).toBeGreaterThan(0);
-  expect(versionRecords.byteLength % 240).toBe(0);
+  expect(versionRecords.byteLength % 248).toBe(0);
   expect(versionRecords.start + versionRecords.byteLength).toBeLessThanOrEqual(bytes.byteLength);
 
   bytes.fill(0xff, versionRecords.start, versionRecords.start + versionRecords.byteLength);
@@ -12979,7 +13226,7 @@ describe("manifest conditional requests", () => {
   }
 
   /** `served` is read on every request, so a test can change what the registry serves between installs. */
-  function startRegistry(served: { etag?: string; lastModified?: string; versions?: string[] }) {
+  function startRegistry(served: { etag?: string; lastModified?: string; versions?: string[]; cacheControl?: string }) {
     const requests: ManifestRequest[] = [];
     const tarballRequests: string[] = [];
     const server = Bun.serve({
@@ -13010,11 +13257,12 @@ describe("manifest conditional requests", () => {
           (served.etag === undefined &&
             served.lastModified !== undefined &&
             entry.ifModifiedSince === served.lastModified);
+        const headers: Record<string, string> = {};
+        if (served.cacheControl !== undefined) headers["Cache-Control"] = served.cacheControl;
         if (notModified) {
           entry.status = 304;
-          return new Response(null, { status: 304 });
+          return new Response(null, { status: 304, headers });
         }
-        const headers: Record<string, string> = {};
         if (served.etag !== undefined) headers["ETag"] = served.etag;
         if (served.lastModified !== undefined) headers["Last-Modified"] = served.lastModified;
         const versions = served.versions ?? ["1.0.0"];
@@ -13166,6 +13414,78 @@ describe("manifest conditional requests", () => {
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
     ]);
+  });
+
+  test.each(["no-cache", "no-store", "max-age=0", "private, No-Cache, max-age=600", "max-age=600, max-age=0"])(
+    "Cache-Control: %s makes every install ask whether the cached manifest still holds",
+    async cacheControl => {
+      const { server, requests, tarballRequests } = startRegistry({ etag, cacheControl });
+      using _ = server;
+      await setup(server.port);
+
+      await install("1.0.0");
+      await install("1.0.0");
+      await install("1.0.0");
+      expect(requests.map(request => [request.ifNoneMatch, request.status])).toStrictEqual([
+        [null, 200],
+        [etag, 304],
+        [etag, 304],
+      ]);
+      expect(tarballRequests).toStrictEqual(["1.0.0"]);
+    },
+  );
+
+  // registry.npmjs.org sends the first. Verdaccio sends only an ETag.
+  test.each(["public, max-age=300", "max-age=31536000, immutable", "public", "(absent)"])(
+    "Cache-Control: %s lets the next install use the cached manifest",
+    async cacheControl => {
+      const { server, requests } = startRegistry({
+        etag,
+        cacheControl: cacheControl === "(absent)" ? undefined : cacheControl,
+      });
+      using _ = server;
+      await setup(server.port);
+
+      await install("1.0.0");
+      await install("1.0.0");
+      expect(requests).toHaveLength(1);
+    },
+  );
+
+  test("a version published to a registry that sends no-cache can be installed at once", async () => {
+    const served = { etag, cacheControl: "no-cache", versions: ["1.0.0"] };
+    const { server, requests } = startRegistry(served);
+    using _ = server;
+    await setup(server.port);
+
+    await install("1.0.0");
+    served.versions.push("1.0.1");
+    served.etag = '"no-deps-manifest-v2"';
+    await install("1.0.1");
+    expect(requests.map(request => request.status)).toStrictEqual([200, 200]);
+  });
+
+  // Debug builds take the time that a cached manifest's age is measured at from the environment.
+  describe.skipIf(!isDebug)("max-age", () => {
+    const installAfter = (seconds: number) => {
+      env = { ...env, BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: String(Math.floor(Date.now() / 1000) + seconds) };
+      return install("1.0.0");
+    };
+
+    test.each([
+      ["max-age=60", 5, 120],
+      ["max-age=31536000", 200, 400],
+    ])("%s: the cached manifest is used after %d seconds and checked after %d", async (cacheControl, early, late) => {
+      const { server, requests } = startRegistry({ etag, cacheControl });
+      using _ = server;
+      await setup(server.port);
+
+      await install("1.0.0");
+      await installAfter(early);
+      expect(requests).toHaveLength(1);
+      await installAfter(late);
+      expect(requests.map(request => request.status)).toStrictEqual([200, 304]);
+    });
   });
 
   // The 304 makes the install rewrite the cache entry from a thread pool task that nothing

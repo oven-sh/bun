@@ -99,6 +99,18 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
+    /// fish makes `<config>/fish/completions` on demand, so a fresh install only has the parent, and
+    /// the search went on to `/etc/fish/completions`. Without the parent (no fish) nothing is made.
+    #[cfg(not(windows))]
+    fn open_fish_user_completions(completions_dir: &[u8]) -> Option<bun_sys::Fd> {
+        bun_sys::open_dir_absolute(completions_dir)
+            .ok()
+            .or_else(|| {
+                bun_sys::mkdir(&bun_core::ZBox::from_bytes(completions_dir), 0o755).ok()?;
+                bun_sys::open_dir_absolute(completions_dir).ok()
+            })
+    }
+
     #[cfg(windows)]
     fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), crate::Error> {
         use bun_core::{WStr, w};
@@ -340,7 +352,7 @@ impl InstallCompletionsCommand {
                             let paths: [&[u8]; 2] = [config_dir, b"./fish/completions"];
                             completions_dir =
                                 resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+                            if let Some(d) = Self::open_fish_user_completions(completions_dir) {
                                 break 'found d;
                             }
                         }
@@ -358,7 +370,7 @@ impl InstallCompletionsCommand {
                             let paths: [&[u8]; 2] = [home_dir, b"./.config/fish/completions"];
                             completions_dir =
                                 resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+                            if let Some(d) = Self::open_fish_user_completions(completions_dir) {
                                 break 'found d;
                             }
                         }
@@ -656,7 +668,8 @@ impl InstallCompletionsCommand {
 
                     // Do they possibly have it in the file already?
                     if strings::contains(contents, completions_path)
-                        || strings::contains(contents, b"# bun completions\n")
+                        || strings::contains(contents, b"# bun completions")
+                        || strings::contains(contents, b"/.bun/_bun")
                     {
                         break 'brk false;
                     }

@@ -3,6 +3,7 @@ use core::cmp::Ordering;
 use crate::Version;
 use crate::query::{Group, Query};
 use crate::range::{Comparator, Op};
+use crate::version::Tag;
 
 #[derive(Clone, Copy)]
 struct Bound<'a> {
@@ -146,5 +147,26 @@ impl Group {
             }
         }
         false
+    }
+
+    /// Whether `self` is satisfied by a version that a comparator of `other` names. An exclusive bound counts
+    /// (`2.0.0` for `^1.0.0`, which is `<2.0.0-0`), and so does the `0.0.0` of an unset comparator.
+    pub fn is_satisfied_by_a_bound_of(
+        &self,
+        self_buf: &[u8],
+        other: &Group,
+        other_buf: &[u8],
+    ) -> bool {
+        other
+            .alternatives()
+            .flat_map(|head| core::iter::successors(Some(head), |query| query.next.as_deref()))
+            .flat_map(|query| [query.range.left, query.range.right])
+            .any(|comparator| {
+                let mut version = comparator.version;
+                if comparator.op == Op::Lt && version.tag.eql(Tag::ZERO_PRE) {
+                    version.tag = Tag::default();
+                }
+                self.satisfies(version, self_buf, other_buf)
+            })
     }
 }

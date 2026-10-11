@@ -12,7 +12,7 @@ use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager::options::Do;
-use bun_install::package_manager::workspace_manifests::DeclaredDependencies;
+use bun_install::package_manager::workspace_manifests::{BrokenMember, DeclaredDependencies};
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
@@ -39,6 +39,7 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
+use crate::cli::outdated_command::{printed, visible_width};
 
 pub(crate) struct TerminalHyperlink<'a> {
     link: &'a [u8],
@@ -153,10 +154,30 @@ struct MultiSelectState<'s> {
     show_workspace: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct TerminalSize {
     height: usize,
     width: usize,
+}
+
+/// Hides the cursor and reports the mouse wheel until dropped.
+struct MouseTracking;
+
+impl MouseTracking {
+    fn enable() -> MouseTracking {
+        Output::print(format_args!("\x1b[?25l")); // hide cursor
+        Output::print(format_args!("\x1b[?1000h")); // Enable basic mouse tracking
+        Output::print(format_args!("\x1b[?1006h")); // Enable SGR extended mouse mode
+        MouseTracking
+    }
+}
+
+impl Drop for MouseTracking {
+    fn drop(&mut self) {
+        Output::print(format_args!("\x1b[?25h")); // show cursor
+        Output::print(format_args!("\x1b[?1000l")); // Disable mouse tracking
+        Output::print(format_args!("\x1b[?1006l")); // Disable SGR extended mouse mode
+    }
 }
 
 impl UpdateInteractiveCommand {
@@ -394,16 +415,10 @@ impl UpdateInteractiveCommand {
                 let version_with_prefix =
                     preserve_version_prefix(original_version, &update.target_version)?;
 
-                // Update the version using hash map put
-                // `Expr::init` would put the `E.String` *node*
-                // in the Store, which `install_with_manager` resets via
-                // `initialize_store()` before re-reading this cached `root`.
-                // Allocate into the entry's own `json_arena` instead so the
-                // node lives as long as the cached AST. The string *bytes* go
-                // through the CLI arena (matches PackageJSONEditor `leak_str`).
+                // Not `Expr::init`: install resets the Store before it reads this cached `root` again.
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
                 let new_expr = Expr::allocate(
-                    &package_json.json_arena,
+                    crate::cli::cli_arena(),
                     E::EString::init(interned),
                     version_query.expr.loc,
                 );
@@ -496,7 +511,7 @@ impl UpdateInteractiveCommand {
             edit_catalog_definitions(
                 &mut updates_for_workspace[..],
                 &mut package_json.root,
-                &package_json.json_arena,
+                crate::cli::cli_arena(),
             )?;
 
             // Save the updated package.json
@@ -743,16 +758,22 @@ impl UpdateInteractiveCommand {
     fn group_catalog_dependencies(
         packages: Vec<OutdatedPackage>,
     ) -> crate::Result<Vec<OutdatedPackage>> {
-        // Create a map to track catalog dependencies by name
+        // One row per catalog entry: `name` or `name:catalog`, the key `update_catalog_definitions` parses.
         let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::default();
 
         let mut result: Vec<OutdatedPackage> = Vec::new();
+        let mut key: Vec<u8> = Vec::new();
 
-        // Group catalog dependencies
         for pkg in packages {
             if pkg.is_catalog {
+                key.clear();
+                key.extend_from_slice(&pkg.name);
+                if let Some(catalog_name) = &pkg.catalog_name {
+                    key.push(b':');
+                    key.extend_from_slice(catalog_name);
+                }
                 let entry = catalog_map
-                    .get_or_put(&pkg.name)
+                    .get_or_put(&key)
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 if !entry.found_existing {
                     *entry.value_ptr = Vec::new();
@@ -830,7 +851,7 @@ impl UpdateInteractiveCommand {
 
         let mut version_buf: String = String::new();
 
-        let declared = DeclaredDependencies::load(manager, workspace_pkg_ids);
+        let declared = DeclaredDependencies::load(manager, workspace_pkg_ids, BrokenMember::Fatal);
         let checked = declared.rows().len();
 
         for row in declared.rows() {
@@ -970,8 +991,13 @@ impl UpdateInteractiveCommand {
             if a_priority != b_priority {
                 return a_priority.cmp(&b_priority);
             }
-            // Then by name
-            strings::order(&a.name, &b.name)
+            // Then by name, then by catalog (the default catalog first)
+            strings::order(&a.name, &b.name).then_with(|| {
+                strings::order(
+                    a.catalog_name.as_deref().unwrap_or(b""),
+                    b.catalog_name.as_deref().unwrap_or(b""),
+                )
+            })
         });
 
         Ok((grouped_result, checked))
@@ -997,11 +1023,11 @@ impl UpdateInteractiveCommand {
                 dev_tag_len = 9; // " optional"
             }
 
-            max_name_len = max_name_len.max(pkg.name.len() + dev_tag_len);
+            max_name_len = max_name_len.max(visible_width(&printed(&pkg.name)) + dev_tag_len);
             max_current_len = max_current_len.max(pkg.current_version.len());
             max_target_len = max_target_len.max(pkg.update_version.len());
             max_latest_len = max_latest_len.max(pkg.latest_version.len());
-            max_workspace_len = max_workspace_len.max(pkg.workspace_name.len());
+            max_workspace_len = max_workspace_len.max(visible_width(&printed(&pkg.workspace_name)));
 
             // Check if we have any non-empty workspace names
             if !pkg.workspace_name.is_empty() {
@@ -1058,16 +1084,18 @@ impl UpdateInteractiveCommand {
         }
     }
 
+    /// The whole terminal; `viewport_height` says how many package rows fit in it.
     fn get_terminal_size() -> TerminalSize {
         // Try to get terminal size
         #[cfg(unix)]
         {
             // TIOCGWINSZ on stdout, routed through the output sink (bun_sys).
-            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize() {
-                // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
-                let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
+            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize()
+                && size.row > 0
+                && size.col > 0
+            {
                 return TerminalSize {
-                    height: usable_height as usize,
+                    height: size.row as usize,
                     width: size.col as usize,
                 };
             }
@@ -1075,63 +1103,71 @@ impl UpdateInteractiveCommand {
         #[cfg(windows)]
         {
             use bun_sys::windows;
-            let handle = match windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
-                Some(h) => h,
-                None => {
-                    return TerminalSize {
-                        height: 20,
-                        width: 80,
-                    };
+            if let Some(handle) = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
+                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+                let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+                // SAFETY: handle is valid; csbi is a valid out-ptr.
+                if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+                    != windows::FALSE
+                {
+                    let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                    let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                    if width > 0 && height > 0 {
+                        return TerminalSize {
+                            height: usize::try_from(height).expect("int cast"),
+                            width: usize::try_from(width).expect("int cast"),
+                        };
+                    }
                 }
-            };
-
-            // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-            // SAFETY: handle is valid; csbi is a valid out-ptr.
-            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                != windows::FALSE
-            {
-                let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-                // Reserve space for prompt + scroll indicators + buffer
-                let usable_height = if height > 6 { height - 4 } else { 20 };
-                return TerminalSize {
-                    height: usize::try_from(usable_height).expect("int cast"),
-                    width: usize::try_from(width).expect("int cast"),
-                };
             }
         }
         TerminalSize {
-            height: 20,
+            height: 24,
             width: 80,
         } // Default fallback
     }
 
-    fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> Box<[u8]> {
-        if text.len() <= max_width {
-            return Box::from(text);
+    /// Package rows that fit next to the help line, two lines per dependency group, the bottom scroll
+    /// indicator and the row the cursor rests on. A taller frame cannot be redrawn in place: cursor-up
+    /// stops at the top of the screen.
+    fn viewport_height(terminal_rows: usize, packages: &[OutdatedPackage]) -> usize {
+        let groups = packages
+            .chunk_by(|a, b| a.dependency_type == b.dependency_type)
+            .count();
+        terminal_rows.saturating_sub(2 * groups + 3).max(1)
+    }
+
+    /// `text` as a cell of at most `max_width` terminal columns prints it.
+    fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> String {
+        use strings::visible::width::exclude_ansi_colors::utf8_index_at_width;
+
+        let text = printed(text);
+        if visible_width(&text) <= max_width {
+            return text;
         }
 
         if max_width <= 3 {
-            return Box::from("…".as_bytes());
+            return "…".to_owned();
         }
 
         // Put ellipsis in the middle to show both start and end of package name
-        let ellipsis = "…".as_bytes();
-        let available_chars = max_width - 1; // Reserve 1 char for ellipsis
-        let start_chars = if only_end {
-            available_chars
+        let available_width = max_width - 1; // Reserve 1 column for ellipsis
+        let start_width = if only_end {
+            available_width
         } else {
-            available_chars / 2
+            available_width / 2
         };
-        let end_chars = available_chars - start_chars;
+        let end_width = available_width - start_width;
 
-        let mut result = vec![0u8; start_chars + ellipsis.len() + end_chars];
-        result[0..start_chars].copy_from_slice(&text[0..start_chars]);
-        result[start_chars..start_chars + ellipsis.len()].copy_from_slice(ellipsis);
-        result[start_chars + ellipsis.len()..].copy_from_slice(&text[text.len() - end_chars..]);
+        let (start, rest) = text.split_at(utf8_index_at_width(text.as_bytes(), start_width));
+        let excess = visible_width(rest).saturating_sub(end_width);
+        let mut cut = utf8_index_at_width(rest.as_bytes(), excess);
+        if visible_width(&rest[..cut]) < excess {
+            // A 2-column character straddles the cut.
+            cut = utf8_index_at_width(rest.as_bytes(), excess + 1);
+        }
 
-        result.into_boxed_slice()
+        [start, "…", &rest[cut..]].concat()
     }
 
     fn prompt_for_updates(packages: &mut [OutdatedPackage]) -> crate::Result<Box<[bool]>> {
@@ -1149,12 +1185,13 @@ impl UpdateInteractiveCommand {
         // Get terminal size for viewport and width optimization
         let terminal_size = Self::get_terminal_size();
 
+        let viewport_height = Self::viewport_height(terminal_size.height, packages);
         let mut state = MultiSelectState {
             packages,
             selected: &mut selected,
             cursor: 0,
             viewport_start: 0,
-            viewport_height: terminal_size.height,
+            viewport_height,
             toggle_all: false,
             max_name_len: columns.name,
             max_current_len: columns.current,
@@ -1211,7 +1248,8 @@ impl UpdateInteractiveCommand {
     fn update_viewport(state: &mut MultiSelectState<'_>) {
         // Ensure cursor is visible with context (2 packages below, 2 above if possible)
         let context_below: usize = 2;
-        let context_above: usize = 1;
+        // A 1-row viewport has no room above the cursor.
+        let context_above: usize = 1usize.min(state.viewport_height - 1);
 
         // If cursor is below viewport
         if state.cursor >= state.viewport_start + state.viewport_height {
@@ -1230,11 +1268,13 @@ impl UpdateInteractiveCommand {
                 {
                     state.cursor - (state.viewport_height - context_below)
                 } else {
-                    0
+                    // Viewport shorter than the context: cursor on the last visible row.
+                    state.cursor.saturating_sub(state.viewport_height - 1)
                 }
             };
 
-            state.viewport_start = desired_start;
+            // Aligning the bottom of a 1-row viewport would scroll past the cursor.
+            state.viewport_start = desired_start.min(state.cursor);
         }
         // If cursor is above viewport
         else if state.cursor < state.viewport_start {
@@ -1279,23 +1319,13 @@ impl UpdateInteractiveCommand {
         Output::flush();
 
         // Enable mouse tracking for scrolling (if terminal supports it)
-        if colors {
-            Output::print(format_args!("\x1b[?25l")); // hide cursor
-            Output::print(format_args!("\x1b[?1000h")); // Enable basic mouse tracking
-            Output::print(format_args!("\x1b[?1006h")); // Enable SGR extended mouse mode
-        }
-        scopeguard::defer! {
-            if colors {
-                Output::print(format_args!("\x1b[?25h")); // show cursor
-                Output::print(format_args!("\x1b[?1000l")); // Disable mouse tracking
-                Output::print(format_args!("\x1b[?1006l")); // Disable SGR extended mouse mode
-            }
-        }
+        let _mouse_tracking = colors.then(MouseTracking::enable);
 
         let mut initial_draw = true;
         let mut reprint_menu = true;
         let mut total_lines: usize = 0;
-        let mut last_terminal_width = initial_terminal_size.width;
+        let mut last_terminal_size = initial_terminal_size;
+        let mut needs_redraw = true;
 
         macro_rules! cleanup_and_reprint {
             ($reprint:expr) => {{
@@ -1323,9 +1353,9 @@ impl UpdateInteractiveCommand {
         loop {
             // Check for terminal resize
             let current_size = Self::get_terminal_size();
-            if current_size.width != last_terminal_width {
+            if current_size != last_terminal_size {
                 // Terminal was resized, update viewport and redraw
-                state.viewport_height = current_size.height;
+                state.viewport_height = Self::viewport_height(current_size.height, state.packages);
                 let columns = Self::calculate_column_widths(state.packages);
                 state.show_workspace = columns.show_workspace && current_size.width > 100;
                 state.max_name_len = columns.name;
@@ -1333,16 +1363,15 @@ impl UpdateInteractiveCommand {
                 state.max_update_len = columns.target;
                 state.max_latest_len = columns.latest;
                 state.max_workspace_len = columns.workspace;
-                last_terminal_width = current_size.width;
+                last_terminal_size = current_size;
                 Self::update_viewport(state);
-                // Force full redraw
-                initial_draw = true;
+                // In place: a fresh frame below the old one would duplicate it.
+                needs_redraw = true;
             }
 
             // The render body
-            {
+            if needs_redraw {
                 let synchronized = Output::synchronized();
-                let _sync_end = scopeguard::guard(synchronized, |s| s.end());
 
                 if !initial_draw {
                     Output::up(total_lines);
@@ -1361,7 +1390,7 @@ impl UpdateInteractiveCommand {
                 );
                 bun_core::prettyln!(
                     "<r><cyan>?<r> Select packages to update<d> - {}<r>",
-                    BStr::new(&elipsised_help_text)
+                    elipsised_help_text
                 );
 
                 // Calculate available space for packages (reserve space for scroll indicators if needed)
@@ -1498,8 +1527,6 @@ impl UpdateInteractiveCommand {
                     } else if pkg.behavior.is_optional() {
                         dev_tag_len = 9; // " optional"
                     }
-                    let total_name_len = pkg.name.len() + dev_tag_len;
-                    let name_padding = state.max_name_len.saturating_sub(total_name_len);
 
                     // Determine version change severity for checkbox color
                     let current_ver_parsed = semver::Version::parse(SlicedString::init(
@@ -1599,6 +1626,9 @@ impl UpdateInteractiveCommand {
                     };
                     let display_name =
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
+                    let name_padding = state
+                        .max_name_len
+                        .saturating_sub(visible_width(&display_name) + dev_tag_len);
 
                     let package_url: Box<[u8]> =
                         if Output::enable_ansi_colors_stdout() && pkg.uses_default_registry {
@@ -1628,7 +1658,7 @@ impl UpdateInteractiveCommand {
 
                     let hyperlink = TerminalHyperlink::new(
                         &package_url,
-                        &display_name,
+                        display_name.as_bytes(),
                         !package_url.is_empty(),
                     );
 
@@ -1666,14 +1696,12 @@ impl UpdateInteractiveCommand {
                         state.max_current_len,
                         false,
                     );
-                    bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_current));
+                    bun_core::pretty!("<r>{}<r>", truncated_current);
 
                     // Print padding after current version (2 spaces)
-                    let current_padding = if truncated_current.len() >= state.max_current_len {
-                        0
-                    } else {
-                        state.max_current_len - truncated_current.len()
-                    };
+                    let current_padding = state
+                        .max_current_len
+                        .saturating_sub(visible_width(&truncated_current));
                     j = 0;
                     while j < current_padding + 2 {
                         Output::print(format_args!(" "));
@@ -1693,8 +1721,7 @@ impl UpdateInteractiveCommand {
                         false,
                     );
 
-                    // For width calculation, use the truncated version string length
-                    let target_width: usize = truncated_target.len();
+                    let target_width: usize = visible_width(&truncated_target);
 
                     if current_ver_parsed.valid && target_ver_parsed.valid {
                         let current_full = semver::Version {
@@ -1716,9 +1743,9 @@ impl UpdateInteractiveCommand {
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        if truncated_target.len() < pkg.update_version.len() {
+                        if truncated_target.as_bytes() != &*pkg.update_version {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
-                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
+                            bun_core::pretty!("<r>{}<r>", truncated_target);
                         } else {
                             // Use diffFmt for full versions
                             bun_core::pretty!(
@@ -1738,7 +1765,7 @@ impl UpdateInteractiveCommand {
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
+                        bun_core::pretty!("<r>{}<r>", truncated_target);
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
                         }
@@ -1789,9 +1816,9 @@ impl UpdateInteractiveCommand {
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        if truncated_latest.len() < pkg.latest_version.len() {
+                        if truncated_latest.as_bytes() != &*pkg.latest_version {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
-                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
+                            bun_core::pretty!("<r>{}<r>", truncated_latest);
                         } else {
                             // Use diffFmt for full versions
                             bun_core::pretty!(
@@ -1819,7 +1846,7 @@ impl UpdateInteractiveCommand {
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
+                        bun_core::pretty!("<r>{}<r>", truncated_latest);
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
                         }
@@ -1830,7 +1857,7 @@ impl UpdateInteractiveCommand {
 
                     // Workspace column
                     if state.show_workspace {
-                        let latest_width: usize = truncated_latest.len();
+                        let latest_width: usize = visible_width(&truncated_latest);
                         let latest_padding = state.max_latest_len.saturating_sub(latest_width);
                         j = 0;
                         while j < latest_padding + 2 {
@@ -1843,7 +1870,7 @@ impl UpdateInteractiveCommand {
                             state.max_workspace_len,
                             true,
                         );
-                        bun_core::pretty!("<r><d>{}<r>", BStr::new(&truncated_workspace));
+                        bun_core::pretty!("<r><d>{}<r>", truncated_workspace);
                     }
 
                     Output::print(format_args!("\x1B[0K\n"));
@@ -1869,6 +1896,7 @@ impl UpdateInteractiveCommand {
 
                 total_lines = lines_displayed + 1;
                 Output::clear_to_end();
+                synchronized.end();
             }
             Output::flush();
 
@@ -1881,6 +1909,7 @@ impl UpdateInteractiveCommand {
                     return Ok(state.selected);
                 }
             };
+            needs_redraw = true;
 
             match byte {
                 b'\n' | b'\r' => {
@@ -2070,6 +2099,9 @@ impl UpdateInteractiveCommand {
                                                     state.viewport_start += scroll_amount;
                                                     Self::ensure_cursor_in_viewport(state);
                                                 }
+                                            } else {
+                                                // A click changes nothing.
+                                                needs_redraw = false;
                                             }
                                         }
                                         break;
@@ -2166,7 +2198,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
     crate::cli::cli_dupe(bytes)
 }
 
-// `bump` is the cache entry's `json_arena`: nodes spliced into the cached `root` must outlive the `initialize_store()` reset that install performs.
+// `bump` is the CLI arena: nodes spliced into the cached `root` must outlive the `initialize_store()` reset that install performs.
 fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,

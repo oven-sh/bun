@@ -1,7 +1,7 @@
 use bun_collections::VecExt;
 use core::mem;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
+use bun_collections::{ArrayHashMap, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, resolve_path};
@@ -145,6 +145,26 @@ fn invalid_trusted_dependencies(
         "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
     );
     crate::Error::InvalidPackageJSON
+}
+
+/// Once per file: the differ parses every workspace package, and one whose dependencies changed
+/// is parsed again, into the same log, when it is re-resolved.
+#[cold]
+fn warn_ignored_patched_dependencies(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    key_loc: bun_ast::Loc,
+) {
+    const TEXT: &[u8] =
+        b"\"patchedDependencies\" is ignored in a workspace package. Move it to the root package.json";
+    let warned = log.msgs.iter().any(|msg| {
+        *msg.data.text == *TEXT
+            && (msg.data.location.as_ref())
+                .is_some_and(|location| *location.file == *source.path.text)
+    });
+    if !warned {
+        log.add_range_warning(Some(source), source.range_of_string(key_loc), TEXT);
+    }
 }
 
 /// A declared `trustedDependencies` (even `[]`) replaces the default list, so the set becomes `Some` as soon as the field exists.
@@ -877,16 +897,6 @@ impl Package<u64> {
 
 pub(crate) struct Diff;
 
-/// A trusted dependency newly added by the current diff. `name` is the exact
-/// byte string the truncated key hash was computed from.
-pub struct AddedTrustedDependency {
-    /// Whether this dependency should be added to lockfile trusted
-    /// dependencies. It is false when the new trusted dependency is coming
-    /// from the default list.
-    pub(crate) add_to_lockfile: bool,
-    pub(crate) name: Box<[u8]>,
-}
-
 #[derive(Default)]
 pub struct DiffSummary {
     pub(crate) add: u32,
@@ -896,9 +906,9 @@ pub struct DiffSummary {
     pub(crate) overrides_changed: bool,
     pub(crate) catalogs_changed: bool,
 
-    pub(crate) added_trusted_dependencies:
-        ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
-    pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
+    /// Trusted now, not when the lockfile was saved: an installed package's blocked scripts run.
+    pub(crate) added_trusted_dependencies: TrustedDependenciesSet,
+    pub(crate) removed_trusted_dependencies: bool,
 
     pub(crate) patched_dependencies_changed: bool,
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
@@ -922,7 +932,7 @@ impl DiffSummary {
     pub(crate) fn has_diffs(&self) -> bool {
         self.changes_resolutions()
             || self.added_trusted_dependencies.count() > 0
-            || self.removed_trusted_dependencies.count() > 0
+            || self.removed_trusted_dependencies
             || self.patched_dependencies_changed
             || self.workspace_versions_changed
     }
@@ -980,16 +990,13 @@ impl Diff {
     ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
-        let named_update_here = match update_requests {
-            Some(updates) if !updates.is_empty() => crate::update_scope::UpdateScope::of(&*pm)
-                .contains_workspace(
-                    from.resolution.tag == ResolutionTag::Root,
-                    from.name_hash,
-                    from.name
-                        .slice(from_lockfile.buffers.string_bytes.as_slice()),
-                ),
-            _ => true,
-        };
+        let named_update_here = pm.update_requests.is_empty()
+            || crate::update_scope::UpdateScope::of(&*pm).contains_workspace(
+                from.resolution.tag == ResolutionTag::Root,
+                from.name_hash,
+                from.name
+                    .slice(from_lockfile.buffers.string_bytes.as_slice()),
+            );
         // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
         // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
@@ -1170,136 +1177,6 @@ impl Diff {
             }
         }
 
-        'trusted_dependencies: {
-            // trusted dependency diff
-            //
-            // situations:
-            // 1 - Both old lockfile and new lockfile use default trusted dependencies, no diffs
-            // 2 - Both exist, only diffs are from additions and removals
-            //
-            // 3 - Old lockfile has trusted dependencies, new lockfile does not. Added are dependencies
-            //     from default list that didn't exist previously. We need to be careful not to add these
-            //     to the new lockfile. Removed are dependencies from old list that
-            //     don't exist in the default list.
-            //
-            // 4 - Old lockfile used the default list, new lockfile has trusted dependencies. Added
-            //     are dependencies are all from the new lockfile. Removed is empty because the default
-            //     list isn't appended to the lockfile.
-
-            // 1
-            if from_lockfile.trusted_dependencies.is_none()
-                && to_lockfile.trusted_dependencies.is_none()
-            {
-                break 'trusted_dependencies;
-            }
-
-            // 2
-            if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_mut(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    // Empty name = legacy bun.lockb hash-only sentinel.
-                    let already_trusted = from_trusted_dependencies
-                        .get_mut(&to_trusted)
-                        .is_some_and(|from_name| {
-                            if from_name.is_empty() && !to_name.is_empty() {
-                                from_name.clone_from(to_name);
-                            }
-                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
-                        });
-                    if !already_trusted {
-                        summary.added_trusted_dependencies.put(
-                            to_trusted,
-                            AddedTrustedDependency {
-                                add_to_lockfile: true,
-                                name: to_name.clone(),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    let still_trusted =
-                        to_trusted_dependencies
-                            .get(&from_trusted)
-                            .is_some_and(|to_name| {
-                                from_name.is_empty()
-                                    || to_name.is_empty()
-                                    || **to_name == **from_name
-                            });
-                    if !still_trusted {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 3
-            if let (Some(from_trusted_dependencies), None) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for entry in default_trusted_dependencies::entries() {
-                    if !from_trusted_dependencies
-                        .contains(&(entry.hash as TruncatedPackageNameHash))
-                    {
-                        // although this is a new trusted dependency, it is from the default
-                        // list so it shouldn't be added to the lockfile
-                        summary.added_trusted_dependencies.put(
-                            entry.hash as TruncatedPackageNameHash,
-                            AddedTrustedDependency {
-                                add_to_lockfile: false,
-                                name: Box::from(entry.key),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 4
-            if let (None, Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // add all to trusted dependencies, even if they exist in default because they weren't in the
-                // lockfile originally
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    summary.added_trusted_dependencies.put(
-                        to_trusted,
-                        AddedTrustedDependency {
-                            add_to_lockfile: true,
-                            name: to_name.clone(),
-                        },
-                    )?;
-                }
-
-                {
-                    // removed
-                    // none
-                }
-
-                break 'trusted_dependencies;
-            }
-        }
-
         summary.patched_dependencies_changed = 'patched_dependencies_changed: {
             if from_lockfile.patched_dependencies.count()
                 != to_lockfile.patched_dependencies.count()
@@ -1447,6 +1324,17 @@ impl Diff {
                         summary.update += 1;
                         continue;
                     }
+                }
+
+                if from_dep.version.tag == dependency::version::Tag::Tarball
+                    && pm.repins_tarball(
+                        from_dep,
+                        from_lockfile.buffers.string_bytes.as_slice(),
+                        named_update_here,
+                    )
+                {
+                    summary.update += 1;
+                    continue;
                 }
 
                 if let Some(mapping) = id_mapping.as_deref_mut() {
@@ -1606,6 +1494,12 @@ impl Diff {
         )) as u32;
         if is_root {
             summary.remove = removed_names.len() as u32;
+            // After the loop: it adds each workspace's `trustedDependencies` to `to_lockfile`.
+            Self::trusted_dependencies(
+                &mut summary,
+                from_lockfile.trusted_dependencies.as_ref(),
+                to_lockfile.trusted_dependencies.as_ref(),
+            )?;
         }
 
         if !missing_workspaces.is_empty() {
@@ -1666,6 +1560,54 @@ impl Diff {
         }
 
         Ok(summary)
+    }
+
+    /// `None` is the default list, which the lockfile never records.
+    fn trusted_dependencies(
+        summary: &mut DiffSummary,
+        from: Option<&TrustedDependenciesSet>,
+        to: Option<&TrustedDependenciesSet>,
+    ) -> crate::Result<()> {
+        // An empty name is the legacy bun.lockb hash-only sentinel.
+        let same = |a: &[u8], b: &[u8]| a.is_empty() || b.is_empty() || a == b;
+        match (from, to) {
+            (None, None) => {}
+            (Some(from), Some(to)) => {
+                for (hash, to_name) in to.iter() {
+                    if !from.get(hash).is_some_and(|name| same(name, to_name)) {
+                        summary
+                            .added_trusted_dependencies
+                            .put(*hash, to_name.clone())?;
+                    }
+                }
+                summary.removed_trusted_dependencies = from
+                    .iter()
+                    .any(|(hash, name)| !to.get(hash).is_some_and(|to_name| same(name, to_name)));
+            }
+            (Some(from), None) => {
+                for entry in default_trusted_dependencies::entries() {
+                    let hash = entry.hash as TruncatedPackageNameHash;
+                    if !from.contains(&hash) {
+                        summary
+                            .added_trusted_dependencies
+                            .put(hash, Box::from(entry.key))?;
+                    }
+                }
+                summary.removed_trusted_dependencies = from
+                    .keys()
+                    .iter()
+                    .any(|&hash| !default_trusted_dependencies::has_with_hash(u64::from(hash)));
+            }
+            // Also an entry that is on the default list: the lockfile did not have it.
+            (None, Some(to)) => {
+                for (hash, to_name) in to.iter() {
+                    summary
+                        .added_trusted_dependencies
+                        .put(*hash, to_name.clone())?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1749,6 +1691,19 @@ impl Package<u64> {
         version: &[u8],
         key_loc: bun_ast::Loc,
     ) -> crate::Result<Option<Dependency>> {
+        // Packages that others publish do have an empty key (#31652).
+        if external_alias.value.is_empty() && (features.is_main || features.is_workspace) {
+            log.add_error_fmt(
+                source,
+                key_loc,
+                format_args!(
+                    "Dependency name cannot be empty (in \"{}\")",
+                    bstr::BStr::new(group.prop)
+                ),
+            );
+            return Err(crate::Error::InstallFailed);
+        }
+
         #[cfg(windows)]
         let external_version = 'brk: {
             match tag.unwrap_or_else(|| {
@@ -1932,6 +1887,7 @@ impl Package<u64> {
                         if version_literal.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)
+                            || features.unchecked_workspace_ranges
                         {
                             dependency_version.value.workspace = path;
                             break 'workspace;
@@ -2614,6 +2570,10 @@ impl Package<u64> {
                     }
                 }
             }
+        } else if FEATURES.is_workspace {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                warn_ignored_patched_dependencies(log, source, patched_deps.loc);
+            }
         }
 
         'bin: {
@@ -2705,6 +2665,16 @@ impl Package<u64> {
         self.scripts.parse_alloc(&mut string_builder, json);
         self.scripts.filled = true;
 
+        // Root packages (the void resolver) keep has_install_script unset.
+        if !resolver.is_void() {
+            let has_scripts = self.scripts.has_any()
+                || self.scripts.wants_default_node_gyp(
+                    source.path.name().dir,
+                    scripts::Gypfile::from_json(json),
+                );
+            self.meta.set_has_install_script(has_scripts);
+        }
+
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
         if FEATURES.check_for_duplicate_dependencies {
             lockfile.scratch.duplicate_checker_map.clear();
@@ -2743,21 +2713,18 @@ impl Package<u64> {
 
         for group in &dependency_groups {
             if group.behavior.is_workspace() {
-                let mut seen_workspace_names: ArrayHashMap<
-                    TruncatedPackageNameHash,
-                    (),
-                    ArrayIdentityContext,
-                > = ArrayHashMap::default();
+                let mut seen_workspace_names = StringSet::init();
                 for (entry, path_) in workspace_names
                     .values()
                     .iter()
                     .zip(workspace_names.keys().iter())
                 {
                     // workspace names from their package jsons. duplicates not allowed
-                    let gop = seen_workspace_names
-                        .get_or_put(semver::string::Builder::string_hash(&entry.name)
-                            as TruncatedPackageNameHash)?;
-                    if gop.found_existing {
+                    if seen_workspace_names
+                        .map
+                        .get_or_put(&entry.name)?
+                        .found_existing
+                    {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.

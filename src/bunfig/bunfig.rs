@@ -150,6 +150,8 @@ struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
+    /// `./bunfig.toml`, which comes with the project: not the user's own file, not `--config`.
+    is_project_file: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -767,6 +769,24 @@ impl<'a> Parser<'a> {
                     self.load_log_level(&expr)?;
                 }
 
+                // Only the package manager reads these two.
+                if self.is_project_file && cmd.is_npm_related() {
+                    for (key, env_var) in [
+                        ("globalDir", "BUN_INSTALL_GLOBAL_DIR"),
+                        ("globalBinDir", "BUN_INSTALL_BIN"),
+                    ] {
+                        if let Some(expr) = install_obj.get(key.as_bytes()) {
+                            self.log.add_warning_fmt(
+                                Some(self.source),
+                                expr.loc,
+                                format_args!(
+                                    "\"{key}\" is ignored in a project's bunfig.toml. Set it in $HOME/.bunfig.toml or in ${env_var}"
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 self.parse_install(&install_obj)?;
             }
 
@@ -1096,6 +1116,7 @@ impl Bunfig {
     pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
+        is_project_file: bool,
         ctx: &mut ContextData,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
@@ -1168,6 +1189,7 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            is_project_file,
         };
         parser.parse(cmd)
     }
@@ -1272,7 +1294,15 @@ impl<'a> Parser<'a> {
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
-        if let Some(cafile) = install_obj.get(b"cafile") {
+        let cafile = install_obj.get(b"cafile");
+        let ca = install_obj.get(b"ca");
+        // `ca` + `cafile` are one setting: a file that sets either replaces both.
+        if cafile.is_some() || ca.is_some() {
+            install.cafile = None;
+            install.ca = None;
+        }
+
+        if let Some(cafile) = cafile {
             install.cafile = match cafile.as_string(self.bump) {
                 Some(s) => Some(s.into()),
                 None => {
@@ -1282,7 +1312,7 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(ca) = install_obj.get(b"ca") {
+        if let Some(ca) = ca {
             match &ca.data {
                 ExprData::EArray(arr) => {
                     let items = arr.items.slice();
@@ -1426,12 +1456,14 @@ impl<'a> Parser<'a> {
         }
         if let Some(v) = install_obj
             .get(b"globalDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
             install.global_dir = Some(v.into());
         }
         if let Some(v) = install_obj
             .get(b"globalBinDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
             install.global_bin_dir = Some(v.into());
@@ -1488,7 +1520,7 @@ impl<'a> Parser<'a> {
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
-                    if seconds.value() < 0.0 {
+                    if !(seconds.value() >= 0.0 && seconds.value().is_finite()) {
                         self.add_error(
                             min_age.loc,
                             b"Expected positive number of seconds for minimumReleaseAge",

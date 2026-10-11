@@ -446,10 +446,7 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
   });
 
   it("should allow safe relative symlinks within the package (install succeeds)", async () => {
-    // This test verifies that safe symlinks don't cause extraction to fail.
-    // Note: Safe symlinks ARE created in the cache during extraction, but bun's
-    // install process doesn't preserve them in the final node_modules.
-    // We verify the install succeeds, which proves safe symlinks are allowed.
+    // Symlink entries are skipped, not treated as an error: the install succeeds.
     const tarball = createTarball([
       { name: "test-package/", type: "dir" },
       {
@@ -522,7 +519,7 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
   });
 
   for (const mode of ["streaming", "buffered"] as const) {
-    it(`writes every directory and file entry inside the package root before creating symlink entries whose names differ only by Unicode normalization (${mode} extraction)`, async () => {
+    it(`writes every directory and file entry at its literal path when symlink entries have names that differ only by Unicode normalization (${mode} extraction)`, async () => {
       let pad = "";
       let seed = `deferred-symlink-pad-${mode}`;
       while (pad.length < 256 * 1024) {
@@ -648,6 +645,103 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
         httpServer.closeAllConnections?.();
         await new Promise<void>(resolve => httpServer.close(() => resolve()));
       }
+    });
+
+    it(`does not materialize symlinks from a GitHub tarball, as npm does not (${mode} extraction)`, async () => {
+      let pad = "";
+      let seed = `skipped-symlink-pad-${mode}`;
+      while (pad.length < 256 * 1024) {
+        seed = createHash("sha256").update(seed).digest("hex");
+        pad += seed;
+      }
+      const tarball = createTarball([
+        { name: "test-package/", type: "dir" },
+        {
+          name: "test-package/package.json",
+          type: "file",
+          content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+        },
+        { name: "test-package/link-to-src", type: "symlink", linkname: "src" },
+        { name: "test-package/src/", type: "dir" },
+        { name: "test-package/src/index.js", type: "file", content: "module.exports = 42;" },
+        { name: "test-package/src/link-to-index", type: "symlink", linkname: "./index.js" },
+        { name: "test-package/nested/deep/", type: "dir" },
+        { name: "test-package/nested/deep/leaf.txt", type: "file", content: "after the links" },
+        { name: "test-package/pad.bin", type: "file", content: pad },
+      ]);
+
+      await using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url);
+          if (!url.pathname.includes("/tarball/")) return new Response("Not Found", { status: 404 });
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                for (let offset = 0; offset < tarball.length; offset += 16 * 1024) {
+                  controller.write(tarball.subarray(offset, offset + 16 * 1024));
+                  await controller.flush();
+                }
+                controller.close();
+              },
+            }),
+            { headers: { "Content-Type": "application/gzip", "Content-Length": String(tarball.length) } },
+          );
+        },
+      });
+
+      using dir = tempDir(`skipped-symlink-${mode}-test`, {
+        "package.json": JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "test-package": "github:user/repo#main" },
+        }),
+      });
+      const installDir = String(dir);
+      const cache = join(installDir, ".bun-cache");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--verbose"],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          GITHUB_API_URL: `http://127.0.0.1:${server.port}`,
+          BUN_INSTALL_CACHE_DIR: cache,
+          BUN_INSTALL_STREAMING_MIN_SIZE: "1024",
+          ...(mode === "buffered" ? { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" } : {}),
+        },
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr.includes("Streamed ")).toBe(mode === "streaming");
+
+      // The linkers drop links on Linux whatever the extractor did, so look at the cache entry.
+      const [entry] = (await readdir(cache)).filter(name => name.startsWith("@GH@"));
+      const listing: string[] = [];
+      const walk = async (rel: string) => {
+        for (const item of await readdir(join(cache, entry, rel), { withFileTypes: true })) {
+          const path = rel ? `${rel}/${item.name}` : item.name;
+          listing.push(item.isSymbolicLink() ? `${path} (link)` : item.isDirectory() ? `${path}/` : path);
+          if (item.isDirectory()) await walk(path);
+        }
+      };
+      await walk("");
+      expect(listing.sort()).toEqual([
+        ".bun-tag",
+        "nested/",
+        "nested/deep/",
+        "nested/deep/leaf.txt",
+        "package.json",
+        "pad.bin",
+        "src/",
+        "src/index.js",
+      ]);
+      expect(
+        await Bun.file(join(installDir, "node_modules", "test-package", "nested", "deep", "leaf.txt")).text(),
+      ).toBe("after the links");
+      expect(exitCode).toBe(0);
     });
   }
 });
@@ -988,6 +1082,7 @@ it.skipIf(isWindows)(
         version: "1.0.0",
         dependencies: { "test-package": "github:user/repo#main" },
       }),
+      ".tmp/.keep": "",
     });
     const installDir = String(dir);
 
@@ -1000,12 +1095,15 @@ it.skipIf(isWindows)(
         ...env,
         GITHUB_API_URL: `http://localhost:${server.port}`,
         BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+        BUN_TMPDIR: join(installDir, ".tmp"),
       },
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain('tarball root directory "pkg.root/extra" is not a valid folder name');
     expect(stdout).not.toContain("1 package installed");
+    // The refusal comes after the extraction.
+    expect(await readdir(join(installDir, ".tmp"))).toEqual([".keep"]);
     expect(exitCode).not.toBe(0);
   },
   60000,

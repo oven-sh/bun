@@ -106,6 +106,7 @@ pub enum Version {
     /// lockfile keeps loading:
     /// - an npm package resolved to a tarball URL outside the configured
     ///   registry must carry a supported integrity hash
+    /// - an integrity hash is a supported one or empty
     /// - a git `.bun-tag` must be a safe path/checkout component (the same
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
@@ -525,11 +526,13 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
+                        let (name, name_hash) =
+                            res.trusted_name((dep.name, dep.name_hash), (pkg_name, pkg_name_hash));
                         if let Some(trusted_name) =
-                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
+                            trusted_dependencies.get(&(name_hash as TruncatedPackageNameHash))
                         {
-                            if **trusted_name == *dep.name.slice(buf) {
-                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            if **trusted_name == *name.slice(buf) {
+                                found_trusted_dependencies.insert(name_hash, name);
                             }
                         }
                     }
@@ -1868,6 +1871,34 @@ fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bu
     JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)
 }
 
+/// bun writes a hash it can check, or nothing. Taking anything else for nothing would turn the check off.
+fn parse_integrity(
+    integrity_str: &[u8],
+    lockfile_version: Version,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+) -> Result<Integrity, ParseError> {
+    let integrity = Integrity::parse(integrity_str);
+    if integrity_str.is_empty() || integrity.tag.is_supported() {
+        return Ok(integrity);
+    }
+    if lockfile_version.at_least(Version::V2) {
+        log.add_error(
+            Some(source),
+            loc,
+            b"Unsupported or malformed integrity hash",
+        );
+        return Err(ParseError::InvalidPackageInfo);
+    }
+    log.add_warning(
+        Some(source),
+        loc,
+        b"Unsupported or malformed integrity hash; ignoring",
+    );
+    Ok(Integrity::default())
+}
+
 pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
@@ -2922,20 +2953,13 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    pkg.meta.integrity = Integrity::parse(integrity_str);
-                    if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
-                        // Surface — don't fail — for npm parity (`npm install`
-                        // proceeds on a malformed lockfile integrity, treating
-                        // it as absent). The download path still applies any
-                        // registry-supplied integrity, so this only loses the
-                        // *lockfile* pin.
-                        log.add_warning(
-                            Some(source),
-                            item_loc(source, key_loc, i),
-                            b"Unsupported or malformed integrity hash; ignoring",
-                        );
-                        pkg.meta.integrity = Integrity::default();
-                    }
+                    pkg.meta.integrity = parse_integrity(
+                        integrity_str,
+                        lockfile_version,
+                        log,
+                        source,
+                        item_loc(source, key_loc, i),
+                    )?;
 
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
@@ -2960,15 +2984,13 @@ pub(crate) fn parse_into_binary_lockfile(
                     // integrity is optional for tarball deps (backward compat)
                     if i < pkg_info.len() {
                         if let Some(integrity_str) = pkg_info[i].as_str() {
-                            pkg.meta.integrity = Integrity::parse(integrity_str);
-                            if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
-                                log.add_warning(
-                                    Some(source),
-                                    item_loc(source, key_loc, i),
-                                    b"Unsupported or malformed integrity hash; ignoring",
-                                );
-                                pkg.meta.integrity = Integrity::default();
-                            }
+                            pkg.meta.integrity = parse_integrity(
+                                integrity_str,
+                                lockfile_version,
+                                log,
+                                source,
+                                item_loc(source, key_loc, i),
+                            )?;
                         }
                     }
                 }
@@ -3024,15 +3046,13 @@ pub(crate) fn parse_into_binary_lockfile(
                     // Optional integrity hash (added to pin tarball content)
                     if i < pkg_info.len() {
                         if let Some(integrity_str) = pkg_info[i].as_str() {
-                            pkg.meta.integrity = Integrity::parse(integrity_str);
-                            if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
-                                log.add_warning(
-                                    Some(source),
-                                    item_loc(source, key_loc, i),
-                                    b"Unsupported or malformed integrity hash; ignoring",
-                                );
-                                pkg.meta.integrity = Integrity::default();
-                            }
+                            pkg.meta.integrity = parse_integrity(
+                                integrity_str,
+                                lockfile_version,
+                                log,
+                                source,
+                                item_loc(source, key_loc, i),
+                            )?;
                         }
                     }
                 }
@@ -3486,7 +3506,7 @@ pub(crate) fn rebind_peers_to_printed_packages(
 }
 
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
-fn may_stay_unresolved(dep: &Dependency) -> bool {
+pub(crate) fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }
 

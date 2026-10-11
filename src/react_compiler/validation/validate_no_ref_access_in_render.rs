@@ -526,6 +526,8 @@ struct Env {
     /// The latest of the rounds that had read what was changed afterwards.
     read_before_change_in: u32,
     data: IdMap<IdentifierId, RefAccessType>,
+    /// What was set to `None` and is not in `data`. Only `get_or_type_of` tells that from what was never set.
+    set_to_none: IdBitSet<IdentifierId>,
     /// By identifier: the one that stands for it in `data`.
     temporaries: Vec<IdentifierId>,
 }
@@ -557,6 +559,7 @@ impl Env {
             read_in: vec![Cell::new(0); env.identifiers.len()],
             read_before_change_in: 0,
             data: IdMap::default(),
+            set_to_none: IdBitSet::default(),
             temporaries: (0..env.identifiers.len() as u32)
                 .map(IdentifierId)
                 .collect(),
@@ -620,12 +623,14 @@ impl Env {
     fn get_or_type_of(&self, key: IdentifierId, place: IdentifierId) -> RefAccessType {
         match self.get(key) {
             Some(ty) => ty.clone(),
+            None if self.set_to_none.contains(self.temporary(key)) => RefAccessType::None,
             None => self.ref_type_of_type(place),
         }
     }
 
     #[inline]
     fn set(&mut self, key: IdentifierId, value: RefAccessType) {
+        // Where no type is a ref's, nothing tells `None` from what was never set.
         if self.has_ref_types || !matches!(value, RefAccessType::None) {
             self.join(key, value);
         }
@@ -635,10 +640,10 @@ impl Env {
         let operand_id = self.temporary(key);
         let current = self.data.get(operand_id);
         match &value {
-            // Joined with it, what is there stays. Where no type is a ref's, not to be there is to be `None`.
+            // Joined with it, what is there stays.
             RefAccessType::None => {
-                if current.is_none() && self.has_ref_types {
-                    self.data.insert(operand_id, value);
+                if current.is_none() {
+                    self.set_to_none.insert(operand_id);
                 }
                 return;
             }

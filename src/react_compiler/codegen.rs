@@ -1509,7 +1509,7 @@ fn codegen_store_or_declare(
             lvalue, value: val, ..
         } => {
             let kind = lvalue.kind;
-            for place in crate::hir::visitors::each_pattern_operand(&lvalue.pattern) {
+            for place in crate::hir::visitors::pattern_operands(&lvalue.pattern) {
                 let ident = &cx.env.identifiers[place.identifier.0 as usize];
                 if kind != InstructionKind::Reassign && ident.name.is_none() {
                     cx.temp.insert(ident.declaration_id, None);

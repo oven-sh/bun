@@ -13,14 +13,14 @@ const SUGGEST_COMMENT: Message =
 impl NoEmpty {
     /// `braces`: a `{ }` without statements or cases. All that can be in it is whitespace and
     /// comments. `place`: where it is reported. `removed`: what oxlint suggests to remove.
-    fn check(braces: Span, place: Span, kind: &'static str, removed: Option<Span>, cx: &Cx<'_, Self>) {
+    fn check(braces: Span, place: Span, kind: &'static str, removed: &dyn Fn() -> Option<Span>, cx: &Cx<'_, Self>) {
         let inside = braces.shrink(1, 1);
         if !strings::is_all_js_whitespace(cx.slice(inside)) {
             return;
         }
         let report = cx.report(place, UNEXPECTED).data("type", kind);
         if cx.language().is_oxlint {
-            report.fix(|fixer| removed.map(|it| fixer.remove(it)));
+            report.fix(|fixer| removed().map(|it| fixer.remove(it)));
             return;
         }
         report.suggest_with(
@@ -41,8 +41,7 @@ impl NoEmpty {
         {
             return;
         }
-        let removed = if cx.language().is_oxlint { removed_by_oxlint(stmt) } else { None };
-        Self::check(stmt.span(), stmt.span(), "block", removed, cx);
+        Self::check(stmt.span(), stmt.span(), "block", &|| removed_by_oxlint(stmt), cx);
     }
 
     fn switch<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -57,11 +56,11 @@ impl NoEmpty {
         let open_brace = skip_trivia(source, close_paren + 1);
         let braces = Span::new(open_brace, stmt.span().end);
         if !cx.language().is_oxlint {
-            return Self::check(braces, braces, "switch", None, cx);
+            return Self::check(braces, braces, "switch", &|| None, cx);
         }
         // oxlint points at the whole statement, which a comment does not fill.
         if strings::is_all_js_whitespace(cx.slice(braces.shrink(1, 1))) {
-            Self::check(braces, stmt.span(), "switch", Some(stmt.span()), cx);
+            Self::check(braces, stmt.span(), "switch", &|| Some(stmt.span()), cx);
         } else {
             cx.report(stmt, UNEXPECTED).data("type", "switch").fix(|fixer| fixer.remove(stmt));
         }

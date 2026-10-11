@@ -39,7 +39,7 @@ use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
 use crate::hir::is_array_type;
 use crate::hir::is_primitive_type;
-use crate::hir::visitors::each_instruction_value_operand;
+use crate::hir::visitors::operands;
 use smallvec::{SmallVec, smallvec};
 
 use crate::reactive_scopes::visitors::ReactiveFunctionTransform;
@@ -523,8 +523,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
             | InstructionValue::UnaryExpression { .. } => {
                 if options.force_memoize_primitives {
                     let level = MemoizationLevel::Conditional;
-                    let operands = each_instruction_value_operand(value, env);
-                    let rvalues: RValues = operands.iter().map(|p| (p.identifier, id)).collect();
+                    let rvalues: RValues = operands(value, &env.functions)
+                        .map(|p| (p.identifier, id))
+                        .collect();
                     let lvalues = if let Some(lv) = lvalue {
                         smallvec![LValueMemoization {
                             place_identifier: lv,
@@ -768,8 +769,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 if no_alias {
                     return (lvalues, smallvec![]);
                 }
-                let operands = each_instruction_value_operand(value, env);
-                for op in &operands {
+                for op in operands(value, &env.functions) {
                     if op.effect.is_mutable() {
                         lvalues.push(LValueMemoization {
                             place_identifier: op.identifier,
@@ -777,7 +777,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         });
                     }
                 }
-                let rvalues: RValues = operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::CallExpression { callee, .. } => {
@@ -792,8 +794,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 if no_alias {
                     return (lvalues, smallvec![]);
                 }
-                let operands = each_instruction_value_operand(value, env);
-                for op in &operands {
+                for op in operands(value, &env.functions) {
                     if op.effect.is_mutable() {
                         lvalues.push(LValueMemoization {
                             place_identifier: op.identifier,
@@ -801,7 +802,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         });
                     }
                 }
-                let rvalues: RValues = operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::MethodCall { property, .. } => {
@@ -816,8 +819,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 if no_alias {
                     return (lvalues, smallvec![]);
                 }
-                let operands = each_instruction_value_operand(value, env);
-                for op in &operands {
+                for op in operands(value, &env.functions) {
                     if op.effect.is_mutable() {
                         lvalues.push(LValueMemoization {
                             place_identifier: op.identifier,
@@ -825,7 +827,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         });
                     }
                 }
-                let rvalues: RValues = operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::RegExpLiteral { .. }
@@ -833,9 +837,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
             | InstructionValue::NewExpression { .. }
             | InstructionValue::ObjectExpression { .. }
             | InstructionValue::PropertyStore { .. } => {
-                let operands = each_instruction_value_operand(value, env);
-                let mut lvalues: LValues = operands
-                    .iter()
+                let mut lvalues: LValues = operands(value, &env.functions)
                     .filter(|op| op.effect.is_mutable())
                     .map(|op| LValueMemoization {
                         place_identifier: op.identifier,
@@ -848,15 +850,15 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Memoized,
                     });
                 }
-                let rvalues: RValues = operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::ObjectMethod { .. } | InstructionValue::FunctionExpression { .. } => {
-                // The canonical each_instruction_value_operand already includes context
+                // The canonical `operands` already includes context
                 // (captured variables) for FunctionExpression/ObjectMethod.
-                let operands = each_instruction_value_operand(value, env);
-                let mut lvalues: LValues = operands
-                    .iter()
+                let mut lvalues: LValues = operands(value, &env.functions)
                     .filter(|op| op.effect.is_mutable())
                     .map(|op| LValueMemoization {
                         place_identifier: op.identifier,
@@ -869,7 +871,9 @@ impl<'a> CollectDependenciesVisitor<'a> {
                         level: MemoizationLevel::Memoized,
                     });
                 }
-                let rvalues: RValues = operands.iter().map(|p| (p.identifier, id)).collect();
+                let rvalues: RValues = operands(value, &env.functions)
+                    .map(|p| (p.identifier, id))
+                    .collect();
                 (lvalues, rvalues)
             }
             InstructionValue::UnsupportedNode { .. } => {

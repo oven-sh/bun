@@ -169,7 +169,7 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
                 ..
             }) => {
                 if state.contains(&destr_value.identifier) {
-                    for operand in hir_visitors::each_pattern_operand(&destr_lvalue.pattern) {
+                    for operand in hir_visitors::pattern_operands(&destr_lvalue.pattern) {
                         let ident = &self.env.identifiers[operand.identifier.0 as usize];
                         let ty = &self.env.types[ident.type_.0 as usize];
                         if is_stable_type(ty) {

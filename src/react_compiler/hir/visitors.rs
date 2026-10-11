@@ -345,21 +345,7 @@ pub type Blocks = SmallVec<[BlockId; 4]>;
 
 /// [`operands`], cloned.
 pub fn each_instruction_value_operand(value: &InstructionValue, env: &Environment) -> Places {
-    each_instruction_value_operand_with_functions(value, &env.functions)
-}
-
-/// Like `each_instruction_value_operand` but takes `functions` directly instead of `env`.
-/// Useful when borrow splitting prevents passing the full `Environment`.
-pub fn each_instruction_value_operand_with_functions(
-    value: &InstructionValue,
-    functions: &[HirFunction],
-) -> Places {
-    operands(value, functions).cloned().collect()
-}
-
-/// [`pattern_operands`], cloned.
-pub fn each_pattern_operand(pattern: &Pattern) -> Places {
-    pattern_operands(pattern).cloned().collect()
+    operands(value, &env.functions).cloned().collect()
 }
 
 /// Returns true if the pattern contains a spread element.
@@ -978,21 +964,11 @@ impl ScopeBlockTraversal {
 // Convenience wrappers: extract IdentifierIds from Places
 // =============================================================================
 
-/// Collect all lvalue IdentifierIds from an instruction.
-pub fn each_instruction_lvalue_ids(instr: &Instruction) -> Ids {
-    lvalues(instr).map(|p| p.identifier).collect()
-}
-
 /// Collect all operand IdentifierIds from an instruction value.
 pub fn each_instruction_value_operand_ids(value: &InstructionValue, env: &Environment) -> Ids {
     operands(value, &env.functions)
         .map(|p| p.identifier)
         .collect()
-}
-
-/// Collect all operand IdentifierIds from a terminal.
-pub fn each_terminal_operand_ids(terminal: &Terminal) -> Ids {
-    terminal_operands(terminal).map(|p| p.identifier).collect()
 }
 
 // =============================================================================

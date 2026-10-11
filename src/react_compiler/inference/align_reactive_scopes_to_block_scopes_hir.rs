@@ -35,9 +35,7 @@ use crate::hir::ScopeId;
 use crate::hir::Terminal;
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
-use crate::hir::visitors::each_instruction_lvalue_ids;
 use crate::hir::visitors::each_instruction_value_operand_ids;
-use crate::hir::visitors::each_terminal_operand_ids;
 
 // =============================================================================
 // ValueBlockNode — stores the valueRange for scope alignment in value blocks
@@ -92,23 +90,12 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
-    // Save original scope ranges BEFORE this pass modifies them.
-    // In TS, identifier.mutableRange and scope.range may or may not be the same
-    // JS object. Only identifiers whose mutableRange IS the scope's range object
-    // (same reference) automatically see scope range modifications. In Rust, we
-    // simulate this by recording original ranges and only syncing identifiers
-    // whose mutableRange matches the original.
-    let original_scope_ranges: Vec<MutableRange> =
-        env.scopes.iter().map(|s| s.range.clone()).collect();
-
     let mut active_block_fallthrough_ranges: Vec<BlockFallthroughRange> = Vec::new();
     let mut active_scopes: HashSet<ScopeId> = HashSet::default();
     let mut seen: HashSet<ScopeId> = HashSet::default();
     let mut value_block_nodes: IdMap<BlockId, ValueBlockNode> = IdMap::new();
 
-    let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
-
-    for &block_id in &block_ids {
+    for (&block_id, block) in &func.body.blocks {
         let starting_id = block_first_id(func, block_id);
 
         // Retain only active scopes whose range.end > startingId
@@ -130,18 +117,14 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
         let node = value_block_nodes.get(block_id).cloned();
 
         // Visit instruction lvalues and operands
-        let block = func.body.blocks.get(&block_id).unwrap();
-        let instr_ids: Vec<crate::hir::InstructionId> =
-            block.instructions.iter().copied().collect();
-        for &instr_id in &instr_ids {
+        for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             let eval_order = instr.id;
 
-            let lvalue_ids = each_instruction_lvalue_ids(instr);
-            for lvalue_id in lvalue_ids {
+            for lvalue in visitors::lvalues(instr) {
                 record_place_id(
                     eval_order,
-                    lvalue_id,
+                    lvalue.identifier,
                     &node,
                     env,
                     &mut active_scopes,
@@ -163,13 +146,11 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
         }
 
         // Visit terminal operands
-        let block = func.body.blocks.get(&block_id).unwrap();
         let terminal_eval_order = block.terminal.evaluation_order();
-        let terminal_operand_ids = each_terminal_operand_ids(&block.terminal);
-        for operand_id in terminal_operand_ids {
+        for operand in visitors::terminal_operands(&block.terminal) {
             record_place_id(
                 terminal_eval_order,
-                operand_id,
+                operand.identifier,
                 &node,
                 env,
                 &mut active_scopes,
@@ -177,7 +158,6 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
             );
         }
 
-        let block = func.body.blocks.get(&block_id).unwrap();
         let terminal = &block.terminal;
         let fallthrough = visitors::terminal_fallthrough(terminal);
         let is_branch = matches!(terminal, Terminal::Branch { .. });
@@ -284,17 +264,16 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
     }
 
     // Sync identifier mutable_range with their scope's range, but ONLY for
-    // identifiers whose mutable_range matched their scope's ORIGINAL range
-    // (before this pass modified it). In TS, identifier.mutableRange and
+    // identifiers whose mutable_range has the identity of their scope's range,
+    // which this pass has not changed. In TS, identifier.mutableRange and
     // scope.range are only the same JS object for identifiers that were the
     // "canonical" representative when the scope was created. Other identifiers
     // in the same scope have independent mutableRange objects that should NOT
     // be updated when the scope's range changes.
     for ident in &mut env.identifiers {
         if let Some(scope_id) = ident.scope {
-            let original = &original_scope_ranges[scope_id.0 as usize];
-            if ident.mutable_range.same_range(original) {
-                let scope_range = &env.scopes[scope_id.0 as usize].range;
+            let scope_range = &env.scopes[scope_id.0 as usize].range;
+            if ident.mutable_range.same_range(scope_range) {
                 ident.mutable_range.start = scope_range.start;
                 ident.mutable_range.end = scope_range.end;
             }

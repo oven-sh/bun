@@ -63,7 +63,7 @@ fn report<'a>(at: Span, message: Message, cx: &Cx<'a, NoUnexpectedMultiline>) {
 
 impl NoUnexpectedMultiline {
     fn check_index<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Index { obj, chain, .. } = e.kind()
+        if let Some((obj, _, chain)) = e.as_index()
             && chain != Chain::Start
             && let Some(open) = break_after(obj)
         {
@@ -72,7 +72,7 @@ impl NoUnexpectedMultiline {
     }
 
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Call(call) = e.kind()
+        if let Some(call) = e.as_call()
             && !call.is_optional()
             && !call.args().is_empty()
             && let Some(open) = match cx.language().is_oxlint && !call.type_args().is_empty() {

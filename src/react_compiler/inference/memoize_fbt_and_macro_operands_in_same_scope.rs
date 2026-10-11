@@ -368,13 +368,7 @@ fn visit_operands(
 ) {
     macro_values.insert(lvalue_id);
 
-    let operand_ids: Vec<IdentifierId> =
-        visitors::each_instruction_value_operand_with_functions(value, &env.functions)
-            .into_iter()
-            .map(|p| p.identifier)
-            .collect();
-
-    for operand_id in operand_ids {
+    for operand_id in visitors::each_instruction_value_operand_ids(value, env) {
         if matches!(macro_def.level, InlineLevel::Transitive) {
             env.identifiers[operand_id.0 as usize].scope = Some(scope_id);
             expand_fbt_scope_range(env, scope_id, operand_id);

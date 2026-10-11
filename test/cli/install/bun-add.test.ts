@@ -3,7 +3,16 @@ import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
 import { join, relative, resolve } from "path";
@@ -18,11 +27,71 @@ import {
   package_dir,
   requested,
   root_url,
+  setGithubRepository,
   setHandler,
+  setUglifyJsRepository,
+  uglifyJsRepositoryFiles,
 } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
+
+// The `owner/repo#ref` dependencies below are downloaded from GITHUB_API_URL. The tests that
+// add them run with it set to the dummy registry, which serves these stand-ins for the real
+// repositories. Each one has the files and package.json fields the tests look at.
+beforeAll(async () => {
+  await Promise.all([
+    setUglifyJsRepository(),
+    setGithubRepository("dylan-conway", "install-test-3", "db5a426", ["v1.0.0"], {
+      "index.js": "",
+    }),
+    setGithubRepository("dylan-conway", "install-test-3", "b67a409", ["v1.0.1"], {
+      "index.js": "",
+      "package.json": JSON.stringify({ description: "hi" }),
+    }),
+    setGithubRepository("dylan-conway", "install-test-3", "506300a", ["v1.0.2"], {
+      "index.js": "",
+      "package.json": JSON.stringify({ name: "", description: "hi" }),
+    }),
+    setGithubRepository("liz3", "empty-bun-repo", "26049f7", [""], {
+      "index.ts": "",
+      "package.json": JSON.stringify({ name: "test-repo", module: "index.ts", type: "module" }),
+    }),
+  ]);
+});
+function githubEnv() {
+  return { ...env, GITHUB_API_URL: root_url };
+}
+
+/**
+ * A git repository on disk standing in for one on a real host. The specifier stays the real one: bun has to turn it
+ * into `clone_url`, which git then rewrites to the local repository (`url.<base>.insteadOf`). A `bun add` spawned with
+ * the returned `env` cannot reach the host: git refuses every transport but `file`.
+ */
+async function hostedGitRepository(clone_url: string, files: Record<string, string>) {
+  const dir = tempDir("git-dep-hosted", files);
+  await $`git init -q && git add -A && git commit -q -m init --no-gpg-sign`
+    .cwd(String(dir))
+    .env({
+      ...env,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    })
+    .quiet();
+  return {
+    env: {
+      ...env,
+      GIT_ALLOW_PROTOCOL: "file",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: `url.${pathToFileURL(String(dir)).href}.insteadOf`,
+      GIT_CONFIG_VALUE_0: clone_url,
+    },
+    [Symbol.dispose]: () => dir[Symbol.dispose](),
+  };
+}
 
 expect.extend({
   toHaveBins,
@@ -946,7 +1015,7 @@ it("should add dependency with package.json in it and http tarball", async () =>
       version: "0.0.1",
 
       dependencies: {
-        booop: `${server.url.href}/booop-0.0.1.tgz`,
+        booop: `${server.url.href}booop-0.0.1.tgz`,
       },
     }),
   );
@@ -993,7 +1062,7 @@ it("should add dependency with package.json in it and http tarball", async () =>
     version: "0.0.1",
     dependencies: {
       bap: "npm:baz@0.0.5",
-      booop: `${server.url.href}/booop-0.0.1.tgz`,
+      booop: `${server.url.href}booop-0.0.1.tgz`,
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -1085,7 +1154,7 @@ it("should add dependency (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err = await stderr.text();
   expect(err).not.toContain("error:");
@@ -1500,7 +1569,7 @@ it("should add aliased dependency (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err = await stderr.text();
   expect(err).not.toContain("error:");
@@ -1581,7 +1650,7 @@ for (const { desc, dep } of gitNameTests) {
       cwd: package_dir,
       stdout: "ignore",
       stderr: "pipe",
-      env,
+      env: githubEnv(),
     });
 
     const err = await stderr.text();
@@ -1599,6 +1668,9 @@ for (const { desc, dep } of gitNameTests) {
 }
 
 it("git dep without package.json and with default branch", async () => {
+  using repo = await hostedGitRepository("https://git@github.com/dylan-conway/install-test-no-packagejson", {
+    "index.js": "",
+  });
   await Bun.write(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1611,7 +1683,7 @@ it("git dep without package.json and with default branch", async () => {
     cwd: package_dir,
     stdout: "ignore",
     stderr: "pipe",
-    env,
+    env: repo.env,
   });
 
   const err = await stderr.text();
@@ -1861,6 +1933,7 @@ it("should install version tagged with `latest` by default", async () => {
 it("should handle Git URL in dependencies (SCP-style)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
+  using repo = await hostedGitRepository("https://bun@github.com/mishoo/UglifyJS.git", uglifyJsRepositoryFiles);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1878,7 +1951,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: repo.env,
   });
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
@@ -1943,7 +2016,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: repo.env,
   });
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
@@ -1957,7 +2030,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-}, 20000);
+});
 
 it("should not save git urls twice", async () => {
   const urls: string[] = [];
@@ -1975,7 +2048,7 @@ it("should not save git urls twice", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
 
   expect(await exited1).toBe(0);
@@ -1991,7 +2064,7 @@ it("should not save git urls twice", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
 
   expect(await exited2).toBe(0);
@@ -2000,7 +2073,7 @@ it("should not save git urls twice", async () => {
   expect(package_json_content2.dependencies).toEqual({
     "test-repo": "https://github.com/liz3/empty-bun-repo",
   });
-}, 20000);
+});
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];
@@ -2246,7 +2319,7 @@ it("should add dependency without duplication (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
@@ -2306,7 +2379,7 @@ it("should add dependency without duplication (GitHub)", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: githubEnv(),
   });
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");

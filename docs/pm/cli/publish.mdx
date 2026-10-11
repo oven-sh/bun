@@ -152,6 +152,10 @@ bun publish --otp 123456
   other automated workflows.
 </Note>
 
+### `--provenance`
+
+`bun publish` cannot generate provenance statements yet: `--provenance`, `--provenance-file`, and a `publishConfig.provenance` other than `false` in `package.json` are errors, so that a package is never published without the statement it asked for.
+
 ---
 
 <Publish />

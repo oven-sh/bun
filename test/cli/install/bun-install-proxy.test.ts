@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { exec } from "child_process";
-import { rm } from "fs/promises";
-import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDir } from "harness";
 import { join } from "path";
 import { promisify } from "util";
 const execAsync = promisify(exec);
@@ -63,14 +62,13 @@ if (isDockerEnabled()) {
           },
         }),
       };
-      const promises = new Array(5);
-      // this repro a hang when using a proxy, we run multiple times to make sure it's not a flaky test
+      // Reproduces a hang behind a proxy (#19771); repeated so that one lucky run does not hide it. One install at
+      // a time: five at once push ~240 CONNECT tunnels through the one squid. The test's timeout catches a hang.
       for (let i = 0; i < 5; i++) {
-        const package_dir = tempDirWithFiles("codex-" + i, files);
-
-        const { exited } = Bun.spawn([bunExe(), "install", "--ignore-scripts"], {
+        using dir = tempDir("codex-" + i, files);
+        const package_dir = String(dir);
+        await using proc = Bun.spawn([bunExe(), "install", "--ignore-scripts"], {
           cwd: package_dir,
-          // @ts-ignore
           env: {
             ...bunEnv,
             BUN_INSTALL_CACHE_DIR: join(package_dir, ".bun-install-cache"),
@@ -79,22 +77,13 @@ if (isDockerEnabled()) {
             HTTPS_PROXY: SQUID_URL,
             HTTP_PROXY: SQUID_URL,
           },
-          stdio: ["inherit", "inherit", "inherit"],
-          timeout: 20_000,
+          stdout: "pipe",
+          stderr: "pipe",
         });
-        promises[i] = exited
-          .then(r => {
-            if (r !== 0) {
-              throw new Error("failed to install with exit code " + r);
-            }
-          })
-          .finally(() => {
-            return rm(package_dir, { recursive: true, force: true });
-          });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ i, stdout, stderr, exitCode }).toEqual({ i, stdout, stderr, exitCode: 0 });
       }
-
-      await Promise.all(promises);
-    }, 60_000);
+    }, 120_000);
   });
 }
 

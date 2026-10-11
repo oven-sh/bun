@@ -2,9 +2,11 @@
 /**
  * Generates the `hoist-*-cycle-*` fixtures used by hoist.test.ts.
  *
- * Each shape is a dependency cycle the hoister can only lay out by nesting:
- * every package in the cycle conflicts with the version of its name one level
- * up, so without a cutoff the tree builder nests copies forever.
+ * Each shape is a dependency cycle on which the tree builder used to nest
+ * copies forever. In hoist-cycle and hoist-optional-peer-cycle every package
+ * conflicts with the version of its name one level up, so no finite
+ * node_modules holds them and `bun install` reports an error.
+ * hoist-bundled-cycle has a finite layout and is installed.
  *
  * hoist-cycle (plain dependencies, two versions of each name):
  *

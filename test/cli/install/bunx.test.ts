@@ -1,9 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, githubTarball, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { chmodSync, copyFileSync, symlinkSync } from "node:fs";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
@@ -74,17 +73,6 @@ function fixturePackage(
   return { name, version, bin: { [binName]: "cli.js" }, files: { "cli.js": binScript } };
 }
 
-/**
- * A .tgz with every entry under `root/`: `package/` for npm tarballs,
- * `<owner>-<repo>-<commit>/` for GitHub's. The directory entry comes first
- * because bun install reads a GitHub tarball's first entry as that root.
- */
-function tarball(root: string, files: Record<string, string>): Promise<Uint8Array<ArrayBuffer>> {
-  const entries: Record<string, string> = { [`${root}/`]: "" };
-  for (const [path, contents] of Object.entries(files)) entries[`${root}/${path}`] = contents;
-  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
-}
-
 function fixtureServer(handler: (pathname: string) => Uint8Array<ArrayBuffer> | object | undefined) {
   const requests: string[] = [];
   const server = Bun.serve({
@@ -123,7 +111,7 @@ async function localRegistry(...packages: FixturePackage[]) {
   for (const { name, version, bin, dependencies, scripts, files } of packages) {
     const tarballPath = `/${name}/-/${name.slice(name.lastIndexOf("/") + 1)}-${version}.tgz`;
     const packageJson = { name, version, bin, dependencies, scripts };
-    tarballs.set(tarballPath, await tarball("package", { "package.json": JSON.stringify(packageJson), ...files }));
+    tarballs.set(tarballPath, await githubTarball("package", { "package.json": JSON.stringify(packageJson), ...files }));
     const manifest = manifests.get(name) ?? { name, versions: {}, "dist-tags": { latest: version } };
     manifest.versions[version] = { ...packageJson, dist: { tarball: `${registry.url}${tarballPath}` } };
     manifest["dist-tags"].latest = version;
@@ -137,21 +125,9 @@ async function localRegistry(...packages: FixturePackage[]) {
  * `/repos/<owner>/<repo>/tarball/<ref>` request gets the one fixture repository.
  */
 async function localGithub(owner: string, repo: string, files: Record<string, string>) {
-  const bytes = await tarball(`${owner}-${repo}-0123abc`, files);
+  const bytes = await githubTarball(`${owner}-${repo}-0123abc`, files);
   return fixtureServer(pathname => (pathname.startsWith(`/repos/${owner}/${repo}/tarball/`) ? bytes : undefined));
 }
-
-beforeAll(async () => {
-  // Clean stale bunx cache dirs from previous runs once up front instead of before every test.
-  const tmp = isWindows ? tmpdir() : "/tmp";
-  const waiting: Promise<void>[] = [];
-  readdirSync(tmp).forEach(file => {
-    if (file.startsWith("bunx-") || file.startsWith("bun-x.test")) {
-      waiting.push(rm(join(tmp, file), { recursive: true, force: true }));
-    }
-  });
-  await Promise.all(waiting);
-});
 
 beforeEach(() => {
   // Sequential tests (the mock-registry suites below) still read these module-level vars.
@@ -207,13 +183,11 @@ it.concurrent("should choose the tagged versions instead of the PATH versions wh
   );
 
   // A `semver` that is first in PATH must lose to the explicitly requested versions.
-  const decoyBinDir = tmpdirSync();
-  if (isWindows) {
-    await writeFile(join(decoyBinDir, "semver.cmd"), "@echo semver from PATH\r\n");
-  } else {
-    await writeFile(join(decoyBinDir, "semver"), '#!/bin/sh\necho "semver from PATH"\n');
-    chmodSync(join(decoyBinDir, "semver"), 0o755);
-  }
+  using decoyBinDir = tempDir(
+    "bunx-decoy-bin",
+    isWindows ? { "semver.cmd": "@echo semver from PATH\r\n" } : { "semver": '#!/bin/sh\necho "semver from PATH"\n' },
+  );
+  if (!isWindows) chmodSync(join(String(decoyBinDir), "semver"), 0o755);
 
   const processes = semverVersions.map(version => {
     return spawn({

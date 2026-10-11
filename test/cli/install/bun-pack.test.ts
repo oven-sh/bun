@@ -4,11 +4,12 @@ import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { chmod, exists, lstat, readdir, rm, symlink, writeFile } from "fs/promises";
 import {
-  MAX_PATH_BYTES,
   bunEnv,
   bunExe,
   isLinux,
+  isRoot,
   isWindows,
+  MAX_PATH_BYTES,
   normalizeBunSnapshot,
   pack,
   runBunInstall,
@@ -990,7 +991,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
   });
 
   // Root can read a mode 000 file, so this one only runs as a regular user.
-  test.concurrent.skipIf(process.getuid?.() === 0)("when one of the files cannot be opened", async () => {
+  test.concurrent.skipIf(isRoot)("when one of the files cannot be opened", async () => {
     await using dir = tempDir("pack-failed-unreadable", {
       "package.json": packageJson,
       "index.js": "module.exports = 1;",
@@ -1029,7 +1030,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
 
   // A destination that cannot even be opened was not written to, so it is left as it is (root can
   // open a read-only file, hence the skip).
-  test.concurrent.skipIf(process.getuid?.() === 0)("keeps a destination it cannot open for writing", async () => {
+  test.concurrent.skipIf(isRoot)("keeps a destination it cannot open for writing", async () => {
     await using dir = tempDir("pack-failed-readonly-dest", {
       "package.json": packageJson,
       "index.js": "module.exports = 1;",

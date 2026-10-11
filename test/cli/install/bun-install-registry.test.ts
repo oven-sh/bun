@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -12226,17 +12226,33 @@ describe("manifest conditional requests", () => {
   const etag = '"no-deps-manifest-v1"';
   const lastModified = "Wed, 21 Oct 2015 07:28:00 GMT";
 
+  /**
+   * An install queues the write of a manifest's cache entry before it asks for the tarball, and nothing waits
+   * for that write. The registry holds the tarball until the entry is on disk, so the install cannot exit first.
+   */
+  async function manifestIsCached(validator: string) {
+    const cacheDir = join(packageDir, ".bun-cache");
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      for (const name of existsSync(cacheDir) ? readdirSync(cacheDir) : []) {
+        if (name.endsWith(".npm") && readFileSync(join(cacheDir, name)).includes(validator)) return;
+      }
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+
   /** `served` is read on every request, so a test can change what the registry serves between installs. */
   function startRegistry(served: { etag?: string; lastModified?: string; versions?: string[] }) {
     const requests: ManifestRequest[] = [];
     const tarballRequests: string[] = [];
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      async fetch(req) {
         const { pathname } = new URL(req.url);
         const tarball = pathname.match(/^\/no-deps\/-\/no-deps-(.+)\.tgz$/);
         if (tarball) {
           tarballRequests.push(tarball[1]);
+          await manifestIsCached(served.etag ?? served.lastModified ?? "no-deps");
           return new Response(
             file(join(import.meta.dir, "registry", "packages", "no-deps", `no-deps-${tarball[1]}.tgz`)),
           );
@@ -12375,8 +12391,7 @@ describe("manifest conditional requests", () => {
     await install("1.0.0");
 
     // The registry's manifest changes because a version was published. Installing it
-    // downloads a tarball after the manifest arrived, which is what gives the rewrite
-    // of the cache entry (nothing waits for it) time to land before the install exits.
+    // downloads a tarball, which arrives once the cache entry is rewritten.
     served.versions.push("1.0.1");
     served.etag = '"no-deps-manifest-v2"';
     await install("1.0.1", "--force");

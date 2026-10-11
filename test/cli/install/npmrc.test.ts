@@ -18,8 +18,24 @@ afterAll(() => {
   registry.stop();
 });
 
-describe("npmrc", async () => {
+describe.concurrent("npmrc", async () => {
   const isBase64Encoded = (opt: string) => opt === "_auth" || opt === "_password";
+
+  // A cache and a user config directory (`<packageDir>/home_dir`, absent unless the case creates it) per
+  // install. These cases delete the bunfig.toml that names a cache, so they would share $BUN_INSTALL_CACHE_DIR,
+  // and an install whose credentials the registry refuses succeeds from what an earlier case downloaded.
+  function installEnv(packageDir: string, extra: Record<string, string> = {}) {
+    const home = join(packageDir, "home_dir");
+    const { NPM_CONFIG_USERCONFIG, ...rest } = env;
+    return {
+      ...rest,
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: home,
+      ...extra,
+    };
+  }
 
   it("should convert to utf8 if BOM", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
@@ -30,16 +46,15 @@ describe("npmrc", async () => {
       rm(join(packageDir, "bunfig.toml"), { force: true }),
     ]);
 
-    const originalCacheDir = env.BUN_INSTALL_CACHE_DIR;
-    delete env.BUN_INSTALL_CACHE_DIR;
+    // It would win over `cache`.
+    const { BUN_INSTALL_CACHE_DIR, ...withoutCacheDir } = installEnv(packageDir);
     const { stdout, stderr, exited } = Bun.spawn({
       cmd: [bunExe(), "pm", "cache"],
       cwd: packageDir,
-      env,
+      env: withoutCacheDir,
       stdout: "pipe",
       stderr: "pipe",
     });
-    env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
 
     const out = await stdout.text();
     const err = await stderr.text();
@@ -63,7 +78,7 @@ describe("npmrc", async () => {
       name: "foo",
       dependencies: {},
     })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+    await Bun.$`${bunExe()} install`.env(installEnv(packageDir)).cwd(packageDir).throws(true);
   });
 
   it("sets default registry", async () => {
@@ -83,7 +98,7 @@ registry = http://localhost:${registry.port}/
         "no-deps": "1.0.0",
       },
     })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+    await Bun.$`${bunExe()} install`.env(installEnv(packageDir)).cwd(packageDir).throws(true);
   });
 
   it("sets scoped registry", async () => {
@@ -102,7 +117,7 @@ registry = http://localhost:${registry.port}/
         "@types/no-deps": "1.0.0",
       },
     })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+    await Bun.$`${bunExe()} install`.env(installEnv(packageDir)).cwd(packageDir).throws(true);
   });
 
   it("works with home config", async () => {
@@ -126,13 +141,7 @@ registry = http://localhost:${registry.port}/
         "no-deps": "1.0.0",
       },
     })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
+    await Bun.$`${bunExe()} install`.env(installEnv(packageDir)).cwd(packageDir).throws(true);
   });
 
   it("works with two configs", async () => {
@@ -161,13 +170,7 @@ registry = http://localhost:${registry.port}/
         "@types/no-deps": "1.0.0",
       },
     })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
+    await Bun.$`${bunExe()} install`.env(installEnv(packageDir)).cwd(packageDir).throws(true);
   });
 
   describe("user .npmrc lookup", () => {
@@ -228,6 +231,13 @@ registry = http://localhost:${registry.port}/
       using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
       const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
       expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent("fails without a user .npmrc, which is what makes the cases above meaningful", async () => {
+      using dir = tempDir("npmrc-xdg-none", { ...pkg, "home/.keep": "", "xdg/.keep": "" });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: join(String(dir), "xdg") });
+      expect(result.stderr).toContain("missing authentication");
+      expect(result.exitCode).toBe(1);
     });
 
     // npm's `userconfig` option: the path of the per-user .npmrc, settable through
@@ -390,7 +400,7 @@ registry = http://localhost:${registry.port}/
     const homeDir = `${packageDir}/home_dir`;
     await Bun.$`mkdir -p ${homeDir}`;
     console.log("home dir", homeDir);
-    const homeIni = /* ini */ "@types:registry=https://registry.npmjs.org/";
+    const homeIni = /* ini */ "@types:registry=http://localhost:1/";
     await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
 
     await Bun.$`echo ${JSON.stringify({
@@ -399,13 +409,7 @@ registry = http://localhost:${registry.port}/
         "@types/no-deps": "1.0.0",
       },
     })} > package.json`.cwd(packageDir);
-    await Bun.$`${bunExe()} install`
-      .env({
-        ...process.env,
-        XDG_CONFIG_HOME: `${homeDir}`,
-      })
-      .cwd(packageDir)
-      .throws(true);
+    await Bun.$`${bunExe()} install`.env(installEnv(packageDir)).cwd(packageDir).throws(true);
   });
 
   it("default registry from env variable", async () => {
@@ -521,7 +525,7 @@ registry = http://localhost:${registry.port}/
       },
     })} > package.json`.cwd(packageDir);
 
-    await Bun.$`${bunExe()} install`.env(env).cwd(packageDir).throws(true);
+    await Bun.$`${bunExe()} install`.env(installEnv(packageDir)).cwd(packageDir).throws(true);
   });
 
   type EnvMap =
@@ -537,7 +541,7 @@ registry = http://localhost:${registry.port}/
     name: string,
     _opts: Record<string, string> | (() => Promise<Record<string, string>>),
     _env?: EnvMap | (() => Promise<EnvMap>),
-    check?: (stdout: string, stderr: string) => void,
+    check?: (stdout: string, stderr: string, exitCode: number) => void,
   ) {
     it(`sets scoped registry option: ${name}`, async () => {
       const { packageDir, packageJson } = await registry.createTestDir();
@@ -581,12 +585,12 @@ ${Object.keys(opts)
         },
       })} > package.json`.cwd(packageDir);
 
-      const { stdout, stderr } = await Bun.$`${bunExe()} install`
-        .env({ ...env, ...restOfEnv })
+      const { stdout, stderr, exitCode } = await Bun.$`${bunExe()} install`
+        .env(installEnv(packageDir, restOfEnv))
         .cwd(packageDir)
         .throws(check === undefined);
 
-      if (check) check(stdout.toString(), stderr.toString());
+      if (check) check(stdout.toString(), stderr.toString(), exitCode);
     });
   }
 
@@ -649,8 +653,11 @@ ${Object.keys(opts)
     {
       dotEnv: { SECRET_AUTH: "" },
     },
-    (stdout: string, stderr: string) => {
+    (stdout: string, stderr: string, exitCode: number) => {
       expect(stderr).toContain("received an empty string");
+      // The empty `_auth` is dropped, so the request carries no credentials and the registry refuses it.
+      expect(stderr).toContain("error: @needs-auth/test-pkg@1.0.0 failed to resolve");
+      expect(exitCode).toBe(1);
     },
   );
 

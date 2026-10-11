@@ -6,11 +6,11 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, readdirSorted, runCommandMaxRSS, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { createGzip, gzipSync } from "node:zlib";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -77,6 +77,18 @@ function tarFile(name: string, body: Buffer): Buffer[] {
   return [tarHeader(name, body.length, "0"), body, pad512(body.length)];
 }
 
+// Bytes gzip can't collapse away, the same on every run (xorshift32).
+function incompressible(bytes: number, seed: number): Buffer {
+  const words = new Uint32Array(bytes / 4);
+  for (let i = 0, x = seed; i < words.length; i++) {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    words[i] = x;
+  }
+  return Buffer.from(words.buffer);
+}
+
 type Entry = { path: string; body: Buffer };
 
 function buildTarball(entries: Entry[]): { tgz: Buffer; shasum: string; integrity: string } {
@@ -110,18 +122,11 @@ function makeEntries(): Entry[] {
       body: Buffer.from("long path ok\n"),
     },
   ];
-  // Bulk entries: SHA-chained bytes so gzip can't collapse them away.
-  // Sized so the compressed tarball exceeds the default
+  // Bulk entries. Sized so the compressed tarball exceeds the default
   // BUN_INSTALL_STREAMING_MIN_SIZE (2 MB) — streaming only commits
   // when Content-Length is above that threshold.
   for (let i = 0; i < 48; i++) {
-    const bytes = Buffer.alloc(48 * 1024);
-    let seed = createHash("sha256").update(`chunk-${i}`).digest();
-    for (let off = 0; off < bytes.length; off += 32) {
-      seed.copy(bytes, off);
-      seed = createHash("sha256").update(seed).digest();
-    }
-    entries.push({ path: `data/chunk-${i}.bin`, body: bytes });
+    entries.push({ path: `data/chunk-${i}.bin`, body: incompressible(48 * 1024, i + 1) });
   }
   return entries;
 }
@@ -237,20 +242,23 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
   };
 }
 
+const installCmd = [bunExe(), "install", "--verbose", "--linker=hoisted"];
+const installEnv = (cwd: string, extraEnv: Record<string, string> = {}) => ({
+  ...bunEnv,
+  BUN_INSTALL_CACHE_DIR: join(cwd, ".cache"),
+  ...extraEnv,
+});
+
 async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+    cmd: installCmd,
     cwd,
-    env: {
-      ...bunEnv,
-      BUN_INSTALL_CACHE_DIR: join(cwd, ".cache"),
-      ...extraEnv,
-    },
+    env: installEnv(cwd, extraEnv),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, resourceUsage: proc.resourceUsage() };
+  return { stdout, stderr, exitCode };
 }
 
 describe("streaming tarball extraction", () => {
@@ -420,6 +428,70 @@ describe("streaming tarball extraction", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Both extractors strip the leading `package/` and normalize the rest, which
+  // drops every `..` that would climb above the root of a relative path. The
+  // buffered extractor has nothing else between an entry name and
+  // openat(extraction_dir, ...).
+  test.concurrent.each([
+    ["streaming", {}],
+    ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+  ] as const)("entries that climb above the package root with .. are clamped to it (%s)", async (label, env) => {
+    const climbing = [
+      "../climb-1.txt",
+      "../../../climb-3.txt",
+      "nested/../../climb-nested.txt",
+      "a/b/../../../climb-ab.txt",
+    ];
+    const built = buildTarball([...entries, ...climbing.map(path => ({ path, body: Buffer.from(`${path}\n`) }))]);
+    expect(built.tgz.length).toBeGreaterThan(2 * 1024 * 1024);
+
+    await using reg = await makeRegistry(built.tgz, built.shasum, built.integrity, chunkBytes);
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-dotdot", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+    });
+    // Entries are extracted under BUN_TMPDIR and the tree is then renamed into
+    // the cache. The temp dir is deeper than the longest `..` chain climbs, so
+    // an entry that escapes still lands where the walk below sees it.
+    const tmp = join(String(dir), "t1", "t2", "t3", "bun-tmp");
+    mkdirSync(tmp, { recursive: true });
+
+    const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_TMPDIR: tmp, TMPDIR: tmp });
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain(label === "streaming" ? "] Streamed " : "] Extracted to ");
+    expect(reg.tarballHits).toBe(1);
+
+    // The clamp keeps the basename: every climbing entry is directly in the package root.
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    const climbed = (await readdirSorted(pkgRoot)).filter(name => name.startsWith("climb-"));
+    expect(climbed.map(name => [name, readFileSync(join(pkgRoot, name), "utf8")])).toEqual([
+      ["climb-1.txt", "../climb-1.txt\n"],
+      ["climb-3.txt", "../../../climb-3.txt\n"],
+      ["climb-ab.txt", "a/b/../../../climb-ab.txt\n"],
+      ["climb-nested.txt", "nested/../../climb-nested.txt\n"],
+    ]);
+    expect(readFileSync(join(pkgRoot, "index.js"), "utf8")).toBe("module.exports = 'ok';\n");
+
+    // Every copy of a climbing entry anywhere under `dir` (node_modules, the
+    // cache, the temp dir) sits in a stream-pkg package root. An escaped one
+    // would have bun-tmp, a t* directory, .cache or `dir` as its parent.
+    const isStreamPkgRoot = (directory: string) => {
+      const manifest = join(directory, "package.json");
+      return existsSync(manifest) && JSON.parse(readFileSync(manifest, "utf8")).name === "stream-pkg";
+    };
+    const strays = readdirSync(String(dir), { recursive: true, withFileTypes: true })
+      .filter(entry => entry.name.startsWith("climb-") && !isStreamPkgRoot(entry.parentPath))
+      .map(entry => relative(String(dir), join(entry.parentPath, entry.name)));
+    expect(strays).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   test("tarballs below BUN_INSTALL_STREAMING_MIN_SIZE take the buffered path", async () => {
     // Reuse the same large tarball but raise the threshold above it.
     // The server sends Content-Length, so `notify()` sees a body_size
@@ -474,6 +546,8 @@ describe("streaming tarball extraction", () => {
 
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
+    expect(readdirSync(join(String(dir), ".cache")).filter(name => name.startsWith("stream-pkg"))).toEqual([]);
+    expect(existsSync(join(String(dir), "node_modules", "stream-pkg"))).toBe(false);
     expect(exitCode).not.toBe(0);
   });
 
@@ -869,7 +943,13 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   // in memory is negligible relative to PAYLOAD_SIZE.
   expect(statSync(tgzPath).size).toBeLessThan(8 * 1024 * 1024);
 
-  const { stderr, exitCode, resourceUsage } = await runInstall(String(dir));
+  // Not runInstall: the maxRSS of a process this test runner spawns directly
+  // also counts the runner's own peak (see runCommandMaxRSS).
+  const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: installCmd,
+    cwd: String(dir),
+    env: installEnv(String(dir)),
+  });
 
   expect(stderr).not.toContain("error:");
   const big = statSync(join(String(dir), "node_modules", "oversized-pkg", "data.bin"));
@@ -878,31 +958,20 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
 
   // The property under test: extraction never held the 256 MiB
   // decompressed tar in memory. With the old pre-decompress path the
-  // child's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
+  // install's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
   // reallocations): ~780 MB release, ~1 GB debug+ASAN. Streaming
   // through libarchive it stays at baseline (~40 MB release, ~240 MB
-  // debug+ASAN), so the midpoint gives wide margin both ways without
-  // needing to branch on build type.
-  // `Subprocess.resourceUsage().maxRSS` is normalised to bytes on every
-  // platform. The > 1 MiB lower bound guards that unit: any bun process
-  // peaks well above 1 MiB in bytes but under 1_048_576 in kB, so a
-  // regression to kB trips the lower bound instead of vacuously passing
-  // the upper one.
-  const maxRssBytes = resourceUsage?.maxRSS ?? 0;
-  expect(maxRssBytes).toBeGreaterThan(1024 * 1024);
-  expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
+  // debug+ASAN, reported as the spawner's ~320 MB floor), so the
+  // midpoint gives wide margin both ways without needing to branch on
+  // build type.
+  expect(maxRSS).toBeLessThan(2 * PAYLOAD_SIZE);
 });
 
 test("streaming extract skips a damaged header block and extracts the entries after it byte-for-byte while more data is still arriving", async () => {
   const pkgJson = Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }) + "\n");
   const before = Buffer.alloc(4 * 1024 * 1024, 0);
   const after = Buffer.alloc(16 * 1024 * 1024, 0);
-  const tail = Buffer.alloc(8 * 1024 * 1024);
-  let seed = createHash("sha512").update("tail.bin").digest();
-  for (let off = 0; off < tail.length; off += seed.length) {
-    seed.copy(tail, off);
-    seed = createHash("sha512").update(seed).digest();
-  }
+  const tail = incompressible(8 * 1024 * 1024, 1);
 
   const damaged = Buffer.alloc(512, 0);
   damaged.write("junk", 0, "utf8");
@@ -965,13 +1034,8 @@ test.concurrent.each([
   const wideMode = Buffer.from([0x80, 0, 0, 0, 0x80, 0, 0x01, 0xed]);
   const root = "owner-repo-abc1234";
   const index = Buffer.from("module.exports = 'ok';\n");
-  // Incompressible bulk so the body spans many reads and streaming commits.
-  const bulk = Buffer.alloc(256 * 1024);
-  let seed = createHash("sha256").update("wide-mode").digest();
-  for (let off = 0; off < bulk.length; off += 32) {
-    seed.copy(bulk, off);
-    seed = createHash("sha256").update(seed).digest();
-  }
+  // So the body spans many reads and streaming commits.
+  const bulk = incompressible(256 * 1024, 1);
   const tgz = gzipSync(
     Buffer.concat([
       tarHeader(`${root}/`, 0, "5"),

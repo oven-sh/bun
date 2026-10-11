@@ -3,6 +3,45 @@ import fs from "fs";
 import { bunEnv, bunExe, isDebug, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
+import npmMetadata from "./yarn/npm-metadata.json";
+
+// After migrating, bun asks the registry for the manifest of every migrated npm package, to fill in the `bin`, `os`
+// and `cpu` that yarn.lock does not record. This registry answers with those fields for the packages of the
+// fixtures that have any, as npm does. Every other name is a 404, and the migration leaves that package as it is.
+let npm: ReturnType<typeof Bun.serve>;
+
+beforeAll(() => {
+  npm = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+      const versions: Record<string, object> | undefined = npmMetadata[name as keyof typeof npmMetadata];
+      if (!versions) return new Response("not found", { status: 404 });
+      return Response.json({
+        name,
+        versions: Object.fromEntries(
+          Object.entries(versions).map(([version, metadata]) => [
+            version,
+            {
+              name,
+              version,
+              ...metadata,
+              dist: { tarball: `${npm.url}${name}/-/${name.split("/").pop()}-${version}.tgz` },
+            },
+          ]),
+        ),
+      });
+    },
+  });
+});
+
+afterAll(() => {
+  npm.stop(true);
+});
+
+function migrateEnv(dir: string | { toString(): string }) {
+  return { ...bunEnv, BUN_CONFIG_REGISTRY: npm.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+}
 
 // After migrating, bun fetches the manifest of every migrated package by the name it recorded,
 // so the registry sees which package each alias was resolved to.
@@ -68,7 +107,7 @@ is-number@^7.0.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -165,7 +204,7 @@ to-fast-properties@^2.0.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -192,18 +231,20 @@ to-fast-properties@^2.0.0:
     expect(bunLockContent).not.toContain("@types/react");
     expect(bunLockContent).not.toContain("�");
 
-    // Install should work after migration
-    const installResult = await Bun.spawn({
-      cmd: [bunExe(), "install"],
+    // The migrated lockfile loads again and still matches package.json
+    await using installResult = Bun.spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
       cwd: tmpDir,
-      env: bunEnv,
-      stdout: "pipe",
+      env: migrateEnv(tmpDir),
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });
 
-    const installExitCode = await installResult.exited;
+    const [installStderr, installExitCode] = await Promise.all([installResult.stderr.text(), installResult.exited]);
+    expect(installStderr).not.toContain("error:");
     expect(installExitCode).toBe(0);
+    expect(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")).toBe(bunLockContent);
   });
 
   test("yarn.lock with extremely long build tags (regression test)", async () => {
@@ -235,7 +276,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -751,7 +792,7 @@ vary@~1.1.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -823,7 +864,7 @@ undici-types@~5.26.4:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1288,7 +1329,7 @@ webpack@^5.89.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1354,7 +1395,7 @@ is-number@^7.0.0:
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache") },
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1453,7 +1494,7 @@ lodash@^4.17.21:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1579,7 +1620,7 @@ babel-loader/chalk@^2.4.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1804,7 +1845,7 @@ webpack@^5.75.0:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1851,7 +1892,7 @@ describe("bun pm migrate for existing yarn.lock", () => {
       await using migrateResult = Bun.spawn({
         cmd: [bunExe(), "pm", "migrate", "-f"],
         cwd: tmpDir,
-        env: bunEnv,
+        env: migrateEnv(tmpDir),
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
@@ -1955,7 +1996,7 @@ fsevents@^2.3.2:
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
       cwd: tmpDir,
-      env: bunEnv,
+      env: migrateEnv(tmpDir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -1973,11 +2014,11 @@ fsevents@^2.3.2:
     const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("os-cpu-yarn-migration");
 
-    // Verify that the lockfile contains the expected os/cpu metadata by checking the snapshot
-    // fsevents should have darwin os constraint, esbuild packages should have arch constraints
-    expect(bunLockContent).toContain("fsevents");
-    expect(bunLockContent).toContain("@esbuild/linux-arm64");
-    expect(bunLockContent).toContain("@esbuild/darwin-arm64");
+    // yarn.lock has none of these fields: they come from the manifests
+    expect(bunLockContent).toContain('["fsevents@2.3.2", "", { "os": "darwin" }');
+    expect(bunLockContent).toContain('["@esbuild/darwin-arm64@0.17.19", "", { "os": "darwin", "cpu": "arm64" }');
+    expect(bunLockContent).toContain('["@esbuild/linux-x64@0.17.19", "", { "os": "linux", "cpu": "x64" }');
+    expect(bunLockContent).toContain('"bin": { "esbuild": "bin/esbuild" }');
   });
 
   test("a peer binds to the highest satisfying version, not the copy yarn.lock resolved its range to", async () => {
@@ -2303,7 +2344,7 @@ async function migrate(dir: string): Promise<MigratedLock & { stderr: string }> 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "pm", "migrate", "-f"],
     cwd: dir,
-    env: bunEnv,
+    env: migrateEnv(dir),
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",

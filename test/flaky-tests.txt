@@ -37,9 +37,7 @@ test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts  # 1 of 8
 test/cli/install/bun-update.test.ts  # 2 of 80 builds; alpine, ubuntu
 test/cli/install/bun-workspaces.test.ts  # 1 of 80 builds; debian; timeout
 test/cli/install/config-precedence.test.ts  # 4 of 80 builds
-test/cli/install/frozen-lockfile-missing-workspace.test.ts  # 2 of 80 builds; mac, debian
 test/cli/install/hoist.test.ts  # 1 of 80 builds; debian
-test/cli/install/migration/complex-workspace.test.ts  # 1 of 80 builds; mac; error: Failed to install
 test/cli/install/migration/migrate.test.ts  # 6 of 80 builds; parallel batch; failed in the parallel batch
 test/cli/install/npmrc.test.ts  # 2 of 80 builds; debian, ubuntu
 test/cli/install/public-hoist-pattern.test.ts  # 2 of 80 builds; ubuntu

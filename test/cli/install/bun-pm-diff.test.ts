@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isRoot, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -886,7 +886,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       try {
         const denied = await run(["./a", "./c"]);
         // root reads anything; everyone else must get a loud failure, not a diff with a hole in it.
-        if (process.getuid?.() !== 0) {
+        if (!isRoot) {
           expect(denied.stderr).toContain("secret.js");
           expect(denied.exitCode).toBe(1);
         }

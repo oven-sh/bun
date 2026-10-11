@@ -1,11 +1,13 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
+import { once } from "events";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rename, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  githubTarball,
   isAndroid,
   isLinux,
   isWindows,
@@ -20,15 +22,19 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { connect, createServer, type AddressInfo } from "net";
+import { connect, createServer, type AddressInfo, type Socket as NetSocket } from "net";
 import { basename, join, relative, resolve, sep } from "path";
+import { pathToFileURL } from "url";
 import {
   createTestContext,
   destroyTestContext,
   dummyAfterAll,
   dummyBeforeAll,
   dummyRegistryForContext,
+  root_url,
   setContextHandler,
+  setGithubRepository,
+  setUglifyJsRepository,
   type TestContext,
 } from "./dummy.registry.js";
 import { constructStdCollision } from "./wyhash-std-collision.js";
@@ -56,11 +62,37 @@ declare module "bun:test" {
 
 setDefaultTimeout(1000 * 60 * 5);
 
-beforeAll(() => {
+beforeAll(async () => {
   dummyBeforeAll();
+  // The `owner/repo#ref` dependencies in this file are downloaded from GITHUB_API_URL. The tests that install
+  // them run with `githubEnv()`, so the dummy registry serves these stand-ins for the real repositories.
+  await Promise.all([
+    setUglifyJsRepository(),
+    setGithubRepository("dylan-conway", "install-test2", "5ed489c", ["", "HEAD"], {
+      "index.js": "",
+      "package.json": JSON.stringify({ name: "install-test2", version: "0.2.0", main: "index.js" }),
+    }),
+    // The real html-minifier depends on seven registry packages. This one depends on `baz`, which the dummy
+    // registry can serve, and which has a bin like `he` and `uglify-js` do.
+    setGithubRepository("kangax", "html-minifier", "4beb325", ["v4.0.0"], {
+      "cli.js": "#!/usr/bin/env node\n",
+      "package.json": JSON.stringify({
+        name: "html-minifier",
+        version: "4.0.0",
+        bin: { "html-minifier": "./cli.js" },
+        main: "src/htmlminifier.js",
+        dependencies: { baz: "^0.0.3" },
+      }),
+      "src/htmlminifier.js": "",
+    }),
+  ]);
 });
 
 afterAll(dummyAfterAll);
+
+function githubEnv() {
+  return { ...env, GITHUB_API_URL: root_url };
+}
 
 // Helper function that sets up test context and ensures cleanup
 async function withContext(
@@ -223,6 +255,31 @@ async function serveTaggedGitPackage(package_json: Record<string, unknown> = {})
 }
 
 /**
+ * A git repository on disk standing in for one on a real host, for the cases whose point is the specifier
+ * (`bitbucket:user/repo`, `git@github.com:user/repo.git`): bun has to turn it into one of `clone_urls`, which git then
+ * rewrites to the local repository (`url.<base>.insteadOf`). An install spawned with the returned `env` cannot reach
+ * the host: git refuses every transport but `file`, so a clone URL that is not listed fails the install.
+ */
+async function hostedGitRepository(clone_urls: string[], files: Record<string, string>) {
+  const dir = tempDir(
+    "git-dep-hosted",
+    Object.fromEntries(Object.entries(files).map(([path, contents]) => [`work/${path}`, contents])),
+  );
+  const sha = await createDumbHttpGitRepo(String(dir), {});
+  const key = `url.${pathToFileURL(join(String(dir), "repo.git")).href}.insteadOf`;
+  const git_config: Record<string, string> = { GIT_ALLOW_PROTOCOL: "file", GIT_CONFIG_COUNT: `${clone_urls.length}` };
+  clone_urls.forEach((url, i) => {
+    git_config[`GIT_CONFIG_KEY_${i}`] = key;
+    git_config[`GIT_CONFIG_VALUE_${i}`] = url;
+  });
+  return {
+    sha,
+    env: { ...env, ...git_config },
+    [Symbol.dispose]: () => dir[Symbol.dispose](),
+  };
+}
+
+/**
  * An HTTP proxy that records every request (plain requests and CONNECT tunnels alike) and refuses all of them with a
  * 404. Spawning an install with the returned `env` routes its traffic, and git's, through the proxy, so a case whose
  * point is an unreachable or made-up host still builds and sends its request but never resolves the host name: a
@@ -261,35 +318,73 @@ function serveDirectory(root: string) {
 }
 
 /**
- * Serves URL dependencies (`http://github.com/<user>/<repo>/tarball/<ref>`, `http://some.url/path?stuff`) without
+ * Serves URL dependencies (`https://github.com/<user>/<repo>/tarball/<ref>`, `https://some.url/path?stuff`) without
  * the network. `bun install` downloads such URLs as-is (there is no `GITHUB_API_URL` equivalent to point at a test
- * server), so the returned `env` instead points the install's `http_proxy` at this server. A proxied plain-http
- * request arrives in absolute form, so `request.url` is the dependency URL itself and the specifiers keep the real
- * hosts bun classifies them by. The dependencies must use `http://`: `https://` would be tunneled (CONNECT) to the
- * real host. Every URL seen is pushed to `urls`. A URL registered with a file map is answered with a gzipped tarball of
- * those files, one registered with a `Response` (e.g. a redirect) with that response, anything else with a 404. The
- * context's registry bypasses the proxy, so its `urls`/`requested` are unaffected.
+ * server), so the returned `env` sets `https_proxy` to a CONNECT proxy that opens every tunnel to one local TLS server
+ * instead of the host it was asked for. The specifiers keep the real hosts bun classifies them by, and the server
+ * sees them: `request.url` is the dependency URL. `targets` holds the `host:port` of every tunnel and `urls` every URL
+ * requested. A URL registered with tarball bytes is answered with them, one registered with a `Response` (e.g. a
+ * redirect) with that response, anything else with a 404. The context's registry is plain http and bypasses the proxy,
+ * so its `urls`/`requested` are unaffected.
  */
-function urlTarballProxy(
-  ctx: TestContext,
-  urls: string[],
-  responses: Record<string, Record<string, string> | Response>,
-) {
-  const server = Bun.serve({
+async function urlTarballProxy(ctx: TestContext, urls: string[], responses: Record<string, Uint8Array | Response>) {
+  const origin = Bun.serve({
     port: 0,
-    async fetch(request) {
+    tls,
+    fetch(request) {
       urls.push(request.url);
       const registered = responses[request.url];
       if (!registered) return new Response(`nothing registered for ${request.url}`, { status: 404 });
-      if (registered instanceof Response) return registered.clone();
-      return new Response(await new Bun.Archive(registered, { compress: "gzip" }).bytes());
+      return registered instanceof Response ? registered.clone() : new Response(registered);
     },
   });
-  const proxy_url = server.url.href.replace(/\/+$/, "");
+
+  const targets: string[] = [];
+  const sockets = new Set<NetSocket>();
+  const proxy = createServer(client => {
+    sockets.add(client);
+    client.on("error", () => {});
+    client.on("close", () => sockets.delete(client));
+    let head = "";
+    client.on("data", function onData(chunk: Buffer) {
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      client.off("data", onData);
+      // `pipe()` below resumes the socket once the upstream is connected.
+      client.pause();
+      targets.push(head.split(" ")[1]);
+      const upstream = connect(origin.port!, "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+      sockets.add(upstream);
+      upstream.on("error", () => client.destroy());
+      upstream.on("close", () => sockets.delete(upstream));
+      client.on("close", () => upstream.destroy());
+    });
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+
+  const proxy_url = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
   const registry_host = new URL(ctx.registry_url).hostname;
   return {
-    env: { ...env, http_proxy: proxy_url, HTTP_PROXY: proxy_url, no_proxy: registry_host, NO_PROXY: registry_host },
-    [Symbol.asyncDispose]: () => server.stop(true),
+    targets,
+    env: {
+      ...env,
+      https_proxy: proxy_url,
+      HTTPS_PROXY: proxy_url,
+      no_proxy: registry_host,
+      NO_PROXY: registry_host,
+      // The local server's certificate is not for github.com.
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+    },
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      proxy.close();
+      await Promise.all([once(proxy, "close"), origin.stop(true)]);
+    },
   };
 }
 
@@ -3160,7 +3255,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       var err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -3180,7 +3275,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       }));
       err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -3200,7 +3295,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       }));
       err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -3220,7 +3315,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       }));
       err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -4650,7 +4745,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -4709,7 +4804,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -4779,7 +4874,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -4837,6 +4932,19 @@ describe.concurrent("bun-install", () => {
       "git@bitbucket.org:dylan-conway/public-install-test",
     ];
 
+    let repo: Awaited<ReturnType<typeof hostedGitRepository>>;
+    beforeAll(async () => {
+      repo = await hostedGitRepository(
+        [
+          "https://bitbucket.org/dylan-conway/public-install-test",
+          "https://bitbucket.com/dylan-conway/public-install-test",
+          "https://git@bitbucket.org/dylan-conway/public-install-test",
+        ],
+        { "package.json": JSON.stringify({ name: "publicinstalltest", version: "1.0.0" }) },
+      );
+    });
+    afterAll(() => repo[Symbol.dispose]());
+
     for (const dep of deps) {
       it(`install ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
@@ -4858,7 +4966,7 @@ describe.concurrent("bun-install", () => {
             stdout: "pipe",
             stdin: "pipe",
             stderr: "pipe",
-            env,
+            env: repo.env,
           });
 
           const err = await stderr.text();
@@ -4867,7 +4975,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun install v1."),
             "",
-            `+ public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
+            `+ public-install-test@git+ssh://${dep}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -4894,7 +5002,7 @@ describe.concurrent("bun-install", () => {
             stdout: "pipe",
             stdin: "pipe",
             stderr: "pipe",
-            env,
+            env: repo.env,
           });
 
           const err = await stderr.text();
@@ -4903,7 +5011,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
-            `installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
+            `installed publicinstalltest@git+ssh://${dep}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -4917,6 +5025,14 @@ describe.concurrent("bun-install", () => {
   describe("should handle gitlab git dependencies", () => {
     const deps = ["gitlab:dylan-conway/public-install-test", "gitlab.com:dylan-conway/public-install-test"];
 
+    let repo: Awaited<ReturnType<typeof hostedGitRepository>>;
+    beforeAll(async () => {
+      repo = await hostedGitRepository(["https://gitlab.com/dylan-conway/public-install-test"], {
+        "package.json": JSON.stringify({ name: "public-install-test", version: "1.0.0" }),
+      });
+    });
+    afterAll(() => repo[Symbol.dispose]());
+
     for (const dep of deps) {
       it(`install ${dep}`, async () => {
         await withContext(defaultOpts, async ctx => {
@@ -4938,7 +5054,7 @@ describe.concurrent("bun-install", () => {
             stdout: "pipe",
             stdin: "pipe",
             stderr: "pipe",
-            env,
+            env: repo.env,
           });
 
           const err = await stderr.text();
@@ -4947,7 +5063,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun install v1."),
             "",
-            `+ public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+            `+ public-install-test@git+ssh://${dep}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -4974,7 +5090,7 @@ describe.concurrent("bun-install", () => {
             stdout: "pipe",
             stdin: "pipe",
             stderr: "pipe",
-            env,
+            env: repo.env,
           });
 
           const err = await stderr.text();
@@ -4983,7 +5099,7 @@ describe.concurrent("bun-install", () => {
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             expect.stringContaining("bun add v1."),
             "",
-            `installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+            `installed public-install-test@git+ssh://${dep}#${repo.sha}`,
             "",
             expect.stringContaining("installed"),
           ]);
@@ -5014,7 +5130,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -5087,7 +5203,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -5146,7 +5262,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -5219,7 +5335,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
@@ -5258,37 +5374,39 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // github.com answers /tarball/ URLs with a redirect to codeload.github.com, whose tarballs have a single
+  // `<user>-<repo>-<short commit>` root directory. Both variants below serve this one tarball.
+  const when_tarball = githubTarball("cujojs-when-1a2b3c4", {
+    ".gitignore": "",
+    ".gitmodules": "",
+    "LICENSE.txt": "",
+    "README.md": "",
+    "apply.js": "",
+    "cancelable.js": "",
+    "delay.js": "",
+    "package.json": JSON.stringify({ name: "when", version: "1.0.2" }),
+    "test/when-test.js": "",
+    "timed.js": "",
+    "timeout.js": "",
+    "when.js": "",
+  });
+
   // The second variant also sets GITHUB_API_URL: it only applies to `github:` dependencies, so the tarball URL
-  // must still be fetched verbatim (any request reaching the local stand-in would show up in `urls`).
+  // must still be fetched verbatim (a request to it would show up in `proxied_urls` and `proxy.targets`).
   for (const with_github_api_url of [false, true]) {
     it(
-      "should handle GitHub tarball URL in dependencies (http://github.com/user/repo/tarball/ref)" +
+      "should handle GitHub tarball URL in dependencies (https://github.com/user/repo/tarball/ref)" +
         (with_github_api_url ? " with custom GITHUB_API_URL" : ""),
       async () => {
         await withContext(defaultOpts, async ctx => {
           const urls: string[] = [];
           setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-          const tarball_url = "http://github.com/cujojs/when/tarball/1.0.2";
-          // github.com answers /tarball/ URLs with a redirect to codeload.github.com, whose tarballs have a single
-          // `<user>-<repo>-<short commit>` root directory.
-          const codeload_url = "http://codeload.github.com/cujojs/when/legacy.tar.gz/refs/tags/1.0.2";
+          const tarball_url = "https://github.com/cujojs/when/tarball/1.0.2";
+          const codeload_url = "https://codeload.github.com/cujojs/when/legacy.tar.gz/refs/tags/1.0.2";
           const proxied_urls: string[] = [];
-          await using proxy = urlTarballProxy(ctx, proxied_urls, {
+          await using proxy = await urlTarballProxy(ctx, proxied_urls, {
             [tarball_url]: new Response(null, { status: 302, headers: { Location: codeload_url } }),
-            [codeload_url]: {
-              "cujojs-when-1a2b3c4/.gitignore": "",
-              "cujojs-when-1a2b3c4/.gitmodules": "",
-              "cujojs-when-1a2b3c4/LICENSE.txt": "",
-              "cujojs-when-1a2b3c4/README.md": "",
-              "cujojs-when-1a2b3c4/apply.js": "",
-              "cujojs-when-1a2b3c4/cancelable.js": "",
-              "cujojs-when-1a2b3c4/delay.js": "",
-              "cujojs-when-1a2b3c4/package.json": JSON.stringify({ name: "when", version: "1.0.2" }),
-              "cujojs-when-1a2b3c4/test/when-test.js": "",
-              "cujojs-when-1a2b3c4/timed.js": "",
-              "cujojs-when-1a2b3c4/timeout.js": "",
-              "cujojs-when-1a2b3c4/when.js": "",
-            },
+            [codeload_url]: await when_tarball,
           });
           await writeFile(
             join(ctx.package_dir, "package.json"),
@@ -5306,7 +5424,7 @@ describe.concurrent("bun-install", () => {
             stdout: "pipe",
             stdin: "pipe",
             stderr: "pipe",
-            env: with_github_api_url ? { ...proxy.env, GITHUB_API_URL: `${ctx.registry_url}github/api` } : proxy.env,
+            env: with_github_api_url ? { ...proxy.env, GITHUB_API_URL: "https://example.com/github/api" } : proxy.env,
           });
           const err = await stderr.text();
           expect(err).toContain("Saved lockfile");
@@ -5322,6 +5440,7 @@ describe.concurrent("bun-install", () => {
           ]);
           expect(await exited).toBe(0);
           expect(proxied_urls).toEqual([tarball_url, codeload_url]);
+          expect(proxy.targets).toEqual(["github.com:443", "codeload.github.com:443"]);
           expect(urls.sort()).toBeEmpty();
           expect(ctx.requested).toBe(0);
           expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "when"]);
@@ -5347,7 +5466,7 @@ describe.concurrent("bun-install", () => {
     );
   }
 
-  it("should treat non-GitHub http(s) URLs as tarballs (http://some.url/path?stuff)", async () => {
+  it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuff)", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       setContextHandler(
@@ -5356,18 +5475,21 @@ describe.concurrent("bun-install", () => {
           "4.3.0": { as: "4.3.0" },
         }),
       );
-      const tarball_url = "http://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2";
+      const tarball_url = "https://gitpkg-fork.vercel.sh/vercel/turbo/crates/turbopack-node/js?turbopack-230922.2";
       const proxied_urls: string[] = [];
-      await using proxy = urlTarballProxy(ctx, proxied_urls, {
-        [tarball_url]: {
-          "package/package.json": JSON.stringify({
-            name: "@vercel/turbopack-node",
-            version: "0.0.0",
-            dependencies: { "loader-runner": "^4.3.0" },
-          }),
-          "package/src/index.ts": "",
-          "package/tsconfig.json": "{}",
-        },
+      await using proxy = await urlTarballProxy(ctx, proxied_urls, {
+        [tarball_url]: await new Bun.Archive(
+          {
+            "package/package.json": JSON.stringify({
+              name: "@vercel/turbopack-node",
+              version: "0.0.0",
+              dependencies: { "loader-runner": "^4.3.0" },
+            }),
+            "package/src/index.ts": "",
+            "package/tsconfig.json": "{}",
+          },
+          { compress: "gzip" },
+        ).bytes(),
       });
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -5401,6 +5523,7 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited).toBe(0);
       expect(proxied_urls).toEqual([tarball_url]);
+      expect(proxy.targets).toEqual(["gitpkg-fork.vercel.sh:443"]);
       expect(urls.sort()).toEqual([`${ctx.registry_url}loader-runner`, `${ctx.registry_url}loader-runner-4.3.0.tgz`]);
       expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
@@ -5468,15 +5591,7 @@ describe.concurrent("bun-install", () => {
   it("should handle GitHub URL with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
-      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-      await writeFile(
-        join(ctx.package_dir, "bunfig.toml"),
-        `
-  [install]
-  cache = false
-  saveTextLockfile = false
-  `,
-      );
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": { bin: { "baz-run": "index.js" } } }));
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -5497,7 +5612,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err1 = await new Response(stderr1).text();
       expect(err1).toContain("Saved lockfile");
@@ -5507,38 +5622,24 @@ describe.concurrent("bun-install", () => {
         "",
         "+ html-minifier@github:kangax/html-minifier#4beb325",
         "",
-        "12 packages installed",
+        "2 packages installed",
       ]);
       expect(await exited1).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(ctx.requested).toBe(2);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
         ".bin",
         ".cache",
-        "camel-case",
-        "clean-css",
-        "commander",
-        "he",
+        "baz",
         "html-minifier",
-        "lower-case",
-        "no-case",
-        "param-case",
-        "relateurl",
-        "source-map",
-        "uglify-js",
-        "upper-case",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
+        "baz-run",
         "html-minifier",
-        "uglifyjs",
       ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
         join("..", "html-minifier", "cli.js"),
-      );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
       );
       await access(join(ctx.package_dir, "bun.lockb"));
       // Perform `bun install` again but with lockfile from before
@@ -5554,7 +5655,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: githubEnv(),
       });
       const err2 = await new Response(stderr2).text();
       expect(err2).not.toContain("Saved lockfile");
@@ -5564,38 +5665,24 @@ describe.concurrent("bun-install", () => {
         "",
         "+ html-minifier@github:kangax/html-minifier#4beb325",
         "",
-        "12 packages installed",
+        "2 packages installed",
       ]);
       expect(await exited2).toBe(0);
-      expect(urls.sort()).toBeEmpty();
-      expect(ctx.requested).toBe(0);
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz-0.0.3.tgz`]);
+      expect(ctx.requested).toBe(3);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
         ".bin",
         ".cache",
-        "camel-case",
-        "clean-css",
-        "commander",
-        "he",
+        "baz",
         "html-minifier",
-        "lower-case",
-        "no-case",
-        "param-case",
-        "relateurl",
-        "source-map",
-        "uglify-js",
-        "upper-case",
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
+        "baz-run",
         "html-minifier",
-        "uglifyjs",
       ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
         join("..", "html-minifier", "cli.js"),
-      );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
       );
       await access(join(ctx.package_dir, "bun.lockb"));
     });
@@ -6143,22 +6230,25 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // The two cases below clone dylan-conway/install-test2 from GitHub: a one-commit repository holding an index.js and
-  // a package.json with no dependencies (the file's other git cases use repositories served from the test itself;
-  // these two keep covering the real URL forms end to end). `printed` is how bun echoes the specifier back.
-  async function expectInstallTest2Installed(ctx: TestContext, out: string, printed: string) {
-    const lines = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/);
-    expect(lines).toEqual([
+  // The two cases below keep the URL forms of a repository on GitHub, dylan-conway/install-test2: a one-commit
+  // repository holding an index.js and a package.json with no dependencies. `clone_url` is what bun has to ask git for.
+  function installTest2Repository(clone_url: string) {
+    return hostedGitRepository([clone_url], {
+      "index.js": "",
+      "package.json": JSON.stringify({ name: "install-test2", version: "0.2.0", main: "index.js" }),
+    });
+  }
+
+  // `printed` is how bun echoes the specifier back. No committish was given, so the commit that is checked out is
+  // HEAD (`sha`): it is reported in the summary and has to be the one tagged in the checkout and in the cache.
+  async function expectInstallTest2Installed(ctx: TestContext, out: string, printed: string, sha: string) {
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      expect.stringContaining(`+ install-test2@${printed}#`),
+      `+ install-test2@${printed}#${sha}`,
       "",
       "1 package installed",
     ]);
-    // No committish was given, so the commit that was checked out is whatever HEAD was; it is reported in the
-    // summary and has to be the one tagged in the checkout and in the cache.
-    const sha = lines[2].slice(lines[2].indexOf("#") + 1);
-    expect(sha).toMatch(/^[0-9a-f]{40}$/);
     expect(ctx.requested).toBe(0);
     expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "install-test2"]);
     expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".cache"))).toEqual([
@@ -6183,6 +6273,7 @@ describe.concurrent("bun-install", () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      using repo = await installTest2Repository("https://git@github.com/dylan-conway/install-test2.git");
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -6199,14 +6290,14 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: repo.env,
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       const out = await stdout.text();
       expect(await exited).toBe(0);
       expect(urls).toBeEmpty();
-      await expectInstallTest2Installed(ctx, out, "git+https://git@github.com/dylan-conway/install-test2.git");
+      await expectInstallTest2Installed(ctx, out, "git+https://git@github.com/dylan-conway/install-test2.git", repo.sha);
     });
   });
 
@@ -6214,6 +6305,7 @@ describe.concurrent("bun-install", () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      using repo = await installTest2Repository("https://github.com/dylan-conway/install-test2.git");
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -6230,14 +6322,14 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: repo.env,
       });
       const err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       const out = await stdout.text();
       expect(await exited).toBe(0);
       expect(urls).toBeEmpty();
-      await expectInstallTest2Installed(ctx, out, "git+ssh://github.com:dylan-conway/install-test2.git");
+      await expectInstallTest2Installed(ctx, out, "git+ssh://github.com:dylan-conway/install-test2.git", repo.sha);
     });
   });
 
@@ -8173,6 +8265,34 @@ describe.concurrent("bun-install", () => {
   [install]
   cache = false
   `,
+      );
+      // The lockfile pins the integrity of 112 real packages, so no stand-in registry can serve them. This case is
+      // about what happens after the download: every package is already in the cache (`cache = false` keeps it in
+      // node_modules/.cache) as a package.json plus the files the lockfile's bins point at.
+      await using printed = spawn({
+        cmd: [bunExe(), "bun.lockb"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "inherit",
+        env,
+      });
+      const bin_files: Record<string, string[]> = {
+        prettier: ["bin-prettier.js"],
+        resolve: ["bin/resolve"],
+        semver: ["bin/semver", "bin/semver.js"],
+        tsd: ["dist/cli.js"],
+        typescript: ["bin/tsc", "bin/tsserver"],
+      };
+      const locked = [...(await printed.stdout.text()).matchAll(/^"?(@?[^@"\n]+)@.*:\r?\n  version "([^"]+)"/gm)];
+      expect(locked).toHaveLength(112);
+      await Promise.all(
+        locked.flatMap(([, name, version]) => {
+          const cached = join(ctx.package_dir, "node_modules", ".cache", `${name}@${version}@@@1`);
+          return [
+            write(join(cached, "package.json"), JSON.stringify({ name, version })),
+            ...(bin_files[name] ?? []).map(path => write(join(cached, path), "#!/usr/bin/env node\n")),
+          ];
+        }),
       );
       const {
         stdout: stdout1,
@@ -10152,6 +10272,9 @@ describe.concurrent("bun-install", () => {
 
   it("should handle modified git resolutions in bun.lock", async () => {
     await withContext(defaultOpts, async ctx => {
+      using repo = await hostedGitRepository(["https://git@github.com/dylan-conway/install-test-8.git"], {
+        "package.json": JSON.stringify({ name: "install-test-eight", version: "2.2.2", dependencies: { jquery: "3.7.1" } }),
+      });
       // install-test-8 has a dependency but because it's not in the lockfile
       // it won't be included in the install.
       const lockfile = JSON.stringify({
@@ -10166,9 +10289,9 @@ describe.concurrent("bun-install", () => {
         },
         "packages": {
           "jquery": [
-            "jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",
+            `jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#${repo.sha}`,
             {},
-            "3a1288830817d13da39e9231302261896f8721ea",
+            repo.sha,
           ],
         },
       });
@@ -10191,7 +10314,7 @@ describe.concurrent("bun-install", () => {
         cwd: ctx.package_dir,
         stdout: "pipe",
         stderr: "pipe",
-        env,
+        env: repo.env,
       });
 
       const err = await stderr.text();

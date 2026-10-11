@@ -1161,7 +1161,7 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
         return false;
     }
     for &call_expression in &call_expressions {
-        let Some(call) = call_expression.call() else {
+        let Some(call) = call_expression.as_call_like() else {
             continue;
         };
         let has_comment_around_argument = !call.args().is_empty()
@@ -1246,7 +1246,7 @@ pub(crate) fn is_short_argument<'a>(
             let raw = template.raw(0);
             template.quasi_count() == 1 && len(raw) <= threshold && bun_core::strings::index_of_any(raw, b"\r\n").is_none()
         }),
-        AstNodes::CallExpression(_) => argument.call().is_some_and(|call| {
+        AstNodes::CallExpression(_) => argument.as_call_like().is_some_and(|call| {
             let callee = call.callee();
             call.args().is_empty()
                 && matches!(callee.kind(), ExprKind::Ident(_))

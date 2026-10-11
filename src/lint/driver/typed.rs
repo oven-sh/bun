@@ -18,6 +18,7 @@ use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
     Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
@@ -192,13 +193,6 @@ impl<'t> Listed<'t> {
 /// `resolveProjectList` of typescript-estree 8.71: the names that are no patterns first, in their order, wherever they stand,
 /// then what each pattern finds. In the checker's format. Empty: `project` names nothing, or `projectService` overrides it.
 fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
-    fn strings_of(value: Option<&Json>) -> Vec<&[u8]> {
-        match value {
-            Some(Json::String(one)) => vec![&one[..]],
-            Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
-            _ => Vec::new(),
-        }
-    }
     let written = strings_of(options.get(b"project"));
     if written.is_empty() || options.get(b"projectService").is_some_and(Json::is_truthy) {
         return Vec::new();

@@ -18,7 +18,7 @@ use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
 use bun_lint::json::{self, Notation};
-use bun_lint::linter::config::glob_refusal;
+use bun_lint::linter::config::{glob_refusal, strings_of};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -176,17 +176,8 @@ pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
     bun_glob::Pattern::of_oxc_glob_set(pattern)
 }
 
-/// A string, or the strings of an array.
-fn texts_of(json: Option<&Json>) -> Vec<&[u8]> {
-    match json {
-        Some(Json::String(one)) => vec![one],
-        Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
-        _ => Vec::new(),
-    }
-}
-
 fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
-    let all = texts_of(json);
+    let all = strings_of(json);
     let pattern = |text: &&[u8]| Pattern {
         glob: if is_oxfmt {
             glob_of_oxc(text)
@@ -891,7 +882,7 @@ impl<'c> Configs<'c> {
                 .unwrap_or_default()
                 .iter()
                 .flat_map(|it| [it.get(b"files"), it.get(b"excludeFiles")])
-                .flat_map(texts_of)
+                .flat_map(strings_of)
                 .find_map(glob_refusal)
         {
             return Err(Fatal(

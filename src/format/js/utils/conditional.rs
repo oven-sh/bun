@@ -287,7 +287,7 @@ impl<'a> FormatConditionalLike<'a> {
                 AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
                 // It is the left side.
                 AstNodes::BinaryExpression(binary) => binary
-                    .binary_operator()
+                    .binary_op()
                     .is_some_and(|operator| is_angular_pipe(operator, f)),
                 _ => false,
             }

@@ -1877,6 +1877,15 @@ describe("email autolinks", () => {
   });
 });
 
+describe("punctuation that is newer than Unicode 15", () => {
+  test("a * between a letter and punctuation does not open emphasis", () => {
+    // U+1B4E BALINESE INVERTED CARIK SIKI (Po, Unicode 16), beside U+00A1 and a letter.
+    expect(Markdown.html("a*\u1B4Eb*\n")).toBe("<p>a*\u1B4Eb*</p>\n");
+    expect(Markdown.html("a*\u00A1b*\n")).toBe("<p>a*\u00A1b*</p>\n");
+    expect(Markdown.html("a*xb*\n")).toBe("<p>a<em>xb</em></p>\n");
+  });
+});
+
 describe("links in links", () => {
   test("a link in brackets in the text of a link", () => {
     expect(Markdown.html("[link [foo [bar]]](/uri)\n\n[bar]: /url\n")).toBe(

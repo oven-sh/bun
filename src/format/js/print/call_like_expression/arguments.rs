@@ -980,7 +980,10 @@ fn is_decorated_function(argument: Expr<'_>) -> bool {
     let AstNodes::CallExpression(parent_call) = parent else {
         return false;
     };
-    let Some(call) = parent_call.call().filter(|call| call.args().len() == 1) else {
+    let Some(call) = parent_call
+        .as_call_like()
+        .filter(|call| call.args().len() == 1)
+    else {
         return false;
     };
     let callee = call.callee();

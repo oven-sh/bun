@@ -13,6 +13,7 @@
 use crate::cli::{Options, Tool};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Chain};
+use crate::print_config::object;
 use crate::run::{Environment, Fatal};
 use crate::{Linter, eslintrc, evaluate, fs, paths, rulesdir};
 use bun_core::strings;
@@ -257,15 +258,6 @@ pub(crate) struct Loader<'l> {
     /// `Inferred` need not ask the system for them.
     pub(crate) searched_from: Guarded<Vec<Vec<u8>>>,
     pub(crate) tsconfigs: Guarded<Vec<Vec<u8>>>,
-}
-
-fn object(entries: Vec<(&[u8], Json)>) -> Json {
-    Json::Object(
-        entries
-            .into_iter()
-            .map(|(key, value)| (key.to_vec(), value))
-            .collect(),
-    )
 }
 
 fn strings_of(items: &[Vec<u8>]) -> Json {

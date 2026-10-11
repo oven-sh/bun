@@ -4,18 +4,12 @@
 //! a node whose kind is known, mostly a parent: `parent.object() == Some(e)`. Each is `None`, or
 //! empty, for a node that has no such field.
 
-use bun_lint::ast::{BinOp, Call, Expr, ExprKind, Func, Stmt, StmtKind, TypeNode, UnOp};
+use bun_lint::ast::{Call, Expr, ExprKind, Func, Stmt, StmtKind, TypeNode};
 use bun_sema::hir::ExprTag;
 
 pub(crate) trait ExprFields<'a>: Copy {
     /// `TaggedTemplateExpression.tag`
     fn tag_expression(self) -> Option<Expr<'a>>;
-    /// The call of a `CallExpression`, a `NewExpression` or a `TaggedTemplateExpression`.
-    fn call(self) -> Option<Call<'a>>;
-    /// `BinaryExpression.operator`, `LogicalExpression.operator`
-    fn binary_operator(self) -> Option<BinOp>;
-    /// `UnaryExpression.operator`, `UpdateExpression.operator`
-    fn unary_operator(self) -> Option<UnOp>;
     /// `ConditionalExpression.test`
     fn test(self) -> Option<Expr<'a>>;
     /// `ConditionalExpression.alternate`
@@ -32,8 +26,6 @@ pub(crate) trait ExprFields<'a>: Copy {
     fn type_annotation(self) -> Option<TypeNode<'a>>;
     /// The function of an `ArrowFunctionExpression`.
     fn arrow_function(self) -> Option<Func<'a>>;
-    /// `optional: true`
-    fn optional(self) -> bool;
 }
 
 impl<'a> ExprFields<'a> for Expr<'a> {
@@ -43,21 +35,6 @@ impl<'a> ExprFields<'a> for Expr<'a> {
             ExprTag::TaggedTemplate => self.as_call_like().map(Call::callee),
             _ => None,
         }
-    }
-
-    #[inline]
-    fn call(self) -> Option<Call<'a>> {
-        self.as_call_like()
-    }
-
-    #[inline]
-    fn binary_operator(self) -> Option<BinOp> {
-        self.binary_op()
-    }
-
-    #[inline]
-    fn unary_operator(self) -> Option<UnOp> {
-        self.unary_op()
     }
 
     #[inline]
@@ -121,11 +98,6 @@ impl<'a> ExprFields<'a> for Expr<'a> {
     #[inline]
     fn arrow_function(self) -> Option<Func<'a>> {
         self.as_fn().filter(|func| func.is_arrow())
-    }
-
-    #[inline]
-    fn optional(self) -> bool {
-        self.is_optional()
     }
 }
 

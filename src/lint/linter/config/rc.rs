@@ -201,7 +201,8 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
 /// The files that are linted if nothing else says so. Of the last three the scripts.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
 
-pub(super) fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
+/// A string, or the strings of an array.
+pub fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
     match json {
         Some(Json::String(one)) => vec![&one[..]],
         Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),

@@ -24,7 +24,8 @@ use crate::prelude::*;
 /// `connect(a, b, c)(d)`: `call` is the callee of a call that has fewer arguments, but some.
 #[inline]
 pub(crate) fn is_long_curried_call(call: Expr<'_>, f: &Formatter<'_>) -> bool {
-    call.call().is_some_and(|call| call.args().len() > 1)
+    call.as_call_like()
+        .is_some_and(|call| call.args().len() > 1)
         && may_be_followed_by_arguments(call)
         && matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent, f))
 }
@@ -41,7 +42,7 @@ fn may_be_followed_by_arguments(callee: Expr<'_>) -> bool {
 /// `parent`: the call that `call` is in. The whole of an optional chain is in a `ChainExpression`, unless the tree is
 /// Babel's.
 fn is_long_curried_callee<'a>(call: Expr<'a>, parent: Expr<'a>, f: &Formatter<'_>) -> bool {
-    let (Some(this), Some(parent)) = (call.call(), parent.call()) else {
+    let (Some(this), Some(parent)) = (call.as_call_like(), parent.as_call_like()) else {
         return false;
     };
     parent.callee() == call

@@ -112,10 +112,10 @@ impl<'a> BinaryLikeExpression<'a> {
             }
             // `Boolean(a && b)`
             AstNodes::CallExpression(call_expression) => {
-                call_expression.call().is_some_and(|call| {
+                call_expression.as_call_like().is_some_and(|call| {
                     let callee = call.callee();
                     callee != self.expr
-                        && !call_expression.optional()
+                        && !call_expression.is_optional()
                         && call.args().len() == 1
                         && matches!(callee.kind(), ExprKind::Ident(_))
                         && callee.text() == b"Boolean"

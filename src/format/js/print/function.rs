@@ -183,7 +183,9 @@ pub(crate) fn write_called_function_with_comments<'a>(
 
     // On a line of its own, a comment leads what follows: the first argument or the template.
     let is_followed = match e.ast_parent() {
-        AstNodes::CallExpression(call) => call.call().is_some_and(|it| !it.args().is_empty()),
+        AstNodes::CallExpression(call) => {
+            call.as_call_like().is_some_and(|it| !it.args().is_empty())
+        }
         _ => true,
     };
     let count_trailing = |f: &Formatter<'a>| {

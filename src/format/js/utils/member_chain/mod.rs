@@ -197,9 +197,9 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             .members
             .iter()
             .filter_map(|member| match member {
-                ChainMember::CallExpression { expression, .. } => expression.call(),
+                ChainMember::CallExpression { expression, .. } => expression.as_call_like(),
                 ChainMember::Node(expression) if is_call_expression(*expression, f) => {
-                    expression.call()
+                    expression.as_call_like()
                 }
                 _ => None,
             })

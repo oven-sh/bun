@@ -34,7 +34,7 @@ pub fn read_file(path: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Its directory is created if there is none. It is only written to be looked at.
-fn write_file(path: &[u8], contents: &[u8]) {
+pub fn write_file(path: &[u8], contents: &[u8]) {
     if let Some(end) = strings::last_index_of_char(path, b'/').filter(|&end| end > 0) {
         let _ = bun_sys::mkdir_recursive(&path[..end]);
     }

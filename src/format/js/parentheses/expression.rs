@@ -30,9 +30,11 @@ pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<
     // part of the chain.
     match parent {
         N::TSNonNullExpression(_) | N::TaggedTemplateExpression(_) => true,
-        N::StaticMemberExpression(member) | N::PrivateFieldExpression(member) => !member.optional(),
-        N::ComputedMemberExpression(member) => !member.optional() && member.object() == Some(e),
-        N::CallExpression(call) => !call.optional() && call.callee() == Some(e),
+        N::StaticMemberExpression(member) | N::PrivateFieldExpression(member) => {
+            !member.is_optional()
+        }
+        N::ComputedMemberExpression(member) => !member.is_optional() && member.object() == Some(e),
+        N::CallExpression(call) => !call.is_optional() && call.callee() == Some(e),
         N::NewExpression(new) => new.callee() == Some(e),
         _ => false,
     }
@@ -60,7 +62,7 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
                 || (text.len() >= 35 && text.starts_with(b"PRETTIER_"));
         }
         // `in` in the head of a `for` statement, and a sequence, depend on more.
-        T::Binary if matches!(e.binary_operator(), None | Some(BinOp::In | BinOp::Comma)) => {
+        T::Binary if matches!(e.binary_op(), None | Some(BinOp::In | BinOp::Comma)) => {
             return true;
         }
         _ => {}
@@ -223,7 +225,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         }
         ExprKind::Unary { op, .. } => match parent {
             N::UnaryExpression(parent) => {
-                let parent_operator = parent.unary_operator();
+                let parent_operator = parent.unary_op();
                 match op {
                     UnOp::PreInc => parent_operator == Some(UnOp::Plus),
                     UnOp::PreDec => parent_operator == Some(UnOp::Minus),
@@ -234,7 +236,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             N::TaggedTemplateExpression(_) | N::TSNonNullExpression(_) => true,
             N::BinaryExpression(binary) => {
                 binary.left() == Some(e)
-                    && match binary.binary_operator() {
+                    && match binary.binary_op() {
                         Some(BinOp::Pow) => true,
                         // `!a instanceof B` was probably meant to be `!(a instanceof B)`.
                         // `(!a) instanceof B` shows what it is.
@@ -301,7 +303,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         ExprKind::Fn(func) if func.is_arrow() => match parent {
             N::BinaryExpression(binary)
                 if binary
-                    .binary_operator()
+                    .binary_op()
                     .is_some_and(|operator| is_angular_pipe(operator, f)) =>
             {
                 false
@@ -467,7 +469,7 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
             N::CallExpression(it) if is(it.callee()) && !is_function => it,
             N::ConditionalExpression(it) if is(it.test()) => it,
             N::UpdateExpression(it)
-                if matches!(it.unary_operator(), Some(UnOp::PostInc | UnOp::PostDec)) =>
+                if matches!(it.unary_op(), Some(UnOp::PostInc | UnOp::PostDec)) =>
             {
                 it
             }
@@ -539,7 +541,7 @@ fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
                     _ => true,
                 };
                 if is_start
-                    && matches!(parent, N::ComputedMemberExpression(member) if member.object() == Some(e) && !member.optional())
+                    && matches!(parent, N::ComputedMemberExpression(member) if member.object() == Some(e) && !member.is_optional())
                 {
                     return true;
                 }
@@ -655,7 +657,7 @@ fn binary_or_cast_needs_parentheses<'a>(
             return operator.is_none() && assignment.left() == Some(e);
         }
         N::LogicalExpression(logical) if operator.is_some_and(BinOp::is_logical) => {
-            return logical.binary_operator() != operator;
+            return logical.binary_op() != operator;
         }
         N::LogicalExpression(parent)
         | N::BinaryExpression(parent)
@@ -712,7 +714,7 @@ fn angular_pipe_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool
 fn is_optional_member_expression_of_babel(mut e: Expr<'_>) -> bool {
     loop {
         let head = match e.tag() {
-            ExprTag::Dot | ExprTag::Index | ExprTag::Call if e.optional() => return true,
+            ExprTag::Dot | ExprTag::Index | ExprTag::Call if e.is_optional() => return true,
             ExprTag::Dot | ExprTag::Index => e.object(),
             ExprTag::Call => e.callee(),
             ExprTag::NonNull => e.expression(),
@@ -821,7 +823,7 @@ fn lists_what_jsx_needs_parentheses_in(f: &Formatter<'_>) -> bool {
 fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     match parent {
         N::BinaryExpression(binary) => {
-            binary.binary_operator() == Some(BinOp::Lt) && binary.left() == Some(e)
+            binary.binary_op() == Some(BinOp::Lt) && binary.left() == Some(e)
         }
         N::CallExpression(_) | N::NewExpression(_) => parent.is_call_like_callee(e),
         _ if lists_what_jsx_needs_parentheses_in(f) => matches!(

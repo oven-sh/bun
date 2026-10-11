@@ -17,6 +17,7 @@
 mod compare;
 mod test_only_rules;
 
+use bun_format_conformance::write_file;
 pub use bun_format_conformance::{Bundle, read_file, write_line};
 use compare::problem_of_oxlint;
 pub use compare::{
@@ -207,15 +208,6 @@ fn write_link(path: &[u8], target: &[u8]) {
     let _ = bun_sys::symlink(
         &bun_core::ZBox::from_bytes(target),
         &bun_core::ZBox::from_bytes(path),
-    );
-}
-
-fn write_file(path: &[u8], contents: &[u8]) {
-    make_parent(path);
-    let _ = bun_sys::File::write_file(
-        bun_core::Fd::cwd(),
-        &bun_core::ZBox::from_bytes(path),
-        contents,
     );
 }
 

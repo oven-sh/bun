@@ -150,7 +150,7 @@ pub(crate) fn is_test_call_expression_in_flavor<'a>(e: Expr<'a>, f: &Formatter<'
 /// arguments of a call of a test on one line all the same, and the comments come out in another order.
 /// To oxfmt it is a call like any other then.
 fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let Some(call) = e.call() else {
+    let Some(call) = e.as_call_like() else {
         return false;
     };
     let mut start = call.callee().span().end;
@@ -207,7 +207,7 @@ fn contains_a_test_pattern_of_oxfmt(e: Expr<'_>) -> bool {
 
 fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
     let Some(call) = e
-        .call()
+        .as_call_like()
         .filter(|call| e.tag() == ExprTag::Call && !call.is_optional())
     else {
         return false;
@@ -221,7 +221,7 @@ fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
             if is_angular_test_wrapper(e)
                 // A wrapper with nothing but a wrapper in it is none: what is in it is no function.
                 && matches!(e.as_chain_element().parent(), AstNodes::CallExpression(parent)
-                    if !(is_angular_test_wrapper(parent) && parent.call().is_some_and(|it| it.args().len() == 1))
+                    if !(is_angular_test_wrapper(parent) && parent.as_call_like().is_some_and(|it| it.args().len() == 1))
                         && is_test_call(parent, is_test_callee))
             {
                 return argument.as_fn().is_some();

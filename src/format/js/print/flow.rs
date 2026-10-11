@@ -1362,7 +1362,7 @@ fn write_match_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut For
         return;
     }
     let is_leaf = !matches!(
-        (pattern.tag(), pattern.unary_operator()),
+        (pattern.tag(), pattern.unary_op()),
         (
             ExprTag::Binary | ExprTag::Object | ExprTag::Array | ExprTag::New | ExprTag::Spread,
             _
@@ -1513,7 +1513,7 @@ fn is_simple_match_pattern(pattern: Expr<'_>) -> bool {
         | ExprTag::Number
         | ExprTag::BigInt
         | ExprTag::String => true,
-        ExprTag::Unary => pattern.unary_operator() != Some(UnOp::Void),
+        ExprTag::Unary => pattern.unary_op() != Some(UnOp::Void),
         _ => false,
     }
 }

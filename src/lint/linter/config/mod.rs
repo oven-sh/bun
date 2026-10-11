@@ -81,7 +81,7 @@ pub use flat::{ConfigError, LoadLocatedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
 pub(crate) use rc::is_rule_of_oxlint;
-pub use rc::{LoadPlugin, oxlint_category, oxlint_runs_on};
+pub use rc::{LoadPlugin, oxlint_category, oxlint_runs_on, strings_of};
 pub(crate) use rc::{OxlintChanges, oxlint_changes};
 use rustc_hash::FxHashMap;
 pub use shape::glob_refusal;

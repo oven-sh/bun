@@ -1,17 +1,8 @@
 //! Characters and strings as micromark sees them.
 
-use super::unicode_tables::PUNCTUATION_OR_SYMBOL;
-
 pub(crate) fn is_in(table: &[(u32, u32)], c: u32) -> bool {
     let after = table.partition_point(|range| range.0 <= c);
     after > 0 && table.get(after - 1).is_some_and(|range| c <= range.1)
-}
-
-pub(crate) fn is_unicode_punctuation(c: char) -> bool {
-    match c.is_ascii() {
-        true => c.is_ascii_punctuation(),
-        false => is_in(PUNCTUATION_OR_SYMBOL, c as u32),
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -26,7 +17,7 @@ pub(crate) fn classify(c: Option<char>) -> CharacterClass {
     match c {
         None => CharacterClass::Whitespace,
         Some(c) if bun_core::strings::is_js_whitespace(c as u32) => CharacterClass::Whitespace,
-        Some(c) if is_unicode_punctuation(c) => CharacterClass::Punctuation,
+        Some(c) if bun_md::helpers::is_unicode_punctuation(c as u32) => CharacterClass::Punctuation,
         Some(_) => CharacterClass::Other,
     }
 }

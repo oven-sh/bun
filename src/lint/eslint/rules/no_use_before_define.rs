@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::semantic::DeclarationKind;
+use bun_lint::semantic::{DeclarationKind, DeclarationKinds};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 
@@ -87,6 +87,23 @@ pub fn end_of_definition(definition: Declaration) -> Option<u32> {
         Declaration::ImportEquals(it) => Some(it.name().start()),
         _ => None,
     }
+}
+
+/// Whether the references alone tell that none of them is before the definition of `variable` or in what initializes it:
+/// there is none to ask about, or what only `var`, `let`, `const` or `using` declare is referred to after the last of
+/// its initializers, which end its declarators, and of what its loops iterate over.
+#[inline]
+pub fn is_referred_to_after_initializers(variable: Symbol) -> bool {
+    let (mut first, mut initialized) = (u32::MAX, 0);
+    for reference in variable.references() {
+        if reference.is_init() {
+            initialized = initialized.max(reference.write_expr().map_or(0, |it| it.span().end));
+        } else if !reference.is_jsx_pragma() {
+            first = first.min(reference.ident().start());
+        }
+    }
+    first == u32::MAX
+        || initialized != 0 && first > initialized && variable.declaration_kinds() == DeclarationKinds::VARIABLE
 }
 
 /// Whether the name of `reference` starts after `end`, if that is given.
@@ -299,6 +316,9 @@ fn parent_of_identifier(reference: Reference, is_in_type_query: bool) -> Parent 
 
 impl NoUseBeforeDefine {
     fn check<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        if is_referred_to_after_initializers(variable) {
+            return;
+        }
         let Some(definition) = variable.declarations().next() else {
             return;
         };

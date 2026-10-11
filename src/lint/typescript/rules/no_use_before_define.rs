@@ -3,7 +3,7 @@ use bun_lint::semantic::DeclarationKind;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint_eslint::rules::no_use_before_define::{
     Config, Initializers, definition_name_end, end_of_definition, is_class_ref_in_class_decorator, is_named_export,
-    starts_after,
+    is_referred_to_after_initializers, starts_after,
 };
 
 /// Disallow the use of variables before they are defined.
@@ -105,6 +105,9 @@ impl NoUseBeforeDefine {
     }
 
     fn check<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        if is_referred_to_after_initializers(variable) {
+            return;
+        }
         let Some(definition) = variable.declarations().next() else {
             return;
         };

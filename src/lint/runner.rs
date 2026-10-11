@@ -107,6 +107,12 @@ impl<const KINDS: usize> Grouped<KINDS> {
     fn of(&self, kind: usize) -> &[u32] {
         &self.ids[self.starts[kind] as usize..self.starts[kind + 1] as usize]
     }
+
+    /// For assertions.
+    fn is_same_as(&self, other: &Self) -> bool {
+        (&self.ids, &self.starts[..=KINDS], self.present)
+            == (&other.ids, &other.starts[..=KINDS], other.present)
+    }
 }
 
 /// The expressions of a file.
@@ -387,9 +393,7 @@ impl ByName {
         }
         // Many of them: to go through all is less than to put those in order.
         if count > 1 && 4 * total > all.len() {
-            let is_wanted = |group: u8| groups[group as usize / 64] >> (group % 64) & 1 != 0;
-            let wanted = all.iter().zip(&self.groups).filter(|it| is_wanted(*it.1));
-            found.extend(wanted.map(|it| *it.0));
+            found.extend(self.those_of(groups, all));
             return;
         }
         for (word, (wanted, present)) in groups.iter().zip(&self.present).enumerate() {
@@ -404,9 +408,20 @@ impl ByName {
         if count > 1 {
             found.sort_unstable();
         }
-        for place in found {
+        for place in found.iter_mut() {
             *place = all.get(*place as usize).map_or(u32::MAX, |&id| id);
         }
+        debug_assert!(self.those_of(groups, all).eq(found.iter().copied()));
+    }
+
+    /// Those of `all`, which is what has been grouped, that are in one of `groups`, by a look at the group of each.
+    fn those_of(&self, groups: [u64; 4], all: &[u32]) -> impl Iterator<Item = u32> {
+        let is_wanted = move |group: u8| groups[group as usize / 64] >> (group % 64) & 1 != 0;
+        let wanted = all
+            .iter()
+            .zip(&self.groups)
+            .filter(move |it| is_wanted(*it.1));
+        wanted.map(|it| *it.0)
     }
 }
 
@@ -522,7 +537,11 @@ impl File<'_> {
                         debug_assert_eq!(StmtTag::of(&it.kind) as u8, it.kind.tag() as u8);
                         StmtTag::of(&it.kind) as u8
                     });
-                    Grouped::of_counted_kinds(0.., kinds, &counts)
+                    let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                    debug_assert!(
+                        grouped.is_same_as(&Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)))
+                    );
+                    grouped
                 }
                 None => Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)),
             })
@@ -543,7 +562,11 @@ impl File<'_> {
                         debug_assert_eq!(TypeTag::of(&it.kind) as u8, it.kind.tag() as u8);
                         TypeTag::of(&it.kind) as u8
                     });
-                    Grouped::of_counted_kinds(0.., kinds, &counts)
+                    let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                    debug_assert!(
+                        grouped.is_same_as(&Grouped::new(|kinds| self.type_tags_in_tree(kinds)))
+                    );
+                    grouped
                 }
                 None => Grouped::new(|kinds| self.type_tags_in_tree(kinds)),
             })
@@ -621,7 +644,11 @@ impl File<'_> {
                             tag => tag as u8,
                         }
                     });
-                    Grouped::of_counted_kinds(0.., kinds, &counts)
+                    let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                    debug_assert!(
+                        grouped.is_same_as(&Grouped::new(|kinds| self.pat_tags_in_tree(kinds)))
+                    );
+                    grouped
                 }
                 None => Grouped::new(|kinds| self.pat_tags_in_tree(kinds)),
             })
@@ -694,6 +721,9 @@ macro_rules! every {
                             && self.hir.import_attributes.is_empty()
                             && have_all_owners(($owners)(self), all.len(), &$no_owner)
                         {
+                            debug_assert!(
+                                all.clone().all(|id| <$handle as Handle>::from_raw(self, id).is_in_tree())
+                            );
                             return all.collect();
                         }
                         // Nearly all are in the tree: room for all of them is made at once.
@@ -758,28 +788,27 @@ impl<'a> File<'a> {
 
     /// `kind`: `Call` or `Dot`.
     fn by_name(&'a self, kind: ExprTag) -> &'a ByName {
-        match kind {
+        let made = match kind {
             ExprTag::Call => {
                 (self.by_kind().calls_by_name).get_or_init(|| Box::new(ByName::of_calls(self)))
             }
             _ => {
                 (self.by_kind().members_by_name).get_or_init(|| Box::new(ByName::of_members(self)))
             }
-        }
+        };
+        debug_assert!(
+            made.those_of([0, 0, 0, 1], self.exprs_of(kind))
+                .eq(self.others(kind).iter().copied())
+        );
+        made
     }
 
-    /// `by_name`, if it is needed or there already. `may_have_names`: the file may have a name of the groups that are asked
-    /// for. If not, only the group `OTHERS` of them can have something.
+    /// `by_name`, if it has been made.
     #[inline]
-    fn by_name_if(&'a self, kind: ExprTag, may_have_names: bool) -> Option<&'a ByName> {
-        let made = match kind {
-            ExprTag::Call => self.by_kind().calls_by_name.get(),
-            _ => self.by_kind().members_by_name.get(),
-        };
-        match (made, may_have_names) {
-            (Some(made), _) => Some(made),
-            (None, true) => Some(self.by_name(kind)),
-            (None, false) => None,
+    fn by_name_if_made(&'a self, kind: ExprTag) -> Option<&'a ByName> {
+        match kind {
+            ExprTag::Call => self.by_kind().calls_by_name.get().map(|it| &**it),
+            _ => self.by_kind().members_by_name.get().map(|it| &**it),
         }
     }
 
@@ -814,12 +843,15 @@ impl<'a> File<'a> {
         }
     }
 
-    /// Whether one of these groups of the `Call`s or the `Dot`s has something.
+    /// Whether one of these groups of the `Call`s or the `Dot`s can have something, told without grouping them: that is left
+    /// until the rule has said that it starts. `may_have_names`: the file may have a name of these groups. If not, only the group
+    /// `OTHERS` of them can have something.
     #[inline(never)]
-    fn has_named(&'a self, kind: ExprTag, groups: [u64; 4], may_have_names: bool) -> bool {
-        match self.by_name_if(kind, may_have_names) {
-            Some(by_name) => by_name.has_any_of(groups),
-            None => !self.others(kind).is_empty(),
+    fn may_have_named(&'a self, kind: ExprTag, groups: [u64; 4], may_have_names: bool) -> bool {
+        match (self.by_name_if_made(kind), may_have_names) {
+            (Some(by_name), _) => by_name.has_any_of(groups),
+            (None, true) => !self.exprs_of(kind).is_empty(),
+            (None, false) => !self.others(kind).is_empty(),
         }
     }
 
@@ -827,7 +859,11 @@ impl<'a> File<'a> {
     #[inline(never)]
     fn named(&'a self, kind: ExprTag, groups: [u64; 4], may_have_names: bool) -> Vec<u32> {
         let mut found = self.by_kind().spare.take();
-        match self.by_name_if(kind, may_have_names) {
+        let by_name = match may_have_names {
+            true => Some(self.by_name(kind)),
+            false => self.by_name_if_made(kind),
+        };
+        match by_name {
             Some(by_name) => by_name.find(groups, self.exprs_of(kind), &mut found),
             None => {
                 found.clear();
@@ -1089,8 +1125,9 @@ fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
     }
     let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
     let may_have_names = (calls[3] | members[3]) != 0 && file.may_have_names_of(&on);
-    has_any = has_any || calls[3] != 0 && file.has_named(ExprTag::Call, calls, may_have_names);
-    has_any = has_any || members[3] != 0 && file.has_named(ExprTag::Dot, members, may_have_names);
+    has_any = has_any || calls[3] != 0 && file.may_have_named(ExprTag::Call, calls, may_have_names);
+    has_any =
+        has_any || members[3] != 0 && file.may_have_named(ExprTag::Dot, members, may_have_names);
     has_any = has_any || on.has(On::OPTIONAL_CHAINS) && file.present_chained() != 0;
     macro_rules! sorts {
         ($($sort:ident $field:ident;)*) => {
@@ -1378,6 +1415,10 @@ pub(crate) fn in_walk_order(
         }
         (first, previous) = (at, start);
     }
+    debug_assert!(order.is_sorted_by_key(|&key| {
+        let (end, rank) = rest(key as u32);
+        Span::new((key >> 32) as u32, end).sort_key(u16::from(rank), key as u32 as usize)
+    }));
     order
 }
 

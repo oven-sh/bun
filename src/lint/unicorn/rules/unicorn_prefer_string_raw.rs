@@ -10,21 +10,34 @@ const PREFER_STRING_RAW: Message = Message::new("", "`String.raw` should be used
 impl Rule for PreferStringRaw {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-string-raw", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().string_literals();
-    type State<'a> = ();
+    /// Where the text has a `\\`, in order.
+    type State<'a> = Vec<u32>;
 
     fn new(_: &Options) -> Self {
         PreferStringRaw
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (!file.is_declaration_file() && strings::contains(file.text(), b"\\\\")).then_some(())
+        if file.is_declaration_file() {
+            return None;
+        }
+        let (text, mut found) = (file.text(), Vec::new());
+        let mut at = strings::index_of_char_usize(text, b'\\')?;
+        while let Some(next) = text.get(at..).and_then(|rest| strings::index_of(rest, b"\\\\")) {
+            found.push((at + next) as u32);
+            at += next + 2;
+        }
+        (!found.is_empty()).then_some(found)
     }
 
     fn string_literal<'a>(&self, string_literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
-        let raw = string_literal.text();
-        if !strings::contains(raw, b"\\\\") || is_where_no_template_can_be(string_literal) {
+        let (span, found) = (string_literal.span(), &cx.state);
+        if found.get(found.partition_point(|it| *it < span.start)).is_none_or(|it| *it >= span.end)
+            || is_where_no_template_can_be(string_literal)
+        {
             return;
         }
+        let raw = string_literal.text();
         let Some(([quote], trimmed)) = raw.get(..raw.len() - 1).and_then(|it| it.split_first_chunk()) else {
             return;
         };

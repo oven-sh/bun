@@ -508,12 +508,12 @@ impl<'m> StarExports<'m> {
 
 /// `{name:?}` in a message: in double quotes, as Rust writes a string.
 pub fn debug(name: &[u8]) -> String {
-    let characters = |it: std::str::Utf8Chunk<'_>| {
-        let invalid = (!it.invalid().is_empty()).then_some(char::REPLACEMENT_CHARACTER);
-        it.valid().chars().chain(invalid).collect::<Vec<char>>()
-    };
-    format!(
-        "{:?}",
-        name.utf8_chunks().flat_map(characters).collect::<String>()
-    )
+    let mut text = String::with_capacity(name.len());
+    for chunk in name.utf8_chunks() {
+        text.push_str(chunk.valid());
+        if !chunk.invalid().is_empty() {
+            text.push(char::REPLACEMENT_CHARACTER);
+        }
+    }
+    format!("{text:?}")
 }

@@ -553,9 +553,10 @@ struct Uses<'a> {
 }
 
 impl<'a> Uses<'a> {
-    fn look_at(&mut self, variable: Binding<'a>) {
+    /// `references`: those to `variable` in its code path.
+    fn look_at(&mut self, variable: Binding<'a>, references: impl Iterator<Item = Reference<'a>>) {
         self.all.clear();
-        self.all.extend(variable.references());
+        self.all.extend(references);
         if !self.all.is_sorted_by_key(start_of) {
             utils::sort::sort_unstable_by_key(&mut self.all, start_of);
         }
@@ -1181,9 +1182,15 @@ impl NoUselessAssignment {
     fn check_binding<'a>(variable: Binding<'a>, cx: &mut Cx<'a, Self>) {
         let State { uses, writers, evaluated_in, .. } = &mut cx.state;
         let home = variable.scope().variable_scope();
+        // In another code path than that of the variable.
+        let is_elsewhere = |it: Reference<'a>| {
+            it.scope().variable_scope() != home
+                && code_path_scope(it.scope()) != code_path_scope(variable.scope())
+        };
+        // What a function assigns to a variable from outside it is not looked at.
         let (mut writes, mut written) = (0, None);
         for reference in variable.symbol.references() {
-            if reference.is_write() && variable.has(reference) {
+            if reference.is_write() && variable.has(reference) && !is_elsewhere(reference) {
                 writes += 1;
                 written = Some(reference);
             }
@@ -1194,19 +1201,15 @@ impl NoUselessAssignment {
             return;
         }
         // What a function reads can be read at any time.
-        if variable.symbol.references().any(|it| {
-            it.is_read()
-                && it.scope().variable_scope() != home
-                && variable.has(it)
-                && code_path_scope(it.scope()) != code_path_scope(variable.scope())
-        }) {
+        if writes == 0
+            || (variable.symbol.references()).any(|it| it.is_read() && is_elsewhere(it) && variable.has(it))
+        {
             return;
         }
-        uses.look_at(variable);
+        uses.look_at(variable, variable.references().filter(|&it| !is_elsewhere(it)));
         // Of the variable, once it is asked for.
         let mut scope = None;
         let mut at = 0;
-        // What a function assigns to a variable from outside it is not looked at.
         let is_unknown = loop {
             let Some(&reference) = uses.all.get(at) else {
                 break false;

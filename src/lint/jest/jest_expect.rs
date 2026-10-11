@@ -913,7 +913,34 @@ pub(crate) mod expect_expect {
         }
 
         fn visit_children(&mut self, node: Node<'a>) {
-            node.for_each_child(|child| self.pending.push(Task::Visit(child)));
+            node.for_each_child(|child| {
+                // Half of all nodes, and there is nothing in them.
+                let is_leaf = match child {
+                    Node::Expr(e) => matches!(
+                        e.tag(),
+                        ExprTag::Ident
+                            | ExprTag::String
+                            | ExprTag::Number
+                            | ExprTag::True
+                            | ExprTag::False
+                            | ExprTag::Null
+                            | ExprTag::This
+                    ),
+                    Node::Param(_) | Node::Type(_) | Node::TypeParam(_) => true,
+                    _ => false,
+                };
+                if !is_leaf {
+                    self.pending.push(Task::Visit(child));
+                }
+            });
+        }
+
+        /// Whether to check `e`, which is visited too, leads to more than that: a call and an arrow function are entered both ways.
+        fn is_checked_besides(e: &Expr) -> bool {
+            match e.tag() {
+                ExprTag::Fn => e.as_fn().is_some_and(|it| !it.is_arrow()),
+                tag => matches!(tag, ExprTag::Ident | ExprTag::Await | ExprTag::Array),
+            }
         }
 
         fn visit_function_body(&mut self, func: Func<'a>) -> bool {
@@ -967,8 +994,8 @@ pub(crate) mod expect_expect {
                         if let Some(known) = self.enter((false, node)) {
                             return known;
                         }
-                        self.pending
-                            .extend(call_expr.args().iter().map(Task::Check));
+                        let checked = call_expr.args().iter().filter(Self::is_checked_besides);
+                        self.pending.extend(checked.map(Task::Check));
                         self.visit_children(node);
                     }
                     // A function expression and a method are entered only where they are checked.
@@ -977,9 +1004,11 @@ pub(crate) mod expect_expect {
                     _ => self.visit_children(node),
                 },
                 Node::Stmt(statement) => match statement.kind() {
-                    StmtKind::Expr(e) => self
-                        .pending
-                        .extend([Task::Check(e), Task::Visit(Node::Expr(e))]),
+                    StmtKind::Expr(e) => {
+                        let checked = Some(e).filter(Self::is_checked_besides);
+                        self.pending.extend(checked.map(Task::Check));
+                        self.pending.push(Task::Visit(Node::Expr(e)));
+                    }
                     // Not the test, and what follows it only if it is a block.
                     StmtKind::If { yes, no, .. } => {
                         let visited = Some(yes)

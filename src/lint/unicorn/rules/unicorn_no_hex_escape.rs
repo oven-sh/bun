@@ -18,7 +18,8 @@ impl Rule for NoHexEscape {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        strings::contains(file.text(), b"\\x").then_some(())
+        let text = file.text();
+        strings::contains(text.get(strings::index_of_char_usize(text, b'\\')?..)?, b"\\x").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

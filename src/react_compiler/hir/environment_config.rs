@@ -91,6 +91,9 @@ pub struct EnvironmentConfig {
     /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
     /// it. Upstream does not compile such a function.
     pub jsx_can_be_reordered: bool,
+    /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
+    /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
+    pub captured_targets_with_keys_force_temporaries: bool,
     /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
     /// its first instruction, which can be the declaration of a later function that the first one refers to.
     pub unreachable_code_is_reported_at_its_function: bool,
@@ -153,6 +156,7 @@ impl Default for EnvironmentConfig {
             captured_refs_are_known_in_functions: true,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
+            captured_targets_with_keys_force_temporaries: false,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,

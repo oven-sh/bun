@@ -755,6 +755,8 @@ pub(super) fn lower_assignment(
             let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Expr, Option<&Expr>)> = Vec::new();
 
+            let config = &builder.environment().config;
+            let with_keys = config.captured_targets_with_keys_force_temporaries;
             let force_temporaries = if kind == InstructionKind::Reassign {
                 let mut found = false;
                 for prop in pattern.properties.iter() {
@@ -767,6 +769,14 @@ pub(super) fn lower_assignment(
                         break;
                     };
                     match assignment_target_ref(val) {
+                        Some(ref_)
+                            if with_keys
+                                && !prop.flags.contains(ast::flags::Property::WasShorthand)
+                                && builder.is_context_identifier(ref_) =>
+                        {
+                            found = true;
+                            break;
+                        }
                         Some(ref_) => {
                             match builder.resolve_identifier(ref_, convert_loc(val.loc))? {
                                 VariableBinding::Identifier { .. } => {}

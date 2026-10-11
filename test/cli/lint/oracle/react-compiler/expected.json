@@ -2785,7 +2785,7 @@
   },
   "fork": {
    "exit": 1,
-   "files": 17,
+   "files": 18,
    "diagnostics": {
     "arguments.jsx": [
      {
@@ -2804,6 +2804,26 @@
       ],
       "message": "Implicit 'arguments' is not supported",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "captured-target.jsx": [
+     {
+      "code": "react(invariant)",
+      "help": "Other places were `Const` but 'store b$34{reactive}' is reassigned",
+      "labels": [
+       {
+        "label": "Expected consistent kind for destructuring",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 12,
+         "offset": 223
+        }
+       }
+      ],
+      "message": "Expected consistent kind for destructuring",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
       "severity": "error"
      }
     ],

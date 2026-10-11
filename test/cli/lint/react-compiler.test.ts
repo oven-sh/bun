@@ -159,6 +159,7 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     // The others are compiled.
     expect(Object.keys(diagnostics)).toEqual([
       "arguments.jsx",
+      "captured-target.jsx",
       "catch.jsx",
       "clock.jsx",
       "computed-string.jsx",
@@ -172,6 +173,7 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
       "update.jsx",
       "virtual.jsx",
     ]);
+    expect(placesOf(diagnostics["captured-target.jsx"])).toEqual([["react(invariant)", 12, 9]]);
     expect(files).toBe(expected.reports.fork.files);
     expect(exit).toBe(1);
   });

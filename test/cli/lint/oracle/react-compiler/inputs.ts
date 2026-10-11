@@ -490,6 +490,23 @@ export function Component() {
   }
 }
 `,
+    // Upstream fails for both by an invariant. It goes through temporaries if the captured one has a key.
+    "captured-target.jsx": `export function WithAKey(props) {
+  let a = [];
+  let b = [];
+  ({ r: a, b } = props.q());
+  const g = () => a;
+  return <div onClick={g}>{b}</div>;
+}
+
+export function Shorthand(props) {
+  let a = [];
+  let b = [];
+  ({ a, b } = props.q());
+  const g = () => a;
+  return <div onClick={g}>{b}</div>;
+}
+`,
     "computed-string.jsx": `import { useRef } from "react";
 
 export function Component({ ["data-testid"]: testId, a }) {

@@ -320,8 +320,7 @@
       "hash": 1
     },
     "src/format/cursor.rs": {
-      "resolve": 1,
-      "units_to_bytes": 1
+      "resolve": 1
     },
     "src/format/graphql/embed.rs": {
       "lines": 1
@@ -372,11 +371,7 @@
       "natural_sort": 1
     },
     "src/format/js/source_text.rs": {
-      "has_line_terminator": 1,
-      "line_terminator_len": 1,
-      "line_terminator_len_back": 1,
-      "white_space_len": 1,
-      "white_space_len_back": 1
+      "has_line_terminator": 1
     },
     "src/format/js/trivia.rs": {
       "without_last_line": 1

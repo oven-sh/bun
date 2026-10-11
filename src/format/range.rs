@@ -170,26 +170,8 @@ impl Offsets {
 
 /// `None` if `text` is shorter.
 fn offset_of_utf16_index(text: &[u8], index: u32) -> Option<usize> {
-    let index = index as usize;
-    // Up to the first character that is not ASCII, bytes are code units.
-    let ascii = bun_core::strings::first_non_ascii(text).map_or(text.len(), |at| at as usize);
-    if index <= ascii {
-        return Some(index);
-    }
-    let mut units = ascii;
-    for (offset, &byte) in text.iter().enumerate().skip(ascii) {
-        // Not in a character.
-        if units >= index && !matches!(byte, 0x80..=0xBF) {
-            return Some(offset);
-        }
-        units += match byte {
-            // Not the first byte of a character.
-            0x80..=0xBF => 0,
-            0xF0..=0xFF => 2,
-            _ => 1,
-        };
-    }
-    (units >= index).then_some(text.len())
+    use bun_core::strings::{wtf8_len_utf16, wtf8_offset_of_utf16_index};
+    (index <= wtf8_len_utf16(text)).then(|| wtf8_offset_of_utf16_index(text, index))
 }
 
 /// Prettier's `getAlignmentSize` of the white space that the last line of `before` starts with.

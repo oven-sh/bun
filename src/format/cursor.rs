@@ -1613,54 +1613,11 @@ const CURSOR: Unit = u32::MAX;
 /// Appends `text` as UTF-16 code units. `normalize`: `\r\n` and `\r` are `\n`, as in the text that
 /// Prettier parses.
 fn push_units(text: &[u8], normalize: bool, out: &mut Vec<Unit>) {
-    let mut rest = text;
-    while let Some((&first, tail)) = rest.split_first() {
-        if first < 0x80 {
-            rest = tail;
-            match first {
-                b'\r' if normalize => {
-                    out.push(Unit::from(b'\n'));
-                    rest = tail.strip_prefix(b"\n").unwrap_or(tail);
-                }
-                _ => out.push(Unit::from(first)),
-            }
-            continue;
-        }
-        let len = match first {
-            0xF0.. => 4,
-            0xE0.. => 3,
-            _ => 2,
-        };
-        let (sequence, tail) = rest.split_at(len.min(rest.len()));
-        rest = tail;
-        let mut code_point = Unit::from(first) & (0x7F >> len);
-        for &byte in &sequence[1..] {
-            code_point = (code_point << 6) | Unit::from(byte & 0x3F);
-        }
-        match code_point.checked_sub(0x1_0000) {
-            Some(high) => out.extend([0xD800 + (high >> 10), 0xDC00 + (high & 0x3FF)]),
-            None => out.push(code_point),
-        }
-    }
-}
-
-/// How many bytes of `text` the first `units` UTF-16 code units of it are.
-fn units_to_bytes(text: &[u8], mut units: usize) -> usize {
-    let mut at = 0;
-    while units > 0 {
-        let Some(&first) = text.get(at) else {
-            break;
-        };
-        let (len, width) = match first {
-            0xF0.. => (4, 2),
-            0xE0.. => (3, 1),
-            0xC0.. => (2, 1),
-            _ => (1, 1),
-        };
-        at += len;
-        units = units.saturating_sub(width);
-    }
-    at.min(text.len())
+    let text = match normalize {
+        true => strings::crlf_as_lf(text),
+        false => text.into(),
+    };
+    out.extend(strings::wtf8_to_utf16(&text).into_iter().map(Unit::from));
 }
 
 /// The furthest that a number of changes gets on a diagonal of the edit graph.
@@ -1854,13 +1811,9 @@ fn offset_in(source: &[u8], options: &FormatOptions) -> Option<Offset> {
     {
         return None;
     }
-    // The bytes of the characters that end at or before it.
-    let mut offset = units_to_bytes(source, units);
+    let offset = strings::wtf8_offset_of_utf16_index(source, units as u32);
     let is_in_character =
-        bun_core::strings::element_length_utf8_into_utf16(source.get(..offset)?) > units;
-    if is_in_character {
-        offset = offset.saturating_sub(4);
-    }
+        bun_core::strings::element_length_utf8_into_utf16(source.get(..offset)?) < units;
     // After `\r\n` has become `\n`, an offset between the two is behind it.
     let is_in_line_break = offset > 0 && source.get(offset - 1..=offset) == Some(b"\r\n");
     Some(Offset {

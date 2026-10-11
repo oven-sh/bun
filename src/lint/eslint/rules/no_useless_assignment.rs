@@ -509,15 +509,6 @@ impl<'a> Uses<'a> {
 
     fn within(&self, span: Span) -> &[Use] {
         let all = &self.all[..];
-        // Most variables are used a few times.
-        if all.len() <= 8 {
-            let first = all.iter().take_while(|it| it.start < span.start).count();
-            let count = all[first..]
-                .iter()
-                .take_while(|it| it.start < span.end)
-                .count();
-            return &all[first..first + count];
-        }
         let first = all.partition_point(|it| it.start < span.start);
         let end = first + all[first..].partition_point(|it| it.start < span.end);
         &all[first..end]

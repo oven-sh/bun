@@ -1,5 +1,9 @@
 //! Questions about the source text around a position.
 
+use bun_core::strings::{
+    contains_js_line_break, js_line_break_len, js_line_break_len_back, js_whitespace_len,
+    js_whitespace_len_back,
+};
 use bun_lint::span::{Span, Spanned};
 
 #[derive(Copy, Clone)]
@@ -7,67 +11,11 @@ pub(crate) struct SourceText<'a> {
     text: &'a [u8],
 }
 
-/// `\n`, `\r`, U+2028 or U+2029 at the start of `text`: its length.
-#[inline]
-fn line_terminator_len(text: &[u8]) -> usize {
-    match text {
-        [b'\n' | b'\r', ..] => 1,
-        [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
-        _ => 0,
-    }
-}
-
-/// The same at the end of `text`.
-#[inline]
-fn line_terminator_len_back(text: &[u8]) -> usize {
-    match text {
-        [.., b'\n' | b'\r'] => 1,
-        [.., 0xE2, 0x80, 0xA8 | 0xA9] => 3,
-        _ => 0,
-    }
-}
-
-fn has_line_terminator(mut rest: &[u8]) -> bool {
-    if matches!(rest, [] | [_, b'\n', ..]) {
-        return !rest.is_empty();
-    }
-    // 0xE2 starts U+2028 and U+2029, and many other characters.
-    while let Some(at) = bun_core::strings::index_of_any(rest, b"\n\r\xE2") {
-        if line_terminator_len(&rest[at..]) != 0 {
-            return true;
-        }
-        rest = &rest[at + 1..];
-    }
-    false
-}
-
-/// `WhiteSpace` of the specification at the start of `text`: its length.
-#[inline]
-fn white_space_len(text: &[u8]) -> usize {
-    match text {
-        [b' ' | b'\t' | 0x0B | 0x0C, ..] => 1,
-        [0xC2, 0xA0, ..] => 2,
-        [0xEF, 0xBB, 0xBF, ..]
-        | [0xE1, 0x9A, 0x80, ..]
-        | [0xE2, 0x80, 0x80..=0x8A | 0xAF, ..]
-        | [0xE2, 0x81, 0x9F, ..]
-        | [0xE3, 0x80, 0x80, ..] => 3,
-        _ => 0,
-    }
-}
-
-/// The same at the end of `text`.
-#[inline]
-fn white_space_len_back(text: &[u8]) -> usize {
-    match text {
-        [.., b' ' | b'\t' | 0x0B | 0x0C] => 1,
-        [.., 0xEF, 0xBB, 0xBF]
-        | [.., 0xE1, 0x9A, 0x80]
-        | [.., 0xE2, 0x80, 0x80..=0x8A | 0xAF]
-        | [.., 0xE2, 0x81, 0x9F]
-        | [.., 0xE3, 0x80, 0x80] => 3,
-        [.., 0xC2, 0xA0] => 2,
-        _ => 0,
+fn has_line_terminator(rest: &[u8]) -> bool {
+    match rest {
+        [] => false,
+        [_, b'\n', ..] => true,
+        _ => contains_js_line_break(rest),
     }
 }
 
@@ -108,7 +56,7 @@ impl<'a> SourceText<'a> {
     pub(crate) fn next_non_whitespace_byte_is(self, position: u32, expected: u8) -> bool {
         let mut rest = self.from(position).trim_ascii_start();
         while rest.first().is_some_and(|b| !b.is_ascii()) {
-            match white_space_len(rest).max(line_terminator_len(rest)) {
+            match js_whitespace_len(rest) {
                 0 => break,
                 len => rest = rest[len..].trim_ascii_start(),
             }
@@ -125,10 +73,11 @@ impl<'a> SourceText<'a> {
         let mut rest = self.text_for(&span);
         while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
             rest = &rest[at..];
-            let (len, stands_for) = match (white_space_len(rest), line_terminator_len(rest)) {
-                (0, len) => (len, b'\n'),
-                (len, _) => (len, b' '),
+            let stands_for = match js_line_break_len(rest) {
+                0 => b' ',
+                _ => b'\n',
             };
+            let len = js_whitespace_len(rest);
             if len < 2 || !predicate(stands_for) {
                 return false;
             }
@@ -156,18 +105,15 @@ impl<'a> SourceText<'a> {
     pub(crate) fn lines_after(self, end: u32) -> usize {
         let (mut rest, mut count) = (self.from(end), 0);
         loop {
-            let space = white_space_len(rest);
-            if space != 0 {
-                rest = &rest[space..];
-                continue;
+            match (js_line_break_len(rest), js_whitespace_len(rest)) {
+                (0, 0) if rest.is_empty() => return 0,
+                (0, 0) => return count,
+                (0, space) => rest = &rest[space..],
+                (len, _) => {
+                    rest = &rest[len..];
+                    count += 1;
+                }
             }
-            match line_terminator_len(rest) {
-                0 if rest.is_empty() => return 0,
-                0 => return count,
-                _ if rest.starts_with(b"\r\n") => rest = &rest[2..],
-                len => rest = &rest[len..],
-            }
-            count += 1;
         }
     }
 
@@ -205,8 +151,9 @@ impl<'a> SourceText<'a> {
                     before = before.strip_suffix(b"\r").unwrap_or(before);
                 }
             }
-            let space = white_space_len_back(before);
-            if space != 0 {
+            if js_line_break_len_back(before) == 0
+                && let space @ 1.. = js_whitespace_len_back(before)
+            {
                 before = &before[..before.len() - space];
                 continue;
             }
@@ -222,7 +169,7 @@ impl<'a> SourceText<'a> {
                 count = 0;
                 continue;
             }
-            match line_terminator_len_back(before) {
+            match js_line_break_len_back(before) {
                 0 if before.is_empty() => return 0,
                 0 if count == 0 && !is_after_comma && before.ends_with(b",") => {
                     before = &before[..before.len() - 1];
@@ -230,7 +177,6 @@ impl<'a> SourceText<'a> {
                     continue;
                 }
                 0 => return count,
-                _ if before.ends_with(b"\r\n") => before = &before[..before.len() - 2],
                 len => before = &before[..before.len() - len],
             }
             count += 1;
@@ -244,7 +190,7 @@ impl<'a> SourceText<'a> {
             .iter()
             .rposition(|b| !matches!(b, b' ' | b'\t'))
             .map_or(0, |at| at + 1);
-        line_terminator_len_back(&before[..end]) != 0
+        js_line_break_len_back(&before[..end]) != 0
     }
 
     /// Whether only spaces and tabs are between `position` and the next line break.
@@ -254,7 +200,7 @@ impl<'a> SourceText<'a> {
             .iter()
             .position(|b| !matches!(b, b' ' | b'\t'))
             .unwrap_or(after.len());
-        line_terminator_len(&after[start..]) != 0
+        js_line_break_len(&after[start..]) != 0
     }
 
     /// Whether there is a line break between `position` and the next token, which can be in or
@@ -274,7 +220,7 @@ impl<'a> SourceText<'a> {
                     }
                     rest = tail.get(end + 2..).unwrap_or_default();
                 }
-                _ => return line_terminator_len(rest) != 0,
+                _ => return js_line_break_len(rest) != 0,
             }
         }
     }

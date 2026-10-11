@@ -1,8 +1,7 @@
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::collections::BTreeSet;
 
 /// Require `super()` calls in constructors.
 pub struct ConstructorSuper;
@@ -178,18 +177,13 @@ struct Called {
 }
 
 /// What the segments before a segment that have been seen say.
-struct Before<'a> {
+struct Before {
     any: bool,
     called: Called,
-    /// One of them in which it is not called on every path.
-    lacking: Option<Segment<'a>>,
 }
 
 struct SegmentInfo<'a> {
     called: Called,
-    /// [`Before::lacking`] when that was last asked. While it still lacks it, nothing before the segment can make it
-    /// be called on every path to it.
-    lacking: Option<Segment<'a>>,
     /// The `super()` calls that have been found valid, which a loop can make duplicates.
     valid_nodes: SmallVec<[Expr<'a>; 1]>,
 }
@@ -213,14 +207,6 @@ pub struct State<'a> {
     super_callees: Option<Vec<Expr<'a>>>,
     /// The statements of the file that [are winding](is_winding), in source order, once a constructor asks.
     winding: Option<Vec<Stmt<'a>>>,
-    /// By `Segment::id`, all the segments that going through them again could change: those that no longer agree with
-    /// what is before them. See [`ConstructorSuper::on_segment_loop`].
-    stale: BTreeSet<u32>,
-    /// The ids of the two ends of the edges that lead from a segment that has been seen to one with a smaller id that
-    /// has been seen, without those that another makes needless: both ends ascend.
-    edges_down: Vec<(u32, u32)>,
-    /// The greatest id of a segment that has been seen.
-    last_seen: u32,
     /// With a configuration of oxlint: a way back in a loop of the constructor leads to a `super()` again.
     is_called_again_in_loop: bool,
     /// The first `super()` of the constructor that can be reached.
@@ -243,136 +229,20 @@ impl<'a> State<'a> {
             && self.seg_info_map.get(&segment.id()).is_some_and(|it| it.called.in_every_path)
     }
 
-    fn seen_prev_segments(&self, segment: Segment<'a>) -> Before<'a> {
-        let (mut any, mut some, mut lacking) = (false, false, None);
+    fn seen_prev_segments(&self, segment: Segment<'a>) -> Before {
+        let (mut any, mut some, mut every) = (false, false, true);
         for prev in segment.prev_segments() {
             if self.seg_info_map.contains_key(&prev.id()) {
                 any = true;
                 some |= self.is_called_in_some_path(prev);
-                if lacking.is_none() && !self.is_called_in_every_path(prev) {
-                    lacking = Some(prev);
-                }
+                every &= self.is_called_in_every_path(prev);
             }
         }
         let called = Called {
-            in_every_path: lacking.is_none(),
+            in_every_path: every,
             in_some_paths: some,
         };
-        Before { any, called, lacking }
-    }
-
-    /// To be called once `segment` has been seen, and whenever `super()` is found to be called in it: finds the
-    /// segments after it that have been seen and no longer agree with it.
-    fn mark_stale_after(&mut self, segment: Segment<'a>) {
-        let (some, every) = (self.is_called_in_some_path(segment), self.is_called_in_every_path(segment));
-        if !some && !every {
-            return;
-        }
-        for next in segment.next_segments() {
-            let Some(info) = self.seg_info_map.get(&next.id()) else {
-                continue;
-            };
-            let mut is_stale = some && !(info.called.in_some_paths && info.valid_nodes.is_empty());
-            if !is_stale
-                && every
-                && !info.called.in_every_path
-                && !info.lacking.is_some_and(|it| !self.is_called_in_every_path(it))
-            {
-                let before = self.seen_prev_segments(next);
-                is_stale = before.called.in_every_path;
-                if let Some(info) = self.seg_info_map.get_mut(&next.id()) {
-                    info.lacking = before.lacking;
-                }
-            }
-            if is_stale {
-                self.stale.insert(next.id());
-            }
-        }
-    }
-
-    fn mark_stale_after_current_segments(&mut self, code_path: CodePath<'a>) {
-        for segment in code_path.current_segments() {
-            self.mark_stale_after(segment);
-        }
-    }
-
-    fn note_edge_down(&mut self, from: u32, to: u32) {
-        let edges = &mut self.edges_down;
-        let at = edges.partition_point(|&(it, _)| it < from);
-        if edges.get(at).is_some_and(|&(_, it)| it <= to) {
-            return;
-        }
-        let end = edges.partition_point(|&(it, _)| it <= from);
-        let keep = edges.get(..end).unwrap_or_default().partition_point(|&(_, it)| it < to);
-        edges.splice(keep..end, [(from, to)]);
-    }
-
-    /// Whether going through the segments from `first` again could change one. An edge leads to a greater id unless
-    /// it is among `edges_down`, so there is a least id that can be got to through what has been seen.
-    fn is_any_stale_from(&self, first: Segment<'a>) -> bool {
-        let mut least = first.id();
-        while let Some(&(_, to)) = self.edges_down.get(self.edges_down.partition_point(|&(from, _)| from < least))
-            && to < least
-        {
-            least = to;
-        }
-        self.stale.range(least..).next().is_some()
-    }
-
-    /// The segments that have been seen with which ESLint's `traverseSegments({ first, last })` calls back, in that
-    /// order, found without going through those that are made after all that have been seen, of which there can be
-    /// many. `None` where it cannot be told without them: at a segment that only loops lead to, which is left out or
-    /// not depending on what has been left out before, and if one is left waiting for a segment before it, which may
-    /// be got to through them.
-    fn seen_segments_between(&self, first: Segment<'a>, last: Segment<'a>) -> Option<Vec<Segment<'a>>> {
-        let is_seen = |id: u32| self.seg_info_map.contains_key(&id);
-        if !is_seen(first.id()) {
-            return None;
-        }
-        let (mut visited, mut skipped) = (FxHashSet::default(), FxHashSet::default());
-        let mut waiting = FxHashSet::default();
-        let mut found = vec![first];
-        visited.insert(first.id());
-        if first.id() == last.id() {
-            skipped.insert(first.id());
-        }
-        let mut stack = vec![(first.next_segments(), 0)];
-        while let Some((next, at)) = stack.last_mut() {
-            let Some(&segment) = next.get(*at) else {
-                stack.pop();
-                continue;
-            };
-            *at += 1;
-            let id = segment.id();
-            if id > self.last_seen || visited.contains(&id) {
-                continue;
-            }
-            let prev = segment.prev_segments();
-            let is_looped = |it: &Segment<'a>| segment.is_looped_prev_segment(*it);
-            if !prev.iter().all(|it| visited.contains(&it.id()) || is_looped(it)) {
-                if is_seen(id) {
-                    waiting.insert(id);
-                }
-                continue;
-            }
-            if prev.iter().all(is_looped) {
-                return None;
-            }
-            visited.insert(id);
-            waiting.remove(&id);
-            if !skipped.is_empty() && prev.iter().all(|it| skipped.contains(&it.id()) || is_looped(it)) {
-                skipped.insert(id);
-            } else {
-                if is_seen(id) {
-                    found.push(segment);
-                }
-                if !is_seen(id) || id == last.id() {
-                    skipped.insert(id);
-                }
-            }
-            stack.push((segment.next_segments(), 0));
-        }
-        waiting.is_empty().then_some(found)
+        Before { any, called }
     }
 
     /// Marks the current segments that are reachable as having called `super()`. Returns the id of
@@ -410,9 +280,6 @@ impl ConstructorSuper {
             }
         }
         cx.state.seg_info_map.clear();
-        cx.state.stale.clear();
-        cx.state.edges_down.clear();
-        cx.state.last_seen = 0;
         cx.state.is_called_again_in_loop = false;
         cx.state.first_call = None;
     }
@@ -466,12 +333,10 @@ impl ConstructorSuper {
         // follows.
         let unknown = SegmentInfo {
             called: Called::default(),
-            lacking: None,
             valid_nodes: SmallVec::new(),
         };
         let id = segment.id();
         cx.state.seg_info_map.insert(id, unknown);
-        cx.state.last_seen = cx.state.last_seen.max(id);
         let before = cx.state.seen_prev_segments(segment);
         let called = Called {
             // The segment of the update of a `for` is made in advance, before what precedes it is
@@ -481,28 +346,11 @@ impl ConstructorSuper {
         };
         if let Some(info) = cx.state.seg_info_map.get_mut(&id) {
             info.called = called;
-            info.lacking = before.lacking;
         }
-        // Going through it again finds it called in all of none.
-        if !before.any && !called.in_every_path {
-            cx.state.stale.insert(id);
-        }
-        for next in segment.next_segments().iter().map(|it| it.id()).filter(|&it| it < id) {
-            if cx.state.seg_info_map.contains_key(&next) {
-                cx.state.note_edge_down(id, next);
-            }
-        }
-        for prev in segment.prev_segments().iter().map(|it| it.id()).filter(|&it| it > id) {
-            if cx.state.seg_info_map.contains_key(&prev) {
-                cx.state.note_edge_down(prev, id);
-            }
-        }
-        cx.state.mark_stale_after(segment);
     }
 
     /// ESLint goes through the segments from the start of the loop again at each way back to it, and through all that
-    /// follow in the function, which it leaves out. That changes a segment only if it no longer agrees with those
-    /// before it.
+    /// follow in the function, which it leaves out.
     fn on_segment_loop<'a>(
         &self,
         from_segment: Segment<'a>,
@@ -513,15 +361,6 @@ impl ConstructorSuper {
         let Some(code_path) = cx.state.constructor().map(|it| it.code_path) else {
             return;
         };
-        if !cx.state.is_any_stale_from(to_segment) {
-            return;
-        }
-        if let Some(segments) = cx.state.seen_segments_between(to_segment, from_segment) {
-            for segment in segments {
-                Self::go_through_again(segment, cx);
-            }
-            return;
-        }
         code_path.traverse_segments_between(Some(to_segment), Some(from_segment), |segment, controller| {
             // What has not been seen is after the loop.
             match cx.state.seg_info_map.contains_key(&segment.id()) {
@@ -536,13 +375,10 @@ impl ConstructorSuper {
         let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) else {
             return;
         };
-        let called = Called {
+        info.called = Called {
             in_every_path: info.called.in_every_path || before.called.in_every_path,
             in_some_paths: info.called.in_some_paths || before.called.in_some_paths,
         };
-        let is_changed = called != info.called;
-        info.called = called;
-        info.lacking = before.lacking;
         if before.called.in_some_paths {
             let again = std::mem::take(&mut info.valid_nodes);
             if cx.language().is_oxlint {
@@ -552,10 +388,6 @@ impl ConstructorSuper {
                     cx.report(node, DUPLICATE);
                 }
             }
-        }
-        cx.state.stale.remove(&segment.id());
-        if is_changed {
-            cx.state.mark_stale_after(segment);
         }
     }
 
@@ -595,8 +427,6 @@ impl ConstructorSuper {
         } else if let Some(info) = cx.state.seg_info_map.get_mut(&last) {
             info.valid_nodes.push(e);
         }
-        // After the call is kept: a segment can be after itself.
-        cx.state.mark_stale_after_current_segments(code_path);
     }
 
     /// Returning a value is a substitute for `super()`.
@@ -606,7 +436,6 @@ impl ConstructorSuper {
             && let Some(code_path) = cx.state.constructor().map(|it| it.code_path)
         {
             cx.state.mark_current_segments(code_path);
-            cx.state.mark_stale_after_current_segments(code_path);
         }
     }
 }

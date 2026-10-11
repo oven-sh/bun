@@ -217,4 +217,5 @@ src/jsc/bindings/GeneratedBindings.zig
 /nosourcemap_entry
 
 # hawk analysis scaffolding (see tools/hawk/); generated per-run, never committed
+/test/js/bun/spawn/subprocess-late-stdio.generated.test.ts
 src/runtime/hawk_root.rs

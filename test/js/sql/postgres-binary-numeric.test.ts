@@ -37,6 +37,10 @@ const cases: string[] = [
   // --- zero: the server sends ndigits = 0 and keeps the scale in dscale ----
   "0.0000",
   "0.00000000000000000000",
+  // --- special values: the server sends the sign word alone -----------------
+  "NaN",
+  "Infinity",
+  "-Infinity",
 ];
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
@@ -48,5 +52,46 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     });
     const [row] = await sql`SELECT ${literal}::numeric AS n`;
     expect(row.n).toBe(literal);
+  });
+
+  test("binary NUMERIC decodes a value of 131072 digits", async () => {
+    await container.ready;
+    await using sql = new SQL({
+      url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+      max: 1,
+    });
+    // 32768 digit words. ndigits is an unsigned 16-bit count on the wire, so
+    // this value reads as a negative count when it is decoded as signed.
+    const nines = Buffer.alloc(131072, "9").toString();
+    const runs: { length: number; nines: boolean }[] = [];
+    // The first run of a statement gets text, the later runs get binary.
+    for (let run = 0; run < 3; run++) {
+      const [row] = await sql`SELECT repeat('9', 131072)::numeric AS n`;
+      runs.push({ length: row.n.length, nines: row.n === nines });
+    }
+    expect(runs).toEqual([
+      { length: 131072, nines: true },
+      { length: 131072, nines: true },
+      { length: 131072, nines: true },
+    ]);
+  });
+
+  test("binary NUMERIC decodes rows fetched from a BINARY cursor", async () => {
+    await container.ready;
+    await using sql = new SQL({
+      url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+      max: 1,
+    });
+    // A simple-protocol FETCH from a BINARY cursor is the one route on which
+    // the server picks binary results without a Bind from the client.
+    const literals = ["0", "0.0000", "-0.05", "123.456", "1000000", "NaN", "Infinity", "-Infinity"];
+    const fetched = await sql.begin(async tx => {
+      await tx.unsafe(
+        `DECLARE numerics BINARY CURSOR FOR
+           SELECT n FROM unnest(ARRAY['${literals.join("','")}']::numeric[]) WITH ORDINALITY AS t(n, i) ORDER BY i`,
+      );
+      return await tx.unsafe("FETCH ALL FROM numerics");
+    });
+    expect(fetched.map((row: { n: string }) => row.n)).toEqual(literals);
   });
 });

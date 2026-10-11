@@ -363,6 +363,32 @@ impl SQLDataCell {
         }
     }
 
+    /// Owned string cell of `len` Latin-1 characters that `write` fills in
+    /// place: one allocation, no copy. Freed via `free_value = 1`. `len` is
+    /// not zero, and `write` fills every character or fails.
+    #[inline]
+    pub(crate) fn string_in_place(
+        len: usize,
+        write: impl FnOnce(&mut [u8]) -> crate::Result<()>,
+    ) -> crate::Result<SQLDataCell> {
+        debug_assert!(len > 0);
+        let (string, chars) = bun_core::String::create_uninitialized_latin1(len);
+        // A dead string would leak as a null pointer, which the C++ side
+        // renders as the empty string.
+        if string.is_dead() {
+            return Err(bun_alloc::AllocError.into());
+        }
+        write(chars)?;
+        Ok(SQLDataCell {
+            tag: Tag::String,
+            value: Value {
+                string: string.leak_wtf_impl(),
+            },
+            free_value: 1,
+            ..Default::default()
+        })
+    }
+
     /// Owned JSON cell: clones `bytes` into a WTFStringImpl, freed via
     /// `free_value = 1`. Empty input becomes a null pointer, which the C++
     /// side (SQLClient.cpp) renders as `null`.

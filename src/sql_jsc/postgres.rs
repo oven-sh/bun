@@ -60,6 +60,9 @@ pub mod types {
     #[path = "date.rs"]
     pub mod date;
 
+    #[path = "numeric.rs"]
+    pub mod numeric;
+
     #[path = "tag_jsc.rs"]
     pub mod tag_jsc;
 }

@@ -1776,6 +1776,22 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     },
   );
 
+  // As Prettier 3.9.9 and oxfmt 0.72, which read a configuration in Node. On Windows it still runs.
+  test.skipIf(isWindows).each(["prettier.config.mjs", "oxfmt.config.ts"])(
+    "a `preload` of bunfig.toml does not run before %s",
+    async name => {
+      const files = {
+        "bunfig.toml": 'preload = ["./preload.ts"]\n',
+        "preload.ts": 'throw new Error("not here");\n',
+        [name]: "export default { semi: false };\n",
+        "a.js": "a;\n",
+      };
+      const result = await format(files, ["a.js"], { reads: ["a.js"] });
+      expect(result.files["a.js"]).toBe("a\n");
+      expect(result.exitCode).toBe(0);
+    },
+  );
+
   test("an oxfmt.config.ts that imports defineConfig from oxfmt works without the package", async () => {
     const files = {
       "oxfmt.config.ts": 'import { defineConfig } from "oxfmt";\nexport default defineConfig({ semi: false });\n',

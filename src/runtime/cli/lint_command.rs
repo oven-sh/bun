@@ -133,6 +133,10 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
             ));
         }
     }
+    // Nor a bunfig.toml, whose `preload` would run before the configuration. Windows has no file that is empty wherever one is.
+    if cfg!(not(windows)) {
+        argv.push(Box::from(&b"--config=/dev/null"[..]));
+    }
     argv.push(Box::from(&b"-e"[..]));
     argv.push(Box::from(script.source.concat().as_bytes()));
     argv.extend(script.arguments.iter().map(|it| Box::<[u8]>::from(*it)));

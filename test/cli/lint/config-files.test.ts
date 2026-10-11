@@ -1208,6 +1208,22 @@ test.concurrent.each([
   expect(result.exitCode).toBe(1);
 });
 
+// As ESLint 10.12.0 and oxlint 1.87.0, which read a configuration in Node. On Windows it still runs.
+test.skipIf(isWindows).each([
+  ["eslint.config.mjs", (rules: string) => `export default [{ rules: ${rules} }];`],
+  ["oxlint.config.ts", (rules: string) => `export default { categories: { correctness: "off" }, rules: ${rules} };`],
+])("a `preload` of bunfig.toml does not run before %s", async (name, config) => {
+  const files = {
+    "bunfig.toml": 'preload = ["./preload.ts"]\n',
+    "preload.ts": "globalThis.PRELOADED = true;\n",
+    [name]: config(`{ "no-var": globalThis.PRELOADED ? "error" : "off", eqeqeq: "error" }`),
+    "a.js": code,
+  };
+  const result = await lint(files, ["a.js"]);
+  expect(result.problems).toEqual(["a.js:2:7 eqeqeq"]);
+  expect(result.exitCode).toBe(1);
+});
+
 describe.concurrent("what is built in is not loaded to evaluate an eslint.config.js", () => {
   const timeout = isDebug || isASAN ? 120_000 : 30_000;
   // The parts of typescript-eslint that count, in the shape that TypeScript gives them. Each large module notes that it is loaded.

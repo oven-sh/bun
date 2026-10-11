@@ -100,22 +100,31 @@ struct NameSlot {
     start: u32,
 }
 
-/// The names of the variables of a file: a hash table with open addressing, at most half full.
+/// The names of the variables of a file.
 struct NameTable {
-    /// A power of two of them.
     slots: Vec<NameSlot>,
+    /// The number of a name is the index of its slot, and the last slot, which stays free, is that of all higher numbers: a file
+    /// that is linted on its own numbers its names from 0. Otherwise: a hash table with open addressing, at most half full,
+    /// with a power of two of slots.
+    is_by_number: bool,
 }
 
 impl NameTable {
-    fn with_room_for(names: usize) -> NameTable {
+    /// `highest`: the highest number of a name that is going to be in it.
+    fn with_room_for(names: usize, highest: u32) -> NameTable {
         let free = NameSlot {
             name: Atom::NONE,
             last: NONE,
             count: 0,
             start: NONE,
         };
+        let is_by_number = (highest as usize) < 8 * names + 1024;
         NameTable {
-            slots: vec![free; (names * 2 + 2).next_power_of_two()],
+            slots: match is_by_number {
+                true => vec![free; highest as usize + 2],
+                false => vec![free; (names * 2 + 2).next_power_of_two()],
+            },
+            is_by_number,
         }
     }
 
@@ -123,6 +132,9 @@ impl NameTable {
     #[inline]
     fn place(&self, name: Atom) -> usize {
         let mask = self.slots.len() - 1;
+        if self.is_by_number {
+            return (name.0 as usize).min(mask);
+        }
         // Atoms are numbered sequentially: Fibonacci hashing spreads them.
         let mut at = (u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & mask;
         while self.slots[at].name != name && self.slots[at].name.is_some() {
@@ -555,7 +567,10 @@ impl Variables {
         let mut starts: Vec<u32> = Vec::with_capacity(scope_count + 1);
         let mut made = Made {
             list: Vec::with_capacity(by_scope.len() + hir.fns.len()),
-            names: NameTable::with_room_for(by_scope.len() + 1),
+            names: NameTable::with_room_for(
+                by_scope.len() + 1,
+                (entries.iter()).fold(known::arguments.0, |highest, it| highest.max(it.name.0)),
+            ),
             later: Vec::new(),
         };
         for (scope, data) in tree.scopes.iter().enumerate() {

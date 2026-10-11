@@ -81,6 +81,13 @@ fn get_first_local_member_name(import: Import<'_>) -> Option<&[u8]> {
     first.map(Ident::bytes)
 }
 
+/// What is compared of the import declaration before.
+pub struct Previous<'a> {
+    syntax: Syntax,
+    first_local_member_name: Option<&'a [u8]>,
+    end: u32,
+}
+
 impl SortImports {
     fn compare(&self, a: &[u8], b: &[u8]) -> Ordering {
         match self.ignore_case {
@@ -111,15 +118,19 @@ impl SortImports {
         if import.span().start >= cx.state.1 {
             return;
         }
-        let Some(previous) = cx.state.0.replace(import) else {
+        let (syntax, first_local_member_name) = (used_member_syntax(import), get_first_local_member_name(import));
+        let this = Previous {
+            syntax,
+            first_local_member_name,
+            end: import.span().end,
+        };
+        let Some(previous) = cx.state.0.replace(this) else {
             return;
         };
-        if self.allow_separated_groups
-            && cx.line_of(import.span().start) > cx.line_of(previous.span().end) + 1
-        {
+        if self.allow_separated_groups && cx.line_of(import.span().start) > cx.line_of(previous.end) + 1 {
             return;
         }
-        let (syntax, previous_syntax) = (used_member_syntax(import), used_member_syntax(previous));
+        let previous_syntax = previous.syntax;
         if syntax != previous_syntax {
             if self.rank[syntax as usize] < self.rank[previous_syntax as usize] {
                 let name: fn(Syntax) -> &'static str = match cx.language().is_oxlint {
@@ -130,8 +141,8 @@ impl SortImports {
                     .data("syntaxA", name(syntax))
                     .data("syntaxB", name(previous_syntax));
             }
-        } else if let Some(name) = get_first_local_member_name(import)
-            && let Some(previous_name) = get_first_local_member_name(previous)
+        } else if let Some(name) = first_local_member_name
+            && let Some(previous_name) = previous.first_local_member_name
             && self.compare(name, previous_name) == Ordering::Less
         {
             cx.report(statement, SORT_IMPORTS_ALPHABETICALLY);
@@ -143,7 +154,7 @@ impl Rule for SortImports {
     const META: Meta = Meta::eslint("sort-imports", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::Import]).finish();
     /// The import declaration before, and where those end that are looked at.
-    type State<'a> = (Option<Import<'a>>, u32);
+    type State<'a> = (Option<Previous<'a>>, u32);
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);

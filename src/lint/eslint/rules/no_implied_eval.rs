@@ -52,7 +52,7 @@ fn is_global_object(object: Expr<'_>) -> bool {
 
 impl Rule for NoImpliedEval {
     const META: Meta = Meta::eslint("no-implied-eval", Kind::Suggestion).reports_at_the_end();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().calls_named(&["setInterval", "setTimeout", "execScript"]);
     /// `execScript`, and the other names for which [`is_eval_like`] holds.
     type State<'a> = [Name<'a>; 3];
 

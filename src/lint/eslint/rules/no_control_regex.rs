@@ -92,7 +92,7 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
 
 impl Rule for NoControlRegex {
     const META: Meta = Meta::eslint("no-control-regex", Kind::Problem).recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Regex, ExprTag::Call, ExprTag::New]);
+    const ON: On = On::new().exprs(&[ExprTag::Regex, ExprTag::New]).function_calls(&["RegExp"]);
     /// `RegExp`, if the file mentions it.
     type State<'a> = Option<Name<'a>>;
 
@@ -107,7 +107,7 @@ impl Rule for NoControlRegex {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().exprs(&[ExprTag::Regex]);
         if file.mentions("RegExp") {
-            on = on.exprs(&[ExprTag::Call, ExprTag::New]);
+            on = on.exprs(&[ExprTag::New]).function_calls(&["RegExp"]);
         }
         on
     }

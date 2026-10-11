@@ -48,7 +48,7 @@ pub struct AncestorCounter<'a> {
 }
 
 /// What an ancestor is to an [`AncestorCounter`].
-pub(crate) enum Ancestor {
+enum Ancestor {
     /// Neither it nor what is above it counts.
     End,
     Counted,
@@ -58,14 +58,8 @@ pub(crate) enum Ancestor {
 impl<'a> AncestorCounter<'a> {
     const STRIDE: u32 = 32;
 
-    /// How many of the ancestors of `start` count. `up` leads from each to the next, in the end to the file. `classify` depends
-    /// on nothing but the ancestor.
-    pub(crate) fn count(
-        &mut self,
-        start: Node<'a>,
-        up: impl Fn(Node<'a>) -> Node<'a>,
-        classify: impl Fn(Node<'a>) -> Ancestor,
-    ) -> usize {
+    /// How many of the ancestors of `start` count. `classify` depends on nothing but the ancestor.
+    fn count(&mut self, start: Node<'a>, classify: impl Fn(Node<'a>) -> Ancestor) -> usize {
         let (mut at, mut steps, mut count) = (start, 0u32, 0u32);
         loop {
             if !self.known.is_empty()
@@ -77,7 +71,7 @@ impl<'a> AncestorCounter<'a> {
             if matches!(at, Node::File(_)) {
                 break;
             }
-            at = up(at);
+            at = at.parent();
             match classify(at) {
                 Ancestor::End => break,
                 Ancestor::Counted => count += 1,
@@ -91,7 +85,7 @@ impl<'a> AncestorCounter<'a> {
                 if i % Self::STRIDE == 0 {
                     self.known.insert(at, above);
                 }
-                at = up(at);
+                at = at.parent();
                 if matches!(classify(at), Ancestor::Counted) {
                     above = above.saturating_sub(1);
                 }
@@ -181,7 +175,7 @@ impl Rule for MaxDepth {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let around = cx.state.ancestors.count(Node::Stmt(stmt), Node::parent, |ancestor| match ancestor {
+        let around = cx.state.ancestors.count(Node::Stmt(stmt), |ancestor| match ancestor {
             Node::Func(_) => Ancestor::End,
             Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
             _ => Ancestor::Passed,

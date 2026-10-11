@@ -74,11 +74,46 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.is_too_deep() {
             return TypeNodeId::NONE;
         }
+        if self.token().is_identifier_or_keyword()
+            && let Some(word) = self.type_of_one_word()
+        {
+            return word;
+        }
         // `TypeExcludesFlags`
         let saved = self.enter_context(ctx::TYPE, ctx::YIELD | ctx::AWAIT);
         let ty = self.type_in_context();
         self.context = saved;
         ty
+    }
+
+    /// `parseType`, at a word after which the text says that no type goes on: most types are such.
+    /// `None`: it says no such thing, or the word is more than a name or the name of a type.
+    #[inline(never)]
+    fn type_of_one_word(&mut self) -> Option<TypeNodeId> {
+        let follows = self.first_byte_of_next();
+        if !matches!(
+            follows,
+            b',' | b')' | b';' | b'=' | b'>' | b'{' | b'}' | b']'
+        ) {
+            return None;
+        }
+        let keyword = match self.token() {
+            T::Identifier => return Some(self.type_reference()),
+            T::Any => Keyword::Any,
+            T::Unknown => Keyword::Unknown,
+            T::StringKeyword => Keyword::String,
+            T::NumberKeyword => Keyword::Number,
+            T::BigIntKeyword => Keyword::BigInt,
+            T::Symbol => Keyword::Symbol,
+            T::Boolean => Keyword::Boolean,
+            T::Undefined => Keyword::Undefined,
+            T::Never => Keyword::Never,
+            T::Object => Keyword::Object,
+            T::Void => Keyword::Void,
+            T::Null => Keyword::Null,
+            _ => return None,
+        };
+        Some(self.token_type(TypeNodeKind::Keyword(keyword)))
     }
 
     fn type_in_context(&mut self) -> TypeNodeId {

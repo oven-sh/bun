@@ -16,7 +16,7 @@ impl Rule for NoArrayConstructor {
         .fixable(Fixable::Code)
         .recommended()
         .extends_base_rule("no-array-constructor");
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    const ON: On = On::new().function_calls(&["Array"]).exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

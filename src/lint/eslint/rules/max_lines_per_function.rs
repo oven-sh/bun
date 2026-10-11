@@ -92,13 +92,13 @@ impl MaxLinesPerFunction {
         std::iter::once(0).chain(counts).collect()
     }
 
-    /// Whether `span` plainly has fewer than `max` line breaks. If not, the lines tell.
-    fn has_fewer_line_breaks<'a>(&self, span: Span, cx: &mut Cx<'a, Self>) -> bool {
+    /// How many line breaks there are in `span`, if they are plainly all `\n`. If not, the lines tell.
+    fn count_line_breaks<'a>(span: Span, cx: &mut Cx<'a, Self>) -> Option<u32> {
         let (file, text) = (cx.file(), cx.slice(span));
         let in_file = &mut cx.state.may_have_other_line_breaks;
-        strings::count_char(text, b'\n') < self.max as usize
-            && !(*in_file.get_or_insert_with(|| may_have_other_line_breaks(file.text()))
-                && may_have_other_line_breaks(text))
+        let may_have_others = *in_file.get_or_insert_with(|| may_have_other_line_breaks(file.text()))
+            && may_have_other_line_breaks(text);
+        (!may_have_others).then(|| strings::count_char(text, b'\n') as u32)
     }
 }
 
@@ -153,24 +153,25 @@ impl Rule for MaxLinesPerFunction {
             if short.contains(span) {
                 continue;
             }
-            match self.has_fewer_line_breaks(span, cx) {
-                true => short = span,
-                false => self.check(func, span, cx),
+            match Self::count_line_breaks(span, cx) {
+                Some(line_breaks) if line_breaks < self.max => short = span,
+                line_breaks => self.check(func, span, line_breaks, cx),
             }
         }
     }
 }
 
 impl MaxLinesPerFunction {
-    /// `span`: what of `func` is counted.
-    fn check<'a>(&self, func: Func<'a>, span: Span, cx: &mut Cx<'a, Self>) {
+    /// `span`: what of `func` is counted. `line_breaks`: how many are in it, if that is known.
+    fn check<'a>(&self, func: Func<'a>, span: Span, line_breaks: Option<u32>, cx: &mut Cx<'a, Self>) {
         let (file, is_oxlint) = (cx.file(), cx.language().is_oxlint);
-        let (first, last) = (file.line_of(span.start), file.line_of(span.end));
-        if last - first < self.max {
+        let line_breaks = line_breaks.unwrap_or_else(|| file.line_of(span.end) - file.line_of(span.start));
+        if line_breaks < self.max {
             return;
         }
-        let mut line_count = last - first + 1;
+        let mut line_count = line_breaks + 1;
         if self.skips_comments || self.skips_blank_lines {
+            let (first, last) = (file.line_of(span.start), file.line_of(span.end));
             let counted = cx.state.lines.get_or_insert_with(|| self.count_lines(file));
             let up_to = |line: u32| counted.get(line as usize).map_or(0, |&it| it);
             line_count = up_to(last).saturating_sub(up_to(first.saturating_sub(1)));

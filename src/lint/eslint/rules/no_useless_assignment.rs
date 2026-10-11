@@ -472,18 +472,15 @@ fn is_read_after_declaration<'a>(
     variable: Binding<'a>,
     written: Reference<'a>,
     home: Scope<'a>,
-    evaluated_in: &mut AncestorMemo<'a, Option<Stmt<'a>>>,
+    (writers, evaluated_in): (&mut AncestorMemo<'a, Writer<'a>>, &mut AncestorMemo<'a, Option<Stmt<'a>>>),
 ) -> bool {
     if written.expr().is_some() || variable.symbol.declaration_count() != 1 {
         return false;
     }
-    let Node::Pat(name) = written.node() else {
+    let Some(Node::VarDecl(declarator)) = written_by(written, writers).map(|it| it.node) else {
         return false;
     };
-    let Node::VarDecl(declarator) = name.parent() else {
-        return false;
-    };
-    if declarator.var_kind() == VarKind::Var || declarator.init().is_none() {
+    if declarator.var_kind() == VarKind::Var {
         return false;
     }
     let Node::Stmt(declaration) = declarator.parent() else {
@@ -1193,7 +1190,7 @@ impl NoUselessAssignment {
             }
         }
         if let (1, None, Some(written)) = (writes, variable.class, written)
-            && is_read_after_declaration(variable, written, home, evaluated_in)
+            && is_read_after_declaration(variable, written, home, (writers, evaluated_in))
         {
             return;
         }

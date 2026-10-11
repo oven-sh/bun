@@ -15,7 +15,9 @@ use crate::ast::{
     ModuleName, Name, Node, Param, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag,
     TypeKind, TypeTag, UnOp, VarDecl,
 };
-use crate::semantic::{Declaration, Reference, ReferenceFlags, Scope, ScopeKind, Symbol};
+use crate::semantic::{
+    Declaration, DeclarationKinds, Reference, ReferenceFlags, Scope, ScopeKind, Symbol,
+};
 use crate::span::Span;
 use crate::tokens::TokenKind;
 use crate::utils::ancestor_memo::AncestorMemo;
@@ -225,6 +227,13 @@ impl Facts {
         | Self::VALUE
         | Self::EXPORTABLE;
 
+    /// Of what `var`, `let`, `const`, `using` or `catch` binds.
+    const OF_VARIABLE: u16 = Self::DEFINED
+        | Self::NOT_IMPORTED_AS_TYPE
+        | Self::VALUE
+        | Self::HAS_RANGES
+        | Self::EXPORTABLE;
+
     #[inline]
     fn has(self, fact: u16) -> bool {
         self.0 & fact != 0
@@ -234,13 +243,7 @@ impl Facts {
     #[inline]
     fn of_declaration(declaration: Declaration) -> u16 {
         match declaration {
-            Declaration::Var(_) => {
-                Self::DEFINED
-                    | Self::NOT_IMPORTED_AS_TYPE
-                    | Self::VALUE
-                    | Self::HAS_RANGES
-                    | Self::EXPORTABLE
-            }
+            Declaration::Var(_) => Self::OF_VARIABLE,
             _ => Self::of_what_is_no_variable(declaration),
         }
     }
@@ -318,6 +321,12 @@ impl Facts {
     fn of(variable: Variable) -> Facts {
         if variable.class.is_some() {
             return Facts(Self::IN_CLASS_SCOPE);
+        }
+        let kinds = variable.symbol.declaration_kinds();
+        if !kinds.is_empty()
+            && (DeclarationKinds::VARIABLE | DeclarationKinds::CATCH_CLAUSE).contains(kinds)
+        {
+            return Facts(Self::OF_VARIABLE);
         }
         let declarations = variable.symbol.declarations();
         Facts(declarations.fold(0, |facts, it| facts | Self::of_declaration(it)))
@@ -906,6 +915,9 @@ fn self_reference_range(definition: Declaration) -> Option<Span> {
 /// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it,
 /// from outside of its own declaration, and for more than its type unless it is a type.
 fn is_used_variable_with<'a>(variable: Variable<'a>, facts: Facts, walks: &mut Walks<'a>) -> bool {
+    if !variable.symbol.has_reads() {
+        return false;
+    }
     let is_split = facts.has(Facts::CLASS);
     let references = variable
         .symbol

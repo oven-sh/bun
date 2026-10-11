@@ -13,7 +13,7 @@ pub struct IdLength {
     exception_patterns: Vec<Regex>,
     /// An option of oxlint.
     check_generic: bool,
-    /// A name that starts with so many letters, digits, `_` and `$` of ASCII has the right length, whatever follows them.
+    /// A name that starts with so many letters of ASCII has the right length, whatever follows them.
     /// `usize::MAX`: no start tells.
     enough: usize,
 }
@@ -103,8 +103,7 @@ impl IdLength {
     /// Whether the name that `text` starts with has the right length by [`IdLength::enough`].
     #[inline]
     fn is_right_by_its_start(&self, text: &[u8]) -> bool {
-        let start = text.get(..self.enough);
-        start.is_some_and(|it| it.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$')))
+        text.get(..self.enough).is_some_and(|it| it.iter().all(u8::is_ascii_alphabetic))
     }
 
     /// The same for the name that is written at `start`.
@@ -133,15 +132,26 @@ impl IdLength {
 
     /// Reports an identifier named `name` if its length is wrong. `at` is only asked then: where
     /// to report it, or `None` if it is not in a place that the rule looks at.
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>, name: Name<'a>, at: impl FnOnce() -> Option<Span>) {
-        let problem = || match name.bytes() {
+    #[inline]
+    fn check<'a>(&self, cx: &mut Cx<'a, Self>, name: Name<'a>, at: impl Fn() -> Option<Span>) {
+        if cx.state.get_or_insert_with(name, || self.problem_of(name).1.is_some()) {
+            self.report(cx, name, &at);
+        }
+    }
+
+    /// `name` without its `#`, and its [`IdLength::problem`].
+    #[inline(never)]
+    fn problem_of<'a>(&self, name: Name<'a>) -> (&'a [u8], Option<(Message, &'static str, f64)>) {
+        match name.bytes() {
             [b'#', rest @ ..] => (rest, self.problem(rest, true)),
             name => (name, self.problem(name, false)),
-        };
-        if !cx.state.get_or_insert_with(name, || problem().1.is_some()) {
-            return;
         }
-        if let (name, Some((message, limit, value))) = problem()
+    }
+
+    /// What few names come to is not in the listeners.
+    #[inline(never)]
+    fn report<'a>(&self, cx: &Cx<'a, Self>, name: Name<'a>, at: &dyn Fn() -> Option<Span>) {
+        if let (name, Some((message, limit, value))) = self.problem_of(name)
             && let Some(at) = at()
         {
             cx.report(at, message).data("name", name).data(limit, text::number_to_string(value));
@@ -361,6 +371,17 @@ impl IdLength {
         }
     }
 
+    #[inline(never)]
+    fn check_member_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(name) = e.member_name() else {
+            return;
+        };
+        match cx.language().is_oxlint {
+            true => self.check_member_expression_as_oxlint(e, name, cx),
+            false => self.check(cx, name.name(), || is_assigned_member(e).then(|| name.span())),
+        }
+    }
+
     /// `a.b`: a private name, or what an assignment or a property of an object pattern assigns to.
     fn check_member_expression_as_oxlint<'a>(&self, e: Expr<'a>, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
         self.check(cx, name.name(), || {
@@ -378,10 +399,8 @@ impl IdLength {
     }
 
     /// The names in types that refer to no variable.
+    #[inline(never)]
     fn check_type_as_oxlint<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if ty.as_ref().is_some_and(|(name, _)| name.len() == 1) {
-            return;
-        }
         match ty.kind() {
             TypeKind::Tuple(elements) => {
                 for name in elements.iter().filter_map(|it| it.name()) {
@@ -510,13 +529,8 @@ impl Rule for IdLength {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(start) = e.member_name_start() {
-            if !self.is_right_at(cx.file(), start)
-                && let Some(name) = e.member_name()
-            {
-                match cx.language().is_oxlint {
-                    true => self.check_member_expression_as_oxlint(e, name, cx),
-                    false => self.check(cx, name.name(), || is_assigned_member(e).then(|| name.span())),
-                }
+            if !self.is_right_at(cx.file(), start) {
+                self.check_member_expression(e, cx);
             }
             return;
         }
@@ -544,6 +558,10 @@ impl Rule for IdLength {
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        // As nearly all are that oxlint's rule is called with.
+        if ty.as_ref().is_some_and(|(name, _)| name.len() == 1) {
+            return;
+        }
         match (ty.tag(), cx.language().is_oxlint) {
             (TypeTag::Import, false) => self.check_import_type(ty, cx),
             (TypeTag::Tuple | TypeTag::Ref | TypeTag::Typeof | TypeTag::Predicate, true) => {

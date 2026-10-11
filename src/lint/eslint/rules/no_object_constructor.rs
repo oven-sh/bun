@@ -38,7 +38,7 @@ fn fix_text(e: Expr) -> &'static str {
 
 impl Rule for NoObjectConstructor {
     const META: Meta = Meta::eslint("no-object-constructor", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    const ON: On = On::new().function_calls(&["Object"]).exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

@@ -8,7 +8,7 @@ const PREFER_SPREAD: Message =
 
 impl Rule for PreferSpread {
     const META: Meta = Meta::eslint("prefer-spread", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["apply"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
@@ -23,7 +23,7 @@ impl Rule for PreferSpread {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let (callee, args) = (call.callee(), call.args());

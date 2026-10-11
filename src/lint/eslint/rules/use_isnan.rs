@@ -190,7 +190,7 @@ impl Rule for UseIsnan {
             BinOp::NotEqEq,
         ])
         .stmts(&[StmtTag::Switch])
-        .exprs(&[ExprTag::Call]);
+        .method_calls(&["indexOf", "lastIndexOf"]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -216,7 +216,7 @@ impl Rule for UseIsnan {
             on = on.stmts(&[StmtTag::Switch]);
         }
         if self.enforce_for_index_of {
-            on = on.exprs(&[ExprTag::Call]);
+            on = on.method_calls(&["indexOf", "lastIndexOf"]);
         }
         on
     }

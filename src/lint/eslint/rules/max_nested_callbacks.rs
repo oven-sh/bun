@@ -1,6 +1,6 @@
-use super::max_depth::{Ancestor, AncestorCounter};
 use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::iter_outer_expressions;
+use smallvec::SmallVec;
 
 /// Enforce a maximum depth that callbacks can be nested.
 pub struct MaxNestedCallbacks {
@@ -15,8 +15,9 @@ const EXCEED: Message = Message::new(
 );
 
 #[derive(Default)]
-pub struct State<'a> {
-    ancestors: AncestorCounter<'a>,
+pub struct State {
+    /// By the index of a function: one more than how many of it and the functions around it are callbacks. 0: not known.
+    callbacks: Vec<usize>,
     /// ESLint before 10 counts while it walks.
     depth: usize,
 }
@@ -67,7 +68,7 @@ impl MaxNestedCallbacks {
 impl Rule for MaxNestedCallbacks {
     const META: Meta = Meta::eslint("max-nested-callbacks", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Fn]).enter(NodeTags::FUNC).exit(NodeTags::FUNC);
-    type State<'a> = State<'a>;
+    type State<'a> = State;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -87,7 +88,7 @@ impl Rule for MaxNestedCallbacks {
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
         Some(State::default())
     }
 
@@ -98,14 +99,26 @@ impl Rule for MaxNestedCallbacks {
         if !self.is_callback(e) {
             return;
         }
-        // From function to function.
-        let file = cx.file();
-        let up = |node: Node<'a>| node.as_func().and_then(Func::enclosing).map_or(Node::File(file), Node::Func);
-        let around = cx.state.ancestors.count(Node::Func(func), up, |ancestor| match ancestor.as_written() {
-            Node::Expr(outer) if outer.tag() == ExprTag::Fn && self.is_callback(outer) => Ancestor::Counted,
-            _ => Ancestor::Passed,
-        });
-        let depth = around + 1;
+        // From function to function, as far as it is not known.
+        let known = &mut cx.state.callbacks;
+        let (mut unknown, mut depth): (SmallVec<[Func<'a>; 8]>, usize) = (SmallVec::new(), 0);
+        for outer in std::iter::successors(Some(func), |it| it.enclosing()) {
+            if let Some(known) = known.get(outer.id().idx()).and_then(|it| it.checked_sub(1)) {
+                depth = known;
+                break;
+            }
+            unknown.push(outer);
+        }
+        for outer in unknown.into_iter().rev() {
+            let is_callback = matches!(outer.owner(), Node::Expr(it) if it.tag() == ExprTag::Fn && self.is_callback(it));
+            depth += usize::from(is_callback);
+            if known.len() <= outer.id().idx() {
+                known.resize(outer.id().idx() + 1, 0);
+            }
+            if let Some(known) = known.get_mut(outer.id().idx()) {
+                *known = depth + 1;
+            }
+        }
         if depth > max {
             // oxlint points at the whole function.
             let place = match cx.language().is_oxlint {

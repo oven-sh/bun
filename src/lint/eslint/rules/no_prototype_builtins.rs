@@ -115,7 +115,7 @@ impl Rule for NoPrototypeBuiltins {
     const META: Meta = Meta::eslint("no-prototype-builtins", Kind::Problem)
         .recommended()
         .has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

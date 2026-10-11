@@ -3774,3 +3774,78 @@ describe.concurrent("paths", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// As ESLint 10.12.0 and 9.39.5. `{ max: Infinity }` is how one limit is switched off. ajv takes it for an integer, and prints a
+// value as `JSON.stringify` does.
+describe("an infinite number in an eslint.config.mjs", () => {
+  const code =
+    "function f(a) {\n  if (a) {\n    if (a) {\n      if (a) {\n        return 123;\n      }\n    }\n  }\n}\nf();\n";
+  test.concurrent.each([
+    [`"max-depth": ["error", 2]`, ["4:7 Blocks are nested too deeply (3). Maximum allowed is 2."]],
+    [`"max-depth": ["error", Infinity]`, []],
+    [`"max-depth": ["error", { max: Infinity }]`, []],
+    [`"max-lines": ["error", { max: Infinity }]`, []],
+    [`"max-len": ["error", { code: Infinity }]`, []],
+    [`"complexity": ["error", Infinity]`, []],
+    [`"no-magic-numbers": ["error", { ignore: [Infinity] }]`, ["5:16 No magic number: 123."]],
+    [
+      `"id-length": ["error", { min: Infinity }]`,
+      ["1:10 Identifier name 'f' is too short (< Infinity).", "1:12 Identifier name 'a' is too short (< Infinity)."],
+    ],
+    [
+      `"id-length": ["error", { max: -Infinity }]`,
+      ["1:10 Identifier name 'f' is too short (< 2).", "1:12 Identifier name 'a' is too short (< 2)."],
+    ],
+    [
+      `"max-depth": ["error", -Infinity]`,
+      'Key "rules": Key "max-depth":\n\tValue null should be >= 0.\n\tValue null should be object.\n\tValue null should match exactly one schema in oneOf.',
+    ],
+    [
+      `"max-depth": ["error", { max: -Infinity }]`,
+      'Key "rules": Key "max-depth":\n\tValue {"max":null} should be integer.\n\tValue null should be >= 0.\n\tValue {"max":null} should match exactly one schema in oneOf.',
+    ],
+    [
+      `"newline-per-chained-call": ["error", { ignoreChainWithDepth: Infinity }]`,
+      'Key "rules": Key "newline-per-chained-call":\n\tValue null should be <= 10.',
+    ],
+    [
+      `"indent": ["error", Infinity]`,
+      'RangeError: Invalid count value: Infinity\nOccurred while linting <dir>/a.js:1\nRule: "indent"',
+    ],
+  ] as [string, string[] | string][])("an option of a rule: %s", async (rule, expected) => {
+    const files = { "eslint.config.mjs": `export default [{ rules: { ${rule} } }];\n`, "a.js": code };
+    const { raw, stderr, exitCode } = await lint(files, ["a.js"]);
+    if (typeof expected === "string") {
+      expect(stderr).toBe(`error: ${expected}`);
+      expect(exitCode).toBe(2);
+      return;
+    }
+    type Message = { line: number; column: number; message: string };
+    const messages: Message[] = JSON.parse(raw).results[0].messages;
+    expect(messages.map(it => `${it.line}:${it.column} ${it.message}`)).toEqual(expected);
+    expect(exitCode).toBe(expected.length === 0 ? 0 : 1);
+  });
+
+  test("what a rule in JavaScript sees", async () => {
+    const files = {
+      "eslint.config.mjs": `
+        const show = it => (typeof it === "object" ? Object.entries(it).map(([key, value]) => key + "=" + value) : String(it));
+        const rule = {
+          meta: { schema: false },
+          create: context => ({
+            Program(node) {
+              context.report({ node, message: "options " + context.options.map(show) + " settings " + context.settings.s });
+            },
+          }),
+        };
+        export default [{
+          plugins: { p: { rules: { show: rule } } },
+          settings: { s: -Infinity },
+          rules: { "p/show": ["error", Infinity, { max: -Infinity }] },
+        }];`,
+      "a.js": "a;\n",
+    };
+    const { raw } = await lint(files, ["a.js"]);
+    expect(JSON.parse(raw).results[0].messages[0].message).toBe("options Infinity,max=-Infinity settings -Infinity");
+  });
+});

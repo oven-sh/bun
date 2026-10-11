@@ -14,6 +14,7 @@ import {
 import { bunEnv, bunExe, DirectoryTree, isWindows, normalizeBunSnapshot, readdirSorted, tempDir } from "harness";
 import { isAbsolute, join, sep } from "path";
 import { TestRegistry } from "registry";
+import { wyhash11 } from "./wyhash11.js";
 
 // Each test spawns three to six debug builds of bun, and up to 20 tests run at once. The registry
 // itself needs more than the default 5 seconds to start on Windows.
@@ -1713,6 +1714,15 @@ describe.concurrent("an npm: aliased dependency", () => {
     const at = lockb.indexOf("a_b");
     expect(lockb.indexOf("a_b", at + 1)).toBe(-1);
     lockb.write("a/b", at);
+    // the row also stores the hash of its name
+    const hashOf = (name: string) => {
+      const bytes = Buffer.alloc(8);
+      bytes.writeBigUInt64LE(wyhash11(0n, Buffer.from(name)));
+      return bytes;
+    };
+    const hashAt = lockb.indexOf(hashOf("a_b"));
+    expect(hashAt).toBeGreaterThan(-1);
+    hashOf("a/b").copy(lockb, hashAt);
     await Bun.write(join(dir, "bun.lockb"), lockb);
 
     await expectRefused(

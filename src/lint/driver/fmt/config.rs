@@ -474,8 +474,8 @@ fn not_an_integer(name: &[u8], value: &[u8], is_flag: bool) -> Option<Vec<u8>> {
         _ => return None,
     };
     let number = bun_core::fmt::js_string_to_number(value);
-    // `tabWidth: -1` is one.
-    if number.fract() == 0.0 {
+    // `tabWidth: -1` is one, and for Prettier `Infinity`.
+    if number.is_infinite() || number.fract() == 0.0 {
         return None;
     }
     let mut buffer = [0; 124];

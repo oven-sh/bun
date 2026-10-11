@@ -7,12 +7,13 @@ use crate::ast::{
 };
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::rule::{Meta, NAME_CLASSES, NodeTags, On, Rule, When, name_class};
-use crate::rule_set::{RuleBits, RuleSet};
+use crate::rule_set::{NUMBERS, RuleBits, RuleSet};
 use crate::span::Span;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, kind_counts};
 use bun_sema::hir;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::cell::{Cell, OnceCell};
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
@@ -54,6 +55,9 @@ impl<const KINDS: usize> Grouped<KINDS> {
         all: impl ExactSizeIterator<Item = u32> + Clone,
         kind_of: impl Fn(u32) -> Option<usize>,
     ) -> Self {
+        if all.len() == 0 {
+            return Grouped::empty();
+        }
         let kinds: Vec<u8> = all
             .clone()
             .map(|id| kind_of(id).map_or(NOT_IN_TREE, |kind| kind as u8))
@@ -100,6 +104,15 @@ impl<const KINDS: usize> Grouped<KINDS> {
             ids,
             starts,
             present,
+        }
+    }
+
+    /// Of no nodes.
+    fn empty() -> Self {
+        Grouped {
+            ids: Vec::new(),
+            starts: [0; MOST_KINDS + 2],
+            present: 0,
         }
     }
 
@@ -474,7 +487,7 @@ impl File<'_> {
 
     #[inline]
     pub(crate) fn by_kind(&self) -> &ByKind {
-        self.lazy.by_kind.get_or_init(ByKind::default)
+        &self.lazy.by_kind
     }
 
     #[inline]
@@ -554,22 +567,24 @@ impl File<'_> {
 
     #[inline]
     fn type_nodes(&self) -> &Grouped<{ TypeTag::COUNT }> {
-        self.by_kind()
-            .types
-            .get_or_init(|| match self.counted_types() {
-                Some(counts) => {
-                    let kinds = self.hir.types.iter().map(|it| {
-                        debug_assert_eq!(TypeTag::of(&it.kind) as u8, it.kind.tag() as u8);
-                        TypeTag::of(&it.kind) as u8
-                    });
-                    let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
-                    debug_assert!(
-                        grouped.is_same_as(&Grouped::new(|kinds| self.type_tags_in_tree(kinds)))
-                    );
-                    grouped
-                }
-                None => Grouped::new(|kinds| self.type_tags_in_tree(kinds)),
-            })
+        let group = || match self.counted_types() {
+            Some(counts) => {
+                let kinds = self.hir.types.iter().map(|it| {
+                    debug_assert_eq!(TypeTag::of(&it.kind) as u8, it.kind.tag() as u8);
+                    TypeTag::of(&it.kind) as u8
+                });
+                let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                debug_assert!(
+                    grouped.is_same_as(&Grouped::new(|kinds| self.type_tags_in_tree(kinds)))
+                );
+                grouped
+            }
+            None => Grouped::new(|kinds| self.type_tags_in_tree(kinds)),
+        };
+        (self.by_kind().types).get_or_init(|| match self.hir.types.is_empty() {
+            true => Grouped::empty(),
+            false => group(),
+        })
     }
 
     #[inline(never)]
@@ -633,25 +648,27 @@ impl File<'_> {
 
     #[inline]
     fn pats(&self) -> &Grouped<{ PatTag::COUNT }> {
-        self.by_kind()
-            .pats
-            .get_or_init(|| match self.counted_pats() {
-                Some(counts) => {
-                    let kinds = self.hir.pats.iter().map(|it| {
-                        debug_assert_eq!(PatTag::of(&it.kind) as u8, it.kind.tag() as u8);
-                        match PatTag::of(&it.kind) {
-                            PatTag::Missing => NOT_IN_TREE,
-                            tag => tag as u8,
-                        }
-                    });
-                    let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
-                    debug_assert!(
-                        grouped.is_same_as(&Grouped::new(|kinds| self.pat_tags_in_tree(kinds)))
-                    );
-                    grouped
-                }
-                None => Grouped::new(|kinds| self.pat_tags_in_tree(kinds)),
-            })
+        let group = || match self.counted_pats() {
+            Some(counts) => {
+                let kinds = self.hir.pats.iter().map(|it| {
+                    debug_assert_eq!(PatTag::of(&it.kind) as u8, it.kind.tag() as u8);
+                    match PatTag::of(&it.kind) {
+                        PatTag::Missing => NOT_IN_TREE,
+                        tag => tag as u8,
+                    }
+                });
+                let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                debug_assert!(
+                    grouped.is_same_as(&Grouped::new(|kinds| self.pat_tags_in_tree(kinds)))
+                );
+                grouped
+            }
+            None => Grouped::new(|kinds| self.pat_tags_in_tree(kinds)),
+        };
+        (self.by_kind().pats).get_or_init(|| match self.hir.pats.is_empty() {
+            true => Grouped::empty(),
+            false => group(),
+        })
     }
 
     #[inline(never)]
@@ -690,6 +707,9 @@ impl File<'_> {
 
     #[inline(never)]
     fn present_types(&self) -> u64 {
+        if self.hir.types.is_empty() {
+            return 0;
+        }
         *(self.by_kind().present_types).get_or_init(|| match self.counted_types() {
             Some(counts) => Grouped::<{ TypeTag::COUNT }>::present(&counts),
             None => self.type_nodes().present,
@@ -698,6 +718,9 @@ impl File<'_> {
 
     #[inline(never)]
     fn present_pats(&self) -> u64 {
+        if self.hir.pats.is_empty() {
+            return 0;
+        }
         *(self.by_kind().present_pats).get_or_init(|| match self.counted_pats() {
             Some(counts) => Grouped::<{ PatTag::COUNT }>::present(&counts),
             None => self.pats().present,
@@ -1098,7 +1121,7 @@ pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<L
 
 /// Calls `visit` with the number of each bit that is set, from the lowest.
 #[inline(always)]
-fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
+pub(crate) fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
     while bits != 0 {
         visit(bits.trailing_zeros() as usize);
         bits &= bits - 1;
@@ -1622,29 +1645,20 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
     order.into_iter().map(|place| place as u32).collect()
 }
 
-/// Those of `enabled` for which `file` has something: all others would not be started.
-pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> RuleBits {
-    let rows = S::LISTENS;
-    let mut all = RuleBits::EMPTY;
-    if *enabled == all {
-        return all;
-    }
-    // All the words of a row, whichever have a rule that is enabled: how many there are is a constant, so there is no loop.
-    let is_wanted = |row: &RuleBits| {
-        let both = enabled.0.iter().zip(&row.0);
-        both.fold(0, |any, (a, b)| any | (a & b)) != 0
-    };
-    let mut add = |row: &RuleBits| {
-        for (to, from) in all.0.iter_mut().zip(&row.0) {
-            *to |= from;
-        }
-    };
-    add(&rows[On::ALWAYS]);
-    // What groups the nodes of a sort is called only if a rule wants that sort.
+/// Calls `add` with each of [`On::ROWS`] for which `file` has something. `wants(sort)`: whether a row of `On::KINDS[sort]` matters:
+/// what groups the nodes of a sort is called only then. `wants_chains`: the same for the row of the optional chains.
+#[inline]
+fn each_row_of<'a>(
+    file: &'a File<'a>,
+    wants: impl Fn(usize) -> bool,
+    wants_chains: bool,
+    mut add: impl FnMut(usize),
+) {
+    add(On::ALWAYS);
     macro_rules! kinds {
         ($($sort:literal $present:ident;)*) => {
-            $(if is_wanted(&S::LISTENS_TO_KINDS[$sort]) {
-                each_bit(file.$present(), |kind| add(&rows[On::KINDS[$sort].0 + kind]));
+            $(if wants($sort) {
+                each_bit(file.$present(), |kind| add(On::KINDS[$sort].0 + kind));
             })*
         };
     }
@@ -1656,14 +1670,14 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
         4 present_types;
         5 present_pats;
     }
-    if is_wanted(&rows[On::SORTS]) && file.present_chained() != 0 {
-        add(&rows[On::SORTS]);
+    if wants_chains && file.present_chained() != 0 {
+        add(On::SORTS);
     }
     // After `optional_chains`, in the order of the bits of `On`.
     macro_rules! sorts {
         ($($bit:literal $field:ident;)*) => {
             $(if !file.hir.$field.is_empty() {
-                add(&rows[On::SORTS + $bit]);
+                add(On::SORTS + $bit);
             })*
         };
     }
@@ -1680,10 +1694,106 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
         10 import_specs;
         11 export_specs;
     }
+}
+
+/// Those of `enabled` for which `file` has something: all others would not be started.
+pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> RuleBits {
+    let rows = S::LISTENS;
+    let mut all = RuleBits::EMPTY;
+    if *enabled == all {
+        return all;
+    }
+    // All the words of a row, whichever have a rule that is enabled: how many there are is a constant, so there is no loop.
+    let is_wanted = |row: &RuleBits| {
+        let both = enabled.0.iter().zip(&row.0);
+        both.fold(0, |any, (a, b)| any | (a & b)) != 0
+    };
+    each_row_of(
+        file,
+        |sort| is_wanted(&S::LISTENS_TO_KINDS[sort]),
+        is_wanted(&rows[On::SORTS]),
+        |row| {
+            for (to, from) in all.0.iter_mut().zip(&rows[row].0) {
+                *to |= from;
+            }
+        },
+    );
     for (to, from) in all.0.iter_mut().zip(&enabled.0) {
         *to &= from;
     }
     all
+}
+
+/// [`RuleSet::LISTENS`] for the rules of a configuration: in a row a rule is the bit of its place among them, so a row is as
+/// long as they are many, and what is found is in their order.
+#[derive(Clone)]
+pub(crate) struct Listeners {
+    /// How many words a row has.
+    words: usize,
+    /// Row after row.
+    rows: Box<[u64]>,
+    /// For each of `On::KINDS`: a row of it has a rule.
+    wants: [bool; On::KINDS.len()],
+    wants_chains: bool,
+}
+
+/// A set of places.
+pub(crate) type Places = SmallVec<[u64; 16]>;
+
+impl Listeners {
+    /// `numbers`: those of the rules in `S`, in their order. One can be there several times.
+    pub(crate) fn new<S: RuleSet>(numbers: &[u16]) -> Listeners {
+        let words = numbers.len().div_ceil(64);
+        // The last place of each number, and for each place the one before it with the same number.
+        let (mut last, mut before) = (vec![None; NUMBERS], vec![None; numbers.len()]);
+        let mut on = RuleBits::EMPTY;
+        for (place, &number) in numbers.iter().enumerate() {
+            if let Some(last) = last.get_mut(number as usize) {
+                before[place] = last.replace(place);
+                on.insert(number);
+            }
+        }
+        let mut rows = vec![0u64; words * On::ROWS].into_boxed_slice();
+        for (row, of_all) in S::LISTENS.iter().enumerate() {
+            for (word, (listening, on)) in of_all.0.iter().zip(&on.0).enumerate() {
+                each_bit(listening & on, |bit| {
+                    let mut next = last[64 * word + bit];
+                    while let Some(place) = next {
+                        rows[row * words + place / 64] |= 1 << (place % 64);
+                        next = before[place];
+                    }
+                });
+            }
+        }
+        let has_any =
+            |first: usize, end: usize| rows[first * words..end * words].iter().any(|&it| it != 0);
+        Listeners {
+            words,
+            wants: On::KINDS.map(|(first, end)| has_any(first, end)),
+            wants_chains: has_any(On::SORTS, On::SORTS + 1),
+            rows,
+        }
+    }
+
+    /// The places of those for which `file` has something: all others would not be started.
+    pub(crate) fn of<'a>(&self, file: &'a File<'a>) -> Places {
+        let mut all = Places::from_elem(0, self.words);
+        if self.words == 0 {
+            return all;
+        }
+        each_row_of(
+            file,
+            |sort| self.wants[sort],
+            self.wants_chains,
+            |row| {
+                let row = self.rows.get(row * self.words..(row + 1) * self.words);
+                for (to, from) in all.iter_mut().zip(row.unwrap_or_default()) {
+                    *to |= from;
+                }
+            },
+        );
+        all
+    }
 }
 
 fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {

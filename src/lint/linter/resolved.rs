@@ -8,7 +8,7 @@ use crate::language::{LanguageOptions, Parser};
 use crate::options::Json;
 use crate::rule::{Meta, Plugin, When};
 use crate::rule_set::RuleBits;
-use crate::runner::RuleEntry;
+use crate::runner::{Listeners, RuleEntry};
 use std::sync::{Arc, OnceLock};
 
 /// ESLint's `linterOptions`.
@@ -174,6 +174,8 @@ pub(super) struct Prepared {
     /// They, in the order of the configuration. Those of a configuration of oxlint: by the numbers that oxlint gives
     /// its rules.
     pub(super) order: Box<[Slot]>,
+    /// What each of them listens to, by its place in that order.
+    pub(super) listeners: Listeners,
     /// They, made from their options, in the same order: a list that the linter has made, which knows the type of its rules.
     pub(super) rules: Arc<dyn std::any::Any + Send + Sync>,
     /// What the first of them that refuses its options throws.

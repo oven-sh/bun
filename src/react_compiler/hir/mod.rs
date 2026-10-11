@@ -40,6 +40,7 @@ pub mod dominator;
 pub mod environment;
 pub mod environment_config;
 pub mod globals;
+pub mod id_map;
 pub mod object_shape;
 pub mod reactive;
 pub mod type_config;
@@ -139,7 +140,17 @@ macro_rules! impl_u32_id {
         }
     )*};
 }
-impl_u32_id!(BlockId, IdentifierId, InstructionId, DeclarationId, ScopeId);
+impl_u32_id!(
+    BlockId,
+    IdentifierId,
+    InstructionId,
+    EvaluationOrder,
+    DeclarationId,
+    ScopeId,
+    TypeId,
+    FunctionId,
+    MutableRangeId,
+);
 
 // =============================================================================
 // FloatValue wrapper

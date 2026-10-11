@@ -8,9 +8,7 @@
 //!
 //! Semantic notes vs `indexmap`:
 //!   * lookups take `&K` (no `Borrow<Q>` adapter) — every key type in this
-//!     crate is a small `Copy` id or an owned `String`, so this is sufficient;
-//!   * `remove` is an order-preserving (`shift_remove`) alias, not the
-//!     deprecated `swap_remove` alias indexmap 2.x uses.
+//!     crate is a small `Copy` id or an owned `String`, so this is sufficient.
 
 use core::fmt;
 use core::hash::Hash;
@@ -33,6 +31,8 @@ type Inner<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
 
 pub(crate) type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext, AstAlloc>;
 pub use bun_collections::array_hash_map::{OccupiedEntry, VacantEntry};
+
+pub use crate::hir::id_map::{IdBitSet, IdMap, IdSet};
 
 // ──────────────────────────────────────────────────────────────────────────
 // IndexMap
@@ -118,11 +118,6 @@ impl<K: Hash + Eq, V> IndexMap<K, V> {
     #[inline]
     pub(crate) fn swap_remove(&mut self, key: &K) -> Option<V> {
         self.0.fetch_swap_remove(key).map(|(_, v)| v)
-    }
-    /// Alias for [`shift_remove`](Self::shift_remove).
-    #[inline]
-    pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
-        self.0.remove(key)
     }
 }
 
@@ -338,79 +333,3 @@ impl<K: Hash + Eq> PartialEq for IndexSet<K> {
     }
 }
 impl<K: Hash + Eq> Eq for IndexSet<K> {}
-
-// ──────────────────────────────────────────────────────────────────────────
-// IdMap
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Insertion-ordered map keyed by a `u32` newtype id. Stores keys as raw `u32`
-/// so every id newtype shares one monomorphization of the underlying map.
-pub struct IdMap<K, V>(IndexMap<u32, V>, core::marker::PhantomData<K>);
-
-impl<K: Copy + Into<u32>, V> IdMap<K, V> {
-    #[inline]
-    pub(crate) fn new() -> Self {
-        Self(IndexMap::new(), core::marker::PhantomData)
-    }
-    #[inline]
-    pub(crate) fn get(&self, k: K) -> Option<&V> {
-        self.0.get(&k.into())
-    }
-    #[inline]
-    pub(crate) fn get_mut(&mut self, k: K) -> Option<&mut V> {
-        self.0.get_mut(&k.into())
-    }
-    #[inline]
-    pub(crate) fn insert(&mut self, k: K, v: V) -> Option<V> {
-        self.0.insert(k.into(), v)
-    }
-    #[inline]
-    pub(crate) fn contains_key(&self, k: K) -> bool {
-        self.0.contains_key(&k.into())
-    }
-    #[inline]
-    pub(crate) fn entry(&mut self, k: K) -> Entry<'_, u32, V> {
-        self.0.entry(k.into())
-    }
-    #[inline]
-    pub(crate) fn remove(&mut self, k: K) -> Option<V> {
-        self.0.remove(&k.into())
-    }
-    /// O(1) remove; does not preserve order.
-    #[inline]
-    pub(crate) fn swap_remove(&mut self, k: K) -> Option<V> {
-        self.0.swap_remove(&k.into())
-    }
-    #[inline]
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (K, &V)>
-    where
-        K: From<u32>,
-    {
-        self.0.iter().map(|(k, v)| (K::from(*k), v))
-    }
-    #[inline]
-    pub(crate) fn len(&self) -> usize {
-        self.0.len()
-    }
-    #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    #[inline]
-    pub(crate) fn values(&self) -> slice::Iter<'_, V> {
-        self.0.values()
-    }
-}
-
-impl<K, V> Default for IdMap<K, V> {
-    #[inline]
-    fn default() -> Self {
-        Self(IndexMap::new(), core::marker::PhantomData)
-    }
-}
-
-impl<K, V: Clone> Clone for IdMap<K, V> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), core::marker::PhantomData)
-    }
-}

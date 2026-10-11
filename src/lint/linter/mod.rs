@@ -76,7 +76,7 @@ use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
-use crate::runner::{Enabled, RuleEntry};
+use crate::runner::{Enabled, Listeners, RuleEntry, each_bit};
 use crate::span::Span;
 use directives::{ConfigComment, Label};
 use instances::Instances;
@@ -406,8 +406,10 @@ impl<S: RuleSet> Linter<S> {
         }
         order.sort_by_key(|it| it.0);
         let rules: Vec<Arc<S>> = order.iter().map(|it| Arc::clone(&it.2)).collect();
+        let numbers: Vec<u16> = order.iter().map(|it| it.1.number).collect();
         Prepared {
             on,
+            listeners: Listeners::new::<S>(&numbers),
             order: order.into_iter().map(|it| it.1).collect(),
             rules: Arc::new(rules),
             refusal,
@@ -500,9 +502,15 @@ impl<S: RuleSet> Linter<S> {
             && (config.linter.no_inline_config
                 || !configures_in_comments
                 || !(comments.iter().filter(is_understood)).any(|it| it.label == Label::Rules));
-        let listening = is_plain.then(|| crate::runner::listening::<S>(file, &prepared.on));
+        let listening = is_plain.then(|| prepared.listeners.of(file));
+        debug_assert!(listening.as_ref().is_none_or(|places| {
+            let numbers = crate::runner::listening::<S>(file, &prepared.on);
+            (prepared.order.iter().enumerate()).all(|(place, slot)| {
+                numbers.has(slot.number) == (places[place / 64] & (1 << (place % 64)) != 0)
+            })
+        }));
         let count = match &listening {
-            Some(listening) => listening.0.iter().map(|it| it.count_ones() as usize).sum(),
+            Some(listening) => listening.iter().map(|it| it.count_ones() as usize).sum(),
             None => prepared.order.len(),
         };
         let made = prepared.rules.downcast_ref::<Vec<Arc<S>>>();
@@ -512,14 +520,19 @@ impl<S: RuleSet> Linter<S> {
         let mut enabled: Vec<Enabled<S>> = Vec::with_capacity(count);
         if let Some(listening) = &listening {
             places.reserve(count);
-            for ((slot, instance), place) in prepared.order.iter().zip(made).zip(0..) {
-                if listening.has(slot.number) {
-                    places.push(place);
-                    enabled.push(Enabled {
-                        rule: &**instance,
-                        severity: slot.severity,
-                    });
-                }
+            for (word, &bits) in listening.iter().enumerate() {
+                each_bit(bits, |bit| {
+                    let place = 64 * word + bit;
+                    if let (Some(slot), Some(instance)) =
+                        (prepared.order.get(place), made.get(place))
+                    {
+                        places.push(place as u32);
+                        enabled.push(Enabled {
+                            rule: &**instance,
+                            severity: slot.severity,
+                        });
+                    }
+                });
             }
         }
         running.reserve(if is_plain { 0 } else { count });
@@ -590,6 +603,19 @@ impl<S: RuleSet> Linter<S> {
             }
         }
 
+        let understands_oxlint_comments =
+            config.understands_oxlint_comments && !config.linter.no_inline_config;
+        let is_directive = |it: &&ConfigComment| {
+            matches!(
+                it.label,
+                Label::Disable | Label::Enable | Label::DisableLine | Label::DisableNextLine
+            )
+        };
+        let has_directives = match understands_oxlint_comments {
+            true => comments.iter().any(|it| is_directive(&it)),
+            false => !disable_directives.is_empty(),
+        };
+        // Read where comments are applied.
         let mut rules_to_ignore = Vec::new();
         // To oxlint, what disables a rule that it does not run on the file is unused.
         let ignores_what_is_filtered = !config.language.is_oxlint;
@@ -626,7 +652,9 @@ impl<S: RuleSet> Linter<S> {
         }
         // Nor can what disables a rule that does not run for lack of types be called unused.
         if file.types.is_none() && is_plain {
-            rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
+            if has_directives {
+                rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
+            }
         } else if file.types.is_none() && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
@@ -732,18 +760,6 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        let understands_oxlint_comments =
-            config.understands_oxlint_comments && !config.linter.no_inline_config;
-        let is_directive = |it: &&ConfigComment| {
-            matches!(
-                it.label,
-                Label::Disable | Label::Enable | Label::DisableLine | Label::DisableNextLine
-            )
-        };
-        let has_directives = match understands_oxlint_comments {
-            true => comments.iter().any(|it| is_directive(&it)),
-            false => !disable_directives.is_empty(),
-        };
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
         file.sink.wants_help.set(options.wants_help);

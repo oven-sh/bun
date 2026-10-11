@@ -487,6 +487,8 @@ struct Builder<'t> {
     tree: &'t mut Tree,
     /// The containers that are open, the root first.
     open: Vec<Open>,
+    /// How many of them are block quotes.
+    open_blockquotes: u32,
     /// What the parser has said last about a container, and the lines of a leaf block.
     source: (u32, u32, u32),
     lines: Vec<VerbatimLine>,
@@ -711,9 +713,7 @@ impl Builder<'_> {
     }
 
     fn is_in_blockquote(&self) -> bool {
-        self.open
-            .iter()
-            .any(|it| self.tree.kind(it.node) == Some(Kind::Blockquote))
+        self.open_blockquotes > 0
     }
 
     /// Adds `node`, which starts at `start`, to the container that is open. A blank line before it spreads out a
@@ -1261,6 +1261,7 @@ impl Builder<'_> {
     fn enter_container(&mut self, kind: Kind, start: u32, end: u32) -> NodeId {
         let node = self.tree.add(kind, start, end);
         self.append(node, start);
+        self.open_blockquotes += u32::from(kind == Kind::Blockquote);
         self.open.push(Open {
             node,
             last_child_line: 0,
@@ -1274,6 +1275,7 @@ impl Builder<'_> {
         let Some(Open { node, .. }) = self.open.pop() else {
             return;
         };
+        self.open_blockquotes -= u32::from(self.tree.kind(node) == Some(Kind::Blockquote));
         if is_ended_by_colons != 0 && self.tree.kind(node) == Some(Kind::Directive) {
             let line_end = self.line_end(ended_by);
             let line = self
@@ -2157,6 +2159,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) 
             _ => "\u{FFFD}".as_bytes(),
         },
         tree,
+        open_blockquotes: 0,
         open: vec![Open {
             node: root,
             last_child_line: 0,

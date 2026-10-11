@@ -307,6 +307,9 @@ impl Checker<'_, '_> {
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
     fn modules_declaration(&mut self, cx: &Cx<'_>, s: StmtId, m: ModuleId, around: Around) {
+        if self.is_stack_low() {
+            return;
+        }
         let (hir, files) = (self.hir(cx.file), self.files());
         let module = hir[m];
         let name_pos = module.name_pos;

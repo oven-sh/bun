@@ -773,7 +773,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkVariableLikeDeclaration`, the part for `node.Name()`: a name, or the elements of a
     /// pattern (`checkBindingElement`).
     fn check_binding_name(&mut self, file: FileId, pat: PatId, is_bodiless: bool) {
-        if pat.is_none() {
+        if pat.is_none() || self.is_stack_low() {
             return;
         }
         let hir = self.hir(file);

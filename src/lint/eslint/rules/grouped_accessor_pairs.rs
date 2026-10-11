@@ -69,18 +69,17 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
 }
 
 impl GroupedAccessorPairs {
-    /// ESLint's `checkList`.
-    /// It is compiled once, not for each kind of list.
-    #[inline(never)]
-    fn check_list<'a>(&self, accessors: &mut dyn Iterator<Item = Accessor<'a>>, cx: &Cx<'a, Self>) {
+    /// ESLint's `checkList`, for the one setter `func` of the list.
+    fn check_list<'a>(&self, func: Func<'a>, accessors: &mut dyn Iterator<Item = Accessor<'a>>, cx: &Cx<'a, Self>) {
         let all: SmallVec<[Accessor<'a>; 8]> = accessors.collect();
+        let Some(setter) = all.iter().find(|it| it.func == func) else {
+            return;
+        };
         // Nothing is reported for a name that has several getters or several setters.
-        for getter in all.iter().filter(|it| it.is_getter) {
-            let mut others =
-                all.iter().filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
-            if let (Some(setter), None) = (others.next(), others.next()) {
-                self.check_pair(*getter, *setter, cx);
-            }
+        let mut others =
+            all.iter().filter(|it| it.index != setter.index && are_equal_keys(cx.file(), setter.key, it.key));
+        if let (Some(getter), None) = (others.next(), others.next()) {
+            self.check_pair(*getter, *setter, cx);
         }
     }
 
@@ -129,8 +128,9 @@ impl GroupedAccessorPairs {
     }
 
     /// `TSMethodSignature`s
-    fn check_signatures<'a>(&self, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
+    fn check_signatures<'a>(&self, func: Func<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         self.check_list(
+            func,
             &mut members.iter().enumerate().filter_map(|(index, member)| Accessor::of_member(index, member)),
             cx,
         );
@@ -139,11 +139,7 @@ impl GroupedAccessorPairs {
 
 impl Rule for GroupedAccessorPairs {
     const META: Meta = Meta::eslint("grouped-accessor-pairs", Kind::Suggestion);
-    const ON: On = On::new()
-        .exprs(&[ExprTag::Object])
-        .classes()
-        .types(&[TypeTag::Object])
-        .stmts(&[StmtTag::Interface]);
+    const ON: On = On::new().funcs();
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -157,45 +153,49 @@ impl Rule for GroupedAccessorPairs {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        let on = On::new().exprs(&[ExprTag::Object]).classes();
-        match self.enforce_for_ts_types {
-            true => on.types(&[TypeTag::Object]).stmts(&[StmtTag::Interface]),
-            false => on,
+    /// A pair has one setter.
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.kind() != FnKind::Setter {
+            return;
         }
-    }
-
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Object(props) = e.kind() {
-            self.check_list(
-                &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
-                cx,
-            );
-        }
-    }
-
-    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if let StmtKind::Interface(interface) = statement.kind() {
-            self.check_signatures(interface.members(), cx);
-        }
-    }
-
-    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if let TypeKind::Object(members) = ty.kind() {
-            self.check_signatures(members, cx);
-        }
-    }
-
-    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        for is_static in [false, true] {
-            // An abstract accessor is not a `MethodDefinition`.
-            let mut accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
-                let flags = member.flags();
-                (flags.contains(Flags::STATIC) == is_static && !flags.contains(Flags::ABSTRACT))
-                    .then(|| Accessor::of_member(index, member))
-                    .flatten()
-            });
-            self.check_list(&mut accessors, cx);
+        match func.owner() {
+            Node::Expr(e) => {
+                if let Node::Prop(prop) = e.parent()
+                    && let Node::Expr(object) = prop.parent()
+                    && let ExprKind::Object(props) = object.kind()
+                {
+                    self.check_list(
+                        func,
+                        &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
+                        cx,
+                    );
+                }
+            }
+            Node::Member(member) => match member.parent() {
+                Node::Class(class) => {
+                    let is_static = member.is_static();
+                    // An abstract accessor is not a `MethodDefinition`.
+                    let mut accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
+                        let flags = member.flags();
+                        (flags.contains(Flags::STATIC) == is_static && !flags.contains(Flags::ABSTRACT))
+                            .then(|| Accessor::of_member(index, member))
+                            .flatten()
+                    });
+                    self.check_list(func, &mut accessors, cx);
+                }
+                Node::Type(ty) if self.enforce_for_ts_types => {
+                    if let TypeKind::Object(members) = ty.kind() {
+                        self.check_signatures(func, members, cx);
+                    }
+                }
+                Node::Stmt(statement) if self.enforce_for_ts_types => {
+                    if let StmtKind::Interface(interface) = statement.kind() {
+                        self.check_signatures(func, interface.members(), cx);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
 }

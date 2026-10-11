@@ -67,10 +67,13 @@ impl<'a> Property<'a> {
 /// `e` as a `MemberExpression` that could be destructured: not an optional chain, not of `super`,
 /// not of a private name.
 fn member_expression(e: Expr<'_>) -> Option<(Expr<'_>, Property<'_>)> {
-    let (object, property) = match e.kind() {
-        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => (obj, Property::Name(name.name())),
-        ExprKind::Index { obj, index, .. } => (obj, Property::Computed(index)),
-        _ => return None,
+    let (object, property) = match e.as_dot() {
+        Some(_) if e.is_private_member() => return None,
+        Some((obj, name, _)) => (obj, Property::Name(name.name())),
+        None => {
+            let (obj, index, _) = e.as_index()?;
+            (obj, Property::Computed(index))
+        }
     };
     (!e.is_in_optional_chain() && object.tag() != ExprTag::Super).then_some((object, property))
 }
@@ -183,7 +186,7 @@ impl Config {
 
     /// ESLint's listener for an `AssignmentExpression`.
     pub fn check_assignment_expression<'a, R: Rule>(&self, e: Expr<'a>, cx: &Cx<'a, R>) {
-        let ExprKind::Assign { op: None, target, value } = e.kind() else {
+        let Some((None, target, value)) = e.as_assign() else {
             return;
         };
         let Some((_, property)) = member_expression(value) else {

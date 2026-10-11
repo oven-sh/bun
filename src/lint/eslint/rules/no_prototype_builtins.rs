@@ -46,19 +46,23 @@ fn is_after_optional(e: Expr<'_>) -> bool {
 
 impl NoPrototypeBuiltins {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let callee = call.callee();
-        // Of the literals, only a string can be one of the names.
-        let name = match callee.kind() {
-            ExprKind::Dot { name, .. } => Some(name.name()),
-            ExprKind::Index { index, .. } => match index.kind() {
+        let name = match (callee.member_name(), callee.index()) {
+            // As it is written it starts like one of the names, or with an escape.
+            (Some(name), _) => match cx.text().get(name.start() as usize) {
+                Some(b'h' | b'i' | b'p' | b'\\') => Some(name.name()),
+                _ => None,
+            },
+            // Of the literals, only a string can be one of the names.
+            (None, Some(index)) => match index.kind() {
                 ExprKind::String(value) => Some(value),
                 ExprKind::Template(template) => template.as_static(),
                 _ => None,
             },
-            _ => None,
+            (None, None) => None,
         };
         let Some(prop) = name.and_then(disallowed_prop) else {
             return;

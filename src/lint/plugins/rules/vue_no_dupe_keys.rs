@@ -2,8 +2,8 @@ use bun_core::strings;
 use crate::oxlint::comments::leading_comments;
 use crate::oxlint::vue::{
     EnclosingDeclarators, enclosing_variable_declarator, first_type_argument,
-    for_each_define_props_type_signature, is_vue_component_options_object, is_vue_setup, key_span, object_properties,
-    signature_key,
+    for_each_define_props_type_signature, is_vue_component_options_object, is_vue_setup, key_span,
+    may_have_component_options, object_properties, signature_key,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -52,14 +52,14 @@ impl Rule for NoDupeKeys {
         on
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        (is_vue_setup(file) || may_have_component_options(file) || file.comments().any(is_annotation)).then(State::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Object => {
-                if let ExprKind::Object(properties) = e.kind()
+                if let Some(properties) = e.as_object()
                     && !properties.is_empty()
                     && (is_vue_component_options_object(e) || has_vue_component_annotation(e, cx))
                 {
@@ -113,13 +113,16 @@ fn outermost_target<'a>(node: Node<'a>, known: &mut FxHashMap<Node<'a>, Option<u
     around_node
 }
 
+/// `@vue/component`
+fn is_annotation(comment: Token) -> bool {
+    let value = strings::trim_js_whitespace_start(comment.comment_value());
+    value.starts_with(b"@vue/component") && strings::trim_js_whitespace_end(value) == b"@vue/component"
+}
+
 /// A comment `@vue/component` is before the outermost statement that `node` is in.
 fn has_vue_component_annotation<'a>(node: Expr<'a>, cx: &mut Cx<'a, NoDupeKeys>) -> bool {
     let file = cx.file();
-    let annotated = cx.state.annotated.get_or_init(|| {
-        let is_annotation = |it: Token| strings::trim_js_whitespace(it.comment_value()) == b"@vue/component";
-        leading_comments(file, is_annotation).iter().map(|it| it.1).collect()
-    });
+    let annotated = cx.state.annotated.get_or_init(|| leading_comments(file, is_annotation).iter().map(|it| it.1).collect());
     if annotated.is_empty() {
         return false;
     }

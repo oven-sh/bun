@@ -93,7 +93,7 @@ impl Config {
 }
 
 fn looks_like_directive(statement: Stmt) -> bool {
-    matches!(statement.kind(), StmtKind::Expr(e) if e.as_string().is_some())
+    statement.as_expr().is_some_and(|e| e.as_string().is_some())
 }
 
 /// What has been asked about last, with where its first statement that does not look like a
@@ -135,7 +135,8 @@ pub(super) fn body_with_directives(parent: Node<'_>) -> Option<List<'_, Stmt<'_>
 /// The whole rule, for an expression statement. typescript-eslint's rule of the same name is no
 /// different.
 pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, prologue: &mut Prologue<'a>, cx: &Cx<'a, R>) {
-    if let StmtKind::Expr(e) = statement.kind()
+    if let Some(e) = statement.as_expr()
+        && !matches!(e.tag(), ExprTag::Call | ExprTag::Assign | ExprTag::Await)
         && config.is_disallowed(e)
         && !ast_utils::is_directive(statement)
         && !(config.ignore_directives && is_in_directive_prologue(statement, prologue))

@@ -34,7 +34,7 @@ impl Rule for ConstComparisons {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
             return;
         };
         if !matches!(op, BinOp::And | BinOp::Or) {
@@ -227,8 +227,8 @@ fn check_redundant_logical_expression<'a>(left: Expr<'a>, right: Expr<'a>, is_or
     }
     // `foo && !foo`, `foo || !foo`
     let is_negation_of = |negated: Expr<'a>, other: Expr<'a>| {
-        matches!(negated.kind(), ExprKind::Unary { op: UnOp::Not, operand }
-            if !operand.is_parenthesized() && is_same_expression(operand, other))
+        negated.unary_op() == Some(UnOp::Not)
+            && negated.operand().is_some_and(|operand| !operand.is_parenthesized() && is_same_expression(operand, other))
     };
     if is_negation_of(inner_left, inner_right) || is_negation_of(inner_right, inner_left) {
         complementary();

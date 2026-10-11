@@ -6,6 +6,7 @@ use crate::ast::{
 };
 use crate::span::Span;
 use crate::tokens::{skip_trivia, skip_trivia_back};
+use crate::utils::ast_utils::first_opening_paren_nearby;
 use crate::utils::estree_compat::estree_span;
 
 /// The start of the first token after the last decorator among `modifiers`, or `start` if there is
@@ -64,6 +65,9 @@ fn opening_paren_of_params(func: Func<'_>) -> u32 {
         Some(name) => name.span().end,
         None => estree_span(Node::Func(func)).start,
     };
+    if let Some(paren) = first_opening_paren_nearby(func, from) {
+        return paren;
+    }
     file.tokens_in(Span::new(from, func.span().end))
         .find(|token| token.is_punctuator("("))
         .map_or(from, |token| token.start())

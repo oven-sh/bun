@@ -19,7 +19,7 @@ impl Rule for NoZeroFractions {
 
     fn number_literal<'a>(&self, number_literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
         let raw = number_literal.text();
-        if !strings::contains_char(raw, b'.') {
+        if raw.len() < 2 || !strings::contains_char(raw, b'.') {
             return;
         }
         let Some((fmt, is_dangling_dot)) = format_raw(raw).filter(|it| it.0 != raw) else {

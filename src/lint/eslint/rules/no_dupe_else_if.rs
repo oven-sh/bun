@@ -32,6 +32,28 @@ fn split_by_or_and(e: Expr<'_>) -> OrOperands<'_> {
     split(BinOp::Or, e).into_iter().map(|it| split(BinOp::And, it)).collect()
 }
 
+/// Whether `a` and `b` can consist of the same tokens: then they are parsed alike.
+fn can_have_equal_tokens<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
+    let mut pending: SmallVec<[(Expr<'a>, Expr<'a>); 8]> = SmallVec::new();
+    pending.push((a, b));
+    while let Some((a, b)) = pending.pop() {
+        if a.tag() != b.tag()
+            || a.as_ident() != b.as_ident()
+            || a.as_string() != b.as_string()
+            || a.member_name().map(Ident::name) != b.member_name().map(Ident::name)
+            || a.binary_op() != b.binary_op()
+            || a.unary_op() != b.unary_op()
+        {
+            return false;
+        }
+        pending.extend(a.object().zip(b.object()));
+        pending.extend(a.operand().zip(b.operand()));
+        pending.extend(a.right().zip(b.right()));
+        pending.extend(a.left().zip(b.left()));
+    }
+    true
+}
+
 /// In a boolean context, `||` and `&&` are commutative.
 fn equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     if a.tag() != b.tag() || !bun_core::StackCheck::init().is_safe_to_recurse() {
@@ -44,7 +66,7 @@ fn equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
         return equal(left, other_left) && equal(right, other_right)
             || equal(left, other_right) && equal(right, other_left);
     }
-    ast_utils::equal_tokens(a.file(), a, b)
+    can_have_equal_tokens(a, b) && ast_utils::equal_tokens(a.file(), a, b)
 }
 
 fn is_subset<'a>(a: &[Expr<'a>], b: &[Expr<'a>]) -> bool {
@@ -54,7 +76,7 @@ fn is_subset<'a>(a: &[Expr<'a>], b: &[Expr<'a>]) -> bool {
 /// The `if` whose `else` is `statement`.
 fn previous_if(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     let parent = statement.parent().as_stmt()?;
-    matches!(parent.kind(), StmtKind::If { no: Some(no), .. } if no == statement).then_some(parent)
+    matches!(parent.as_if(), Some((_, _, Some(no))) if no == statement).then_some(parent)
 }
 
 impl NoDupeElseIf {
@@ -62,16 +84,16 @@ impl NoDupeElseIf {
         let Some(mut current) = previous_if(statement) else {
             return;
         };
-        let StmtKind::If { test, .. } = statement.kind() else {
+        let Some((test, ..)) = statement.as_if() else {
             return;
         };
         let mut list_to_check: SmallVec<[OrOperands<'a>; 4]> = SmallVec::new();
         list_to_check.push(split_by_or_and(test));
-        if matches!(test.kind(), ExprKind::Binary { op: BinOp::And, .. }) {
+        if test.binary_op() == Some(BinOp::And) {
             list_to_check.extend(split(BinOp::And, test).into_iter().map(split_by_or_and));
         }
         loop {
-            let StmtKind::If { test: current_test, .. } = current.kind() else {
+            let Some((current_test, ..)) = current.as_if() else {
                 return;
             };
             let current_operands = split_by_or_and(current_test);

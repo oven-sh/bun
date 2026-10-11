@@ -1,6 +1,6 @@
 use crate::oxlint::vue::{
-    definitely_returns_in_all_codepaths, is_specific_static_name, is_vue_component_options_object, key_span, object_of,
-    property_of_function,
+    definitely_returns_in_all_codepaths, is_specific_static_name, is_vue_component_options_object, key_span,
+    may_have_component_options, object_of, property_of_function,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -20,7 +20,7 @@ impl Rule for RequireRenderReturn {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("render").then_some(())
+        (file.mentions("render") && may_have_component_options(file)).then_some(())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

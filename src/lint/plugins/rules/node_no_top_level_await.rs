@@ -37,8 +37,9 @@ impl Rule for NoTopLevelAwait {
                 }
             }
             StmtTag::Var => {
-                if matches!(stmt.kind(), StmtKind::Var(declarations)
-                    if declarations.first().is_some_and(|it| it.var_kind() == VarKind::AwaitUsing))
+                if stmt.text().starts_with(b"await")
+                    && matches!(stmt.kind(), StmtKind::Var(declarations)
+                        if declarations.first().is_some_and(|it| it.var_kind() == VarKind::AwaitUsing))
                 {
                     check(Node::Stmt(stmt), cx);
                 }

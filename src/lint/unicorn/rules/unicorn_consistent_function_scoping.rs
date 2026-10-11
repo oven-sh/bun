@@ -25,6 +25,8 @@ pub struct State<'a> {
     is_strict: FxHashMap<Scope<'a>, bool>,
     /// [`Captures::of`], once that is asked.
     captures: Option<Captures<'a>>,
+    /// [`functions_with_private_names`], once that is asked.
+    with_private_names: Option<FxHashSet<Scope<'a>>>,
 }
 
 /// Up to three variables, those first that are declared furthest out.
@@ -71,38 +73,46 @@ fn is_top_or_module_block(scope: Scope) -> bool {
 }
 
 impl ConsistentFunctionScoping {
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+    /// The variable that `func` is the value of, and the expression that it is. `None`: where it is, or without a name,
+    /// it is not looked at.
+    fn place_of<'a>(&self, func: Func<'a>) -> Option<(Option<Pat<'a>>, Option<Expr<'a>>)> {
         if !func.has_body() {
-            return;
+            return None;
         }
-        // The variable that it is the value of, and the expression that it is.
         let (binding, expression) = match (func.kind(), func.owner()) {
             (FnKind::Decl, Node::Stmt(declaration)) => {
                 let parent = declaration.parent();
                 if is_top_level(parent) || matches!(parent, Node::Func(outer) if is_iife(outer)) {
-                    return;
+                    return None;
                 }
                 (None, None)
             }
-            (FnKind::Arrow, Node::Expr(_)) if !self.check_arrow_functions => return,
+            (FnKind::Arrow, Node::Expr(_)) if !self.check_arrow_functions => return None,
             (FnKind::Expr | FnKind::Arrow, Node::Expr(e)) => match e.parent() {
                 Node::VarDecl(declarator) if declarator.pat().tag() == PatTag::Ident => {
                     if is_top_level(declarator.parent().parent()) {
-                        return;
+                        return None;
                     }
                     (Some(declarator.pat()), Some(e))
                 }
-                Node::Stmt(parent) if parent.tag() == StmtTag::Return => return,
+                Node::Stmt(parent) if parent.tag() == StmtTag::Return => return None,
                 Node::Expr(parent)
                     if !e.is_parenthesized()
                         && matches!(parent.tag(), ExprTag::Call | ExprTag::New)
                         && parent.callee() != Some(e) =>
                 {
-                    return;
+                    return None;
                 }
                 _ => (None, Some(e)),
             },
-            _ => return,
+            _ => return None,
+        };
+        (binding.is_some() || func.name().is_some()).then_some((binding, expression))
+    }
+
+    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let Some((binding, expression)) = self.place_of(func) else {
+            return;
         };
         let (name, reporter_span) = match (binding, func.name(), expression) {
             (Some(binding), _, _) if func.is_arrow() => (binding.text(), binding.span()),
@@ -130,12 +140,8 @@ impl ConsistentFunctionScoping {
         {
             return;
         }
-        let arrows = &mut cx.state.arrows_with_lexical_capture;
-        if func.is_arrow() && arrows.get_or_insert_with(|| arrows_with_lexical_capture(file)).contains(&func) {
-            return;
-        }
 
-        let captures = cx.state.captures.get_or_insert_with(|| Captures::of(file));
+        let captures = cx.state.captures.get_or_insert_with(|| Captures::of(file, |it| self.place_of(it).is_some()));
         // What is declared further out than the function around it does not keep it in that function.
         let is_in_plain_function = function_of(parent_scope).is_some()
             && !captures.with_eval.contains(&parent_scope)
@@ -145,7 +151,15 @@ impl ConsistentFunctionScoping {
             false => (captures.outermost.get(&scope))
                 .is_some_and(|it| it.iter().any(|it| *it != symbol && Some(*it) != func.symbol())),
         };
-        if is_kept || captures.of_class.contains(&scope) {
+        if is_kept {
+            return;
+        }
+        let with_private_names = &mut cx.state.with_private_names;
+        if with_private_names.get_or_insert_with(|| functions_with_private_names(file)).contains(&scope) {
+            return;
+        }
+        let arrows = &mut cx.state.arrows_with_lexical_capture;
+        if func.is_arrow() && arrows.get_or_insert_with(|| arrows_with_lexical_capture(file)).contains(&func) {
             return;
         }
 
@@ -222,7 +236,7 @@ struct Direct<'a> {
     noted: Option<Scope<'a>>,
 }
 
-/// What the functions of a file refer to that is not their own.
+/// What the functions of a file that are looked at, and the functions in these, refer to that is not their own.
 struct Captures<'a> {
     regions: FxHashMap<Scope<'a>, Region>,
     /// [`scopes_of_oxlint_only`]
@@ -233,84 +247,80 @@ struct Captures<'a> {
     /// there, that scope refers to it as well, it is the name of the function whose scope that is, or of the class that
     /// this function is directly in.
     of_parent: FxHashSet<Scope<'a>>,
-    /// The scopes of the functions that use a private name of a class, and are directly in that class or directly in
-    /// what is directly in it.
-    of_class: FxHashSet<Scope<'a>>,
-    /// The scopes with an `eval(..)` in them.
+    /// [`scopes_with_eval`]
     with_eval: FxHashSet<Scope<'a>>,
 }
 
 impl<'a> Captures<'a> {
-    fn of(file: &'a File<'a>) -> Captures<'a> {
-        let regions: FxHashMap<Scope<'a>, Region> =
-            file.scopes().filter_map(|it| Some((it, Region::of(function_of(it)?)))).collect();
+    fn of(file: &'a File<'a>, is_looked_at: impl Fn(Func<'a>) -> bool) -> Captures<'a> {
         let mut captures = Captures {
-            outermost: outermost_captures(file, &regions),
-            regions,
+            regions: FxHashMap::default(),
             scopes_of_oxlint_only: scopes_of_oxlint_only(file),
+            outermost: FxHashMap::default(),
             of_parent: FxHashSet::default(),
-            of_class: FxHashSet::default(),
-            with_eval: FxHashSet::default(),
+            with_eval: scopes_with_eval(file),
         };
-        let private_references = private_references(file);
-        // The scopes of the classes of `path` that declare a private name, and where their bodies start.
-        let mut declaring: FxHashMap<Name<'a>, SmallVec<[(Scope<'a>, u32); 1]>> = FxHashMap::default();
-        let eval = file.mentions("eval").then(|| file.name_of("eval"));
         // From the global scope to the current one.
         let mut path: Vec<Scope<'a>> = Vec::new();
+        // The scopes of the functions that are looked at and are in no other of them, and the scopes that these are
+        // directly in.
+        let mut outermost: Vec<Scope<'a>> = Vec::new();
+        let mut around: FxHashSet<Scope<'a>> = FxHashSet::default();
+        // A scope comes before the scopes that are in it.
+        for scope in file.scopes() {
+            if outermost.last().is_some_and(|it| it.contains(scope)) {
+                continue;
+            }
+            while path.last().is_some_and(|it| !it.contains(scope)) {
+                path.pop();
+            }
+            if !function_of(scope).is_some_and(&is_looked_at) {
+                path.push(scope);
+                continue;
+            }
+            outermost.push(scope);
+            for &it in path.iter().rev() {
+                around.insert(it);
+                if is_scope_of_oxlint(it) {
+                    break;
+                }
+            }
+        }
+        path.clear();
+        let mut outermost = outermost.into_iter().peekable();
+        let mut current = None;
+        // The scopes of these functions and those in them.
+        let mut inside: Vec<Scope<'a>> = Vec::new();
         // The scopes of `path` that refer to a variable.
         let mut direct: FxHashMap<Symbol<'a>, SmallVec<[Direct<'a>; 2]>> = FxHashMap::default();
-        // A scope comes before the scopes that are in it.
         for scope in file.scopes() {
             while path.last().is_some_and(|it| !it.contains(scope)) {
                 path.pop();
             }
             path.push(scope);
-            if let Node::Class(class) = scope.node()
-                && !private_references.is_empty()
-            {
-                let body_start = class.body_span().start;
-                for member in class.members() {
-                    if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
-                        let classes = declaring.entry(name).or_default();
-                        while classes.last().is_some_and(|it| !it.0.contains(scope)) {
-                            classes.pop();
-                        }
-                        classes.push((scope, body_start));
-                    }
+            current = outermost.next_if_eq(&scope).or(current);
+            let is_inside = current.is_some_and(|it| it.contains(scope));
+            if is_inside {
+                inside.push(scope);
+                if let Some(func) = function_of(scope) {
+                    captures.regions.insert(scope, Region::of(func));
                 }
-            }
-            for &(name, at) in private_references.get(&scope).into_iter().flatten() {
-                let Some(classes) = declaring.get_mut(&name) else {
-                    continue;
-                };
-                while classes.last().is_some_and(|it| !it.0.contains(scope)) {
-                    classes.pop();
-                }
-                // The heritage of a class is in its scope, not in its body.
-                if let Some(&(class_scope, _)) = classes.iter().rev().find(|it| it.1 <= at) {
-                    captures.note_private_reference(&path, class_scope, at);
-                }
+            } else if outermost.peek().is_none() {
+                break;
+            } else if !around.contains(&scope) {
+                continue;
             }
             for reference in scope.references() {
-                if eval.is_some_and(|it| it == reference.name()) && is_called(reference) {
-                    for it in path.iter().rev() {
-                        // Those around one that is known are known.
-                        if !captures.with_eval.insert(*it) {
-                            break;
-                        }
-                    }
-                }
                 let is_of_interest = |it: &Symbol<'a>| it.scope() != scope && is_reference_of_oxlint(reference, *it);
                 let Some(symbol) = reference.symbol().filter(is_of_interest) else {
                     continue;
                 };
-                let at = reference.span().start;
+                let at = reference.ident().start();
                 let entries = direct.entry(symbol).or_default();
                 while entries.last().is_some_and(|it| !it.scope.contains(scope)) {
                     entries.pop();
                 }
-                if !is_jsx_tag_name(reference) {
+                if is_inside && !is_jsx_tag_name(reference) {
                     captures.note_reference(&path, entries, symbol, at);
                 }
                 let is_new = entries.last().is_none_or(|it| it.scope != scope);
@@ -319,6 +329,7 @@ impl<'a> Captures<'a> {
                 }
             }
         }
+        captures.outermost = outermost_captures(&inside, &captures.regions);
         captures
     }
 
@@ -331,12 +342,12 @@ impl<'a> Captures<'a> {
     }
 
     /// `symbol`, which has to do with the scope around `inner`, is referred to at `at`, in `inner`. Whether that is
-    /// noted, or there is nothing to note as `inner` is not the scope of a function.
+    /// noted, or there is nothing to note as `inner` is not the scope of a function that something is asked about.
     fn note(&mut self, inner: Scope<'a>, symbol: Symbol<'a>, at: u32) -> bool {
-        let Some(func) = function_of(inner) else {
+        let (Some(region), Some(func)) = (self.regions.get(&inner), function_of(inner)) else {
             return true;
         };
-        if self.regions.get(&inner).is_some_and(|it| !it.contains(at)) || own_symbols(func).contains(&Some(symbol)) {
+        if !region.contains(at) || own_symbols(func).contains(&Some(symbol)) {
             return false;
         }
         self.of_parent.insert(inner);
@@ -370,33 +381,45 @@ impl<'a> Captures<'a> {
             }
         }
     }
-
-    /// A private name that the class with the scope `class_scope` declares is used at `at`, in the last of `path`.
-    fn note_private_reference(&mut self, path: &[Scope<'a>], class_scope: Scope<'a>, at: u32) {
-        let mut outer = class_scope;
-        while let Some(inner) = scope_in(path, outer) {
-            if self.regions.get(&inner).is_some_and(|it| it.contains(at)) {
-                self.of_class.insert(inner);
-            }
-            // A function moves out of the scope around it, and on out of classes.
-            if outer.kind() != ScopeKind::Class {
-                break;
-            }
-            outer = inner;
-        }
-    }
 }
 
-/// The scope directly in `outer` that is one of `path`, which leads from the global scope inwards. For oxlint the name
-/// of a function expression and the initializer of a field have no scope.
+/// For oxlint the name of a function expression and the initializer of a field have no scope.
+fn is_scope_of_oxlint(scope: Scope) -> bool {
+    !matches!(scope.kind(), ScopeKind::FunctionExpressionName | ScopeKind::ClassFieldInitializer)
+}
+
+/// The scope directly in `outer`, for oxlint, that is one of `path`, which leads from the global scope inwards.
 fn scope_in<'a>(path: &[Scope<'a>], outer: Scope<'a>) -> Option<Scope<'a>> {
     let after = path.partition_point(|it| it.contains(outer));
     if after.checked_sub(1).and_then(|it| path.get(it)) != Some(&outer) {
         return None;
     }
-    let is_scope_of_oxlint =
-        |it: &&Scope<'a>| !matches!(it.kind(), ScopeKind::FunctionExpressionName | ScopeKind::ClassFieldInitializer);
-    path.get(after..)?.iter().find(is_scope_of_oxlint).copied()
+    path.get(after..)?.iter().copied().find(|it| is_scope_of_oxlint(*it))
+}
+
+/// The scopes with an `eval(..)` in them.
+fn scopes_with_eval<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> {
+    let mut found = FxHashSet::default();
+    if !file.mentions("eval") {
+        return found;
+    }
+    let eval = file.name_of("eval");
+    let mut path: Vec<Scope<'a>> = Vec::new();
+    for scope in file.scopes() {
+        while path.last().is_some_and(|it| !it.contains(scope)) {
+            path.pop();
+        }
+        path.push(scope);
+        if scope.references().any(|it| it.name() == eval && is_called(it)) {
+            for it in path.iter().rev() {
+                // Those around one that is known are known.
+                if !found.insert(*it) {
+                    break;
+                }
+            }
+        }
+    }
+    found
 }
 
 /// It is the `eval` of `eval(..)` or `(eval)(..)`.
@@ -448,13 +471,70 @@ fn private_references<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<(Name<
     if !file.has_classes() || !strings::contains_char(file.text(), b'#') {
         return found;
     }
-    for usage in file.exprs_of_kind(ExprTag::Dot).chain(file.exprs_of_kind(ExprTag::PrivateIdentifier)) {
+    let members = file.exprs_of_kind(ExprTag::Dot).filter(|it| it.is_private_member());
+    for usage in members.chain(file.exprs_of_kind(ExprTag::PrivateIdentifier)) {
         let name = match usage.kind() {
-            ExprKind::Dot { name, .. } if usage.is_private_member() => name.name(),
+            ExprKind::Dot { name, .. } => name.name(),
             ExprKind::PrivateIdentifier(name) => name,
             _ => continue,
         };
         found.entry(Node::Expr(usage).scope()).or_default().push((name, usage.span().start));
+    }
+    found
+}
+
+/// The scopes of the functions that use a private name of a class, and are directly in that class or directly in what
+/// is directly in it.
+fn functions_with_private_names<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> {
+    let mut found = FxHashSet::default();
+    let private_references = private_references(file);
+    if private_references.is_empty() {
+        return found;
+    }
+    // The scopes of the classes of `path` that declare a private name, and where their bodies start.
+    let mut declaring: FxHashMap<Name<'a>, SmallVec<[(Scope<'a>, u32); 1]>> = FxHashMap::default();
+    // From the global scope to the current one.
+    let mut path: Vec<Scope<'a>> = Vec::new();
+    for scope in file.scopes() {
+        while path.last().is_some_and(|it| !it.contains(scope)) {
+            path.pop();
+        }
+        path.push(scope);
+        if let Node::Class(class) = scope.node() {
+            let body_start = class.body_span().start;
+            for member in class.members() {
+                if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
+                    let classes = declaring.entry(name).or_default();
+                    while classes.last().is_some_and(|it| !it.0.contains(scope)) {
+                        classes.pop();
+                    }
+                    classes.push((scope, body_start));
+                }
+            }
+        }
+        for &(name, at) in private_references.get(&scope).into_iter().flatten() {
+            let Some(classes) = declaring.get_mut(&name) else {
+                continue;
+            };
+            while classes.last().is_some_and(|it| !it.0.contains(scope)) {
+                classes.pop();
+            }
+            // The heritage of a class is in its scope, not in its body.
+            let Some(&(class_scope, _)) = classes.iter().rev().find(|it| it.1 <= at) else {
+                continue;
+            };
+            let mut outer = class_scope;
+            while let Some(inner) = scope_in(&path, outer) {
+                if function_of(inner).is_some_and(|it| Region::of(it).contains(at)) {
+                    found.insert(inner);
+                }
+                // A function moves out of the scope around it, and on out of classes.
+                if outer.kind() != ScopeKind::Class {
+                    break;
+                }
+                outer = inner;
+            }
+        }
     }
     found
 }
@@ -467,18 +547,18 @@ fn add_outermost<'a>(list: &mut Outermost<'a>, symbol: Symbol<'a>) {
     }
 }
 
-/// For the scope of each function: variables that are declared outside it and referred to in its [`Region`], or in a
-/// scope there. Three are enough to know whether there is one that is not one of two: if a variable is declared outside
-/// a scope, so are those that are declared further out.
+/// For the scope of each function among `scopes`: variables that are declared outside it and referred to in its
+/// [`Region`], or in a scope there. Three are enough to know whether there is one that is not one of two: if a variable
+/// is declared outside a scope, so are those that are declared further out. `scopes`: with each all that are in it,
+/// after it.
 fn outermost_captures<'a>(
-    file: &'a File<'a>,
+    scopes: &[Scope<'a>],
     regions: &FxHashMap<Scope<'a>, Region>,
 ) -> FxHashMap<Scope<'a>, Outermost<'a>> {
     let mut of_functions = FxHashMap::default();
     // What the scopes in a scope refer to and is declared outside it: all, and what is in the region of the function.
     let mut from_inside: FxHashMap<Scope<'a>, (Outermost<'a>, Outermost<'a>)> = FxHashMap::default();
-    // A scope comes after the scopes that are in it.
-    for scope in file.scopes().rev() {
+    for &scope in scopes.iter().rev() {
         let (mut all, mut in_region) = from_inside.remove(&scope).unwrap_or_default();
         let region = regions.get(&scope);
         for reference in scope.references() {
@@ -489,7 +569,7 @@ fn outermost_captures<'a>(
                 continue;
             };
             add_outermost(&mut all, referenced);
-            if region.is_some_and(|it| it.contains(reference.span().start)) {
+            if region.is_some_and(|it| it.contains(reference.ident().start())) {
                 add_outermost(&mut in_region, referenced);
             }
         }

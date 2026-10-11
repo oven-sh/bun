@@ -79,66 +79,63 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
 }
 
 impl AccessorPairs {
-    /// It is compiled once, not for each kind of list.
-    #[inline(never)]
-    fn check_list<'a>(
+    /// `func` is one of `accessors`, which are all of an object literal, a class or a type that can be a pair with it.
+    fn check<'a>(
         &self,
+        func: Func<'a>,
         accessors: &mut dyn Iterator<Item = Accessor<'a>>,
         missing_getter: Message,
         missing_setter: Message,
         cx: &Cx<'a, Self>,
     ) {
         let accessors: SmallVec<[Accessor<'a>; 8]> = accessors.collect();
-        let is_checked = |accessor: Accessor<'a>| match accessor.is_getter {
-            true => self.get_without_set,
-            false => self.set_without_get,
+        let Some((i, &accessor)) = accessors.iter().enumerate().find(|(_, it)| it.func == func) else {
+            return;
         };
-        let report = |accessor: Accessor<'a>| {
-            let message = if accessor.is_getter { missing_setter } else { missing_getter };
-            // oxlint points at the key.
-            let place = match cx.language().is_oxlint {
-                true => accessor.key.inner_span(cx.file()),
-                false => ast_utils::get_function_head_loc(accessor.func),
-            };
-            cx.report(place, message)
-                .data("name", ast_utils::get_function_name_with_kind(accessor.func));
+        let is_paired = |other: &Accessor<'a>| {
+            other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
+        };
+        let is_same = |other: &Accessor<'a>| {
+            other.is_getter == accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
         };
         // Of several getters, or setters, of a name that is known oxlint keeps the last.
         let is_oxlint = cx.language().is_oxlint;
-        let keeps_the_last = |accessor: Accessor<'a>| is_oxlint && accessor.key.name().is_some();
-        for (i, &accessor) in accessors.iter().enumerate() {
-            let is_paired = |other: &Accessor<'a>| {
-                other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
-            };
-            let is_same = |other: &Accessor<'a>| {
-                other.is_getter == accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
-            };
-            if is_checked(accessor)
-                && !accessors.iter().any(is_paired)
-                && !(keeps_the_last(accessor) && accessors.iter().skip(i + 1).any(is_same))
-            {
-                report(accessor);
-            }
+        let keeps_the_last = is_oxlint && accessor.key.name().is_some();
+        if accessors.iter().any(is_paired) || keeps_the_last && accessors.iter().skip(i + 1).any(is_same) {
+            return;
         }
+        let message = if accessor.is_getter { missing_setter } else { missing_getter };
+        // oxlint points at the key.
+        let place = match is_oxlint {
+            true => accessor.key.inner_span(cx.file()),
+            false => ast_utils::get_function_head_loc(accessor.func),
+        };
+        cx.report(place, message)
+            .data("name", ast_utils::get_function_name_with_kind(accessor.func));
     }
 
-    fn check_type<'a>(&self, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
-        self.check_list(
+    fn check_type<'a>(&self, func: Func<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
+        self.check(
+            func,
             &mut members.iter().filter_map(Accessor::of_member),
             MISSING_GETTER_IN_TYPE,
             MISSING_SETTER_IN_TYPE,
             cx,
         );
     }
+
+    /// Whether an object literal of the file can be a property descriptor that is reported.
+    fn may_have_descriptors(&self, file: &File) -> bool {
+        (self.set_without_get && file.mentions("set")
+            || self.get_without_set && !file.language().is_oxlint && file.mentions("get"))
+            && (file.mentions("defineProperty") && file.mentions_any(&["Object", "Reflect"])
+                || file.mentions("Object") && file.mentions_any(&["create", "defineProperties"]))
+    }
 }
 
 impl Rule for AccessorPairs {
     const META: Meta = Meta::eslint("accessor-pairs", Kind::Suggestion);
-    const ON: On = On::new()
-        .exprs(&[ExprTag::Object])
-        .classes()
-        .types(&[TypeTag::Object])
-        .stmts(&[StmtTag::Interface]);
+    const ON: On = On::new().exprs(&[ExprTag::Object]).funcs();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -151,15 +148,11 @@ impl Rule for AccessorPairs {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        let mut on = On::new().exprs(&[ExprTag::Object]);
-        if self.enforce_for_class_members {
-            on = on.classes();
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match self.may_have_descriptors(file) {
+            true => On::new().funcs().exprs(&[ExprTag::Object]),
+            false => On::new().funcs(),
         }
-        if self.enforce_for_ts_types {
-            on = on.types(&[TypeTag::Object]).stmts(&[StmtTag::Interface]);
-        }
-        on
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
@@ -170,16 +163,17 @@ impl Rule for AccessorPairs {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let is_argument_or_value = match e.parent() {
+            Node::Expr(parent) => parent.tag() == ExprTag::Call,
+            Node::Prop(_) => true,
+            _ => false,
+        };
+        if !is_argument_or_value {
+            return;
+        }
         let ExprKind::Object(props) = e.kind() else {
             return;
         };
-        self.check_list(
-            &mut props.iter().filter_map(Accessor::of_prop),
-            MISSING_GETTER_IN_OBJECT_LITERAL,
-            MISSING_SETTER_IN_OBJECT_LITERAL,
-            cx,
-        );
-
         let (mut has_getter, mut has_setter, mut key_of_setter) = (false, false, None);
         for prop in props {
             if matches!(prop.kind(), PropKind::Init | PropKind::Shorthand | PropKind::Method)
@@ -207,30 +201,58 @@ impl Rule for AccessorPairs {
         }
     }
 
-    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        for is_static in [true, false] {
-            // An abstract accessor is not a `MethodDefinition`.
-            let methods = class.members().iter().filter(move |member| {
-                member.is_static() == is_static && !member.flags().contains(Flags::ABSTRACT)
-            });
-            self.check_list(
-                &mut methods.filter_map(Accessor::of_member),
-                MISSING_GETTER_IN_CLASS,
-                MISSING_SETTER_IN_CLASS,
-                cx,
-            );
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let is_checked = match func.kind() {
+            FnKind::Getter => self.get_without_set,
+            FnKind::Setter => self.set_without_get,
+            _ => false,
+        };
+        if !is_checked {
+            return;
         }
-    }
-
-    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if let TypeKind::Object(members) = ty.kind() {
-            self.check_type(members, cx);
-        }
-    }
-
-    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if let StmtKind::Interface(interface) = statement.kind() {
-            self.check_type(interface.members(), cx);
+        match func.owner() {
+            Node::Expr(e) => {
+                if let Node::Prop(prop) = e.parent()
+                    && let Node::Expr(object) = prop.parent()
+                    && let ExprKind::Object(props) = object.kind()
+                {
+                    self.check(
+                        func,
+                        &mut props.iter().filter_map(Accessor::of_prop),
+                        MISSING_GETTER_IN_OBJECT_LITERAL,
+                        MISSING_SETTER_IN_OBJECT_LITERAL,
+                        cx,
+                    );
+                }
+            }
+            Node::Member(member) => match member.parent() {
+                Node::Class(class) if self.enforce_for_class_members => {
+                    let is_static = member.is_static();
+                    // An abstract accessor is not a `MethodDefinition`.
+                    let methods = class.members().iter().filter(move |member| {
+                        member.is_static() == is_static && !member.flags().contains(Flags::ABSTRACT)
+                    });
+                    self.check(
+                        func,
+                        &mut methods.filter_map(Accessor::of_member),
+                        MISSING_GETTER_IN_CLASS,
+                        MISSING_SETTER_IN_CLASS,
+                        cx,
+                    );
+                }
+                Node::Type(ty) if self.enforce_for_ts_types => {
+                    if let TypeKind::Object(members) = ty.kind() {
+                        self.check_type(func, members, cx);
+                    }
+                }
+                Node::Stmt(statement) if self.enforce_for_ts_types => {
+                    if let StmtKind::Interface(interface) = statement.kind() {
+                        self.check_type(func, interface.members(), cx);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
 }

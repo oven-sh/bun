@@ -26,10 +26,16 @@ enum InitType {
 impl Rule for NoImmediateMutation {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-immediate-mutation", Kind::Suggestion);
     const ON: On = On::new().stmts(&[StmtTag::Expr]);
-    no_state!();
+    /// The methods that it is about, those that the file mentions.
+    type State<'a> = SmallVec<[Name<'a>; 5]>;
 
     fn new(_: &Options) -> Self {
         NoImmediateMutation
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let methods = ["assign", "push", "unshift", "add", "set"].into_iter();
+        Some(methods.filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -45,7 +51,7 @@ impl Rule for NoImmediateMutation {
             prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };
         let Some(mutation) = (match expr.kind() {
-            ExprKind::Call(call) => call_mutation(call, is_initialized),
+            ExprKind::Call(call) => call_mutation(call, &cx.state, is_initialized),
             ExprKind::Assign { op: None, target, value } => property_assignment(target, value, is_initialized),
             _ => None,
         }) else {
@@ -67,16 +73,24 @@ fn is_spread(e: Expr) -> bool {
     e.tag() == ExprTag::Spread
 }
 
-fn call_mutation<'a>(call: Call<'a>, is_initialized: impl Fn(Name<'a>, InitType) -> bool) -> Option<Mutation<'a>> {
-    let member = get_member_expr(call.callee()).filter(|it| !it.is_optional())?;
+fn call_mutation<'a>(
+    call: Call<'a>,
+    methods: &[Name<'a>],
+    is_initialized: impl Fn(Name<'a>, InitType) -> bool,
+) -> Option<Mutation<'a>> {
+    let callee = call.callee();
+    if callee.tag() == ExprTag::Ident {
+        return None;
+    }
+    let member = get_member_expr(callee).filter(|it| !it.is_optional())?;
     let method_name = match member.member_name() {
         Some(name) => name.name(),
         None => static_property_name(member)?,
     };
-    let method = method_name.bytes();
-    if !matches!(method, b"assign" | b"push" | b"unshift" | b"add" | b"set") {
+    if !methods.contains(&method_name) {
         return None;
     }
+    let method = method_name.bytes();
     let object = get_inner_expression(member.object()?);
     let args = call.args();
     let references = |variable| args.iter().filter(|it| !is_spread(*it)).any(|it| expression_references_variable(it, variable));

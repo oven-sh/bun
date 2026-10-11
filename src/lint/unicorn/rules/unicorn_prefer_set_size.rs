@@ -14,21 +14,30 @@ const PREFER_SET_SIZE: Message =
 impl Rule for PreferSetSize {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-set-size", Kind::Problem).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Dot]);
-    type State<'a> = ();
+    /// `length`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         PreferSetSize
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("Set") && file.mentions("length")).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        (file.mentions("Set") && file.mentions("length")).then(|| file.name_of("length"))
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !member.member_name().is_some_and(|it| it.name() == cx.state) {
+            return;
+        }
         let ExprKind::Dot { obj, name, chain } = member.kind() else {
             return;
         };
-        if !name.name().is("length") || chain == Chain::Start || member.is_jsx_tag_name() || member.is_in_type_query() {
+        // `[...set]`, `Array.from(set)`
+        if !matches!(obj.tag(), ExprTag::Array | ExprTag::Call)
+            || chain == Chain::Start
+            || member.is_jsx_tag_name()
+            || member.is_in_type_query()
+        {
             return;
         }
         let Some(maybe_set) = get_set_node(obj).filter(|it| is_set(get_inner_expression(*it))) else {

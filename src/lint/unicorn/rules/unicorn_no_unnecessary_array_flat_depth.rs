@@ -26,7 +26,7 @@ impl Rule for NoUnnecessaryArrayFlatDepth {
         let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
             return;
         };
-        let Some(depth) = call.args().first().map(get_inner_expression) else {
+        let Some(depth) = call.args().first().filter(|_| call.args().len() == 1).map(get_inner_expression) else {
             return;
         };
         if !matches!(depth.kind(), ExprKind::Number(n) if (n - 1.0).abs() < f64::EPSILON)

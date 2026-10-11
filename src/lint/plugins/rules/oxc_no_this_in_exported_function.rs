@@ -14,6 +14,9 @@ pub struct State<'a> {
     functions: AncestorMemo<'a, Option<Func<'a>>>,
     /// How often a function is exported.
     exports: FxHashMap<Func<'a>, usize>,
+    /// Where the function declarations and the function expressions are, without those in another, in order. No other function
+    /// is exported.
+    candidates: Vec<Span>,
 }
 
 impl Rule for NoThisInExportedFunction {
@@ -26,13 +29,25 @@ impl Rule for NoThisInExportedFunction {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.has_exprs([ExprTag::This])
-            && (file.has_stmts([StmtTag::ExportNamed]) || file.stmts_of_kind(StmtTag::Fn).any(Stmt::is_exported)))
-        .then(State::default)
+        if !file.has_stmts([StmtTag::ExportNamed]) && !file.stmts_of_kind(StmtTag::Fn).any(Stmt::is_exported) {
+            return None;
+        }
+        let functions = file.funcs().filter(|it| matches!(it.kind(), FnKind::Decl | FnKind::Expr) && it.has_body());
+        let mut candidates: Vec<Span> = functions.map(Func::span).collect();
+        utils::sort::sort_unstable_by_key(&mut candidates, |it| it.start);
+        let mut end = 0;
+        candidates.retain(|it| {
+            let is_in_no_other = it.start >= end;
+            end = end.max(it.end);
+            is_in_no_other
+        });
+        (!candidates.is_empty()).then(|| State { candidates, ..State::default() })
     }
 
     fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if this.is_in_type_query() {
+        let start = this.span().start;
+        let before = cx.state.candidates.partition_point(|it| it.start <= start);
+        if !before.checked_sub(1).and_then(|it| cx.state.candidates.get(it)).is_some_and(|it| start < it.end) || this.is_in_type_query() {
             return;
         }
         let Some(Some(func)) = cx.state.functions.find(Node::Expr(this), function_of_this) else {

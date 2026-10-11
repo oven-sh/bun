@@ -18,7 +18,7 @@ impl Rule for BadMinMaxFunc {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("Math").then_some(())
+        (file.mentions("Math") && file.mentions("min") && file.mentions("max")).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

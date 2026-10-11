@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{
     as_object_expression, get_inner_expression, is_specific_id, static_property_name, static_string,
 };
-use crate::oxlint::vue::{casing, find_property, is_vue_component_options_object, is_vue_setup};
+use crate::oxlint::vue::{casing, find_property, is_vue_component_options_object, is_vue_setup, may_have_component_options};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -26,7 +26,7 @@ impl Rule for ComponentDefinitionNameCasing {
         if file.mentions("component") || is_vue_setup(file) && file.mentions("defineOptions") {
             on = on.exprs(&[ExprTag::Call]);
         }
-        if file.mentions("name") {
+        if file.mentions("name") && may_have_component_options(file) {
             on = on.exprs(&[ExprTag::Object]);
         }
         on
@@ -36,8 +36,8 @@ impl Rule for ComponentDefinitionNameCasing {
         match e.tag() {
             ExprTag::Call => self.call(e, cx),
             ExprTag::Object => {
-                if let ExprKind::Object(properties) = e.kind()
-                    && is_vue_component_options_object(e)
+                if is_vue_component_options_object(e)
+                    && let Some(properties) = e.as_object()
                 {
                     self.check_name_property(properties, cx);
                 }
@@ -61,9 +61,11 @@ impl ComponentDefinitionNameCasing {
             return self.check_name_property(properties, cx);
         }
         // `Vue.component("Name", ..)`, `app.component("Name", ..)`
+        if call.args().len() != 2 {
+            return;
+        }
         let callee = get_inner_expression(call.callee());
-        let is_component = !callee.is_chain_root() && static_property_name(callee).is_some_and(|it| it.is("component"));
-        if is_component && call.args().len() == 2 {
+        if static_property_name(callee).is_some_and(|it| it.is("component")) && !callee.is_chain_root() {
             self.check_name_node(first, cx);
         }
     }

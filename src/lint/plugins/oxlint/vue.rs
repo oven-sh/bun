@@ -17,8 +17,11 @@ use std::rc::Rc;
 
 /// `ctx.file_extension().is_some_and(|ext| ext == "vue")`
 pub(crate) fn is_vue_file(file: &File) -> bool {
-    let name = bun_lint::paths::file_name(file.path());
-    name.len() > 4 && name.ends_with(b".vue")
+    // The name is what the path ends with, but for separators.
+    matches!(file.path(), [.., b'e' | b'/' | b'\\']) && {
+        let name = bun_lint::paths::file_name(file.path());
+        name.len() > 4 && name.ends_with(b".vue")
+    }
 }
 
 /// `ctx.frameworks_options() == FrameworkOptions::VueSetup`: the script is a `<script setup>`.
@@ -123,6 +126,18 @@ fn vue_component_options_kind(object: Expr) -> Option<VueComponentObjectKind> {
         },
         _ => None,
     }
+}
+
+/// Whether an object literal of `file` can be the options of a component.
+pub(crate) fn may_have_component_options(file: &File) -> bool {
+    file.mentions_any(&[
+        "createApp",
+        "defineComponent",
+        "defineNuxtComponent",
+        "component",
+        "mixin",
+        "Vue",
+    ]) || is_vue_file(file)
 }
 
 pub(crate) fn is_vue_component_options_object(object: Expr) -> bool {
@@ -457,6 +472,12 @@ pub(crate) enum ComputedContext<'a> {
     CompositionApi(Func<'a>),
 }
 
+/// Whether a function of `file` can be such a getter.
+pub(crate) fn may_have_computed_context(file: &File) -> bool {
+    file.mentions("computed")
+        && (file.mentions_any(&MODULES_WITH_COMPUTED) || may_have_component_options(file))
+}
+
 /// That of the innermost function around `node`. `memo`: for [`Enclosing::FunctionOrArrow`].
 pub(crate) fn find_computed_context<'a>(
     node: Expr<'a>,
@@ -497,13 +518,15 @@ pub(crate) fn get_computed_getter_context(function: Func<'_>) -> Option<Computed
     }
 }
 
+const MODULES_WITH_COMPUTED: [&str; 3] = ["vue", "@vue/composition-api", "#imports"];
+
 /// A call of the `computed` of Vue, under whatever name it is imported.
 fn is_vue_computed_call(call: Call) -> bool {
     let declaration = get_inner_expression(call.callee())
         .symbol()
         .and_then(|it| it.declarations().next());
     matches!(declaration, Some(Declaration::ImportSpec(specifier))
-        if specifier.imported().name().is("computed") && specifier.import().spec().is_any(&["vue", "@vue/composition-api", "#imports"]))
+        if specifier.imported().name().is("computed") && specifier.import().spec().is_any(&MODULES_WITH_COMPUTED))
 }
 
 /// What `break` and `continue` can go to.

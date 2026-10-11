@@ -16,10 +16,12 @@ const USE_LITERAL_AFTER_SEMICOLON: Message = Message::new(
 
 /// The call, if `e` calls or constructs something that is named `Array`, without type arguments.
 pub fn as_array_call(e: Expr<'_>) -> Option<Call<'_>> {
-    let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
-        return None;
-    };
-    (call.callee().is_ident("Array") && call.type_args().is_empty()).then_some(call)
+    let call = e.as_call().or_else(|| e.as_new())?;
+    let callee = call.callee();
+    // As it is written the name starts with an `A`, or with an escape.
+    let can_be_array = callee.tag() == ExprTag::Ident
+        && matches!(e.file().text().get(callee.span().start as usize), Some(b'A' | b'\\'));
+    (can_be_array && callee.is_ident("Array") && call.type_args().is_empty()).then_some(call)
 }
 
 /// Whether oxlint reports `call`, which [calls `Array`](as_array_call): the name is not in parentheses and nothing

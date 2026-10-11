@@ -2,7 +2,8 @@ use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKind;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint_eslint::rules::no_use_before_define::{
-    Config, Initializers, definition_name_end, is_class_ref_in_class_decorator, is_named_export,
+    Config, Initializers, definition_name_end, end_of_definition, is_class_ref_in_class_decorator, is_named_export,
+    starts_after,
 };
 
 /// Disallow the use of variables before they are defined.
@@ -111,13 +112,18 @@ impl NoUseBeforeDefine {
         let Some(definition) = variable.declarations().next() else {
             return;
         };
+        let end = end_of_definition(definition);
+        let is_defined = |it: Reference<'a>| starts_after(it, end) || it.is_init() || it.is_jsx_pragma();
+        if variable.references().all(is_defined) {
+            return;
+        }
         let (Some(kind), Some(definition_end)) = (definition.kind(), definition_name_end(definition)) else {
             return;
         };
         let declared = cx.state.initializers.declared(definition);
         for reference in references {
             // What JSX makes of `React` is a reference whose identifier is the declaration.
-            if reference.is_init() || reference.is_jsx_pragma() {
+            if is_defined(reference) {
                 continue;
             }
             let identifier = reference.span();

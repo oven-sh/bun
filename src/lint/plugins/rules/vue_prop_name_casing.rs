@@ -2,8 +2,8 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, static_nam
 use bun_lint_oxlint::regex_flags::rust_regex;
 use crate::oxlint::vue::{
     casing, find_property, first_type_argument, for_each_define_props_type_signature,
-    is_vue_component_options_object_excluding_instance, is_vue_setup, key_span, object_properties, signature_key,
-    span_of_key,
+    is_vue_component_options_object_excluding_instance, is_vue_setup, key_span, may_have_component_options,
+    object_properties, signature_key, span_of_key,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -31,7 +31,7 @@ impl Rule for PropNameCasing {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        if file.mentions("props") {
+        if file.mentions("props") && may_have_component_options(file) {
             on = on.exprs(&[ExprTag::Object]);
         }
         if is_vue_setup(file) && file.mentions("defineProps") {

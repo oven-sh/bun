@@ -27,7 +27,12 @@ impl Rule for NoConsoleSpaces {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        if !is_method_call(call_expr, Some(&["console"]), Some(&["log", "debug", "info", "warn", "error"]), None, None) {
+        // `console.log()`, nearly always.
+        let callee = call_expr.callee();
+        if callee.tag() == ExprTag::Ident
+            || callee.tag() == ExprTag::Dot && callee.object().is_some_and(|it| matches!(it.tag(), ExprTag::This | ExprTag::Dot | ExprTag::Call))
+            || !is_method_call(call_expr, Some(&["console"]), Some(&["log", "debug", "info", "warn", "error"]), None, None)
+        {
             return;
         }
         let Some((_, method_name)) = call_expr_method_callee_info(call_expr) else {

@@ -46,7 +46,8 @@ fn leftmost_identifier_reference(e: Expr<'_>) -> Option<Expr<'_>> {
 impl Rule for NoArraySort {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-sort", Kind::Problem).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `sort`
+    type State<'a> = Name<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -56,15 +57,19 @@ impl Rule for NoArraySort {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("sort").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions("sort").then(|| file.name_of("sort"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| it.args().len() <= 1 && !it.is_optional()) else {
             return;
         };
-        let Some(member) = get_member_expr(call.callee()) else {
+        let is_candidate = match call.callee().member_name() {
+            Some(method) => method.name() == cx.state,
+            None => call.callee().tag() != ExprTag::Ident,
+        };
+        let Some(member) = get_member_expr(call.callee()).filter(|_| is_candidate) else {
             return;
         };
         let (Some((span, name)), Some(object)) = (static_property_info(member), member.object()) else {

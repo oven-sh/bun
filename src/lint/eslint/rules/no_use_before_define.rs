@@ -51,6 +51,50 @@ pub fn definition_name_end(definition: Declaration) -> Option<u32> {
     }
 }
 
+/// A place that is not before the end of `definition.name` nor before the end of what [`Initializers::has`] holds for: a
+/// reference that starts after it is neither. `None` where that takes a closer look.
+pub fn end_of_definition(definition: Declaration) -> Option<u32> {
+    match definition {
+        Declaration::Var(pat) => {
+            let Node::VarDecl(declarator) = pat.parent() else {
+                return None;
+            };
+            let end = declarator.span().end;
+            match declarator.parent().parent() {
+                Node::Stmt(parent) if matches!(parent.tag(), StmtTag::ForIn | StmtTag::ForOf) => match parent.kind() {
+                    StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => Some(end.max(expr.span().end)),
+                    _ => None,
+                },
+                _ => Some(end),
+            }
+        }
+        Declaration::Param(pat) => {
+            let Node::Param(param) = pat.parent() else {
+                return None;
+            };
+            let func = param.func()?;
+            (func.has_body() && func.kind() != FnKind::StaticBlock).then(|| param.span().end)
+        }
+        // What starts after the start of a name starts after its end.
+        Declaration::Fn(func) => func.name().map(Ident::start),
+        Declaration::Class(class) => class.name().map(Ident::start),
+        Declaration::Interface(it) => Some(it.name().start()),
+        Declaration::TypeAlias(it) => Some(it.name().start()),
+        Declaration::Enum(it) => Some(it.name().start()),
+        Declaration::ImportDefault(it) => it.default().map(Ident::start),
+        Declaration::ImportNamespace(it) => it.namespace().map(Ident::start),
+        Declaration::ImportSpec(it) => Some(it.local().start()),
+        Declaration::ImportEquals(it) => Some(it.name().start()),
+        _ => None,
+    }
+}
+
+/// Whether the name of `reference` starts after `end`, if that is given.
+#[inline]
+pub fn starts_after(reference: Reference, end: Option<u32>) -> bool {
+    end.is_some_and(|end| reference.ident().start() > end)
+}
+
 /// `identifier.parent.type === "ExportSpecifier" && identifier.parent.local === identifier`
 pub fn is_named_export(reference: Reference) -> bool {
     matches!(reference.node(), Node::ExportSpec(_))
@@ -263,6 +307,14 @@ impl NoUseBeforeDefine {
         let Some(definition) = variable.declarations().next() else {
             return;
         };
+        let end = match definition {
+            Declaration::Class(class) => Some(class.span().end),
+            _ => end_of_definition(definition),
+        };
+        let is_defined = |it: Reference<'a>| starts_after(it, end) || it.is_init() || it.is_jsx_pragma();
+        if variable.references().all(is_defined) {
+            return;
+        }
         let (Some(kind), Some(definition_end)) = (definition.kind(), definition_name_end(definition)) else {
             return;
         };
@@ -284,7 +336,7 @@ impl NoUseBeforeDefine {
         };
         for reference in references {
             // What JSX makes of `React` is a reference whose identifier is the declaration.
-            if reference.is_init() || reference.is_jsx_pragma() {
+            if is_defined(reference) {
                 continue;
             }
             let identifier = reference.span();

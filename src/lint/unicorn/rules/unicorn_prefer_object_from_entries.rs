@@ -3,6 +3,7 @@ use crate::unicorn::{call_expr_member_expr_property_span, does_expr_match_any_pa
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use smallvec::SmallVec;
 
 /// Encourages using `Object.fromEntries` when converting an array of key-value pairs into an object.
 pub struct PreferObjectFromEntries {
@@ -34,7 +35,8 @@ fn is_plain_property(property: Prop) -> bool {
 impl Rule for PreferObjectFromEntries {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-object-from-entries", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `reduce`, and the last names of the functions: those that the file mentions.
+    type State<'a> = (Option<Name<'a>>, SmallVec<[Name<'a>; 2]>);
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -47,9 +49,11 @@ impl Rule for PreferObjectFromEntries {
         PreferObjectFromEntries { functions: functions.into_iter().map(split).collect() }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        let is_mentioned = |function: &Vec<String>| function.last().is_some_and(|it| file.mentions(it));
-        (file.mentions("reduce") || self.functions.iter().any(is_mentioned)).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let reduce = file.mentions("reduce").then(|| file.name_of("reduce"));
+        let last_names = self.functions.iter().filter_map(|it| it.last()).filter(|it| file.mentions(it));
+        let last_names: SmallVec<_> = last_names.map(|it| file.name_of(it)).collect();
+        (reduce.is_some() || !last_names.is_empty()).then_some((reduce, last_names))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -61,7 +65,9 @@ impl Rule for PreferObjectFromEntries {
             return;
         };
         let Some(second) = second else {
-            if first.tag() != ExprTag::Spread
+            let name = callee.member_name().map(Ident::name).or_else(|| callee.as_ident());
+            if name.is_some_and(|it| cx.state.1.contains(&it))
+                && first.tag() != ExprTag::Spread
                 && !as_member_expression(callee).is_some_and(Expr::is_optional)
                 && does_expr_match_any_path(callee, &self.functions)
             {
@@ -69,7 +75,8 @@ impl Rule for PreferObjectFromEntries {
             }
             return;
         };
-        if !as_member_expression(callee).is_some_and(|it| !it.is_optional())
+        if callee.member_name().is_some_and(|it| Some(it.name()) != cx.state.0)
+            || !as_member_expression(callee).is_some_and(|it| !it.is_optional())
             || !is_method_call(call, None, Some(&["reduce"]), Some(2), Some(2))
             || !is_empty_object(get_inner_expression(second))
         {

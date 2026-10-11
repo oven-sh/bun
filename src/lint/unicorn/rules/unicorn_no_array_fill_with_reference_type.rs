@@ -30,21 +30,27 @@ fn get_const_variable_initializer(fill_value: Expr<'_>) -> Option<Expr<'_>> {
 impl Rule for NoArrayFillWithReferenceType {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-fill-with-reference-type", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `fill`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         NoArrayFillWithReferenceType
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("fill").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions("fill").then(|| file.name_of("fill"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
             return;
         };
-        if !is_method_call(call, None, Some(&["fill"]), Some(1), None)
+        let is_candidate = match call.callee().member_name() {
+            Some(method) => method.name() == cx.state,
+            None => call.callee().tag() != ExprTag::Ident,
+        };
+        if !is_candidate
+            || !is_method_call(call, None, Some(&["fill"]), Some(1), None)
             || get_member_expr(call.callee()).is_none_or(Expr::is_optional)
         {
             return;

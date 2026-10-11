@@ -54,8 +54,8 @@ impl Rule for NoThenable {
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(then) = cx.state
-            && let Some(span) = contains_then(member.key(), then, cx.file())
             && !member.is_signature()
+            && let Some(span) = contains_then(member.key(), then, cx.file())
             && !member.flags().contains(Flags::ACCESSOR)
         {
             cx.report(span, CLASS);

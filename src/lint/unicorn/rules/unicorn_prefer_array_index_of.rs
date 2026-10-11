@@ -1,6 +1,7 @@
 use bun_lint_oxlint::ast_util::{as_member_expression, get_inner_expression, is_method_call, static_property_info};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use smallvec::SmallVec;
 
 /// Enforces using `indexOf` or `lastIndexOf` instead of `findIndex` or `findLastIndex` when the callback is a simple
 /// strict equality comparison.
@@ -8,6 +9,8 @@ pub struct PreferArrayIndexOf;
 
 const PREFER_ARRAY_INDEX_OF: Message =
     Message::new("", "Prefer `indexOf` over `findIndex` for simple equality checks");
+
+const METHODS: [&str; 2] = ["findIndex", "findLastIndex"];
 
 /// `x => x === a`, `function (x) { return a === x }`, where that is the only `x`.
 fn is_simple_compare_callback_function<'a>(e: Expr<'a>) -> bool {
@@ -44,19 +47,25 @@ fn is_simple_compare_callback_function<'a>(e: Expr<'a>) -> bool {
 impl Rule for PreferArrayIndexOf {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-index-of", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// Those of `METHODS` that the file mentions.
+    type State<'a> = SmallVec<[Name<'a>; 2]>;
 
     fn new(_: &Options) -> Self {
         PreferArrayIndexOf
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["findIndex", "findLastIndex"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let methods: Self::State<'a> = METHODS.iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect();
+        (!methods.is_empty()).then_some(methods)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(call) = e.as_call()
-            && is_method_call(call, None, Some(&["findIndex", "findLastIndex"]), Some(1), Some(1))
+            && match call.callee().member_name() {
+                Some(method) => cx.state.contains(&method.name()),
+                None => call.callee().tag() != ExprTag::Ident,
+            }
+            && is_method_call(call, None, Some(&METHODS), Some(1), Some(1))
             && call.args().first().is_some_and(is_simple_compare_callback_function)
         {
             let property = as_member_expression(call.callee()).and_then(static_property_info);

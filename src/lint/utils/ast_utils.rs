@@ -200,17 +200,47 @@ pub fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
 
 /// What `equal_tokens` is for the texts `left` and `right`, if that shows without splitting them into tokens: they are compared
 /// byte by byte, whitespace against whitespace. `None` where more than that is to be known: at a comment, a regular expression,
-/// a template, an escape, a character that is not ASCII, and where only one of the two has whitespace, which may or may not
-/// separate two tokens.
+/// a substitution of a template, an escape in a name, a character that is not ASCII and not in a string, and where only one of
+/// the two has whitespace, which may or may not separate two tokens.
 fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
     let is_blank = |byte: Option<&u8>| matches!(byte, Some(b'\t'..=b'\r' | b' '));
+    let is_of_word = |byte: Option<&u8>| {
+        byte.is_some_and(|it| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$'))
+    };
+    // `<!--` and `-->` can start a comment.
+    let is_in_html_comment_mark = |text: &[u8], at: usize| {
+        let (before, rest) = text.split_at(at);
+        rest.starts_with(b"-->") || rest.starts_with(b"--") && before.ends_with(b"<!")
+    };
     let (mut l, mut r) = (0, 0);
-    // The quote of the string that both are in.
+    // The quote of the string, or of the template before its first substitution, that both are in. It is one token, which
+    // starts at the same place in both.
     let mut quote = None;
     loop {
-        if quote.is_none() && (is_blank(left.get(l)) || is_blank(right.get(r))) {
+        if let Some(open) = quote {
+            let (a, b) = (*left.get(l)?, *right.get(r)?);
+            if a != b {
+                return Some(false);
+            }
+            match a {
+                b'$' if open == b'`' && left.get(l + 1) == Some(&b'{') => return None,
+                b'\\' => {
+                    if *left.get(l + 1)? != *right.get(r + 1)? {
+                        return Some(false);
+                    }
+                    (l, r) = (l + 1, r + 1);
+                }
+                _ if a == open => quote = None,
+                _ => {}
+            }
+            (l, r) = (l + 1, r + 1);
+            continue;
+        }
+        if is_blank(left.get(l)) || is_blank(right.get(r)) {
             if !is_blank(left.get(l)) || !is_blank(right.get(r)) {
-                return None;
+                // A word that ends in one goes on in the other.
+                let goes_on = is_of_word(left.get(l)) || is_of_word(right.get(r));
+                return (goes_on && l > 0 && is_of_word(left.get(l - 1))).then_some(false);
             }
             while is_blank(left.get(l)) {
                 l += 1;
@@ -222,29 +252,20 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
         let (a, b) = match (left.get(l), right.get(r)) {
             (None, None) => return Some(true),
             (Some(&a), Some(&b)) => (a, b),
-            _ => return quote.is_none().then_some(false),
+            _ => return Some(false),
         };
-        if a == b'\\' || b == b'\\' {
+        if matches!(a, b'/' | b'\\' | 0x80..)
+            || matches!(b, b'/' | b'\\' | 0x80..)
+            || a == b'-' && is_in_html_comment_mark(left, l)
+            || b == b'-' && is_in_html_comment_mark(right, r)
+        {
             return None;
-        }
-        if quote.is_none() {
-            if matches!(a, b'/' | b'`' | 0x80..) || matches!(b, b'/' | b'`' | 0x80..) {
-                return None;
-            }
-            // `<!--` and `-->` can start a comment.
-            if a == b'-' && left.get(l + 1) == Some(&b'-')
-                || b == b'-' && right.get(r + 1) == Some(&b'-')
-            {
-                return None;
-            }
         }
         if a != b {
             return Some(false);
         }
-        match quote {
-            None if matches!(a, b'"' | b'\'') => quote = Some(a),
-            Some(open) if open == a => quote = None,
-            _ => {}
+        if matches!(a, b'"' | b'\'' | b'`') {
+            quote = Some(a);
         }
         (l, r) = (l + 1, r + 1);
     }
@@ -1753,9 +1774,34 @@ pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
     }
     let whole = estree_span(Node::Func(func));
     let from = func.name().map_or(whole.start, |name| name.span().end);
+    if let Some(at) = first_opening_paren_nearby(func, from) {
+        return Some(Span::new(at, at + 1));
+    }
     file.tokens_in(Span::new(from, whole.end))
         .find(is_opening_paren_token)
         .map(Token::span)
+}
+
+/// Where the first `(` of `func` from `from` on is, which is the end of its name or else its start, if that shows without the
+/// tokens of the file.
+pub(crate) fn first_opening_paren_nearby(func: Func<'_>, from: u32) -> Option<u32> {
+    let text = func.file().text();
+    let at = match func.open_paren() {
+        // There is no other before it, not even in a comment.
+        Some(paren) => {
+            let before = text.get(from as usize..paren as usize)?;
+            (!strings::contains_char(before, b'(')).then_some(paren)?
+        }
+        // Nothing but `async` is before that of an arrow function.
+        None if func.is_arrow() && func.type_params().is_empty() => {
+            match func.is_async() && text.get(from as usize..)?.starts_with(b"async") {
+                true => skip_trivia(text, from + "async".len() as u32),
+                false => from,
+            }
+        }
+        None => return None,
+    };
+    (text.get(at as usize) == Some(&b'(')).then_some(at)
 }
 
 /// ESLint's `getFunctionHeadLoc`: what to report for a function, so that not all of it is

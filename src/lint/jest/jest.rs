@@ -11,6 +11,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{scope_made_by, static_property_info};
 use bun_lint_oxlint::codegen::Codegen;
@@ -42,7 +43,22 @@ pub(crate) const fn plugin(is_vitest: bool) -> Plugin {
     }
 }
 
-pub(crate) static JEST_METHOD_NAMES: [&str; 19] = [
+/// [`mention_bit`] of each of `names`, for a constant.
+pub(crate) const fn mention_bits<const N: usize>(names: [&str; N]) -> [u32; N] {
+    let (mut bits, mut i) = ([0; N], 0);
+    while i < N {
+        bits[i] = mention_bit(names[i].as_bytes());
+        i += 1;
+    }
+    bits
+}
+
+/// `file.mentions_any(..)` of the names with these [`mention_bits`].
+pub(crate) fn mentions_any(file: &File, bits: &[u32]) -> bool {
+    bits.iter().any(|bit| file.mentions_bit(*bit))
+}
+
+pub(crate) const JEST_METHOD_NAMES: [&str; 19] = [
     "afterAll",
     "afterEach",
     "beforeAll",
@@ -63,6 +79,14 @@ pub(crate) static JEST_METHOD_NAMES: [&str; 19] = [
     "xit",
     "xtest",
 ];
+const JEST_METHOD_BITS: [u32; 19] = mention_bits(JEST_METHOD_NAMES);
+/// Of what tests are imported from.
+const SOURCE_BITS: [u32; 4] = mention_bits([
+    "vitest",
+    "vite-plus/test",
+    "@effect/vitest",
+    "@jest/globals",
+]);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum JestFnKind {
@@ -76,6 +100,7 @@ pub(crate) enum JestFnKind {
 impl JestFnKind {
     pub(crate) fn from(name: &[u8]) -> Self {
         match name {
+            _ if !(2..=12).contains(&name.len()) => JestFnKind::Unknown,
             b"expect" => JestFnKind::Expect,
             b"expectTypeOf" => JestFnKind::ExpectTypeOf,
             b"vi" | b"vitest" => JestFnKind::General(JestGeneralFnKind::Vitest),
@@ -134,6 +159,10 @@ struct PossibleCall {
     reference: u32,
     /// The how manyth of the names that the file imports it is. `u32::MAX` for a global.
     import_index: u32,
+    /// [`is_in_call_or_member`]
+    is_in_call_or_member: bool,
+    /// [`is_valid_without_members`] of that name.
+    is_valid_without_members: bool,
 }
 
 pub(crate) fn is_vitest_import_source(source: &[u8]) -> bool {
@@ -168,12 +197,7 @@ pub(crate) fn is_jest_file(file: &File) -> bool {
 /// `None` only if something else is kept with the file.
 fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
     file.extension(|| {
-        let imports_tests = file.mentions_any(&[
-            "vitest",
-            "vite-plus/test",
-            "@effect/vitest",
-            "@jest/globals",
-        ]);
+        let imports_tests = mentions_any(file, &SOURCE_BITS);
         let imports = |is_source: fn(&[u8]) -> bool| {
             imports_tests && import_entries(file).any(|it| is_source(it.declaration.spec().bytes()))
         };
@@ -202,12 +226,9 @@ pub(crate) struct PossibleJestNode<'a> {
     pub(crate) node: Expr<'a>,
     /// The name that what is called has in `@jest/globals` or in Vitest, if it is imported by name from there.
     pub(crate) original: Option<&'a [u8]>,
-    /// What [`JestFnKind::from`] says of the name that the chain starts with, where that is known: most rules are about `expect`
-    /// only, or not about it, and need not parse the rest.
-    kind: Option<JestFnKind>,
-    /// The identifier that the chain starts with, and the how manyth of the names that the file imports it is: `u32::MAX` for a
-    /// global. For [`OxlintOrder`].
-    reference: Option<(Expr<'a>, u32)>,
+    /// What is known of one of [`iter_possible_jest_call_node`]: most rules are about `expect` only, or not about it, and need not
+    /// parse the rest.
+    known: Option<&'a PossibleCall>,
 }
 
 impl<'a> PossibleJestNode<'a> {
@@ -216,19 +237,29 @@ impl<'a> PossibleJestNode<'a> {
         PossibleJestNode {
             node,
             original: None,
-            kind: None,
-            reference: None,
+            known: None,
         }
     }
 
-    fn of(file: &'a File<'a>, found: &'a PossibleJestNodes, call: &PossibleCall) -> Self {
+    fn of(file: &'a File<'a>, originals: &'a [Box<[u8]>], call: &'a PossibleCall) -> Self {
         PossibleJestNode {
             node: Expr::from_raw(file, call.id),
-            original: found.originals.get(call.original as usize).map(|it| &**it),
-            kind: Some(call.kind),
-            reference: Some((Expr::from_raw(file, call.reference), call.import_index)),
+            original: originals.get(call.original as usize).map(|it| &**it),
+            known: Some(call),
         }
     }
+
+    /// What [`JestFnKind::from`] says of the name that the chain starts with, where that is known.
+    fn kind(&self) -> Option<JestFnKind> {
+        self.known.map(|it| it.kind)
+    }
+}
+
+fn possible_jest_nodes<'a>(file: &'a File<'a>) -> Option<&'a PossibleJestNodes> {
+    per_file(file).map(|it| {
+        it.possible_jest_nodes
+            .get_or_init(|| collect_possible_jest_call_node(file, it))
+    })
 }
 
 /// Every call of a global of Jest, of what is imported from Jest or Vitest, and of what these calls and their members return: of
@@ -239,16 +270,11 @@ impl<'a> PossibleJestNode<'a> {
 pub(crate) fn iter_possible_jest_call_node<'a>(
     file: &'a File<'a>,
 ) -> impl Iterator<Item = PossibleJestNode<'a>> {
-    let found = per_file(file).map(|it| {
-        it.possible_jest_nodes
-            .get_or_init(|| collect_possible_jest_call_node(file))
-    });
-    found.into_iter().flat_map(move |found| {
-        found
-            .calls
-            .iter()
-            .map(move |call| PossibleJestNode::of(file, found, call))
-    })
+    let (originals, calls) = possible_jest_nodes(file)
+        .map_or((&[][..], &[][..]), |it| (&it.originals[..], &it.calls[..]));
+    calls
+        .iter()
+        .map(move |call| PossibleJestNode::of(file, originals, call))
 }
 
 /// The one of [`iter_possible_jest_call_node`] that is the call `node`.
@@ -256,26 +282,22 @@ pub(crate) fn possible_jest_node_of<'a>(
     file: &'a File<'a>,
     node: Expr<'a>,
 ) -> Option<PossibleJestNode<'a>> {
-    let found = per_file(file)?
-        .possible_jest_nodes
-        .get_or_init(|| collect_possible_jest_call_node(file));
+    let found = possible_jest_nodes(file)?;
     let key = |span: Span| (span.start, std::cmp::Reverse(span.end));
     let call = found.calls.get(
         found
             .calls
             .partition_point(|it| key(it.span) < key(node.span())),
     )?;
-    (call.id == node.id().0).then(|| PossibleJestNode::of(file, found, call))
+    (call.id == node.id().0).then(|| PossibleJestNode::of(file, &found.originals, call))
 }
 
-fn collect_possible_jest_call_node<'a>(file: &'a File<'a>) -> PossibleJestNodes {
+fn collect_possible_jest_call_node<'a>(
+    file: &'a File<'a>,
+    frameworks: &PerFile,
+) -> PossibleJestNodes {
     let mut found = PossibleJestNodes::default();
-    let imports_tests = file.mentions_any(&[
-        "vitest",
-        "vite-plus/test",
-        "@effect/vitest",
-        "@jest/globals",
-    ]);
+    let imports_tests = mentions_any(file, &SOURCE_BITS);
     for (import_index, entry) in import_entries(file)
         .take_while(|_| imports_tests)
         .enumerate()
@@ -295,13 +317,12 @@ fn collect_possible_jest_call_node<'a>(file: &'a File<'a>) -> PossibleJestNodes 
             _ => u32::MAX,
         };
         let references = symbol.references().filter_map(Reference::expr);
-        references.for_each(|it| found.add_calls_of(it, original, import_index as u32));
+        references.for_each(|it| found.add_calls_of(it, original, import_index as u32, frameworks));
     }
     // What the names resolve to is asked only where one of them starts a chain: `test` is also the name of a method.
-    let globals: SmallVec<[Name; 19]> = JEST_METHOD_NAMES
-        .iter()
-        .filter(|name| file.mentions(name))
-        .map(|name| file.name_of(name))
+    let globals: SmallVec<[Name; 19]> = (JEST_METHOD_NAMES.iter().zip(JEST_METHOD_BITS))
+        .filter(|it| file.mentions_bit(it.1))
+        .map(|it| file.name_of(it.0))
         .collect();
     if !globals.is_empty() {
         let is_global = |e: &Expr<'a>| {
@@ -313,7 +334,7 @@ fn collect_possible_jest_call_node<'a>(file: &'a File<'a>) -> PossibleJestNodes 
         };
         file.exprs_of_kind(ExprTag::Ident)
             .filter(is_global)
-            .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX));
+            .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX, frameworks));
     }
     utils::sort::sort_unstable_by_key(&mut found.calls, |it| {
         (it.span.start, std::cmp::Reverse(it.span.end))
@@ -323,13 +344,20 @@ fn collect_possible_jest_call_node<'a>(file: &'a File<'a>) -> PossibleJestNodes 
 
 impl PossibleJestNodes {
     /// The longest chain of calls, members and tagged templates that starts with `reference`.
-    fn add_calls_of(&mut self, reference: Expr, original: u32, import_index: u32) {
+    fn add_calls_of(
+        &mut self,
+        reference: Expr,
+        original: u32,
+        import_index: u32,
+        frameworks: &PerFile,
+    ) {
         let local = reference.as_ident().map_or(b"".as_slice(), Name::bytes);
-        let kind = JestFnKind::from(
-            self.originals
-                .get(original as usize)
-                .map_or(local, |it| &**it),
-        );
+        let name = self
+            .originals
+            .get(original as usize)
+            .map_or(local, |it| &**it);
+        let kind = JestFnKind::from(name);
+        let is_valid_without_members = is_valid_without_members(frameworks, name);
         let mut at = reference;
         while let Some(parent) = parent_expression(at) {
             match parent.kind() {
@@ -342,6 +370,8 @@ impl PossibleJestNodes {
                         kind,
                         reference,
                         import_index,
+                        is_in_call_or_member: is_in_call_or_member(parent),
+                        is_valid_without_members,
                     });
                 }
                 ExprKind::Dot { .. } if !parent.is_private_member() => {}
@@ -378,7 +408,7 @@ fn is_member(e: Expr) -> bool {
 
 // ───────────────────────────── the parser of calls ─────────────────────────────
 
-pub(crate) type Members<'a> = SmallVec<[KnownMemberExpressionProperty<'a>; 4]>;
+pub(crate) type Members<'a> = SmallVec<[KnownMemberExpressionProperty<'a>; 2]>;
 
 pub(crate) enum ParsedJestFnCall<'a> {
     GeneralJest(ParsedGeneralJestFnCall<'a>),
@@ -505,10 +535,10 @@ impl<'a> KnownMemberExpressionProperty<'a> {
     }
 }
 
-/// `get_node_chain`, after `resolve_first_ident`: the identifier that `callee` starts with, and then the names of the members, in the
+/// `get_node_chain`, after `resolve_first_ident`: the identifier that `callee` starts with, and the names of the members, in the
 /// order of the source. `None` if it starts with something else, or if there is something else on the way than members, calls and
 /// tagged templates.
-fn get_node_chain(callee: Expr<'_>) -> Option<Members<'_>> {
+fn get_node_chain(callee: Expr<'_>) -> Option<(KnownMemberExpressionProperty<'_>, Members<'_>)> {
     use KnownMemberExpressionParentKind::{Call, Member, TaggedTemplate};
     let mut chain = Members::new();
     let (mut at, mut parent) = (callee, None);
@@ -519,16 +549,15 @@ fn get_node_chain(callee: Expr<'_>) -> Option<Members<'_>> {
         }
         let (next, kind) = match at.kind() {
             ExprKind::Ident(_) => {
-                let element = MemberExpressionElement::Expression(at);
-                chain.push(KnownMemberExpressionProperty {
-                    element,
+                let head = KnownMemberExpressionProperty {
+                    element: MemberExpressionElement::Expression(at),
                     parent,
                     parent_kind,
                     grandparent_kind,
                     span: at.span(),
-                });
+                };
                 chain.reverse();
-                return Some(chain);
+                return Some((head, chain));
             }
             ExprKind::Dot { obj, name, .. } => {
                 if !at.is_private_member() {
@@ -570,6 +599,30 @@ pub(crate) fn parse_jest_fn_call<'a>(
     parse_jest_fn_call_in(file, possible_jest_node.node, possible_jest_node)
 }
 
+/// The identifier that [`get_node_chain`] of `callee` starts with. `None` where that is `None`.
+pub(crate) fn first_identifier_of_chain(callee: Expr<'_>) -> Option<Name<'_>> {
+    let mut at = callee;
+    while !at.is_parenthesized() {
+        at = match at.tag() {
+            ExprTag::Ident => return at.as_ident(),
+            ExprTag::Dot | ExprTag::Index => at.object()?,
+            ExprTag::Call | ExprTag::TaggedTemplate => at.as_call_like()?.callee(),
+            _ => return None,
+        };
+    }
+    None
+}
+
+/// Whether `name(..)` is a call of Jest or of Vitest, whichever the file is for. In a file that is for neither, every call is.
+fn is_valid_without_members(frameworks: &PerFile, name: &[u8]) -> bool {
+    let PerFile {
+        is_jest, is_vitest, ..
+    } = *frameworks;
+    !is_jest && !is_vitest
+        || is_jest && is_valid_jest_call(name, &[])
+        || is_vitest && is_valid_vitest_call(name, &[])
+}
+
 /// Parses the call `call_expr`. What it is part of is asked of the node of `possible_jest_node`: some rules pass another than the call.
 pub(crate) fn parse_jest_fn_call_in<'a>(
     file: &'a File<'a>,
@@ -577,37 +630,52 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedJestFnCall<'a>> {
     let PossibleJestNode { node, original, .. } = possible_jest_node;
+    let known = possible_jest_node
+        .known
+        .filter(|it| it.id == call_expr.id().0);
     let call_expr = call_expr.as_call()?;
     let callee = call_expr.callee();
-    let (is_jest, is_vitest) =
-        per_file(file).map_or((false, false), |it| (it.is_jest, it.is_vitest));
+    let is_part = || known.map_or_else(|| is_in_call_or_member(node), |it| it.is_in_call_or_member);
 
-    // Most calls of a file that is no test.
-    if !is_jest
-        && !is_vitest
+    // `it(..)`, `expect(..)`
+    if let Some(local) = callee.as_ident()
         && !callee.is_parenthesized()
-        && let Some(local) = callee.as_ident()
     {
-        let name = original.unwrap_or_else(|| local.bytes());
-        if name != b"each" && JestFnKind::from(name) == JestFnKind::Unknown && name != b"pending" {
-            return (!is_in_call_or_member(node)).then(|| {
-                ParsedJestFnCall::GeneralJest(ParsedGeneralJestFnCall {
-                    kind: JestFnKind::Unknown,
-                    members: Members::new(),
-                    name,
-                })
-            });
+        let local = local.bytes();
+        let name = original.unwrap_or(local);
+        if local == b"each" {
+            return None;
         }
+        let kind = known.map_or_else(|| JestFnKind::from(name), |it| it.kind);
+        if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
+            let head = KnownMemberExpressionProperty {
+                element: MemberExpressionElement::Expression(callee),
+                parent: None,
+                parent_kind: Some(KnownMemberExpressionParentKind::Call),
+                grandparent_kind: None,
+                span: callee.span(),
+            };
+            let members = Members::new();
+            return parse_jest_expect_fn_call(node, call_expr, members, name, local, head, kind);
+        }
+        let is_valid = || match (kind, known) {
+            (JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest), _) => true,
+            (_, Some(known)) => known.is_valid_without_members,
+            (_, None) => per_file(file).is_none_or(|it| is_valid_without_members(it, name)),
+        };
+        return (!is_part() && is_valid()).then(|| {
+            ParsedJestFnCall::GeneralJest(ParsedGeneralJestFnCall {
+                kind,
+                members: Members::new(),
+                name,
+            })
+        });
     }
 
-    let mut chain = get_node_chain(callee)?;
-    let local = chain.first()?.name()?;
+    let (head, members) = get_node_chain(callee)?;
+    let local = head.name()?;
     let name = original.unwrap_or(local);
-    let is_member = |it: &KnownMemberExpressionProperty| {
-        it.parent_kind == Some(KnownMemberExpressionParentKind::Member)
-    };
-    let all_member_expr_except_last = chain.iter().rev().skip(1).all(is_member);
-    let is_each = chain.last()?.is_name_equal("each");
+    let is_each = members.last().unwrap_or(&head).is_name_equal("each");
 
     // `.each()` is parsed with the call of what it returns: `.each()()`.
     if is_each && !matches!(callee.tag(), ExprTag::Call | ExprTag::TaggedTemplate) {
@@ -618,15 +686,12 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
     }
 
     let kind = JestFnKind::from(name);
-    let head = chain.remove(0);
-    let members = chain;
-
     if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
         return parse_jest_expect_fn_call(node, call_expr, members, name, local, head, kind);
     }
 
     // Only the whole of `x().y.z()` is a call of Jest, not the `x()`.
-    if is_in_call_or_member(node) {
+    if is_part() {
         return None;
     }
 
@@ -641,10 +706,13 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         }));
     }
 
-    if !all_member_expr_except_last {
+    // All but the last are members: nothing before it is called.
+    if !members.is_empty() && head.parent_kind != Some(KnownMemberExpressionParentKind::Member) {
         return None;
     }
 
+    let (is_jest, is_vitest) =
+        per_file(file).map_or((false, false), |it| (it.is_jest, it.is_vitest));
     if is_jest || is_vitest {
         if !(is_jest && is_valid_jest_call(name, &members)
             || is_vitest && is_valid_vitest_call(name, &members))
@@ -857,9 +925,13 @@ pub(crate) fn is_type_of_jest_fn_call<'a>(
     possible_jest_node: PossibleJestNode<'a>,
     kinds: &[JestFnKind],
 ) -> bool {
-    !possible_jest_node
-        .kind
-        .is_some_and(|it| !kinds.contains(&it))
+    let kind = match possible_jest_node.known {
+        Some(known) => Some(known.kind),
+        None => (possible_jest_node.node.as_call())
+            .and_then(|it| first_identifier_of_chain(it.callee()))
+            .map(|it| JestFnKind::from(possible_jest_node.original.unwrap_or_else(|| it.bytes()))),
+    };
+    kind.is_some_and(|it| kinds.contains(&it))
         && parse_jest_fn_call(file, possible_jest_node).is_some_and(|it| kinds.contains(&it.kind()))
 }
 
@@ -868,7 +940,7 @@ pub(crate) fn parse_general_jest_fn_call<'a>(
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedGeneralJestFnCall<'a>> {
     if matches!(
-        possible_jest_node.kind,
+        possible_jest_node.kind(),
         Some(JestFnKind::Expect | JestFnKind::ExpectTypeOf)
     ) {
         return None;
@@ -884,7 +956,7 @@ pub(crate) fn parse_expect_jest_fn_call<'a>(
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedExpectFnCall<'a>> {
     if possible_jest_node
-        .kind
+        .kind()
         .is_some_and(|it| it != JestFnKind::Expect)
     {
         return None;
@@ -900,7 +972,7 @@ pub(crate) fn parse_expect_and_typeof_vitest_fn_call<'a>(
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedExpectFnCall<'a>> {
     if possible_jest_node
-        .kind
+        .kind()
         .is_some_and(|it| !matches!(it, JestFnKind::Expect | JestFnKind::ExpectTypeOf))
     {
         return None;
@@ -935,7 +1007,13 @@ pub(crate) fn get_node_name_vec(expr: Expr<'_>) -> SmallVec<[&[u8]; 4]> {
             ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
                 call.callee()
             }
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
+            ExprKind::Dot { obj, name, .. } => {
+                if !at.is_private_member() {
+                    chain.push(name.bytes());
+                }
+                obj
+            }
+            ExprKind::Index { obj, .. } => {
                 chain.extend(static_property_info(at).map(|it| it.1.bytes()));
                 obj
             }
@@ -968,13 +1046,7 @@ pub(crate) fn run_on_jest_nodes<'a>(
 
 /// Whether [`iter_possible_jest_call_node`] can have anything, by what the file mentions. It computes nothing.
 pub(crate) fn may_have_possible_jest_call_node(file: &File) -> bool {
-    file.mentions_any(&JEST_METHOD_NAMES)
-        || file.mentions_any(&[
-            "vitest",
-            "vite-plus/test",
-            "@effect/vitest",
-            "@jest/globals",
-        ])
+    mentions_any(file, &JEST_METHOD_BITS) || mentions_any(file, &SOURCE_BITS)
 }
 
 /// `node.enclosing_function()`, asked of many nodes. A static block is not a function.
@@ -1249,8 +1321,14 @@ impl<'a> OxlintOrder<'a> {
     /// then the globals, in the order of the table. Of one name the references are in the order of the source, and of one chain the
     /// calls from the inside.
     pub(crate) fn key(&self, possible_jest_node: PossibleJestNode<'a>) -> (bool, u32, u32, u32) {
-        let end = possible_jest_node.node.span().end;
-        match possible_jest_node.reference {
+        let (file, end) = (
+            possible_jest_node.node.file(),
+            possible_jest_node.node.span().end,
+        );
+        let reference = possible_jest_node
+            .known
+            .map(|it| (Expr::from_raw(file, it.reference), it.import_index));
+        match reference {
             Some((reference, u32::MAX)) => (
                 true,
                 reference.as_ident().map_or(u32::MAX, |it| self.rank(it)),

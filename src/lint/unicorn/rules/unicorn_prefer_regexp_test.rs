@@ -1,6 +1,7 @@
 use bun_lint_oxlint::ast_util::get_member_expr;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use smallvec::SmallVec;
 
 /// Prefers `RegExp#test()` over `String#match()` and `String#exec()`.
 pub struct PreferRegexpTest;
@@ -41,20 +42,30 @@ fn is_in_boolean_position(call: Expr) -> bool {
 impl Rule for PreferRegexpTest {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-regexp-test", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// Those of `match` and `exec` that the file mentions.
+    type State<'a> = SmallVec<[Name<'a>; 2]>;
 
     fn new(_: &Options) -> Self {
         PreferRegexpTest
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["match", "exec"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let methods = ["match", "exec"].into_iter().filter(|it| file.mentions(it));
+        let methods: Self::State<'a> = methods.map(|it| file.name_of(it)).collect();
+        (!methods.is_empty()).then_some(methods)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
             return;
         };
+        let is_candidate = match call.callee().member_name() {
+            Some(method) => cx.state.contains(&method.name()),
+            None => call.callee().tag() != ExprTag::Ident,
+        };
+        if !is_candidate {
+            return;
+        }
         let Some(ExprKind::Dot { obj, name, .. }) = get_member_expr(call.callee()).map(Expr::kind) else {
             return;
         };

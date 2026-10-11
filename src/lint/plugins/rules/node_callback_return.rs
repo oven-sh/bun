@@ -46,10 +46,11 @@ impl Rule for CallbackReturn {
         let Some(callee) = e.callee() else {
             return;
         };
-        if !matches!(callee.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index)
-            || !self.callbacks.iter().any(|it| it.as_bytes() == callee.text())
-            || !contains_only_identifiers(callee)
-        {
+        if !matches!(callee.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index) {
+            return;
+        }
+        let text = callee.text();
+        if !self.callbacks.iter().any(|it| it.as_bytes() == text) || !contains_only_identifiers(callee) {
             return;
         }
         let (block_body, is_body_of_function) = match cx.state.closest_block.find(Node::Expr(e), find_closest_block_parent) {

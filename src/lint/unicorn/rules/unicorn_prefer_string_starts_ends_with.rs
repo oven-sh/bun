@@ -18,21 +18,26 @@ impl Rule for PreferStringStartsEndsWith {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-starts-ends-with", Kind::Problem).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `test`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         PreferStringStartsEndsWith
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.mentions("test") && file.has_exprs([ExprTag::Regex])).then_some(())
+        (file.mentions("test") && file.has_exprs([ExprTag::Regex])).then(|| file.name_of("test"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
             return;
         };
-        let Some(member) = get_member_expr(call.callee()) else {
+        let is_candidate = match call.callee().member_name() {
+            Some(method) => method.name() == cx.state,
+            None => call.callee().tag() != ExprTag::Ident,
+        };
+        let Some(member) = get_member_expr(call.callee()).filter(|_| is_candidate) else {
             return;
         };
         let ExprKind::Dot { obj, name, .. } = member.kind() else {

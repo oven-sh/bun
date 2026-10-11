@@ -77,15 +77,13 @@ fn is_maybe_url(value: &[u8]) -> bool {
 
 /// oxlint's `is_url`: `text` starts with a scheme and `://`.
 fn oxlint_is_url(text: &[u8]) -> bool {
-    let colon = strings::index_of_char(text, b':').map_or(0, |it| it as usize);
-    let is_in_scheme = |c: &u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.');
-    colon > 0
-        && text.get(colon..).is_some_and(|it| it.starts_with(b"://"))
-        && text.get(..colon).is_some_and(|it| it.iter().all(is_in_scheme))
+    let is_in_scheme = |c: &&u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.');
+    let scheme_len = text.iter().take_while(is_in_scheme).count();
+    scheme_len > 0 && text.get(scheme_len..).is_some_and(|it| it.starts_with(b"://"))
 }
 
 /// What oxlint passes over: its `is_directive_comment`. In a block the URL can come after the `*` of a line.
-fn oxlint_is_directive(comment: Token) -> bool {
+fn oxlint_is_directive(comment: Token, value: &[u8]) -> bool {
     const DIRECTIVES: [&[u8]; 11] = [
         b"eslint-",
         b"eslint ",
@@ -99,9 +97,9 @@ fn oxlint_is_directive(comment: Token) -> bool {
         b"prettier-ignore",
         b"oxfmt-ignore",
     ];
-    let value = comment.comment_value();
     let rest = strings::trim_js_whitespace_start(value);
-    if DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
+    let may_be_named = matches!(rest.first(), Some(b'e' | b'o' | b'j' | b'i' | b'g' | b'p'));
+    if may_be_named && DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
         return true;
     }
     let mut lines = strings::split(value, b"\n").map(|line| {
@@ -143,16 +141,23 @@ impl CapitalizedComments {
         let Some(letter) = value.get(at..at + char::from_u32(first).map_or(1, char::len_utf8)) else {
             return;
         };
-        let expected = match self.is_always {
+        let expected = || match self.is_always {
             true => text::to_upper_case(letter),
             false => text::to_lower_case(letter),
         };
+        let is_as_expected = match (letter, self.is_always) {
+            ([letter], true) => !letter.is_ascii_lowercase(),
+            ([letter], false) => !letter.is_ascii_uppercase(),
+            _ => *expected() == *letter,
+        };
+        if is_as_expected {
+            return;
+        }
         let is_directive = match cx.language().is_oxlint {
-            true => oxlint_is_directive(comment),
+            true => oxlint_is_directive(comment, value),
             false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
         };
-        if *expected == *letter
-            || is_directive
+        if is_directive
             || (options.ignore_pattern.as_ref()).is_some_and(|it| it.test(&without_asterisks(value)))
             || options.ignore_inline_comments && is_inline_comment(cx.file(), comment)
             || options.ignore_consecutive_comments && is_consecutive_comment(cx.file(), comment)
@@ -166,7 +171,7 @@ impl CapitalizedComments {
         // The 2 is the `//` or the `/*`.
         let start = comment.start() + 2 + at as u32;
         cx.report(comment, message)
-            .fix(|fixer| fixer.replace(Span::new(start, start + letter.len() as u32), expected));
+            .fix(|fixer| fixer.replace(Span::new(start, start + letter.len() as u32), expected()));
     }
 }
 

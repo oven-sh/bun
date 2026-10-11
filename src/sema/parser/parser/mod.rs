@@ -988,7 +988,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         let start = self.f.ids.len() as u32;
         let items = self.s.ids.get(base..).unwrap_or_default();
         let len = items.len() as u32;
-        self.f.ids.extend_from_slice(items);
+        match *items {
+            [only] => self.f.ids.push(only),
+            _ => self.f.ids.extend_from_slice(items),
+        }
         self.s.ids.truncate(base);
         IdList::new(start, len)
     }
@@ -1054,7 +1057,10 @@ macro_rules! take_span {
         let start = $p.f.$field.len() as u32;
         let items = $p.s.$field.get(base..).unwrap_or_default();
         let len = items.len() as u32;
-        $p.f.$field.extend_from_slice(items);
+        match *items {
+            [only] => $p.f.$field.push(only),
+            _ => $p.f.$field.extend_from_slice(items),
+        }
         $p.s.$field.truncate(base);
         bun_sema::hir::Span::new(start, len)
     }};

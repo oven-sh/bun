@@ -30,6 +30,19 @@ fn is_script_url_literal(raw: &[u8]) -> bool {
             .all(|(unit, c)| u8::try_from(unit.code_unit).is_ok_and(|it| it.eq_ignore_ascii_case(c)))
 }
 
+/// Whether what follows a backtick of `text` is a script URL as far as it is written without an escape.
+fn may_have_script_url_in_template(text: &[u8]) -> bool {
+    let mut rest = text;
+    while let Some(at) = strings::index_of_char_usize(rest, b'`') {
+        rest = &rest[at + 1..];
+        let same = rest.iter().zip(SCHEME).take_while(|(a, b)| a.eq_ignore_ascii_case(b)).count();
+        if same == SCHEME.len() || rest.get(same) == Some(&b'\\') {
+            return true;
+        }
+    }
+    false
+}
+
 /// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here.
 fn check_template_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoScriptUrl>) {
     if let Some(key) = key
@@ -60,7 +73,7 @@ impl Rule for NoScriptUrl {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().string_literals();
-        if !strings::contains_char(file.text(), b'`') {
+        if !may_have_script_url_in_template(file.text()) {
             return on;
         }
         on.exprs(&[ExprTag::Template])
@@ -72,7 +85,7 @@ impl Rule for NoScriptUrl {
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
         // After the quote: the `j`, an escape, or an entity in JSX.
-        if !matches!(literal.text().get(1), Some(b'j' | b'J' | b'\\' | b'&')) {
+        if !matches!(cx.text().get(literal.span().start as usize + 1), Some(b'j' | b'J' | b'\\' | b'&')) {
             return;
         }
         let found = match literal.owner() {

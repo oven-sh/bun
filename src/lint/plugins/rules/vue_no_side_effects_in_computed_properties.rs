@@ -2,7 +2,7 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, parent_nod
 use bun_lint_oxlint::import::{AssignmentTargets, is_assignment_target};
 use crate::oxlint::vue::{
     ComputedContext, EnclosingFunctions, find_computed_context, is_specific_static_name, is_this_object,
-    is_vue_component_options_object, is_vue_setup, object_of, property_of_function,
+    is_vue_component_options_object, is_vue_setup, may_have_computed_context, object_of, property_of_function,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -34,7 +34,7 @@ impl Rule for NoSideEffectsInComputedProperties {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("computed").then(State::default)
+        may_have_computed_context(file).then(State::default)
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {

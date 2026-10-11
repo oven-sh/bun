@@ -1,6 +1,6 @@
 use crate::oxlint::vue::{
     as_inner_object_expression, is_specific_static_name, is_vue_component_options_object,
-    is_vue_component_options_object_excluding_instance, is_vue_file, object_of,
+    is_vue_component_options_object_excluding_instance, is_vue_file, may_have_component_options, object_of,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -23,7 +23,7 @@ impl<const SHARED: bool> Rule for NoDataObject<SHARED> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        ((SHARED || is_vue_file(file)) && file.mentions("data")).then_some(())
+        ((SHARED || is_vue_file(file)) && file.mentions("data") && may_have_component_options(file)).then_some(())
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {

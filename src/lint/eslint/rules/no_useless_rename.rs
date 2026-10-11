@@ -115,8 +115,8 @@ impl Rule for NoUselessRename {
         let Some(value) = prop.value() else {
             return;
         };
-        let (left, has_default) = match value.kind() {
-            ExprKind::Assign { op: None, target, .. } => (target, true),
+        let (left, has_default) = match value.as_assign() {
+            Some((None, target, _)) => (target, true),
             _ => (value, false),
         };
         let Some(local) = left.as_ident() else {

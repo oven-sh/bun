@@ -1,5 +1,7 @@
 use bun_lint_oxlint::ast_util::get_inner_expression;
-use crate::oxlint::vue::{EnclosingFunctions, is_in_vue_component_instance_method, is_this_object};
+use crate::oxlint::vue::{
+    EnclosingFunctions, is_in_vue_component_instance_method, is_this_object, may_have_component_options,
+};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -18,14 +20,14 @@ impl Rule for NoDeprecatedEventsApi {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&["$on", "$off", "$once"]).then(EnclosingFunctions::default)
+        (file.mentions_any(&["$on", "$off", "$once"]) && may_have_component_options(file)).then(EnclosingFunctions::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // `this.$on?.()` asks whether it is there.
         if !e.is_optional()
             && let Some(callee) = e.callee().map(get_inner_expression)
-            && let ExprKind::Dot { obj, name, .. } = callee.kind()
+            && let (Some(obj), Some(name)) = (callee.object(), callee.member_name())
             && name.name().is_any(&["$on", "$off", "$once"])
             && is_this_object(obj)
             && is_in_vue_component_instance_method(e, &mut cx.state)

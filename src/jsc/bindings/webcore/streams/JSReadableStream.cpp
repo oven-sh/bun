@@ -526,6 +526,10 @@ void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)
     const auto mode = m_bunMode;
     if (mode == BunStreamMode::Default) [[likely]]
         return;
+    // A native sink took this stream without a reader (ReadableStream__lockNative) and left it lazy.
+    // Its source is not the caller's to start: the caller's acquire fails on the lock next.
+    if (m_lockedWithoutReader)
+        return;
     // Clear the mode BEFORE running the thunk so re-entrant consumers see it done.
     m_bunMode = BunStreamMode::Default;
     if (mode == BunStreamMode::DirectPending)

@@ -3595,6 +3595,22 @@ test.concurrent.each([
   expect({ problems, exitCode }).toEqual({ problems: [], exitCode: 2 });
 });
 
+// What reads a selector holds more levels than what matches it: how many depends on the build and on the system. Between
+// the two, each `:has()` took the end of the stack for a node that does not match, and went on to the next one.
+// ESLint 9.39.5 reports the ten nodes up to 999 levels.
+test.concurrent.each(Array.from({ length: 24 }, (_, i) => Math.ceil(300 * 1.2 ** i)))(
+  "no-restricted-syntax with `:has()` nested about as deep as the stack holds: %d",
+  async depth => {
+    const selector = `${":has(".repeat(depth)}*${")".repeat(depth)}`;
+    const files = { ".eslintrc.json": rc({ rules: { "no-restricted-syntax": ["error", selector] } }), "a.js": code };
+    const { problems, stderr, exitCode } = await lint(files, ["a.js"]);
+    if (exitCode === 2) expect(stderr).toEndWith("Maximum call stack size exceeded\nOccurred while linting <dir>/a.js");
+    expect({ problems: problems.length, exitCode }).toEqual(
+      exitCode === 2 ? { problems: 0, exitCode } : { problems: 10, exitCode: 1 },
+    );
+  },
+);
+
 // As ESLint 10.12. What is in a plugin of the configuration is known, whether or not a rule of it is on.
 test.concurrent(
   "a rule that only a comment names, of a plugin of which the configuration turns no rule on",

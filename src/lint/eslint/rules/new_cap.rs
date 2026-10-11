@@ -196,7 +196,18 @@ impl Rule for NewCap {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match e.tag() {
+        let tag = e.tag();
+        // The first byte of a name as it is written is nearly always that of the name.
+        if let Some(callee) = e.callee()
+            && let Some(start) = callee.member_name_start().or_else(|| callee.as_ident().map(|_| callee.span().start))
+            && let Some(first) = cx.text().get(start as usize)
+            && first.is_ascii()
+            && *first != b'\\'
+            && !(if tag == ExprTag::New { first.is_ascii_lowercase() } else { first.is_ascii_uppercase() })
+        {
+            return;
+        }
+        match tag {
             ExprTag::New => self.check_new(e, cx),
             ExprTag::Call => self.check_call(e, cx),
             _ => {}

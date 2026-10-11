@@ -59,6 +59,39 @@ pub(crate) struct Lines {
     /// For columns far into a line: how many UTF-16 code units the characters have that start before each multiple of
     /// `BLOCK`, and at last all of them. `None` if the text is not valid UTF-8. Made when the first such column is asked for.
     units: OnceCell<Option<Vec<u32>>>,
+    /// The line that was found last, counted from 0. The next one that is asked for is mostly near it.
+    last: Cell<u32>,
+}
+
+impl Lines {
+    /// The line that `offset` is in, counted from 1, and where it starts.
+    fn line_at(&self, offset: u32) -> (u32, u32) {
+        let starts = &self.starts[..];
+        let starts_by = |at: usize| starts.get(at).is_some_and(|&start| start <= offset);
+        // The line is one from `low` to before `high`. The steps away from the last double.
+        let (mut low, mut high) = (self.last.get() as usize, starts.len());
+        let mut step = 1;
+        if starts_by(low) {
+            while starts_by(low + step) {
+                low += step;
+                step *= 2;
+            }
+            high = high.min(low + step);
+        } else {
+            loop {
+                high = low;
+                low = low.saturating_sub(step);
+                if low == 0 || starts_by(low) {
+                    break;
+                }
+                step *= 2;
+            }
+        }
+        let between = starts.get(low + 1..high).unwrap_or_default();
+        let at = low + between.partition_point(|&start| start <= offset);
+        self.last.set(at as u32);
+        (at as u32 + 1, starts.get(at).copied().unwrap_or(0))
+    }
 }
 
 /// A column is counted from the start of its line if that is no further away.
@@ -124,6 +157,7 @@ impl<'a> File<'a> {
             starts: line_starts(self.text()),
             is_ascii: bun_core::strings::first_non_ascii(self.text()).is_none(),
             units: OnceCell::new(),
+            last: Cell::new(0),
         })
     }
 
@@ -181,9 +215,7 @@ impl<'a> File<'a> {
         if let Some((line, _)) = self.nearby_line(offset.min(self.text().len() as u32)) {
             return line;
         }
-        self.lines_index()
-            .starts
-            .partition_point(|&start| start <= offset) as u32
+        self.lines_index().line_at(offset).0
     }
 
     /// Where the line `line`, counted from 1, starts and where it ends, before its line break. The first starts after a byte
@@ -221,12 +253,20 @@ impl<'a> File<'a> {
         let (line, start, is_ascii) = match self.nearby_line(offset) {
             Some((line, start)) => (line, start, false),
             None => {
-                let (line, lines) = (self.line_of(offset), self.lines_index());
-                (line, lines.starts[line as usize - 1], lines.is_ascii)
+                let lines = self.lines_index();
+                let (line, start) = lines.line_at(offset);
+                (line, start, lines.is_ascii)
             }
         };
-        let start = start.max(self.start_of_text());
+        let start = match start {
+            0 => self.start_of_text(),
+            start => start,
+        };
         let offset = offset.max(start);
+        let is_ascii = is_ascii
+            || offset - start <= FAR
+                && self.slice(Span::new(start, offset)).is_ascii()
+                && (text.get(offset as usize)).is_none_or(|byte| byte & 0xC0 != 0x80);
         if is_ascii {
             return Position {
                 line,

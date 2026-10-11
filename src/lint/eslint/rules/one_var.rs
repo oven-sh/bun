@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ast_utils;
 
 /// Enforce variables to be declared either together or separately in functions.
@@ -100,12 +101,26 @@ struct Seen {
     required: bool,
 }
 
-#[derive(Default)]
-pub struct State {
-    /// What `var` has declared in each of the functions around the current node.
-    functions: Vec<Seen>,
-    /// The same for the other kinds, by [`index`], and the blocks.
-    blocks: Vec<[Seen; 5]>,
+/// A function or a block of a file: the sort of the node, and its index among those.
+type Scope = (u8, u32);
+
+/// `node` as what ESLint's `startFunction` is called for, or with `of_blocks` its `startBlock` as well. The file is neither.
+fn as_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> Option<Scope> {
+    match node {
+        // The block that is the body of a function is not a node: one scope stands for ESLint's
+        // two, of which the outer is empty.
+        Node::Func(func) if func.has_body() => Some((1, func.id().0)),
+        Node::Stmt(statement) => {
+            let opens = match statement.tag() {
+                // ESLint does not know namespaces. For oxlint what is declared in one is apart, `var` too.
+                StmtTag::Module => is_oxlint,
+                StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => of_blocks,
+                _ => false,
+            };
+            opens.then(|| (2, statement.id().0))
+        }
+        _ => None,
+    }
 }
 
 /// How many of some declarations have what.
@@ -118,7 +133,8 @@ struct Counts {
 }
 
 impl Counts {
-    fn of<'a>(declarations: List<'a, VarDecl<'a>>) -> Counts {
+    /// `mentions_require`: whether one can be a `require`.
+    fn of<'a>(declarations: List<'a, VarDecl<'a>>, mentions_require: bool) -> Counts {
         let mut counts = Counts {
             total: 0,
             initialized: 0,
@@ -131,7 +147,7 @@ impl Counts {
                 None => counts.uninitialized += 1,
                 Some(_) => counts.initialized += 1,
             }
-            counts.requires += usize::from(is_require(declaration));
+            counts.requires += usize::from(mentions_require && is_require(declaration));
         }
         counts
     }
@@ -282,13 +298,7 @@ fn report_combine<'a>(cx: &Cx<'a, OneVar>, statement: Stmt<'a>, kind: VarKind, m
 
 impl OneVar {
     /// ESLint's `hasOnlyOneStatement`, which includes `recordTypes`.
-    fn has_only_one_statement<'a>(
-        &self,
-        kind: VarKind,
-        declarations: List<'a, VarDecl<'a>>,
-        counts: Counts,
-        state: &mut State,
-    ) -> bool {
+    fn has_only_one_statement(&self, kind: VarKind, counts: Counts, scope: &mut Seen) -> bool {
         let options = self.kinds[index(kind)];
         let always_uninitialized = options.uninitialized == Some(Mode::Always);
         let always_initialized = options.initialized == Some(Mode::Always);
@@ -296,13 +306,6 @@ impl OneVar {
         if !always_uninitialized && !always_initialized {
             return true;
         }
-        let scope = match kind {
-            VarKind::Var => state.functions.last_mut(),
-            _ => state.blocks.last_mut().map(|block| &mut block[index(kind)]),
-        };
-        let Some(scope) = scope else {
-            return true;
-        };
         let has_requires = counts.requires > 0;
         if always_uninitialized
             && always_initialized
@@ -320,22 +323,17 @@ impl OneVar {
         if scope.required && has_requires {
             return false;
         }
-        for declaration in declarations {
-            if declaration.init().is_none() {
-                scope.uninitialized |= always_uninitialized;
-            } else if always_initialized {
-                if self.separate_requires && is_require(declaration) {
-                    scope.required = true;
-                } else {
-                    scope.initialized = true;
-                }
-            }
+        scope.uninitialized |= always_uninitialized && counts.uninitialized > 0;
+        if always_initialized {
+            let apart = if self.separate_requires { counts.requires } else { 0 };
+            scope.required |= apart > 0;
+            scope.initialized |= counts.initialized > apart;
         }
         true
     }
 
-    /// ESLint's `checkVariableDeclaration`
-    fn check_variable_declaration<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+    /// ESLint's `checkVariableDeclaration`. `seen`: by [`index`], what has been declared in the scope of each kind.
+    fn check_variable_declaration<'a>(&self, statement: Stmt<'a>, seen: &mut [Seen; 5], cx: &Cx<'a, Self>) {
         let Some((declarations, kind)) = as_variable_declaration(statement) else {
             return;
         };
@@ -345,7 +343,7 @@ impl OneVar {
         if options.initialized.is_none() && options.uninitialized.is_none() {
             return;
         }
-        let counts = Counts::of(declarations);
+        let counts = Counts::of(declarations, cx.state);
 
         if options.initialized == always
             && self.separate_requires
@@ -358,7 +356,7 @@ impl OneVar {
         if options.has(Mode::Consecutive)
             && let Some(previous) = previous_declarations(statement, kind)
         {
-            let previous = Counts::of(previous);
+            let previous = Counts::of(previous, cx.state);
             let requires = counts.requires + previous.requires;
             let are_requires_mixed = requires > 0 && requires < counts.total + previous.total;
             let message = if are_requires_mixed {
@@ -383,7 +381,7 @@ impl OneVar {
             }
         }
 
-        if !self.has_only_one_statement(kind, declarations, counts, &mut cx.state) {
+        if !self.has_only_one_statement(kind, counts, &mut seen[index(kind)]) {
             if options.initialized == always && options.uninitialized == always {
                 report_combine(cx, statement, kind, COMBINE);
             } else {
@@ -419,33 +417,11 @@ impl OneVar {
     }
 }
 
-/// What opens a scope for ESLint.
-const SCOPES: NodeTags = NodeTags::new()
-    .stmts(&[
-        StmtTag::Block,
-        StmtTag::For,
-        StmtTag::ForIn,
-        StmtTag::ForOf,
-        StmtTag::Switch,
-    ])
-    .union(NodeTags::FILE)
-    .union(NodeTags::FUNC);
-
-/// Whether ESLint's `startFunction` is called for it: the file, a function, a static block.
-fn starts_function(node: Node<'_>) -> bool {
-    match node {
-        Node::Func(func) => func.has_body(),
-        _ => true,
-    }
-}
-
 impl Rule for OneVar {
     const META: Meta = Meta::eslint("one-var", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new()
-        .stmts(&[StmtTag::Var])
-        .enter(SCOPES.stmts(&[StmtTag::Module, StmtTag::Var]))
-        .exit(SCOPES.stmts(&[StmtTag::Module]));
-    type State<'a> = State;
+    const ON: On = On::new().stmts(&[StmtTag::Var]).finish();
+    /// Whether the file can have a `require`.
+    type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -472,67 +448,46 @@ impl Rule for OneVar {
         }
     }
 
-    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         // Only what has to be declared together depends on what has been declared before.
-        if !self.kinds.iter().any(|it| it.has(Mode::Always)) {
-            return On::new().stmts(&[StmtTag::Var]);
+        match self.kinds.iter().any(|it| it.has(Mode::Always)) {
+            true => On::new().finish(),
+            false => On::new().stmts(&[StmtTag::Var]),
         }
-        // ESLint does not know namespaces. For oxlint what is declared in one is apart, `var` too.
-        let scopes = match file.language().is_oxlint {
-            true => SCOPES.stmts(&[StmtTag::Module]),
-            false => SCOPES,
-        };
-        On::new().enter(scopes.stmts(&[StmtTag::Var])).exit(scopes)
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
-        Some(State::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        file.has_stmts([StmtTag::Var]).then(|| file.mentions("require"))
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_variable_declaration(statement, cx);
+        self.check_variable_declaration(statement, &mut Default::default(), cx);
     }
 
-    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        match node {
-            // The block that is the body of a function is not a node: one scope stands for ESLint's
-            // two, of which the outer is empty.
-            Node::File(_) | Node::Func(_) if starts_function(node) => {
-                cx.state.functions.push(Seen::default());
-                cx.state.blocks.push(Default::default());
-            }
-            Node::Stmt(statement) => match statement.tag() {
-                StmtTag::Module => {
-                    cx.state.functions.push(Seen::default());
-                    cx.state.blocks.push(Default::default());
-                }
-                StmtTag::Var => self.check_variable_declaration(statement, cx),
-                StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => {
-                    cx.state.blocks.push(Default::default())
-                }
-                _ => {}
-            },
-            _ => {}
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        let is_oxlint = file.language().is_oxlint;
+        let (mut functions, mut blocks) = (AncestorMemo::default(), AncestorMemo::default());
+        let statements = file.stmts_of_kind(StmtTag::Var);
+        let mut found = Vec::with_capacity(statements.size_hint().0);
+        for statement in statements {
+            let Some((_, kind)) = as_variable_declaration(statement) else {
+                continue;
+            };
+            let scope = match kind {
+                VarKind::Var => functions.find(statement.into(), |_, it| as_scope(it, false, is_oxlint)),
+                _ => blocks.find(statement.into(), |_, it| as_scope(it, true, is_oxlint)),
+            };
+            found.push((scope.unwrap_or_default(), statement.span().start, statement));
         }
-    }
-
-    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        match node {
-            Node::File(_) | Node::Func(_) if starts_function(node) => {
-                cx.state.functions.pop();
-                cx.state.blocks.pop();
+        // Scope by scope, each in the order of the source.
+        found.sort_unstable_by_key(|it| (it.0, it.1));
+        let (mut scope, mut seen) = (Scope::default(), Default::default());
+        for (its_scope, _, statement) in found {
+            if its_scope != scope {
+                (scope, seen) = (its_scope, Default::default());
             }
-            Node::Stmt(statement) => match statement.tag() {
-                StmtTag::Module => {
-                    cx.state.functions.pop();
-                    cx.state.blocks.pop();
-                }
-                StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => {
-                    cx.state.blocks.pop();
-                }
-                _ => {}
-            },
-            _ => {}
+            self.check_variable_declaration(statement, &mut seen, cx);
         }
     }
 }

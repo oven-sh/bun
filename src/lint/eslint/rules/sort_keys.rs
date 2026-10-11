@@ -310,9 +310,11 @@ impl Rule for SortKeys {
         let ExprKind::Object(props) = object.kind() else {
             return;
         };
-        if props.len() < self.min_keys || utils::is_assignment_target(object) {
+        if props.len() < self.min_keys {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
+        let mut is_pattern: Option<bool> = None;
         let mut prev_node: Option<Prop<'a>> = None;
         let mut prev_name: Option<Cow<'a, [u8]>> = None;
         let mut prev_blank_line = false;
@@ -330,7 +332,7 @@ impl Rule for SortKeys {
                     || prev_node.is_some_and(|previous| is_blank_line_between(cx.file(), previous, prop)));
             prev_node = Some(prop);
 
-            let Some(this_name) = get_property_name(key, cx.language().is_oxlint) else {
+            let Some(this_name) = get_property_name(key, is_oxlint) else {
                 prev_blank_line |= starts_group;
                 continue;
             };
@@ -340,24 +342,25 @@ impl Rule for SortKeys {
                 continue;
             }
             if let Some(before) = before
-                && !self.is_valid_order(&before, &this_name, cx.language().is_oxlint)
+                && !self.is_valid_order(&before, &this_name, is_oxlint)
             {
-                // oxlint says one thing about an object, and points at it.
-                let is_oxlint = cx.language().is_oxlint;
-                let report = cx
-                    .report(if is_oxlint { object.span() } else { key.inner_span(cx.file()) }, SORT_KEYS)
-                    .data("thisName", this_name)
-                    .data("prevName", before)
-                    .data("order", if self.is_descending { "desc" } else { "asc" })
-                    .data("insensitive", if self.is_insensitive { "insensitive " } else { "" })
-                    .data("natural", if self.is_natural { "natural " } else { "" });
+                if *is_pattern.get_or_insert_with(|| utils::is_assignment_target(object)) {
+                    return;
+                }
+                // oxlint says one thing about an object, without a name, and points at it.
                 if is_oxlint {
-                    report.fix(|fixer| {
+                    cx.report(object, SORT_KEYS).fix(|fixer| {
                         let (replaced, text) = self.fix_as_oxlint(object, &mut cx.state)?;
                         Some(fixer.replace(replaced, text))
                     });
                     return;
                 }
+                cx.report(key.inner_span(cx.file()), SORT_KEYS)
+                    .data("thisName", this_name)
+                    .data("prevName", before)
+                    .data("order", if self.is_descending { "desc" } else { "asc" })
+                    .data("insensitive", if self.is_insensitive { "insensitive " } else { "" })
+                    .data("natural", if self.is_natural { "natural " } else { "" });
             }
         }
     }

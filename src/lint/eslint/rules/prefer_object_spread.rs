@@ -58,7 +58,10 @@ fn message_for(call: Call) -> Option<Message> {
 
 /// What oxlint reports for `call`. It follows no variable: `Object.assign` or `globalThis.Object.assign` is written out.
 fn message_for_oxlint(call: Call) -> Option<Message> {
-    if !is_method_call(call, None, Some(&["assign"]), Some(1), None) {
+    let args = call.args();
+    if get_inner_expression(args.first()?).tag() != ExprTag::Object
+        || !is_method_call(call, None, Some(&["assign"]), Some(1), None)
+    {
         return None;
     }
     let is_global = |e: Expr, name: &str| e.is_ident(name) && is_reference_to_global_variable(e);
@@ -69,11 +72,7 @@ fn message_for_oxlint(call: Call) -> Option<Message> {
         }
         _ => is_global(object, "Object"),
     };
-    let args = call.args();
-    if !is_object
-        || get_inner_expression(args.first()?).tag() != ExprTag::Object
-        || args.iter().any(|it| it.tag() == ExprTag::Spread)
-    {
+    if !is_object || args.iter().any(|it| it.tag() == ExprTag::Spread) {
         return None;
     }
     if args.len() == 1 {
@@ -205,7 +204,7 @@ impl Rule for PreferObjectSpread {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
-        file.has_exprs([ExprTag::Call]).then_some(false)
+        (file.has_exprs([ExprTag::Call]) && (!file.language().is_oxlint || file.mentions("assign"))).then_some(false)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

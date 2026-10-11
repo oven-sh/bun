@@ -539,10 +539,11 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (caFile) name += `:caFile=${JSONStringify(caFile)}`;
   if (allowPartialTrustChain) name += ":allowPartialTrustChain";
   if (secureContext) name += `:secureContext=${poolKeyPart(secureContext)}`;
-  // `ca: []` trusts no CA, and its part above is as empty as that of no `ca`. In Node the two share a name, so
-  // there that request takes a pooled socket that the default roots verified.
+  // A truthy `ca` whose part above is empty is not "no ca". `[]` trusts no CA. Any other such value (`[""]`, an
+  // empty Buffer) is refused when a connection is made. In Node they all share the name of no `ca`, so there
+  // such a request takes a pooled socket that the default roots verified.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L487-L489
-  if (emptyCA) name += ":ca=[]";
+  if (emptyCA) name += $isArray(ca) && ca.length === 0 ? ":ca=[]" : ":ca=empty";
 
   const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
   if (perRequestCheckServerIdentity) name += `:${perRequestCheckServerIdentity}`;

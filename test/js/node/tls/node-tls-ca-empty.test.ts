@@ -133,15 +133,18 @@ describe("an empty ca list trusts no certificate on Bun's own APIs", () => {
       "WebSocket": { "no ca": "open", "ca: []": "error" },
       "ws": { "no ca": "open", "ca: []": "error" },
     },
-    "Bun.connect": {
-      "tls: true": "authorized",
-      "ca: []": unauthorized,
-      "upgradeTLS, ca: []": unauthorized,
-      "Bun.serve({ tls: { ca: [] } })": "https:",
-      "tls: {}": "closed without a TLS handshake",
-      "cert: []": "closed without a TLS handshake",
-      "key: []": "closed without a TLS handshake",
-      "crl: []": "closed without a TLS handshake",
+    "Bun.connect, Bun.listen, Bun.serve": {
+      "Bun.connect": {
+        "tls: true": "authorized",
+        "ca: []": unauthorized,
+        "upgradeTLS, ca: []": unauthorized,
+        "tls: {}": "closed without a TLS handshake",
+        "cert: []": "closed without a TLS handshake",
+        "key: []": "closed without a TLS handshake",
+        "crl: []": "closed without a TLS handshake",
+      },
+      "Bun.serve({ tls: { ca: [] } })": "http:",
+      "Bun.listen({ tls: { ca: [] } })": "plain text: hello",
     },
     "pooled connections": {
       "fetch through a CONNECT proxy": {
@@ -155,6 +158,7 @@ describe("an empty ca list trusts no certificate on Bun's own APIs", () => {
       },
       "one https.Agent, keepAlive": { "no ca": "status 200", "ca: []": refused },
       "one https.Agent": { "no ca": "status 200", "ca: []": refused },
+      "Agent names of no ca, ca: [] and ca: ['']": 3,
     },
     "a client certificate": {
       "tls.connect": {

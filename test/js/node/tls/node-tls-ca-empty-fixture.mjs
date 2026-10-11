@@ -295,7 +295,8 @@ const modes = {
     };
   },
 
-  async "Bun.connect"() {
+  // The tls object of these sockets decides if they do TLS.
+  async "Bun.connect, Bun.listen, Bun.serve"() {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { cert, key }, fetch: () => new Response("ok") });
     const handlers = resolve => ({
       // A socket without TLS sends this in the clear, and the server hangs up on it.
@@ -342,17 +343,48 @@ const modes = {
       return promise;
     };
     using lone = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { ca: [] }, fetch: () => new Response("ok") });
+    // What a listener gets from a client that sends "hello" in the clear.
+    const listenerGets = async tls => {
+      const { promise, resolve } = Promise.withResolvers();
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: {
+          data(socket, chunk) {
+            resolve(`plain text: ${chunk}`);
+          },
+          error() {},
+        },
+      });
+      const sendsHello = {
+        open(socket) {
+          socket.write("hello");
+        },
+        data() {},
+        error() {},
+        close() {
+          resolve("nothing: it closed the client");
+        },
+      };
+      Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: sendsHello }).catch(() => {});
+      return await promise;
+    };
     return {
-      "tls: true": await connect(true),
-      // `ca` is the only TLS option in these, and it asks for TLS.
-      "ca: []": await connect({ ca: [] }),
-      "upgradeTLS, ca: []": await upgrade({ ca: [] }),
+      "Bun.connect": {
+        "tls: true": await connect(true),
+        // `ca` is the only TLS option in these two. For a client it asks for TLS.
+        "ca: []": await connect({ ca: [] }),
+        "upgradeTLS, ca: []": await upgrade({ ca: [] }),
+        // `cert`, `key` and `crl` are not given when they are empty: these are the same as `tls: {}`.
+        "tls: {}": await connect({}),
+        "cert: []": await connect({ cert: [] }),
+        "key: []": await connect({ key: [] }),
+        "crl: []": await connect({ crl: [] }),
+      },
+      // A server that has no certificate cannot do TLS. `ca: []` alone leaves it without TLS, as `tls: {}` does.
       "Bun.serve({ tls: { ca: [] } })": lone.url.protocol,
-      // `cert`, `key` and `crl` are not given when they are empty: these are the same as `tls: {}`.
-      "tls: {}": await connect({}),
-      "cert: []": await connect({ cert: [] }),
-      "key: []": await connect({ key: [] }),
-      "crl: []": await connect({ crl: [] }),
+      "Bun.listen({ tls: { ca: [] } })": await listenerGets({ ca: [] }),
     };
   },
 
@@ -424,10 +456,13 @@ const modes = {
       agent.destroy();
       return rows;
     };
+    // A `ca` that no context can be made with (`[""]`) must not share a name with either.
+    const names = [{}, { ca: [] }, { ca: [""] }].map(options => https.globalAgent.getName({ host: "a", ...options }));
     return {
       "fetch through a CONNECT proxy": tunnel,
       "one https.Agent, keepAlive": await onOneAgent(true),
       "one https.Agent": await onOneAgent(false),
+      "Agent names of no ca, ca: [] and ca: ['']": new Set(names).size,
     };
   },
 

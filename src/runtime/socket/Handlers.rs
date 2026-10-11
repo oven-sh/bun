@@ -508,9 +508,10 @@ impl SocketConfig {
                         None
                     }
                 }
-                GeneratedTls::Object(ssl) => {
-                    SSLConfig::from_generated(vm, global, ssl, mode.is_server())?
+                GeneratedTls::Object(ssl) if mode.is_server() => {
+                    SSLConfig::listener_from_generated(vm, global, ssl)?
                 }
+                GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl, false)?,
             };
             break 'blk SocketConfig {
                 hostname_or_unix: Utf8Bytes::EMPTY,

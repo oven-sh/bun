@@ -135,6 +135,39 @@ pub(crate) trait SSLConfigFromJs: Sized {
         generated: &jsc::generated::SSLConfig,
         is_server: bool,
     ) -> JsResult<Option<Self>>;
+
+    /// `from_js` for the tls object of `Bun.serve` or `Bun.listen`: [`LoneEmptyCa::NoTlsOption`].
+    fn listener_from_js(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>>;
+
+    /// `from_generated` for the tls object of `Bun.serve` or `Bun.listen`: [`LoneEmptyCa::NoTlsOption`].
+    fn listener_from_generated(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+    ) -> JsResult<Option<Self>>;
+
+    fn from_generated_with(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+        is_server: bool,
+        lone_empty_ca: LoneEmptyCa,
+    ) -> JsResult<Option<Self>>;
+}
+
+/// What an empty `ca` means when it is the only option of a tls object.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoneEmptyCa {
+    /// A TLS option: a trust list with no entry.
+    TrustsNoCa,
+    /// No TLS option, as before `ca: []` had a meaning. A tls object that names no option leaves
+    /// `Bun.serve` and `Bun.listen` without TLS. A server that has no certificate cannot do TLS, so
+    /// the empty list must not turn a plain-text server into one that fails every handshake.
+    NoTlsOption,
 }
 
 impl SSLConfigFromJs for SSLConfig {
@@ -154,6 +187,33 @@ impl SSLConfigFromJs for SSLConfig {
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
         is_server: bool,
+    ) -> JsResult<Option<SSLConfig>> {
+        Self::from_generated_with(vm, global, generated, is_server, LoneEmptyCa::TrustsNoCa)
+    }
+
+    fn listener_from_js(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<SSLConfig>> {
+        let generated = jsc::generated::SSLConfig::from_js(global, value)?;
+        Self::listener_from_generated(vm, global, &generated)
+    }
+
+    fn listener_from_generated(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+    ) -> JsResult<Option<SSLConfig>> {
+        Self::from_generated_with(vm, global, generated, true, LoneEmptyCa::NoTlsOption)
+    }
+
+    fn from_generated_with(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+        is_server: bool,
+        lone_empty_ca: LoneEmptyCa,
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
         // `result` cleanup handled by Drop on error-path `?`
@@ -219,7 +279,6 @@ impl SSLConfigFromJs for SSLConfig {
         result.key = handle_file_for_field(global, "key", &generated.key, EmptyArray::Absent)?;
         result.crl = handle_file_for_field(global, "crl", &generated.crl, EmptyArray::Absent)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
-            || result.ca.is_some()
             || result.cert.is_some()
             || result.key.is_some()
             || result.crl.is_some()
@@ -273,6 +332,14 @@ impl SSLConfigFromJs for SSLConfig {
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
 
+        // `ca` counts last, so that a lone empty list can be told from the other options.
+        if let Some(ca) = &result.ca {
+            if !any && ca.is_empty() && lone_empty_ca == LoneEmptyCa::NoTlsOption {
+                return Ok(None);
+            }
+            result.requires_custom_request_ctx = true;
+            any = true;
+        }
         if !any {
             return Ok(None);
         }

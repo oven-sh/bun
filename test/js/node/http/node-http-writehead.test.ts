@@ -2035,6 +2035,29 @@ if (typeof Bun !== "undefined") {
         },
       );
     });
+
+    // new WebSocketServer({ port }) answers a request that is no handshake with res.writeHead(426, headers).
+    test("ws answers a plain request to its own server", async () => {
+      const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+      await once(wss, "listening");
+      const socket = net.connect((wss.address() as AddressInfo).port, "127.0.0.1");
+      let raw = "";
+      socket.setEncoding("latin1");
+      socket.on("data", chunk => (raw += chunk));
+      socket.write(GET);
+      await once(socket, "close");
+      wss.close();
+      const end = raw.indexOf("\r\n\r\n");
+      const [status, ...all] = raw.slice(0, end).split("\r\n");
+      assert.deepStrictEqual(
+        { status, headers: all.filter(line => !ADDED.test(line)), body: raw.slice(end + 4) },
+        {
+          status: "HTTP/1.1 426 Upgrade Required",
+          headers: ["Content-Length: 16", "Content-Type: text/plain"],
+          body: "Upgrade Required",
+        },
+      );
+    });
   });
 
   describe("Node.js compatibility", () => {

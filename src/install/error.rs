@@ -68,6 +68,8 @@ pub enum Error {
     Failed,
     #[error("UnrecognizedDependencyFormat")]
     UnrecognizedDependencyFormat,
+    #[error("InvalidDependencyName")]
+    InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
     #[error("InvalidPackageID")]
@@ -172,8 +174,6 @@ pub enum Error {
     CorruptLockfile,
     #[error("Lockfile is missing resolution data")]
     LockfileIsMissingResolutionData,
-    #[error("MissingPackageName")]
-    MissingPackageName,
     #[error("GlobError")]
     GlobError,
     #[error("Lockfile validation failed: list is impossibly long")]
@@ -275,6 +275,7 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
+            Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
             Self::InvalidPackageID => "InvalidPackageID",
             Self::PartialInstallFailed => "PartialInstallFailed",
@@ -333,7 +334,6 @@ impl Error {
             }
             Self::CorruptLockfile => "CorruptLockfile",
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
-            Self::MissingPackageName => "MissingPackageName",
             Self::GlobError => "GlobError",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"

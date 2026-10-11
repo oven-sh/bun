@@ -2,7 +2,7 @@ use crate::dependency::{Behavior, Dependency};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::{Meta, PackageColumns as _};
 use crate::lockfile_real::Lockfile;
-use crate::npm::{Architecture, OperatingSystem};
+use crate::npm::{Architecture, Libc, OperatingSystem};
 use crate::{PackageID, PackageManager};
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom;
@@ -15,7 +15,7 @@ pub struct Options {
     pub peer: bool,
     pub optional_peer: bool,
     pub bundled: bool,
-    pub platform: Option<(Architecture, OperatingSystem)>,
+    pub platform: Option<(Architecture, OperatingSystem, Libc)>,
 }
 
 impl Options {
@@ -31,7 +31,7 @@ impl Options {
         }
     }
 
-    // What `bun install` would link with the manager's `--production` / `--omit` / os / cpu settings.
+    // What `bun install` would link with the manager's `--production` / `--omit` / os / cpu / libc settings.
     pub(crate) fn install(manager: &PackageManager) -> Options {
         let features = manager.options.local_package_features;
         Options {
@@ -41,7 +41,11 @@ impl Options {
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
             bundled: false,
-            platform: Some((manager.options.cpu, manager.options.os)),
+            platform: Some((
+                manager.options.cpu,
+                manager.options.os,
+                manager.options.libc,
+            )),
         }
     }
 }
@@ -116,7 +120,7 @@ pub fn dev_packages_from(
                 continue;
             }
             if behavior.is_dev() && walk.follows(behavior) {
-                walk.admit(target, &mut seen, &mut worklist);
+                walk.admit(target, behavior, &mut seen, &mut worklist);
             }
         }
     }
@@ -180,12 +184,20 @@ impl<'a> Walk<'a> {
         }
     }
 
-    fn admit(&self, target: PackageID, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
+    // `behavior` is the edge `target` is reached through; like the tree builder
+    // (`is_filtered_dependency_or_workspace`), libc only disables optional edges.
+    fn admit(
+        &self,
+        target: PackageID,
+        behavior: Behavior,
+        seen: &mut DynamicBitSet,
+        worklist: &mut Vec<PackageID>,
+    ) {
         if seen.is_set_allow_out_of_bound(target as usize, true) {
             return;
         }
-        if let Some((cpu, os)) = self.options.platform
-            && self.metas[target as usize].is_disabled(cpu, os)
+        if let Some((cpu, os, libc)) = self.options.platform
+            && self.metas[target as usize].is_disabled(cpu, os, libc.for_dependency(behavior))
         {
             return;
         }
@@ -197,10 +209,11 @@ impl<'a> Walk<'a> {
         while let Some(parent) = worklist.pop() {
             let slice = self.dep_slices[parent as usize];
             for dep_id in slice.begin() as usize..slice.end() as usize {
-                if !(self.follow_all || self.follows(self.deps[dep_id].behavior)) {
+                let behavior = self.deps[dep_id].behavior;
+                if !(self.follow_all || self.follows(behavior)) {
                     continue;
                 }
-                self.admit(self.resolutions[dep_id], seen, worklist);
+                self.admit(self.resolutions[dep_id], behavior, seen, worklist);
             }
         }
     }

@@ -4,11 +4,11 @@ use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, Subcommand, bin, resolution,
+    self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
+    PackageID, PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
 };
 use bun_sys::Fd;
 
@@ -27,6 +27,8 @@ fn print_installed_workspace_section<
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
     update_owners: &[PackageID],
+    // The summary has no other sections, so `print_catalog_entry_updates` runs here.
+    sole_section: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -114,6 +116,19 @@ where
     }
 
     if !PRINT_SECTION_HEADER {
+        if sole_section
+            && print_catalog_entry_updates::<W, ENABLE_ANSI_COLORS>(
+                this,
+                manager,
+                installed,
+                pkg_metas,
+                &mut update_dedupe,
+                writer,
+            )?
+        {
+            *printed_new_install = true;
+            printed_update = true;
+        }
         if print_transitive_updates::<W, ENABLE_ANSI_COLORS>(
             this,
             manager,
@@ -249,6 +264,7 @@ fn should_print_package_install(
         &pkg_metas[package_id as usize],
         this.options.cpu,
         this.options.os,
+        this.options.libc,
     ) {
         return ShouldPrintPackageInstallResult::No;
     }
@@ -375,6 +391,43 @@ where
     Ok(())
 }
 
+/// A bare `bun update` moves the root's catalog entries for every importer, but the one-section summary only walks `update_owners`' rows (hence the shared `update_dedupe`); entries consumed elsewhere print through whichever `catalog:` row names them. The verbose summary has a section per importer and skips this.
+fn print_catalog_entry_updates<W, const ENABLE_ANSI_COLORS: bool>(
+    this: &Printer,
+    manager: &mut PackageManager,
+    installed: &Bitset,
+    pkg_metas: &[PackageMeta],
+    update_dedupe: &mut HashMap<PackageNameHash, ()>,
+    writer: &mut W,
+) -> Result<bool, crate::Error>
+where
+    W: Write,
+{
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    let mut printed = false;
+    for (dep_id, dep) in dependencies.iter().enumerate() {
+        if dep.version.tag != DependencyVersionTag::Catalog
+            || !(manager.updating_packages.get(dep.name.slice(string_buf)))
+                .is_some_and(|info| info.catalog_entry)
+        {
+            continue;
+        }
+        let dep_id = dep_id as DependencyID;
+        let ShouldPrintPackageInstallResult::Update(update_info) =
+            should_print_package_install(this, manager, dep_id, installed, None, pkg_metas)
+        else {
+            continue;
+        };
+        if update_dedupe.get_or_put(dep.name_hash)?.found_existing {
+            continue;
+        }
+        print_updated_package::<W, ENABLE_ANSI_COLORS>(this, manager, &update_info, writer)?;
+        printed = true;
+    }
+    Ok(printed)
+}
+
 /// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets stay with them.
 fn print_transitive_updates<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
@@ -467,6 +520,7 @@ where
     let packages_slice = this.lockfile.packages.slice();
     let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
+    let version = bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix));
 
     let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
@@ -479,16 +533,16 @@ where
                     "<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n",
                     true
                 ),
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                escape_control_chars(name),
+                version,
                 later_version_fmt,
             )?;
         } else {
             write!(
                 writer,
                 bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", false),
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                escape_control_chars(name),
+                version,
                 later_version_fmt,
             )?;
         }
@@ -500,15 +554,15 @@ where
         write!(
             writer,
             bun_core::pretty_fmt!("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", true),
-            bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            escape_control_chars(name),
+            version,
         )?;
     } else {
         write!(
             writer,
             bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r>\n", false),
-            bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            escape_control_chars(name),
+            version,
         )?;
     }
 
@@ -529,7 +583,7 @@ where
         writer,
         ENABLE_ANSI_COLORS,
         "<r><green>installed<r> <b>{s}<r>",
-        bstr::BStr::new(dependency.name.slice(string_buf)),
+        escape_control_chars(dependency.name.slice(string_buf)),
     )?;
 
     if let Some(npm) = dependency.version.try_npm().filter(|npm| npm.is_alias) {
@@ -537,7 +591,7 @@ where
             writer,
             ENABLE_ANSI_COLORS,
             "<d>@npm:<r><b>{s}<r>",
-            bstr::BStr::new(npm.name.slice(string_buf)),
+            escape_control_chars(npm.name.slice(string_buf)),
         )?;
     }
 
@@ -545,7 +599,7 @@ where
         writer,
         ENABLE_ANSI_COLORS,
         "<d>@{f}<r>",
-        resolution.fmt(string_buf, PathSep::Posix),
+        bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
     )?;
     writer.write_str(if has_binaries {
         " with binaries:\n"
@@ -629,6 +683,7 @@ where
                 &mut had_printed_new_install,
                 None,
                 &[0],
+                false,
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
@@ -642,6 +697,7 @@ where
                     &mut had_printed_new_install,
                     None,
                     &[workspace_package_id],
+                    false,
                 )?;
             }
         } else {
@@ -693,6 +749,7 @@ where
                 &mut had_printed_new_install,
                 Some(&mut id_map),
                 &update_owners,
+                true,
             )?;
         }
     } else {
@@ -731,8 +788,10 @@ where
                 writer,
                 ENABLE_ANSI_COLORS,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
-                bstr::BStr::new(package_name),
-                resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
+                bun_core::fmt::escape_control_chars(package_name),
+                bun_core::fmt::for_terminal(
+                    resolved[package_id as usize].fmt(string_buf, PathSep::Auto)
+                ),
             )?;
         }
     }
@@ -798,7 +857,7 @@ where
                                 writer,
                                 ENABLE_ANSI_COLORS,
                                 "<r> <d>- <r><b>{s}<r>\n",
-                                bstr::BStr::new(&owned[..]),
+                                escape_control_chars(&owned[..]),
                             )?;
 
                             manager.track_installed_bin = TrackInstalledBin::Basename(owned);
@@ -810,7 +869,7 @@ where
                             writer,
                             ENABLE_ANSI_COLORS,
                             "<r> <d>- <r><b>{s}<r>\n",
-                            bstr::BStr::new(bin_name),
+                            escape_control_chars(bin_name),
                         )?;
                     }
                 }

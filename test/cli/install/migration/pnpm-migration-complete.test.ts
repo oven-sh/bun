@@ -714,9 +714,9 @@ snapshots:
     expect(catalogsExitCode).toBe(0);
     const catalogsLockfile = fs.readFileSync(join(catalogsTest, "bun.lock"), "utf8");
 
-    // Catalogs are resolved to actual versions during migration
-    expect(catalogsLockfile).toContain('"react": "18.2.0"');
-    expect(catalogsLockfile).toContain('"lodash": "4.17.21"');
+    // Importer rows keep their catalog references, as package.json spells them
+    expect(catalogsLockfile).toContain('"react": "catalog:"');
+    expect(catalogsLockfile).toContain('"lodash": "catalog:tools"');
     // The actual packages should be in the lockfile
     expect(catalogsLockfile).toContain('"react@18.2.0"');
     expect(catalogsLockfile).toContain('"lodash@4.17.21"');

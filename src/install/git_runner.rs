@@ -309,9 +309,7 @@ impl CacheStaging {
             &self.tmp_name,
             self.cache_dir,
             folder_name,
-            bun_sys::RenameatConcurrentlyOptions {
-                move_fallback: false,
-            },
+            bun_sys::RenameatConcurrentlyOptions::default(),
         );
         // After an exchange the temporary name holds the folder that was replaced.
         self.discard();
@@ -552,7 +550,7 @@ impl GitSubprocess {
         if !is_safe_resolved_tag(&resolved) {
             this.log_error(format_args!(
                 "invalid git commit \"{}\" for \"{}\"",
-                BStr::new(&resolved),
+                bun_core::fmt::escape_control_chars(&resolved),
                 BStr::new(&this.name)
             ));
             return Err(Error::InstallFailed);

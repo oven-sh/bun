@@ -4,14 +4,15 @@ use core::sync::atomic::Ordering;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
-use bun_core::{self, fmt::quote};
-use bun_core::{MutableString, strings};
+use bun_core::fmt::{quote, redacted_npm_url};
+use bun_core::{self, MutableString, strings};
 use bun_http::{
     self as http, AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
 use bun_threading::thread_pool::Batch;
 use bun_url::URL;
+use std::io::Write as _;
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
@@ -58,6 +59,8 @@ pub struct NetworkTask {
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
     pub(crate) header_buf: Box<[u8]>,
+    /// Read back when a 401/403 is reported (`Options::missing_credentials_note`).
+    pub(crate) authorization: Authorization,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -122,6 +125,21 @@ pub struct DedupeMapEntry {
     /// later `enqueue_*_for_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
+    /// Manifest tasks only (these three): see `PackageManager::has_created_manifest_task`.
+    pub(crate) is_extended_manifest: bool,
+    pub(crate) has_abbreviated_manifest_request: bool,
+    /// The package then resolves from the abbreviated document (`PackageManager::needs_extended_manifest`).
+    pub(crate) extended_manifest_failed: bool,
+}
+
+impl DedupeMapEntry {
+    pub(crate) fn manifest_requested(&mut self, extended: bool) -> &mut bool {
+        if extended {
+            &mut self.is_extended_manifest
+        } else {
+            &mut self.has_abbreviated_manifest_request
+        }
+    }
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.
@@ -459,6 +477,13 @@ impl bun_core::output::ErrName for ForManifestError {
     }
 }
 
+/// Redacted before `quote()`: the password scan only recognizes an unquoted URL.
+fn redacted_url(url: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    let _ = write!(out, "{}", redacted_npm_url(url));
+    out
+}
+
 impl NetworkTask {
     pub(crate) fn for_manifest(
         &mut self,
@@ -492,13 +517,14 @@ impl NetworkTask {
             );
 
             if tmp.tag() == bun_core::Tag::Dead {
+                let redacted_registry = redacted_url(scope.url.href());
                 if !is_optional {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(scope.url.href()),
+                            quote(&redacted_registry),
                             quote(name),
                         ),
                     );
@@ -508,31 +534,8 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(scope.url.href()),
+                            quote(&redacted_registry),
                             quote(name),
-                        ),
-                    );
-                }
-                return Err(ForManifestError::InvalidURL);
-            }
-
-            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
-                if !is_optional {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            tmp
-                        ),
-                    );
-                } else {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            tmp
                         ),
                     );
                 }
@@ -541,6 +544,30 @@ impl NetworkTask {
 
             // This actually duplicates the string! The WTF managed one above drops at scope exit.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
+
+            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
+                let redacted_manifest_url = redacted_url(&url_bytes);
+                if !is_optional {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Registry URL must be http:// or https://\nReceived: {}",
+                            quote(&redacted_manifest_url)
+                        ),
+                    );
+                } else {
+                    log.add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Registry URL must be http:// or https://\nReceived: {}",
+                            quote(&redacted_manifest_url)
+                        ),
+                    );
+                }
+                return Err(ForManifestError::InvalidURL);
+            }
 
             {
                 let joined = URL::parse(&url_bytes);
@@ -553,6 +580,8 @@ impl NetworkTask {
                     || joined.get_port_auto() != registry.get_port_auto()
                     || !joined.pathname.starts_with(registry_dir)
                 {
+                    let redacted_manifest_url = redacted_url(&url_bytes);
+                    let redacted_registry = redacted_url(scope.url.href());
                     if !is_optional {
                         log.add_error_fmt(
                             None,
@@ -560,8 +589,8 @@ impl NetworkTask {
                             format_args!(
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
-                                quote(&url_bytes),
-                                quote(scope.url.href()),
+                                quote(&redacted_manifest_url),
+                                quote(&redacted_registry),
                             ),
                         );
                     } else {
@@ -571,8 +600,8 @@ impl NetworkTask {
                             format_args!(
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
-                                quote(&url_bytes),
-                                quote(scope.url.href()),
+                                quote(&redacted_manifest_url),
+                                quote(&redacted_registry),
                             ),
                         );
                     }
@@ -591,6 +620,8 @@ impl NetworkTask {
                 etag = manifest.pkg.etag.slice(&manifest.string_buf);
             }
         }
+
+        self.authorization = Authorization::AllowAuthorization;
 
         let mut header_builder = HeaderBuilder::default();
 
@@ -682,6 +713,8 @@ impl NetworkTask {
             },
         ));
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client.flags.redirect_credentials =
+            http::RedirectCredentialsPolicy::HttpsUpgrade;
 
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
@@ -797,6 +830,7 @@ impl NetworkTask {
         };
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
+            let redacted_tarball_url = redacted_url(&self.url_buf);
             // SAFETY: `pm.log` is the long-lived `*mut Log` the package
             // manager was constructed with.
             pm.log_mut().add_error_fmt(
@@ -804,7 +838,7 @@ impl NetworkTask {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
-                    quote(&self.url_buf),
+                    quote(&redacted_tarball_url),
                     quote(tarball.name.slice()),
                 ),
             );
@@ -822,35 +856,20 @@ impl NetworkTask {
             None => None,
         };
 
-        // Only attach the registry `Authorization` header when the tarball URL
-        // origin matches the configured registry scope origin. The npm manifest
-        // is registry-controlled, so a malicious registry could otherwise point
-        // the tarball at an attacker-controlled host and receive the scope
-        // credentials. The empty-`tarball_url` branch builds the URL from
-        // `scope.url.href()`, so its origin matches and authorized downloads
-        // keep working.
-        // Compare (protocol, hostname, effective port) rather than the raw
-        // `URL.origin` slice — `origin` is a borrowed prefix of the input
-        // string and is not normalized for default ports, so a tarball URL of
-        // `https://host:443/...` would not byte-match a `.npmrc` registry of
-        // `https://host/...` even though they are the same origin. Some
-        // registries emit `dist.tarball` URLs with the default port spelled
-        // out; without normalization those installs lose the `Authorization`
-        // header and fail with 401.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
-            let tarball = URL::parse(&self.url_buf);
-            let registry = scope.url.url();
-            tarball.protocol == registry.protocol
-                && tarball.hostname == registry.hostname
-                && tarball.get_port_auto() == registry.get_port_auto()
+        self.authorization = authorization;
+        let credentials = match authorization {
+            Authorization::NoAuthorization => None,
+            Authorization::AllowAuthorization => pm
+                .options
+                .tarball_credentials(scope, &URL::parse(&self.url_buf)),
         };
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if send_auth {
-            count_auth(&mut header_builder, scope);
+        if let Some(credentials) = credentials {
+            count_auth(&mut header_builder, credentials);
         }
 
         // Registry credentials win over URL userinfo, as in npm.
@@ -864,9 +883,10 @@ impl NetworkTask {
 
         let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
-            match &url_authorization {
-                Some(value) => header_builder.append("Authorization", value),
-                None => append_auth(&mut header_builder, scope),
+            match (&url_authorization, credentials) {
+                (Some(value), _) => header_builder.append("Authorization", value),
+                (None, Some(credentials)) => append_auth(&mut header_builder, credentials),
+                (None, None) => {}
             }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();
@@ -933,6 +953,8 @@ impl NetworkTask {
             http_options,
         ));
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client.flags.redirect_credentials =
+            http::RedirectCredentialsPolicy::HttpsUpgrade;
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
         }
@@ -1028,6 +1050,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
+            addr_of_mut!((*slot).authorization).write(Authorization::NoAuthorization);
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

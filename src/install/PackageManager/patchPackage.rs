@@ -270,8 +270,14 @@ pub fn do_patch_commit(
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
     let name = manager.lockfile.str(&pkg.name).to_vec();
-    let cache_result =
-        compute_cache_dir_and_subpath(manager, &name, &pkg.resolution, &mut folder_path_buf, None);
+    let cache_result = compute_cache_dir_and_subpath(
+        manager,
+        &name,
+        &pkg.resolution,
+        &pkg.meta.integrity,
+        &mut folder_path_buf,
+        None,
+    );
     let cache_dir: Fd = cache_result.cache_dir;
     let cache_dir_subpath: &ZStr = cache_result.cache_dir_subpath;
     let changes_dir: &[u8] = &changes_dir;
@@ -344,6 +350,7 @@ pub fn do_patch_commit(
                 random_tempdir.as_bytes(),
                 sys::RenameOptions {
                     move_fallback: true,
+                    ..Default::default()
                 },
             )
             .is_err()
@@ -399,6 +406,7 @@ pub fn do_patch_commit(
                 patch_tag_tmpname.as_bytes(),
                 sys::RenameOptions {
                     move_fallback: true,
+                    ..Default::default()
                 },
             ) {
                 bun_core::warn!(
@@ -431,7 +439,7 @@ pub fn do_patch_commit(
                         random_tempdir.as_bytes(),
                         new_folder_handle.fd,
                         b"node_modules",
-                        sys::RenameOptions { move_fallback: true },
+                        sys::RenameOptions { move_fallback: true, ..Default::default() },
                     ) {
                         bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
                     }
@@ -443,7 +451,7 @@ pub fn do_patch_commit(
                         patch_tag_tmpname.as_bytes(),
                         new_folder_handle.fd,
                         patch_tag,
-                        sys::RenameOptions { move_fallback: true },
+                        sys::RenameOptions { move_fallback: true, ..Default::default() },
                     ) {
                         bun_core::warn!("failed renaming the bun patch tag, this may cause issues: {}", e);
                     }
@@ -588,6 +596,7 @@ pub fn do_patch_commit(
         path_in_patches_dir,
         sys::RenameOptions {
             move_fallback: true,
+            ..Default::default()
         },
     ) {
         Output::err(e, "failed renaming patch file to patches dir", ());
@@ -858,6 +867,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     manager,
                     &name,
                     &actual_package.resolution,
+                    &actual_package.meta.integrity,
                     &mut folder_path_buf,
                     existing_patchfile_hash,
                 );
@@ -914,10 +924,12 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 };
 
                 let pkg_resolution = pkg.resolution;
+                let pkg_integrity = pkg.meta.integrity;
                 let cache_result = compute_cache_dir_and_subpath(
                     manager,
                     &pkg_name,
                     &pkg_resolution,
+                    &pkg_integrity,
                     &mut folder_path_buf,
                     existing_patchfile_hash,
                 );
@@ -1396,7 +1408,7 @@ fn pkg_info_for_name_and_version(
         bun_core::pretty_error!(
             "  {}@<blue>{}<r>\n",
             bstr::BStr::new(pkg.name.slice(strbuf)),
-            pkg.resolution.fmt(strbuf, PathSep::Posix)
+            bun_fmt::EscapeControlChars(pkg.resolution.fmt(strbuf, PathSep::Posix))
         );
 
         if i + 1 < pairs.len() {

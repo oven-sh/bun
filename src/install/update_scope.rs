@@ -15,6 +15,7 @@ use crate::package_manager::Options::LogLevel;
 use crate::package_manager::UpdateTargetWorkspace;
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
+use crate::package_manager_real::install_with_manager::loaded_lockfile_name;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id};
 
@@ -295,15 +296,9 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
         missing(silent, subject);
     }
     let load_result = manager.load_lockfile_from_cwd::<true>();
-    let from_binary = load_result.loaded_from_binary_lockfile();
+    let lockfile_name = loaded_lockfile_name(&load_result);
     match load_result {
-        crate::lockfile::LoadResult::Ok(_) => {
-            if from_binary {
-                "bun.lockb"
-            } else {
-                "bun.lock"
-            }
-        }
+        crate::lockfile::LoadResult::Ok(_) => lockfile_name,
         crate::lockfile::LoadResult::NotFound => missing(silent, subject),
         crate::lockfile::LoadResult::Err(cause) => {
             if !silent && !crate::migration::reported_unsupported_lockfile_version(&cause) {

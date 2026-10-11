@@ -10,7 +10,7 @@ use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Dependency, PackageID, PackageNameHash, invalid_package_id};
+use crate::{Dependency, Features, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -55,6 +55,25 @@ fn root_target() -> WorkspaceTarget {
         name: Box::default(),
         name_hash: None,
         package_json_path: root_package_json_path(),
+    }
+}
+
+/// Writes the root package.json a pnpm migration edited in memory, just before the migrated lockfile is saved:
+/// a package.json that cannot take the moved fields fails the command before a lockfile that depends on them exists.
+/// Only the places that save the lockfile call this, so a load that is never saved leaves the file alone.
+pub fn write_migrated_root(manager: &mut PackageManager) {
+    if manager.migrated_package_json_moves.is_empty() {
+        return;
+    }
+    let moved = core::mem::take(&mut manager.migrated_package_json_moves);
+    if !write_target(manager, &root_target()) {
+        Global::exit(1);
+    }
+    if !manager.options.log_level.is_silent() {
+        bun_core::pretty_errorln!(
+            "<d>copied {} in <r><green>package.json<r>",
+            moved.join(", ")
+        );
     }
 }
 
@@ -267,7 +286,7 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
 /// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
 fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
-    scratch.parse_root(manager)?;
+    scratch.parse_root(manager, Features::main())?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
     let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
     for (i, e) in edited.iter().enumerate() {
@@ -406,7 +425,11 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
         if unchanged_on_disk(manager, &e.target) {
             continue;
         }
-        any_failed |= !write_target(manager, &e.target);
+        if write_target(manager, &e.target) {
+            manager.wrote_package_json = true;
+        } else {
+            any_failed = true;
+        }
     }
     if any_failed {
         Global::exit(1);

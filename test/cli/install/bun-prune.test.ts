@@ -1,6 +1,15 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  runBunInstall,
+  tempDir,
+  VerdaccioRegistry,
+} from "harness";
 import {
   chmodSync,
   closeSync,
@@ -434,6 +443,42 @@ test.concurrent("--dry-run prints without deleting; --silent deletes without pri
   expect(existsSync(junk)).toBeFalse();
 
   const clean = await prune(dir, "--dry-run");
+  expect(lines(clean.stdout)).toStrictEqual([BANNER, "", NOTHING(1, 1)]);
+  expect(clean.exitCode).toBe(0);
+});
+
+// `--check` is the CI gate: the same report as `--dry-run`, but exits 1 when anything would be removed, like `bun dedupe --check`.
+test.concurrent("--check reports and exits 1 without deleting", async () => {
+  const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+  const junk = plant(dir, "node_modules/junk");
+
+  const check = await prune(dir, "--check");
+  expect(lines(check.stdout)).toStrictEqual([BANNER, "", "- junk", CAN_BE_REMOVED(1, 2), APPLY_HINT()]);
+  expect(check.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(check.exitCode).toBe(1);
+
+  // The report is identical to --dry-run; only the exit code differs.
+  const dryRun = await prune(dir, "--dry-run");
+  expect(out(dryRun.stdout)).toBe(out(check.stdout));
+  expect(dryRun.exitCode).toBe(0);
+
+  // The hint omits both flags, so it stays copy-pasteable.
+  const both = await prune(dir, "--dry-run", "--check");
+  expect(lines(both.stdout)).toStrictEqual(lines(check.stdout));
+  expect(both.exitCode).toBe(1);
+
+  const silent = await prune(dir, "--check", "--silent");
+  expect(silent.stdout).toBe("");
+  expect(silent.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(silent.exitCode).toBe(1);
+
+  const apply = await prune(dir);
+  expect(apply.exitCode).toBe(0);
+  expect(existsSync(junk)).toBeFalse();
+
+  const clean = await prune(dir, "--check");
   expect(lines(clean.stdout)).toStrictEqual([BANNER, "", NOTHING(1, 1)]);
   expect(clean.exitCode).toBe(0);
 });
@@ -1986,6 +2031,40 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
   },
 );
 
+// native-libc-glibc and native-libc-musl differ only in their `libc` field. The libc is passed
+// explicitly throughout because the default differs per host (and non-Linux hosts do not filter).
+test.concurrent("--libc removes the variant of the other libc, pruning for the installed libc keeps it", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      optionalDependencies: { "native-libc-glibc": "1.0.0", "native-libc-musl": "1.0.0" },
+    }),
+  );
+  expect(await install(dir, "--libc=glibc")).toContain("+ native-libc-glibc@1.0.0");
+  const nm = join(dir, "node_modules");
+  const glibc = join(nm, "native-libc-glibc", "package.json");
+  const musl = join(nm, "native-libc-musl", "package.json");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([true, false]);
+
+  const same = await prune(dir, "--libc=glibc");
+  expect(out(same.stdout)).toEndWith(NOTHING(1, 1));
+  expect(same.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeTrue();
+
+  const other = await prune(dir, "--libc=musl");
+  expect(lines(other.stdout)).toStrictEqual([BANNER, "", "- native-libc-glibc@1.0.0", REMOVED(1, 1)]);
+  expect(other.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeFalse();
+
+  expect(await install(dir, "--libc=musl")).toContain("+ native-libc-musl@1.0.0");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([false, true]);
+  const musl2 = await prune(dir, "--libc=musl");
+  expect(out(musl2.stdout)).toEndWith(NOTHING(1, 1));
+  expect(musl2.exitCode).toBe(0);
+});
+
 test.concurrent.each(["hoisted", "isolated"] as Linker[])(
   "%s: an npm: alias is kept under its alias name",
   async linker => {
@@ -2044,7 +2123,7 @@ test.concurrent("isolated + publicHoistPattern: hoisted links follow their store
   expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
 });
 
-test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+test.concurrent.skipIf(isWindows || isRoot)(
   "a failed deletion is reported, the rest is removed, exit code 1",
   async () => {
     const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
@@ -2914,6 +2993,30 @@ test.concurrent(
 );
 
 test.concurrent(
+  "isolated: a file: dependency declared by a registry package is not a store entry, a leftover one is removed",
+  async () => {
+    // file-dep@1.0.0 declares `"files": "file:./the-files"`; the installer links the
+    // folder inside the package's own store entry instead of creating one for it.
+    const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "file-dep": "1.0.0" } });
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    const filesLink = join(dir, "node_modules", ".bun", "file-dep@1.0.0", "node_modules", "files");
+    expect(isSymlink(filesLink)).toBeTrue();
+    plant(dir, "node_modules/.bun/files@file+.+the-files/node_modules/files");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+    expect(stderr).not.toContain("warn:");
+    expect(lines(stdout)).toContain("- files@file+.+the-files");
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    expect(existsSync(join(filesLink, "package.json"))).toBeTrue();
+
+    const again = await prune(dir, "--linker", "isolated");
+    expect(out(again.stdout)).toEndWith(NOTHING(2, 2));
+    expect(again.exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
   "workspaces: without --linker, a bun.lock with configVersion 1 is pruned with the isolated linker",
   async () => {
     const { packageDir: dir, packageJson } = await registry.createTestDir({});
@@ -3575,9 +3678,11 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
     Flags:
       -p, --production      Also remove packages that are only needed by devDependencies (alias: --prod)
           --omit=<val>      Also remove packages that are only needed by the given dependency types
+          --check           Exit with code 1 if node_modules has packages that can be removed, without deleting anything
           --dry-run         Print what would be removed without deleting anything
           --os=<val>        Prune for a different operating system than the current one
           --cpu=<val>       Prune for a different CPU architecture than the current one
+          --libc=<val>      Prune for a different libc than the current one
           --linker=<val>    Linker to assume when node_modules mixes isolated and hoisted installs (one of "isolated" or "hoisted")
       -F, --filter=<val>    Only prune the node_modules folders of the matching workspaces
           --silent          Don't log anything
@@ -3593,6 +3698,9 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
 
       Show what would be removed without deleting anything
       bun prune --dry-run
+
+      Only report what would be removed; exit code 1 if there is anything (for CI)
+      bun prune --check
 
       Only prune what the app workspace no longer needs
       bun prune --production --filter app

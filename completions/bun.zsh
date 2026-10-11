@@ -23,7 +23,7 @@ _bun_add_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -77,7 +77,7 @@ _bun_unlink_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -121,7 +121,7 @@ _bun_link_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -259,7 +259,7 @@ _bun_pm_completion() {
     cmd2)
         sub_commands=(
             'bin\:"print the path to bin folder" '
-            'ls\:"list the dependency tree according to the current lockfile" '
+            'ls\:"list the tree of installed dependencies" '
             'licenses\:"list installed packages grouped by license" '
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
@@ -295,7 +295,7 @@ _bun_pm_completion() {
             ;;
         ls)
             pmargs=(
-                "--all[list the entire dependency tree according to the current lockfile]"
+                "--all[list the entire tree of installed dependencies]"
                 "--trusted[list only trusted dependencies]"
             )
 
@@ -387,7 +387,7 @@ _bun_install_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -437,7 +437,7 @@ _bun_remove_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -654,7 +654,7 @@ _bun_update_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '-g[Add a package globally]' \
         '--global[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -711,7 +711,7 @@ _bun_dedupe_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--linker[Linker strategy]:linker:(isolated hoisted)' \
@@ -735,8 +735,10 @@ _bun_prune_completion() {
         '--prod[Also remove packages that are only needed by devDependencies]' \
         '*--omit[Also remove packages that are only needed by the given dependency types]:type:(dev optional peer)' \
         '--dry-run[Print what would be removed without deleting anything]' \
+        '--check[Exit with code 1 if node_modules has packages that can be removed, without deleting anything]' \
         '*--os[Prune for a different operating system than the current one]:os' \
         '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
+        '*--libc[Prune for a different libc than the current one]:libc:(glibc musl)' \
         '--linker[Linker to assume when node_modules mixes isolated and hoisted installs]:linker:(isolated hoisted)' \
         '*--filter[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
         '*-F[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \

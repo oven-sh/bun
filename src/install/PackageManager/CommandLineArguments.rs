@@ -32,6 +32,38 @@ fn pretty_help(text: &str) {
     Output::pretty(text);
 }
 
+/// `--cpu` / `--os` / `--libc`, combined like the package.json arrays they filter. Unlike there
+/// (`Negatable::apply` skips names this build does not know), an unknown name is a typo and fatal.
+fn parse_platform_flag<T: Npm::NegatableEnum>(
+    values: &[&[u8]],
+    unset: T,
+    what: &str,
+    valid_names: &str,
+) -> T {
+    if values.is_empty() {
+        return unset;
+    }
+    let mut negatable = Npm::Negatable::<T>::default();
+    for &value in values {
+        match value {
+            b"*" => negatable.had_wildcard = true,
+            b"any" | b"none" => negatable.apply(value),
+            _ => {
+                let name = value.strip_prefix(b"!").unwrap_or(value);
+                if T::lookup_name(name).is_none() {
+                    Output::err_generic(
+                        "Invalid {}: '{}'. Valid values are: *, any, {}. Use !name to negate.",
+                        (what, bstr::BStr::new(value), valid_names),
+                    );
+                    Global::crash();
+                }
+                negatable.apply(value);
+            }
+        }
+    }
+    negatable.combine()
+}
+
 type ParamType = clap::Param<clap::Help>;
 
 // `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`, so combined tables
@@ -60,6 +92,7 @@ const PRODUCTION_PARAMS: &[ParamType] = &[
     clap::param!("-P, --prod"),
 ];
 
+// `LINK_SHARED_PARAMS` swaps out the first two.
 const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--no-save                             Don't update package.json or save a lockfile"
@@ -95,7 +128,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--prefer-offline                      Use cached package metadata regardless of age; only fetch what is missing"
     ),
     clap::param!(
-        "--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)"
+        "--ignore-scripts                      Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies"
     ),
     clap::param!(
         "--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"
@@ -110,7 +143,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"
     ),
     clap::param!(
-        "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"
+        "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 64)"
     ),
     clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
     clap::param!(
@@ -131,11 +164,29 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"
     ),
+    clap::param!(
+        "--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)"
+    ),
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
 const SHARED_PARAMS: &[ParamType] =
     concat_params![SHARED_HEAD_PARAMS, PRODUCTION_PARAMS, SHARED_TAIL_PARAMS];
+
+// `parse` gives link and unlink the opposite default: they only save when --save is passed.
+const LINK_SHARED_PARAMS: &[ParamType] = concat_params![
+    SHARED_HEAD_PARAMS,
+    PRODUCTION_PARAMS,
+    &[
+        clap::param!(
+            "--no-save                             Don't update package.json or save a lockfile (the default)"
+        ),
+        clap::param!(
+            "--save                                Update package.json and save a lockfile (false by default)"
+        ),
+    ],
+    SHARED_TAIL_PARAMS.split_at(2).1
+];
 
 pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
@@ -300,14 +351,14 @@ pub(crate) static REMOVE_PARAMS: &[ParamType] = concat_params![
 ];
 
 pub(crate) static LINK_PARAMS: &[ParamType] = concat_params![
-    SHARED_PARAMS,
+    LINK_SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" install package as a link"
     ),]
 ];
 
 pub(crate) static UNLINK_PARAMS: &[ParamType] = concat_params![
-    SHARED_PARAMS,
+    LINK_SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" uninstall package as a link"
     ),]
@@ -348,23 +399,48 @@ static OUTDATED_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-const AUDIT_PARAMS: &[ParamType] = &[
-    clap::param!(
-        "<POS> ...                              Check installed packages for vulnerabilities"
-    ),
-    clap::param!("--json                                 Output in JSON format"),
+static AUDIT_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!(
+            "<POS> ...                              Check installed packages for vulnerabilities"
+        ),
+        clap::param!("--json                                 Output in JSON format"),
+        clap::param!(
+            "--audit-level <STR>                    Only print advisories with severity greater than or equal to \\<level\\> (low, moderate, high, critical)"
+        ),
+        clap::param!(
+            "--ignore <STR>...                      Ignore advisories by GHSA or numeric advisory ID (repeatable)"
+        ),
+        clap::param!(
+            "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
+        ),
+    ]
+];
+
+const AUDIT_HELP_PARAMS: &[ParamType] = &[
     clap::param!(
         "--audit-level <STR>                    Only print advisories with severity greater than or equal to \\<level\\> (low, moderate, high, critical)"
     ),
     clap::param!(
+        "-p, --production                       Skip packages that are only needed by devDependencies (alias: --prod)"
+    ),
+    clap::param!(
+        "--omit <dev|optional|peer>...          Skip packages that are only needed by the given dependency types: dev, optional, or peer (repeatable)"
+    ),
+    clap::param!(
         "--ignore <STR>...                      Ignore advisories by GHSA or numeric advisory ID (repeatable)"
+    ),
+    clap::param!("--json                                 Output in JSON format"),
+    clap::param!(
+        "--dry-run                              Show what bun audit fix would change without changing anything"
     ),
     clap::param!(
         "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
     ),
+    clap::param!("--cwd <STR>                            Set a specific cwd"),
+    clap::param!("-h, --help                             Print this help menu"),
 ];
-
-static AUDIT_PARAMS_FULL: &[ParamType] = concat_params![SHARED_PARAMS, AUDIT_PARAMS];
 
 static INFO_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
@@ -460,6 +536,9 @@ static PRUNE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!(
+            "--check                                Exit with code 1 if node_modules has packages that can be removed, without deleting anything"
+        ),
+        clap::param!(
             "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"
         ),
         clap::param!("<POS> ...                              "),
@@ -474,6 +553,9 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
         "--omit <dev|optional|peer>...          Also remove packages that are only needed by the given dependency types"
     ),
     clap::param!(
+        "--check                                Exit with code 1 if node_modules has packages that can be removed, without deleting anything"
+    ),
+    clap::param!(
         "--dry-run                              Print what would be removed without deleting anything"
     ),
     clap::param!(
@@ -481,6 +563,9 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
     ),
     clap::param!(
         "--cpu <STR>...                         Prune for a different CPU architecture than the current one"
+    ),
+    clap::param!(
+        "--libc <STR>...                        Prune for a different libc than the current one"
     ),
     clap::param!(
         "--linker <STR>                         Linker to assume when node_modules mixes isolated and hoisted installs (one of \"isolated\" or \"hoisted\")"
@@ -599,9 +684,10 @@ pub struct CommandLineArguments {
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
 
-    // CPU and OS overrides for optional dependencies
+    // CPU, OS and libc overrides for optional dependencies
     pub(crate) cpu: Npm::Architecture,
     pub(crate) os: Npm::OperatingSystem,
+    pub(crate) libc: Npm::Libc,
 }
 
 impl Default for CommandLineArguments {
@@ -698,6 +784,7 @@ impl Default for CommandLineArguments {
 
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
+            libc: Npm::Libc::CURRENT,
         }
     }
 }
@@ -961,8 +1048,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
   <d>Directory should contain a package.json.<r>
   <b><green>bun link<r>
 
-  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
+  <d>Link a previously-registered linkable package into the current project's node_modules.<r>
   <b><green>bun link<r> <blue>\<package\><r>
+
+  <d>Also add it to the current project's package.json as a link: dependency.<r>
+  <b><green>bun link<r> <cyan>--save<r> <blue>\<package\><r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";
@@ -1108,7 +1198,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(AUDIT_PARAMS);
+                clap::simple_help(AUDIT_HELP_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1214,6 +1304,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/dedupe<r
   <d>Show what would be removed without deleting anything<r>
   <b><green>bun prune<r> <cyan>--dry-run<r>
 
+  <d>Only report what would be removed; exit code 1 if there is anything (for CI)<r>
+  <b><green>bun prune<r> <cyan>--check<r>
+
   <d>Only prune what the app workspace no longer needs<r>
   <b><green>bun prune<r> <cyan>--production --filter app<r>
 
@@ -1247,10 +1340,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Why => WHY_PARAMS,
             Subcommand::Dedupe => DEDUPE_PARAMS,
             Subcommand::Prune => PRUNE_PARAMS,
-
-            // TODO: we will probably want to do this for other *_params. this way extra params
-            // are not included in the help text
-            Subcommand::Audit => AUDIT_PARAMS_FULL,
+            Subcommand::Audit => AUDIT_PARAMS,
             Subcommand::Info => INFO_PARAMS,
         };
 
@@ -1417,7 +1507,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             // cli.json_output = args.flag(b"--json");
         }
 
-        if subcommand == Subcommand::Dedupe && args.flag(b"--check") {
+        if matches!(subcommand, Subcommand::Dedupe | Subcommand::Prune) && args.flag(b"--check") {
             cli.check = true;
             cli.dry_run = true;
         }
@@ -1528,59 +1618,19 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.config = Some(opt);
         }
 
-        // Parse multiple --cpu flags and combine them using Negatable
-        let cpu_values = args.options(b"--cpu");
-        if !cpu_values.is_empty() {
-            let mut cpu_negatable = Npm::Architecture::NONE.negatable();
-            for cpu_str in cpu_values {
-                // apply() already handles "any" as wildcard and negation with !
-                cpu_negatable.apply(cpu_str);
-
-                // Support * as an alias for "any"
-                if *cpu_str == *b"*" {
-                    cpu_negatable.had_wildcard = true;
-                    cpu_negatable.had_unrecognized_values = false;
-                } else if cpu_negatable.had_unrecognized_values
-                    && *cpu_str != *b"any"
-                    && *cpu_str != *b"none"
-                {
-                    // Only error for truly unrecognized values (not "any" or "none")
-                    Output::err_generic(
-                        "Invalid CPU architecture: '{}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.",
-                        (bstr::BStr::new(cpu_str),),
-                    );
-                    Global::crash();
-                }
-            }
-            cli.cpu = cpu_negatable.combine();
-        }
-
-        // Parse multiple --os flags and combine them using Negatable
-        let os_values = args.options(b"--os");
-        if !os_values.is_empty() {
-            let mut os_negatable = Npm::OperatingSystem::NONE.negatable();
-            for os_str in os_values {
-                // apply() already handles "any" as wildcard and negation with !
-                os_negatable.apply(os_str);
-
-                // Support * as an alias for "any"
-                if *os_str == *b"*" {
-                    os_negatable.had_wildcard = true;
-                    os_negatable.had_unrecognized_values = false;
-                } else if os_negatable.had_unrecognized_values
-                    && *os_str != *b"any"
-                    && *os_str != *b"none"
-                {
-                    // Only error for truly unrecognized values (not "any" or "none")
-                    Output::err_generic(
-                        "Invalid operating system: '{}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.",
-                        (bstr::BStr::new(os_str),),
-                    );
-                    Global::crash();
-                }
-            }
-            cli.os = os_negatable.combine();
-        }
+        cli.cpu = parse_platform_flag(
+            args.options(b"--cpu"),
+            cli.cpu,
+            "CPU architecture",
+            "arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64",
+        );
+        cli.os = parse_platform_flag(
+            args.options(b"--os"),
+            cli.os,
+            "operating system",
+            "aix, darwin, freebsd, linux, openbsd, sunos, win32, android",
+        );
+        cli.libc = parse_platform_flag(args.options(b"--libc"), cli.libc, "libc", "glibc, musl");
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {
             cli.dependency_group = if args.flag(b"--development") || args.flag(b"--dev") {
@@ -1608,28 +1658,28 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut buf2 = bun_paths::path_buffer_pool::get();
 
-            let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
+            let final_path: Option<&bun_core::ZStr> = if !cwd_.is_empty() && cwd_[0] == b'.' {
                 let cwd_len = bun_sys::getcwd(&mut buf[..])?;
                 let cwd = &buf[..cwd_len];
                 let parts: [&[u8]; 1] = [cwd_];
-                let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                Path::resolve_path::join_abs_string_buf_z_checked::<Path::platform::Auto>(
                     cwd,
                     &mut buf2[..],
                     &parts,
                 )
-                .len();
-                buf2[len] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf2[..], len)
-            } else {
+            } else if cwd_.len() < buf.len() {
                 buf[..cwd_.len()].copy_from_slice(cwd_);
                 buf[cwd_.len()] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len())
+                Some(bun_core::ZStr::from_buf(&buf[..], cwd_.len()))
+            } else {
+                None
             };
-            if let Err(err) = bun_sys::chdir(final_path) {
+            let too_long = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir);
+            if let Err(err) = final_path.map_or(Err(too_long), bun_sys::chdir) {
                 Output::err_generic(
                     "failed to change directory to \"{}\": {}\n",
                     (
-                        bstr::BStr::new(final_path.as_bytes()),
+                        bstr::BStr::new(final_path.map_or(cwd_, |p| p.as_bytes())),
                         bstr::BStr::new(err.name()),
                     ),
                 );

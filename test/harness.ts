@@ -24,6 +24,18 @@ export const isFreeBSD = process.platform === "freebsd";
 export const isAndroid = process.platform === "android";
 export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
+/**
+ * Whether the tests are running as uid 0. Root bypasses file and directory
+ * mode bits, so tests that expect EACCES from a `chmod 000` fixture skip on it,
+ * while tests that need to setuid/setgid a child only run on it. Always false
+ * on Windows, where `process.getuid` does not exist.
+ */
+export const isRoot = process.getuid?.() === 0;
+/**
+ * Size of bun's fixed path buffers (`MAX_PATH_BYTES` in `src/bun_core/util.rs`). A path longer than this does not
+ * fit in one, which code taking a path from the user has to report rather than overflow the buffer.
+ */
+export const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux || isAndroid ? 4096 : 1024;
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");
@@ -547,6 +559,55 @@ export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: Direct
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
+}
+
+/**
+ * `Bun.spawn` options for a child that must be subject to file permission bits,
+ * for tests where e.g. a `chmod 444` file has to be unwritable.
+ *
+ * Root bypasses permission bits, so when the tests run as root the child is
+ * run as uid/gid 65534 ("nobody" on Linux and macOS): `dir` is handed over to
+ * that user, and every ancestor it could not traverse (CI points TMPDIR at a
+ * mode 0700 directory) gets `o+x` until the returned value is disposed. When
+ * the tests already run unprivileged, the child runs as the current user and
+ * nothing is changed. POSIX only.
+ *
+ * @example
+ * ```ts
+ * using dir = tempDir("read-only", { "package.json": "{}" });
+ * fs.chmodSync(join(String(dir), "package.json"), 0o444);
+ * using unprivileged = unprivilegedSpawnOptions(String(dir));
+ * await using proc = Bun.spawn({ cmd: [bunExe(), "pm", "pack"], cwd: String(dir), env: bunEnv, ...unprivileged });
+ * ```
+ */
+export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: number } & Disposable {
+  const restoreModes: [path: string, mode: number][] = [];
+  const options: { uid?: number; gid?: number } & Disposable = {
+    [Symbol.dispose]() {
+      for (const [path, mode] of restoreModes) fs.chmodSync(path, mode);
+    },
+  };
+  if (isWindows || process.getuid!() !== 0) return options;
+
+  const NOBODY = 65534;
+  try {
+    fs.chownSync(dir, NOBODY, NOBODY);
+    for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+      fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
+    }
+    for (let parent = dirname(dir); parent !== dirname(parent); parent = dirname(parent)) {
+      const mode = fs.statSync(parent).mode & 0o7777;
+      if (mode & 0o001) continue;
+      fs.chmodSync(parent, mode | 0o001);
+      restoreModes.push([parent, mode]);
+    }
+  } catch (e) {
+    options[Symbol.dispose]();
+    throw e;
+  }
+  options.uid = NOBODY;
+  options.gid = NOBODY;
+  return options;
 }
 
 export interface BunRunResult {
@@ -1952,6 +2013,22 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
+/**
+ * Builds the gzipped tarball GitHub serves for `/repos/<owner>/<repo>/tarball/<ref>`: one
+ * root directory, which GitHub names `<owner>-<repo>-<short sha>`, with the repository's
+ * files inside it. `bun install` reads the dependency's resolved commit (the lockfile's
+ * third tuple element and the installed `.bun-tag`) from the archive's first entry, which
+ * is why the root directory gets an entry of its own ahead of the files.
+ *
+ * Serve the bytes from a local server and pass its URL as `GITHUB_API_URL` to install
+ * `owner/repo#ref` dependencies without contacting api.github.com.
+ */
+export function githubTarball(rootDir: string, files: Record<string, string | Uint8Array>) {
+  const entries: Record<string, string | Uint8Array> = { [`${rootDir}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
+}
+
 export class VerdaccioRegistry {
   port: number;
   process: ChildProcess | undefined;
@@ -2408,3 +2485,48 @@ export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
     closeSync(fd);
   }
 }
+
+const dtUnknownReaddirMarker = "dt-unknown-readdir-shim: rewrote getdents64 d_type";
+let dtUnknownReaddirShim: Promise<string> | undefined;
+
+async function compileDtUnknownReaddirShim(): Promise<string> {
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("dtUnknownReaddir: no C compiler (cc/clang/gcc) found in $PATH");
+  const shim = join(tmpdirSync("dt-unknown-readdir-"), "shim.so");
+  const source = join(import.meta.dir, "fixtures", "dt-unknown-readdir-shim.c");
+  const proc = Bun.spawn({
+    cmd: [cc, "-shared", "-fPIC", "-O2", `-DMARKER="${dtUnknownReaddirMarker}"`, "-o", shim, source, "-ldl"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0)
+    throw new Error(`dtUnknownReaddir: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+  return shim;
+}
+
+/**
+ * Runs bun as if on a filesystem whose readdir does not report entry types
+ * (FUSE, some NFS servers, XFS formatted with `ftype=0`), without needing such a
+ * mount: `env()` preloads a shim that zeroes `d_type` in every `getdents64`
+ * record. The shim prints `marker` to stderr the first time it does so; assert
+ * on it, otherwise a test here passes vacuously if bun ever stops issuing
+ * `getdents64` through libc's `syscall()` wrapper, which is what the shim hooks.
+ */
+export const dtUnknownReaddir = {
+  /** Linux with a C compiler; `skipIf(!dtUnknownReaddir.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  marker: dtUnknownReaddirMarker,
+  /**
+   * Compiles the shim the first time it is called. Call it from `beforeAll`
+   * (the compiler can take several seconds on a loaded machine) and spawn bun
+   * with the returned env.
+   */
+  async env(): Promise<NodeJS.Dict<string>> {
+    const shim = await (dtUnknownReaddirShim ??= compileDtUnknownReaddirShim());
+    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+  },
+};

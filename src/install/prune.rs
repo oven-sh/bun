@@ -337,7 +337,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
             print_elapsed();
             print_apply_hint();
         }
-        return Ok(());
+        Global::exit(manager.options.check as u32);
     }
 
     let failed = execute(&plan, quiet);
@@ -494,7 +494,7 @@ fn print_apply_hint() {
         .skip_while(|arg| **arg != *b"prune")
         .skip(1)
     {
-        if arg.starts_with(b"--dry-run") {
+        if arg.starts_with(b"--dry-run") || arg.starts_with(b"--check") {
             continue;
         }
         bun_core::pretty!(" {}", BStr::new(arg));
@@ -1726,11 +1726,15 @@ fn push_store_entry_names(
 ) {
     let pkg_res = lockfile.packages.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
+    let entry_nested_folder = store.entries.items_nested_folder();
     names.reserve(store.entries.len());
     let mut name: Vec<u8> = Vec::new();
     for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
         let pkg_id = node_pkg_ids[node_id.get() as usize] as usize;
-        if pkg_res[pkg_id].tag == ResolutionTag::Workspace || !wanted.is_set(pkg_id) {
+        if pkg_res[pkg_id].tag == ResolutionTag::Workspace
+            || entry_nested_folder[entry_idx]
+            || !wanted.is_set(pkg_id)
+        {
             continue;
         }
         name.clear();

@@ -94,6 +94,13 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    /// Auto-install mode (`--install=...`). It must be on the
+    /// resolver BEFORE `configure_linker()` reads `top_level_dir`: that read
+    /// caches the project's package.json, and its dependency ranges are only
+    /// recorded (for auto-install to resolve against) when the resolver has
+    /// auto-install enabled at the time it is cached. Defaults to `disable`,
+    /// matching `BundleOptions::from_api`.
+    pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -118,6 +125,7 @@ impl Default for InitOptions {
             log: None,
             env_loader: None,
             graph: None,
+            global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -5464,21 +5472,16 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
-        if let Err(err_) = resolve_result {
-            let err = err_;
+        if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
-            let msg = log
+            let resolve_msg_index = log
                 .msgs
                 .iter()
-                .find_map(|m| {
-                    if let bun_ast::Metadata::Resolve(_) = &m.metadata {
-                        Some(m.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| {
+                .position(|m| matches!(m.metadata, bun_ast::Metadata::Resolve(_)));
+            let mut msg = match resolve_msg_index {
+                Some(i) => log.msgs[i].clone(),
+                None => {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
                         source_utf8.slice(),
@@ -5494,7 +5497,24 @@ impl VirtualMachine {
                         }),
                         ..Default::default()
                     }
-                });
+                }
+            };
+            // The resolver and auto-install log why a resolution failed
+            // (`GET <url> - 404`, an unreadable directory, ...) in the scoped
+            // `log`, which dies with this frame; carry those lines as notes on
+            // the `ResolveMessage`. Dedup by text: `_resolve` retries once
+            // after busting the directory cache and can log a failure twice.
+            let mut notes = core::mem::take(&mut msg.notes).into_vec();
+            for (i, logged) in log.msgs.iter().enumerate() {
+                if Some(i) == resolve_msg_index
+                    || !matches!(logged.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
+                    || notes.iter().any(|note| note.text == logged.data.text)
+                {
+                    continue;
+                }
+                notes.push(logged.data.clone());
+            }
+            msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
                 global,
                 &msg,

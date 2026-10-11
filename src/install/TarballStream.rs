@@ -133,6 +133,8 @@ pub struct TarballStream {
     /// Owned copy of the temp-directory name.
     // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.
     tmpname: ZBox,
+    /// Captured in `init`, before the first byte is extracted.
+    cache_publish: CachePublish,
 
     /// Incremental SHA over the *compressed* bytes, matching
     /// `Integrity.verify` / `Integrity.forBytes` in the buffered path.
@@ -248,6 +250,7 @@ impl TarballStream {
             },
             compute_if_missing,
         );
+        let cache_publish = tarball.cache_publish();
 
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(...)). Pointer is
         // recovered via `container_of` from the thread-pool callback and
@@ -272,6 +275,7 @@ impl TarballStream {
             entry_final_offset: 0,
             dest: None,
             tmpname: ZBox::from_bytes(b""),
+            cache_publish,
             hasher,
             resolved_github_dirname,
             want_first_dirname,
@@ -1121,7 +1125,7 @@ impl TarballStream {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Refusing to install package with invalid name \"{}\"",
-                            bun_fmt::s(tarball.name_and_basename().0),
+                            bun_fmt::escape_control_chars(tarball.name_and_basename().0),
                         ),
                     );
                 } else {
@@ -1203,12 +1207,15 @@ impl TarballStream {
 
             let (name, basename) = tarball.name_and_basename();
 
+            let integrity = tarball.lockfile_integrity(|| self.hasher.final_());
             let mut result = match tarball.move_to_cache_directory(
                 &mut (*task).log,
                 self.tmpname.as_zstr(),
                 name,
                 basename,
                 self.resolved_github_dirname,
+                &integrity,
+                self.cache_publish,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -1217,19 +1224,7 @@ impl TarballStream {
                     return;
                 }
             };
-
-            match tarball.resolution.tag {
-                ResolutionTag::Github
-                | ResolutionTag::RemoteTarball
-                | ResolutionTag::LocalTarball => {
-                    if tarball.integrity.tag.is_supported() {
-                        result.integrity = tarball.integrity;
-                    } else {
-                        result.integrity = self.hasher.final_();
-                    }
-                }
-                _ => {}
-            }
+            result.integrity = integrity;
 
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(
@@ -1493,5 +1488,6 @@ fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
 
 // Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
 // discriminant; Data/Status live on PackageManagerTask.
+use crate::extract_tarball::CachePublish;
 use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 use crate::resolution::Tag as ResolutionTag;

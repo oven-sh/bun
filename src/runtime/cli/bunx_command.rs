@@ -33,6 +33,70 @@ bun_output::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
+/// `flock` on `<bunx cache dir>.lock`, next to (not inside) the shared directory so the stale-tree cleanup
+/// never unlinks it: exclusive while installing, probed shared before running out of it. CLOEXEC, so exec'ing
+/// the target releases it too.
+struct InstallLock(bun_sys::File);
+
+impl InstallLock {
+    /// Zero-padded seconds, fixed width so a rewrite never has to truncate.
+    const STAMP_LEN: usize = 20;
+
+    /// `None` when the lock cannot be taken (including a lock path that is a symlink or, on POSIX, not ours),
+    /// or is held elsewhere and `nonblocking`.
+    fn acquire(
+        bunx_cache_dir: &[u8],
+        mode: bun_sys::FileLockMode,
+        nonblocking: bool,
+    ) -> Option<Self> {
+        let path = bun_core::ZBox::from_bytes([bunx_cache_dir, b".lock"].concat());
+        let flags = O::CREAT | O::RDWR | O::CLOEXEC | O::NOFOLLOW;
+        let file = bun_sys::File::from_fd(bun_sys::openat(Fd::cwd(), &path, flags, 0o600).ok()?);
+        #[cfg(unix)]
+        {
+            let st = bun_sys::fstat(file.fd()).ok()?;
+            if (st.st_mode & libc::S_IFMT) != libc::S_IFREG || st.st_uid != bun_sys::c::getuid() {
+                return None;
+            }
+        }
+        bun_sys::flock(file.fd(), mode, nonblocking)
+            .ok()?
+            .then_some(Self(file))
+    }
+
+    /// Whether another `bun x` is installing into `bunx_cache_dir` right now (its tree is partial).
+    fn install_in_progress(bunx_cache_dir: &[u8]) -> bool {
+        let busy = Self::acquire(bunx_cache_dir, bun_sys::FileLockMode::Shared, true).is_none();
+        if busy {
+            bun_output::scoped_log!(
+                bunx,
+                "install in progress for {}, waiting",
+                BStr::new(bunx_cache_dir)
+            );
+        }
+        busy
+    }
+
+    /// Whether the previous exclusive holder finished installing at or after `since`.
+    fn installed_since(&self, since: i64) -> bool {
+        let mut stamp = [0u8; Self::STAMP_LEN];
+        matches!(
+            bun_sys::pread(self.0.fd(), &mut stamp, 0),
+            Ok(Self::STAMP_LEN)
+        ) && bun_core::fmt::parse_unsigned::<i64>(&stamp, 10).is_ok_and(|done| done >= since)
+    }
+
+    /// Stamps the completion time (the last write before the lock goes) and releases the lock.
+    fn release_after_install(lock: &mut Option<Self>) {
+        let Some(lock) = lock.take() else { return };
+        let stamp = format!("{:01$}", bun_core::time::timestamp(), Self::STAMP_LEN);
+        // Best effort: without a stamp, waiters reinstall.
+        if let Err(err) = bun_sys::pwrite(lock.0.fd(), stamp.as_bytes(), 0) {
+            bun_output::scoped_log!(bunx, "failed to record install completion: {}", err);
+        }
+    }
+}
+
 /// bunx-specific options parsed from argv.
 //
 // Invariant: string fields borrow from `argv`, which is process-lifetime —
@@ -335,8 +399,14 @@ impl BunxCommand {
 
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
-                    let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
+                // Same values the bin linker refuses to link from (`bin.rs`, `Tag::Dir`).
+                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal().filter(|dir| {
+                    !dir.is_empty() && !bun_install::bin::bin_target_escapes_package_dir(dir)
+                }) {
+                    use bun_paths::{platform::Auto, resolve_path::dirname, resolve_path::join_z};
+                    // `directories.bin` is relative to the package, not to `dir_fd`.
+                    let path = join_z::<Auto>(&[dirname::<Auto>(subpath_z.as_bytes()), dir_name]);
+                    let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
                     let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
@@ -463,8 +533,12 @@ impl BunxCommand {
 
             if is_stale {
                 let _ = target_package_json.close();
-                // If delete fails, oh well. Hope installation takes care of it.
-                let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
+                // Not under a process installing into or about to run from it; the reinstall
+                // refreshes it anyway. If delete fails, oh well. Hope installation takes care of it.
+                let mode = bun_sys::FileLockMode::Exclusive;
+                if let Some(_lock) = InstallLock::acquire(tempdir_name, mode, true) {
+                    let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
+                }
                 return Err(crate::Error::NeedToInstall);
             }
             let _ = target_package_json.close();
@@ -1142,6 +1216,11 @@ impl BunxCommand {
                                 break 'try_run_existing;
                             }
                         }
+
+                        // The install path waits for it; with --no-install that path is an error.
+                        if !opts.no_install && InstallLock::install_in_progress(bunx_cache_dir) {
+                            break 'try_run_existing;
+                        }
                     }
 
                     bun_output::scoped_log!(
@@ -1248,6 +1327,12 @@ impl BunxCommand {
                                         do_cache_bust = true;
                                         break 'try_run_existing;
                                     }
+                                    if !opts.no_install
+                                        && strings::has_prefix(out, bunx_cache_dir)
+                                        && InstallLock::install_in_progress(bunx_cache_dir)
+                                    {
+                                        break 'try_run_existing;
+                                    }
                                     let stored = fs.dirname_store.append_slice(out)?;
                                     Run::run_binary(
                                         ctx,
@@ -1310,115 +1395,154 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        'create_package_json: {
-            // create package.json, but only if it doesn't exist
-            let package_json = match bun_sys::File::create(
-                bunx_install_dir.fd,
-                b"package.json",
-                /* truncate */ true,
-            ) {
-                Ok(f) => f,
-                Err(_) => break 'create_package_json,
-            };
-            let _ = package_json.write_all(b"{}\n");
+        // Concurrent cold-cache runs of one package share this directory: hold the lock through the
+        // install and the bin probes below, until exec. Unlockable: install without it, as before.
+        let install_wait_start = bun_core::time::timestamp();
+        let mut install_lock =
+            InstallLock::acquire(bunx_cache_dir, bun_sys::FileLockMode::Exclusive, false);
+        if install_lock.is_none() {
+            bun_output::scoped_log!(
+                bunx,
+                "could not lock {}, installing without the lock",
+                BStr::new(bunx_cache_dir)
+            );
         }
 
-        let install_args: [&[u8]; 4] = [
-            bun_core::self_exe_path()?.as_bytes(),
-            b"add",
-            install_param.as_slice(),
-            b"--no-summary",
-        ];
-        let mut args: BoundedArray<&[u8], 8> =
-            BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
-
-        if do_cache_bust {
-            // disable the manifest cache when a tag is specified
-            // so that @latest is fetched from the registry
-            args.append(b"--no-cache").expect("unreachable"); // upper bound is known
-
-            // forcefully re-install packages in this mode too
-            args.append(b"--force").expect("unreachable"); // upper bound is known
-        }
-
-        if opts.verbose_install {
-            args.append(b"--verbose").expect("unreachable"); // upper bound is known
-        }
-
-        if opts.silent_install {
-            args.append(b"--silent").expect("unreachable"); // upper bound is known
-        }
-
-        let argv_to_use = args.slice();
-
-        bun_output::scoped_log!(
-            bunx,
-            "installing package: {}",
-            bun_core::fmt::fmt_slice(argv_to_use, " "),
-        );
-        env_loader
-            .map
-            .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
-            .expect("oom");
-
-        let envp = env_loader.map.create_null_delimited_env_map()?;
-
-        let spawn_result = match proc_sync::spawn(&proc_sync::Options {
-            argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-
-            envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
-
-            cwd: Box::<[u8]>::from(bunx_cache_dir),
-            stderr: proc_sync::SyncStdio::Inherit,
-            stdout: proc_sync::SyncStdio::Inherit,
-            stdin: proc_sync::SyncStdio::Inherit,
-
-            #[cfg(windows)]
-            windows: proc_sync::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // `this_transpiler.env` is the process-lifetime loader
-                        // singleton populated during transpiler init.
-                        //
-                        // Aliasing: do NOT call `this_transpiler.env_mut()` here —
-                        // `env_loader` (line 594) is still live and is used again below at the
-                        // post-install `Run::run_binary` calls. A second `env_mut()` would
-                        // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
-                        // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
-                        // *through* `env_loader` so the new `&mut` is a child of its tag; the
-                        // child is consumed by `init_global` (converted to `NonNull`) before
-                        // `env_loader` is touched again.
-                        // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
-                        // stacked reborrow, not a sibling alias.
-                        Some(unsafe { &mut *(env_loader as *mut _) }),
-                        None,
-                    ),
-                ),
-                ..Default::default()
-            },
-            ..Default::default()
-        }) {
-            Err(err) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: bunx failed to install <b>{}<r> due to error <b>{}<r>",
-                    BStr::new(&install_param),
-                    err.name(),
-                );
-                Global::exit(1);
+        // The holder we queued behind just installed this tree; `bun add` again (`--force` for a
+        // dist tag) would rewrite it under the process now running out of it.
+        if (install_lock.as_ref()).is_some_and(|lock| lock.installed_since(install_wait_start)) {
+            bun_output::scoped_log!(
+                bunx,
+                "concurrent bunx finished installing {}, skipping reinstall",
+                BStr::new(&install_param)
+            );
+        } else {
+            'create_package_json: {
+                // create package.json, but only if it doesn't exist
+                let package_json = match bun_sys::File::create(
+                    bunx_install_dir.fd,
+                    b"package.json",
+                    /* truncate */ true,
+                ) {
+                    Ok(f) => f,
+                    Err(_) => break 'create_package_json,
+                };
+                let _ = package_json.write_all(b"{}\n");
             }
-            Ok(maybe) => match maybe {
-                bun_sys::Result::Err(_err) => {
+
+            let install_args: [&[u8]; 4] = [
+                bun_core::self_exe_path()?.as_bytes(),
+                b"add",
+                install_param.as_slice(),
+                b"--no-summary",
+            ];
+            let mut args: BoundedArray<&[u8], 8> =
+                BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
+
+            if do_cache_bust {
+                // disable the manifest cache when a tag is specified
+                // so that @latest is fetched from the registry
+                args.append(b"--no-cache").expect("unreachable"); // upper bound is known
+
+                // forcefully re-install packages in this mode too
+                args.append(b"--force").expect("unreachable"); // upper bound is known
+            }
+
+            if opts.verbose_install {
+                args.append(b"--verbose").expect("unreachable"); // upper bound is known
+            }
+
+            if opts.silent_install {
+                args.append(b"--silent").expect("unreachable"); // upper bound is known
+            }
+
+            let argv_to_use = args.slice();
+
+            bun_output::scoped_log!(
+                bunx,
+                "installing package: {}",
+                bun_core::fmt::fmt_slice(argv_to_use, " "),
+            );
+            env_loader
+                .map
+                .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
+                .expect("oom");
+
+            let envp = env_loader.map.create_null_delimited_env_map()?;
+
+            let spawn_result = match proc_sync::spawn(&proc_sync::Options {
+                argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+
+                envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
+
+                cwd: Box::<[u8]>::from(bunx_cache_dir),
+                stderr: proc_sync::SyncStdio::Inherit,
+                stdout: proc_sync::SyncStdio::Inherit,
+                stdin: proc_sync::SyncStdio::Inherit,
+
+                #[cfg(windows)]
+                windows: proc_sync::WindowsOptions {
+                    loop_: bun_jsc::EventLoopHandle::init_mini(
+                        bun_event_loop::MiniEventLoop::init_global(
+                            // `this_transpiler.env` is the process-lifetime loader
+                            // singleton populated during transpiler init.
+                            //
+                            // Aliasing: do NOT call `this_transpiler.env_mut()` here —
+                            // `env_loader` (line 594) is still live and is used again below at the
+                            // post-install `Run::run_binary` calls. A second `env_mut()` would
+                            // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
+                            // Unique tag under Stacked Borrows (UB on later use). Instead reborrow
+                            // *through* `env_loader` so the new `&mut` is a child of its tag; the
+                            // child is consumed by `init_global` (converted to `NonNull`) before
+                            // `env_loader` is touched again.
+                            // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
+                            // stacked reborrow, not a sibling alias.
+                            Some(unsafe { &mut *(env_loader as *mut _) }),
+                            None,
+                        ),
+                    ),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }) {
+                Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: bunx failed to install <b>{}<r> due to error <b>{}<r>",
+                        BStr::new(&install_param),
+                        err.name(),
+                    );
                     Global::exit(1);
                 }
-                bun_sys::Result::Ok(result) => result,
-            },
-        };
+                Ok(maybe) => match maybe {
+                    bun_sys::Result::Err(_err) => {
+                        Global::exit(1);
+                    }
+                    bun_sys::Result::Ok(result) => result,
+                },
+            };
 
-        match &spawn_result.status {
-            SpawnStatus::Exited(exited) => {
-                // Any non-zero byte (incl. RT signals >31) is a valid signal.
-                // `signal_code()` would drop RT signals, so check the raw byte directly.
-                if exited.signal != 0 {
+            match &spawn_result.status {
+                SpawnStatus::Exited(exited) => {
+                    // Any non-zero byte (incl. RT signals >31) is a valid signal.
+                    // `signal_code()` would drop RT signals, so check the raw byte directly.
+                    if exited.signal != 0 {
+                        if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
+                            .get()
+                            .unwrap_or(false)
+                        {
+                            bun_crash_handler::suppress_reporting();
+                        }
+
+                        Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(
+                            exited.signal,
+                        ));
+                    }
+
+                    if exited.code != 0 {
+                        Global::exit(exited.code as u32);
+                    }
+                }
+                SpawnStatus::Signaled(sig) => {
                     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
                         .get()
                         .unwrap_or(false)
@@ -1426,35 +1550,21 @@ impl BunxCommand {
                         bun_crash_handler::suppress_reporting();
                     }
 
-                    Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(exited.signal));
+                    // RT signals (>31) are valid payloads; forward the
+                    // raw byte instead of lossy `signal_code()` so this arm always
+                    // diverges with the *actual* signal.
+                    Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
                 }
-
-                if exited.code != 0 {
-                    Global::exit(exited.code as u32);
+                SpawnStatus::Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
+                        BStr::new(&install_param),
+                        err,
+                    );
+                    Global::exit(1);
                 }
+                _ => {}
             }
-            SpawnStatus::Signaled(sig) => {
-                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
-                    .get()
-                    .unwrap_or(false)
-                {
-                    bun_crash_handler::suppress_reporting();
-                }
-
-                // RT signals (>31) are valid payloads; forward the
-                // raw byte instead of lossy `signal_code()` so this arm always
-                // diverges with the *actual* signal.
-                Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
-            }
-            SpawnStatus::Err(err) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
-                    BStr::new(&install_param),
-                    err,
-                );
-                Global::exit(1);
-            }
-            _ => {}
         }
 
         absolute_in_cache_dir = {
@@ -1494,6 +1604,7 @@ impl BunxCommand {
             // Bail out to the generic error rather than execute it.
             if Self::is_trusted_cached_binary(destination, uid) {
                 let stored = fs.dirname_store.append_slice(out)?;
+                InstallLock::release_after_install(&mut install_lock);
                 Run::run_binary(
                     ctx,
                     stored,
@@ -1554,6 +1665,7 @@ impl BunxCommand {
                         // Same TOCTOU hardening as the post-install probe above.
                         if Self::is_trusted_cached_binary(destination, uid) {
                             let stored = fs.dirname_store.append_slice(out)?;
+                            InstallLock::release_after_install(&mut install_lock);
                             Run::run_binary(
                                 ctx,
                                 stored,

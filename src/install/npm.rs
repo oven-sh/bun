@@ -5,7 +5,7 @@ use crate::Error;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, IdentityContext, StringSet, index_sort};
+use bun_collections::{HashMap, IdentityContext, index_sort};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
@@ -147,6 +147,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // returns. `init_sync` borrows the URL/header buffers for the duration of
     // the synchronous request only.
     let url = URL::parse(&print_buf);
+    let http_proxy = manager.http_proxy(&url);
 
     // `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
     // allocation; `headers` outlives `req`. `written_slice()` is the safe
@@ -160,9 +161,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.entries,
         header_buf,
         b"",
-        None,
+        http_proxy,
         http::FetchRedirect::Follow,
     );
+    req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
     let res = match req.send_sync(&mut response_buf) {
         Ok(res) => res,
@@ -182,7 +184,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache") {
         Output::print_error("\n");
-        bun_core::note!("{}", bstr::BStr::new(notice));
+        bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
         Output::flush();
     }
 
@@ -248,7 +250,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         } else {
             ""
         },
-        bstr::BStr::new(res.status_text()),
+        bun_fmt::escape_control_chars(res.status_text()),
         bun_fmt::redacted_npm_url(req.url.href),
     );
 
@@ -272,7 +274,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
                 Global::crash();
             }
         }
-        bun_core::pretty_errorln!("\n - {}", bstr::BStr::new(msg));
+        bun_core::pretty_errorln!("\n - {}", bun_fmt::escape_control_chars(msg));
     }
 
     Global::crash();
@@ -329,6 +331,18 @@ pub mod registry {
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
 
+        /// Whether requests to this scope carry an `Authorization` header.
+        pub(crate) fn has_credentials(&self) -> bool {
+            !self.token.is_empty() || !self.auth.is_empty()
+        }
+
+        /// Take `other`'s credentials, leaving this scope's registry URL as is.
+        pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {
+            self.token.clone_from(&other.token);
+            self.auth.clone_from(&other.auth);
+            self.user.clone_from(&other.user);
+        }
+
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
@@ -356,6 +370,15 @@ pub mod registry {
                         registry.url = replaced_url.into();
                     }
                 }
+            }
+
+            // The config loaders split literal strings; an expanded $ENV_VAR is split here.
+            let from_url = api::NpmRegistry::from_url(&registry.url);
+            registry.url = from_url.url;
+            if !registry.has_credentials() {
+                registry.token = from_url.token;
+                registry.username = from_url.username;
+                registry.password = from_url.password;
             }
 
             // `url` borrows the owned `registry_url` buffer for the duration
@@ -477,7 +500,7 @@ pub mod registry {
                     registry.password = env.get_auto(&registry.password).into();
 
                     if !registry.username.is_empty()
-                        && !registry.password.is_empty()
+                        && (!registry.password.is_empty() || registry.credentials_from_url)
                         && auth.is_empty()
                     {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
@@ -528,6 +551,62 @@ pub mod registry {
 
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
+
+    /// A `.npmrc` `//host/path/:...` line, matched like npm does: same host and port, and the
+    /// key's path is the request path or a parent directory of it; either scheme.
+    pub(crate) struct UrlAuth {
+        hostname: Box<[u8]>,
+        /// `None`: the default port of the request's scheme.
+        port: Option<u16>,
+        /// Without trailing slash; `/` for a bare host.
+        pathname: Box<[u8]>,
+        /// Only the credential fields are meaningful; `url` is empty.
+        credentials: Scope,
+    }
+
+    impl UrlAuth {
+        /// `None` when the line has nothing to send as `Authorization` (e.g. only `email`), so it
+        /// never shadows a shallower key that does.
+        pub(crate) fn from_api(
+            api: &api::NpmUrlAuth,
+            env: &mut DotEnv,
+        ) -> Result<Option<UrlAuth>, AllocError> {
+            let credentials = Scope::from_api(b"", api.credentials.clone(), env)?;
+            let host = URL::parse(&api.host);
+            // `//host:notaport/` cannot match any request.
+            if !credentials.has_credentials()
+                || host.hostname.is_empty()
+                || (!host.port.is_empty() && host.get_port().is_none())
+            {
+                return Ok(None);
+            }
+            Ok(Some(UrlAuth {
+                hostname: host.hostname.into(),
+                port: host.get_port(),
+                pathname: api.pathname.clone(),
+                credentials,
+            }))
+        }
+
+        fn matches(&self, url: &URL) -> bool {
+            let (path, default_port) = (&*self.pathname, if url.is_https() { 443 } else { 80 });
+            strings::eql_case_insensitive_ascii(url.hostname, &self.hostname, true)
+                && url.get_port_auto() == self.port.unwrap_or(default_port)
+                && (path == b"/"
+                    || url
+                        .pathname
+                        .strip_prefix(path)
+                        .is_some_and(|r| matches!(r, [] | [b'/', ..])))
+        }
+
+        /// The matching key with the longest path (`//host/a/b/` beats `//host/`).
+        pub(crate) fn find<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a Scope> {
+            list.iter()
+                .filter(|entry| entry.matches(url))
+                .max_by_key(|entry| entry.pathname.len())
+                .map(|entry| &entry.credentials)
+        }
+    }
 
     pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),
@@ -732,7 +811,7 @@ pub struct PackageVersion {
     /// `"cpu"` field in package.json
     pub(crate) cpu: Architecture,
 
-    /// `"libc"` field in package.json
+    /// `"libc"` field in package.json; only in the extended manifest (`Libc::NONE` = not declared).
     pub(crate) libc: Libc,
 
     /// `hasInstallScript` field in registry API.
@@ -863,7 +942,7 @@ pub struct NpmPackage {
     pub(crate) versions_buf: VersionSlice,
     pub(crate) string_lists_buf: ExternalStringList,
 
-    // Flag to indicate if we have timestamp data from extended manifest
+    // The full document was fetched: `publish_timestamp_ms` and `PackageVersion.libc` are populated.
     pub(crate) has_extended_manifest: bool,
     pub(crate) _padding_tail: [u8; 7],
 }
@@ -933,8 +1012,9 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        // - v0.0.8: fixed bundled dependencies being dropped from all but one dependency group
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -1179,14 +1259,11 @@ pub mod package_manifest {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                // Attempt #1.
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
-                    // Attempt #2: the file may already exist. Let's unlink and try again.
-                    let _ = bun_sys::unlinkat(cache_dir, outpath);
-                    bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath)?;
-                    // There is no attempt #3. This is a cache, so it's not essential.
+                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
+                    return Ok(());
                 }
-                return Ok(());
+                // Keep the entry present throughout: rename over it below instead of unlinking it.
+                bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
             #[cfg(not(windows))]
@@ -1501,6 +1578,79 @@ impl FindResult<'_> {
     }
 }
 
+/// `minimumReleaseAgeExcludes` entries (pnpm grammar): `name` exempts a package, `name@1.2.3 || 1.2.4` only those
+/// versions (matched with `Version::eql`, which compares tags by hash, so no string buffer is kept).
+pub struct MinimumReleaseAgeExcludes(Vec<(&'static [u8], Option<Semver::Version>)>);
+
+impl MinimumReleaseAgeExcludes {
+    /// A malformed entry (`foo@`, `foo@^1`) is dropped with a warning, never widened to the bare name.
+    pub(crate) fn parse(entries: &[&'static [u8]], log: &mut bun_ast::Log) -> Self {
+        let mut list = Vec::new();
+        for &entry in entries {
+            // Skip a scope's leading `@` so `@types/node@20.0.0` splits after the name.
+            let name_start = usize::from(strings::starts_with_char(entry, b'@'));
+            let Some(at) = strings::index_of_char_usize(&entry[name_start..], b'@') else {
+                list.push((entry, None));
+                continue;
+            };
+            let (name, specs) = (&entry[..name_start + at], &entry[name_start + at + 1..]);
+            let first_of_entry = list.len();
+            for spec in strings::split(specs, b"||") {
+                let Some(version) = parse_exact_version(spec) else {
+                    list.truncate(first_of_entry);
+                    log.add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
+                            bun_fmt::quote(entry),
+                            name = bstr::BStr::new(name),
+                        ),
+                    );
+                    break;
+                };
+                list.push((name, Some(version)));
+            }
+        }
+        MinimumReleaseAgeExcludes(list)
+    }
+
+    /// `base` plus bare-name exemptions; `bun audit fix` exempts the packages it must move past the age gate.
+    pub(crate) fn with_packages(
+        base: Option<&Self>,
+        names: impl IntoIterator<Item = &'static [u8]>,
+    ) -> Self {
+        let mut list = base.map_or_else(Vec::new, |base| base.0.clone());
+        list.extend(names.into_iter().map(|name| (name, None)));
+        MinimumReleaseAgeExcludes(list)
+    }
+
+    fn excludes_package(&self, name: &[u8]) -> bool {
+        self.0
+            .iter()
+            .any(|&(package, v)| package == name && v.is_none())
+    }
+
+    fn excludes_version(&self, name: &[u8], version: Semver::Version) -> bool {
+        self.0
+            .iter()
+            .any(|&(p, v)| p == name && v.is_some_and(|v| v.eql(version)))
+    }
+}
+
+/// Ranges, dist-tags, empty input, and trailing bytes are all rejected.
+fn parse_exact_version(spec: &[u8]) -> Option<Semver::Version> {
+    let spec = strings::trim(spec, &strings::WHITESPACE_CHARS);
+    let parsed = Semver::Version::parse_utf8(spec);
+    if !parsed.valid
+        || parsed.wildcard != Semver::query::Wildcard::None
+        || parsed.len as usize != spec.len()
+    {
+        return None;
+    }
+    Some(parsed.version.min())
+}
+
 impl PackageManifest {
     pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {
@@ -1553,16 +1703,23 @@ impl PackageManifest {
         None
     }
 
-    pub(crate) fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
-        if let Some(excl) = exclusions {
-            let pkg_name = self.name();
-            for excluded in excl {
-                if pkg_name == *excluded {
-                    return true;
-                }
-            }
-        }
-        false
+    /// Whether every version of this package bypasses the minimum release age.
+    pub(crate) fn should_exclude_from_age_filter(
+        &self,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> bool {
+        exclusions.is_some_and(|excludes| excludes.excludes_package(self.name()))
+    }
+
+    /// Too recent for the gate and not listed in `exclusions`.
+    pub(crate) fn is_version_blocked_by_age_filter(
+        &self,
+        result: FindResult<'_>,
+        minimum_release_age_ms: f64,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> bool {
+        Self::is_package_version_too_recent(result.package, minimum_release_age_ms)
+            && !exclusions.is_some_and(|e| e.excludes_version(self.name(), result.version))
     }
 
     #[inline]
@@ -1582,6 +1739,7 @@ impl PackageManifest {
         group: &Semver::query::Group,
         group_buf: &[u8],
         minimum_release_age_ms: f64,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
         newest_filtered: &mut Option<Semver::Version>,
     ) -> Option<FindVersionResult<'a>> {
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = None;
@@ -1598,6 +1756,11 @@ impl PackageManifest {
             let version = versions[i];
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
+                // Listed versions count as stable: no age gate, and they replace an unstable fallback in `best_version`.
+                if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
+                    best_version = Some(FindResult { version, package });
+                    break;
+                }
                 if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
                     if newest_filtered.is_none() {
                         *newest_filtered = Some(version);
@@ -1691,7 +1854,7 @@ impl PackageManifest {
         &self,
         tag: &[u8],
         minimum_release_age_ms: Option<f64>,
-        exclusions: Option<&[&[u8]]>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
         let Some(dist_result) = self.find_by_dist_tag(tag) else {
             return FindVersionResult::Err(FindVersionError::NotFound);
@@ -1710,8 +1873,7 @@ impl PackageManifest {
         let seven_days_ms: f64 = 7.0 * bun_core::time::MS_PER_DAY as f64;
         let stability_window_ms = min_age_ms.min(seven_days_ms);
 
-        let dist_too_recent = Self::is_package_version_too_recent(dist_result.package, min_age_ms);
-        if !dist_too_recent {
+        if !self.is_version_blocked_by_age_filter(dist_result, min_age_ms, exclusions) {
             return FindVersionResult::Found(dist_result);
         }
 
@@ -1766,6 +1928,12 @@ impl PackageManifest {
                 }
             }
 
+            // See `search_version_list`.
+            if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
+                best_version = Some(FindResult { version, package });
+                break;
+            }
+
             if Self::is_package_version_too_recent(package, min_age_ms) {
                 prev_package_blocked_from_age = Some(package);
                 continue;
@@ -1818,7 +1986,7 @@ impl PackageManifest {
         group: &Semver::query::Group,
         group_buf: &[u8],
         minimum_release_age_ms: Option<f64>,
-        exclusions: Option<&[&[u8]]>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
         let min_age_gate_ms = match minimum_release_age_ms {
             Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
@@ -1841,7 +2009,7 @@ impl PackageManifest {
         if left.op == Semver::range::Op::Eql {
             let result = self.find_by_version(left.version);
             if let Some(r) = result {
-                if Self::is_package_version_too_recent(r.package, min_age_ms) {
+                if self.is_version_blocked_by_age_filter(r, min_age_ms, exclusions) {
                     return FindVersionResult::Err(FindVersionError::TooRecent);
                 }
                 return FindVersionResult::Found(r);
@@ -1851,7 +2019,7 @@ impl PackageManifest {
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if group.satisfies(result.version, group_buf, &self.string_buf) {
-                if Self::is_package_version_too_recent(result.package, min_age_ms) {
+                if self.is_version_blocked_by_age_filter(result, min_age_ms, exclusions) {
                     newest_filtered = Some(result.version);
                 }
                 if newest_filtered.is_none() {
@@ -1876,6 +2044,7 @@ impl PackageManifest {
             group,
             group_buf,
             min_age_ms,
+            exclusions,
             &mut newest_filtered,
         ) {
             return result;
@@ -1888,6 +2057,7 @@ impl PackageManifest {
                 group,
                 group_buf,
                 min_age_ms,
+                exclusions,
                 &mut newest_filtered,
             ) {
                 return result;
@@ -1969,35 +2139,6 @@ impl PackageManifest {
     }
 }
 
-/// Fills `set` with the names listed in `bundle(d)Dependencies`; returns whether it was `true` (bundle everything).
-fn collect_bundled_deps(
-    version_obj: Option<&JSON::E::ObjectJSON>,
-    set: &mut StringSet,
-) -> Result<bool, AllocError> {
-    set.map.clear_retaining_capacity();
-    let mut bundle_all_deps = false;
-    if let Some(bundled_deps_value) = version_obj
-        .and_then(|o| o.get(b"bundleDependencies"))
-        .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
-    {
-        match bundled_deps_value {
-            JSON::E::JsonValue::Boolean(boolean) => {
-                bundle_all_deps = *boolean;
-            }
-            JSON::E::JsonValue::Array(arr) => {
-                for bundled_dep in arr.get().items() {
-                    let Some(s) = bundled_dep.as_str() else {
-                        continue;
-                    };
-                    set.insert(s)?;
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(bundle_all_deps)
-}
-
 // Keys are pre-hashed string hashes, so don't re-hash them.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList, IdentityContext<u64>>;
 
@@ -2008,6 +2149,16 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
     DependencyGroup::OPTIONAL,
     DependencyGroup::PEER,
 ];
+
+/// npm accepts both spellings; `bundleDependencies` is the documented one.
+fn bundled_dependencies_field(
+    version_obj: Option<&JSON::E::ObjectJSON>,
+) -> Option<&JSON::E::JsonValue> {
+    let version_obj = version_obj?;
+    version_obj
+        .get(b"bundleDependencies")
+        .or_else(|| version_obj.get(b"bundledDependencies"))
+}
 
 impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
@@ -2047,7 +2198,7 @@ impl PackageManifest {
                 log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
-                    format_args!("npm error: {}", bstr::BStr::new(err)),
+                    format_args!("npm error: {}", bun_fmt::escape_control_chars(err)),
                 );
                 return Ok(None);
             }
@@ -2061,9 +2212,6 @@ impl PackageManifest {
         let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
-
-        let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps: bool;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -2086,7 +2234,7 @@ impl PackageManifest {
                     bun_core::warn!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
                         bstr::BStr::new(expected_name),
-                        bstr::BStr::new(received_name),
+                        bun_fmt::escape_control_chars(received_name),
                     );
                 }
             }
@@ -2204,7 +2352,16 @@ impl PackageManifest {
                     }
                 }
 
-                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
+                if let Some(JSON::E::JsonValue::Array(arr)) =
+                    bundled_dependencies_field(version_obj)
+                {
+                    bundled_deps_count += arr
+                        .get()
+                        .items()
+                        .iter()
+                        .filter(|bundled_dep| bundled_dep.as_str().is_some())
+                        .count();
+                }
 
                 for pair in &DEPENDENCY_GROUPS {
                     if let Some(obj) = version_obj
@@ -2215,11 +2372,6 @@ impl PackageManifest {
                         dependency_sum += properties.len();
                         for property in properties {
                             let key = property.key.slice();
-                            if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
-                                // swap remove the dependency name because it could exist in
-                                // multiple behavior groups.
-                                bundled_deps_count += 1;
-                            }
                             string_builder.count(key);
                             string_builder.count(property.value.as_str().unwrap_or(b""));
                         }
@@ -2407,9 +2559,29 @@ impl PackageManifest {
 
                 let version_obj = prop.value.as_object();
 
-                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
-
                 let mut package_version: PackageVersion = empty_version;
+
+                // `Package::from_npm` matches these against the dependencies of every group.
+                package_version.bundled_dependencies = match bundled_dependencies_field(version_obj)
+                {
+                    Some(JSON::E::JsonValue::Boolean(true)) => ExternalPackageNameHashList::INVALID,
+                    Some(JSON::E::JsonValue::Array(arr)) => {
+                        let bundled_deps_begin = bundled_deps_offset;
+                        for bundled_dep in arr.get().items() {
+                            let Some(name) = bundled_dep.as_str() else {
+                                continue;
+                            };
+                            bundled_deps_buf[bundled_deps_offset] =
+                                Semver::semver_string::Builder::string_hash(name);
+                            bundled_deps_offset += 1;
+                        }
+                        ExternalPackageNameHashList::init(
+                            &bundled_deps_buf,
+                            &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                        )
+                    }
+                    _ => ExternalPackageNameHashList::default(),
+                };
 
                 if let Some(cpu) = version_obj.and_then(|o| o.get(b"cpu")) {
                     package_version.cpu = negatable_from_json_value::<Architecture>(cpu);
@@ -2611,16 +2783,36 @@ impl PackageManifest {
                             package_version.unpacked_size = n.value() as u32;
                         }
 
+                        let mut malformed = false;
                         if let Some(shasum_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
                             package_version.integrity = Integrity::parse(shasum_str);
                             if package_version.integrity.tag.is_supported() {
                                 break 'integrity;
                             }
+                            malformed = !shasum_str.is_empty();
                         }
 
                         if let Some(shasum_str) = dist.get(b"shasum").and_then(|v| v.as_str()) {
-                            package_version.integrity =
-                                Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
+                            match Integrity::parse_sha_sum(shasum_str) {
+                                Ok(integrity) if integrity.tag.is_supported() => {
+                                    package_version.integrity = integrity;
+                                    break 'integrity;
+                                }
+                                Ok(_) => {}
+                                Err(_) => malformed = true,
+                            }
+                        }
+
+                        if malformed {
+                            log.add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}; its tarball will not be verified",
+                                    bstr::BStr::new(expected_name),
+                                    bstr::BStr::new(version_name),
+                                ),
+                            );
                         }
                     }
                 }
@@ -2632,13 +2824,7 @@ impl PackageManifest {
                     // For peer deps, fall through with an empty `items`
                     // slice when `peerDependencies` is absent so that
                     // `peerDependenciesMeta`-only entries (synthesised
-                    // below) still get a build pass. The fallthrough must
-                    // stay scoped to packages that actually have a
-                    // `peerDependenciesMeta`: the body sets
-                    // `package_version.bundled_dependencies` from this
-                    // iteration's slice of `bundled_deps_buf`, so an
-                    // unconditional empty pass would clobber the value the
-                    // `dependencies` iteration just produced.
+                    // below) still get a build pass.
                     let items: &[JSON::E::PropertyJSON] = version_obj
                         .and_then(|o| o.get(pair.prop))
                         .and_then(|deps| deps.as_object())
@@ -2687,8 +2873,6 @@ impl PackageManifest {
                             }
                         }
 
-                        let bundled_deps_begin = bundled_deps_offset;
-
                         let mut i: usize = 0;
 
                         for item in items {
@@ -2701,15 +2885,6 @@ impl PackageManifest {
                                 string_builder.append::<ExternalString>(name_str);
                             version_extern_strings[values_base + i] =
                                 string_builder.append::<ExternalString>(version_str);
-
-                            if !bundle_all_deps && bundled_deps_set.swap_remove(name_str) {
-                                // SAFETY: bundled_deps_buf sized in counting pass
-                                unsafe {
-                                    *bundled_deps_buf.as_mut_ptr().add(bundled_deps_offset) =
-                                        all_extern_strings[names_base + i].hash;
-                                }
-                                bundled_deps_offset += 1;
-                            }
 
                             if is_peer {
                                 if optional_peer_dep_names
@@ -2809,27 +2984,6 @@ impl PackageManifest {
                         let this_names = &all_extern_strings[names_base..names_base + count];
                         let this_versions =
                             &version_extern_strings[values_base..values_base + count];
-
-                        // Bundled deps are matched against the
-                        // `dependencies`/`optionalDependencies` groups
-                        // only; the peer pass never adds to
-                        // `bundled_deps_buf`. With the meta-only
-                        // synthesis above the peer body now runs even
-                        // when `peerDependencies` is absent, so writing
-                        // here would clobber the value the dependencies
-                        // pass already produced with an empty slice.
-                        if !is_peer {
-                            if bundle_all_deps {
-                                package_version.bundled_dependencies =
-                                    ExternalPackageNameHashList::INVALID;
-                            } else {
-                                package_version.bundled_dependencies =
-                                    ExternalPackageNameHashList::init(
-                                        &bundled_deps_buf,
-                                        &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
-                                    );
-                            }
-                        }
 
                         let mut name_list =
                             ExternalStringList::init(&all_extern_strings, this_names);

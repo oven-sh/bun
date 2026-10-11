@@ -724,7 +724,7 @@ impl Variables {
 
     /// The variables named `name`, by scope.
     #[inline]
-    fn named(&self, name: Atom) -> &[u32] {
+    pub(crate) fn named(&self, name: Atom) -> &[u32] {
         let slot = &self.names.slots[self.names.place(name)];
         match slot.name.is_some() {
             true => self

@@ -46,6 +46,7 @@ impl NumericBaseConfig {
 
 impl NumericSeparatorsStyle {
     /// `raw`: without the `n` of a `BigInt`. `None`: nothing is said about numbers of this kind without a separator.
+    #[inline(never)]
     fn format(&self, raw: &[u8]) -> Option<Vec<u8>> {
         let (prefix, digits, config) = match raw {
             [b'0', b'b' | b'B', digits @ ..] => (raw.get(..2)?, digits, &self.binary),

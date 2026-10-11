@@ -105,10 +105,6 @@ impl NoUseBeforeDefine {
     }
 
     fn check<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        let references = variable.references();
-        if references.len() == 0 {
-            return;
-        }
         let Some(definition) = variable.declarations().next() else {
             return;
         };
@@ -120,9 +116,21 @@ impl NoUseBeforeDefine {
         let is_defined = |it: Reference<'a>| {
             starts_after(it, end) && !(is_type && it.is_value()) || it.is_init() || it.is_jsx_pragma()
         };
-        if variable.references().all(is_defined) {
-            return;
+        if !variable.references().all(is_defined) {
+            self.check_references(variable, definition, &is_defined, cx);
         }
+    }
+
+    /// `is_defined`: whether it is plain that a reference is after the definition.
+    #[inline(never)]
+    fn check_references<'a>(
+        &self,
+        variable: Symbol<'a>,
+        definition: Declaration<'a>,
+        is_defined: &dyn Fn(Reference<'a>) -> bool,
+        cx: &mut Cx<'a, Self>,
+    ) {
+        let references = variable.references();
         let (Some(kind), Some(definition_end)) = (definition.kind(), definition_name_end(definition)) else {
             return;
         };

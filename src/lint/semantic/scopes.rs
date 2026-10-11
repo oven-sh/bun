@@ -79,6 +79,8 @@ pub(crate) struct ScopeTree {
     zones: Vec<Zone>,
     /// Sorted by start. A region comes after the regions that contain it. Computed on demand.
     regions: OnceCell<Vec<Region>>,
+    /// Where each of `zones` starts, sorted, and where the last ends of those up to it. Computed on demand.
+    zone_ends: OnceCell<Vec<(u32, u32)>>,
 }
 
 #[derive(Copy, Clone)]
@@ -230,6 +232,7 @@ impl ScopeTree {
             changes: Vec::with_capacity(protos.len() * 2),
             zones: Vec::new(),
             regions: OnceCell::new(),
+            zone_ends: OnceCell::new(),
         };
         let mut scope_of_proto = vec![NONE; if zones.is_empty() { 0 } else { protos.len() }];
         // What is open: where it ends, the scope that what is written in it belongs to, and what
@@ -429,9 +432,45 @@ impl ScopeTree {
         })
     }
 
+    /// Whether `pos` is in one of `zones`.
+    fn is_in_zone(&self, pos: u32) -> bool {
+        let ends = self.zone_ends.get_or_init(|| {
+            let zones = self.zones.iter();
+            let mut ends: Vec<(u32, u32)> = zones.map(|it| (it.start, it.end)).collect();
+            ends.sort_unstable();
+            let mut last = 0;
+            for it in &mut ends {
+                last = last.max(it.1);
+                it.1 = last;
+            }
+            ends
+        });
+        let after = ends.partition_point(|it| it.0 <= pos);
+        (after.checked_sub(1).and_then(|it| ends.get(it))).is_some_and(|it| pos < it.1)
+    }
+
+    /// `scope_of_node` for a node that starts in none of `zones`: no zone is around it, and without the zones the regions
+    /// are the scopes, which are in that order, each with the one around it.
+    fn scope_of_node_in_no_zone(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
+        let after = self.scopes.partition_point(|it| it.start <= start);
+        let mut at = after.saturating_sub(1);
+        while let Some(scope) = self.scopes.get(at) {
+            let is_around =
+                end.max(start + 1) <= scope.end && (scope.start, scope.end) != (start, end);
+            if Some(scope.block) == block || is_around || scope.parent == NONE {
+                break;
+            }
+            at = scope.parent as usize;
+        }
+        at as u32
+    }
+
     /// ESLint's `getScope` for a node with this range. `block`: the node, if a node of its sort
     /// can create a scope.
     pub(crate) fn scope_of_node(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
+        if self.regions.get().is_none() && !self.is_in_zone(start) {
+            return self.scope_of_node_in_no_zone(start, end, block);
+        }
         let regions = self.regions();
         let after = regions.partition_point(|it| it.start <= start);
         let mut at = after.saturating_sub(1);

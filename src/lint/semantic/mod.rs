@@ -1094,6 +1094,16 @@ impl<'a> File<'a> {
         declared.map(move |it| Symbol::at(self, it.0 as u32))
     }
 
+    /// Those of [`File::symbols`] that are called `name`, in the same order. It looks at nothing else.
+    pub fn symbols_named(&'a self, name: Name<'a>) -> impl Iterator<Item = Symbol<'a>> + 'a {
+        let variables = self.variables();
+        let named = variables.named(name.atom()).iter();
+        let declared = named.filter(|it| {
+            (variables.list.get(**it as usize)).is_some_and(|it| !Variables::is_implicit(it))
+        });
+        declared.map(move |&index| Symbol::at(self, index))
+    }
+
     /// Those of [`File::symbols`] that have a declaration of one of `kinds`. It looks at a number
     /// for each symbol of the file.
     pub fn symbols_declared_as(
@@ -1143,6 +1153,17 @@ impl<'a> File<'a> {
             .all
             .iter()
             .map(move |raw| Reference { file: self, raw })
+    }
+
+    /// Those of [`File::references`] whose name starts in `span`, in the same order: two searches.
+    pub fn references_within(
+        &'a self,
+        span: Span,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let all = &self.reference_list().all[..];
+        let rest = &all[all.partition_point(|it| it.pos < span.start)..];
+        let within = &rest[..rest.partition_point(|it| it.pos < span.end)];
+        within.iter().map(move |raw| Reference { file: self, raw })
     }
 
     /// Every reference, in [the order ESLint makes them](self).

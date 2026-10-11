@@ -473,9 +473,19 @@ impl ScopeTree {
     /// ESLint's `getScope` for a node with this range. `block`: the node, if a node of its sort
     /// can create a scope.
     pub(crate) fn scope_of_node(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
-        if self.regions.get().is_none() && !self.has_lifted_parts && !self.is_in_zone(start) {
-            return self.scope_of_node_in_no_zone(start, end, block);
+        // A debug build goes the short way wherever it can be gone, and compares.
+        if (cfg!(debug_assertions) || self.regions.get().is_none())
+            && !self.has_lifted_parts
+            && !self.is_in_zone(start)
+        {
+            let scope = self.scope_of_node_in_no_zone(start, end, block);
+            debug_assert_eq!(scope, self.scope_of_node_by_regions(start, end, block));
+            return scope;
         }
+        self.scope_of_node_by_regions(start, end, block)
+    }
+
+    fn scope_of_node_by_regions(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
         let regions = self.regions();
         let after = regions.partition_point(|it| it.start <= start);
         let mut at = after.saturating_sub(1);

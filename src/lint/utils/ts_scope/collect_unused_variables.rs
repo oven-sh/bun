@@ -348,12 +348,6 @@ impl<'a> Variable<'a> {
         self.symbol
     }
 
-    /// The class, if this is the variable that its name is inside it.
-    #[inline]
-    pub fn class_scope(self) -> Option<Class<'a>> {
-        self.class
-    }
-
     #[inline]
     pub fn name(self) -> Name<'a> {
         self.symbol.name()

@@ -12,6 +12,7 @@ use crate::ir::width::string_width;
 use crate::js::format::format_node;
 use crate::prelude::*;
 use crate::write;
+use bun_lint::linter::goes_to_flow;
 use std::borrow::Cow;
 
 /// Prettier's `printKey`, without the brackets of a computed key, with the comments around it.
@@ -189,7 +190,10 @@ fn unquoted<'a>(
                     && is_canonical_simple_number(content)
                     && !f.file().is_flow()
                     && (f.options().flavor.is_oxfmt()
-                        || !crate::pragma::is_flow_file(f.file().text(), f.filepath())))
+                        || !goes_to_flow(
+                            bun_core::strings::without_utf8_bom(f.file().text()),
+                            f.filepath(),
+                        )))
         }
     };
     is_safe.then_some(content)

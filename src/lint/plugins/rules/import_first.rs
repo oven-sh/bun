@@ -43,12 +43,7 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        self.check(cx.file(), &|at, message| cx.report(at, message));
-    }
-}
-
-impl<const OLD_NAME: bool> First<OLD_NAME> {
-    fn check<'a>(&self, file: &'a File<'a>, report: &dyn Fn(Span, Message) -> Report<'a>) {
+        let file = cx.file();
         let is_oxlint = file.language().is_oxlint;
         let (mut any_expressions, mut has_non_import, mut any_relative) = (false, false, false);
         let (mut last_legal_imp, mut previous) = (None, Span::default());
@@ -89,7 +84,7 @@ impl<const OLD_NAME: bool> First<OLD_NAME> {
                 if is_relative {
                     any_relative = true;
                 } else if any_relative && let Some(span) = place() {
-                    report(span, if is_oxlint { ABSOLUTE_FIRST } else { ABSOLUTE_AFTER_RELATIVE });
+                    cx.report(span, if is_oxlint { ABSOLUTE_FIRST } else { ABSOLUTE_AFTER_RELATIVE });
                 }
             }
             if has_non_import {
@@ -102,10 +97,10 @@ impl<const OLD_NAME: bool> First<OLD_NAME> {
         for (index, info) in error_infos.iter().enumerate() {
             // oxlint has no fix.
             if is_oxlint {
-                report(info.node.span(), FIRST);
+                cx.report(info.node.span(), FIRST);
                 continue;
             }
-            report(info.node.span(), IN_BODY).fix(|fixer| {
+            cx.report(info.node.span(), IN_BODY).fix(|fixer| {
                 let last = *last_sort_nodes_index.get_or_init(|| ErrorInfo::last_to_sort(&error_infos));
                 match index.cmp(&last) {
                     Ordering::Less => Some(fixer.insert_after(info.node, "")),

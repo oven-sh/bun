@@ -34,10 +34,7 @@ impl Rule for NoNewBuffer {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Buffer") {
-            return None;
-        }
-        Some(())
+        file.mentions("Buffer").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

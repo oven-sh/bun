@@ -19,10 +19,7 @@ impl Rule for PreferArrayFind {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("filter") {
-            return None;
-        }
-        Some(())
+        file.mentions("filter").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -21,10 +21,7 @@ impl Rule for PreferSetSize {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Set") || !file.mentions("length") {
-            return None;
-        }
-        Some(())
+        (file.mentions("Set") && file.mentions("length")).then_some(())
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {

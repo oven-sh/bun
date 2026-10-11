@@ -28,10 +28,7 @@ impl Rule for RequireLocalTestContextForConcurrentSnapshots {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !jest::is_test(file) || !file.mentions("concurrent") || !file.mentions_any(&SNAPSHOT_METHODS) {
-            return None;
-        }
-        Some(())
+        (jest::is_test(file) && file.mentions("concurrent") && file.mentions_any(&SNAPSHOT_METHODS)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

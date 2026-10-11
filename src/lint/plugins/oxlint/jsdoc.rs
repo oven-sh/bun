@@ -85,7 +85,8 @@ pub struct JSDocFinder<'a> {
 }
 
 impl<'a> JSDocFinder<'a> {
-    pub(crate) fn new(file: &'a File<'a>) -> Self {
+    /// `None`: the file has no JSDoc comment.
+    pub(crate) fn new(file: &'a File<'a>) -> Option<Self> {
         let has_comments = file.comments().next().is_some();
         let comments = match has_comments
             .then(|| file.extension(|| Comments::new(file)))
@@ -94,20 +95,15 @@ impl<'a> JSDocFinder<'a> {
             Some(kept) => Kept::WithTheFile(kept),
             None => Kept::Here(Comments::new(file)),
         };
-        JSDocFinder {
+        (!comments.get().0.is_empty()).then(|| JSDocFinder {
             docs: file.jsdoc(),
             comments,
             nearest: AncestorMemo::default(),
-        }
+        })
     }
 
     fn comments(&self) -> &Comments {
         self.comments.get()
-    }
-
-    /// The file has no JSDoc comment.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.comments().0.is_empty()
     }
 
     fn handles<'s>(

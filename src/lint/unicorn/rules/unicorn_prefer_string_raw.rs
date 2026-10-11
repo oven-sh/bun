@@ -17,10 +17,7 @@ impl Rule for PreferStringRaw {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if file.is_declaration_file() {
-            return None;
-        }
-        Some(())
+        (!file.is_declaration_file()).then_some(())
     }
 
     fn string_literal<'a>(&self, string_literal: Literal<'a>, cx: &mut Cx<'a, Self>) {

@@ -273,21 +273,8 @@ impl<'a> Walk<'a> {
                 _ => (last_comment, tail),
             };
         }
-        let Some(content) = last_comment.filter(|content| content.starts_with(b"*")) else {
-            return false;
-        };
-        [&b"@type"[..], b"@satisfies"].iter().any(|tag| {
-            let mut rest = content;
-            while let Some(found) = strings::index_of(rest, tag) {
-                rest = rest.get(found + tag.len()..).unwrap_or_default();
-                if !rest
-                    .first()
-                    .is_some_and(|&byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                {
-                    return true;
-                }
-            }
-            false
+        last_comment.is_some_and(|content| {
+            content.starts_with(b"*") && crate::js::comments::is_type_cast_text(content)
         })
     }
 

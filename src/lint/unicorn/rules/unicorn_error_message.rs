@@ -20,10 +20,7 @@ impl Rule for ErrorMessage {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&BUILT_IN_ERRORS) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&BUILT_IN_ERRORS).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

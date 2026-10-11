@@ -20,10 +20,9 @@
 
 use super::print::flow::{arrow_behind_parameters, is_declared_class, is_flow_declare_export};
 use bun_lint::ast::{
-    BinOp, Case, Chain, Class, EnumMember, ExportSpec, Expr, ExprKind, File, Flags, FnBody, FnKind,
-    Func, ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp,
-    Prop, PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp,
-    VarDecl,
+    BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprKind, File, Flags, FnBody, FnKind, Func,
+    ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp, Prop,
+    PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
 };
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::skip_trivia_back;
@@ -194,37 +193,6 @@ enum Level {
     JsxContainer,
 }
 
-/// Whether `e` is a link of an optional chain after its first `?.`. The `!` of `a?.b!` is one.
-#[inline]
-fn is_chain_link(e: Expr<'_>) -> bool {
-    match e.tag() {
-        ExprTag::Dot | ExprTag::Index | ExprTag::Call => e.chain() != Chain::No,
-        ExprTag::NonNull => e.is_in_optional_chain(),
-        _ => false,
-    }
-}
-
-/// Whether oxc has a `ChainExpression` around `e`: it is all of `a?.b.c!`, not a part of it.
-#[inline]
-pub(crate) fn is_chain_root(e: Expr<'_>) -> bool {
-    is_chain_link(e) && is_last_chain_link(e)
-}
-
-fn is_last_chain_link(e: Expr<'_>) -> bool {
-    if e.is_parenthesized() {
-        return true;
-    }
-    let Node::Expr(parent) = e.parent() else {
-        return true;
-    };
-    match parent.tag() {
-        ExprTag::Dot | ExprTag::Index => parent.object() != Some(e) || parent.chain() == Chain::No,
-        ExprTag::Call => parent.callee() != Some(e) || parent.chain() == Chain::No,
-        ExprTag::NonNull => false,
-        _ => true,
-    }
-}
-
 #[inline]
 fn is_comma(e: Expr<'_>) -> bool {
     e.binary_op() == Some(BinOp::Comma)
@@ -235,41 +203,6 @@ fn is_inner_comma(e: Expr<'_>) -> bool {
     is_comma(e)
         && !e.is_parenthesized()
         && matches!(e.parent(), Node::Expr(parent) if is_comma(parent) && parent.left() == Some(e))
-}
-
-/// Whether `e` is written where ESTree has a pattern: it is what an assignment or a `for`-`in` or
-/// `for`-`of` loop assigns to, or a part of that which is not a default value or a computed key.
-pub(crate) fn is_assignment_target(mut e: Expr<'_>) -> bool {
-    fn is_head<'a>(statement: Stmt<'a>, e: Expr<'a>) -> bool {
-        matches!(
-            statement.kind(),
-            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }
-                if matches!(left.kind(), StmtKind::Expr(it) if it == e)
-        )
-    }
-    loop {
-        // An error. What is in the parentheses is an expression for typescript-estree, and Babel
-        // rejects it: `({ a }) = b`, `[(a = 1)] = b`.
-        if e.is_parenthesized() {
-            return false;
-        }
-        match e.parent() {
-            Node::Expr(parent) => match parent.tag() {
-                ExprTag::Assign => return parent.left() == Some(e),
-                ExprTag::Array | ExprTag::Spread => e = parent,
-                _ => return false,
-            },
-            Node::Prop(prop) => match (prop.value() == Some(e), prop.parent()) {
-                (true, Node::Expr(object)) if !prop.is_jsx_attribute() => e = object,
-                _ => return false,
-            },
-            Node::Stmt(statement) => {
-                return is_head(statement, e)
-                    || matches!(statement.parent(), Node::Stmt(outer) if is_head(outer, e));
-            }
-            _ => return false,
-        }
-    }
 }
 
 /// What a handle is, and what it is in.
@@ -293,7 +226,7 @@ impl<'a> AsAstNodes<'a> for Expr<'a> {
     /// [`ChainElement::as_chain_element`].
     #[inline]
     fn as_ast_nodes(self) -> AstNodes<'a> {
-        match is_chain_root(self) {
+        match self.is_chain_root() {
             true => AstNodes::ChainExpression(self),
             false => self.as_chain_element(),
         }
@@ -347,9 +280,9 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
         ExprTag::Regex => N::RegExpLiteral(e),
         ExprTag::Template => N::TemplateLiteral(e),
         ExprTag::TaggedTemplate => N::TaggedTemplateExpression(e),
-        ExprTag::Array if is_assignment_target(e) => N::ArrayAssignmentTarget(e),
+        ExprTag::Array if e.is_assignment_target() => N::ArrayAssignmentTarget(e),
         ExprTag::Array => N::ArrayExpression(e),
-        ExprTag::Object if is_assignment_target(e) => N::ObjectAssignmentTarget(e),
+        ExprTag::Object if e.is_assignment_target() => N::ObjectAssignmentTarget(e),
         ExprTag::Object => N::ObjectExpression(e),
         ExprTag::Fn => e.as_fn().map_or(N::Elision(e), Func::as_ast_nodes),
         ExprTag::Class => e.as_class().map_or(N::Elision(e), N::Class),
@@ -381,7 +314,7 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
         ExprTag::Assign => N::AssignmentExpression(e),
         ExprTag::Cond => N::ConditionalExpression(e),
         ExprTag::Spread if e.jsx_container_span().is_some() => N::JSXSpreadChild(e),
-        ExprTag::Spread if is_assignment_target(e) => N::AssignmentTargetRest(e),
+        ExprTag::Spread if e.is_assignment_target() => N::AssignmentTargetRest(e),
         ExprTag::Spread => N::SpreadElement(Node::Expr(e)),
         ExprTag::Await => N::AwaitExpression(e),
         ExprTag::Yield => N::YieldExpression(e),
@@ -414,7 +347,7 @@ fn is_default_in_assignment_target(e: Expr<'_>) -> bool {
         Node::Prop(prop) => prop.value() == Some(e) && !prop.is_jsx_attribute(),
         _ => false,
     };
-    is_element && is_assignment_target(e)
+    is_element && e.is_assignment_target()
 }
 
 /// Whether `statement` is in the place of Prettier's `JsExpressionRoot`: the text of the file is `(`, an expression that is in
@@ -426,7 +359,7 @@ fn is_expression_root(statement: Stmt<'_>) -> bool {
 
 fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
     use AstNodes as N;
-    if above < Level::Chain && is_chain_root(e) {
+    if above < Level::Chain && e.is_chain_root() {
         return N::ChainExpression(e);
     }
     let parent = e.parent();
@@ -553,7 +486,7 @@ impl<'a> AsAstNodes<'a> for Prop<'a> {
                 N::JSXAttribute(self)
             };
         }
-        let is_target = matches!(owner, Node::Expr(object) if is_assignment_target(object));
+        let is_target = matches!(owner, Node::Expr(object) if object.is_assignment_target());
         match (is_target, self.kind()) {
             (false, PropKind::Spread) => N::SpreadElement(Node::Prop(self)),
             (false, _) => N::ObjectProperty(self),

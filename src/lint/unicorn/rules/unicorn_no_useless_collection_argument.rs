@@ -19,10 +19,7 @@ impl Rule for NoUselessCollectionArgument {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["Set", "Map", "WeakSet", "WeakMap"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["Set", "Map", "WeakSet", "WeakMap"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

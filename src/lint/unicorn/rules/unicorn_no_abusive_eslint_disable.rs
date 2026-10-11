@@ -20,10 +20,7 @@ impl Rule for NoAbusiveEslintDisable {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if file.comments().len() == 0 {
-            return None;
-        }
-        Some(())
+        (file.comments().len() != 0).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

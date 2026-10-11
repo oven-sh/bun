@@ -18,10 +18,7 @@ impl Rule for NoImportNodeTest {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("node:test") {
-            return None;
-        }
-        Some(())
+        file.mentions("node:test").then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

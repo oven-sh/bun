@@ -197,7 +197,7 @@ Every variant has one field, the handle. It emulates the nodes that oxc has and 
 
 `a?.b.c` is two nodes in ESTree, a `ChainExpression` and the member expression in it, and one `Expr` here.
 
-- `e.as_ast_nodes()` is ESTree's `Expression`: `ChainExpression(e)` if `e` is the whole of a chain (`is_chain_root(e)`).
+- `e.as_ast_nodes()` is ESTree's `Expression`: `ChainExpression(e)` if `e` is the whole of a chain (`e.is_chain_root()`).
 - `e.as_chain_element()` is the member access, the call or the `!` itself. Its `parent()` is the `ChainExpression`.
 
 So oxc's `matches!(callee, Expression::StaticMemberExpression(_))`, which is false for `(a?.b)()`, is `matches!(callee.as_ast_nodes(), AstNodes::StaticMemberExpression(_))`, not `matches!(callee.kind(), ExprKind::Dot { .. })`.
@@ -307,7 +307,7 @@ oxfmt's option, which is made of `prettier-plugin-tailwindcss`: the classes of T
 - `Expr::span()` is without parentheses, like in ESTree. `e.outer_span()` has them.
 - A backtick string without substitutions is `ExprKind::Template`. JSX text is `ExprKind::String` with `e.is_jsx_text()`.
 - `a, b, c` is `Binary { op: Comma }`, left-nested. `e.sequence()` are the operands. `BinaryLikeExpression::new(e)` is `None` for it. `#a in b` is a binary-like expression (`AstNodes::PrivateInExpression` tells it apart).
-- Patterns in declarations are `Pat`. In assignments they are expressions: `is_assignment_target(e)`, and `as_ast_nodes()` says `ArrayAssignmentTarget`, ..
+- Patterns in declarations are `Pat`. In assignments they are expressions: `e.is_assignment_target()`, and `as_ast_nodes()` says `ArrayAssignmentTarget`, ..
 - `export` is a modifier of the declaration. `stmt.as_ast_nodes()` is the `ExportNamedDeclaration`, `FormatDeclaration(stmt)` the declaration in it, `stmt.span_without_export()` its span.
 - Methods: `member.func()` / `prop.func()` is the function, whose span starts at the parameters in ESTree.
 - Elements of `implements` and of the `extends` of an interface are `TypeKind::Ref`, or `TypeKind::Heritage` if they are not names.

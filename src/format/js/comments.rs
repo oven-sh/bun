@@ -11,7 +11,6 @@
 //! Where Prettier attaches a comment to a node that it is not next to, so that it is printed
 //! somewhere else, the comment is moved before anything is printed: see [`Comment::start`].
 
-use super::ast_nodes::is_chain_root;
 use super::source_text::SourceText;
 use crate::options::Flavor;
 use bun_lint::ast::{
@@ -308,7 +307,7 @@ impl<'a> NodeFinder<'a> {
     /// Whether `e`, which is in a link, is written in parentheses: a chain starts with it.
     fn stays_in_parentheses(&self, e: Expr<'a>) -> bool {
         self.is_cast_target(e)
-            || (is_chain_root(e)
+            || (e.is_chain_root()
                 && matches!(e.parent(), Node::Expr(parent) if match parent.tag() {
                     ExprTag::NonNull => true,
                     _ => !parent.is_optional(),
@@ -322,7 +321,7 @@ impl<'a> NodeFinder<'a> {
         };
         let callee = call.callee();
         matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
-            && (!is_chain_root(callee)
+            && (!callee.is_chain_root()
                 || (self.has_tree_of_babel && !self.stays_in_parentheses(callee)))
     }
 
@@ -334,10 +333,8 @@ impl<'a> NodeFinder<'a> {
                 ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::NonNull(_) => true,
                 ExprKind::Call(call) => {
                     let callee = call.callee();
-                    matches!(
-                        callee.tag(),
-                        ExprTag::Dot | ExprTag::Index | ExprTag::Call
-                    ) && (self.has_tree_of_babel || !is_chain_root(callee))
+                    matches!(callee.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call)
+                        && (self.has_tree_of_babel || !callee.is_chain_root())
                 }
                 _ => false,
             };
@@ -972,7 +969,11 @@ fn move_comments<'a>(
                 (true, false) => 1,
                 (false, _) => 2,
             };
-            (comment.start(), rank, std::cmp::Reverse(comment.leads_until))
+            (
+                comment.start(),
+                rank,
+                std::cmp::Reverse(comment.leads_until),
+            )
         });
     }
 }
@@ -1007,7 +1008,7 @@ fn is_indentable_text(content: &[u8]) -> bool {
 }
 
 /// Prettier's `/@(?:type|satisfies)\b/`.
-fn is_type_cast_text(content: &[u8]) -> bool {
+pub(crate) fn is_type_cast_text(content: &[u8]) -> bool {
     let mut rest = content;
     while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'@') {
         rest = &rest[at + 1..];

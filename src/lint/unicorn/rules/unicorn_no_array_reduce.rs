@@ -52,10 +52,7 @@ impl Rule for NoArrayReduce {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["reduce", "reduceRight"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["reduce", "reduceRight"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

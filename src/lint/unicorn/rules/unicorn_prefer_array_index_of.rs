@@ -51,10 +51,7 @@ impl Rule for PreferArrayIndexOf {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["findIndex", "findLastIndex"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["findIndex", "findLastIndex"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

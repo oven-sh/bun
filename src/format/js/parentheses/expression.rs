@@ -10,7 +10,7 @@ use AstNodes as N;
 /// Whether ESTree's `Expression` that `e` is needs parentheses. For the whole of an optional chain
 /// that is the `ChainExpression`.
 pub(crate) fn expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    match is_chain_root(e) {
+    match e.is_chain_root() {
         true => chain_expression_needs_parentheses(e, f),
         false => needs_parentheses(e, f),
     }
@@ -157,7 +157,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
                 && !few_initializers_of_for_in_get_parentheses(f);
         }
         // A pattern is not an expression.
-        ExprKind::Array(_) | ExprKind::Object(_) if is_assignment_target(e) => return false,
+        ExprKind::Array(_) | ExprKind::Object(_) if e.is_assignment_target() => return false,
         // The function of a method is not an expression of its own.
         ExprKind::Fn(func) if !func.is_arrow() && func.kind() != FnKind::Expr => return false,
         // The `ChainExpression` has them.
@@ -165,7 +165,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | ExprKind::Index { .. }
         | ExprKind::Call(_)
         | ExprKind::NonNull(_)
-            if is_chain_root(e) =>
+            if e.is_chain_root() =>
         {
             return false;
         }
@@ -582,7 +582,7 @@ fn assignment_needs_parentheses<'a>(
         // `({ a } = b);` would be a block otherwise. `() => (a = b)`
         N::ExpressionStatement(statement) => {
             statement.is_arrow_function_body()
-                || (matches!(left.kind(), ExprKind::Object(_)) && is_assignment_target(left))
+                || (matches!(left.kind(), ExprKind::Object(_)) && left.is_assignment_target())
         }
         // `interface A { [a = 1]; }`, `a = b = c`, Prettier's `JsExpressionRoot`
         N::TSPropertySignature(_) | N::AssignmentExpression(_) | N::Program(_) => false,
@@ -799,7 +799,7 @@ fn has_call_on_left_edge(e: Expr<'_>) -> bool {
     let mut current = e;
     loop {
         // What is in a `ChainExpression` is in parentheses.
-        if current != e && is_chain_root(current) {
+        if current != e && current.is_chain_root() {
             return false;
         }
         current = match current.kind() {

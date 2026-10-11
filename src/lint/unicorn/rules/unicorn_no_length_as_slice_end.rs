@@ -19,10 +19,7 @@ impl Rule for NoLengthAsSliceEnd {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("slice") || !file.mentions("length") {
-            return None;
-        }
-        Some(())
+        (file.mentions("slice") && file.mentions("length")).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

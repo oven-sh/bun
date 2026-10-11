@@ -19,10 +19,7 @@ impl Rule for PreferDomNodeDataset {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["setAttribute", "getAttribute", "removeAttribute", "hasAttribute"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["setAttribute", "getAttribute", "removeAttribute", "hasAttribute"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

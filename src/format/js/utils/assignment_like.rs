@@ -4,7 +4,6 @@
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::member_chain::is_member_call_chain;
 use super::object::{FormatKey, format_computed_or_property_key, write_member_name};
-use super::operators::assign_op_text;
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use super::suppressed::FormatSuppressedNode;
 use super::typecast::is_cast_target;
@@ -715,7 +714,7 @@ impl<'a> AssignmentLike<'a> {
                 _ => false,
             },
             AssignmentLike::AssignmentExpression(assignment) => match (assignment.left())
-                .filter(|left| left.tag() == ExprTag::Object && is_assignment_target(*left))
+                .filter(|left| left.tag() == ExprTag::Object && left.is_assignment_target())
                 .map(Expr::kind)
             {
                 Some(ExprKind::Object(props)) => {
@@ -770,7 +769,7 @@ fn block_comment_in_parentheses_of_cast_breaks(f: &Formatter<'_>) -> bool {
 /// `a =⏎// comment⏎b?.c` is `a = // comment⏎b?.c` in TypeScript: typescript-estree has a `ChainExpression` around
 /// `b?.c`, which Prettier attaches no comment to. The comment leads what is in it, and the right side has none.
 fn comments_lead_what_is_in_chain_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    is_chain_root(e) && !f.context().has_tree_of_babel() && !f.options().flavor.is_oxfmt()
+    e.is_chain_root() && !f.context().has_tree_of_babel() && !f.options().flavor.is_oxfmt()
 }
 
 fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> LeadingComments {
@@ -863,7 +862,7 @@ fn get_innermost_expression<'a>(mut current: Expr<'a>, f: &Formatter<'a>) -> Exp
             ExprTag::Unary if current.unary_op().is_some_and(|op| op.is_update()) => None,
             ExprTag::Unary | ExprTag::Await | ExprTag::Yield => current.argument(),
             // All of `a?.b!` is a `ChainExpression`.
-            ExprTag::NonNull if !is_chain_root(current) => current.expression(),
+            ExprTag::NonNull if !current.is_chain_root() => current.expression(),
             _ => None,
         };
         match inner {

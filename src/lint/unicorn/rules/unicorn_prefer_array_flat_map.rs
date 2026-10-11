@@ -1,4 +1,4 @@
-use crate::unicorn::expression_uses_optional_chain;
+use crate::unicorn::{TYPED_ARRAYS, expression_uses_optional_chain};
 use bun_lint_oxlint::ast_util::{
     get_declaration_of_variable, get_inner_expression, get_inner_expression_unless_chain, get_member_expr,
     is_global_reference, is_method_call,
@@ -14,22 +14,6 @@ const PREFER_ARRAY_FLAT_MAP: Message =
 const PREFER_SINGLE_FLAT_MAP: Message = Message::new("", "Prefer a single `.flatMap(…)` over `.filter(…).flatMap(…)`.");
 const REPLACE_FILTER_FLAT_MAP: Message =
     Message::new("", "Replace `.filter(…).flatMap(…)` with a single `.flatMap(…)`.");
-
-const INDEXED_COLLECTIONS: [&str; 13] = [
-    "Array",
-    "Int8Array",
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "Int16Array",
-    "Uint16Array",
-    "Int32Array",
-    "Uint32Array",
-    "Float16Array",
-    "Float32Array",
-    "Float64Array",
-    "BigInt64Array",
-    "BigUint64Array",
-];
 
 /// `Children.map(..)`, `React.Children.map(..)`
 fn is_ignored_call_expression(call: Call) -> bool {
@@ -71,7 +55,7 @@ fn simple_callback(argument: Expr<'_>) -> Option<(Name<'_>, Expr<'_>)> {
 
 /// The global `Array`, `Int8Array` ..
 fn is_indexed_collection(callee: Expr) -> bool {
-    callee.as_ident().is_some_and(|it| it.is_any(&INDEXED_COLLECTIONS)) && is_global_reference(callee)
+    callee.as_ident().is_some_and(|it| it.is("Array") || it.is_any(&TYPED_ARRAYS)) && is_global_reference(callee)
 }
 
 /// It is, or is a constant that is declared with, what is neither an array nor a typed array.

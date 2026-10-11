@@ -60,7 +60,7 @@ fn write_call<'a>(
     // A member access needs no parentheses as a callee, unless an optional chain ends with it. Then
     // it is a member access only in JavaScript: see `is_member_expression`.
     if matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
-        && (!is_chain_root(callee)
+        && (!callee.is_chain_root()
             || (f.context().has_tree_of_babel() && !chain_expression_needs_parentheses(callee, f)))
     {
         return write_member_chain(e, f);

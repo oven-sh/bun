@@ -48,10 +48,7 @@ impl Rule for PreferRegexpTest {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["match", "exec"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["match", "exec"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

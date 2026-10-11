@@ -23,8 +23,7 @@ impl Rule for CheckPropertyNames {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        let finder = JSDocFinder::new(file);
-        (!finder.is_empty()).then_some(finder)
+        JSDocFinder::new(file)
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

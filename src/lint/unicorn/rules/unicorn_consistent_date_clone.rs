@@ -17,10 +17,7 @@ impl Rule for ConsistentDateClone {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("getTime") {
-            return None;
-        }
-        Some(())
+        file.mentions("getTime").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -82,10 +82,7 @@ impl Rule for PreferEventTarget {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("EventEmitter") {
-            return None;
-        }
-        Some(())
+        file.mentions("EventEmitter").then_some(())
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {

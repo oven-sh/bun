@@ -6,7 +6,7 @@
 //
 // This lint knows the NAMES that such helpers have (`FAMILIES`), and finds the free functions with one of these names
 // outside the shared crates (`SHARED`): no `self`, and the first parameter is text, a byte, a code unit or a code point.
-// A method that happens to be called `contains` or `join` is not one, nor a function of a type (`SveltePart::order`).
+// A method that happens to be called `contains` or `join` is not one, nor a function of a type (`Word::hash`).
 //
 // What was there when the lint was written is in shared-helpers.inventory.json, by file and name. It can only shrink.
 //
@@ -130,7 +130,7 @@ const FUNCTION = /\bfn\s+([a-z_][a-z0-9_]*)\s*(?:<[^(]*?>)?\s*\(\s*(?:mut\s+)?([
 const TEXT =
   /^(?:&(?:'\w+\s+)?(?:mut\s+)?(?:\[u8\]|\[u16\]|str|BStr|Vec<u8>|Vec<u16>|String)|u8|u16|u32|i32|char|CodePoint|impl AsRef<\[u8\]>)$/;
 
-/** Whether what is at `index` is in an `impl` or a `trait`: `SveltePart::order(value)` is no comparison of strings. By rustfmt's indentation. */
+/** Whether what is at `index` is in an `impl` or a `trait`: `Word::hash(first, second, len)` is no hash of a text. By rustfmt's indentation. */
 function isAssociated(text: string, index: number): boolean {
   const start = text.lastIndexOf("\n", index) + 1;
   const indentation = /^ */.exec(text.slice(start, index))![0].length;

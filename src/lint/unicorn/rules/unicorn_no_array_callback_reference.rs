@@ -33,10 +33,7 @@ impl Rule for NoArrayCallbackReference {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&METHODS) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&METHODS).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

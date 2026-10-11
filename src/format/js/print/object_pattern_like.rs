@@ -76,7 +76,7 @@ impl<'a> ObjectPatternLike<'a> {
                 property.kind() == PropKind::Init
                     && (property.value()).is_some_and(|it| {
                         matches!(it.kind(), ExprKind::Object(_) | ExprKind::Array(_))
-                            && is_assignment_target(it)
+                            && it.is_assignment_target()
                     })
             }),
         }

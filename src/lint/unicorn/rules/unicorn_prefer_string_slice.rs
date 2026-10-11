@@ -17,10 +17,7 @@ impl Rule for PreferStringSlice {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !file.mentions_any(&["substr", "substring"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["substr", "substring"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

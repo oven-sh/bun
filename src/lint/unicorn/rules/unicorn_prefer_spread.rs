@@ -1,6 +1,7 @@
 use bun_lint_oxlint::ast_util::static_property_name;
 use bun_lint_oxlint::codegen::{Codegen, print_expression};
 use bun_lint_oxlint::ast_util::could_be_asi_hazard;
+use crate::unicorn::TYPED_ARRAYS;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -19,10 +20,7 @@ impl Rule for PreferSpread {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !file.mentions_any(&["from", "concat", "slice", "toSpliced"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["from", "concat", "slice", "toSpliced"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -89,24 +87,8 @@ fn is_typed_array_or_buffer_construction(expr: Expr) -> bool {
         return false;
     };
     !new_expr.callee().is_parenthesized()
-        && new_expr.callee().as_ident().is_some_and(|it| {
-            it.is_any(&[
-                "ArrayBuffer",
-                "SharedArrayBuffer",
-                "Int8Array",
-                "Uint8Array",
-                "Uint8ClampedArray",
-                "Int16Array",
-                "Uint16Array",
-                "Int32Array",
-                "Uint32Array",
-                "Float16Array",
-                "Float32Array",
-                "Float64Array",
-                "BigInt64Array",
-                "BigUint64Array",
-            ])
-        })
+        && (new_expr.callee().as_ident())
+            .is_some_and(|it| it.is_any(&["ArrayBuffer", "SharedArrayBuffer"]) || it.is_any(&TYPED_ARRAYS))
 }
 
 /// `expr`: whether it is in parentheses or not.

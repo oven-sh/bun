@@ -17,10 +17,7 @@ impl Rule for PreferBlobReadingMethods {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["readAsText", "readAsArrayBuffer"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["readAsText", "readAsArrayBuffer"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

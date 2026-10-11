@@ -47,22 +47,7 @@ fn is_blank_without_line_break(text: &[u8]) -> bool {
 
 /// A JSDoc comment with `@type` or `@satisfies`: Prettier's `isTypeCastComment`.
 fn is_type_cast_comment(source: &[u8]) -> bool {
-    let is_word_end = |rest: &[u8]| {
-        !rest
-            .first()
-            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
-    };
-    let has_tag = |tag: &[u8]| {
-        let mut rest = source;
-        while let Some(at) = bun_core::strings::index_of(rest, tag) {
-            rest = &rest[at + tag.len()..];
-            if is_word_end(rest) {
-                return true;
-            }
-        }
-        false
-    };
-    source.starts_with(b"/**") && (has_tag(b"@type") || has_tag(b"@satisfies"))
+    source.starts_with(b"/**") && crate::js::comments::is_type_cast_text(source)
 }
 
 /// Comments with text before and after them on their line, between the same two nodes.

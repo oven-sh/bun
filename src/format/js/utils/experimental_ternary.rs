@@ -87,7 +87,7 @@ impl<'a> OperandComments<'a> {
         // `ChainExpression`, which TypeScript files have: Prettier compares the alternate with the
         // node that follows the comment, and that is the member access or the call in it.
         let count = match alternate {
-            Operand::Expr(e) if f.file().is_javascript() || !is_chain_root(e) => rest
+            Operand::Expr(e) if f.file().is_javascript() || !e.is_chain_root() => rest
                 .iter()
                 .take_while(|comment| comment.is_line() || comment.is_multiline_block())
                 .count(),
@@ -677,7 +677,7 @@ fn inner_node_count(e: Expr<'_>, max: u32, is_javascript: bool) -> u32 {
         }
         ExprKind::Jsx(_) => 2,
     };
-    match !is_javascript && is_chain_root(e) {
+    match !is_javascript && e.is_chain_root() {
         true => count + 1,
         false => count,
     }

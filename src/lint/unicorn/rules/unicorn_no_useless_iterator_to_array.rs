@@ -103,10 +103,7 @@ impl Rule for NoUselessIteratorToArray {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("toArray") {
-            return None;
-        }
-        Some(())
+        file.mentions("toArray").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

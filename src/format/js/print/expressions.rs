@@ -263,7 +263,7 @@ pub(crate) fn unary_argument_has_comments<'a>(
     // Prettier attaches no comment to a `ChainExpression`, so what is in it has them.
     if !f.options().flavor.is_oxfmt()
         && !f.context().has_tree_of_babel()
-        && crate::js::ast_nodes::is_chain_root(argument)
+        && argument.is_chain_root()
     {
         return false;
     }

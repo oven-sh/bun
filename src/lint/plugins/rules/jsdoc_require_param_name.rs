@@ -94,8 +94,7 @@ impl<const RULE: usize> Rule for RequireTagPart<RULE> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        let finder = JSDocFinder::new(file);
-        (!finder.is_empty()).then_some(finder)
+        JSDocFinder::new(file)
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

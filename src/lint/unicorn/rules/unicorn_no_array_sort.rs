@@ -57,10 +57,7 @@ impl Rule for NoArraySort {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("sort") {
-            return None;
-        }
-        Some(())
+        file.mentions("sort").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

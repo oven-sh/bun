@@ -43,10 +43,7 @@ impl Rule for NoImportingVitestGlobals {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["vitest", "vite-plus/test", "@effect/vitest"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["vitest", "vite-plus/test", "@effect/vitest"]).then_some(())
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {

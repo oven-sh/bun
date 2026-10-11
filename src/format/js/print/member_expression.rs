@@ -168,7 +168,7 @@ fn answer_for_object<'a>(object: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
     let (last, answer) = f.context().long_member_chain.get()?;
     let mut at = object;
     loop {
-        if is_chain_root(at) {
+        if at.is_chain_root() {
             return None;
         }
         if at == last {

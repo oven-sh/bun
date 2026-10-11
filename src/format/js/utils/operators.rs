@@ -113,37 +113,3 @@ impl UnOpExt for UnOp {
         !matches!(self, UnOp::PostInc | UnOp::PostDec)
     }
 }
-
-/// `=`, `+=`, ..: `op` is the operator of a compound assignment.
-pub(crate) fn assign_op_text(op: Option<BinOp>) -> &'static str {
-    match op {
-        None | Some(BinOp::Comma) => "=",
-        Some(BinOp::Add) => "+=",
-        Some(BinOp::Sub) => "-=",
-        Some(BinOp::Mul) => "*=",
-        Some(BinOp::Div) => "/=",
-        Some(BinOp::Rem) => "%=",
-        Some(BinOp::Pow) => "**=",
-        Some(BinOp::Shl) => "<<=",
-        Some(BinOp::Shr) => ">>=",
-        Some(BinOp::UShr) => ">>>=",
-        Some(BinOp::BitAnd) => "&=",
-        Some(BinOp::BitOr) => "|=",
-        Some(BinOp::BitXor) => "^=",
-        Some(BinOp::And) => "&&=",
-        Some(BinOp::Or) => "||=",
-        Some(BinOp::Nullish) => "??=",
-        Some(
-            BinOp::Lt
-            | BinOp::Le
-            | BinOp::Gt
-            | BinOp::Ge
-            | BinOp::EqEq
-            | BinOp::NotEq
-            | BinOp::EqEqEq
-            | BinOp::NotEqEq
-            | BinOp::In
-            | BinOp::Instanceof,
-        ) => "=",
-    }
-}

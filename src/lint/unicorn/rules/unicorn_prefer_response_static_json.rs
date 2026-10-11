@@ -20,10 +20,7 @@ impl Rule for PreferResponseStaticJson {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Response") || !file.mentions("stringify") {
-            return None;
-        }
-        Some(())
+        (file.mentions("Response") && file.mentions("stringify")).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

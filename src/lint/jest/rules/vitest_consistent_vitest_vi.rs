@@ -26,10 +26,7 @@ impl Rule for ConsistentVitestVi {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions(self.opposite) {
-            return None;
-        }
-        Some(())
+        file.mentions(self.opposite).then_some(())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

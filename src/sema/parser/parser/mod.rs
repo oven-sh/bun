@@ -18,7 +18,7 @@ mod ty;
 
 use crate::lexer::{Lexer, Mark};
 use crate::token::T;
-use crate::{Goal, Options, Parsed, Refusal, Refused, Scratch};
+use crate::{Options, Parsed, Refusal, Refused, Scratch};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
@@ -190,8 +190,6 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// In Flow: where the last expression statement starts.
     pub(crate) flow_statement_start: u32,
     pub(crate) has_top_level_await: bool,
-    /// `Parsed::end`
-    pub(crate) end: u32,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
     /// A computed name in the top-level statement that is being parsed has an `await`, which was read outside the await
@@ -278,7 +276,6 @@ struct Harvest<'a> {
     file: FileBuilder,
     stacks: Stacks,
     has_top_level_await: bool,
-    end: u32,
 }
 
 pub(crate) fn run<'a>(
@@ -292,9 +289,7 @@ pub(crate) fn run<'a>(
     }
     match atoms {
         Some(atoms) => scratch.names.belong_to(atoms),
-        None if options.goal == Goal::File => scratch.names.begin_own(text.len()),
-        // What follows the part is not paid for.
-        None => scratch.names.begin_own(text.len().min(1 << 12)),
+        None => scratch.names.begin_own(text.len()),
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
@@ -324,7 +319,6 @@ pub(crate) fn run<'a>(
         file: mut f,
         stacks,
         has_top_level_await,
-        end,
     } = match is_general {
         true => Parser::<true>::new(seed).parse(),
         false => Parser::<false>::new(seed).parse(),
@@ -367,7 +361,6 @@ pub(crate) fn run<'a>(
     Ok(Parsed {
         file: f,
         has_top_level_await,
-        end,
     })
 }
 
@@ -414,7 +407,6 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             has_type_arguments_in_expressions: is_flow || !options.is_javascript,
             flow_statement_start: u32::MAX,
             has_top_level_await: false,
-            end: 0,
             has_await_in_statement: false,
             has_await_in_name: false,
             has_await_identifier: false,
@@ -445,7 +437,6 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             file: self.f,
             stacks: self.s,
             has_top_level_await: self.has_top_level_await,
-            end: self.end,
         }
     }
 
@@ -464,7 +455,6 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     /// `parseSourceFileWorker`
     fn source_file(&mut self) {
         self.f.source_len = self.lx.src.len() as u32;
-        self.end = self.f.source_len;
         self.f.kind = if self.options.is_json {
             FileKind::Json
         } else if self.options.is_declaration_file {
@@ -483,10 +473,6 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             let value = self.json_text();
             self.f.has_module_syntax = true;
             self.s.ids.push(value.0);
-        }
-        if self.options.goal != Goal::File {
-            let part = self.part(self.options.goal);
-            self.s.ids.push(part.0);
         }
         let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {

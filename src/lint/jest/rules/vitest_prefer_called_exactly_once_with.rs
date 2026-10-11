@@ -25,10 +25,7 @@ impl Rule for PreferCalledExactlyOnceWith {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("toHaveBeenCalledOnce") || !file.mentions("toHaveBeenCalledWith") {
-            return None;
-        }
-        Some(())
+        (file.mentions("toHaveBeenCalledOnce") && file.mentions("toHaveBeenCalledWith")).then_some(())
     }
 
     fn stmt<'a>(&self, block_statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

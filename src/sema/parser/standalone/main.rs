@@ -54,7 +54,6 @@ fn options_for(path: &[u8], dialect: Dialect) -> Options {
         recovers: false,
         reads_jsdoc: false,
         dialect,
-        goal: Default::default(),
     }
 }
 
@@ -525,33 +524,6 @@ fn bench(args: &[String]) {
     }
 }
 
-/// `part --goal=expression|declaration|type [--js] <text> ..`: where the part at the start of each text ends.
-fn part(args: &[String]) {
-    let goal = match args.iter().find_map(|arg| arg.strip_prefix("--goal=")) {
-        Some("declaration") => bun_sema_parser::Goal::Declaration,
-        Some("type") => bun_sema_parser::Goal::Type,
-        _ => bun_sema_parser::Goal::Expression,
-    };
-    let is_javascript = args.iter().any(|arg| arg == "--js");
-    let mut scratch = Scratch::default();
-    for text in args.iter().filter(|arg| !arg.starts_with("--")) {
-        let options = Options {
-            is_javascript,
-            goal,
-            ..Default::default()
-        };
-        match bun_sema_parser::parse_with_own_atoms(text.as_bytes(), options, &mut scratch) {
-            Ok(parsed) => {
-                let (part, rest) = text.split_at(parsed.end as usize);
-                let statements = parsed.file.ids(parsed.file.body).count();
-                output_line!("{part:?} | {rest:?} | {statements} statement");
-                scratch.recycle(parsed.file);
-            }
-            Err(refused) => output_line!("{text:?}: {:?} at {}", refused.why, refused.at),
-        }
-    }
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let stack = 16 << 20;
@@ -562,7 +534,6 @@ fn main() {
             Some("dump") => dump(&args[1..]),
             Some("bench") => bench(&args[1..]),
             Some("fuzz") => fuzz(&args[1..]),
-            Some("part") => part(&args[1..]),
             _ => error_line!("usage: bun-hir compare|dump|bench|fuzz <paths>"),
         }
     };

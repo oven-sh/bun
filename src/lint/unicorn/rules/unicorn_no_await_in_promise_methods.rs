@@ -19,10 +19,7 @@ impl Rule for NoAwaitInPromiseMethods {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Promise") || !file.has_exprs([ExprTag::Await]) {
-            return None;
-        }
-        Some(())
+        (file.mentions("Promise") && file.has_exprs([ExprTag::Await])).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -19,10 +19,7 @@ impl Rule for NoConditionalTests {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !jest::is_test(file) || !file.has_stmts([StmtTag::If]) {
-            return None;
-        }
-        Some(())
+        (jest::is_test(file) && file.has_stmts([StmtTag::If])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

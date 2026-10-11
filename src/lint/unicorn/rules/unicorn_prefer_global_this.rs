@@ -72,10 +72,7 @@ impl Rule for PreferGlobalThis {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&ALIASES) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&ALIASES).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

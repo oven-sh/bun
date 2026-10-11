@@ -19,10 +19,7 @@ impl Rule for NoTypeofUndefined {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("undefined") {
-            return None;
-        }
-        Some(())
+        file.mentions("undefined").then_some(())
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

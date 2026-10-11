@@ -32,10 +32,7 @@ impl Rule for PreferModernMathApis {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Math") {
-            return None;
-        }
-        Some(())
+        file.mentions("Math").then_some(())
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

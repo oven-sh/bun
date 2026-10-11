@@ -45,7 +45,7 @@ fn is_long_curried_callee<'a>(call: Expr<'a>, parent: Expr<'a>, f: &Formatter<'_
         return false;
     };
     parent.callee() == call
-        && (f.context().has_tree_of_babel() || !is_chain_root(call))
+        && (f.context().has_tree_of_babel() || !call.is_chain_root())
         && this.args().len() > parent.args().len()
         && !parent.args().is_empty()
 }

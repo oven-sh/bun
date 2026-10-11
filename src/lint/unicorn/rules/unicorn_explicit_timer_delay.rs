@@ -23,10 +23,7 @@ impl Rule for ExplicitTimerDelay {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&TIMER_FUNCTION_NAMES) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&TIMER_FUNCTION_NAMES).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

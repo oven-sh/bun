@@ -84,28 +84,22 @@ impl<const OLD_NAME: bool> Rule for SortDefaultProps<OLD_NAME> {
         cx.state.extend(property_definition(member));
     }
 
+    /// `checkSorted`, for each of the objects. One that many variables lead to is looked at once, and reported as often.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut objects = std::mem::take(&mut cx.state);
-        self.check_sorted(&mut objects, &mut |unsorted| {
-            cx.report(unsorted, PROPS_NOT_SORTED);
-        });
-    }
-}
-
-impl<const OLD_NAME: bool> SortDefaultProps<OLD_NAME> {
-    /// `checkSorted`, for each of `objects`. One that many variables lead to is looked at once, and reported as often.
-    fn check_sorted<'a>(&self, objects: &mut [Expr<'a>], report: &mut dyn FnMut(Prop<'a>)) {
         objects.sort_unstable_by_key(|it| it.span().start);
         for same in objects.chunk_by(|a, b| a == b) {
             let unsorted = same.first().map_or_else(Vec::new, |&object| self.unsorted(object));
             for _ in same {
                 for &property in &unsorted {
-                    report(property);
+                    cx.report(property, PROPS_NOT_SORTED);
                 }
             }
         }
     }
+}
 
+impl<const OLD_NAME: bool> SortDefaultProps<OLD_NAME> {
     /// What `checkSorted` reports of the properties of `object`.
     fn unsorted<'a>(&self, object: Expr<'a>) -> Vec<Prop<'a>> {
         let ExprKind::Object(declarations) = object.kind() else {

@@ -80,10 +80,7 @@ impl Rule for PreferStringReplaceAll {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !file.mentions_any(&["replace", "replaceAll"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["replace", "replaceAll"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

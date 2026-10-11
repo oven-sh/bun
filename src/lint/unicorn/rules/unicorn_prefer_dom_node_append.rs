@@ -18,10 +18,7 @@ impl Rule for PreferDomNodeAppend {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("appendChild") {
-            return None;
-        }
-        Some(())
+        file.mentions("appendChild").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

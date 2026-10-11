@@ -43,10 +43,7 @@ impl Rule for NoConfusingArrayWith {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("with") {
-            return None;
-        }
-        Some(())
+        file.mentions("with").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

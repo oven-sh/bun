@@ -18,10 +18,7 @@ impl Rule for NoExport {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !jest::is_jest_file(file) || !jest::may_have_possible_jest_call_node(file) {
-            return None;
-        }
-        Some(())
+        (jest::is_jest_file(file) && jest::may_have_possible_jest_call_node(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

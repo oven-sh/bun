@@ -18,10 +18,7 @@ impl Rule for PreferStringTrimStartEnd {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !file.mentions_any(&["trimLeft", "trimRight"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["trimLeft", "trimRight"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

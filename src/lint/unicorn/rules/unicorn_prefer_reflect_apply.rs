@@ -47,10 +47,7 @@ impl Rule for PreferReflectApply {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("apply") {
-            return None;
-        }
-        Some(())
+        file.mentions("apply").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

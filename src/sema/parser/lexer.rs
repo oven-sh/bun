@@ -376,11 +376,6 @@ impl<'a> Lexer<'a> {
         self.end = self.start;
     }
 
-    /// Nothing more of the text is read.
-    pub(crate) fn stop(&mut self) {
-        self.token = T::Eof;
-    }
-
     /// From here on the text ends where `src` ends: before the `*/` of a comment, or with the file.
     pub(crate) fn set_src(&mut self, src: &'a [u8]) {
         self.src = src;

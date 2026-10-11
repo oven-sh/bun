@@ -23,10 +23,7 @@ impl Rule for NoSinglePromiseInPromiseMethods {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Promise") {
-            return None;
-        }
-        Some(())
+        file.mentions("Promise").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

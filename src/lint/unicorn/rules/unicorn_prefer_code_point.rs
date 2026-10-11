@@ -17,10 +17,7 @@ impl Rule for PreferCodePoint {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["fromCharCode", "charCodeAt"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["fromCharCode", "charCodeAt"]).then_some(())
     }
 
     fn expr<'a>(&self, member_expr: Expr<'a>, cx: &mut Cx<'a, Self>) {

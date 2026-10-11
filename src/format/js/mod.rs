@@ -18,9 +18,7 @@ pub(crate) mod utils;
 use crate::prelude::*;
 
 pub(crate) mod prelude {
-    pub(crate) use super::ast_nodes::{
-        AsAstNodes, AstNodes, ChainElement, is_assignment_target, is_chain_root,
-    };
+    pub(crate) use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement};
     pub(crate) use super::builders::FormatSeparatedIter;
     pub(crate) use super::comments::{Comment, Comments};
     pub(crate) use super::fields::{ExprFields, StmtFields};

@@ -20,10 +20,7 @@ impl Rule for NoConsoleSpaces {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("console") {
-            return None;
-        }
-        Some(())
+        file.mentions("console").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

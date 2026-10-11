@@ -25,10 +25,7 @@ impl Rule for PreferDateNow {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Date") {
-            return None;
-        }
-        Some(())
+        file.mentions("Date").then_some(())
     }
 
     fn expr<'a>(&self, new_date: Expr<'a>, cx: &mut Cx<'a, Self>) {

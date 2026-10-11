@@ -44,10 +44,7 @@ impl Rule for PreferIncludes {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("indexOf") {
-            return None;
-        }
-        Some(())
+        file.mentions("indexOf").then_some(())
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

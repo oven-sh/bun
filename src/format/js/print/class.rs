@@ -606,7 +606,7 @@ impl HeadGaps {
                 .first()
                 .map(|it| (it.span().start, HeadGap::Implements { follows_known_part }))
         };
-        let is_chain = class.extends().is_some_and(is_chain_root);
+        let is_chain = class.extends().is_some_and(Expr::is_chain_root);
         let heritage = || {
             class
                 .extends()

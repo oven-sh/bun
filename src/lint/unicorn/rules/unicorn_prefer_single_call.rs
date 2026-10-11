@@ -20,10 +20,7 @@ impl Rule for PreferSingleCall {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["push", "unshift", "classList", "importScripts"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["push", "unshift", "classList", "importScripts"]).then_some(())
     }
 
     fn stmt<'a>(&self, curr_es: Stmt<'a>, cx: &mut Cx<'a, Self>) {

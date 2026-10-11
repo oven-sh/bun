@@ -174,7 +174,6 @@ fn file_read_as(
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
-        goal: Default::default(),
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -454,38 +453,6 @@ pub fn with_summary_in_place<'s, R>(
     if text.len() < 4 << 20 {
         scratch.recycle(file);
     }
-    give_back_scratch(scratch);
-    result
-}
-
-/// [`with_summary_in_place`] for what a text starts with: see [`crate::Goal`]. Calls `then` with the file, which has one
-/// statement, the interner of its atoms, and the end of the last token of the part. `Err`: where the first error is.
-/// There is no JSX, `await` is a keyword, and nothing is recovered from.
-pub fn with_part_in_place<'s, R>(
-    dialect: Dialect,
-    is_javascript: bool,
-    text: &[u8],
-    goal: crate::Goal,
-    then: impl FnOnce(Summary<'_, 's>, &dyn Intern, u32) -> R,
-) -> Result<R, u32> {
-    let options = Options {
-        is_javascript,
-        dialect,
-        goal,
-        ..Default::default()
-    };
-    // `then` may parse another text.
-    let mut scratch = take_scratch();
-    let parsed = crate::parse_with_own_atoms(text, options, &mut scratch);
-    let result = parsed.map_err(|refused| refused.at).map(|mut parsed| {
-        let result = then(
-            Summary::InPlace(&mut parsed.file),
-            &scratch.atoms(text),
-            parsed.end,
-        );
-        scratch.recycle(parsed.file);
-        result
-    });
     give_back_scratch(scratch);
     result
 }

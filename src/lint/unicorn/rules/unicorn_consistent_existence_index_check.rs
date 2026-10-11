@@ -24,10 +24,7 @@ impl Rule for ConsistentExistenceIndexCheck {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&METHOD_NAMES) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&METHOD_NAMES).then_some(())
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -117,8 +117,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             return false;
         };
         if !f.is_quiet()
-            && (has_leading_comment(first_member, f)
-                || has_trailing_comment(first_member, f))
+            && (has_leading_comment(first_member, f) || has_trailing_comment(first_member, f))
         {
             return false;
         }
@@ -367,7 +366,7 @@ fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool
     let end = expression.span().end;
     if comments_are_attached_to_links(f) {
         // It is attached to what is in a `ChainExpression`, not to that.
-        let is_chain_expression = matches!(member, ChainMember::Node(node) if is_chain_root(*node))
+        let is_chain_expression = matches!(member, ChainMember::Node(node) if node.is_chain_root())
             && !f.context().has_tree_of_babel();
         return !is_chain_expression && f.comments().has_comment_trailing_link(end);
     }
@@ -545,7 +544,7 @@ fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatt
         if (has_type_casts && is_cast_target(expression, f))
             || ((!is_link
                 || ((tag == ExprTag::NonNull || expression.chain() != Chain::No)
-                    && is_chain_root(expression)))
+                    && expression.is_chain_root()))
                 && expression_needs_parentheses(expression, f))
         {
             members.push(ChainMember::Node(expression));

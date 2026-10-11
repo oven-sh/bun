@@ -66,7 +66,7 @@ bun_lint::rules! {
     unicorn_no_unnecessary_array_flat_depth::NoUnnecessaryArrayFlatDepth,
     unicorn_no_unnecessary_array_splice_count::NoUnnecessaryArraySpliceCount,
     unicorn_no_unnecessary_await::NoUnnecessaryAwait,
-    unicorn_no_unnecessary_slice_end::NoUnnecessarySliceEnd,
+    unicorn_no_unnecessary_slice_end::NoUnnecessaryArraySpliceCount = unicorn_no_unnecessary_array_splice_count<true>,
     unicorn_no_unreadable_array_destructuring::NoUnreadableArrayDestructuring,
     unicorn_no_unreadable_iife::NoUnreadableIife,
     unicorn_no_useless_collection_argument::NoUselessCollectionArgument,

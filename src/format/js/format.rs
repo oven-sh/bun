@@ -14,9 +14,10 @@
 //! 4 to 6 are done. It is set for the time that a node is written which has no comment in it and
 //! none behind it on the same line.
 
-use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement, is_chain_root};
+use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement};
 use super::parentheses;
 use super::print;
+use super::print::program::ends_before_semicolon;
 use super::siblings::following_span_start_in;
 use super::utils::suppressed::FormatSuppressedNode;
 use super::utils::typecast::write_type_casts;
@@ -139,34 +140,6 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
             f.comments().without_semicolon(span)
         }
         _ => span,
-    }
-}
-
-/// Whether Prettier's `locEnd` of `statement` is before the `;` at its end.
-fn ends_before_semicolon(mut statement: Stmt<'_>) -> bool {
-    loop {
-        statement = match statement.kind() {
-            StmtKind::If { yes, no, .. } => no.unwrap_or(yes),
-            StmtKind::For { body, .. }
-            | StmtKind::ForIn { body, .. }
-            | StmtKind::ForOf { body, .. }
-            | StmtKind::While { body, .. }
-            | StmtKind::With { body, .. }
-            | StmtKind::Labeled { body, .. } => body,
-            StmtKind::Expr(_)
-            | StmtKind::Import(_)
-            | StmtKind::ExportNamed(_)
-            | StmtKind::ExportStar { .. }
-            | StmtKind::ExportDefault(_)
-            | StmtKind::Return(_)
-            | StmtKind::Throw(_)
-            | StmtKind::DoWhile { .. }
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_)
-            | StmtKind::Debugger
-            | StmtKind::Var(_) => return true,
-            _ => return false,
-        };
     }
 }
 
@@ -520,7 +493,7 @@ impl<'a> Format<'a> for FormatExpr<'a> {
                 self.expr.tag(),
                 ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
             )
-            && is_chain_root(self.expr);
+            && self.expr.is_chain_root();
         match f.is_quiet() {
             true => self.write_in_parentheses(is_chain_expression, f),
             false => self.fmt_with_comments(is_chain_expression, f),
@@ -566,7 +539,7 @@ fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let is_chain_expression = matches!(
         tag,
         ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
-    ) && is_chain_root(e);
+    ) && e.is_chain_root();
     match is_chain_expression || parentheses::expression::needs_parentheses(e, f) {
         true => format_expression_in_general(e, f),
         false => write_expression_of(tag, e, ExprOptions::None, f),
@@ -706,7 +679,7 @@ fn write_object<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let ExprKind::Object(props) = e.kind() else {
         return;
     };
-    match super::ast_nodes::is_assignment_target(e) {
+    match e.is_assignment_target() {
         true => print::expressions::write_object_assignment_target(e, props, f),
         false => print::expressions::write_object_expression(e, props, f),
     }
@@ -717,7 +690,7 @@ fn write_array<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let ExprKind::Array(elements) = e.kind() else {
         return;
     };
-    match super::ast_nodes::is_assignment_target(e) {
+    match e.is_assignment_target() {
         true => print::expressions::write_array_assignment_target(e, elements, f),
         false => print::array_expression::write_array_expression(e, elements, f),
     }

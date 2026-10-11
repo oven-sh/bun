@@ -16,10 +16,7 @@ impl Rule for ConsistentAssert {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["assert", "node:assert", "assert/strict", "node:assert/strict"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["assert", "node:assert", "assert/strict", "node:assert/strict"]).then_some(())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

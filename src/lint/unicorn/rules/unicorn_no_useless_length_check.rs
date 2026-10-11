@@ -55,10 +55,7 @@ impl Rule for NoUselessLengthCheck {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("length") || !file.mentions_any(&["every", "some"]) {
-            return None;
-        }
-        Some(())
+        (file.mentions("length") && file.mentions_any(&["every", "some"])).then_some(())
     }
 
     fn binary<'a>(&self, root: Expr<'a>, cx: &mut Cx<'a, Self>) {

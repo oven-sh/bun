@@ -23,10 +23,7 @@ impl Rule for PreferArrayFlat {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["flatMap", "reduce", "concat"]) {
-            return None;
-        }
-        Some(())
+        file.mentions_any(&["flatMap", "reduce", "concat"]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

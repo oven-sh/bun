@@ -23,10 +23,7 @@ impl Rule for PreferDomNodeTextContent {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("innerText") {
-            return None;
-        }
-        Some(())
+        file.mentions("innerText").then_some(())
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {

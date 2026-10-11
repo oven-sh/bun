@@ -1,4 +1,5 @@
 use bun_lint_oxlint::ast_util::get_inner_expression;
+use crate::jest;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -19,7 +20,7 @@ impl Rule for PreferJestMocked {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&MOCK_TYPES).then_some(())
+        jest::mentions_any(file, &const { jest::mention_bits(MOCK_TYPES) }).then_some(())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

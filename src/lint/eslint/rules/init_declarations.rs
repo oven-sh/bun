@@ -39,6 +39,23 @@ impl Config {
     }
 
     pub fn check<'a>(&self, decl: VarDecl<'a>) -> Option<Finding<'a>> {
+        let Node::Stmt(declaration) = decl.parent() else {
+            return None;
+        };
+        // Whether it is in the head of the `for` statement that is its parent.
+        let in_for_loop = match declaration.parent() {
+            Node::Stmt(block) if block.is_loop() => match block.kind() {
+                StmtKind::For { init, .. } => Some(init == Some(declaration)),
+                StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some(left == declaration),
+                _ => None,
+            },
+            _ => None,
+        };
+        let is_initialized = in_for_loop.unwrap_or_else(|| decl.init().is_some());
+        // As most are.
+        if is_initialized != self.is_never {
+            return None;
+        }
         let name = decl.pat().as_ident()?;
         // For oxlint only a `const` has to be initialized.
         let is_oxlint = decl.file().language().is_oxlint;
@@ -50,23 +67,10 @@ impl Config {
         if self.is_never && has_to_be_initialized {
             return None;
         }
-        let Node::Stmt(declaration) = decl.parent() else {
-            return None;
-        };
         // The parameter of a `catch` is a `VarDecl` too.
         if declaration.tag() != StmtTag::Var {
             return None;
         }
-        // Whether it is in the head of the `for` statement that is its parent.
-        let in_for_loop = match declaration.parent() {
-            Node::Stmt(block) if block.is_loop() => match block.kind() {
-                StmtKind::For { init, .. } => Some(init == Some(declaration)),
-                StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some(left == declaration),
-                _ => None,
-            },
-            _ => None,
-        };
-        let is_initialized = in_for_loop.unwrap_or_else(|| decl.init().is_some());
         let message = match self.is_never {
             false if !is_initialized => INITIALIZED,
             // With `ignoreForLoopInit` oxlint says nothing at all.

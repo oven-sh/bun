@@ -3,7 +3,7 @@ use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
-    SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, has_rest_sibling,
+    SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_unused_variables, collect_variables, has_rest_sibling,
     is_defined_in_array_pattern, is_referenced_in_array_pattern, is_type_only_reference,
     is_used_global_variable,
 };
@@ -1463,19 +1463,14 @@ impl NoUnusedVars {
 
     fn check_program<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        let analysis = collect_variables(file, UsedMarks::default());
-        // Upstream's `collectVariables` sets `variable.eslintUsed`, for the rules that end after this one.
-        for variable in analysis.used_variables() {
-            if variable.class_scope().is_none() && analysis.is_eslint_used(*variable) {
-                variable.symbol().mark_used();
-            }
-        }
+        // It sets `variable.eslintUsed`, as upstream's does, for the rules that end after this one.
+        let analysis = match self.base.report_used_ignore_pattern {
+            true => collect_variables(file, UsedMarks::default()),
+            false => collect_unused_variables(file, UsedMarks::default()),
+        };
 
         let mut reported = SymbolSet::default();
-        let used_variables: &[Variable<'a>] = match self.base.report_used_ignore_pattern {
-            true => analysis.used_variables(),
-            false => &[],
-        };
+        let used_variables = analysis.used_variables();
         // What is unused for oxlint only.
         let discarded = std::mem::take(&mut cx.state.discarded);
         let candidates = match file.language().is_oxlint {

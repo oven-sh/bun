@@ -868,7 +868,8 @@ fn has_use<'a>(
         let flags = reference.flags();
         // Only what is written to is on the left of an assignment or the operand of an update, and
         // without an assignment before there is no right side to be in.
-        if flags.contains(ReferenceFlags::WRITE) || rhs_node.is_some() {
+        // Nor is the name of a declaration.
+        if rhs_node.is_some() || flags.contains(ReferenceFlags::WRITE) && reference.expr().is_some() {
             let is_for_itself = is_read_for_itself(reference, rhs_node, walks);
             rhs_node = get_rhs_node(reference, rhs_node, walks);
             if is_for_itself {
@@ -959,7 +960,7 @@ impl<'a> VariableAnalysis<'a> {
     }
 
     /// `usedVariables`. The variable that the name of a class is inside the class is always here,
-    /// also if the class is among the unused.
+    /// also if the class is among the unused. Empty after [`collect_unused_variables`].
     #[inline]
     pub fn used_variables(&self) -> &[Variable<'a>] {
         &self.used_variables
@@ -988,10 +989,28 @@ impl<'a> VariableAnalysis<'a> {
 /// declares at its top level under a name that a library of TypeScript defines. And the globals
 /// that the file does not declare, which are no [`Symbol`]s: see [`is_used_global_variable`].
 pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> VariableAnalysis<'a> {
+    collect(file, eslint_used, true)
+}
+
+/// [`collect_variables`] for who does not ask for [`VariableAnalysis::used_variables`].
+pub fn collect_unused_variables<'a>(
+    file: &'a File<'a>,
+    eslint_used: UsedMarks,
+) -> VariableAnalysis<'a> {
+    collect(file, eslint_used, false)
+}
+
+fn collect<'a>(
+    file: &'a File<'a>,
+    eslint_used: UsedMarks,
+    keeps_used: bool,
+) -> VariableAnalysis<'a> {
     let mut analysis = VariableAnalysis::default();
-    analysis
-        .used_variables
-        .reserve(file.symbols().size_hint().1.unwrap_or(0));
+    if keeps_used {
+        analysis
+            .used_variables
+            .reserve(file.symbols().size_hint().1.unwrap_or(0));
+    }
     let mut marks = Marker {
         marks: eslint_used,
         unshared: Vec::new(),
@@ -1005,7 +1024,7 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
     for symbol in file.symbols() {
         let variable = Variable::new(symbol);
         let facts = Facts::of(variable);
-        if facts.has(Facts::CLASS) {
+        if keeps_used && facts.has(Facts::CLASS) {
             let classes = symbol.declarations().filter_map(|it| match it {
                 Declaration::Class(class) if class.name().is_some() => Some(Variable {
                     symbol,
@@ -1040,7 +1059,9 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
             || is_used_variable_with(variable, facts, &mut walks)
             || is_exported_with(variable, facts)
         {
-            analysis.used_variables.push(variable);
+            if keeps_used {
+                analysis.used_variables.push(variable);
+            }
         } else {
             analysis.unused_variables.push(variable);
             analysis.unused.insert(symbol);

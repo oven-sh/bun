@@ -19,12 +19,8 @@ struct Operands<'a> {
 
 /// ESLint's `isConcatenation`: the operands of a `+`.
 fn as_concatenation(e: Expr<'_>) -> Option<Operands<'_>> {
-    match e.kind() {
-        ExprKind::Binary {
-            op: BinOp::Add,
-            left,
-            right,
-        } => Some(Operands { left, right }),
+    match (e.binary_op(), e.left(), e.right()) {
+        (Some(BinOp::Add), Some(left), Some(right)) => Some(Operands { left, right }),
         _ => None,
     }
 }
@@ -330,7 +326,7 @@ impl<'a> TemplateWriter<'a> {
 
 impl Rule for PreferTemplate {
     const META: Meta = Meta::eslint("prefer-template", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().binaries(&[BinOp::Add]);
     /// That a node is in a concatenation.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -342,7 +338,7 @@ impl Rule for PreferTemplate {
         Some(AncestorMemo::default())
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if as_concatenation(e).is_none()
             || matches!(e.parent(), Node::Expr(parent) if as_concatenation(parent).is_some())
             || !has_string_literal(e)

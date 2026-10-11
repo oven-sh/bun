@@ -84,7 +84,7 @@ impl Rule for NoSelfAssign {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Assign { op, target, value } = e.kind() else {
+        let (Some(op), Some(target), Some(value)) = (e.assign_op(), e.left(), e.right()) else {
             return;
         };
         if !matches!(op, None | Some(BinOp::And | BinOp::Or | BinOp::Nullish)) {

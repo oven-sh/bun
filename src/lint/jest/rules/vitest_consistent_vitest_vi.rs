@@ -16,7 +16,8 @@ const CONSISTENT_VITEST_VI: Message = Message::new("", "The vitest function acce
 impl Rule for ConsistentVitestVi {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-vitest-vi", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::Import]);
-    type State<'a> = ();
+    /// `opposite`
+    type State<'a> = Name<'a>;
 
     fn new(options: &Options) -> Self {
         match options.object(0).str("fn") {
@@ -25,8 +26,8 @@ impl Rule for ConsistentVitestVi {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions(self.opposite).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions(self.opposite).then(|| file.name_of(self.opposite))
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -39,6 +40,7 @@ impl Rule for ConsistentVitestVi {
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(member_expression) = node.callee().and_then(as_member_expression)
+            && jest::first_identifier_of_chain(member_expression) == Some(cx.state)
             && let Some(vitest_fn) = jest::parse_general_jest_fn_call(cx.file(), PossibleJestNode::new(node))
             && vitest_fn.kind == JestFnKind::General(JestGeneralFnKind::Vitest)
             && vitest_fn.name == self.opposite.as_bytes()

@@ -439,12 +439,25 @@ fn is_jsx_tag_name(reference: Reference) -> bool {
     matches!(reference.node(), Node::Expr(e) if e.is_jsx_tag_name())
 }
 
+/// `for (let ..`, `for (const ..`, which has a scope here as well.
+fn declares_in_its_head(statement: Stmt) -> bool {
+    let head = match statement.kind() {
+        StmtKind::For { init, .. } => init,
+        StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some(left),
+        _ => None,
+    };
+    head.and_then(Stmt::as_var).and_then(|it| it.first()).is_some_and(|it| it.var_kind() != VarKind::Var)
+}
+
 /// By the scope of the function that they are directly in: the statements that have a scope for oxlint only, without
 /// those that are in another of them, in the order of the file.
 fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Span>> {
     let mut found: FxHashMap<Scope<'a>, Vec<Span>> = FxHashMap::default();
     for tag in [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::TypeAlias, StmtTag::Interface] {
         for statement in file.stmts_of_kind(tag) {
+            if matches!(statement.parent(), Node::File(_)) || declares_in_its_head(statement) {
+                continue;
+            }
             let scope = Node::Stmt(statement).scope();
             if function_of(scope).is_some() {
                 found.entry(scope).or_default().push(statement.span());

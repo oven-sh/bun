@@ -149,12 +149,7 @@ impl Format {
     pub(crate) fn reads_fixes(self) -> bool {
         matches!(
             self,
-            Format::Stylish
-                | Format::Json
-                | Format::JsonWithMetadata
-                | Format::Pretty
-                | Format::Agent
-                | Format::OxlintDefault
+            Format::Stylish | Format::Json | Format::JsonWithMetadata | Format::Agent
         )
     }
 }

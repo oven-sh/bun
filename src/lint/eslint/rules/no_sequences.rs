@@ -31,7 +31,7 @@ fn is_init_or_update_of_for(e: Expr<'_>) -> bool {
 
 impl Rule for NoSequences {
     const META: Meta = Meta::eslint("no-sequences", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().binaries(&[BinOp::Comma]);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -40,7 +40,7 @@ impl Rule for NoSequences {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !utils::is_sequence_root(e)
             || is_init_or_update_of_for(e)
             || (self.allow_in_parentheses && e.parens().len() >= parentheses_needed(e))

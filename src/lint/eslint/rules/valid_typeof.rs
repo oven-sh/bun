@@ -42,7 +42,7 @@ impl Rule for ValidTypeof {
     const META: Meta = Meta::eslint("valid-typeof", Kind::Problem)
         .has_suggestions()
         .recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    const ON: On = On::new().unaries(&[UnOp::Typeof]);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -51,7 +51,7 @@ impl Rule for ValidTypeof {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !is_typeof_expression(e) {
             return;
         }

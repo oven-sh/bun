@@ -1,6 +1,6 @@
 use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::{ImportImportName, import_entries};
-use crate::jest::{OxlintOrder, is_vitest_import_source, parent_expression};
+use crate::jest::{self, OxlintOrder, is_vitest_import_source, parent_expression};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -10,6 +10,8 @@ use std::hash::BuildHasher;
 
 /// Enforces explicit imports from 'vitest' instead of using Vitest globals.
 pub struct PreferImportingVitestGlobals;
+
+const VITEST_GLOBAL_BITS: [u32; 17] = jest::mention_bits(VITEST_GLOBALS);
 
 const PREFER_IMPORTING_VITEST_GLOBALS: Message = Message::new("", "Do not use Vitest global functions");
 
@@ -43,7 +45,7 @@ impl Rule for PreferImportingVitestGlobals {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&VITEST_GLOBALS).then_some(())
+        jest::mentions_any(file, &VITEST_GLOBAL_BITS).then_some(())
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
@@ -54,9 +56,10 @@ impl Rule for PreferImportingVitestGlobals {
 fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
     let file = cx.file();
     // What nothing declares, in the order in which oxlint has it. References in types count too.
-    let mut missing_globals: SmallVec<[&str; 8]> = (VITEST_GLOBALS.into_iter())
-        .filter(|name| file.mentions(name) && file.unresolved_references_to(name.as_bytes()).len() > 0)
-        .collect();
+    let mentioned: SmallVec<[&str; 8]> =
+        VITEST_GLOBALS.into_iter().zip(VITEST_GLOBAL_BITS).filter(|it| file.mentions_bit(it.1)).map(|it| it.0).collect();
+    let mut missing_globals: SmallVec<[&str; 8]> =
+        mentioned.iter().copied().filter(|name| file.unresolved_references_to(name.as_bytes()).len() > 0).collect();
     if missing_globals.len() > 1 {
         let order = OxlintOrder::new(file);
         utils::sort::sort_by_cached_key(&mut missing_globals, |name| order.rank(file.name_of(name)));
@@ -71,7 +74,7 @@ fn run_once<'a>(cx: &Cx<'a, PreferImportingVitestGlobals>) {
         }
     }
     // What is imported from elsewhere, or as a type.
-    for name in VITEST_GLOBALS.into_iter().filter(|name| file.mentions(name)) {
+    for name in mentioned {
         if let Some(symbol) = file.top_level_scope().get(name)
             && let Some(import) = symbol.declarations().next().and_then(|it| match it {
                 Declaration::ImportSpec(specifier) => Some(specifier.import()),

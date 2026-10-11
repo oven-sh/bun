@@ -7,19 +7,15 @@ const UNEXPECTED: Message = Message::new("unexpected", "Use '===' to compare wit
 
 impl Rule for NoEqNull {
     const META: Meta = Meta::eslint("no-eq-null", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().binaries(&[BinOp::EqEq, BinOp::NotEq]);
     no_state!();
 
     fn new(_: &Options) -> Self {
         NoEqNull
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Binary {
-            op: op @ (BinOp::EqEq | BinOp::NotEq),
-            left,
-            right,
-        } = e.kind()
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let (Some(op @ (BinOp::EqEq | BinOp::NotEq)), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right())
             && (right.tag() == ExprTag::Null || left.tag() == ExprTag::Null)
         {
             let report = cx.report(e, UNEXPECTED);

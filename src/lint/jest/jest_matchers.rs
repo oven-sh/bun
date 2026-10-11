@@ -4,8 +4,8 @@
 use crate::jest::{
     Ctx, EnclosingFunctions, JestFnKind, JestGeneralFnKind, KnownMemberExpressionProperty,
     ParsedExpectFnCall, PossibleJestNode, enclosing_function, is_equality_matcher,
-    iter_possible_jest_call_node, parent_expression, parse_expect_and_typeof_vitest_fn_call,
-    parse_expect_jest_fn_call, print_expression,
+    iter_possible_jest_call_node, mention_bits, mentions_any, parent_expression,
+    parse_expect_and_typeof_vitest_fn_call, parse_expect_jest_fn_call, print_expression,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -1095,7 +1095,8 @@ pub(crate) mod no_large_snapshots {
     }
 
     pub(crate) fn may_have_snapshot(file: &File) -> bool {
-        file.mentions_any(&INLINE_SNAPSHOT_MATCHERS) || is_snapshot_file(file)
+        mentions_any(file, &const { mention_bits(INLINE_SNAPSHOT_MATCHERS) })
+            || is_snapshot_file(file)
     }
 
     /// The line breaks in it, and in the character after it.

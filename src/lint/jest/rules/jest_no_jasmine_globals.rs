@@ -1,4 +1,5 @@
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
+use crate::jest;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -29,7 +30,7 @@ impl Rule for NoJasmineGlobals {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        if NON_JASMINE_PROPERTY_NAMES.iter().any(|it| file.mentions(it.0)) {
+        if jest::mentions_any(file, &const { jest::mention_bits(["spyOn", "spyOnProperty", "fail", "pending"]) }) {
             on = on.finish();
         }
         if !file.mentions("jasmine") {

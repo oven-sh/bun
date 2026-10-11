@@ -1,4 +1,4 @@
-use crate::jest::is_vitest_import_source;
+use crate::jest::{self, is_vitest_import_source};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::SmallVec;
@@ -43,7 +43,7 @@ impl Rule for NoImportingVitestGlobals {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["vitest", "vite-plus/test", "@effect/vitest"]).then_some(())
+        jest::mentions_any(file, &const { jest::mention_bits(["vitest", "vite-plus/test", "@effect/vitest"]) }).then_some(())
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {

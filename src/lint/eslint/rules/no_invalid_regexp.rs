@@ -51,7 +51,7 @@ impl NoInvalidRegexp {
     }
 
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
+        let Some(call) = e.as_call_like() else {
             return;
         };
         if !call.callee().is_ident("RegExp") || !ast_utils::is_global_reference(call.callee()) {

@@ -286,8 +286,6 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
-// A unix socket. Node's Pipe handle has no setTypeOfService.
-const kIsPipe = Symbol("kIsPipe");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
@@ -1408,7 +1406,6 @@ function onconnection(err, clientHandle) {
     highWaterMark: self.highWaterMark,
   }) as SocketInstance;
   _socket.isServer = true;
-  if (self._handle?.unix || self[kClusterUnixPath]) _socket[kIsPipe] = true;
   // Use the server's normalized fields so the per-socket flag agrees with the
   // native listener: node's tlsConnectionListener passes `this.requestCert`
   // (`=== true`-normalized), not the raw option.
@@ -2360,7 +2357,6 @@ Socket.prototype.connect = function connect(...args) {
 
   const { path } = options;
   const pipe = !!path;
-  this[kIsPipe] = pipe;
   $debug("pipe", pipe, path);
 
   if (!this._handle) {
@@ -2885,7 +2881,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
   }
   validateInt32(tos, "tos", 0, 255);
 
-  if (!this._handle || !this._handle.setTypeOfService || this[kIsPipe]) {
+  if (!this._handle || !this._handle.setTypeOfService) {
     this[kSetTOS] = tos;
     return this;
   }
@@ -2903,10 +2899,12 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
 };
 
 Socket.prototype.getTypeOfService = function getTypeOfService() {
-  if (!this._handle || !this._handle.getTypeOfService || this[kIsPipe]) {
+  if (!this._handle || !this._handle.getTypeOfService) {
     return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
   }
   const res = this._handle.getTypeOfService();
+  // A unix socket: like Node's Pipe handle it has no type of service, only the value set here.
+  if (res === undefined) return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
   if (typeof res === "number" && res < 0) {
     // getsockopt(IP_TOS) commonly fails on Windows: fall back to the cached
     // value the way Node does.

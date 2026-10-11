@@ -922,6 +922,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             0
         };
         log!("setTypeOfService({})", tos);
+        if this.is_unix_socket() {
+            return Ok(JSValue::UNDEFINED);
+        }
         Ok(JSValue::from(this.socket.get().set_tos(tos)))
     }
 
@@ -935,7 +938,24 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         log!("getTypeOfService()");
+        if this.is_unix_socket() {
+            return Ok(JSValue::UNDEFINED);
+        }
         Ok(JSValue::from(this.socket.get().get_tos()))
+    }
+
+    /// Node gives a unix socket a Pipe handle, which has no type of service:
+    /// the two methods above answer `undefined` and net.Socket keeps the value.
+    fn is_unix_socket(&self) -> bool {
+        use super::listener::UnixOrHost;
+        if matches!(self.connection.get(), Some(UnixOrHost::Unix(_))) {
+            return true;
+        }
+        self.handlers
+            .get()
+            .as_ref()
+            .and_then(|handlers| handlers.listener())
+            .is_some_and(|listener| matches!(listener.connection, UnixOrHost::Unix(_)))
     }
 
     /// `handle.resumeSNI(secureContextOrNull, isError)` - resumes a server

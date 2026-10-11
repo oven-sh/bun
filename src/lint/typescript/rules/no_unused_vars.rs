@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
+use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
     SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_unused_variables, collect_variables, has_rest_sibling,
@@ -12,6 +13,8 @@ use bun_lint_eslint::rules::no_unused_vars::{
     Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars, is_first_parameter_named,
 };
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+use std::cmp::Reverse;
 
 /// Disallow unused variables.
 pub struct NoUnusedVars {
@@ -55,11 +58,21 @@ fn oxlint_reports_the_declaration(file: &File) -> bool {
 /// What is a use for oxlint 1.87 and not for typescript-eslint: `has_usages` of its rule, as far as values that are read go. It is
 /// asked about the few variables that are about to be reported.
 fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bool) -> bool {
-    let is_variable = variable.defs().any(|it| matches!(it, Declaration::Var(_) | Declaration::Param(_)));
-    let is_function_or_class = variable.defs().any(|it| matches!(it, Declaration::Fn(_) | Declaration::Class(_)));
-    let is_callable = (is_variable || is_function_or_class) && !variable.defs().any(Declaration::is_catch_parameter);
+    let (mut is_variable, mut is_function_or_class) = (false, false);
+    for def in variable.defs() {
+        is_variable |= matches!(def, Declaration::Var(_) | Declaration::Param(_));
+        is_function_or_class |= matches!(def, Declaration::Fn(_) | Declaration::Class(_));
+    }
+    let kinds = variable.symbol().declaration_kinds();
+    let is_callable = (is_variable || is_function_or_class)
+        && !(kinds.contains(DeclarationKinds::CATCH_CLAUSE) && variable.defs().any(Declaration::is_catch_parameter));
+    let statements = DeclarationKinds::TYPE
+        | DeclarationKinds::TS_ENUM_NAME
+        | DeclarationKinds::TS_MODULE_NAME
+        | DeclarationKinds::IMPORT_BINDING;
     // A value and a type of one name are one symbol: `const A = 0; export type A = typeof A;`
-    if matches!(variable.scope().kind(), ScopeKind::Global | ScopeKind::Module)
+    if kinds.intersects(statements)
+        && matches!(variable.scope().kind(), ScopeKind::Global | ScopeKind::Module)
         && variable.defs().any(|it| matches!(it.node(), Some(Node::Stmt(it)) if it.is_exported()))
     {
         return true;
@@ -101,43 +114,91 @@ struct Named<'a> {
     all: Vec<Symbol<'a>>,
 }
 
+impl<'a> Named<'a> {
+    #[inline]
+    fn add(&mut self, symbol: Symbol<'a>) {
+        if !self.seen.contains(symbol) {
+            self.seen.insert(symbol);
+            self.all.push(symbol);
+        }
+    }
+}
+
 impl<'a> Visitor<'a> for Named<'a> {
     fn enter(&mut self, node: Node<'a>) {
         if let Node::Expr(e) = node
             && e.tag() == ExprTag::Ident
             && let Some(symbol) = e.reference().and_then(Reference::symbol)
-            && !self.seen.contains(symbol)
         {
-            self.seen.insert(symbol);
-            self.all.push(symbol);
+            self.add(symbol);
         }
     }
 
     fn exit(&mut self, _: Node<'a>) {}
 }
 
-/// The variables that typescript-eslint takes for used and oxlint may not: what a logical assignment changes, as in
-/// `a ||= 1;`, and what is named where a value is discarded, as in `(a, 0)`. Most files have none.
-///
-/// `discarded`: the left operands of the comma operators.
-fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, mut discarded: Vec<Expr<'a>>) -> Vec<Symbol<'a>> {
-    let mut named = Named::default();
-    for e in file.exprs_of_kind(ExprTag::Assign) {
-        if let Some(Some(BinOp::And | BinOp::Or | BinOp::Nullish)) = e.assign_op()
-            && let Some((_, target, _)) = e.as_assign()
-        {
-            named.enter(Node::Expr(target));
+/// What the comma operators `commas` discard: from the start of each to the end of its left operand, without those that are in
+/// another.
+fn oxlint_discarded_parts(commas: &[Expr]) -> Vec<Span> {
+    // The one that ends last first, and of those that end together the outer one. The parser makes them the other way round.
+    let mut operators: Vec<(Reverse<u32>, u32, u32)> = (commas.iter().rev())
+        .filter_map(|it| Some((Reverse(it.span().end), it.span().start, it.left()?.span().end)))
+        .collect();
+    if !operators.is_sorted() {
+        utils::sort::sort_unstable(&mut operators);
+    }
+    let mut parts = Vec::new();
+    // Those that what is to come can be in: the others start after it.
+    let mut open: Vec<Span> = Vec::new();
+    for (Reverse(end), start, end_of_left) in operators {
+        while open.last().is_some_and(|it| it.start >= end) {
+            open.pop();
+        }
+        if !open.last().is_some_and(|it| it.contains(Span::new(start, end))) {
+            open.push(Span::new(start, end_of_left));
+            parts.push(Span::new(start, end_of_left));
         }
     }
+    parts
+}
+
+/// Whether `named` has what is named in the left operands of `commas` beside `others`, and nothing else.
+fn oxlint_is_what_a_walk_finds<'a>(named: &Named<'a>, mut others: Named<'a>, commas: &[Expr<'a>]) -> bool {
+    let mut discarded: Vec<Expr<'a>> = commas.iter().filter_map(|it| it.left()).collect();
     // Each is looked into once: not the `a` of `a, b, c`, which is in the `a, b`.
-    utils::sort::sort_unstable_by_key(&mut discarded, |it| (it.span().start, u32::MAX - it.span().end));
+    utils::sort::sort_unstable_by_key(&mut discarded, |it| (it.span().start, Reverse(it.span().end)));
     let mut end = 0;
     for operand in discarded {
         if operand.span().end > end {
             end = operand.span().end;
-            walk_node(Node::Expr(operand), &mut named);
+            walk_node(Node::Expr(operand), &mut others);
         }
     }
+    others.all.len() == named.all.len() && others.all.iter().all(|it| named.seen.contains(*it))
+}
+
+/// The variables that typescript-eslint takes for used and oxlint may not: what a logical assignment changes, as in
+/// `a ||= 1;`, and what is named where a value is discarded, as in `(a, 0)`. Most files have none.
+///
+/// `commas`: the comma operators.
+fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, commas: &[Expr<'a>]) -> Vec<Symbol<'a>> {
+    let changed_by_logical_assignments = || {
+        let mut named = Named::default();
+        for e in file.exprs_of_kind(ExprTag::Assign) {
+            if let Some(Some(BinOp::And | BinOp::Or | BinOp::Nullish)) = e.assign_op()
+                && let Some((_, target, _)) = e.as_assign()
+            {
+                named.enter(Node::Expr(target));
+            }
+        }
+        named
+    };
+    let mut named = changed_by_logical_assignments();
+    for part in oxlint_discarded_parts(commas) {
+        let identifiers = file.references_within(part).filter(|it| it.expr().is_some());
+        identifiers.filter_map(Reference::symbol).for_each(|it| named.add(it));
+    }
+    debug_assert!(oxlint_is_what_a_walk_finds(&named, changed_by_logical_assignments(), commas));
     named.all
 }
 
@@ -300,6 +361,8 @@ struct OxlintWalks<'a> {
     operations: AncestorMemo<'a, Node<'a>>,
     /// The outermost of the `a && b`, `a || b`, `a ?? b` that a node is an operand of without anything else in between.
     logical: AncestorMemo<'a, Node<'a>>,
+    /// What is given to the variable.
+    values: Option<SmallVec<[Span; 2]>>,
 }
 
 /// Whether `oxlint_is_self_reassignment` does nothing with `node`.
@@ -554,6 +617,21 @@ fn oxlint_is_self_call<'a>(
         });
         return own.any(|it| it.contains(reference.span()));
     }
+    // A function that is given to the variable is not around the variable.
+    let can_be = reference.scope().variable_scope() != variable.scope().variable_scope() && {
+        let values = || variable.references().filter_map(Reference::write_expr).map(|it| it.span()).collect();
+        let at = reference.ident().start();
+        walks.values.get_or_insert_with(values).iter().any(|it| it.contains_offset(at))
+    };
+    debug_assert!(can_be || !oxlint_is_in_function_that_is_the_variable(variable, reference, walks));
+    can_be && oxlint_is_in_function_that_is_the_variable(variable, reference, walks)
+}
+
+fn oxlint_is_in_function_that_is_the_variable<'a>(
+    variable: Variable<'a>,
+    reference: Reference<'a>,
+    walks: &mut OxlintWalks<'a>,
+) -> bool {
     let start = oxlint_outermost_operation(reference.node(), walks);
     let mut parents = oxlint_relevant_parents(start).peekable();
     let mut is_value_of_variable = false;
@@ -659,8 +737,8 @@ pub struct State<'a> {
     is_definition_file: bool,
     /// That a node is in a `declare namespace`.
     declared: AncestorMemo<'a, ()>,
-    /// For oxlint: the left operands of the comma operators.
-    discarded: Vec<Expr<'a>>,
+    /// For oxlint: the comma operators.
+    commas: Vec<Expr<'a>>,
 }
 
 // ───────────────────────────── ambient declarations ─────────────────────────────
@@ -1231,16 +1309,17 @@ impl NoUnusedVars {
             return;
         };
         let name = unused_var.name();
-        // As many columns as the name is long, however it is written.
-        let start = cx.position(id.start);
-        let end = Position {
-            line: start.line,
-            column: start.column + strings::wtf8_len_utf16(name.bytes()),
-        };
         let is_oxlint = cx.language().is_oxlint;
-        let mut report = cx
-            .report(id, if is_oxlint { Message::new(message.id, "{{text}}") } else { message })
-            .end_at(end)
+        let mut report = cx.report(id, if is_oxlint { Message::new(message.id, "{{text}}") } else { message });
+        // As many columns as the name is long, however it is written.
+        if cx.file().slice(id) != name.bytes() || !name.bytes().is_ascii() {
+            let start = cx.position(id.start);
+            report = report.end_at(Position {
+                line: start.line,
+                column: start.column + strings::wtf8_len_utf16(name.bytes()),
+            });
+        }
+        report = report
             .data("varName", name)
             .data("action", action)
             .data("additional", additional);
@@ -1474,16 +1553,15 @@ impl NoUnusedVars {
         let mut reported = SymbolSet::default();
         let used_variables = analysis.used_variables();
         // What is unused for oxlint only.
-        let discarded = std::mem::take(&mut cx.state.discarded);
         let candidates = match file.language().is_oxlint {
-            true => oxlint_may_be_unused_after_all(file, discarded),
+            true => oxlint_may_be_unused_after_all(file, &cx.state.commas),
             false => Vec::new(),
         };
         let is_added = |it: &Variable<'a>| {
             !analysis.is_unused(it.symbol())
                 && !analysis.is_eslint_used(*it)
-                && !is_exported(*it)
                 && !oxlint_counts_as_used(*it, self.reports_vars_only_used_as_types)
+                && !is_exported(*it)
         };
         let added: Vec<Variable<'a>> = candidates.into_iter().map(Variable::new).filter(is_added).collect();
         let mut unused_for_oxlint = SymbolSet::default();
@@ -1590,14 +1668,13 @@ impl Rule for NoUnusedVars {
         Some(State {
             is_definition_file,
             declared: AncestorMemo::default(),
-            discarded: Vec::new(),
+            commas: Vec::new(),
         })
     }
 
+    #[inline]
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(left) = e.left() {
-            cx.state.discarded.push(left);
-        }
+        cx.state.commas.push(e);
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {

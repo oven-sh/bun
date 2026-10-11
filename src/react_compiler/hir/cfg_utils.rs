@@ -5,31 +5,32 @@
 //! used by the optimization and inference passes to renumber, prune, and
 //! reorder blocks after structural changes.
 
+use crate::collections::IdBitSet;
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
 
 use super::environment::Environment;
-use super::visitors::{each_terminal_successor, terminal_fallthrough};
+use super::visitors::{Blocks, each_terminal_successor, terminal_fallthrough};
 use super::{
     BasicBlock, BlockId, Effect, EvaluationOrder, GotoVariant, HIR, Instruction, Place,
     SourceLocation, Terminal,
 };
 
-/// Compute a reverse-postorder of blocks reachable from the entry.
-///
+/// The blocks that are visited from the entry, in postorder.
+struct Postorder {
+    blocks: Vec<BlockId>,
+    /// Reached through successors.
+    used: IdBitSet<BlockId>,
+    /// The fallthrough of a block that is.
+    used_fallthroughs: IdBitSet<BlockId>,
+}
+
 /// Visits successors in reverse order so that when the postorder list is
 /// reversed, sibling edges appear in program order.
-///
-/// Blocks not reachable through successors are removed. Blocks that are
-/// only reachable as fallthroughs (not through real successor edges) are
-/// replaced with empty blocks that have an Unreachable terminal.
-pub fn get_reverse_postordered_blocks(
-    hir: &HIR,
-    _instructions: &[Instruction],
-) -> Result<IndexMap<BlockId, BasicBlock>, crate::diagnostics::CompilerDiagnostic> {
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-    let mut used: IndexSet<BlockId> = IndexSet::new();
-    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
+fn postorder(hir: &HIR) -> Result<Postorder, crate::diagnostics::CompilerDiagnostic> {
+    let mut visited: IdBitSet<BlockId> = IdBitSet::new();
+    let mut used: IdBitSet<BlockId> = IdBitSet::new();
+    let mut used_fallthroughs: IdBitSet<BlockId> = IdBitSet::new();
     let mut postorder: Vec<BlockId> = Vec::with_capacity(hir.blocks.len());
 
     enum Step {
@@ -46,9 +47,8 @@ pub fn get_reverse_postordered_blocks(
                 continue;
             }
         };
-        let was_used = used.contains(&block_id);
-        let was_visited = visited.contains(&block_id);
-        visited.insert(block_id);
+        let was_used = used.contains(block_id);
+        let was_visited = !visited.insert(block_id);
         if is_used {
             used.insert(block_id);
         }
@@ -84,44 +84,89 @@ pub fn get_reverse_postordered_blocks(
         }
     }
 
-    let mut blocks = IndexMap::new();
-    for block_id in postorder.into_iter().rev() {
-        let block = hir.blocks.get(&block_id).unwrap();
-        if used.contains(&block_id) {
-            blocks.insert(block_id, block.clone());
-        } else if used_fallthroughs.contains(&block_id) {
-            blocks.insert(
-                block_id,
-                BasicBlock {
-                    kind: block.kind,
-                    id: block_id,
-                    instructions: super::AstAlloc::vec(),
-                    terminal: Terminal::Unreachable {
-                        id: block.terminal.evaluation_order(),
-                        loc: block.terminal.loc().copied(),
-                    },
-                    preds: block.preds.clone(),
-                    phis: super::AstAlloc::vec(),
-                },
-            );
+    Ok(Postorder {
+        blocks: postorder,
+        used,
+        used_fallthroughs,
+    })
+}
+
+/// What becomes of a block that is only reachable as a fallthrough.
+fn unreachable_block(block: &BasicBlock, preds: IndexSet<BlockId>) -> BasicBlock {
+    BasicBlock {
+        kind: block.kind,
+        id: block.id,
+        instructions: super::AstAlloc::vec(),
+        terminal: Terminal::Unreachable {
+            id: block.terminal.evaluation_order(),
+            loc: block.terminal.loc().copied(),
+        },
+        preds,
+        phis: super::AstAlloc::vec(),
+    }
+}
+
+/// Puts the blocks reachable from the entry into reverse postorder.
+///
+/// Blocks not reachable through successors are removed. Blocks that are
+/// only reachable as fallthroughs (not through real successor edges) are
+/// replaced with empty blocks that have an Unreachable terminal.
+///
+/// Returns the blocks as they were ordered, those that are removed as they were.
+/// Nothing is changed if it fails.
+pub fn reverse_postorder_blocks(
+    hir: &mut HIR,
+) -> Result<IndexMap<BlockId, BasicBlock>, crate::diagnostics::CompilerDiagnostic> {
+    let order = postorder(hir)?;
+    let mut old = std::mem::take(&mut hir.blocks);
+    for block_id in order.blocks.into_iter().rev() {
+        let block = old.get_mut(&block_id).unwrap();
+        if order.used.contains(block_id) {
+            let left = unreachable_block(block, IndexSet::new());
+            hir.blocks.insert(block_id, std::mem::replace(block, left));
+        } else if order.used_fallthroughs.contains(block_id) {
+            let preds = std::mem::take(&mut block.preds);
+            hir.blocks.insert(block_id, unreachable_block(block, preds));
         }
         // otherwise this block is unreachable and is dropped
     }
+    Ok(old)
+}
 
+/// [`reverse_postorder_blocks`] on a copy.
+pub fn get_reverse_postordered_blocks(
+    hir: &HIR,
+    _instructions: &[Instruction],
+) -> Result<IndexMap<BlockId, BasicBlock>, crate::diagnostics::CompilerDiagnostic> {
+    let order = postorder(hir)?;
+    let mut blocks = IndexMap::new();
+    for block_id in order.blocks.into_iter().rev() {
+        let block = hir.blocks.get(&block_id).unwrap();
+        if order.used.contains(block_id) {
+            blocks.insert(block_id, block.clone());
+        } else if order.used_fallthroughs.contains(block_id) {
+            blocks.insert(block_id, unreachable_block(block, block.preds.clone()));
+        }
+    }
     Ok(blocks)
 }
 
 /// For each block with a `For` terminal whose update block is not in the
 /// blocks map, set update to None.
 pub fn remove_unreachable_for_updates(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-    for block in hir.blocks.values_mut() {
-        if let Terminal::For { update, .. } = &mut block.terminal {
-            if let Some(update_id) = *update {
-                if !block_ids.contains(&update_id) {
-                    *update = None;
-                }
-            }
+    let is_gone = |(&block_id, block): (&BlockId, &BasicBlock)| match &block.terminal {
+        Terminal::For {
+            update: Some(update),
+            ..
+        } if !hir.blocks.contains_key(update) => Some(block_id),
+        _ => None,
+    };
+    let without_update: Blocks = hir.blocks.iter().filter_map(is_gone).collect();
+    for block_id in without_update {
+        if let Some(Terminal::For { update, .. }) =
+            hir.blocks.get_mut(&block_id).map(|it| &mut it.terminal)
+        {
+            *update = None;
         }
     }
 }
@@ -129,33 +174,28 @@ pub fn remove_unreachable_for_updates(hir: &mut HIR) {
 /// For each block with a `DoWhile` terminal whose test block is not in
 /// the blocks map, replace the terminal with a Goto to the loop block.
 pub fn remove_dead_do_while_statements(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-    for block in hir.blocks.values_mut() {
-        let should_replace = if let Terminal::DoWhile { test, .. } = &block.terminal {
-            !block_ids.contains(test)
-        } else {
-            false
+    let is_dead = |(&block_id, block): (&BlockId, &BasicBlock)| match &block.terminal {
+        Terminal::DoWhile { test, .. } if !hir.blocks.contains_key(test) => Some(block_id),
+        _ => None,
+    };
+    let dead: Blocks = hir.blocks.iter().filter_map(is_dead).collect();
+    for block_id in dead {
+        let Some(block) = hir.blocks.get_mut(&block_id) else {
+            continue;
         };
-        if should_replace {
-            if let Terminal::DoWhile {
-                loop_block,
+        if let Terminal::DoWhile {
+            loop_block,
+            id,
+            loc,
+            ..
+        } = block.terminal
+        {
+            block.terminal = Terminal::Goto {
+                block: loop_block,
+                variant: GotoVariant::Break,
                 id,
                 loc,
-                ..
-            } = std::mem::replace(
-                &mut block.terminal,
-                Terminal::Unreachable {
-                    id: EvaluationOrder(0),
-                    loc: None,
-                },
-            ) {
-                block.terminal = Terminal::Goto {
-                    block: loop_block,
-                    variant: GotoVariant::Break,
-                    id,
-                    loc,
-                };
-            }
+            };
         }
     }
 }
@@ -166,8 +206,6 @@ pub fn remove_dead_do_while_statements(hir: &mut HIR) {
 /// Also cleans up the fallthrough block's predecessors if the handler
 /// was the only path to it.
 pub fn remove_unnecessary_try_catch(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-
     // Collect the blocks that need replacement and their associated data
     let replacements: Vec<(BlockId, BlockId, BlockId, BlockId, Option<SourceLocation>)> = hir
         .blocks
@@ -181,8 +219,8 @@ pub fn remove_unnecessary_try_catch(hir: &mut HIR) {
                 ..
             } = &block.terminal
             {
-                if !block_ids.contains(handler) {
-                    return Some((block_id, *try_block, *handler, *fallthrough, loc.clone()));
+                if !hir.blocks.contains_key(handler) {
+                    return Some((block_id, *try_block, *handler, *fallthrough, *loc));
                 }
             }
             None

@@ -20,7 +20,7 @@ use crate::hir::object_shape::{
     BUILT_IN_OBJECT_ID, BUILT_IN_PROPS_ID, BUILT_IN_REF_VALUE_ID, BUILT_IN_SET_STATE_ID,
     BUILT_IN_USE_REF_ID, ShapeRegistry,
 };
-use crate::hir::visitors::{each_lvalue, each_operand};
+use crate::hir::visitors::{lvalues, operands};
 use crate::hir::{
     ArrayPatternElement, AstAlloc, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier,
     IdentifierId, IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
@@ -1013,14 +1013,16 @@ impl Apply<'_> {
             for &instr_id in &block.instructions {
                 let instr = &func.instructions[instr_id.0 as usize];
 
-                // Instruction lvalue
-                self.resolve_identifier(instr.lvalue.identifier);
+                // Instruction lvalue, and LValues from instruction values
+                // (StoreLocal, StoreContext, DeclareLocal, DeclareContext, Destructure)
+                for place in lvalues(instr) {
+                    self.resolve_identifier(place.identifier);
+                }
 
-                // LValues from instruction values (StoreLocal, StoreContext, DeclareLocal, DeclareContext, Destructure)
-                each_lvalue(&instr.value, |p| self.resolve_identifier(p.identifier));
-
-                // Operands
-                each_operand(&instr.value, |p| self.resolve_identifier(p.identifier));
+                // Operands, with the captured context variable places
+                for place in operands(&instr.value, functions) {
+                    self.resolve_identifier(place.identifier);
+                }
 
                 // Recurse into inner functions
                 match &instr.value {
@@ -1032,13 +1034,7 @@ impl Apply<'_> {
                         lowered_func: LoweredFunction { func: func_id },
                         ..
                     } => {
-                        let inner_func = &functions[func_id.0 as usize];
-                        // Resolve types for captured context variable places (matching TS
-                        // where eachInstructionValueOperand yields func.context places)
-                        for ctx in &inner_func.context {
-                            self.resolve_identifier(ctx.identifier);
-                        }
-                        self.function(inner_func, functions);
+                        self.function(&functions[func_id.0 as usize], functions);
                     }
                     _ => {}
                 }

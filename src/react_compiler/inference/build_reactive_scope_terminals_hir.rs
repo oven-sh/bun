@@ -24,9 +24,9 @@ use crate::hir::HirFunction;
 use crate::hir::IdentifierId;
 use crate::hir::ScopeId;
 use crate::hir::Terminal;
-use crate::hir::cfg_utils::get_reverse_postordered_blocks;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::cfg_utils::mark_predecessors;
+use crate::hir::cfg_utils::reverse_postorder_blocks;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::each_instruction_lvalue_ids;
 use crate::hir::visitors::each_instruction_operand_ids;
@@ -359,7 +359,7 @@ pub(crate) fn build_reactive_scope_terminals_hir(
     }
 
     // Step 4: Fixup HIR to restore RPO, correct predecessors, renumber instructions
-    func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions)?;
+    reverse_postorder_blocks(&mut func.body)?;
     mark_predecessors(&mut func.body);
     mark_instruction_ids(&mut func.body, &mut func.instructions);
 

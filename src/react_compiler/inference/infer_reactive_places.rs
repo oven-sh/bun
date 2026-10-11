@@ -90,8 +90,6 @@ pub(crate) fn infer_reactive_places(
     let phi_operand_count = phi_operand_count.map(|phi| phi.operands.len()).sum();
     let mut phi_operand_reactive = vec![false; phi_operand_count];
 
-    let mut operands: Vec<(IdentifierId, Effect)> = Vec::new();
-
     // Fixpoint iteration — compute reactive set
     let mut is_settled = false;
     loop {
@@ -141,12 +139,8 @@ pub(crate) fn infer_reactive_places(
 
                 // Check if any operand is reactive
                 let mut has_reactive_input = false;
-                operands.clear();
-                for_each_instruction_value_operand(value, &env.functions, &mut |place| {
-                    operands.push((place.identifier, place.effect));
-                });
-                for &(op_id, _) in &operands {
-                    let reactive = reactive_map.is_reactive(op_id);
+                for operand in visitors::operands(value, &env.functions) {
+                    let reactive = reactive_map.is_reactive(operand.identifier);
                     has_reactive_input = has_reactive_input || reactive;
                 }
 
@@ -180,34 +174,39 @@ pub(crate) fn infer_reactive_places(
 
                 if has_reactive_input {
                     // Mark lvalues reactive (unless stable)
-                    let mut mark_lvalue = |place: &Place| {
-                        if !stable_sidemap.read(place.identifier).unwrap_or(false) {
-                            reactive_map.mark_reactive(place.identifier);
+                    for lvalue in visitors::lvalues(instr) {
+                        if stable_sidemap.read(lvalue.identifier).unwrap_or(false) {
+                            continue;
                         }
-                    };
-                    mark_lvalue(&instr.lvalue);
-                    visitors::each_lvalue(value, &mut mark_lvalue as &mut dyn FnMut(&Place));
+                        reactive_map.mark_reactive(lvalue.identifier);
+                    }
                 }
 
                 if has_reactive_input || has_reactive_control {
                     // Mark mutable operands reactive
-                    for &(op_id, effect) in &operands {
-                        match effect {
+                    for op_place in visitors::operands(value, &env.functions) {
+                        match op_place.effect {
                             Effect::Capture
                             | Effect::Store
                             | Effect::ConditionallyMutate
                             | Effect::ConditionallyMutateIterator
                             | Effect::Mutate => {
-                                let op_range = &env.identifiers[op_id.0 as usize].mutable_range;
+                                let op_range =
+                                    &env.identifiers[op_place.identifier.0 as usize].mutable_range;
                                 if op_range.contains(instr.id) {
-                                    reactive_map.mark_reactive(op_id);
+                                    reactive_map.mark_reactive(op_place.identifier);
                                 }
                             }
                             Effect::Freeze | Effect::Read => {
                                 // no-op
                             }
                             Effect::Unknown => {
-                                return Err(unknown_effect(value, env));
+                                return Err(crate::diagnostics::cold_invariant(
+                                    "Unexpected unknown effect",
+                                    Some(format!("{:?}", op_place.loc)),
+                                    None,
+                                )
+                                .into());
                             }
                         }
                     }
@@ -239,37 +238,6 @@ pub(crate) fn infer_reactive_places(
     );
 
     Ok(())
-}
-
-#[cold]
-#[inline(never)]
-fn unknown_effect(value: &InstructionValue, env: &Environment) -> CompilerDiagnostic {
-    let operands = visitors::each_instruction_value_operand(value, env);
-    let unknown = operands.iter().find(|op| op.effect == Effect::Unknown);
-    crate::diagnostics::cold_invariant(
-        "Unexpected unknown effect",
-        Some(format!("{:?}", unknown.and_then(|op| op.loc))),
-        None,
-    )
-    .into()
-}
-
-/// `visitors::each_instruction_value_operand`, place by place.
-pub(crate) fn for_each_instruction_value_operand(
-    value: &InstructionValue,
-    functions: &[HirFunction],
-    f: &mut dyn FnMut(&Place),
-) {
-    match value {
-        InstructionValue::ObjectMethod { lowered_func, .. }
-        | InstructionValue::FunctionExpression { lowered_func, .. } => {
-            functions[lowered_func.func.0 as usize]
-                .context
-                .iter()
-                .for_each(f);
-        }
-        _ => visitors::each_operand(value, f),
-    }
 }
 
 // =============================================================================
@@ -442,7 +410,7 @@ impl StableSidemap {
             InstructionValue::Destructure { value: val, .. } => {
                 let source_id = val.identifier;
                 if self.read(source_id).is_some() {
-                    let mut handle_lvalue = |place: &Place| {
+                    for place in visitors::lvalues(instr) {
                         let lid = place.identifier;
                         let lid_ty = &env.types[env.identifiers[lid.0 as usize].type_.0 as usize];
                         if is_stable_type_container(lid_ty) {
@@ -450,9 +418,7 @@ impl StableSidemap {
                         } else if is_stable_type(lid_ty) {
                             self.set(lid, true);
                         }
-                    };
-                    handle_lvalue(&instr.lvalue);
-                    visitors::each_lvalue(value, &mut handle_lvalue as &mut dyn FnMut(&Place));
+                    }
                 }
             }
             InstructionValue::StoreLocal {

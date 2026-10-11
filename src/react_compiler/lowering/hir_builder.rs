@@ -12,9 +12,12 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::Position;
-use crate::hir::cfg_utils::get_reverse_postordered_blocks;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::cfg_utils::mark_predecessors;
+use crate::hir::cfg_utils::remove_dead_do_while_statements;
+use crate::hir::cfg_utils::remove_unnecessary_try_catch;
+use crate::hir::cfg_utils::remove_unreachable_for_updates;
+use crate::hir::cfg_utils::reverse_postorder_blocks;
 use crate::hir::environment::Environment;
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
@@ -783,10 +786,10 @@ impl<'h> HirBuilder<'h> {
 
         let mut instructions = AstAlloc::take(&mut self.instruction_table);
 
-        let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions)?;
+        let unordered = reverse_postorder_blocks(&mut hir)?;
 
-        for (id, block) in &hir.blocks {
-            if !rpo_blocks.contains_key(id) {
+        for (id, block) in &unordered {
+            if !hir.blocks.contains_key(id) {
                 let function_expr = block.instructions.iter().find(|&&instr_id| {
                     matches!(
                         instructions[instr_id.0 as usize].value,
@@ -811,8 +814,6 @@ impl<'h> HirBuilder<'h> {
                 }
             }
         }
-
-        hir.blocks = rpo_blocks;
 
         remove_unreachable_for_updates(&mut hir);
         remove_dead_do_while_statements(&mut hir);
@@ -1049,98 +1050,6 @@ impl<'h> HirBuilder<'h> {
 
     pub(crate) fn is_context_binding(&self, ref_: Ref) -> bool {
         self.is_context_identifier(ref_)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Post-build helper functions
-// ---------------------------------------------------------------------------
-
-fn remove_unreachable_for_updates(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-    for block in hir.blocks.values_mut() {
-        if let Terminal::For { update, .. } = &mut block.terminal {
-            if let Some(update_id) = *update {
-                if !block_ids.contains(&update_id) {
-                    *update = None;
-                }
-            }
-        }
-    }
-}
-
-fn remove_dead_do_while_statements(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-    for block in hir.blocks.values_mut() {
-        let should_replace = if let Terminal::DoWhile { test, .. } = &block.terminal {
-            !block_ids.contains(test)
-        } else {
-            false
-        };
-        if should_replace {
-            if let Terminal::DoWhile {
-                loop_block,
-                id,
-                loc,
-                ..
-            } = std::mem::replace(
-                &mut block.terminal,
-                Terminal::Unreachable {
-                    id: EvaluationOrder(0),
-                    loc: None,
-                },
-            ) {
-                block.terminal = Terminal::Goto {
-                    block: loop_block,
-                    variant: GotoVariant::Break,
-                    id,
-                    loc,
-                };
-            }
-        }
-    }
-}
-
-fn remove_unnecessary_try_catch(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-
-    let replacements: Vec<(BlockId, BlockId, BlockId, BlockId, Option<SourceLocation>)> = hir
-        .blocks
-        .iter()
-        .filter_map(|(&block_id, block)| {
-            if let Terminal::Try {
-                block: try_block,
-                handler,
-                fallthrough,
-                loc,
-                ..
-            } = &block.terminal
-            {
-                if !block_ids.contains(handler) {
-                    return Some((block_id, *try_block, *handler, *fallthrough, *loc));
-                }
-            }
-            None
-        })
-        .collect();
-
-    for (block_id, try_block, handler_id, fallthrough_id, loc) in replacements {
-        if let Some(block) = hir.blocks.get_mut(&block_id) {
-            block.terminal = Terminal::Goto {
-                block: try_block,
-                id: EvaluationOrder(0),
-                loc,
-                variant: GotoVariant::Break,
-            };
-        }
-
-        if let Some(fallthrough) = hir.blocks.get_mut(&fallthrough_id) {
-            if fallthrough.preds.len() == 1 && fallthrough.preds.contains(&handler_id) {
-                hir.blocks.shift_remove(&fallthrough_id);
-            } else {
-                fallthrough.preds.shift_remove(&handler_id);
-            }
-        }
     }
 }
 

@@ -20,10 +20,9 @@ use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
-    DeclarationId, EvaluationOrder, HirFunction, IdentifierId, InstructionValue, Place, Position,
+    DeclarationId, EvaluationOrder, HirFunction, IdentifierId, InstructionValue, Position,
     SourceLocation,
 };
-use crate::inference::infer_reactive_places::for_each_instruction_value_operand;
 use crate::utils::DisjointSet;
 
 // =============================================================================
@@ -339,8 +338,8 @@ pub(crate) fn find_disjoint_mutable_values(
                         operands.push(value.identifier);
                     }
                 }
-                InstructionValue::Destructure { value, .. } => {
-                    let mut declare = |place: &Place| {
+                InstructionValue::Destructure { lvalue, value, .. } => {
+                    for place in visitors::pattern_operands(&lvalue.pattern) {
                         let place_id = place.identifier;
                         let decl_id = env.identifiers[place_id.0 as usize].declaration_id;
                         declarations.entry(decl_id).or_insert(place_id);
@@ -349,8 +348,7 @@ pub(crate) fn find_disjoint_mutable_values(
                         if place_range.end.0 > place_range.start.0 + 1 {
                             operands.push(place_id);
                         }
-                    };
-                    visitors::each_lvalue(&instr.value, &mut declare as &mut dyn FnMut(&Place));
+                    }
 
                     let value_range = &env.identifiers[value.identifier.0 as usize].mutable_range;
                     if value_range.contains(instr.id) && value_range.start.0 > 0 {
@@ -359,23 +357,23 @@ pub(crate) fn find_disjoint_mutable_values(
                 }
                 InstructionValue::MethodCall { property, .. } => {
                     // For MethodCall: include all mutable operands plus the computed property
-                    for_each_instruction_value_operand(&instr.value, &env.functions, &mut |op| {
+                    for op in visitors::operands(&instr.value, &env.functions) {
                         let op_range = &env.identifiers[op.identifier.0 as usize].mutable_range;
                         if op_range.contains(instr.id) && op_range.start.0 > 0 {
                             operands.push(op.identifier);
                         }
-                    });
+                    }
                     // Ensure method property is in the same scope as the call
                     operands.push(property.identifier);
                 }
                 _ => {
                     // For all other instructions: include mutable operands
-                    for_each_instruction_value_operand(&instr.value, &env.functions, &mut |op| {
+                    for op in visitors::operands(&instr.value, &env.functions) {
                         let op_range = &env.identifiers[op.identifier.0 as usize].mutable_range;
                         if op_range.contains(instr.id) && op_range.start.0 > 0 {
                             operands.push(op.identifier);
                         }
-                    });
+                    }
                 }
             }
 

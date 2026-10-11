@@ -251,8 +251,6 @@ impl ReadableStream {
 
     /// The file a lazy, not yet started file stream reads, with the stream's window.
     fn file_blob(&self, global_this: &JSGlobalObject) -> Option<Blob> {
-        // BACKREF: see `Source::file()` — payload valid while stream alive.
-        // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
         let reader = self.ptr.file()?;
         let webcore::file_reader::Lazy::Blob(store) = reader.lazy.get() else {
             return None;

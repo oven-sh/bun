@@ -1413,9 +1413,7 @@ impl PostgresSQLConnection {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// For the pool's `onclose`, which runs before `clean_up_requests`: the requests no byte of
-    /// which was written leave the queue, and their `Query` objects are returned in queue order.
-    /// The server never saw them, so the pool runs them on another connection.
+    /// For the pool's `onclose`, before `clean_up_requests`: removes the requests no byte of which was written and returns their `Query` objects in queue order.
     pub fn take_unsent(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -1430,8 +1428,7 @@ impl PostgresSQLConnection {
                 .iter()
                 .filter_map(|request| request.unsent_target(global_object))
         };
-        // Nothing leaves the queue before the array is complete: if this throws,
-        // `clean_up_requests` still rejects every request.
+        // Nothing leaves the queue before the array is complete: after a throw here `clean_up_requests` still rejects every request.
         let queries = JSValue::create_empty_array(global_object, unsent().count())?;
         for (index, target) in unsent().enumerate() {
             queries.put_index(global_object, index as u32, target)?;

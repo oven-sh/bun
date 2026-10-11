@@ -411,8 +411,7 @@ impl JSMySQLQuery {
         self.get_target()
     }
 
-    /// Undoes `run` for a request whose connection closed before writing any of it, so that the
-    /// pool can run it on another connection.
+    /// Undoes `run` for a request whose connection closed before writing any of it: the pool runs it on another connection.
     pub(crate) fn take_back(&self) {
         self.query.with_mut(|q| q.take_back());
         self.set_target(JSValue::ZERO);

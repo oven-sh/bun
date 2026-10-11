@@ -569,9 +569,7 @@ impl JSMySQLConnection {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// For the pool's `onclose`, which runs before `clean_queue_and_close`: the requests no byte
-    /// of which was written leave the queue, and their `Query` objects are returned in queue
-    /// order. The server never saw them, so the pool runs them on another connection.
+    /// For the pool's `onclose`, before `clean_queue_and_close`: removes the requests no byte of which was written and returns their `Query` objects in queue order.
     pub fn take_unsent(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -582,8 +580,7 @@ impl JSMySQLConnection {
             return JSValue::create_empty_array(global_object, 0);
         }
         let queue = &connection.queue;
-        // Nothing leaves the queue before the array is complete: if this throws,
-        // `clean_queue_and_close` still rejects every request.
+        // Nothing leaves the queue before the array is complete: after a throw here `clean_queue_and_close` still rejects every request.
         let queries = JSValue::create_empty_array(global_object, queue.unsent_targets().count())?;
         for (index, target) in queue.unsent_targets().enumerate() {
             queries.put_index(global_object, index as u32, target)?;

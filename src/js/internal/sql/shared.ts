@@ -713,8 +713,7 @@ abstract class BasePooledConnection<
       err = this.wrapError(err);
     }
     const established = this.state === PooledConnectionState.connected;
-    // What the connection never wrote is the pool's again, in the order it was issued. The driver
-    // rejects what it keeps when this callback returns.
+    // What the connection never wrote is the pool's again; the driver rejects what it keeps when this callback returns.
     const unsent =
       established && !this.adapter.closed ? (this.connection?.takeUnsent() as QueryType<any, any>[]) : undefined;
     this.connection = null;
@@ -824,9 +823,7 @@ abstract class BasePooledConnection<
     this.closeHandlers.add(onClose);
   }
 
-  /// The query counts against this slot until it settles, or until the
-  /// connection hands it back unsent. A query that was handed back binds again
-  /// and keeps its one settle hook.
+  /// The query counts against this slot until it settles or is handed back unsent; it registers its settle hook only once.
   bindQuery(query: QueryType<any, any>) {
     if (query[_slot] === undefined) {
       query.finally(onPoolQuerySettled.bind(query));
@@ -1255,9 +1252,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     this.flushConcurrentQueries();
   }
 
-  /// `unsent`: what `connection` never wrote before it closed, in the order it was issued. The server
-  /// saw none of it, so its pool queries wait for a connection again, in front of the callers already
-  /// queued. The slot dials again for the ones that no other connection takes at once.
+  /// `unsent`: what `connection` never wrote, in issue order. Its pool queries wait again in front of the callers already queued, and the slot dials again for those still waiting.
   takeBack(connection: PooledConnection, unsent: QueryType<any, any>[], err: Error) {
     const later = this.waitingQueue;
     this.waitingQueue = [];
@@ -1284,8 +1279,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     this.flushConcurrentQueries();
   }
 
-  /// `connection` came up. The callers handed back go to it before a reservation does, as on the
-  /// connection that closed: a sql.begin() asked for after them can be waiting for one of them.
+  /// The callers handed back take `connection` before a reservation does: a sql.begin() asked for after them can be waiting for one of them.
   resumeHandedBack(connection: PooledConnection) {
     const resumed = this.#takeHandedBack();
     if (resumed.length === 0) {
@@ -1302,8 +1296,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
   }
 
-  /// A dial failed. The callers handed back do not wait for a connection that sql.begin() or
-  /// sql.reserve() holds: whoever holds it can be waiting for them.
+  /// After a failed dial the callers handed back do not wait for a connection that sql.begin() or sql.reserve() holds: its holder can be waiting for them.
   failHandedBack(err: Error) {
     const pollSize = this.connections.length;
     let free = false;

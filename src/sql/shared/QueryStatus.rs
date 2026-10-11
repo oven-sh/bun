@@ -3,8 +3,7 @@
 pub enum Status {
     /// The query was just enqueued and no byte of it is written, statement status can be checked for more details
     Pending,
-    /// The query wrote its own Parse (PostgreSQL) or COM_STMT_PREPARE (MySQL) and waits for the
-    /// reply; its Bind and Execute are not written
+    /// The query wrote its own Parse (PostgreSQL) or COM_STMT_PREPARE (MySQL); its Bind and Execute are not written
     Preparing,
     /// The query is being bound to the statement
     Binding,

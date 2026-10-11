@@ -527,8 +527,7 @@ impl MySQLQuery {
         self.status == Status::Pending
     }
 
-    /// Undoes `run_query` for a query whose connection closed before writing any of it: the next
-    /// `run_query` looks its statement up on another connection.
+    /// Undoes `run_query` for a query that wrote nothing: the next `run_query` looks its statement up on another connection.
     pub(crate) fn take_back(&mut self) {
         debug_assert!(self.is_unsent());
         self.statement = None;

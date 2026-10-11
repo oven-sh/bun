@@ -8,8 +8,8 @@ pub struct NoProcessExit;
 
 const NO_PROCESS_EXIT: Message = Message::new("", "Don't use `process.exit()`");
 
-#[derive(Default)]
 pub struct State<'a> {
+    exit: Name<'a>,
     /// What is in a call of `process.on()` or `process.once()`.
     process_event_handlers: AncestorMemo<'a, ()>,
     is_worker_threads_imported: Option<bool>,
@@ -26,15 +26,17 @@ impl Rule for NoProcessExit {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         // Not in what has a hashbang.
-        if file.mentions("exit") && file.mentions("process") && !file.text().starts_with(b"#!") {
-            Some(State::default())
-        } else {
-            None
-        }
+        (file.mentions("exit") && file.mentions("process") && !file.text().starts_with(b"#!")).then(|| State {
+            exit: file.name_of("exit"),
+            process_event_handlers: AncestorMemo::default(),
+            is_worker_threads_imported: None,
+        })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !e.as_call().is_some_and(|it| is_method_call(it, Some(&["process"]), Some(&["exit"]), None, None)) {
+        if e.callee().and_then(Expr::member_name).is_some_and(|it| it.name() != cx.state.exit)
+            || !e.as_call().is_some_and(|it| is_method_call(it, Some(&["process"]), Some(&["exit"]), None, None))
+        {
             return;
         }
         let file = cx.file();

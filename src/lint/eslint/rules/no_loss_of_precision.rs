@@ -101,7 +101,9 @@ fn loses_precision(raw: &[u8]) -> bool {
 }
 
 pub fn check<'a, R: Rule>(literal: Literal<'a>, cx: &Cx<'a, R>) {
-    if !literal.is_bigint() && loses_precision(literal.text()) {
+    let raw = literal.text();
+    // An exponent takes three characters.
+    if raw.len() > 2 && !raw.ends_with(b"n") && loses_precision(raw) {
         cx.report(literal, NO_LOSS_OF_PRECISION);
     }
 }

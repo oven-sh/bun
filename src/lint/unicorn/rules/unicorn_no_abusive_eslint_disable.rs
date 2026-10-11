@@ -30,7 +30,12 @@ impl Rule for NoAbusiveEslintDisable {
                 TokenKind::Block => comment.span().shrink(2, 2),
                 _ => continue,
             };
-            let text = strings::trim_unicode_whitespace_start(cx.slice(comment_span));
+            let text = cx.slice(comment_span);
+            // The `*` of `/**`, or a word.
+            if text.first().is_some_and(|it| it.is_ascii_graphic() && !matches!(it, b'e' | b'o')) {
+                continue;
+            }
+            let text = strings::trim_unicode_whitespace_start(text);
             let (message, rest) = match (text.strip_prefix(b"eslint-disable"), text.strip_prefix(b"oxlint-disable")) {
                 (Some(rest), _) => (ESLINT, rest),
                 (_, Some(rest)) => (OXLINT, rest),

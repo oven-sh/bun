@@ -11,26 +11,29 @@ const PREFER_MODERN_DOM_APIS: Message = Message::new("", "Prefer using `{{good_m
 impl Rule for PreferModernDomApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-dom-apis", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// The names of the methods.
+    type State<'a> = [Name<'a>; 4];
 
     fn new(_: &Options) -> Self {
         PreferModernDomApis
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["replaceChild", "insertBefore", "insertAdjacentText", "insertAdjacentElement"]) {
-            return None;
-        }
-        Some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        const METHODS: [&str; 4] = ["replaceChild", "insertBefore", "insertAdjacentText", "insertAdjacentElement"];
+        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call_expr) = e.as_call().filter(|it| it.args().len() == 2) else {
+        let Some(call_expr) = e.as_call() else {
             return;
         };
-        let Some(ExprKind::Dot { obj, name: property, .. }) = plain(call_expr.callee()).map(Expr::kind) else {
+        let callee = call_expr.callee();
+        let Some((obj, property, _)) = callee.as_dot().filter(|it| cx.state.contains(&it.1.name())) else {
             return;
         };
+        if call_expr.args().len() != 2 || plain(callee).is_none() {
+            return;
+        }
         let (Some(first), Some(second)) = (call_expr.args().first(), call_expr.args().get(1)) else {
             return;
         };

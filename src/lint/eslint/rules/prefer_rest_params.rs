@@ -16,8 +16,9 @@ fn is_normal_member_access(e: Expr<'_>) -> bool {
 }
 
 /// For the `arguments` that are referred to many times.
-#[derive(Default)]
 pub struct State<'a> {
+    /// `arguments`
+    name: Name<'a>,
     counted: FxHashSet<Symbol<'a>>,
     /// How many of the references to what is `counted` an identifier is.
     references: FxHashMap<Expr<'a>, u32>,
@@ -49,11 +50,15 @@ impl Rule for PreferRestParams {
         if !file.mentions("arguments") {
             return None;
         }
-        Some(State::default())
+        Some(State {
+            name: file.name_of("arguments"),
+            counted: FxHashSet::default(),
+            references: FxHashMap::default(),
+        })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !e.is_ident("arguments") || is_normal_member_access(e) {
+        if e.as_ident() != Some(cx.state.name) || is_normal_member_access(e) {
             return;
         }
         let Some(symbol) = e.reference().and_then(Reference::symbol) else {

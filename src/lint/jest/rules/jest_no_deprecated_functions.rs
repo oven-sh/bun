@@ -2,6 +2,7 @@ use bun_lint_oxlint::ast_util::static_property_name;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use smallvec::SmallVec;
 
 /// Disallow Jest functions that have been deprecated, renamed, or replaced.
 pub struct NoDeprecatedFunctions {
@@ -29,19 +30,26 @@ fn major(version: &[u8]) -> Option<usize> {
 impl Rule for NoDeprecatedFunctions {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-deprecated-functions", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
-    type State<'a> = ();
+    /// The names of the properties that the file mentions.
+    type State<'a> = SmallVec<[Name<'a>; 6]>;
 
     fn new(options: &Options) -> Self {
         let version = options.object(0).object("jest").str("version");
         NoDeprecatedFunctions { version: version.and_then(|it| major(it.as_bytes())).unwrap_or(29) }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        DEPRECATED_FUNCTIONS.iter().any(|it| file.mentions(it.0)).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.mentions("jest") && !file.mentions("require") {
+            return None;
+        }
+        let mentioned = DEPRECATED_FUNCTIONS.iter().filter(|it| file.mentions(it.0));
+        let names: Self::State<'a> = mentioned.map(|it| file.name_of(it.0)).collect();
+        (!names.is_empty()).then_some(names)
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(property) = static_property_name(node)
+        if node.member_name().is_none_or(|it| cx.state.contains(&it.name()))
+            && let Some(property) = static_property_name(node)
             && let Some((property, base_version, object, replacement)) =
                 DEPRECATED_FUNCTIONS.iter().find(|it| property.is(it.0))
             && node.object().is_some_and(|it| it.is_ident(object) && !it.is_parenthesized())

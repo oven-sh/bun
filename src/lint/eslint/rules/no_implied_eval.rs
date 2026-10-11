@@ -53,35 +53,41 @@ fn is_global_object(object: Expr<'_>) -> bool {
 impl Rule for NoImpliedEval {
     const META: Meta = Meta::eslint("no-implied-eval", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `execScript`, and the other names for which [`is_eval_like`] holds.
+    type State<'a> = [Name<'a>; 3];
 
     fn new(_: &Options) -> Self {
         NoImpliedEval
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<[Name<'a>; 3]> {
         file.mentions_any(&["setInterval", "setTimeout", "execScript"])
-            .then_some(())
+            .then(|| ["execScript", "setInterval", "setTimeout"].map(|name| file.name_of(name)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let callee = call.callee();
-        let is_exec_script = match callee.kind() {
-            ExprKind::Ident(name) if is_eval_like(name.bytes()) => {
-                if !ast_utils::is_global_reference(callee) {
+        let [exec_script, ..] = cx.state;
+        let is_exec_script = match (callee.as_ident(), callee.member_name(), callee.object()) {
+            (Some(name), ..) => {
+                if !cx.state.contains(&name) || !ast_utils::is_global_reference(callee) {
                     return;
                 }
-                name.is("execScript")
+                name == exec_script
             }
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                match ast_utils::get_static_property_name(callee) {
-                    Some(name) if is_eval_like(&name) && is_global_object(obj) => *name == *b"execScript",
-                    _ => return,
+            (None, Some(name), Some(obj)) => {
+                if !cx.state.contains(&name.name()) || !is_global_object(obj) {
+                    return;
                 }
+                name.name() == exec_script
             }
+            (None, None, Some(obj)) => match ast_utils::get_static_property_name(callee) {
+                Some(name) if is_eval_like(&name) && is_global_object(obj) => *name == *b"execScript",
+                _ => return,
+            },
             _ => return,
         };
         let Some(first) = call.args().first() else {

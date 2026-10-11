@@ -15,20 +15,24 @@ fn static_member_name(callee: Expr<'_>) -> Option<Ident<'_>> {
 impl Rule for NoInvalidRemoveEventListener {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-invalid-remove-event-listener", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `removeEventListener`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         NoInvalidRemoveEventListener
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("removeEventListener").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("removeEventListener").then(|| file.name_of("removeEventListener"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
         };
+        if call.callee().member_name().is_some_and(|it| it.name() != cx.state) {
+            return;
+        }
         let Some(listener) = call.args().get(1) else {
             return;
         };

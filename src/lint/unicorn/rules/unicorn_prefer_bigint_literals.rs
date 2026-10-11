@@ -61,10 +61,10 @@ impl Rule for PreferBigintLiterals {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
-        if !get_inner_expression(call.callee()).is_ident("BigInt") {
+        if !get_inner_expression(call.callee()).is_ident("BigInt") || call.args().len() != 1 || call.is_optional() {
             return;
         }
         let Some(argument) = call.args().first() else {

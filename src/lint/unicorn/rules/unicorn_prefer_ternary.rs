@@ -79,15 +79,15 @@ enum BodyNode<'a> {
 fn get_node_body_statement(statement: Stmt<'_>) -> BodyNode<'_> {
     let mut statement = statement;
     loop {
-        match statement.kind() {
-            StmtKind::Expr(expression) => return BodyNode::Expression(get_inner_expression(expression)),
-            StmtKind::Block(body) => {
-                let mut non_empty = body.iter().filter(|it| it.tag() != StmtTag::Empty);
-                match (non_empty.next(), non_empty.next()) {
-                    (Some(single), None) => statement = single,
-                    _ => return BodyNode::Statement(statement),
-                }
-            }
+        if let Some(expression) = statement.as_expr() {
+            return BodyNode::Expression(get_inner_expression(expression));
+        }
+        let Some(body) = statement.as_block() else {
+            return BodyNode::Statement(statement);
+        };
+        let mut non_empty = body.iter().filter(|it| it.tag() != StmtTag::Empty);
+        match (non_empty.next(), non_empty.next()) {
+            (Some(single), None) => statement = single,
             _ => return BodyNode::Statement(statement),
         }
     }

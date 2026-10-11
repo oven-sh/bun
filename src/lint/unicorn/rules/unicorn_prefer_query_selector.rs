@@ -14,14 +14,15 @@ const METHODS: [&str; 4] = ["getElementById", "getElementsByClassName", "getElem
 impl Rule for PreferQuerySelector {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-query-selector", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// [`METHODS`]
+    type State<'a> = [Name<'a>; 4];
 
     fn new(_: &Options) -> Self {
         PreferQuerySelector
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&METHODS).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -30,9 +31,15 @@ impl Rule for PreferQuerySelector {
 }
 
 fn check<'a>(_: &PreferQuerySelector, e: Expr<'a>, cx: &mut Cx<'a, PreferQuerySelector>) {
-    let Some(call_expr) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
+    let Some(call_expr) = e.as_call() else {
         return;
     };
+    if !call_expr.callee().member_name().is_some_and(|it| cx.state.contains(&it.name()))
+        || call_expr.args().len() != 1
+        || call_expr.is_optional()
+    {
+        return;
+    }
     let Some(ExprKind::Dot { obj, name: property, chain }) = as_member_expression(call_expr.callee()).map(Expr::kind)
     else {
         return;

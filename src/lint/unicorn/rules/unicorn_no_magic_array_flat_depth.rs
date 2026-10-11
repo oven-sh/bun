@@ -12,20 +12,24 @@ const NO_MAGIC_ARRAY_FLAT_DEPTH: Message =
 impl Rule for NoMagicArrayFlatDepth {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-magic-array-flat-depth", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `flat`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         NoMagicArrayFlatDepth
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("flat").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("flat").then(|| file.name_of("flat"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
+        if call.callee().member_name().is_some_and(|it| it.name() != cx.state) || call.is_optional() {
+            return;
+        }
         let Some(depth) = call.args().first() else {
             return;
         };

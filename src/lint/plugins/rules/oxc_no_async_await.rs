@@ -22,6 +22,11 @@ impl Rule for NoAsyncAwait {
         }
         let file = cx.file();
         let whole = func.estree_span();
+        // An arrow function, and a function with a name, is looked at from its start, where the keyword nearly always is.
+        if (func.is_arrow() || func.name().is_some()) && cx.slice(whole).starts_with(b"async") {
+            cx.report(Span::new(whole.start, whole.start + 5), NO_ASYNC);
+            return;
+        }
         // Where the keyword is looked for.
         let async_span = match (func.owner(), func.name()) {
             (Node::Expr(_), _) if func.is_arrow() => Span::new(whole.start, func.params_span().map_or(whole.end, |it| it.start)),

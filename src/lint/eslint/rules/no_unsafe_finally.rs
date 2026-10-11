@@ -25,12 +25,15 @@ fn leaves<'a>(at: Node<'a>, parent: Node<'a>, stops_at_loops: bool, stops_at_swi
     match parent {
         Node::File(_) | Node::Class(_) => Some(None),
         Node::Func(func) if func.kind() != FnKind::StaticBlock => Some(None),
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Try {
-                finalizer: Some(finalizer),
-                ..
-            } if Node::Stmt(finalizer) == at => Some(Some(finalizer.span())),
-            StmtKind::Switch { .. } if stops_at_switch => Some(None),
+        Node::Stmt(parent) => match parent.tag() {
+            StmtTag::Try => match parent.kind() {
+                StmtKind::Try {
+                    finalizer: Some(finalizer),
+                    ..
+                } if Node::Stmt(finalizer) == at => Some(Some(finalizer.span())),
+                _ => None,
+            },
+            StmtTag::Switch if stops_at_switch => Some(None),
             _ if stops_at_loops && parent.is_loop() => Some(None),
             _ => None,
         },
@@ -59,10 +62,8 @@ impl Rule for NoUnsafeFinally {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        if !file.has_stmts([StmtTag::Try]) {
-            return None;
-        }
-        Some(State::default())
+        let has_finalizer = |it: Stmt| matches!(it.kind(), StmtKind::Try { finalizer: Some(_), .. });
+        file.stmts_of_kind(StmtTag::Try).any(has_finalizer).then(State::default)
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

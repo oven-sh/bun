@@ -14,7 +14,8 @@ const PREFER_MATH_LOG_N: Message = Message::new("", "Prefer `Math.{{good_method}
 impl Rule for PreferModernMathApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-math-apis", Kind::Suggestion);
     const ON: On = On::new().binaries(&[BinOp::Mul, BinOp::Div]).exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `sqrt`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         PreferModernMathApis
@@ -31,12 +32,12 @@ impl Rule for PreferModernMathApis {
         on
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("Math").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("Math").then(|| file.name_of("sqrt"))
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
         check_prefer_log(e, left, right, cx);
@@ -46,6 +47,9 @@ impl Rule for PreferModernMathApis {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.callee().and_then(Expr::member_name).is_some_and(|it| it.name() != cx.state) {
+            return;
+        }
         let Some(arg) = e.as_call().and_then(|it| argument_of_math_method(it, "sqrt")) else {
             return;
         };

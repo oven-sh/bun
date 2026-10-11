@@ -42,12 +42,7 @@ impl Rule for NoArrayCallbackReference {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        let callee = call_expr.callee();
-        let member = match callee.tag() {
-            ExprTag::Dot => callee,
-            ExprTag::Ident => return,
-            _ => get_inner_expression(callee),
-        };
+        let member = get_inner_expression(call_expr.callee());
         if !member.member_name().is_some_and(|it| cx.state.contains(&it.name())) {
             return;
         }

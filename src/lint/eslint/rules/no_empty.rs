@@ -46,7 +46,7 @@ impl NoEmpty {
     }
 
     fn switch<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Switch { expr, cases } = stmt.kind() else {
+        let Some((expr, cases)) = stmt.as_switch() else {
             return;
         };
         if !cases.is_empty() {

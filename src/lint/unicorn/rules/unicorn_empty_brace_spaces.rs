@@ -17,8 +17,8 @@ impl Rule for EmptyBraceSpaces {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // Not a pattern, nor the attributes of an import.
-        if e.span().len() > 2
-            && e.as_object().is_some_and(|it| it.is_empty())
+        if e.as_object().is_some_and(|it| it.is_empty())
+            && e.span().len() > 2
             && !matches!(e.parent(), Node::File(_))
             && !e.is_assignment_target()
         {

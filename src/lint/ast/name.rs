@@ -64,16 +64,32 @@ impl<'a> Name<'a> {
     /// Whether it is one of `texts`.
     #[inline]
     pub fn is_any(self, texts: &[&str]) -> bool {
-        let len = self.len();
-        (texts.iter()).any(|text| text.len() == len && self.has_all(text.as_bytes()))
+        match self.file.texts.span_of(self.atom) {
+            Some(_) => texts.iter().any(|text| self.has(text.as_bytes())),
+            None => self.is_any_elsewhere(texts),
+        }
+    }
+
+    #[inline(never)]
+    fn is_any_elsewhere(self, texts: &[&str]) -> bool {
+        let bytes = self.bytes_elsewhere();
+        texts.iter().any(|text| bytes == text.as_bytes())
     }
 
     #[inline]
     fn has(self, text: &[u8]) -> bool {
-        self.len() == text.len() && self.has_all(text)
+        let texts = &self.file.texts;
+        let may_have = match texts.span_of(self.atom) {
+            Some((_, len)) if len as usize != text.len() => false,
+            Some((start, _)) => match (texts.source().get(start as usize), text.first()) {
+                (Some(first), Some(wanted)) => first == wanted,
+                _ => true,
+            },
+            None => true,
+        };
+        may_have && self.has_all(text)
     }
 
-    /// Whether its bytes are `text`, which is as long.
     #[inline(never)]
     fn has_all(self, text: &[u8]) -> bool {
         self.bytes() == text

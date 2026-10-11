@@ -43,14 +43,14 @@ impl Rule for PreferNumericLiterals {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let args = call.args();
         let (Some(string), Some(radix), None) = (args.first(), args.get(1), args.get(2)) else {
             return;
         };
-        let ExprKind::Number(radix) = radix.kind() else {
+        let Some(radix) = radix.as_number() else {
             return;
         };
         let (radix, system, literal_prefix) = if radix == 2.0 {

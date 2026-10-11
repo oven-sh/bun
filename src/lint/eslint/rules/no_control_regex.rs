@@ -93,10 +93,15 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
 impl Rule for NoControlRegex {
     const META: Meta = Meta::eslint("no-control-regex", Kind::Problem).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Regex, ExprTag::Call, ExprTag::New]);
-    no_state!();
+    /// `RegExp`, if the file mentions it.
+    type State<'a> = Option<Name<'a>>;
 
     fn new(_: &Options) -> Self {
         NoControlRegex
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Option<Name<'a>>> {
+        Some(file.mentions("RegExp").then(|| file.name_of("RegExp")))
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
@@ -115,10 +120,11 @@ impl Rule for NoControlRegex {
                 }
             }
             ExprTag::Call | ExprTag::New => {
-                let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
+                let Some(call) = e.as_call_like() else {
                     return;
                 };
-                if call.callee().is_ident("RegExp")
+                if cx.state.is_some()
+                    && call.callee().as_ident() == cx.state
                     && let Some(first) = call.args().first()
                     && let Some(pattern) = first.as_string()
                     && ast_utils::is_global_reference(call.callee())

@@ -10,18 +10,20 @@ const PREFER_CODE_POINT: Message = Message::new("", "Prefer `{{good_method}}` ov
 impl Rule for PreferCodePoint {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-code-point", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Dot]);
-    type State<'a> = ();
+    /// `fromCharCode`, `charCodeAt`
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         PreferCodePoint
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["fromCharCode", "charCodeAt"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        const METHODS: [&str; 2] = ["fromCharCode", "charCodeAt"];
+        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, member_expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Dot { obj, name, .. } = member_expr.kind() else {
+        let Some((obj, name, _)) = member_expr.as_dot().filter(|it| cx.state.contains(&it.1.name())) else {
             return;
         };
         let replacement = match name.bytes() {

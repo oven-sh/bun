@@ -136,7 +136,7 @@ impl Rule for NoUnneededTernary {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Cond { test, yes, no } = e.kind() else {
+        let Some((test, yes, no)) = e.as_cond() else {
             return;
         };
         // oxlint sees through `as T` and the like.

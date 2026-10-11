@@ -229,10 +229,14 @@ fn name_for_oxlint(func: Func) -> (Vec<u8>, &'static [u8]) {
 }
 
 /// The whole rule, for a function, and typescript-eslint's rule of the same name.
+#[inline]
 pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
-    if !func.body_statements().is_some_and(|body| body.is_empty()) {
-        return;
+    if func.body_statements().is_some_and(|body| body.is_empty()) {
+        check_without_statements(func, allow, cx);
     }
+}
+
+fn check_without_statements<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     let (Some(kind), Some(body)) = (get_kind(func), func.body_span()) else {
         return;
     };

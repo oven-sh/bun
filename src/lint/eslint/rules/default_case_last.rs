@@ -15,7 +15,7 @@ impl Rule for DefaultCaseLast {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Switch { cases, .. } = stmt.kind() else {
+        let Some((_, cases)) = stmt.as_switch() else {
             return;
         };
         if let Some(default) = cases.iter().find(|case| case.is_default())

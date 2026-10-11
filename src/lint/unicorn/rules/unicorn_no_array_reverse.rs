@@ -18,20 +18,27 @@ const USE_TO_REVERSED: Message = Message::new(
 impl Rule for NoArrayReverse {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-reverse", Kind::Problem).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `reverse`
+    type State<'a> = Name<'a>;
 
     fn new(options: &Options) -> Self {
         NoArrayReverse { allow_expression_statement: options.object(0).bool_or("allowExpressionStatement", true) }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("reverse").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("reverse").then(|| file.name_of("reverse"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| it.args().is_empty() && !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
+        if call.callee().member_name().is_some_and(|it| it.name() != cx.state)
+            || !call.args().is_empty()
+            || call.is_optional()
+        {
+            return;
+        }
         let Some(member) = get_member_expr(call.callee()) else {
             return;
         };

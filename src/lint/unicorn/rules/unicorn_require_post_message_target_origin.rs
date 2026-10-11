@@ -31,28 +31,32 @@ impl Rule for RequirePostMessageTargetOrigin {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "require-post-message-target-origin", Kind::Problem).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `postMessage`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         RequirePostMessageTargetOrigin
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("postMessage").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("postMessage").then(|| file.name_of("postMessage"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
-        let Some(ExprKind::Dot { obj, name, chain }) = get_member_expr(call.callee()).map(Expr::kind) else {
+        let member = get_member_expr(call.callee()).and_then(Expr::as_dot);
+        let Some((obj, _, chain)) = member.filter(|it| it.1.name() == cx.state) else {
             return;
         };
+        if call.args().len() != 1 || call.is_optional() {
+            return;
+        }
         let Some(message) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
             return;
         };
-        if !name.name().is("postMessage")
-            || chain == Chain::Start && obj.tag() != ExprTag::Ident
+        if chain == Chain::Start && obj.tag() != ExprTag::Ident
             || is_message_port_expression(obj)
         {
             return;

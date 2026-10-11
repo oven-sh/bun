@@ -11,27 +11,28 @@ impl Rule for RequireNumberToFixedDigitsArgument {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "require-number-to-fixed-digits-argument", Kind::Suggestion)
         .fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `toFixed`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         RequireNumberToFixedDigitsArgument
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("toFixed").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("toFixed").then(|| file.name_of("toFixed"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| it.args().is_empty() && !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let Some(member) = get_member_expr(call.callee()) else {
             return;
         };
-        let ExprKind::Dot { obj, name, .. } = member.kind() else {
+        let Some((obj, _, _)) = member.as_dot().filter(|it| it.1.name() == cx.state) else {
             return;
         };
-        if !name.name().is("toFixed") || obj.tag() == ExprTag::New && !obj.is_parenthesized() {
+        if !call.args().is_empty() || call.is_optional() || obj.tag() == ExprTag::New && !obj.is_parenthesized() {
             return;
         }
         // From the end of `a.toFixed`, whatever is between that and the `(`.

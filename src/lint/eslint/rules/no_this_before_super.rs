@@ -1,4 +1,5 @@
 use super::constructor_super::first_super_statement;
+use bun_core::strings;
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -77,16 +78,26 @@ fn has_this_or_super(node: Node<'_>) -> bool {
     false
 }
 
+/// Whether neither word is written from the start of `constructor` to the last argument of `call`, but for what is called.
+fn writes_neither_up_to(constructor: Func<'_>, call: Call<'_>) -> bool {
+    let (file, callee) = (constructor.file(), call.callee().span());
+    let end = call.args().last().map_or(callee.end, |it| it.outer_span().end);
+    let before = file.slice(Span::new(constructor.span().start, callee.start));
+    let after = file.slice(Span::new(callee.end, end));
+    [before, after].iter().all(|it| !strings::contains(it, b"this") && !strings::contains(it, b"super"))
+}
+
 /// Whether it can be told from the statements of the body alone that there is no `this` or `super`
 /// before `super()` is called: that is a statement of its own there, and there is none in the
 /// parameters, in the types of the signature, in what precedes it and in its arguments.
 fn calls_super_first(constructor: Func<'_>) -> bool {
     first_super_statement(constructor).is_some_and(|(mut before, call)| {
-        !constructor.params().iter().any(|it| has_this_or_super(it.into()))
-            && !constructor.type_params().iter().any(|it| has_this_or_super(it.into()))
-            && !constructor.return_type().is_some_and(|it| has_this_or_super(it.into()))
-            && !before.any(|it| has_this_or_super(it.into()))
-            && !call.args().iter().any(|it| has_this_or_super(it.into()))
+        writes_neither_up_to(constructor, call)
+            || !constructor.params().iter().any(|it| has_this_or_super(it.into()))
+                && !constructor.type_params().iter().any(|it| has_this_or_super(it.into()))
+                && !constructor.return_type().is_some_and(|it| has_this_or_super(it.into()))
+                && !before.any(|it| has_this_or_super(it.into()))
+                && !call.args().iter().any(|it| has_this_or_super(it.into()))
     })
 }
 

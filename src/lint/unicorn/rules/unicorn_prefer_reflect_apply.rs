@@ -40,20 +40,27 @@ fn is_literal_or_array_or_object(e: Expr) -> bool {
 impl Rule for PreferReflectApply {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-reflect-apply", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `apply`, `call`
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         PreferReflectApply
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("apply").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("apply").then(|| ["apply", "call"].map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| matches!(it.args().len(), 2 | 3) && !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
+        if call.callee().member_name().is_some_and(|it| !cx.state.contains(&it.name()))
+            || !matches!(call.args().len(), 2 | 3)
+            || call.is_optional()
+        {
+            return;
+        }
         let (callee, args) = (call.callee(), call.args());
         let (Some(first), Some(second)) = (args.first(), args.get(1)) else {
             return;

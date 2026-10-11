@@ -57,7 +57,9 @@ impl Rule for PreferAt {
             ExprTag::Index => {
                 // `a[0]`, `a[a.length - 1]`
                 let is_candidate = self.check_all_index_access
-                    || e.index().is_some_and(|it| matches!(inner_tag(it), ExprTag::Number | ExprTag::Binary));
+                    || e.index().is_some_and(|it| {
+                        matches!(get_inner_expression(it).tag(), ExprTag::Number | ExprTag::Binary)
+                    });
                 if is_candidate && !is_assignment_target(e) {
                     self.handle_computed_member(e, cx);
                 }
@@ -79,15 +81,6 @@ impl Rule for PreferAt {
 
 type Context<'a> = Cx<'a, PreferAt>;
 
-/// `get_inner_expression(e).tag()`
-fn inner_tag(e: Expr) -> ExprTag {
-    match e.tag() {
-        ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation => {
-            get_inner_expression(e).tag()
-        }
-        tag => tag,
-    }
-}
 
 /// `callee.get_member_expr()`, if it is `a.b`.
 fn as_static_member(callee: Expr<'_>) -> Option<Expr<'_>> {

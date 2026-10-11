@@ -17,7 +17,9 @@ impl Rule for NoWith {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if let StmtKind::With { .. } = stmt.kind() {
+        if stmt.as_block().is_none()
+            && let StmtKind::With { .. } = stmt.kind()
+        {
             let start = stmt.span().start;
             // Before ESLint 10 it is the whole statement.
             let end = if cx.language().eslint_major < 10 { stmt.span().end } else { start + "with".len() as u32 };

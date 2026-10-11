@@ -3,12 +3,13 @@
 
 use crate::jest::{
     Ctx, JestFnKind, JestGeneralFnKind, ParsedJestFnCall, PossibleJestNode, get_node_name,
-    is_type_of_jest_fn_call, parent_expression, parse_jest_fn_call_in, print_expression,
+    is_type_of_jest_fn_call, mention_bits, mentions_any, parent_expression, parse_jest_fn_call_in,
+    print_expression,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
-use bun_lint_oxlint::import::import_entries;
+use bun_lint_oxlint::import::{import_declarations, import_entries_of};
 use rustc_hash::FxHashMap;
 
 /// Not in parentheses, and not the whole of an optional chain.
@@ -22,11 +23,22 @@ fn statements_of(func: Func<'_>) -> Option<impl Iterator<Item = Stmt<'_>>> {
         .map(|it| it.iter().filter(|it| it.directive().is_none()))
 }
 
-/// `a.mockImplementation(..)`: where the name of the method is written, the name, and the first argument, which is no `...a`.
-fn method_call_with_argument(node: Expr<'_>) -> Option<(Span, Name<'_>, Expr<'_>)> {
+/// `a.mockImplementation(..)`: where the name of the method is written, the name, which is one of `names`, and the first argument,
+/// which is no `...a`.
+fn method_call_with_argument<'a>(
+    node: Expr<'a>,
+    names: &[Name<'a>],
+) -> Option<(Span, Name<'a>, Expr<'a>)> {
     let call_expr = node.as_call()?;
+    let callee = call_expr.callee();
+    if callee
+        .member_name()
+        .is_some_and(|it| !names.contains(&it.name()))
+    {
+        return None;
+    }
     let (property_span, property_name) =
-        static_property_info(as_member_expression(call_expr.callee())?)?;
+        static_property_info(as_member_expression(callee)?).filter(|it| names.contains(&it.1))?;
     Some((
         property_span,
         property_name,
@@ -46,13 +58,18 @@ pub(crate) mod no_mocks_import {
     );
 
     pub(crate) fn run_once(ctx: &Ctx) {
-        // Once for each name that is imported.
-        for import_entry in import_entries(ctx.file) {
-            if contains_mocks_dir(import_entry.declaration.spec().bytes())
-                && let Some(span) = import_entry.declaration.spec_span()
+        for declaration in import_declarations(ctx.file) {
+            if contains_mocks_dir(declaration.spec().bytes())
+                && let Some(span) = declaration.spec_span()
             {
-                ctx.report(span, NO_MOCKS_IMPORT);
+                // Once for each name that is imported.
+                for _ in import_entries_of(declaration) {
+                    ctx.report(span, NO_MOCKS_IMPORT);
+                }
             }
+        }
+        if !ctx.file.mentions("require") {
+            return;
         }
         // It stops at the first `require` that is not called with a string.
         for reference in ctx.file.unresolved_references_to(b"require") {
@@ -140,19 +157,23 @@ pub(crate) mod prefer_mock_promise_shorthand {
     const USE_MOCK_SHORTHAND: Message =
         Message::new("", "Prefer mock resolved/rejected shorthands for promises.");
 
+    const METHODS: [&str; 4] = [
+        "mockReturnValue",
+        "mockReturnValueOnce",
+        "mockImplementation",
+        "mockImplementationOnce",
+    ];
+
     pub(crate) fn should_run(file: &File) -> bool {
-        file.mentions("Promise")
-            && file.mentions_any(&[
-                "mockReturnValue",
-                "mockReturnValueOnce",
-                "mockImplementation",
-                "mockImplementationOnce",
-            ])
+        file.mentions("Promise") && mentions_any(file, &const { mention_bits(METHODS) })
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
+        let methods = METHODS.map(|it| ctx.file.name_of(it));
         for node in ctx.file.exprs_of_kind(ExprTag::Call) {
-            let Some((property_span, property_name, expr)) = method_call_with_argument(node) else {
+            let Some((property_span, property_name, expr)) =
+                method_call_with_argument(node, &methods)
+            else {
                 continue;
             };
             let (is_once, is_implementation) = match property_name.bytes() {
@@ -241,8 +262,10 @@ pub(crate) mod prefer_mock_return_shorthand {
         "Mock functions that return simple values should use `mockReturnValue/mockReturnValueOnce`.",
     );
 
+    const METHODS: [&str; 2] = ["mockImplementation", "mockImplementationOnce"];
+
     pub(crate) fn should_run(file: &File) -> bool {
-        file.mentions_any(&["mockImplementation", "mockImplementationOnce"])
+        mentions_any(file, &const { mention_bits(METHODS) })
     }
 
     /// `a.mockImplementation(() => 1)`
@@ -255,8 +278,8 @@ pub(crate) mod prefer_mock_return_shorthand {
         return_expression: Expr<'a>,
     }
 
-    fn as_mock(node: Expr<'_>) -> Option<Mock<'_>> {
-        let (property_span, property_name, expr) = method_call_with_argument(node)?;
+    fn as_mock<'a>(node: Expr<'a>, methods: &[Name<'a>]) -> Option<Mock<'a>> {
+        let (property_span, property_name, expr) = method_call_with_argument(node, methods)?;
         let new_property_name = match property_name.bytes() {
             b"mockImplementation" => "mockReturnValue",
             b"mockImplementationOnce" => "mockReturnValueOnce",
@@ -277,10 +300,11 @@ pub(crate) mod prefer_mock_return_shorthand {
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
+        let methods = METHODS.map(|it| ctx.file.name_of(it));
         let mut mocks: Vec<Mock<'a>> = ctx
             .file
             .exprs_of_kind(ExprTag::Call)
-            .filter_map(as_mock)
+            .filter_map(|it| as_mock(it, &methods))
             .collect();
         // What is returned by one can have others in it. These come first, and are not looked at again.
         utils::sort::sort_unstable_by_key(&mut mocks, |it| {

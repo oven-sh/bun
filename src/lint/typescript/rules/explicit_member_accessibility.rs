@@ -30,17 +30,17 @@ const ACCESSIBILITY: Flags = Flags::PUBLIC.union(Flags::PRIVATE).union(Flags::PR
 
 /// `head`: what is reported, which starts after the decorators, where the modifier belongs. `key`: what oxlint points at.
 fn report_missing<'a>(
-    head: Span,
-    key: Option<Span>,
+    head: impl Fn() -> Span,
+    key: impl FnOnce() -> Option<Span>,
     node_type: &'static str,
     name: Cow<'a, [u8]>,
     cx: &Cx<'a, ExplicitMemberAccessibility>,
 ) {
-    let place = key.filter(|_| cx.language().is_oxlint).unwrap_or(head);
+    let place = if cx.language().is_oxlint { key() } else { None }.unwrap_or_else(&head);
     let mut report = cx.report(place, MISSING_ACCESSIBILITY).data("type", node_type).data("name", name);
     for accessibility in ["public", "private", "protected"] {
         report = report.suggest_with(ADD_EXPLICIT_ACCESSIBILITY, &[("type", accessibility.as_bytes())], |fixer| {
-            fixer.insert_before(head, format!("{accessibility} "))
+            fixer.insert_before(head(), format!("{accessibility} "))
         });
     }
 }
@@ -89,11 +89,11 @@ impl ExplicitMemberAccessibility {
         }
         match check {
             Level::Explicit => {
-                let key = match member.key() {
+                let key = || match member.key() {
                     Some(key) => Some(key.inner_span(cx.file())),
                     None => member.constructor_keyword().map(|it| it.span()),
                 };
-                report_missing(get_member_head_loc(member), key, node_type, name, cx);
+                report_missing(|| get_member_head_loc(member), key, node_type, name, cx);
             }
             _ => report_public(member.modifiers(), node_type, name, cx),
         }
@@ -113,8 +113,8 @@ impl ExplicitMemberAccessibility {
         let name = name.bytes();
         match self.parameter_properties {
             Level::Explicit => {
-                let head = get_parameter_property_head_loc(param, name);
-                report_missing(head, Some(param.pat().span()), "parameter property", Cow::Borrowed(name), cx);
+                let head = || get_parameter_property_head_loc(param, name);
+                report_missing(head, || Some(param.pat().span()), "parameter property", Cow::Borrowed(name), cx);
             }
             _ => report_public(param.modifiers(), "parameter property", Cow::Borrowed(name), cx),
         }

@@ -315,10 +315,7 @@ impl ArrowBodyStyle {
             return;
         }
         // The only statement, if it is a `return`, and what it returns.
-        let returned = match statements.first().map(|it| (it, it.kind())) {
-            Some((statement, StmtKind::Return(argument))) if count == 1 => Some((statement, argument)),
-            _ => None,
-        };
+        let returned = statements.first().filter(|_| count == 1).and_then(|it| Some((it, it.as_return()?)));
         if self.mode == Mode::AsNeeded {
             let Some((_, argument)) = returned else {
                 return;

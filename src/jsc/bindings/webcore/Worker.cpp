@@ -80,10 +80,15 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
     worker->suspendIfNeeded();
 
-    auto started = worker->m_contextProxy->startWorkerGlobalScope(url);
-    if (started.hasException())
-        return started.releaseException();
+    auto prepared = worker->m_contextProxy->prepareWorkerGlobalScope(url);
+    if (prepared.hasException())
+        return prepared.releaseException();
     return worker;
+}
+
+ExceptionOr<void> Worker::start(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&& sharedEnvStore)
+{
+    return m_contextProxy->startWorkerGlobalScope(WTF::move(workerDataAndEnvironmentData), WTF::move(dataMessagePorts), WTF::move(sharedEnvStore));
 }
 
 Worker::~Worker()

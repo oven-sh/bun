@@ -346,8 +346,9 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // Resolve the spawning thread's env tree (founding one if needed) so disjoint
     // SHARE_ENV chains stay isolated. Runs only after every option validated,
     // because founding a tree swaps this thread's process.env.
+    RefPtr<Bun::SharedEnvStore> sharedEnvStore;
     if (shareEnv) {
-        options.sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
+        sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
@@ -392,16 +393,19 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         transferredPorts = disentangleResult.releaseReturnValue();
     }
 
-    options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
-    options.dataMessagePorts = WTF::move(transferredPorts);
-
-    auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
+    auto created = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
+    if (created.hasException()) [[unlikely]] {
+        WebCore::propagateException(*lexicalGlobalObject, throwScope, created.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    Ref worker = created.releaseReturnValue();
+    auto started = worker->start(serialized.releaseReturnValue(), WTF::move(transferredPorts), WTF::move(sharedEnvStore));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (started.hasException()) [[unlikely]] {
+        WebCore::propagateException(*lexicalGlobalObject, throwScope, started.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), WTF::move(worker));
 
     setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});

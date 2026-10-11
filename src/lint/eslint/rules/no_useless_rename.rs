@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use smallvec::SmallVec;
 
 /// Disallow renaming import, export, and destructured assignments to the same name.
 pub struct NoUselessRename {
@@ -48,13 +49,66 @@ impl NoUselessRename {
             Some(fixer.replace(node, file.slice(replacement)))
         });
     }
+
+    /// A `Property` of an `ObjectPattern` that is assigned to.
+    fn check_property<'a>(prop: Prop<'a>, cx: &Cx<'a, Self>) {
+        if prop.kind() != PropKind::Init || prop.is_jsx_attribute() {
+            return;
+        }
+        let Some(value) = prop.value() else {
+            return;
+        };
+        let (left, has_default) = match value.as_assign() {
+            Some((None, target, _)) => (target, true),
+            _ => (value, false),
+        };
+        let Some(local) = left.as_ident() else {
+            return;
+        };
+        let Some(name) = prop.key().and_then(name_of_key).filter(|&name| name == local) else {
+            return;
+        };
+        Self::report(cx, Renamed {
+            node: prop.span(),
+            replacement: value.span(),
+            name,
+            kind: "Destructuring assignment",
+            is_fixable: !(has_default && left.is_parenthesized()),
+            is_type_only: false,
+        });
+    }
+
+    /// `target`: what an assignment, a `for`-`in` or a `for`-`of` assigns to. The way down of [`Expr::is_assignment_target`].
+    fn check_target<'a>(target: Expr<'a>, cx: &Cx<'a, Self>) {
+        if !matches!(target.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Spread) {
+            return;
+        }
+        let mut pending: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
+        pending.push(target);
+        while let Some(e) = pending.pop() {
+            if e.is_parenthesized() {
+                continue;
+            }
+            if let Some(props) = e.as_object() {
+                for prop in props {
+                    Self::check_property(prop, cx);
+                    pending.extend(prop.value());
+                }
+            } else if let Some(elements) = e.as_array() {
+                pending.extend(elements);
+            } else if e.tag() == ExprTag::Spread {
+                pending.extend(e.operand());
+            }
+        }
+    }
 }
 
 impl Rule for NoUselessRename {
     const META: Meta = Meta::eslint("no-useless-rename", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new()
         .pats(&[PatTag::Object])
-        .props()
+        .exprs(&[ExprTag::Assign])
+        .stmts(&[StmtTag::ForIn, StmtTag::ForOf])
         .import_specs()
         .export_specs();
     no_state!();
@@ -71,7 +125,7 @@ impl Rule for NoUselessRename {
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         let mut on = On::new();
         if !self.ignore_destructuring {
-            on = on.pats(&[PatTag::Object]).props();
+            on = on.pats(&[PatTag::Object]).exprs(&[ExprTag::Assign]).stmts(&[StmtTag::ForIn, StmtTag::ForOf]);
         }
         if !self.ignore_import {
             on = on.import_specs();
@@ -107,36 +161,17 @@ impl Rule for NoUselessRename {
         }
     }
 
-    /// A `Property` of an `ObjectPattern` that is assigned to.
-    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if prop.kind() != PropKind::Init || prop.is_jsx_attribute() {
-            return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(target) = e.left() {
+            Self::check_target(target, cx);
         }
-        let Some(value) = prop.value() else {
-            return;
-        };
-        let (left, has_default) = match value.as_assign() {
-            Some((None, target, _)) => (target, true),
-            _ => (value, false),
-        };
-        let Some(local) = left.as_ident() else {
-            return;
-        };
-        let Some(name) = prop.key().and_then(name_of_key).filter(|&name| name == local) else {
-            return;
-        };
-        let Node::Expr(object) = prop.parent() else {
-            return;
-        };
-        if utils::is_assignment_target(object) {
-            Self::report(cx, Renamed {
-                node: prop.span(),
-                replacement: value.span(),
-                name,
-                kind: "Destructuring assignment",
-                is_fixable: !(has_default && left.is_parenthesized()),
-                is_type_only: false,
-            });
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } = statement.kind()
+            && let Some(head) = left.as_expr()
+        {
+            Self::check_target(head, cx);
         }
     }
 

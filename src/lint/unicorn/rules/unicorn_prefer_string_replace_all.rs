@@ -73,21 +73,24 @@ impl Rule for PreferStringReplaceAll {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-replace-all", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `replace`, `replaceAll`
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         PreferStringReplaceAll
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&["replace", "replaceAll"]).then_some(())
+        const METHODS: [&str; 2] = ["replace", "replaceAll"];
+        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| it.args().len() == 2) else {
             return;
         };
-        let Some(name) = get_member_expr(call.callee()).and_then(Expr::member_name) else {
+        let name = get_member_expr(call.callee()).and_then(Expr::member_name);
+        let Some(name) = name.filter(|it| cx.state.contains(&it.name())) else {
             return;
         };
         let Some(pattern) = call.args().first() else {

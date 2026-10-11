@@ -10,24 +10,29 @@ const PREFER_BLOB_READING_METHODS: Message =
 impl Rule for PreferBlobReadingMethods {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-blob-reading-methods", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `readAsText`, `readAsArrayBuffer`
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         PreferBlobReadingMethods
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["readAsText", "readAsArrayBuffer"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        const METHODS: [&str; 2] = ["readAsText", "readAsArrayBuffer"];
+        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call_expr) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
+        let Some(call_expr) = e.as_call() else {
             return;
         };
         let callee = call_expr.callee();
-        let ExprKind::Dot { name, chain, .. } = callee.kind() else {
+        let Some((_, name, chain)) = callee.as_dot().filter(|it| cx.state.contains(&it.1.name())) else {
             return;
         };
+        if call_expr.args().len() != 1 || call_expr.is_optional() {
+            return;
+        }
         let good_method = match name.bytes() {
             b"readAsText" => "text",
             b"readAsArrayBuffer" => "arrayBuffer",

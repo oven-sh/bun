@@ -15,7 +15,7 @@ impl<const VITEST: bool> Rule for ValidExpect<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::may_have_possible_jest_call_node(file).then_some(())
+        file.mentions("expect").then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

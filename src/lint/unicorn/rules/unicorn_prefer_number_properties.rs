@@ -19,6 +19,7 @@ const FUNCTIONS: [&str; 4] = ["isNaN", "isFinite", "parseFloat", "parseInt"];
 pub struct State<'a> {
     /// The nearest unary expression around something.
     nearest_unary: AncestorMemo<'a, Expr<'a>>,
+    functions: [Name<'a>; 4],
 }
 
 impl Rule for PreferNumberProperties {
@@ -51,8 +52,8 @@ impl Rule for PreferNumberProperties {
         on
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State { nearest_unary: AncestorMemo::default() })
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        Some(State { nearest_unary: AncestorMemo::default(), functions: FUNCTIONS.map(|it| file.name_of(it)) })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -107,7 +108,7 @@ impl Rule for PreferNumberProperties {
 }
 
 fn is_global_object(e: Expr) -> bool {
-    !e.is_parenthesized() && e.as_ident().is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES))
+    e.as_ident().is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES)) && !e.is_parenthesized()
 }
 
 impl PreferNumberProperties {
@@ -127,9 +128,13 @@ impl PreferNumberProperties {
 
     /// `parseInt(a)`, `window.parseInt(a)`
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(callee) = e.callee().filter(|it| !it.is_parenthesized()) else {
+        let Some(callee) = e.callee() else {
             return;
         };
+        let name = callee.as_ident().or_else(|| callee.member_name().map(Ident::name));
+        if name.is_some_and(|it| !cx.state.functions.contains(&it)) || callee.is_parenthesized() {
+            return;
+        }
         let name = match callee.as_ident() {
             Some(name) => Some(name),
             None => as_member_expression(callee)

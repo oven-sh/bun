@@ -24,10 +24,8 @@ impl NoThisAlias {
                 (declaration.pat().span(), declaration.pat().as_ident())
             }
             Node::VarDecl(declaration) => (declaration.binding_span(), declaration.pat().as_ident()),
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Assign { target, value, .. }
-                    if value == this && !utils::is_assignment_target(parent) =>
-                {
+            Node::Expr(parent) => match parent.as_assign() {
+                Some((_, target, value)) if value == this && !utils::is_assignment_target(parent) => {
                     (target.span(), target.as_ident())
                 }
                 _ => return,

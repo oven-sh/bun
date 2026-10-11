@@ -36,23 +36,27 @@ fn is_length_member_for<'a>(index: Expr<'a>, object: Expr<'a>) -> bool {
 impl Rule for NoConfusingArrayWith {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-confusing-array-with", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `with`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         NoConfusingArrayWith
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("with").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("with").then(|| file.name_of("with"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let Some(member) = get_member_expr(call.callee()) else {
             return;
         };
+        if member.member_name().is_none_or(|it| it.name() != cx.state) || call.is_optional() {
+            return;
+        }
         let Some(property) = plain_member_name(member) else {
             return;
         };

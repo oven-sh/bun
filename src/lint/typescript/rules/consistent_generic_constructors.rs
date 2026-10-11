@@ -114,7 +114,7 @@ impl Rule for ConsistentGenericConstructors {
     }
 
     fn expr<'a>(&self, rhs: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(call) = rhs.kind() else {
+        let Some(call) = rhs.as_new() else {
             return;
         };
         let callee = call.callee();
@@ -125,15 +125,14 @@ impl Rule for ConsistentGenericConstructors {
         if callee.is_parenthesized() && cx.language().is_oxlint {
             return;
         }
-        let rhs_type_args = call.type_args().angle_brackets_span();
-        if rhs_type_args.is_some() != self.prefers_type_annotation {
+        if call.type_args().is_empty() == self.prefers_type_annotation {
             return;
         }
         let Some(owner) = Owner::of(rhs) else {
             return;
         };
 
-        if let Some(type_args) = rhs_type_args {
+        if let Some(type_args) = call.type_args().angle_brackets_span() {
             if owner.ty().is_some() {
                 return;
             }
@@ -158,18 +157,19 @@ impl Rule for ConsistentGenericConstructors {
         let TypeKind::Ref { name, args } = lhs.kind() else {
             return;
         };
-        let Some(type_args) = args.angle_brackets_span() else {
-            return;
-        };
         let Some(type_name) = name.as_ident().map(Ident::name) else {
             return;
         };
         if type_name != callee_name
+            || args.is_empty()
             || type_name.is_any(&BUILT_IN_ARRAYS) && is_reference_to_global(type_name, lhs, &mut cx.state)
             || Object::of(Some(&cx.language().parser_options)).bool_or("isolatedDeclarations", false)
         {
             return;
         }
+        let Some(type_args) = args.angle_brackets_span() else {
+            return;
+        };
         // oxlint points at the annotation.
         let place = if cx.language().is_oxlint { lhs.annotation_span() } else { owner.span(rhs) };
         cx.report(place, PREFER_CONSTRUCTOR).fix(|fixer| {

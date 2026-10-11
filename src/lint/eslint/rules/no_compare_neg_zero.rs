@@ -21,7 +21,7 @@ const SUGGEST_NOT_OBJECT_IS: Message = Message::new(
 );
 
 fn is_neg_zero(e: Expr) -> bool {
-    let ExprKind::Unary { op: UnOp::Minus, operand } = e.kind() else {
+    let Some(operand) = e.operand().filter(|_| e.unary_op() == Some(UnOp::Minus)) else {
         return false;
     };
     match operand.kind() {
@@ -48,15 +48,22 @@ impl Rule for NoCompareNegZero {
     const META: Meta = Meta::eslint("no-compare-neg-zero", Kind::Problem)
         .has_suggestions()
         .recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().unaries(&[UnOp::Minus]);
     no_state!();
 
     fn new(_: &Options) -> Self {
         NoCompareNegZero
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+    /// There are fewer `-` than comparisons.
+    fn unary<'a>(&self, operand: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !is_neg_zero(operand) {
+            return;
+        }
+        let Node::Expr(e) = operand.parent() else {
+            return;
+        };
+        let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
             return;
         };
         if !matches!(
@@ -73,7 +80,8 @@ impl Rule for NoCompareNegZero {
             return;
         }
         let (left_is_neg_zero, right_is_neg_zero) = (is_neg_zero(left), is_neg_zero(right));
-        if !left_is_neg_zero && !right_is_neg_zero {
+        // `-0 == -0` is reported with the left.
+        if left_is_neg_zero && operand != left {
             return;
         }
         let report = cx.report(e, UNEXPECTED).data("operator", bin_op_text(op));

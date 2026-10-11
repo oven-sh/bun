@@ -839,6 +839,12 @@ impl NodeTags {
         self.0 & (1 << index) != 0
     }
 
+    /// The number of the lowest bit that is set: of one kind, what [`NodeTags::index_of`] says for a node of it.
+    #[inline]
+    pub(crate) const fn first_index(self) -> u32 {
+        self.0.trailing_zeros()
+    }
+
     /// The numbers of the bits that are set: see [`NodeTags::index_of`].
     #[inline]
     pub(crate) fn indices(self) -> impl Iterator<Item = u32> {

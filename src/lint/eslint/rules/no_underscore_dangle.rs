@@ -36,10 +36,12 @@ fn may_dangle(text: &[u8], written: Span) -> bool {
 
 /// ESTree's `object` and `property.name` of a `MemberExpression`. In `a[b]` the name is `b`.
 fn object_and_property_name(e: Expr<'_>) -> Option<(Expr<'_>, &[u8])> {
-    match e.kind() {
-        ExprKind::Dot { obj, name, .. } => Some((obj, strings::without_prefix(name.bytes(), b"#"))),
-        ExprKind::Index { obj, index, .. } => Some((obj, index.as_ident()?.bytes())),
-        _ => None,
+    match e.as_dot() {
+        Some((obj, name, _)) => Some((obj, strings::without_prefix(name.bytes(), b"#"))),
+        None => {
+            let (obj, index, _) = e.as_index()?;
+            Some((obj, index.as_ident()?.bytes()))
+        }
     }
 }
 
@@ -149,7 +151,7 @@ impl NoUnderscoreDangle {
     /// `A.b` after `implements`, or after the `extends` of an interface, is a `MemberExpression`
     /// in ESTree.
     fn check_heritage<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        let TypeKind::Ref { name, .. } = ty.kind() else {
+        let Some((name, _)) = ty.as_ref() else {
             return;
         };
         let is_unexpected = |part: &Ident<'a>| self.is_unexpected(part.bytes()) && part.bytes() != b"__proto__";

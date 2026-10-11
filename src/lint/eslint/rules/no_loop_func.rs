@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 /// Disallow function declarations that contain unsafe references inside loop statements.
 pub struct NoLoopFunc;
@@ -66,6 +67,8 @@ impl Writes {
 /// What has been found out about a file.
 #[derive(Default)]
 pub struct Known<'a> {
+    /// Where the loops are that are in no other loop, in the order of the source.
+    loops: SmallVec<[Span; 4]>,
     /// ESLint's `getContainingLoopNode`.
     containing_loops: AncestorMemo<'a, Option<Stmt<'a>>>,
     writes_to_variables: FxHashMap<usize, Writes>,
@@ -75,6 +78,32 @@ pub struct Known<'a> {
 }
 
 impl<'a> Known<'a> {
+    /// `None` if there is nothing to check in `file`.
+    pub fn of(file: &'a File<'a>) -> Option<Known<'a>> {
+        let tags = [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::While, StmtTag::DoWhile];
+        let mut loops: SmallVec<[Span; 4]> =
+            tags.into_iter().flat_map(|tag| file.stmts_of_kind(tag)).map(Stmt::span).collect();
+        if loops.is_empty() {
+            return None;
+        }
+        utils::sort::sort_unstable_by_key(&mut loops, |it| it.start);
+        let mut end = 0;
+        loops.retain(|it| {
+            let is_outermost = it.end > end;
+            end = end.max(it.end);
+            is_outermost
+        });
+        Some(Known {
+            loops,
+            ..Known::default()
+        })
+    }
+
+    fn is_in_loop(&self, offset: u32) -> bool {
+        let after = self.loops.partition_point(|it| it.start <= offset);
+        after.checked_sub(1).and_then(|it| self.loops.get(it)).is_some_and(|it| offset < it.end)
+    }
+
     /// ESLint's `getContainingLoopNode`.
     fn get_containing_loop_node(&mut self, node: Node<'a>) -> Option<Stmt<'a>> {
         let is_oxlint = node.file().language().is_oxlint;
@@ -178,23 +207,15 @@ fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect
     known.has_unsafe_write(writes, loop_node, excluded_end)
 }
 
-/// Whether there is anything to check in `file`.
-pub fn has_loops(file: &File) -> bool {
-    file.has_stmts([
-        StmtTag::For,
-        StmtTag::ForIn,
-        StmtTag::ForOf,
-        StmtTag::While,
-        StmtTag::DoWhile,
-    ])
-}
-
 /// ESLint's `checkForLoops`.
 pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialect, cx: &mut Cx<'a, R>) {
     if !ast_utils::is_function_with_body(func) {
         return;
     }
     let known = &mut cx.state;
+    if !known.is_in_loop(func.span().start) {
+        return;
+    }
     let Some(loop_node) = known.get_containing_loop_node(func.into()) else {
         return;
     };
@@ -247,7 +268,7 @@ impl Rule for NoLoopFunc {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
-        has_loops(file).then(Known::default)
+        Known::of(file)
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

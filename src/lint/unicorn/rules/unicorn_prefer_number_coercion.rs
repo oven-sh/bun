@@ -12,20 +12,27 @@ const REPLACE: Message = Message::new("", "Replace this call with `{{replacement
 impl Rule for PreferNumberCoercion {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-number-coercion", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `parseFloat`, `parseInt`
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         PreferNumberCoercion
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["parseFloat", "parseInt"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        const FUNCTIONS: [&str; 2] = ["parseFloat", "parseInt"];
+        file.mentions_any(&FUNCTIONS).then(|| FUNCTIONS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call_expr) = e.as_call().filter(|it| !it.is_optional()) else {
+        let Some(call_expr) = e.as_call() else {
             return;
         };
+        let callee = call_expr.callee();
+        let name = callee.as_ident().or_else(|| callee.member_name().map(Ident::name));
+        if name.is_some_and(|it| !cx.state.contains(&it)) || call_expr.is_optional() {
+            return;
+        }
         let Some(is_parse_int) = parse_target(call_expr.callee()) else {
             return;
         };

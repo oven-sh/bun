@@ -77,6 +77,9 @@ impl NoParamReassign {
         let Some(symbol) = pat.symbol() else {
             return;
         };
+        if !self.props && !symbol.has_modifying_references() {
+            return;
+        }
         // ESLint defines the parameters before everything else in the scope of the function.
         // Once for `function f(a, a) {}`.
         let is_parameter = |it: &Declaration<'a>| matches!(it, Declaration::Param(_));
@@ -95,18 +98,18 @@ impl NoParamReassign {
         // A destructuring assignment with a default value writes to the same identifier twice.
         let mut previous = None;
         for reference in symbol.references() {
-            let at = reference.span();
-            let is_repeated = previous.replace(at) == Some(at);
+            let start = reference.ident().start();
+            let is_repeated = previous.replace(start) == Some(start);
             if reference.is_init() || is_repeated {
                 continue;
             }
             if reference.is_write() {
-                cx.report(at, ASSIGNMENT_TO_FUNCTION_PARAM).data("name", reference.name());
+                cx.report(reference, ASSIGNMENT_TO_FUNCTION_PARAM).data("name", reference.name());
             } else if self.props
                 && matches!(reference.node(), node @ (Node::Expr(_) | Node::Type(_)) if is_modifying_prop(node, &mut cx.state))
                 && !self.is_ignored_property_assignment(reference.name().bytes())
             {
-                cx.report(at, ASSIGNMENT_TO_FUNCTION_PARAM_PROP).data("name", reference.name());
+                cx.report(reference, ASSIGNMENT_TO_FUNCTION_PARAM_PROP).data("name", reference.name());
             }
         }
     }

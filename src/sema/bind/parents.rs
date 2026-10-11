@@ -227,7 +227,21 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     for (i, e) in f.exprs.iter().enumerate() {
         let id = ExprId(i as u32);
         let me = Parent::Expr(id);
-        let mut chain = Chain::No;
+        // What few expressions are is put right where they are met.
+        let kind = 2 * e.kind.tag() as u8;
+        if LINT {
+            set!(expr_kinds[id] = kind);
+            counts[kind as usize] += 1;
+        }
+        macro_rules! link {
+            ($chain:expr) => {
+                if LINT && $chain != Chain::No {
+                    set!(expr_kinds[id] = kind + 1);
+                    counts[kind as usize] -= 1;
+                    counts[kind as usize + 1] += 1;
+                }
+            };
+        }
         macro_rules! operands {
             ($($operand:expr),*) => {{ $(set!(expr_parent[$operand] = me);)* }};
         }
@@ -262,8 +276,13 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             };
         }
         match e.kind {
-            ExprKind::Missing
-            | ExprKind::Ident(_)
+            ExprKind::Missing => {
+                if LINT {
+                    set!(expr_kinds[id] = NOT_REACHED);
+                    counts[kind as usize] -= 1;
+                }
+            }
+            ExprKind::Ident(_)
             | ExprKind::PrivateIdentifier(_)
             | ExprKind::This
             | ExprKind::Super
@@ -276,24 +295,18 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             | ExprKind::Regex
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
-            ExprKind::Dot {
-                obj, chain: link, ..
-            } => {
-                chain = link;
+            ExprKind::Dot { obj, chain, .. } => {
+                link!(chain);
                 operands!(obj);
             }
-            ExprKind::Index {
-                obj,
-                index,
-                chain: link,
-            } => {
-                chain = link;
+            ExprKind::Index { obj, index, chain } => {
+                link!(chain);
                 operands!(obj, index);
             }
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
                 if let Some(call) = f.calls.get(call.idx()) {
                     if let ExprKind::Call(_) = e.kind {
-                        chain = call.chain;
+                        link!(call.chain);
                     }
                     operands!(call.callee, call.template);
                     list!(call.args);
@@ -339,11 +352,6 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
                     list!(jsx.children);
                 }
             }
-        }
-        if LINT && !matches!(e.kind, ExprKind::Missing) {
-            let kind = 2 * e.kind.tag() as u8 + u8::from(chain != Chain::No);
-            set!(expr_kinds[id] = kind);
-            counts[kind as usize] += 1;
         }
     }
     if let Some(all) = expr_kind_counts.get_mut(..counts.len()) {

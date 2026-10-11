@@ -480,40 +480,46 @@ impl<'a> File<'a> {
         }
     }
 
-    /// Calls `visit` with every node of the kinds in `tags`, sort by sort.
-    pub(crate) fn every_node_of(&'a self, tags: NodeTags, visit: &mut dyn FnMut(Node<'a>)) {
+    /// Calls `visit` with every node of the kinds in `tags`, sort by sort, and with its `NodeTags::index_of`.
+    pub(crate) fn every_node_of(&'a self, tags: NodeTags, visit: &mut dyn FnMut(Node<'a>, u32)) {
         for tag in EXPR_TAGS {
-            if tags.intersects(tag.into()) {
+            let kind = NodeTags::from(tag);
+            if tags.intersects(kind) {
                 self.exprs_of(tag)
                     .iter()
-                    .for_each(|&id| visit(Node::Expr(grouped_expr(self, id))));
+                    .for_each(|&id| visit(Node::Expr(grouped_expr(self, id)), kind.first_index()));
             }
         }
         for tag in StmtTag::ALL {
-            if tags.intersects(tag.into()) {
-                self.stmts_of(tag)
-                    .iter()
-                    .for_each(|&id| visit(Node::Stmt(Stmt::from_raw(self, id))));
+            let kind = NodeTags::from(tag);
+            if tags.intersects(kind) {
+                self.stmts_of(tag).iter().for_each(|&id| {
+                    visit(Node::Stmt(Stmt::from_raw(self, id)), kind.first_index())
+                });
             }
         }
         for tag in TypeTag::ALL {
-            if tags.intersects(tag.into()) {
-                self.types_of(tag)
-                    .iter()
-                    .for_each(|&id| visit(Node::Type(TypeNode::from_raw(self, id))));
+            let kind = NodeTags::from(tag);
+            if tags.intersects(kind) {
+                self.types_of(tag).iter().for_each(|&id| {
+                    visit(Node::Type(TypeNode::from_raw(self, id)), kind.first_index())
+                });
             }
         }
         if tags.intersects(NodeTags::PAT) {
             for tag in PatTag::ALL {
-                self.pats_of(tag)
-                    .iter()
-                    .for_each(|&id| visit(Node::Pat(Pat::from_raw(self, id))));
+                self.pats_of(tag).iter().for_each(|&id| {
+                    visit(
+                        Node::Pat(Pat::from_raw(self, id)),
+                        NodeTags::PAT.first_index(),
+                    )
+                });
             }
         }
         macro_rules! sorts {
             ($($tags:ident $every:ident $variant:ident;)*) => {
                 $(if tags.intersects(NodeTags::$tags) {
-                    self.$every(|it| visit(Node::$variant(it)));
+                    self.$every(|it| visit(Node::$variant(it), NodeTags::$tags.first_index()));
                 })*
             };
         }
@@ -534,7 +540,7 @@ impl<'a> File<'a> {
             PAT_ELEM every_pat_elem PatElem;
         }
         if tags.intersects(NodeTags::FILE) {
-            visit(Node::File(self));
+            visit(Node::File(self), NodeTags::FILE.first_index());
         }
     }
 
@@ -795,7 +801,7 @@ impl RuleEntry {
 #[inline(never)]
 fn nodes_of<'a>(file: &'a File<'a>, tags: NodeTags) -> Vec<Node<'a>> {
     let mut all = Vec::new();
-    file.every_node_of(tags, &mut |node| all.push(node));
+    file.every_node_of(tags, &mut |node, _| all.push(node));
     all
 }
 
@@ -843,9 +849,10 @@ impl ByTag {
         }
     }
 
+    /// `kind`: `NodeTags::index_of` a node.
     #[inline]
-    fn of(&self, node: Node) -> &[u16] {
-        let index = NodeTags::index_of(node) as usize;
+    fn of(&self, kind: u8) -> &[u16] {
+        let index = kind as usize;
         &self.listeners[self.starts[index] as usize..self.starts[index + 1] as usize]
     }
 }
@@ -858,22 +865,23 @@ struct Walk<'w, T> {
 }
 
 impl<T> Walk<'_, T> {
+    /// `kind`, here and below: `NodeTags::index_of(node)`.
     #[inline]
-    fn enter<'a>(&mut self, node: Node<'a>)
+    fn enter<'a>(&mut self, node: Node<'a>, kind: u8)
     where
         T: Running<'a>,
     {
-        for &rule in self.enter.of(node) {
+        for &rule in self.enter.of(kind) {
             self.running[rule as usize].enter(node);
         }
     }
 
     #[inline]
-    fn exit<'a>(&mut self, node: Node<'a>)
+    fn exit<'a>(&mut self, node: Node<'a>, kind: u8)
     where
         T: Running<'a>,
     {
-        for &rule in self.exit.of(node) {
+        for &rule in self.exit.of(kind) {
             self.running[rule as usize].exit(node);
         }
     }
@@ -888,6 +896,8 @@ fn walk_listened<'a, T: Running<'a>>(file: &'a File<'a>, walk: &mut Walk<'_, T>)
         end: u32,
         /// Of two nodes with the same span, the one with the lower rank contains the other.
         rank: u8,
+        /// `NodeTags::index_of(node)`
+        kind: u8,
         node: Node<'a>,
     }
     fn rank(node: Node) -> u8 {
@@ -914,12 +924,13 @@ fn walk_listened<'a, T: Running<'a>>(file: &'a File<'a>, walk: &mut Walk<'_, T>)
         }
     }
     let mut found: Vec<Found<'a>> = Vec::new();
-    file.every_node_of(walk.enter.tags | walk.exit.tags, &mut |node| {
+    file.every_node_of(walk.enter.tags | walk.exit.tags, &mut |node, kind| {
         let span = node.span();
         found.push(Found {
             start: span.start,
             end: span.end,
             rank: rank(node),
+            kind: kind as u8,
             node,
         });
     });
@@ -928,24 +939,24 @@ fn walk_listened<'a, T: Running<'a>>(file: &'a File<'a>, walk: &mut Walk<'_, T>)
     let mut order: Vec<u128> = keys.collect();
     order.sort();
 
-    // The nodes that have been entered and not left, each with its end.
-    let mut open: Vec<(u32, Node<'a>)> = Vec::new();
+    // The nodes that have been entered and not left, each with its end and its kind.
+    let mut open: Vec<(u32, u8, Node<'a>)> = Vec::new();
     for it in order
         .iter()
         .filter_map(|&key| found.get(key as u32 as usize))
     {
-        while let Some(&(end, node)) = open.last()
+        while let Some(&(end, kind, node)) = open.last()
             && end <= it.start
             && !matches!(node, Node::File(_))
         {
             open.pop();
-            walk.exit(node);
+            walk.exit(node, kind);
         }
-        walk.enter(it.node);
-        open.push((it.end, it.node));
+        walk.enter(it.node, it.kind);
+        open.push((it.end, it.kind, it.node));
     }
-    while let Some((_, node)) = open.pop() {
-        walk.exit(node);
+    while let Some((_, kind, node)) = open.pop() {
+        walk.exit(node, kind);
     }
 }
 

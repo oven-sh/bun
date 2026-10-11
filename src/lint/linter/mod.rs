@@ -743,12 +743,17 @@ impl<S: RuleSet> Linter<S> {
                     config::oxlint_changes(rule.reported_as, diagnostic.message_id),
                 );
             }
-            let mut message = to_message(diagnostic, rule.reported_as, places);
+            problems.push(to_message(diagnostic, rule.reported_as, places));
+            let Some(message) =
+                (problems.last_mut()).filter(|_| changes_something || rule.name.is_some())
+            else {
+                continue;
+            };
             if rule.name.is_some() {
                 message.rule_id = Some(rule.id());
             }
             if follows_oxlint {
-                change_as_oxlint(&mut message, changes.1);
+                change_as_oxlint(message, changes.1);
             }
             if changes_something && file.language().eslint_8.is_some() {
                 let (fixes, suggests) = config::eslint8::changes_of(rule.reported_as);
@@ -757,7 +762,6 @@ impl<S: RuleSet> Linter<S> {
                     message.suggestions.clear();
                 }
             }
-            problems.push(message);
         }
         drop(diagnostics);
         // The rule of the package looks at a file that the rule here cannot answer for as it would.
@@ -921,6 +925,7 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
 }
 
 /// Takes out of `diagnostic` what is on the heap. `locator`: `None` if nothing reads where it is.
+#[inline]
 fn to_message(
     diagnostic: &mut Diagnostic,
     rule: &'static Meta,

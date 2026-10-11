@@ -16,13 +16,15 @@ const MISSING: Message = Message::new(
 /// The test of a statement or of a conditional expression, and how the message describes that.
 fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
     match node {
+        Node::Stmt(stmt) if stmt.tag() == StmtTag::If => Some((stmt.as_if()?.0, "an 'if' statement")),
+        Node::Stmt(stmt) if !stmt.is_loop() => None,
         Node::Stmt(stmt) => match stmt.kind() {
-            StmtKind::If { test, .. } => Some((test, "an 'if' statement")),
             StmtKind::While { test, .. } => Some((test, "a 'while' statement")),
             StmtKind::DoWhile { test, .. } => Some((test, "a 'do...while' statement")),
             StmtKind::For { test, .. } => Some((test?, "a 'for' statement")),
             _ => None,
         },
+        Node::Expr(e) if e.tag() != ExprTag::Cond => None,
         Node::Expr(e) => match e.kind() {
             ExprKind::Cond { test, .. } => Some((test, "ConditionalExpression")),
             _ => None,

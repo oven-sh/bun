@@ -928,10 +928,10 @@ impl<'a> Expr<'a> {
         let Node::Expr(parent) = self.parent() else {
             return true;
         };
-        let continues = match parent.kind() {
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == self,
-            ExprKind::Call(call) => call.callee() == self,
-            ExprKind::NonNull(_) => true,
+        let continues = match parent.tag() {
+            ExprTag::Dot | ExprTag::Index => parent.object() == Some(self),
+            ExprTag::Call => parent.callee() == Some(self),
+            ExprTag::NonNull => true,
             _ => false,
         };
         !continues || self.is_parenthesized()
@@ -949,9 +949,9 @@ impl<'a> Expr<'a> {
                 return false;
             }
             at = match at.parent() {
-                Node::Expr(parent) => match parent.kind() {
-                    ExprKind::Assign { target, .. } => return target == at,
-                    ExprKind::Array(_) | ExprKind::Spread(_) => parent,
+                Node::Expr(parent) => match parent.tag() {
+                    ExprTag::Assign => return parent.left() == Some(at),
+                    ExprTag::Array | ExprTag::Spread => parent,
                     _ => return false,
                 },
                 Node::Prop(prop) if prop.value() == Some(at) && !prop.is_jsx_attribute() => {
@@ -961,11 +961,10 @@ impl<'a> Expr<'a> {
                     }
                 }
                 Node::Stmt(parent) => {
-                    return match parent.kind() {
-                        super::StmtKind::ForIn { left, .. }
-                        | super::StmtKind::ForOf { left, .. } => {
-                            matches!(left.kind(), super::StmtKind::Expr(head) if head == at)
-                        }
+                    return match parent.try_raw().map(|raw| raw.kind) {
+                        Some(
+                            hir::StmtKind::ForIn { left, .. } | hir::StmtKind::ForOf { left, .. },
+                        ) => super::Stmt::new(self.file, left).as_expr() == Some(at),
                         _ => false,
                     };
                 }
@@ -1015,15 +1014,16 @@ impl<'a> Expr<'a> {
     /// `e satisfies T`, `e!`. Parentheses are not nodes, so `(e as T)!` is `e` too.
     pub fn skip_type_wrappers(self) -> Expr<'a> {
         let mut at = self;
-        loop {
-            match at.kind() {
-                ExprKind::As { expr, .. }
-                | ExprKind::Satisfies { expr, .. }
-                | ExprKind::AsConst(expr)
-                | ExprKind::NonNull(expr) => at = expr,
-                _ => return at,
-            }
+        while let Some(
+            hir::ExprKind::As { expr, .. }
+            | hir::ExprKind::Satisfies { expr, .. }
+            | hir::ExprKind::AsConst(expr)
+            | hir::ExprKind::NonNull(expr),
+        ) = at.try_raw().map(|raw| raw.kind)
+        {
+            at = Expr::new(self.file, expr);
         }
+        at
     }
 
     /// The `const` of `e as const` or `<const>e`, which ESLint has as a `TSTypeReference`.
@@ -1082,11 +1082,7 @@ impl<'a> Expr<'a> {
     pub fn sequence(self) -> SmallVec<[Expr<'a>; 4]> {
         let mut items = SmallVec::new();
         let mut at = self;
-        while let ExprKind::Binary {
-            op: BinOp::Comma,
-            left,
-            right,
-        } = at.kind()
+        while let Some((BinOp::Comma, left, right)) = at.as_binary()
             && (at == self || !at.is_parenthesized())
         {
             items.push(right);

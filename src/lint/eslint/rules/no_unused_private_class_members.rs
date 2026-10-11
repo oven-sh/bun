@@ -268,23 +268,29 @@ impl NoUnusedPrivateClassMembers {
         }
     }
 
-    fn collect_usage<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match e.kind() {
-            ExprKind::Dot { name, .. } if cx.text().get(name.start() as usize) == Some(&b'#') => {
+    /// For a file in which a private name is declared.
+    fn collect_usages<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        for e in file.exprs_of_kind(ExprTag::PrivateIdentifier) {
+            if let ExprKind::PrivateIdentifier(name) = e.kind() {
+                cx.state.usages.push((Node::Expr(e), name));
+            }
+        }
+        for e in file.exprs_of_kind(ExprTag::Dot).filter(|it| it.is_private_member()) {
+            if let Some(name) = e.member_name() {
                 cx.state.usages.push((Node::Expr(e), name.name()));
             }
-            ExprKind::PrivateIdentifier(name) => cx.state.usages.push((Node::Expr(e), name)),
-            _ => {}
         }
     }
 
     /// oxlint looks at each class alone: a name in a class in the class is not looked for further out. A method is used by
     /// any `a.#x` or `#x in a`, a field by an `a.#x` whose value goes somewhere. A getter and a setter are two members.
     fn finish_as_oxlint<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let State { declared, usages, .. } = std::mem::take(&mut cx.state);
-        if declared.is_empty() {
+        if cx.state.declared.is_empty() {
             return;
         }
+        self.collect_usages(cx);
+        let State { declared, usages, .. } = std::mem::take(&mut cx.state);
         let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
         // What is referred to, and whether it is read.
         let mut referenced: FxHashMap<(Class<'a>, Name<'a>), bool> = FxHashMap::default();
@@ -312,10 +318,7 @@ impl Rule for NoUnusedPrivateClassMembers {
         .has_suggestions()
         .recommended()
         .reports_on_exit();
-    const ON: On = On::new()
-        .classes()
-        .exprs(&[ExprTag::Dot, ExprTag::PrivateIdentifier])
-        .finish();
+    const ON: On = On::new().classes().finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
@@ -324,10 +327,6 @@ impl Rule for NoUnusedPrivateClassMembers {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         (file.has_classes() && strings::contains_char(file.text(), b'#')).then(State::default)
-    }
-
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.collect_usage(e, cx);
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
@@ -339,10 +338,11 @@ impl Rule for NoUnusedPrivateClassMembers {
             self.finish_as_oxlint(cx);
             return;
         }
-        let State { mut members, usages, .. } = std::mem::take(&mut cx.state);
-        if members.is_empty() {
+        if cx.state.members.is_empty() {
             return;
         }
+        self.collect_usages(cx);
+        let State { mut members, usages, .. } = std::mem::take(&mut cx.state);
         // The class whose body a node is in.
         let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
         for (usage, name) in usages {

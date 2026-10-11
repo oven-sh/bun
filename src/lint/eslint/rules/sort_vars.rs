@@ -108,6 +108,9 @@ impl Rule for SortVars {
         let StmtKind::Var(all) = statement.kind() else {
             return;
         };
+        if all.len() < 2 {
+            return;
+        }
         if cx.language().is_oxlint {
             return self.check_as_oxlint(&all.iter().collect::<Vec<_>>(), cx);
         }

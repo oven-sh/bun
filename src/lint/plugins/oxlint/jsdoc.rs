@@ -116,11 +116,7 @@ pub struct JSDocFinder<'a> {
 impl<'a> JSDocFinder<'a> {
     /// `None`: the file has no JSDoc comment.
     pub(crate) fn new(file: &'a File<'a>) -> Option<Self> {
-        let has_comments = file.comments().next().is_some();
-        let comments = match has_comments
-            .then(|| file.extension(|| Comments::new(file)))
-            .flatten()
-        {
+        let comments = match file.extension(|| Comments::new(file)) {
             Some(kept) => Kept::WithTheFile(kept),
             None => Kept::Here(Comments::new(file)),
         };
@@ -184,11 +180,20 @@ impl<'a> JSDocFinder<'a> {
         comments.iter().filter_map(move |it| docs.at(it.start))
     }
 
-    pub(crate) fn iter_all(&self) -> impl Iterator<Item = JSDoc<'a>> {
-        self.handles(&self.comments().all)
+    /// Those for which `is_wanted` holds of what is between the `/**` and the `*/`.
+    pub(crate) fn iter_all_with(
+        &self,
+        is_wanted: impl Fn(&[u8]) -> bool,
+    ) -> impl Iterator<Item = JSDoc<'a>> {
+        let (file, docs) = (self.file, self.file.jsdoc());
+        let content = move |it: &Comment| file.slice(Span::new(it.start, it.end).shrink(3, 2));
+        let wanted = self.comments().all.iter();
+        wanted
+            .filter(move |it| is_wanted(content(it)))
+            .filter_map(move |it| docs.at(it.start))
     }
 
-    /// [`JSDocFinder::iter_all`] without those that have no tags.
+    /// All but those that have no tags.
     pub(crate) fn iter_tagged(&self) -> impl Iterator<Item = JSDoc<'a>> {
         let docs = self.file.jsdoc();
         let tagged = self.comments().all.iter().filter(|it| it.has_at);

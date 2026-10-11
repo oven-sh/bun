@@ -254,15 +254,13 @@ impl LogicalAssignmentOperators {
 
     /// `a = a || b`
     fn check_assignment<'a>(&self, assignment: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Assign { op: None, target, value } = assignment.kind() else {
+        let (Some(None), Some(target), Some(value)) = (assignment.assign_op(), assignment.left(), assignment.right())
+        else {
             return;
         };
-        let ExprKind::Binary { op, mut left, .. } = value.kind() else {
+        let (Some(op), Some(mut left)) = (value.binary_op().filter(|op| is_logical(*op)), value.left()) else {
             return;
         };
-        if !is_logical(op) {
-            return;
-        }
         // The leftmost operand of consecutive expressions with the same operator, unless
         // parentheses make the order of evaluation explicit, and the expression it is the left of.
         let mut parent = value;
@@ -302,13 +300,11 @@ impl LogicalAssignmentOperators {
 
     /// `a || (a = b)`
     fn check_logical<'a>(&self, logical: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = logical.kind() else {
+        let (Some(op), Some(left), Some(right)) = (logical.binary_op(), logical.left(), logical.right()) else {
             return;
         };
-        if !is_logical(op) {
-            return;
-        }
-        let ExprKind::Assign { op: None, target, .. } = seen(right).kind() else {
+        let assignment = seen(right);
+        let (Some(None), Some(target)) = (assignment.assign_op(), assignment.left()) else {
             return;
         };
         if !is_reference(left) || !is_same_reference(left, target) {
@@ -408,7 +404,8 @@ impl Rule for LogicalAssignmentOperators {
         .fixable(Fixable::Code)
         .has_suggestions();
     const ON: On = On::new()
-        .exprs(&[ExprTag::Assign, ExprTag::Binary])
+        .exprs(&[ExprTag::Assign])
+        .binaries(&[BinOp::And, BinOp::Or, BinOp::Nullish])
         .stmts(&[StmtTag::If]);
     type State<'a> = WithBlocks<'a>;
 
@@ -424,7 +421,7 @@ impl Rule for LogicalAssignmentOperators {
         if self.is_never {
             return On::new().exprs(&[ExprTag::Assign]);
         }
-        let mut on = On::new().exprs(&[ExprTag::Assign, ExprTag::Binary]);
+        let mut on = On::new().exprs(&[ExprTag::Assign]).binaries(&[BinOp::And, BinOp::Or, BinOp::Nullish]);
         if self.check_if {
             on = on.stmts(&[StmtTag::If]);
         }
@@ -436,12 +433,14 @@ impl Rule for LogicalAssignmentOperators {
     }
 
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match expr.tag() {
-            ExprTag::Assign if self.is_never => self.check_logical_assignment(expr, cx),
-            ExprTag::Assign => self.check_assignment(expr, cx),
-            ExprTag::Binary => self.check_logical(expr, cx),
-            _ => {}
+        match self.is_never {
+            true => self.check_logical_assignment(expr, cx),
+            false => self.check_assignment(expr, cx),
         }
+    }
+
+    fn binary<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_logical(expr, cx);
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

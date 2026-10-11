@@ -1,6 +1,6 @@
 //! typescript-eslint's `util/referenceContainsTypeQuery.ts`.
 
-use crate::ast::{ExprKind, Node};
+use crate::ast::{ExprTag, Node};
 use crate::semantic::Reference;
 
 /// typescript-eslint's `referenceContainsTypeQuery`, of `reference.identifier`: the reference is
@@ -19,8 +19,7 @@ pub fn reference_contains_type_query(reference: Reference) -> bool {
             return true;
         }
         match name.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == name) =>
-            {
+            Node::Expr(parent) if parent.tag() == ExprTag::Dot && parent.object() == Some(name) => {
                 name = parent;
             }
             _ => return false,

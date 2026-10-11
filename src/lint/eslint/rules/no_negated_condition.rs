@@ -8,10 +8,7 @@ const UNEXPECTED_NEGATED: Message = Message::new("unexpectedNegated", "Unexpecte
 
 /// ESLint's `isNegatedIf`
 fn is_negated(test: Expr) -> bool {
-    matches!(
-        test.kind(),
-        ExprKind::Unary { op: UnOp::Not, .. } | ExprKind::Binary { op: BinOp::NotEq | BinOp::NotEqEq, .. }
-    )
+    test.unary_op() == Some(UnOp::Not) || matches!(test.binary_op(), Some(BinOp::NotEq | BinOp::NotEqEq))
 }
 
 impl Rule for NoNegatedCondition {
@@ -24,7 +21,7 @@ impl Rule for NoNegatedCondition {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if let StmtKind::If { test, yes, no: Some(no) } = stmt.kind()
+        if let Some((test, yes, Some(no))) = stmt.as_if()
             && no.tag() != StmtTag::If
             && is_negated(test)
         {

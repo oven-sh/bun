@@ -16,8 +16,9 @@
 //! | `sourceCode.getNodeByRangeIndex(i).type` | [`estree_type_at`](super::estree_type_at) |
 
 use crate::ast::{
-    BinOp, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name, Node,
-    Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp, VarDecl,
+    BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, Keyword, MemberKind,
+    Name, Node, Param, Pat, PatKind, PropKind, Stmt, StmtKind, StmtTag, TypeKind, TypeNode, UnOp,
+    VarDecl,
 };
 use crate::span::{Span, Spanned};
 use bun_sema::hir;
@@ -146,15 +147,15 @@ pub fn is_expression_statement(statement: Stmt<'_>) -> bool {
 /// not. The operand of `++` and `--` is not a pattern.
 pub fn is_assignment_target(e: Expr<'_>) -> bool {
     if matches!(
-        e.kind(),
-        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. } | ExprKind::Spread(_)
+        e.tag(),
+        ExprTag::Array | ExprTag::Object | ExprTag::Assign | ExprTag::Spread
     ) {
         return e.is_assignment_target();
     }
     match e.parent() {
-        Node::Expr(parent) => match parent.kind() {
-            ExprKind::Assign { target, .. } => target == e,
-            ExprKind::Array(_) | ExprKind::Spread(_) => parent.is_assignment_target(),
+        Node::Expr(parent) => match parent.tag() {
+            ExprTag::Assign => parent.left() == Some(e),
+            ExprTag::Array | ExprTag::Spread => parent.is_assignment_target(),
             _ => false,
         },
         Node::Prop(prop) => {
@@ -162,11 +163,14 @@ pub fn is_assignment_target(e: Expr<'_>) -> bool {
                 && !prop.is_jsx_attribute()
                 && matches!(prop.parent(), Node::Expr(object) if object.is_assignment_target())
         }
-        Node::Stmt(statement) => matches!(
-            statement.kind(),
-            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }
-                if matches!(left.kind(), StmtKind::Expr(target) if target == e)
-        ),
+        Node::Stmt(statement) => {
+            matches!(statement.tag(), StmtTag::ForIn | StmtTag::ForOf)
+                && matches!(
+                    statement.kind(),
+                    StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }
+                        if left.as_expr() == Some(e)
+                )
+        }
         _ => false,
     }
 }

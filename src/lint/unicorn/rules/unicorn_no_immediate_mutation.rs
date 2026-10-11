@@ -51,8 +51,11 @@ impl Rule for NoImmediateMutation {
             let Some(Node::Stmt(statement)) = outermost_wrapper(expr).map(Expr::parent) else {
                 return false;
             };
+            if statement.tag() != StmtTag::Expr {
+                return false;
+            }
             let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
-            statement.tag() == StmtTag::Expr && prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
+            prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };
         let mutation = match expr.as_call() {
             Some(call) => call_mutation(call, &cx.state, is_initialized),

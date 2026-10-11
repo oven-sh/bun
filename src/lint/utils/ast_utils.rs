@@ -925,12 +925,9 @@ pub fn get_static_property_name<'a>(node: impl Into<Node<'a>>) -> Option<Cow<'a,
 
 fn static_property_name_of(node: Node<'_>) -> Option<Cow<'_, [u8]>> {
     match node {
-        Node::Expr(e) => match e.kind() {
-            ExprKind::Dot { name, .. } if !name.bytes().starts_with(b"#") => {
-                Some(Cow::Borrowed(name.bytes()))
-            }
-            ExprKind::Index { index, .. } => get_static_string_value(index),
-            _ => None,
+        Node::Expr(e) => match e.member_name() {
+            Some(name) => Some(Cow::Borrowed(name.bytes())).filter(|it| !it.starts_with(b"#")),
+            None => get_static_string_value(e.index()?),
         },
         Node::Prop(prop) => get_static_key_name(prop.key()?),
         Node::PatProp(prop) => get_static_key_name(prop.key()?),
@@ -957,10 +954,7 @@ pub fn is_specific_id_with(e: Expr<'_>, name: impl FnOnce(&[u8]) -> bool) -> boo
 /// The object of a member access.
 #[inline]
 pub fn member_object(e: Expr<'_>) -> Option<Expr<'_>> {
-    match e.kind() {
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
-        _ => None,
-    }
+    e.object()
 }
 
 /// ESLint's `isSpecificMemberAccess`: `e` is `objectName.propertyName`,
@@ -974,19 +968,18 @@ pub fn is_specific_member_access(
         return false;
     };
     object_name.is_none_or(|name| object.is_ident(name))
-        && property_name.is_none_or(|name| match e.kind() {
-            ExprKind::Dot { name: written, .. } => written.name().is(name),
-            _ => get_static_property_name(e).is_some_and(|it| *it == *name.as_bytes()),
+        && property_name.is_none_or(|name| match e.member_name() {
+            Some(written) => written.name().is(name),
+            None => get_static_property_name(e).is_some_and(|it| *it == *name.as_bytes()),
         })
 }
 
 /// Whether `e` is a member access whose property has one of `names`, whatever the object.
 pub fn is_member_access_of_any(e: Expr<'_>, names: &[&str]) -> bool {
-    match e.kind() {
-        ExprKind::Dot { name, .. } => name.name().is_any(names),
-        ExprKind::Index { .. } => get_static_property_name(e)
+    match e.member_name() {
+        Some(name) => name.name().is_any(names),
+        None => get_static_property_name(e)
             .is_some_and(|it| names.iter().any(|name| *it == *name.as_bytes())),
-        _ => false,
     }
 }
 
@@ -1426,8 +1419,8 @@ pub fn is_constant_in(e: Expr<'_>, in_boolean_position: bool, constants: &mut Co
     let mut chain: SmallVec<[(Expr<'_>, bool); 8]> = SmallVec::new();
     let (mut at, mut in_boolean) = (e, in_boolean_position);
     let mut found = loop {
-        match at.kind() {
-            ExprKind::Binary { op, left, .. } if op != BinOp::Comma => {
+        match at.as_binary() {
+            Some((op, left, _)) if op != BinOp::Comma => {
                 if let Some(&known) = constants.known.get(&(at.id(), in_boolean)) {
                     break known;
                 }
@@ -1436,17 +1429,21 @@ pub fn is_constant_in(e: Expr<'_>, in_boolean_position: bool, constants: &mut Co
                 at = left;
             }
             _ => {
+                // Only the same operator asks.
+                let above = chain.last().and_then(|it| it.0.binary_op());
+                let is_identity_of =
+                    |operator: BinOp| above == Some(operator) && is_logical_identity(at, operator);
                 break Constant {
                     is_constant: is_constant_unless_binary(at, in_boolean),
-                    is_identity_of_and: is_logical_identity(at, BinOp::And),
-                    is_identity_of_or: is_logical_identity(at, BinOp::Or),
+                    is_identity_of_and: is_identity_of(BinOp::And),
+                    is_identity_of_or: is_identity_of(BinOp::Or),
                 };
             }
         }
     };
     let is_long = chain.len() >= LONG;
     for (link, in_boolean) in chain.into_iter().rev() {
-        let ExprKind::Binary { op, right, .. } = link.kind() else {
+        let Some((op, _, right)) = link.as_binary() else {
             continue;
         };
         let left = found;

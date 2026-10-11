@@ -45,26 +45,31 @@ fn is_simple_operation(callback: Expr) -> bool {
 impl Rule for NoArrayReduce {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-reduce", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `reduce`, `reduceRight`, `call`, `apply`
+    type State<'a> = [Name<'a>; 4];
 
     fn new(options: &Options) -> Self {
         NoArrayReduce { allow_simple_operations: options.object(0).bool_or("allowSimpleOperations", true) }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["reduce", "reduceRight"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions_any(&["reduce", "reduceRight"])
+            .then(|| ["reduce", "reduceRight", "call", "apply"].map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let Some(member) = get_member_expr(call.callee()) else {
             return;
         };
-        let ExprKind::Dot { obj, name, .. } = member.kind() else {
+        let Some((obj, name, _)) = member.as_dot().filter(|it| cx.state.contains(&it.1.name())) else {
             return;
         };
+        if call.is_optional() {
+            return;
+        }
         let is_reported = match name.bytes() {
             b"reduce" | b"reduceRight" => {
                 matches!(call.args().len(), 1 | 2)

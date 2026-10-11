@@ -26,15 +26,15 @@ fn oxlint_is_acceptable_index_expression(property: Expr) -> bool {
 
 impl Rule for NoDynamicDelete {
     const META: Meta = Meta::typescript("no-dynamic-delete", Kind::Suggestion).presets(Presets::STRICT);
-    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    const ON: On = On::new().unaries(&[UnOp::Delete]);
     no_state!();
 
     fn new(_: &Options) -> Self {
         NoDynamicDelete
     }
 
-    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some((UnOp::Delete, operand)) = expr.as_unary() else {
+    fn unary<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some((_, operand)) = expr.as_unary() else {
             return;
         };
         let Some(index) = operand.index() else {

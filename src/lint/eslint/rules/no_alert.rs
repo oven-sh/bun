@@ -5,8 +5,10 @@ pub struct NoAlert;
 
 const UNEXPECTED: Message = Message::new("unexpected", "Unexpected {{name}}.");
 
+const PROHIBITED: [&str; 3] = ["alert", "confirm", "prompt"];
+
 fn is_prohibited_identifier(name: &[u8]) -> bool {
-    matches!(name, b"alert" | b"confirm" | b"prompt")
+    PROHIBITED.iter().any(|it| it.as_bytes() == name)
 }
 
 /// Something in the file declares what the identifier refers to.
@@ -34,29 +36,37 @@ fn is_global_this_reference_or_global_window<'a>(call: Expr<'a>, object: Expr<'a
 impl Rule for NoAlert {
     const META: Meta = Meta::eslint("no-alert", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// Those of [`PROHIBITED`] that the file mentions.
+    type State<'a> = [Option<Name<'a>>; 3];
 
     fn new(_: &Options) -> Self {
         NoAlert
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions_any(&["alert", "confirm", "prompt"]) {
-            return None;
-        }
-        Some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let mentioned = PROHIBITED.map(|it| file.mentions(it).then(|| file.name_of(it)));
+        mentioned.iter().any(Option::is_some).then_some(mentioned)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let callee = call.callee();
+        let name = match callee.tag() {
+            ExprTag::Ident => callee.as_ident(),
+            ExprTag::Dot => callee.member_name().map(Ident::name),
+            ExprTag::Index => None,
+            _ => return,
+        };
+        if name.is_some() && !cx.state.contains(&name) {
+            return;
+        }
         // oxlint points at what is called.
         let place = if cx.language().is_oxlint { callee.span() } else { e.span() };
         match callee.kind() {
             ExprKind::Ident(name) => {
-                if is_prohibited_identifier(name.bytes()) && !is_shadowed(callee) {
+                if !is_shadowed(callee) {
                     cx.report(place, UNEXPECTED).data("name", name);
                 }
             }

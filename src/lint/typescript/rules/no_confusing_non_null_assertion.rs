@@ -32,11 +32,53 @@ const WRAP_UP_LEFT: Message = Message::new(
     "Wrap the left-hand side in parentheses to avoid confusion with \"{{operator}}\" operator.",
 );
 
+/// `e`: `left operator ..`
+fn check<'a>(e: Expr<'a>, left: Expr<'a>, operator: &'static str, cx: &Cx<'a, NoConfusingNonNullAssertion>) {
+    // Nothing but the operator ends with a `!`. This also finds the one in `1 + two! === 3`.
+    let end = left.span().end;
+    if cx.text().get(end.wrapping_sub(1) as usize) != Some(&b'!') || left.is_parenthesized() {
+        return;
+    }
+    // A default value in a destructuring assignment is an `AssignmentPattern`.
+    if operator == "=" && utils::is_assignment_target(e) {
+        return;
+    }
+    let bang = Span::new(end - 1, end);
+    let data = [("operator", operator.as_bytes())];
+    let wrap_up_left = move |fixer: Fixer<'a>| [fixer.insert_before(left, "("), fixer.insert_after(left, ")")];
+    let message = match operator {
+        "=" => CONFUSING_ASSIGN,
+        "==" | "===" => CONFUSING_EQUAL,
+        _ => CONFUSING_OPERATOR,
+    };
+    let report = cx.report(e, message).data("operator", operator);
+    // `a?.b!` is a `ChainExpression`.
+    if left.tag() != ExprTag::NonNull || left.is_in_optional_chain() {
+        let report = match cx.language().is_oxlint && message.id == CONFUSING_EQUAL.id {
+            true => report.help(
+                "Wrap left-hand side in parentheses to avoid putting non-null assertion `!` and `=` together.",
+            ),
+            false => report,
+        };
+        report.suggest_with(WRAP_UP_LEFT, &data, wrap_up_left);
+        return;
+    }
+    match operator {
+        "=" => report.suggest(NOT_NEED_IN_ASSIGN, |fixer| fixer.remove(bang)),
+        "==" | "===" => report.suggest(NOT_NEED_IN_EQUAL_TEST, |fixer| fixer.remove(bang)),
+        _ => report
+            .suggest_with(NOT_NEED_IN_OPERATOR, &data, |fixer| fixer.remove(bang))
+            .suggest_with(WRAP_UP_LEFT, &data, wrap_up_left),
+    };
+}
+
 impl Rule for NoConfusingNonNullAssertion {
     const META: Meta = Meta::typescript("no-confusing-non-null-assertion", Kind::Problem)
         .has_suggestions()
         .presets(Presets::STYLISTIC);
-    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign]);
+    const ON: On = On::new()
+        .binaries(&[BinOp::EqEq, BinOp::EqEqEq, BinOp::In, BinOp::Instanceof])
+        .exprs(&[ExprTag::Assign]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
@@ -44,54 +86,18 @@ impl Rule for NoConfusingNonNullAssertion {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (!file.is_javascript()).then_some(())
+        (!file.is_javascript() && file.has_exprs([ExprTag::NonNull])).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (left, operator) = match e.kind() {
-            ExprKind::Binary {
-                op: op @ (BinOp::EqEq | BinOp::EqEqEq | BinOp::In | BinOp::Instanceof),
-                left,
-                ..
-            } => (left, bin_op_text(op)),
-            ExprKind::Assign { op: None, target, .. } => (target, "="),
-            _ => return,
-        };
-        // Nothing but the operator ends with a `!`. This also finds the one in `1 + two! === 3`.
-        let end = left.span().end;
-        if cx.text().get(end.wrapping_sub(1) as usize) != Some(&b'!') || left.is_parenthesized() {
-            return;
+        if let Some((None, target, _)) = e.as_assign() {
+            check(e, target, "=", cx);
         }
-        // A default value in a destructuring assignment is an `AssignmentPattern`.
-        if operator == "=" && utils::is_assignment_target(e) {
-            return;
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some((op, left, _)) = e.as_binary() {
+            check(e, left, bin_op_text(op), cx);
         }
-        let bang = Span::new(end - 1, end);
-        let data = [("operator", operator.as_bytes())];
-        let wrap_up_left = move |fixer: Fixer<'a>| [fixer.insert_before(left, "("), fixer.insert_after(left, ")")];
-        let message = match operator {
-            "=" => CONFUSING_ASSIGN,
-            "==" | "===" => CONFUSING_EQUAL,
-            _ => CONFUSING_OPERATOR,
-        };
-        let report = cx.report(e, message).data("operator", operator);
-        // `a?.b!` is a `ChainExpression`.
-        if left.tag() != ExprTag::NonNull || left.is_in_optional_chain() {
-            let report = match cx.language().is_oxlint && message.id == CONFUSING_EQUAL.id {
-                true => report.help(
-                    "Wrap left-hand side in parentheses to avoid putting non-null assertion `!` and `=` together.",
-                ),
-                false => report,
-            };
-            report.suggest_with(WRAP_UP_LEFT, &data, wrap_up_left);
-            return;
-        }
-        match operator {
-            "=" => report.suggest(NOT_NEED_IN_ASSIGN, |fixer| fixer.remove(bang)),
-            "==" | "===" => report.suggest(NOT_NEED_IN_EQUAL_TEST, |fixer| fixer.remove(bang)),
-            _ => report
-                .suggest_with(NOT_NEED_IN_OPERATOR, &data, |fixer| fixer.remove(bang))
-                .suggest_with(WRAP_UP_LEFT, &data, wrap_up_left),
-        };
     }
 }

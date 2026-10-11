@@ -143,9 +143,15 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
 /// For [`Rule::symbol`].
 pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a, R>) {
     let count = symbol.declaration_count();
+    let is_oxlint = cx.language().is_oxlint;
+    // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.
+    let oxlint_asks_globals =
+        || config.builtin_globals && utils::oxlint::source_type(cx.file()) != SourceType::Module;
+    if is_oxlint && count < 2 && !oxlint_asks_globals() {
+        return;
+    }
     let scope = symbol.scope();
     let is_global = scope.kind() == ScopeKind::Global;
-    let is_oxlint = cx.language().is_oxlint;
     // oxlint looks at all scopes.
     if !is_oxlint && (count < 2 && !is_global || !is_checked(scope, config)) {
         return;
@@ -157,8 +163,7 @@ pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a,
     }
     let name = symbol.name().bytes();
     let global = match is_oxlint {
-        // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.
-        true if config.builtin_globals && utils::oxlint::source_type(cx.file()) != SourceType::Module => {
+        true if oxlint_asks_globals() => {
             // Not what an `env` defines.
             let is_asked = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_written_global(name);
             if is_asked { cx.file().global(name) } else { None }

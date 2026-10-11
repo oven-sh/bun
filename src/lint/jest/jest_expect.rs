@@ -1493,7 +1493,9 @@ pub(crate) mod prefer_expect_assertions {
 
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>, is_for_vitest: bool) {
             // What `expect` is imported as.
-            let file_expect_prefix = (import_entries(ctx.file).filter(|it| !it.is_type()))
+            let file_expect_prefix = (import_entries(ctx.file)
+                .take_while(|_| ctx.file.mentions("expect"))
+                .filter(|it| !it.is_type()))
                 .filter(|it| match it.declaration.spec().bytes() {
                     b"@jest/globals" => !is_for_vitest,
                     source => is_for_vitest && is_vitest_import_source(source),
@@ -1560,19 +1562,21 @@ pub(crate) mod prefer_expect_assertions {
             else {
                 return;
             };
-            let parameters = parameters(func);
-            let parameter_prefix = |index: usize| {
+            let parameter_prefix = |parameters: &[Param<'a>], index: usize| {
                 resolve_expect_parameter_prefix_from_pattern(parameters.get(index)?.pat())
             };
             let prefix = if !is_for_vitest {
-                if func.scope().is_some_and(|it| it.get("expect").is_some()) {
+                if ctx.file.mentions("expect")
+                    && func.scope().is_some_and(|it| it.get("expect").is_some())
+                {
                     ctx.report(call_expr.callee(), EXPECT_SHADOWED_BY_PARAMETER);
                     return;
                 }
                 None
             } else if is_parameterized {
+                let parameters = parameters(func);
                 parameterized_context_parameter_index(call_expr)
-                    .and_then(parameter_prefix)
+                    .and_then(|index| parameter_prefix(&parameters, index))
                     .or_else(|| {
                         // The last parameter that `expect` is taken from.
                         parameters
@@ -1593,7 +1597,7 @@ pub(crate) mod prefer_expect_assertions {
                             })
                     })
             } else {
-                parameter_prefix(0)
+                parameter_prefix(&parameters(func), 0)
             };
             let prefix = prefix.unwrap_or(Cow::Borrowed(file_expect_prefix));
             let has_options = self.only_functions_with_async_keyword
@@ -1615,28 +1619,30 @@ pub(crate) mod prefer_expect_assertions {
             } else {
                 HAVE_EXPECT_ASSERTIONS_JEST
             };
-            let mut report = ctx.report(node, message).data("prefix", prefix.to_vec());
+            let mut report = ctx.report(node, message).data("prefix", prefix.clone());
             for (message, method) in [
                 (ADD_HAS_ASSERTIONS, ".hasAssertions();"),
                 (ADD_ASSERTIONS, ".assertions();"),
             ] {
-                let call = [&*prefix, method.as_bytes()].concat();
-                report = report.suggest_with(message, &[("prefix", &*prefix)], |fixer| match func
-                    .body()
-                {
-                    FnBody::Expr(expression) => {
-                        let source = fixer.file().slice(expression.outer_span());
-                        let code = [
-                            b"{".as_slice(),
-                            &call,
-                            b"return ".as_slice(),
-                            source,
-                            b";}".as_slice(),
-                        ]
-                        .concat();
-                        Some(fixer.replace(expression.outer_span(), code))
+                report = report.suggest_with(message, &[("prefix", &*prefix)], |fixer| {
+                    let call = [&*prefix, method.as_bytes()].concat();
+                    match func.body() {
+                        FnBody::Expr(expression) => {
+                            let source = fixer.file().slice(expression.outer_span());
+                            let code = [
+                                b"{".as_slice(),
+                                &call,
+                                b"return ".as_slice(),
+                                source,
+                                b";}".as_slice(),
+                            ]
+                            .concat();
+                            Some(fixer.replace(expression.outer_span(), code))
+                        }
+                        _ => Some(
+                            fixer.insert_before(Span::empty(func.body_span()?.start + 1), call),
+                        ),
                     }
-                    _ => Some(fixer.insert_before(Span::empty(func.body_span()?.start + 1), call)),
                 });
             }
         }
@@ -1719,7 +1725,9 @@ pub(crate) mod prefer_expect_assertions {
         let Some(first_call) = first.as_call() else {
             return false;
         };
-        let (name, arguments) = (get_node_name(first_call.callee()), first_call.args());
+        // The last of the names of what is called.
+        let names = get_node_name_vec(first_call.callee());
+        let (name, arguments) = (names.last().copied().unwrap_or_default(), first_call.args());
         if name.ends_with(b"hasAssertions") {
             if let Some((args_span, delete_span)) = arguments_spans(first, first_call) {
                 (ctx.report(args_span, HAS_ASSERTIONS_TAKES_NO_ARGUMENTS)

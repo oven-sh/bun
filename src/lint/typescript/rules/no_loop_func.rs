@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::no_loop_func::{Dialect, Known, check, has_loops};
+use bun_lint_eslint::rules::no_loop_func::{Dialect, Known, check};
 
 /// Disallow function declarations that contain unsafe references inside loop statements.
 pub struct NoLoopFunc;
@@ -16,7 +16,7 @@ impl Rule for NoLoopFunc {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
-        has_loops(file).then(Known::default)
+        Known::of(file)
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

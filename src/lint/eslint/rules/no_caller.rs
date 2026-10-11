@@ -40,7 +40,7 @@ impl Rule for NoCaller {
 
     // What a class implements and what an interface extends is a `MemberExpression` too.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if let TypeKind::Ref { name, .. } = ty.kind()
+        if let Some((name, _)) = ty.as_ref()
             && let (Some(object), Some(property)) = (name.get(0), name.get(1))
             && object.name().is("arguments")
             && property.name().is_any(&["callee", "caller"])

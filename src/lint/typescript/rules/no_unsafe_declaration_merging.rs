@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use smallvec::SmallVec;
 
 /// Disallow unsafe declaration merging.
 pub struct NoUnsafeDeclarationMerging;
@@ -39,10 +40,11 @@ impl Rule for NoUnsafeDeclarationMerging {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.has_stmts([StmtTag::Class]) || !file.has_stmts([StmtTag::Interface]) {
-            return None;
-        }
-        Some(())
+        // A class and an interface of one name.
+        let classes = file.stmts_of_kind(StmtTag::Class).filter_map(|it| it.as_class()?.name());
+        let classes: SmallVec<[Name<'a>; 8]> = classes.map(Ident::name).collect();
+        let mut interfaces = file.stmts_of_kind(StmtTag::Interface).filter_map(Stmt::as_interface);
+        interfaces.any(|it| classes.contains(&it.name().name())).then_some(())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

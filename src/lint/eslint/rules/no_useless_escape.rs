@@ -364,7 +364,9 @@ impl Rule for NoUselessEscape {
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        check_template_key(prop.span(), || prop.key(), cx);
+        if prop.has_computed_key() {
+            check_template_key(prop.span(), || prop.key(), cx);
+        }
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {

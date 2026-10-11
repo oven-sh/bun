@@ -12,24 +12,26 @@ const NO_LENGTH_AS_SLICE_END: Message =
 impl Rule for NoLengthAsSliceEnd {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-length-as-slice-end", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `slice`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         NoLengthAsSliceEnd
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("slice") && file.mentions("length")).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (file.mentions("slice") && file.mentions("length")).then(|| file.name_of("slice"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(call_expr) = e.as_call()
             && call_expr.args().len() == 2
+            && call_expr.callee().member_name().is_none_or(|it| it.name() == cx.state)
             && !call_expr.is_optional()
             && let (Some(first), Some(second)) = (call_expr.args().first(), call_expr.args().get(1))
             && first.tag() != ExprTag::Spread
             && let Some(second_argument) = get_member_expr(second)
-            && let ExprKind::Dot { obj: object_of_length, name, .. } = second_argument.kind()
+            && let Some((object_of_length, name, _)) = second_argument.as_dot()
             && name.name().is("length")
             // oxlint panics if the callee is in parentheses.
             && let Some(callee) = as_member_expression(call_expr.callee())

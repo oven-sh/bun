@@ -290,7 +290,7 @@ impl<'a> Report<'a> {
     /// What `{{name}}` in the message stands for.
     #[inline]
     pub fn data(mut self, name: &'static str, value: impl IntoText<'a>) -> Self {
-        self.push_data(name, value.into_text());
+        value.put_into(&mut self, name);
         self
     }
 
@@ -688,8 +688,14 @@ pub fn interpolate_text<'d>(text: &str, data: impl Fn(&str) -> Option<&'d [u8]>)
 }
 
 /// What can be put into a message or a fix.
-pub trait IntoText<'a> {
+pub trait IntoText<'a>: Sized {
     fn into_text(self) -> Cow<'a, [u8]>;
+
+    /// [`Report::data`]
+    #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_data(name, self.into_text());
+    }
 }
 
 impl<'a> IntoText<'a> for &'a [u8] {
@@ -746,6 +752,12 @@ macro_rules! numbers_into_text {
         $(impl<'a> IntoText<'a> for $ty {
             fn into_text(self) -> Cow<'a, [u8]> {
                 Cow::Owned(self.to_string().into_bytes())
+            }
+
+            fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+                if report.reads_data {
+                    report.push_data(name, self.into_text());
+                }
             }
         })*
     };

@@ -103,6 +103,9 @@ impl Rule for NoUselessComputedKey {
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if !prop.has_computed_key() {
+            return;
+        }
         let Some((key, literal)) = computed_literal(prop.key(), cx.file()) else {
             return;
         };
@@ -120,7 +123,9 @@ impl Rule for NoUselessComputedKey {
             return;
         };
         for prop in props {
-            if let Some((key, _)) = computed_literal(prop.key(), cx.file()) {
+            if prop.has_computed_key()
+                && let Some((key, _)) = computed_literal(prop.key(), cx.file())
+            {
                 Self::report(prop.into(), key, cx);
             }
         }

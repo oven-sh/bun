@@ -693,9 +693,7 @@ impl<'a> Stmt<'a> {
     /// statement that consists of an unparenthesized string literal and is among the first
     /// statements of a function, of a namespace or of the file.
     pub fn directive(self) -> Option<&'a [u8]> {
-        let StmtKind::Expr(expr) = self.kind() else {
-            return None;
-        };
+        let expr = self.as_expr()?;
         if expr.as_string().is_none() || expr.is_parenthesized() {
             return None;
         }
@@ -704,10 +702,7 @@ impl<'a> Stmt<'a> {
             Node::Func(func) if func.kind() != super::FnKind::StaticBlock => {
                 func.body_statements()?
             }
-            Node::Stmt(parent) => match parent.kind() {
-                StmtKind::Module(module) => module.innermost().body(),
-                _ => return None,
-            },
+            Node::Stmt(parent) => parent.as_module()?.innermost().body(),
             _ => return None,
         };
         // Where the statements start, and where the strings that they start with end. The next question is about the same ones
@@ -716,7 +711,9 @@ impl<'a> Stmt<'a> {
         let end = match self.file.lazy.directives.get() {
             Some((known, end)) if known == start => end,
             _ => {
-                let is_string = |it: &Stmt| matches!(it.kind(), StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized());
+                let is_string = |it: &Stmt| {
+                    (it.as_expr()).is_some_and(|e| e.as_string().is_some() && !e.is_parenthesized())
+                };
                 let end = siblings
                     .iter()
                     .take_while(is_string)

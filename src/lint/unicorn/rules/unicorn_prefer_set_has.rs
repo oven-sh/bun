@@ -54,7 +54,7 @@ impl Rule for PreferSetHas {
 }
 
 fn is_kind_of_array_expr(e: Expr) -> bool {
-    if e.is_parenthesized() || e.is_chain_root() {
+    if !matches!(e.tag(), ExprTag::Array | ExprTag::New | ExprTag::Call) || e.is_parenthesized() || e.is_chain_root() {
         return false;
     }
     match e.kind() {

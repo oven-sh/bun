@@ -25,7 +25,7 @@ impl Rule for NoBlankBlocks {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        for jsdoc_span in cx.state.iter_all().map(|it| it.span()).filter(|it| is_blank_jsdoc(file.slice(*it))) {
+        for jsdoc_span in cx.state.iter_all_with(is_blank_jsdoc).map(|it| it.span()) {
             let report = cx.report(jsdoc_span, NO_BLANK_BLOCKS);
             if self.enable_fixer {
                 report.fix(|fixer| fix_span(jsdoc_span, file.text()).map(|span| fixer.remove(span)));

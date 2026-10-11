@@ -28,7 +28,7 @@ fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>)
 
 impl Rule for NoPlusplus {
     const META: Meta = Meta::eslint("no-plusplus", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    const ON: On = On::new().unaries(&[UnOp::PreInc, UnOp::PostInc, UnOp::PreDec, UnOp::PostDec]);
     /// `is_for_loop_afterthought`
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -42,12 +42,8 @@ impl Rule for NoPlusplus {
         Some(AncestorMemo::default())
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Unary {
-            op: op @ (UnOp::PreInc | UnOp::PostInc | UnOp::PreDec | UnOp::PostDec),
-            operand,
-        } = e.kind()
-        else {
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (Some(op), Some(operand)) = (e.unary_op(), e.operand()) else {
             return;
         };
         if self.allow_for_loop_afterthoughts && is_for_loop_afterthought(e, &mut cx.state) {

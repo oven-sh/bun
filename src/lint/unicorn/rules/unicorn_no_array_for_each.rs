@@ -27,21 +27,22 @@ fn leftmost_identifier_reference(e: Expr<'_>) -> Option<Expr<'_>> {
 impl Rule for NoArrayForEach {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-for-each", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `forEach`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         NoArrayForEach
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("forEach").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("forEach").then(|| file.name_of("forEach"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(ExprKind::Dot { obj, name, .. }) = e.callee().and_then(get_member_expr).map(Expr::kind) else {
+        let Some((obj, name, _)) = e.callee().and_then(get_member_expr).and_then(Expr::as_dot) else {
             return;
         };
-        if !name.name().is("forEach") {
+        if name.name() != cx.state {
             return;
         }
         let object_name = match obj.as_ident() {

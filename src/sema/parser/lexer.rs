@@ -260,6 +260,13 @@ fn decode_last(text: &[u8]) -> Option<(u32, usize)> {
     })
 }
 
+/// For a text that can be long.
+fn is_utf8(text: &[u8]) -> bool {
+    let is_valid = bun_core::strings::is_valid_utf8(text);
+    debug_assert_eq!(is_valid, core::str::from_utf8(text).is_ok());
+    is_valid
+}
+
 /// Where the first of `ends` is from `pos` on, or the end of `src`.
 #[inline]
 fn end_of_run_before(src: &[u8], mut pos: usize, ends: [u8; 4]) -> usize {
@@ -1467,6 +1474,11 @@ impl<'a> Lexer<'a> {
                     break false;
                 }
                 Some(&c) if c == quote => break true,
+                // The commonest of those that stand for what follows the backslash.
+                Some(b'\\') if let Some(&c @ (b'"' | b'\'' | b'\\')) = src.get(pos + 1) => {
+                    text.push(c);
+                    pos += 2;
+                }
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
                     None => match self.legacy_escape(pos, &mut text) {
@@ -1478,6 +1490,24 @@ impl<'a> Lexer<'a> {
                         }
                     },
                 },
+                // Up to 16 bytes that stand for themselves. Between two escapes there are often few: all 16 are copied, and
+                // those that count are kept.
+                Some(_) if let Some(chunk) = src[pos..].first_chunk::<16>() => {
+                    let bytes = u8x16::from_array(*chunk);
+                    let [a, b, c, d] =
+                        [quote, b'\\', b'\n', b'\r'].map(|end| bytes.simd_eq(u8x16::splat(end)));
+                    let len = ((a | b | c | d).to_bitmask().trailing_zeros() as usize).min(16);
+                    debug_assert_eq!(
+                        pos + len,
+                        end_of_run_before(src, pos + 1, [quote, b'\\', b'\n', b'\r']).min(pos + 16)
+                    );
+                    let not_ascii = bytes.simd_ge(u8x16::splat(0x80)).to_bitmask();
+                    is_ascii &= not_ascii & ((1 << len) - 1) == 0;
+                    let kept = text.len() + len;
+                    text.extend_from_slice(chunk);
+                    text.truncate(kept);
+                    pos += len;
+                }
                 Some(_) => {
                     let end = end_of_run_before(src, pos + 1, [quote, b'\\', b'\n', b'\r']);
                     let written = src.get(pos..end).unwrap_or_default();
@@ -1488,7 +1518,7 @@ impl<'a> Lexer<'a> {
             }
         };
         // TypeScript's scanner takes the bytes as they are.
-        if !is_ascii && core::str::from_utf8(&src[start + 1..pos]).is_err() && !self.recovers {
+        if !is_ascii && !self.recovers && !is_utf8(&src[start + 1..pos]) {
             self.buffer = text;
             return self.refuse(Refusal::NotUtf8);
         }
@@ -1635,7 +1665,7 @@ impl<'a> Lexer<'a> {
                 }
             }
         };
-        if !is_ascii && core::str::from_utf8(&src[start + 1..pos]).is_err() && !self.recovers {
+        if !is_ascii && !self.recovers && !is_utf8(&src[start + 1..pos]) {
             self.buffer = text;
             return self.refuse(Refusal::NotUtf8);
         }

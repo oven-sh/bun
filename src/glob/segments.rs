@@ -9,6 +9,7 @@ use crate::unit::{Subject, Text};
 use bun_collections::StringHashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
+use std::cell::OnceCell;
 
 // ───────────────────────────── a name of a pattern ─────────────────────────────
 
@@ -80,32 +81,72 @@ fn split_path(path: &[u8]) -> Names<'_> {
     names
 }
 
-/// A path that many patterns are matched with: split once. Separated by `/`.
-pub struct Candidate<'p> {
-    whole: &'p [u8],
-    /// The path, if its names are separated by one slash each.
-    text: Option<&'p [u8]>,
+struct Split<'p> {
     names: Names<'p>,
     /// Where the last name is that no `**` takes, with the option `dot` and without.
     last_dots: Option<usize>,
     last_hidden: Option<usize>,
 }
 
+/// A path that many patterns are matched with: split once, if at all. Separated by `/`.
+pub struct Candidate<'p> {
+    whole: &'p [u8],
+    /// The path, if its names are separated by one slash each.
+    text: Option<&'p [u8]>,
+    /// No name starts with a `.`.
+    is_plain: bool,
+    /// Where the last name starts. A `/` at the end of the path belongs to it.
+    name_at: usize,
+    split: OnceCell<Split<'p>>,
+}
+
 impl<'p> Candidate<'p> {
     pub fn new(path: &'p [u8]) -> Candidate<'p> {
-        let names = split_path(path);
+        let names = path.strip_suffix(b"/").unwrap_or(path);
         Candidate {
             whole: path,
             text: (!strings::contains(path, b"//")).then_some(path),
-            last_dots: names.iter().rposition(|it| is_dots(it)),
-            last_hidden: names.iter().rposition(|it| it.starts_with(b".")),
-            names,
+            is_plain: !path.starts_with(b".") && !strings::contains(path, b"/."),
+            name_at: strings::last_index_of_char(names, b'/').map_or(0, |slash| slash + 1),
+            split: OnceCell::new(),
         }
+    }
+
+    /// The same for `path`: this one, which is empty or ends with a `/`, then a name, and a `/` or not.
+    pub fn entry<'e>(&self, path: &'e [u8]) -> Candidate<'e> {
+        let name_at = self.whole.len();
+        let entry = Candidate {
+            whole: path,
+            text: self.text.map(|_| path),
+            is_plain: self.is_plain && path.get(name_at) != Some(&b'.'),
+            name_at,
+            split: OnceCell::new(),
+        };
+        #[cfg(debug_assertions)]
+        {
+            let computed = Candidate::new(path);
+            debug_assert_eq!(
+                (entry.text, entry.is_plain, entry.name_at),
+                (computed.text, computed.is_plain, computed.name_at)
+            );
+        }
+        entry
     }
 
     /// The path as it is.
     pub fn path(&self) -> &'p [u8] {
         self.whole
+    }
+
+    fn split(&self) -> &Split<'p> {
+        self.split.get_or_init(|| {
+            let names = split_path(self.whole);
+            Split {
+                last_dots: names.iter().rposition(|it| is_dots(it)),
+                last_hidden: names.iter().rposition(|it| it.starts_with(b".")),
+                names,
+            }
+        })
     }
 }
 
@@ -122,6 +163,8 @@ pub(crate) struct Expansion {
     tail: Vec<u8>,
     /// The longest run of characters without magic in the parts between these, which is somewhere in what matches.
     inner: Vec<u8>,
+    /// It ends with a `/`, and so does what matches, but for the empty path.
+    ends_with_slash: bool,
 }
 
 impl Expansion {
@@ -151,6 +194,7 @@ impl Expansion {
                 .to_vec(),
             head: literals.join(&b'/'),
             tail: tail.to_vec(),
+            ends_with_slash: matches!(&parts[..], [_, .., Part::Literal(last)] if last.is_empty()),
             globstars: parts
                 .iter()
                 .position(is_globstar)
@@ -180,7 +224,37 @@ impl Expansion {
             || path.starts_with(&self.head)
                 && matches!(path.get(self.head.len()), None | Some(b'/')))
             && (ends_with_tail() || path.last() == Some(&b'/'))
+            && (!self.ends_with_slash || matches!(path.last(), None | Some(b'/')))
             && (self.inner.is_empty() || strings::contains(path, &self.inner))
+    }
+
+    /// `**/name`: the part for the name.
+    #[inline]
+    fn for_name(&self) -> Option<&Part> {
+        match &self.parts[..] {
+            [Part::GlobStar, Part::GlobStar] => None,
+            [Part::GlobStar, name] => Some(name),
+            _ => None,
+        }
+    }
+
+    /// Whether `path`, whose names are separated by one slash each, matches.
+    #[inline]
+    fn matches_text(&self, path: &Candidate<'_>, text: &[u8], dot: bool) -> bool {
+        // No `**` stops at a name of such a path, so only the last name counts.
+        let hit = match self.for_name().filter(|_| path.is_plain) {
+            Some(part) => {
+                let name = &text[path.name_at..];
+                self.can_match(name)
+                    && match name.strip_suffix(b"/") {
+                        Some(name) => part.test(b"", dot) || part.test(name, dot),
+                        None => part.test(name, dot),
+                    }
+            }
+            None => self.can_match(text) && self.matches_names(path, false, dot),
+        };
+        debug_assert_eq!(hit, self.matches_names(path, false, dot));
+        hit
     }
 
     /// Apart from `matches`: most paths are turned away by `can_match`, and do not pay for what this sets up.
@@ -188,7 +262,7 @@ impl Expansion {
     fn matches_names(&self, path: &Candidate<'_>, partial: bool, dot: bool) -> bool {
         match self.globstars {
             Some(globstars) => match_globstar(path, &self.parts, globstars, partial, dot),
-            None => match_plain(&path.names, &self.parts, partial, dot),
+            None => match_plain(&path.split().names, &self.parts, partial, dot),
         }
     }
 }
@@ -356,6 +430,7 @@ fn match_globstar(
     partial: bool,
     dot: bool,
 ) -> bool {
+    let candidate = candidate.split();
     let file = &candidate.names[..];
     let is_globstar = |part: &Part| matches!(part, Part::GlobStar);
     if !partial && first + (pattern.len() - 1 - last) > file.len() {
@@ -432,7 +507,7 @@ pub(crate) fn matches_base(
     partial: bool,
     dot: bool,
 ) -> bool {
-    let last = path.names.iter().rfind(|it| !it.is_empty());
+    let last = path.split().names.iter().rfind(|it| !it.is_empty());
     let name = Candidate::new(last.copied().unwrap_or_default());
     set.iter().any(|it| {
         let path = if it.parts.len() == 1 { &name } else { path };
@@ -444,8 +519,8 @@ pub(crate) fn matches_base(
 /// Whether one of `set` matches. `partial`: the argument of `match`.
 #[inline]
 pub(crate) fn matches(set: &[Expansion], path: &Candidate<'_>, partial: bool, dot: bool) -> bool {
-    let text = path.text.filter(|_| !partial);
-    set.iter().any(|it| {
-        text.is_none_or(|text| it.can_match(text)) && it.matches_names(path, partial, dot)
-    })
+    match path.text.filter(|_| !partial) {
+        Some(text) => set.iter().any(|it| it.matches_text(path, text, dot)),
+        None => set.iter().any(|it| it.matches_names(path, partial, dot)),
+    }
 }

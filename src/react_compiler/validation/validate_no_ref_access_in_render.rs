@@ -491,12 +491,34 @@ fn join_ref_access_types_many(types: &[RefAccessType], joins: &Joins) -> RefAcce
 
 // --- Env ---
 
+/// What `refTypeOfType` asks of the type of an identifier.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TypeKind {
+    Ref,
+    RefValue,
+    Other,
+}
+
+impl TypeKind {
+    fn of(ty: &Type) -> Self {
+        if crate::hir::is_ref_value_type(ty) {
+            TypeKind::RefValue
+        } else if crate::hir::is_use_ref_type(ty) {
+            TypeKind::Ref
+        } else {
+            TypeKind::Other
+        }
+    }
+}
+
 struct Env {
     joins: Joins,
     /// `EnvironmentConfig::captured_refs_are_known_in_functions`
     looks_into_functions: bool,
     /// Whether the type of any identifier is that of a ref or of the value of one.
     has_ref_types: bool,
+    /// By identifier. Empty if none is a ref's or a ref value's.
+    type_kinds: Vec<TypeKind>,
     /// Whether `data` holds anything that is reported: a ref, the value of one, a guard, a function that reads one.
     has_refs: bool,
     /// Whether `data` holds a guard.
@@ -515,6 +537,9 @@ struct Env {
 
 impl Env {
     fn new(env: &Environment) -> Self {
+        let has_ref_types = env.types.iter().any(crate::hir::is_ref_or_ref_value);
+        let type_kind_of =
+            |identifier: &Identifier| TypeKind::of(&env.types[identifier.type_.0 as usize]);
         Self {
             joins: Joins {
                 keeps_place: env.config.joined_ref_values_keep_their_place,
@@ -525,7 +550,11 @@ impl Env {
                 returned: Joined::default(),
             },
             looks_into_functions: env.config.captured_refs_are_known_in_functions,
-            has_ref_types: env.types.iter().any(crate::hir::is_ref_or_ref_value),
+            has_ref_types,
+            type_kinds: match has_ref_types {
+                true => env.identifiers.iter().map(type_kind_of).collect(),
+                false => Vec::new(),
+            },
             has_refs: false,
             has_guards: false,
             changed: false,
@@ -593,16 +622,10 @@ impl Env {
     }
 
     /// `get(key) ?? refTypeOfType(place)`
-    fn get_or_type_of(
-        &self,
-        key: IdentifierId,
-        place: IdentifierId,
-        identifiers: &[Identifier],
-        types: &[Type],
-    ) -> RefAccessType {
+    fn get_or_type_of(&self, key: IdentifierId, place: IdentifierId) -> RefAccessType {
         match self.get(key) {
             Some(ty) => ty.clone(),
-            None => self.ref_type_of_type(place, identifiers, types),
+            None => self.ref_type_of_type(place),
         }
     }
 
@@ -649,43 +672,33 @@ impl Env {
         self.data.insert(operand_id, widened_value);
     }
 
-    fn ref_type_of_type(
-        &self,
-        id: IdentifierId,
-        identifiers: &[Identifier],
-        types: &[Type],
-    ) -> RefAccessType {
-        if !self.has_ref_types {
-            return RefAccessType::None;
-        }
-        let identifier = &identifiers[id.0 as usize];
-        let ty = &types[identifier.type_.0 as usize];
-        if crate::hir::is_ref_value_type(ty) {
-            RefAccessType::RefValue {
-                loc: None,
-                ref_id: None,
-            }
-        } else if crate::hir::is_use_ref_type(ty) {
-            RefAccessType::Ref {
-                ref_id: next_ref_id(),
-            }
-        } else {
-            RefAccessType::None
+    #[inline]
+    fn type_kind(&self, id: IdentifierId) -> TypeKind {
+        match self.type_kinds.get(id.0 as usize) {
+            Some(&kind) => kind,
+            None => TypeKind::Other,
         }
     }
 
-    fn is_ref_type(&self, id: IdentifierId, identifiers: &[Identifier], types: &[Type]) -> bool {
-        self.has_ref_types
-            && crate::hir::is_use_ref_type(&types[identifiers[id.0 as usize].type_.0 as usize])
+    fn ref_type_of_type(&self, id: IdentifierId) -> RefAccessType {
+        match self.type_kind(id) {
+            TypeKind::RefValue => RefAccessType::RefValue {
+                loc: None,
+                ref_id: None,
+            },
+            TypeKind::Ref => RefAccessType::Ref {
+                ref_id: next_ref_id(),
+            },
+            TypeKind::Other => RefAccessType::None,
+        }
+    }
+
+    fn is_ref_type(&self, id: IdentifierId) -> bool {
+        self.type_kind(id) == TypeKind::Ref
     }
 }
 
 // --- Helper functions ---
-
-fn is_ref_value_type(id: IdentifierId, identifiers: &[Identifier], types: &[Type]) -> bool {
-    let identifier = &identifiers[id.0 as usize];
-    crate::hir::is_ref_value_type(&types[identifier.type_.0 as usize])
-}
 
 fn destructure(ty: &RefAccessType) -> View<'_> {
     let RefAccessType::Structure {
@@ -851,13 +864,7 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
     let mut ref_env = Env::new(env);
-    collect_temporaries_sidemap(
-        func,
-        &mut ref_env,
-        &env.identifiers,
-        &env.types,
-        &env.functions,
-    );
+    collect_temporaries_sidemap(func, &mut ref_env, &env.functions);
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
     validate_no_ref_access_in_render_impl(
         func,
@@ -876,13 +883,7 @@ pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Env
     }
 }
 
-fn collect_temporaries_sidemap(
-    func: &HirFunction,
-    env: &mut Env,
-    identifiers: &[Identifier],
-    types: &[Type],
-    functions: &[HirFunction],
-) {
+fn collect_temporaries_sidemap(func: &HirFunction, env: &mut Env, functions: &[HirFunction]) {
     if !env.joins.has_stack() {
         return;
     }
@@ -895,7 +896,7 @@ fn collect_temporaries_sidemap(
                     if env.looks_into_functions =>
                 {
                     let inner = &functions[lowered_func.func.0 as usize];
-                    collect_temporaries_sidemap(inner, env, identifiers, types, functions);
+                    collect_temporaries_sidemap(inner, env, functions);
                 }
                 InstructionValue::LoadLocal { place, .. } => {
                     let temp = env.temporary(place.identifier);
@@ -909,7 +910,7 @@ fn collect_temporaries_sidemap(
                 InstructionValue::PropertyLoad {
                     object, property, ..
                 } => {
-                    if env.is_ref_type(object.identifier, identifiers, types)
+                    if env.is_ref_type(object.identifier)
                         && matches!(property, PropertyLiteral::String(s) if s == b"current")
                     {
                         continue;
@@ -941,10 +942,7 @@ fn validate_no_ref_access_in_render_impl(
     // Process params
     for param in &func.params {
         let place = param.place();
-        ref_env.set(
-            place.identifier,
-            ref_env.ref_type_of_type(place.identifier, identifiers, types),
-        );
+        ref_env.set(place.identifier, ref_env.ref_type_of_type(place.identifier));
     }
     // Seed captured context places so refs captured from an enclosing scope are
     // recognized as Ref/RefValue inside the lambda body. Callbacks passed to
@@ -952,10 +950,7 @@ fn validate_no_ref_access_in_render_impl(
     // read must be detected here for `read_ref_effect` to propagate.
     if ref_env.looks_into_functions {
         for place in &func.context {
-            ref_env.set(
-                place.identifier,
-                ref_env.ref_type_of_type(place.identifier, identifiers, types),
-            );
+            ref_env.set(place.identifier, ref_env.ref_type_of_type(place.identifier));
         }
     }
 
@@ -1004,11 +999,7 @@ fn validate_no_ref_access_in_render_impl(
                                 loc: instr.loc,
                                 ref_id: Some(*ref_id),
                             },
-                            _ => ref_env.ref_type_of_type(
-                                instr.lvalue.identifier,
-                                identifiers,
-                                types,
-                            ),
+                            _ => ref_env.ref_type_of_type(instr.lvalue.identifier),
                         };
                         ref_env.set(instr.lvalue.identifier, lookup_type);
                     }
@@ -1017,12 +1008,7 @@ fn validate_no_ref_access_in_render_impl(
                     | InstructionValue::LoadLocal { place, .. } => {
                         ref_env.set(
                             instr.lvalue.identifier,
-                            ref_env.get_or_type_of(
-                                place.identifier,
-                                instr.lvalue.identifier,
-                                identifiers,
-                                types,
-                            ),
+                            ref_env.get_or_type_of(place.identifier, instr.lvalue.identifier),
                         );
                     }
                     InstructionValue::StoreContext { lvalue, value, .. }
@@ -1030,12 +1016,7 @@ fn validate_no_ref_access_in_render_impl(
                         for place in [&lvalue.place, &instr.lvalue] {
                             ref_env.set(
                                 place.identifier,
-                                ref_env.get_or_type_of(
-                                    value.identifier,
-                                    place.identifier,
-                                    identifiers,
-                                    types,
-                                ),
+                                ref_env.get_or_type_of(value.identifier, place.identifier),
                             );
                         }
                     }
@@ -1051,22 +1032,14 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env.set(
                                 instr.lvalue.identifier,
                                 lookup_type.clone().unwrap_or_else(|| {
-                                    ref_env.ref_type_of_type(
-                                        instr.lvalue.identifier,
-                                        identifiers,
-                                        types,
-                                    )
+                                    ref_env.ref_type_of_type(instr.lvalue.identifier)
                                 }),
                             );
                             for pattern_place in pattern_operands(&lvalue.pattern) {
                                 ref_env.set(
                                     pattern_place.identifier,
                                     lookup_type.clone().unwrap_or_else(|| {
-                                        ref_env.ref_type_of_type(
-                                            pattern_place.identifier,
-                                            identifiers,
-                                            types,
-                                        )
+                                        ref_env.ref_type_of_type(pattern_place.identifier)
                                     }),
                                 );
                             }
@@ -1139,8 +1112,7 @@ fn validate_no_ref_access_in_render_impl(
                          */
                         if !did_error && ref_env.may_report() {
                             let ref_env = &*ref_env;
-                            let is_ref_lvalue =
-                                ref_env.is_ref_type(instr.lvalue.identifier, identifiers, types);
+                            let is_ref_lvalue = ref_env.is_ref_type(instr.lvalue.identifier);
                             let callee_identifier = &identifiers[callee.identifier.0 as usize];
                             let callee_type = &types[callee_identifier.type_.0 as usize];
                             let hook_kind = env.get_hook_kind_for_type(callee_type).ok().flatten();
@@ -1405,7 +1377,7 @@ fn validate_no_ref_access_in_render_impl(
                 if !ref_env.has_ref_types {
                     continue;
                 }
-                if ref_env.is_ref_type(instr.lvalue.identifier, identifiers, types)
+                if ref_env.is_ref_type(instr.lvalue.identifier)
                     && !matches!(
                         ref_env.get(instr.lvalue.identifier),
                         Some(RefAccessType::Ref { .. })
@@ -1426,7 +1398,7 @@ fn validate_no_ref_access_in_render_impl(
                         ),
                     );
                 }
-                if is_ref_value_type(instr.lvalue.identifier, identifiers, types)
+                if ref_env.type_kind(instr.lvalue.identifier) == TypeKind::RefValue
                     && !matches!(
                         ref_env.get(instr.lvalue.identifier),
                         Some(RefAccessType::RefValue { .. })

@@ -3,7 +3,7 @@
 use crate::linear::Shape;
 use crate::node::{Assertion, Node, Program, lower, simplify};
 use crate::read_ignore::{self, Line};
-use crate::unit::{Subject, Text};
+use crate::unit::{Subject, Text, Unit};
 use bun_collections::StringHashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
@@ -45,8 +45,86 @@ pub struct Refused {
     pub why: Box<[u8]>,
 }
 
+/// `under/**/names`: what is behind the `**`, which takes anything, goes to the end of the path and takes a known number of `/`. So
+/// it is known where it starts.
+struct Tail {
+    /// What is before the `**`. Empty, or it ends with a `/`.
+    under: Box<[u8]>,
+    slashes: u32,
+    program: Program,
+}
+
+impl Tail {
+    /// Of `node`, which is simplified, if it is such a rule. Bytes are compared as they are.
+    fn of(node: &Node, text: Text) -> Option<Tail> {
+        let Node::Seq(nodes) = node else {
+            return None;
+        };
+        let is_deep = |it: &Node| {
+            matches!(
+                it,
+                Node::Deep {
+                    empty_names: true,
+                    newlines: true
+                }
+            )
+        };
+        let (before, after) = nodes.split_at_checked(nodes.iter().position(is_deep)?)?;
+        let [_, names @ .., Node::Assert(Assertion::End)] = after else {
+            return None;
+        };
+        let mut under = Vec::new();
+        for node in before {
+            let Node::Lit(bytes) = node else {
+                return None;
+            };
+            under.extend_from_slice(bytes);
+        }
+        if text.unit != Unit::Byte || text.folds || !matches!(under.last(), None | Some(b'/')) {
+            return None;
+        }
+        let mut slashes = 0;
+        let mut copy = Vec::with_capacity(names.len() + 1);
+        for node in names {
+            copy.push(match node {
+                Node::Lit(bytes) => {
+                    slashes += strings::count_char(bytes, b'/') as u32;
+                    Node::Lit(bytes.clone())
+                }
+                Node::Any => Node::Any,
+                Node::Star => Node::Star,
+                Node::Plus => Node::Plus,
+                Node::Class(class) if !class.takes_slash() => Node::Class(class.clone()),
+                _ => return None,
+            });
+        }
+        copy.push(Node::Assert(Assertion::End));
+        Some(Tail {
+            under: under.into(),
+            slashes,
+            program: lower(Node::Seq(copy), text),
+        })
+    }
+
+    /// `name_at`: where the last name of `path` starts.
+    #[inline]
+    fn matches(&self, path: &[u8], name_at: usize) -> bool {
+        if !(self.under.is_empty() || path.starts_with(&self.under)) {
+            return false;
+        }
+        let mut at = name_at;
+        for _ in 0..self.slashes {
+            let before = &path[..at.saturating_sub(1)];
+            at = strings::last_index_of_char(before, b'/').map_or(0, |slash| slash + 1);
+        }
+        at >= self.under.len() && self.program.matches(Subject::of(&path[at..]))
+    }
+}
+
 struct Rule {
     program: Program,
+    /// What gives the same answers with less of the path.
+    tail: Option<Tail>,
     is_negated: bool,
     is_for_directories: bool,
 }
@@ -63,6 +141,8 @@ pub struct IgnoreRules {
     /// Which rules to try: by name, by path, and `*.ext` by `ext`. With folding: keys in upper case, ASCII rules only.
     by_name: Places,
     by_path: Places,
+    /// How long the longest key of `by_path` is.
+    longest_path: usize,
     by_extension: Places,
     /// Those that start with a name and a `/`, by that name.
     by_first_name: Places,
@@ -108,6 +188,7 @@ impl IgnoreRules {
             refused: Vec::new(),
             by_name: Places::new(),
             by_path: Places::new(),
+            longest_path: 0,
             by_extension: Places::new(),
             by_first_name: Places::new(),
             others: Vec::new(),
@@ -133,7 +214,9 @@ impl IgnoreRules {
                 });
             }
         };
-        let program = lower(read.node, self.text);
+        let node = simplify(read.node);
+        let tail = Tail::of(&node, self.text);
+        let program = lower(node, self.text);
         // What can match nothing says nothing.
         if program.is_never() {
             return;
@@ -146,6 +229,9 @@ impl IgnoreRules {
             Shape::Under(first) => Some((&mut self.by_first_name, first)),
             Shape::Other => None,
         };
+        if let Shape::Path(path) = program.shape() {
+            self.longest_path = self.longest_path.max(path.len());
+        }
         match place {
             Some((places, key)) => {
                 bun_core::handle_oom(places.get_or_put_value(key, Vec::new())).push(at);
@@ -155,6 +241,7 @@ impl IgnoreRules {
         self.has_exceptions |= read.is_negated;
         self.rules.push(Rule {
             program,
+            tail,
             is_negated: read.is_negated,
             is_for_directories: read.is_for_directories,
         });
@@ -211,12 +298,12 @@ impl IgnoreRules {
         &self.refused
     }
 
-    /// The last of `found` that matches and is behind `best`, or else `best`.
+    /// The last of `found` that matches and is behind `best`, or else `best`. `name_at`: where the last name of `path` starts.
     fn look(
         &self,
         found: Option<&[u32]>,
         best: Option<u32>,
-        path: &[u8],
+        (path, name_at): (&[u8], usize),
         is_directory: bool,
     ) -> Option<u32> {
         let by_slash = self.tells_directories_by_slash();
@@ -224,13 +311,19 @@ impl IgnoreRules {
         let later = found.unwrap_or_default().iter().rev();
         let mut later = later.take_while(|at| Some(**at) > best);
         let matches = |at: &&u32| {
-            self.rules.get(**at as usize).is_some_and(|rule| {
-                (is_directory || !rule.is_for_directories)
-                    && rule.program.matches(Subject {
-                        bytes: path,
-                        slash: is_directory && !rule.is_for_directories && by_slash,
-                    })
-            })
+            let rule = self.rules.get(**at as usize);
+            rule.filter(|it| is_directory || !it.is_for_directories)
+                .is_some_and(|rule| {
+                    let whole = || {
+                        rule.program.matches(Subject {
+                            bytes: path,
+                            slash: is_directory && !rule.is_for_directories && by_slash,
+                        })
+                    };
+                    let by_tail = rule.tail.as_ref().map(|it| it.matches(path, name_at));
+                    debug_assert!(by_tail.is_none_or(|it| it == whole()));
+                    by_tail.unwrap_or_else(whole)
+                })
         };
         later.find(matches).copied().or(best)
     }
@@ -246,19 +339,23 @@ impl IgnoreRules {
             }
             false => path,
         };
-        let name = &key[strings::last_index_of_char(key, b'/').map_or(0, |it| it + 1)..];
+        let name_at = strings::last_index_of_char(key, b'/').map_or(0, |it| it + 1);
+        let name = &key[name_at..];
         let extension = strings::last_index_of_char(name, b'.').map(|dot| &name[dot + 1..]);
         let first_len = || strings::index_of_char_usize(key, b'/').unwrap_or(key.len());
         let first = (!self.by_first_name.is_empty()).then(|| &key[..first_len()]);
         let mut best = None;
         for found in [
             places(&self.by_name, name),
-            places(&self.by_path, key),
+            match key.len() <= self.longest_path {
+                true => places(&self.by_path, key),
+                false => None,
+            },
             extension.and_then(|it| places(&self.by_extension, it)),
             first.and_then(|it| places(&self.by_first_name, it)),
             Some(&self.others[..]),
         ] {
-            best = self.look(found, best, path, is_directory);
+            best = self.look(found, best, (path, name_at), is_directory);
         }
         self.rules.get(best? as usize)
     }

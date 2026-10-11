@@ -407,6 +407,8 @@ pub struct Seen {
 pub struct Within<'c> {
     config: &'c Config,
     seen: &'c Seen,
+    /// `seen.before_name`
+    before_name: Option<Candidate<'c>>,
     /// Where the name starts in the path of an entry.
     name_at: usize,
     /// [`Config::relative`] of the entry that was asked about last.
@@ -438,16 +440,15 @@ impl Within<'_> {
         path: &'w [u8],
         is_directory: bool,
     ) -> Option<(Candidate<'w>, Entry<'w>)> {
-        let name = path.get(self.name_at..)?;
-        self.relative
-            .truncate(self.seen.before_name.as_ref()?.len());
+        let (name, before_name) = (path.get(self.name_at..)?, self.before_name.as_ref()?);
+        self.relative.truncate(before_name.path().len());
         self.relative.extend_from_slice(name);
         debug_assert_eq!(self.relative, self.config.relative(path));
         if is_directory {
             self.relative.push(b'/');
         }
         Some((
-            Candidate::new(&self.relative),
+            before_name.entry(&self.relative),
             Entry {
                 name,
                 seen_by_objects: &self.seen.by_objects,
@@ -729,6 +730,7 @@ impl Config {
         Within {
             config: self,
             seen,
+            before_name: seen.before_name.as_deref().map(Candidate::new),
             name_at: directory.len() + usize::from(!directory.ends_with(b"/")),
             relative: seen.before_name.clone().unwrap_or_default(),
         }

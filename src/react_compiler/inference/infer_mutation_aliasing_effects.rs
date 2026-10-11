@@ -336,6 +336,60 @@ fn hashset_of(r: ValueReason) -> ValueReasonSet {
     ValueReasonSet::only(r)
 }
 
+/// An `Option<AbstractValue>` in a number. Zero is `None`.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+struct PackedValue(u32);
+
+impl PackedValue {
+    #[inline]
+    fn new(value: AbstractValue) -> Self {
+        let packed =
+            PackedValue(1 | (value.kind as u32) << 1 | u32::from(value.reason.as_u16()) << 16);
+        debug_assert!(packed.get() == Some(value));
+        packed
+    }
+
+    #[inline]
+    fn get(self) -> Option<AbstractValue> {
+        if self.0 == 0 {
+            return None;
+        }
+        const KINDS: [ValueKind; 8] = [
+            ValueKind::Mutable,
+            ValueKind::Frozen,
+            ValueKind::Primitive,
+            ValueKind::MaybeFrozen,
+            ValueKind::Global,
+            ValueKind::Context,
+            ValueKind::Context,
+            ValueKind::Context,
+        ];
+        Some(AbstractValue {
+            kind: KINDS[(self.0 >> 1 & 7) as usize],
+            reason: ValueReasonSet::from_u16_truncated((self.0 >> 16) as u16),
+        })
+    }
+}
+
+/// What a [`ChunkedVec`] holds: a number, so that a stretch of them is compared at once.
+trait Packed: Copy + Default {
+    fn bits(self) -> u32;
+}
+
+impl Packed for PackedValue {
+    #[inline]
+    fn bits(self) -> u32 {
+        self.0
+    }
+}
+
+impl Packed for ValueSet {
+    #[inline]
+    fn bits(self) -> u32 {
+        self.0
+    }
+}
+
 // =============================================================================
 // ValueSet — compact points-to set
 // =============================================================================
@@ -461,7 +515,7 @@ type Chunk<T> = Rc<[T; CHUNK]>;
 #[derive(Clone)]
 struct ChunkedVec<T>(SmallVec<[Rc<[Chunk<T>; CHUNKS]>; 2]>);
 
-impl<T: Copy + Default> ChunkedVec<T> {
+impl<T: Packed> ChunkedVec<T> {
     fn new() -> Self {
         ChunkedVec(SmallVec::new())
     }
@@ -505,15 +559,25 @@ impl<T: Copy + Default> ChunkedVec<T> {
                 if Rc::ptr_eq(&mine[chunk], theirs) {
                     continue;
                 }
-                let mut all = *mine[chunk];
-                let mut chunk_changed = false;
-                for (mine, theirs) in all.iter_mut().zip(theirs.iter()) {
-                    if let Some(merged) = merged(*mine, *theirs) {
-                        *mine = merged;
-                        chunk_changed = true;
+                const STRETCH: usize = 8;
+                let before: &[T; CHUNK] = &mine[chunk];
+                let mut all: Option<[T; CHUNK]> = None;
+                for start in (0..CHUNK).step_by(STRETCH) {
+                    let stretch = start..start + STRETCH;
+                    let pairs = before[stretch.clone()].iter().zip(&theirs[stretch.clone()]);
+                    if pairs.fold(0, |bits, (mine, theirs)| {
+                        bits | (mine.bits() ^ theirs.bits())
+                    }) == 0
+                    {
+                        continue;
+                    }
+                    for at in stretch {
+                        if let Some(merged) = merged(before[at], theirs[at]) {
+                            all.get_or_insert(*before)[at] = merged;
+                        }
                     }
                 }
-                if chunk_changed {
+                if let Some(all) = all {
                     let chunk = &mut Rc::make_mut(mine)[chunk];
                     match Rc::get_mut(chunk) {
                         Some(chunk) => *chunk = all,
@@ -535,7 +599,7 @@ impl<T: Copy + Default> ChunkedVec<T> {
 #[derive(Clone)]
 struct InferenceState {
     /// Kind of each allocation site, indexed by `ValueId.0`. `None` = unset.
-    values: ChunkedVec<Option<AbstractValue>>,
+    values: ChunkedVec<PackedValue>,
     /// Points-to set per identifier, indexed by `IdentifierId.0`.
     variables: ChunkedVec<ValueSet>,
     sets: Rc<RefCell<ValueSets>>,
@@ -554,7 +618,7 @@ impl InferenceState {
 
     #[inline]
     fn value(&self, id: ValueId) -> Option<AbstractValue> {
-        self.values.get(id.0 as usize)
+        self.values.get(id.0 as usize).get()
     }
 
     #[inline]
@@ -574,7 +638,22 @@ impl InferenceState {
     }
 
     /// Check the kind of a place, recording the usage location for error reporting.
+    #[inline]
     fn kind_with_loc(
+        &self,
+        place_id: IdentifierId,
+        usage_loc: Option<SourceLocation>,
+    ) -> AbstractValue {
+        if let Some(value_id) = self.set_of(place_id).as_singleton()
+            && let Some(value) = self.value(value_id)
+        {
+            return value;
+        }
+        self.kind_of_any_set(place_id, usage_loc)
+    }
+
+    #[inline(never)]
+    fn kind_of_any_set(
         &self,
         place_id: IdentifierId,
         usage_loc: Option<SourceLocation>,
@@ -608,7 +687,7 @@ impl InferenceState {
     }
 
     fn initialize(&mut self, value_id: ValueId, kind: AbstractValue) {
-        self.values.set(value_id.0 as usize, Some(kind));
+        self.values.set(value_id.0 as usize, PackedValue::new(kind));
     }
 
     fn define(&mut self, place_id: IdentifierId, value_id: ValueId) {
@@ -724,12 +803,11 @@ impl InferenceState {
             if value == ov {
                 return None;
             }
-            let ov = ov?;
-            let merged = match value {
-                Some(this) => merge_abstract_values(this, ov),
+            let merged = match value.get() {
+                Some(this) => PackedValue::new(merge_abstract_values(this, ov.get()?)),
                 None => ov,
             };
-            (value != Some(merged)).then_some(Some(merged))
+            (value != merged).then_some(merged)
         });
 
         let sets = &self.sets;
@@ -853,7 +931,11 @@ impl Context {
         Some(Rc::clone(interned))
     }
 
+    #[inline]
     fn intern_effect(&mut self, effect: AliasingEffect) -> AliasingEffect {
+        if self.interned_effects.is_none() {
+            return effect;
+        }
         match self.interned_effect(&effect) {
             Some(interned) => AliasingEffect::clone(&interned),
             None => effect,
@@ -1548,6 +1630,13 @@ fn freeze_function_captures_transitive(
 // applyEffect
 // =============================================================================
 
+/// What `apply_effect` does with an effect of which it is known that it changes no state and is kept
+/// as it is: an `ImmutableCapture` of a frozen value, a `MaybeAlias` of one that is not.
+#[inline]
+fn keep_effect(context: &mut Context, effects: &mut Vec<AliasingEffect>, effect: AliasingEffect) {
+    effects.push(context.intern_effect(effect));
+}
+
 fn apply_effect(
     context: &mut Context,
     state: &mut InferenceState,
@@ -1562,7 +1651,7 @@ fn apply_effect(
         &AliasingEffect::Freeze { ref value, reason } => {
             let did_freeze = state.freeze(value.identifier, reason);
             if did_freeze {
-                effects.push(effect.clone());
+                effects.extend_from_slice(std::slice::from_ref(effect));
                 // Transitively freeze FunctionExpression captures if enabled
                 // (matches TS freezeValue which recurses into func.context)
                 let enable_transitive = env.config.enable_preserve_existing_memoization_guarantees
@@ -1597,7 +1686,7 @@ fn apply_effect(
                 },
             );
             state.define(into.identifier, value_id);
-            effects.push(effect.clone());
+            effects.extend_from_slice(std::slice::from_ref(effect));
         }
         AliasingEffect::ImmutableCapture { from, .. } => {
             let kind = state.kind(from.identifier).kind;
@@ -1606,7 +1695,7 @@ fn apply_effect(
                     // no-op: don't track data flow for copy types
                 }
                 _ => {
-                    effects.push(effect.clone());
+                    effects.extend_from_slice(std::slice::from_ref(effect));
                 }
             }
         }
@@ -1642,20 +1731,21 @@ fn apply_effect(
                         into: into.clone(),
                         reason: first_reason,
                     });
-                    apply_effect(
+                    debug_assert!(matches!(
+                        state.kind(from.identifier).kind,
+                        ValueKind::Frozen | ValueKind::MaybeFrozen
+                    ));
+                    keep_effect(
                         context,
-                        state,
-                        &AliasingEffect::ImmutableCapture {
+                        effects,
+                        AliasingEffect::ImmutableCapture {
                             from: from.clone(),
                             into: into.clone(),
                         },
-                        initialized,
-                        effects,
-                        env,
-                    )?;
+                    );
                 }
                 _ => {
-                    effects.push(effect.clone());
+                    effects.extend_from_slice(std::slice::from_ref(effect));
                 }
             }
         }
@@ -1669,7 +1759,7 @@ fn apply_effect(
                 "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
             )?;
             initialized.push(into.identifier);
-            effects.push(effect.clone());
+            effects.extend_from_slice(std::slice::from_ref(effect));
 
             // Check if function is mutable
             let has_captures = captures.iter().any(|capture| {
@@ -1773,37 +1863,35 @@ fn apply_effect(
             let source_type = DataFlowType::of_source(from_kind);
 
             if source_type == Some(DataFlowType::Frozen) {
-                apply_effect(
+                debug_assert!(matches!(
+                    state.kind(from.identifier).kind,
+                    ValueKind::Frozen | ValueKind::MaybeFrozen
+                ));
+                keep_effect(
                     context,
-                    state,
-                    &AliasingEffect::ImmutableCapture {
+                    effects,
+                    AliasingEffect::ImmutableCapture {
                         from: from.clone(),
                         into: into.clone(),
                     },
-                    initialized,
-                    effects,
-                    env,
-                )?;
+                );
             } else if (source_type == Some(DataFlowType::Mutable)
                 && destination_type == Some(DataFlowType::Mutable))
                 || is_maybe_alias
             {
-                effects.push(effect.clone());
+                effects.extend_from_slice(std::slice::from_ref(effect));
             } else if (source_type == Some(DataFlowType::Context) && destination_type.is_some())
                 || (source_type == Some(DataFlowType::Mutable)
                     && destination_type == Some(DataFlowType::Context))
             {
-                apply_effect(
+                keep_effect(
                     context,
-                    state,
-                    &AliasingEffect::MaybeAlias {
+                    effects,
+                    AliasingEffect::MaybeAlias {
                         from: from.clone(),
                         into: into.clone(),
                     },
-                    initialized,
-                    effects,
-                    env,
-                )?;
+                );
             }
         }
         AliasingEffect::Assign { from, into } => {
@@ -1815,17 +1903,18 @@ fn apply_effect(
             let from_value = state.kind_with_loc(from.identifier, from.loc);
             match from_value.kind {
                 ValueKind::Frozen => {
-                    apply_effect(
+                    debug_assert!(matches!(
+                        state.kind(from.identifier).kind,
+                        ValueKind::Frozen | ValueKind::MaybeFrozen
+                    ));
+                    keep_effect(
                         context,
-                        state,
-                        &AliasingEffect::ImmutableCapture {
+                        effects,
+                        AliasingEffect::ImmutableCapture {
                             from: from.clone(),
                             into: into.clone(),
                         },
-                        initialized,
-                        effects,
-                        env,
-                    )?;
+                    );
                     let cache_key = {
                         use std::hash::Hasher;
                         let mut h = rustc_hash::FxHasher::default();
@@ -1865,7 +1954,7 @@ fn apply_effect(
                 }
                 _ => {
                     state.assign(into.identifier, from.identifier, context);
-                    effects.push(effect.clone());
+                    effects.extend_from_slice(std::slice::from_ref(effect));
                 }
             }
         }
@@ -2111,7 +2200,7 @@ fn apply_effect(
             let value = mutate_place;
             let mutation_kind = state.mutate_with_loc(variant, value.identifier, env, value.loc);
             if mutation_kind == MutationResult::Mutate {
-                effects.push(effect.clone());
+                effects.extend_from_slice(std::slice::from_ref(effect));
             } else if mutation_kind == MutationResult::MutateRef {
                 // no-op
             } else if mutation_kind != MutationResult::None
@@ -2232,7 +2321,7 @@ fn apply_effect(
         | AliasingEffect::Render { .. }
         | AliasingEffect::MutateFrozen { .. }
         | AliasingEffect::MutateGlobal { .. } => {
-            effects.push(effect.clone());
+            effects.extend_from_slice(std::slice::from_ref(effect));
         }
     }
     Ok(())

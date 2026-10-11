@@ -100,10 +100,9 @@ fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Option<Outcome> {
 }
 
 impl NoUnsafeOptionalChaining {
+    /// `chain` is the whole of an optional chain.
+    #[inline(never)]
     fn check<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !chain.is_chain_root() {
-            return;
-        }
         let is_oxlint = cx.language().is_oxlint;
         let outcome = cx.state.find(chain.into(), |child, _| child.as_expr().and_then(|it| usage_of(it, is_oxlint)));
         match outcome.unwrap_or(Outcome::Safe) {
@@ -134,10 +133,14 @@ impl Rule for NoUnsafeOptionalChaining {
     }
 
     fn expr<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check(chain, cx);
+        if chain.is_chain_root() {
+            self.check(chain, cx);
+        }
     }
 
     fn optional_chain<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check(chain, cx);
+        if chain.is_chain_root() {
+            self.check(chain, cx);
+        }
     }
 }

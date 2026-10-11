@@ -29,6 +29,16 @@ impl Rule for NoReturnAssign {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // Most are statements.
+        if !matches!(e.parent(), Node::Stmt(statement) if statement.tag() != StmtTag::Return) {
+            self.check(e, cx);
+        }
+    }
+}
+
+impl NoReturnAssign {
+    #[inline(never)]
+    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // Nothing above a statement, a function or a class can be a `return` or an arrow function
         // without one of ESLint's sentinels in between.
         let found = cx.state.find(Node::Expr(e), |child, parent| match parent {

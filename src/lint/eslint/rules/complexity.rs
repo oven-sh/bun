@@ -27,6 +27,8 @@ fn is_field_initializer<'a>(member: Member<'a>, node: Node<'a>) -> bool {
 
 #[derive(Default)]
 pub struct State<'a> {
+    /// What adds to the complexity of the code path that it is in: where it starts, how much it adds, and what it is.
+    found: Vec<(u32, usize, Node<'a>)>,
     /// By the index of a function: the complexity of its code path. 0: it is not known to have more than one route.
     of_functions: Vec<usize>,
     /// The same for the initializers of fields, of which few have more than one.
@@ -35,10 +37,58 @@ pub struct State<'a> {
 }
 
 impl Complexity {
+    fn increase<'a>(node: impl Into<Node<'a>> + Spanned, by: usize, cx: &mut Cx<'a, Self>) {
+        cx.state.found.push((node.span().start, by, node.into()));
+    }
+
+    /// Finds the complexity of each code path that can be above `threshold`.
+    fn count<'a>(threshold: usize, cx: &mut Cx<'a, Self>) {
+        let found = std::mem::take(&mut cx.state.found);
+        // A complexity is one more than what is added to it.
+        if found.iter().map(|it| it.1).sum::<usize>() < threshold {
+            return;
+        }
+        // For each function that is in no function: where all that is written is in it, and how much that adds, be it to the
+        // function or to a code path in it.
+        let inside = |func: Func<'a>| {
+            let whole = func.span();
+            let start = match func.open_paren() {
+                Some(open) => func.type_params().first().map_or(open, |it| it.span().start),
+                None => whole.start,
+            };
+            (Span::new(start, whole.end), 0)
+        };
+        let outermost = cx.file().funcs().filter(|it| it.has_body() && it.enclosing().is_none());
+        let mut outermost: Vec<(Span, usize)> = outermost.map(inside).collect();
+        outermost.sort_unstable_by_key(|it| it.0.start);
+        // The last that starts before what has been found.
+        let mut at = 0;
+        let mut around = Vec::with_capacity(found.len());
+        for &(start, by, _) in &found {
+            let is_at = outermost.get(at).is_some_and(|it| it.0.start <= start)
+                && outermost.get(at + 1).is_none_or(|it| start < it.0.start);
+            if !is_at {
+                at = outermost.partition_point(|it| it.0.start <= start).wrapping_sub(1);
+            }
+            around.push(match outermost.get_mut(at).filter(|it| start < it.0.end) {
+                Some(function) => {
+                    function.1 += by;
+                    at
+                }
+                None => usize::MAX,
+            });
+        }
+        for (&(_, by, node), around) in found.iter().zip(around) {
+            if outermost.get(around).is_none_or(|it| it.1 >= threshold) {
+                Self::add(node, by, cx);
+            }
+        }
+    }
+
     /// Adds to the complexity of what has the code path that `node` is in: the `Func` of a function
     /// or of a static block, or the `Member` whose initializer it is in. Nothing at the top level.
-    fn increase<'a>(node: impl Into<Node<'a>>, by: usize, cx: &mut Cx<'a, Self>) {
-        let owner = cx.state.owners.find(node.into(), |inner, ancestor| match ancestor {
+    fn add<'a>(node: Node<'a>, by: usize, cx: &mut Cx<'a, Self>) {
+        let owner = cx.state.owners.find(node, |inner, ancestor| match ancestor {
             Node::Func(func) if func.has_body() => Some(ancestor),
             Node::Member(member) if is_field_initializer(member, inner) => Some(ancestor),
             _ => None,
@@ -253,6 +303,7 @@ impl Rule for Complexity {
         let Some(threshold) = self.threshold else {
             return;
         };
+        Self::count(threshold, cx);
         // oxlint reports an initializer that is a function and the function at one place: the initializer first.
         for (&member, &complexity) in &cx.state.of_fields {
             self.report(Node::Member(member), complexity, cx);

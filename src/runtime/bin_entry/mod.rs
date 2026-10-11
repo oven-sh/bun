@@ -180,6 +180,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
+    // macOS and FreeBSD keep children waitable after execve.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     keep_children_waitable();
 
@@ -215,11 +216,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     Global::exit(0)
 }
 
-/// An ignored SIGCHLD survives execve, and while it is ignored Linux reaps
-/// our children itself, so every wait4() fails with ECHILD. It is the one
-/// inherited SIG_IGN we undo (HUP/INT/TERM stay ignored, for nohup). Only an
-/// exact SIG_IGN is replaced: a handler installed before main() stays.
-/// macOS and FreeBSD keep children waitable after execve, hence the gate.
+/// An inherited SIG_IGN on SIGCHLD makes Linux reap our children itself: wait4() fails with ECHILD.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn keep_children_waitable() {
     // SAFETY: `old` is a valid out-pointer and a null new action only queries;

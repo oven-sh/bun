@@ -868,6 +868,8 @@ pub(crate) struct WindowsState {
     /// field never frees.
     pub(crate) windows_write: Option<*mut WindowsWrite>,
     pub(crate) try_close_after_write: bool,
+    /// The peer's reply to a handle message, read before libuv reported that message's write complete; `on_write_complete` applies it.
+    pub(crate) early_ack_nack: Option<AckNack>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -1345,6 +1347,19 @@ impl SendQueue {
             Some(item) => Some(item.handle.is_some()),
         });
         let Some(has_handle) = waiting else {
+            // uv_write completes later, so the reply can be read before `on_write_complete` parks the message in `waiting_for_ack`.
+            #[cfg(windows)]
+            if self.write_in_progress.get()
+                && self
+                    .queue
+                    .get()
+                    .first()
+                    .is_some_and(|first| first.handle.is_some())
+            {
+                log!("onAckNack: ack/nack arrived before the handle message's write completed");
+                self.windows.with_mut(|w| w.early_ack_nack = Some(ack_nack));
+                return;
+            }
             log!("onAckNack: ack received but not waiting for ack");
             return;
         };
@@ -1535,6 +1550,8 @@ impl SendQueue {
             return;
         }
         self.write_in_progress.set(false);
+        #[cfg(windows)]
+        let early_ack_nack = self.windows.with_mut(|w| w.early_ack_nack.take());
         let global_this = self.get_global_this();
 
         enum Done {
@@ -1579,6 +1596,10 @@ impl SendQueue {
         });
         match done {
             Done::AwaitAck => {
+                #[cfg(windows)]
+                if let Some(ack_nack) = early_ack_nack {
+                    return self.on_ack_nack(&global_this, ack_nack);
+                }
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Completed(item) => {

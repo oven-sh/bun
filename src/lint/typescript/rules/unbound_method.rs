@@ -211,8 +211,8 @@ fn is_natively_bound<'a>(object: ObjectNode<'a>, property: PropertyNode<'a>) -> 
         && is_symbol_from_default_library(property.node.get_type_at_location().get_symbol())
 }
 
-fn is_node_inside_type_declaration(node: Node) -> bool {
-    node.ancestors().any(|parent| match parent {
+fn is_node_inside_type_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>) -> bool {
+    let is_type_declaration = |parent: Node| match parent {
         Node::Class(class) => {
             matches!(class.owner(), Node::Stmt(_)) && class.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT)
         }
@@ -234,7 +234,8 @@ fn is_node_inside_type_declaration(node: Node) -> bool {
             _ => false,
         },
         _ => false,
-    })
+    };
+    known.find(node, |_, parent| is_type_declaration(parent).then_some(())).is_some()
 }
 
 /// The message to report, if the method is dangerous.
@@ -341,6 +342,8 @@ fn identifier_key<'a>(key: Key<'a>, name_node: impl FnOnce() -> Option<TsNode<'a
 pub struct State<'a> {
     /// [`is_safe_use`]
     safe_uses: AncestorMemo<'a, bool>,
+    /// [`is_node_inside_type_declaration`]
+    type_declarations: AncestorMemo<'a, ()>,
     /// By a type that has many constituents and the name of a property: what is to be said of an access to it. To look
     /// the property up in each of them for each access takes long.
     methods_of_many: FxHashMap<(Type<'a>, Box<[u8]>), Option<Message>>,
@@ -508,7 +511,7 @@ impl UnboundMethod {
         let PatKind::Object(properties) = node.kind() else {
             return;
         };
-        if properties.is_empty() || is_node_inside_type_declaration(Node::Pat(node)) {
+        if properties.is_empty() || is_node_inside_type_declaration(Node::Pat(node), &mut cx.state.type_declarations) {
             return;
         }
         let (init_node, is_in_assignment_pattern) = match node.parent() {
@@ -541,7 +544,10 @@ impl UnboundMethod {
         let ExprKind::Object(properties) = node.kind() else {
             return;
         };
-        if properties.is_empty() || !node.is_assignment_target() || is_node_inside_type_declaration(Node::Expr(node)) {
+        if properties.is_empty()
+            || !node.is_assignment_target()
+            || is_node_inside_type_declaration(Node::Expr(node), &mut cx.state.type_declarations)
+        {
             return;
         }
         let (init_node, is_in_assignment_pattern) = match node.parent() {

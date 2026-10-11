@@ -1,5 +1,7 @@
+use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use rustc_hash::FxHashSet;
+use std::cmp::Reverse;
 
 /// Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements.
 pub struct NoUnreachable;
@@ -7,39 +9,17 @@ pub struct NoUnreachable;
 const UNREACHABLE_CODE: Message = Message::new("unreachableCode", "Unreachable code.");
 
 #[derive(Default)]
-pub struct State {
+pub struct State<'a> {
     /// ESLint's `ConsecutiveRange`: consecutive unreachable statements that are not reported yet.
     range: Option<Span>,
     /// For each of the constructors around the current node, whether a `super()` has been seen.
     constructors: Vec<bool>,
     /// With a configuration of oxlint: the last `catch` block that cannot be reached.
     catch_block: Option<Span>,
-}
-
-type Context<'a> = Cx<'a, NoUnreachable>;
-
-/// Reports the current range, which `next` replaces.
-fn report_range(next: Option<Span>, cx: &mut Context) {
-    if let Some(range) = std::mem::replace(&mut cx.state.range, next) {
-        cx.report(range, UNREACHABLE_CODE);
-    }
-}
-
-/// ESLint's `reportIfUnreachable`, for a node that is unreachable.
-fn add_unreachable(node: Span, cx: &mut Context) {
-    let Some(range) = cx.state.range else {
-        cx.state.range = Some(node);
-        return;
-    };
-    if range.contains(node) {
-        return;
-    }
-    // oxlint reports each statement.
-    if !cx.language().is_oxlint && cx.file().token_before(node).is_some_and(|before| range.contains(before.span())) {
-        cx.state.range = Some(range.to(node));
-        return;
-    }
-    report_range(Some(node), cx);
+    /// What is reported at the end.
+    found: Vec<Span>,
+    /// The statements that cannot be reached, where the nodes are not entered one by one.
+    unreachable: Vec<Stmt<'a>>,
 }
 
 /// Whether ESLint has a `MethodDefinition` with the kind `constructor` for it.
@@ -66,20 +46,6 @@ fn is_listened(stmt: Stmt) -> bool {
     }
 }
 
-/// What cannot be reached and oxlint says nothing about: the declaration of a class, which is no statement for it, and
-/// a `catch` block, which it takes for reachable whatever the `try` block is.
-fn oxlint_passes_over<'a>(stmt: Stmt<'a>, cx: &mut Context<'a>) -> bool {
-    if cx.state.catch_block.is_some_and(|it| it.contains(stmt.span())) {
-        return true;
-    }
-    let is_catch_block = matches!(stmt.parent(), Node::Stmt(parent)
-        if matches!(parent.kind(), StmtKind::Try { handler: Some(handler), .. } if handler == stmt));
-    if is_catch_block {
-        cx.state.catch_block = Some(stmt.span());
-    }
-    is_catch_block || stmt.tag() == StmtTag::Class
-}
-
 /// Whether there can be a subclass whose constructor does not call `super()`.
 fn has_constructor_without_super_call<'a>(file: &'a File<'a>) -> bool {
     let mut constructors = (file.classes().filter(|class| class.extends().is_some()))
@@ -102,7 +68,7 @@ fn has_constructor_without_super_call<'a>(file: &'a File<'a>) -> bool {
     constructors.any(|member| !with_call.contains(&member))
 }
 
-const STATEMENTS: NodeTags = NodeTags::new().stmts(&[
+const KINDS: &[StmtTag] = &[
     StmtTag::Block,
     StmtTag::Break,
     StmtTag::Class,
@@ -131,53 +97,92 @@ const STATEMENTS: NodeTags = NodeTags::new().stmts(&[
     StmtTag::Enum,
     StmtTag::Module,
     StmtTag::ImportEquals,
-]);
+];
+const STATEMENTS: NodeTags = NodeTags::new().stmts(KINDS);
 
-impl NoUnreachable {
-    fn enter_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Node::Stmt(stmt) = node else {
+/// The statements and the functions in what is walked.
+struct Entered<'a>(Vec<Node<'a>>);
+
+impl<'a> Visitor<'a> for Entered<'a> {
+    fn enter(&mut self, node: Node<'a>) {
+        if STATEMENTS.union(NodeTags::FUNC).contains(node) {
+            self.0.push(node);
+        }
+    }
+
+    fn exit(&mut self, _: Node<'a>) {}
+}
+
+/// Puts statements and functions in the order in which they are entered.
+fn sort_as_entered(nodes: &mut [Node]) {
+    utils::sort::sort_by_key(nodes, |it| (it.span().start, Reverse(it.span().end), matches!(it, Node::Func(_))));
+}
+
+impl<'a> State<'a> {
+    /// Reports the current range, which `next` replaces.
+    fn report_range(&mut self, next: Option<Span>) {
+        self.found.extend(std::mem::replace(&mut self.range, next));
+    }
+
+    /// ESLint's `reportIfUnreachable`, for a node that is unreachable.
+    fn add_unreachable(&mut self, node: Span, file: &'a File<'a>) {
+        let Some(range) = self.range else {
+            self.range = Some(node);
             return;
         };
-        let is_reachable = stmt.is_reachable();
-        if is_reachable && cx.state.range.is_none() || !is_listened(stmt) {
+        if range.contains(node) {
             return;
         }
-        if !is_reachable && cx.language().is_oxlint && oxlint_passes_over(stmt, cx) {
+        // oxlint reports each statement.
+        if !file.language().is_oxlint && file.token_before(node).is_some_and(|before| range.contains(before.span())) {
+            self.range = Some(range.to(node));
+            return;
+        }
+        self.report_range(Some(node));
+    }
+
+    /// What cannot be reached and oxlint says nothing about: the declaration of a class, which is no statement for it, and
+    /// a `catch` block, which it takes for reachable whatever the `try` block is.
+    fn oxlint_passes_over(&mut self, stmt: Stmt<'a>) -> bool {
+        if self.catch_block.is_some_and(|it| it.contains(stmt.span())) {
+            return true;
+        }
+        let is_catch_block = matches!(stmt.parent(), Node::Stmt(parent)
+            if matches!(parent.kind(), StmtKind::Try { handler: Some(handler), .. } if handler == stmt));
+        if is_catch_block {
+            self.catch_block = Some(stmt.span());
+        }
+        is_catch_block || stmt.tag() == StmtTag::Class
+    }
+
+    fn enter_statement(&mut self, stmt: Stmt<'a>) {
+        let is_reachable = stmt.is_reachable();
+        if is_reachable && self.range.is_none() || !is_listened(stmt) {
+            return;
+        }
+        if !is_reachable && stmt.file().language().is_oxlint && self.oxlint_passes_over(stmt) {
             return;
         }
         match is_reachable {
-            true => report_range(None, cx),
-            false => add_unreachable(stmt.span(), cx),
+            true => self.report_range(None),
+            false => self.add_unreachable(stmt.span(), stmt.file()),
         }
     }
 
     /// The `BlockStatement` that is the body of a function can always be reached.
-    fn enter_function<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.state.range.is_some()
-            && let Node::Func(func) = node
-            && func.kind() != FnKind::StaticBlock
-            && func.body_statements().is_some()
-        {
-            report_range(None, cx);
-        }
-    }
-
-    fn enter_member<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(node, Node::Member(member) if is_constructor(member)) {
-            cx.state.constructors.push(false);
+    fn enter_function(&mut self, func: Func<'a>) {
+        if self.range.is_some() && func.kind() != FnKind::StaticBlock && func.body_statements().is_some() {
+            self.report_range(None);
         }
     }
 
     /// The instance fields of a subclass are never created if its constructor does not call
     /// `super()`.
-    fn exit_member<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Node::Member(member) = node else {
-            return;
-        };
+    fn exit_member(&mut self, member: Member<'a>) {
         if !is_constructor(member) {
             return;
         }
-        let has_super_call = cx.state.constructors.pop().unwrap_or(true);
+        let has_super_call = self.constructors.pop().unwrap_or(true);
         let Node::Class(class) = member.parent() else {
             return;
         };
@@ -188,32 +193,70 @@ impl NoUnreachable {
             if element.kind() == MemberKind::Property
                 && !element.flags().intersects(Flags::STATIC | Flags::ACCESSOR | Flags::ABSTRACT)
             {
-                add_unreachable(element.span(), cx);
+                self.add_unreachable(element.span(), element.file());
             }
         }
     }
 
-    fn enter_super<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if let Node::Expr(e) = node
-            && let Node::Expr(parent) = e.parent()
+    fn enter_super(&mut self, e: Expr<'a>) {
+        if let Node::Expr(parent) = e.parent()
             && matches!(parent.kind(), ExprKind::Call(call) if call.callee() == e)
-            && let Some(has_super_call) = cx.state.constructors.last_mut()
+            && let Some(has_super_call) = self.constructors.last_mut()
         {
             *has_super_call = true;
         }
     }
+
+    fn enter(&mut self, node: Node<'a>) {
+        match node {
+            Node::Stmt(stmt) => self.enter_statement(stmt),
+            Node::Func(func) => self.enter_function(func),
+            Node::Member(member) if is_constructor(member) => self.constructors.push(false),
+            Node::Expr(e) => self.enter_super(e),
+            _ => {}
+        }
+    }
+
+    /// Enters what is in `self.unreachable`. What is entered between a range and a statement matters only if the statement is
+    /// in the range or follows it at once, and then all of that is in the range.
+    #[inline(never)]
+    fn enter_what_is_unreachable(&mut self) {
+        let mut unreachable = std::mem::take(&mut self.unreachable);
+        utils::sort::sort_unstable_by_key(&mut unreachable, |it| (it.span().start, Reverse(it.span().end)));
+        let (mut entered, mut end) = (Entered(Vec::new()), 0);
+        for stmt in unreachable {
+            if stmt.span().start >= end {
+                end = stmt.span().end;
+                walk_node(Node::Stmt(stmt), &mut entered);
+            }
+        }
+        sort_as_entered(&mut entered.0);
+        entered.0.into_iter().for_each(|node| self.enter(node));
+    }
+}
+
+/// What is found if all statements and functions of `file` are entered.
+fn found_in_all<'a>(file: &'a File<'a>) -> Vec<Span> {
+    let statements = KINDS.iter().flat_map(|&kind| file.stmts_of_kind(kind)).map(Node::Stmt);
+    let mut all: Vec<Node<'a>> = statements.chain(file.funcs().map(Node::Func)).collect();
+    sort_as_entered(&mut all);
+    let mut state = State::default();
+    all.into_iter().for_each(|node| state.enter(node));
+    state.report_range(None);
+    state.found
 }
 
 impl Rule for NoUnreachable {
     const META: Meta = Meta::eslint("no-unreachable", Kind::Problem).recommended();
     const ON: On = On::new()
+        .stmts(KINDS)
         .enter(STATEMENTS)
         .enter(NodeTags::FUNC)
         .enter(NodeTags::MEMBER)
         .exit(NodeTags::MEMBER)
         .enter(NodeTags::new().exprs(&[ExprTag::Super]))
         .finish();
-    type State<'a> = State;
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnreachable
@@ -221,39 +264,49 @@ impl Rule for NoUnreachable {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         // oxlint says nothing about the fields of a class.
-        let looks_at_fields = !file.language().is_oxlint && has_constructor_without_super_call(file);
-        if !file.has_unreachable_statements() && !looks_at_fields {
-            return On::new();
+        if !file.language().is_oxlint && has_constructor_without_super_call(file) {
+            return On::new()
+                .enter(STATEMENTS)
+                .enter(NodeTags::FUNC)
+                .enter(NodeTags::MEMBER)
+                .exit(NodeTags::MEMBER)
+                .enter(NodeTags::new().exprs(&[ExprTag::Super]))
+                .finish();
         }
-        let mut on = On::new().enter(STATEMENTS);
-        on = on.enter(NodeTags::FUNC);
-        if looks_at_fields {
-            on = on.enter(NodeTags::MEMBER);
-            on = on.exit(NodeTags::MEMBER);
-            on = on.enter(NodeTags::new().exprs(&[ExprTag::Super]));
+        match file.has_unreachable_statements() {
+            true => On::new().stmts(KINDS).finish(),
+            false => On::new(),
         }
-        on.finish()
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
         Some(State::default())
     }
 
-    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        match node {
-            Node::Stmt(_) => self.enter_statement(node, cx),
-            Node::Func(_) => self.enter_function(node, cx),
-            Node::Member(_) => self.enter_member(node, cx),
-            Node::Expr(_) => self.enter_super(node, cx),
-            _ => {}
+    #[inline]
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !stmt.is_reachable() {
+            cx.state.unreachable.push(stmt);
         }
     }
 
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.enter(node);
+    }
+
     fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        self.exit_member(node, cx);
+        if let Node::Member(member) = node {
+            cx.state.exit_member(member);
+        }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        report_range(None, cx);
+        let is_entered_in_part = !cx.state.unreachable.is_empty();
+        cx.state.enter_what_is_unreachable();
+        cx.state.report_range(None);
+        debug_assert!(!is_entered_in_part || cx.state.found == found_in_all(cx.file()));
+        for &range in &cx.state.found {
+            cx.report(range, UNREACHABLE_CODE);
+        }
     }
 }

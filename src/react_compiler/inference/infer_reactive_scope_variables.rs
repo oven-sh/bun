@@ -20,9 +20,10 @@ use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
-    DeclarationId, EvaluationOrder, HirFunction, IdentifierId, InstructionValue, Pattern, Position,
+    DeclarationId, EvaluationOrder, HirFunction, IdentifierId, InstructionValue, Place, Position,
     SourceLocation,
 };
+use crate::inference::infer_reactive_places::for_each_instruction_value_operand;
 use crate::utils::DisjointSet;
 
 // =============================================================================
@@ -234,31 +235,6 @@ fn may_allocate(value: &InstructionValue, lvalue_type_is_primitive: bool) -> boo
 }
 
 // =============================================================================
-// Pattern helpers
-// =============================================================================
-
-/// Collect all Place identifiers from a destructure pattern.
-/// Corresponds to TS `eachPatternOperand`.
-fn each_pattern_operand(pattern: &Pattern) -> Vec<IdentifierId> {
-    visitors::each_pattern_operand(pattern)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
-}
-
-/// Collect all operand identifiers from an instruction value.
-/// Corresponds to TS `eachInstructionValueOperand`.
-fn each_instruction_value_operand(
-    value: &InstructionValue,
-    env: &Environment,
-) -> Vec<IdentifierId> {
-    visitors::each_instruction_value_operand(value, env)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
-}
-
-// =============================================================================
 // findDisjointMutableValues
 // =============================================================================
 
@@ -273,6 +249,7 @@ pub(crate) fn find_disjoint_mutable_values(
     let mut declarations: IdMap<DeclarationId, IdentifierId> = IdMap::new();
 
     let enable_forest = env.config.enable_forest;
+    let mut operands: Vec<IdentifierId> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {
         // Handle phi nodes
@@ -307,7 +284,8 @@ pub(crate) fn find_disjoint_mutable_values(
                         >= first_instr_id
                 });
             if is_phi_mutated_after_creation || is_loop_carried_reassignment {
-                let mut operands = vec![phi_id];
+                operands.clear();
+                operands.push(phi_id);
                 if let Some(&decl_id) = declarations.get(phi_decl_id) {
                     operands.push(decl_id);
                 }
@@ -325,7 +303,7 @@ pub(crate) fn find_disjoint_mutable_values(
         // Handle instructions
         for instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
-            let mut operands: Vec<IdentifierId> = Vec::new();
+            operands.clear();
 
             let lvalue_id = instr.lvalue.identifier;
             let lvalue_range = &env.identifiers[lvalue_id.0 as usize].mutable_range;
@@ -361,17 +339,18 @@ pub(crate) fn find_disjoint_mutable_values(
                         operands.push(value.identifier);
                     }
                 }
-                InstructionValue::Destructure { lvalue, value, .. } => {
-                    let pattern_places = each_pattern_operand(&lvalue.pattern);
-                    for place_id in &pattern_places {
+                InstructionValue::Destructure { value, .. } => {
+                    let mut declare = |place: &Place| {
+                        let place_id = place.identifier;
                         let decl_id = env.identifiers[place_id.0 as usize].declaration_id;
-                        declarations.entry(decl_id).or_insert(*place_id);
+                        declarations.entry(decl_id).or_insert(place_id);
 
                         let place_range = &env.identifiers[place_id.0 as usize].mutable_range;
                         if place_range.end.0 > place_range.start.0 + 1 {
-                            operands.push(*place_id);
+                            operands.push(place_id);
                         }
-                    }
+                    };
+                    visitors::each_lvalue(&instr.value, &mut declare as &mut dyn FnMut(&Place));
 
                     let value_range = &env.identifiers[value.identifier.0 as usize].mutable_range;
                     if value_range.contains(instr.id) && value_range.start.0 > 0 {
@@ -380,25 +359,23 @@ pub(crate) fn find_disjoint_mutable_values(
                 }
                 InstructionValue::MethodCall { property, .. } => {
                     // For MethodCall: include all mutable operands plus the computed property
-                    let all_operands = each_instruction_value_operand(&instr.value, env);
-                    for op_id in &all_operands {
-                        let op_range = &env.identifiers[op_id.0 as usize].mutable_range;
+                    for_each_instruction_value_operand(&instr.value, &env.functions, &mut |op| {
+                        let op_range = &env.identifiers[op.identifier.0 as usize].mutable_range;
                         if op_range.contains(instr.id) && op_range.start.0 > 0 {
-                            operands.push(*op_id);
+                            operands.push(op.identifier);
                         }
-                    }
+                    });
                     // Ensure method property is in the same scope as the call
                     operands.push(property.identifier);
                 }
                 _ => {
                     // For all other instructions: include mutable operands
-                    let all_operands = each_instruction_value_operand(&instr.value, env);
-                    for op_id in &all_operands {
-                        let op_range = &env.identifiers[op_id.0 as usize].mutable_range;
+                    for_each_instruction_value_operand(&instr.value, &env.functions, &mut |op| {
+                        let op_range = &env.identifiers[op.identifier.0 as usize].mutable_range;
                         if op_range.contains(instr.id) && op_range.start.0 > 0 {
-                            operands.push(*op_id);
+                            operands.push(op.identifier);
                         }
-                    }
+                    });
                 }
             }
 

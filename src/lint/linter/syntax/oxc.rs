@@ -296,30 +296,32 @@ fn deferred_import<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
 
 /// The error for which oxlint refuses a file in which TypeScript's parser has found none.
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    // acorn's checks have these for JavaScript.
-    let of_typescript = match file.is_javascript() {
-        true => [None, None, None, None, None, None],
-        false => [
-            declare_in_ambient_context(file),
-            espree::export_assignment_beside_exports(file),
-            declaration_without_initializer(file),
-            declaration_list(file),
-            class_without_name(file),
-            error_of_grammar(file),
-        ],
+    let mut first: Option<SyntaxError> = None;
+    // Of two at one place, the one that is looked for first.
+    let mut note = |found: Option<SyntaxError>| {
+        if let Some(found) = found
+            && first.as_ref().is_none_or(|first| found.at < first.at)
+        {
+            first = Some(found);
+        }
     };
-    let early = [
-        espree::first_error_of_oxc(file),
-        espree::using_in_script(file),
-        espree::with_in_strict_code(file),
-        deferred_import(file),
-        espree::for_await_where_nothing_waits(file),
-        reserved_word(file),
-        duplicate_parameter(file),
-    ];
-    (of_typescript.into_iter().chain(early))
-        .flatten()
-        .min_by_key(|it| it.at)
+    // acorn's checks have these for JavaScript.
+    if !file.is_javascript() {
+        note(declare_in_ambient_context(file));
+        note(espree::export_assignment_beside_exports(file));
+        note(declaration_without_initializer(file));
+        note(declaration_list(file));
+        note(class_without_name(file));
+        note(error_of_grammar(file));
+    }
+    note(espree::first_error_of_oxc(file));
+    note(espree::using_in_script(file));
+    note(espree::with_in_strict_code(file));
+    note(deferred_import(file));
+    note(espree::for_await_where_nothing_waits(file));
+    note(reserved_word(file));
+    note(duplicate_parameter(file));
+    first
 }
 
 /// The same for oxfmt, which runs OXC's parser and not the pass that builds the scopes: that pass has most of the errors.

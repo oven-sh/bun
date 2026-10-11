@@ -1,15 +1,11 @@
-use crate::collections::FxHashSet as HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{FxHashSet as HashSet, IdBitSet, IdMap};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerSuggestion, CompilerSuggestionOperation,
     ErrorCategory, SourceLocation,
 };
 use crate::hir::environment::Environment;
 use crate::hir::environment_config::ExhaustiveEffectDepsMode;
-use crate::hir::visitors::{
-    each_instruction_value_operand_with_functions, each_lvalue, each_terminal_operand,
-};
+use crate::hir::visitors::{each_lvalue, lvalues, operands, terminal_operands};
 use crate::hir::{
     ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
     IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
@@ -32,6 +28,10 @@ pub(crate) fn validate_exhaustive_dependencies(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
+    let has_dependencies = has_dependencies_to_validate(func, env);
+    if !has_dependencies && !cfg!(debug_assertions) {
+        return validate_optional_places(func, &env.functions);
+    }
     let reactive = collect_reactive_identifiers(func, &env.functions);
     let validate_memo = env.config.validate_exhaustive_memoization_dependencies;
     let validate_effect = env.config.validate_exhaustive_effect_dependencies.clone();
@@ -62,7 +62,7 @@ pub(crate) fn validate_exhaustive_dependencies(
         invalid_memo_ids: HashSet::default(),
     };
 
-    collect_dependencies(
+    let collected = collect_dependencies(
         func,
         &env.identifiers,
         &env.types,
@@ -70,7 +70,14 @@ pub(crate) fn validate_exhaustive_dependencies(
         &mut temporaries,
         &mut Some(&mut callbacks),
         false,
-    )?;
+    );
+    debug_assert!(
+        has_dependencies
+            || (callbacks.diagnostics.is_empty()
+                && callbacks.invalid_memo_ids.is_empty()
+                && collected.is_ok() == validate_optional_places(func, &env.functions).is_ok())
+    );
+    collected?;
 
     // Set has_invalid_deps on StartMemoize instructions that had validation errors
     if !callbacks.invalid_memo_ids.is_empty() {
@@ -91,6 +98,57 @@ pub(crate) fn validate_exhaustive_dependencies(
     // Record all diagnostics on the environment
     for diagnostic in callbacks.diagnostics {
         env.record_diagnostic(diagnostic);
+    }
+    Ok(())
+}
+
+/// Whether the function has what the callbacks are for: manual memoization, or an effect to validate.
+fn has_dependencies_to_validate(func: &HirFunction, env: &Environment) -> bool {
+    let validates_effects = !matches!(
+        env.config.validate_exhaustive_effect_dependencies,
+        ExhaustiveEffectDepsMode::Off
+    );
+    func.body.blocks.values().any(|block| {
+        block.instructions.iter().any(|instr_id| {
+            match &func.instructions[instr_id.0 as usize].value {
+                InstructionValue::StartMemoize { .. } | InstructionValue::FinishMemoize { .. } => {
+                    true
+                }
+                InstructionValue::CallExpression { callee, .. }
+                | InstructionValue::MethodCall {
+                    property: callee, ..
+                } => {
+                    validates_effects
+                        && is_effect_hook(get_identifier_type(
+                            callee.identifier,
+                            &env.identifiers,
+                            &env.types,
+                        ))
+                }
+                _ => false,
+            }
+        })
+    })
+}
+
+/// What is left of `collect_dependencies` where nothing asks for the dependencies: what fails, in the same order.
+fn validate_optional_places(
+    func: &HirFunction,
+    functions: &[HirFunction],
+) -> Result<(), CompilerDiagnostic> {
+    if !crate::lowering::thread_has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+    find_optional_places(func)?;
+    for block in func.body.blocks.values() {
+        for &instr_id in &block.instructions {
+            if let InstructionValue::FunctionExpression { lowered_func, .. }
+            | InstructionValue::ObjectMethod { lowered_func, .. } =
+                &func.instructions[instr_id.0 as usize].value
+            {
+                validate_optional_places(&functions[lowered_func.func.0 as usize], functions)?;
+            }
+        }
     }
     Ok(())
 }
@@ -148,7 +206,7 @@ struct Callbacks<'a> {
     start_memo: &'a mut Option<StartMemoInfo>,
     validate_memo: bool,
     validate_effect: ExhaustiveEffectDepsMode,
-    reactive: &'a HashSet<IdentifierId>,
+    reactive: &'a IdBitSet<IdentifierId>,
     diagnostics: Vec<CompilerDiagnostic>,
     /// manual_memo_ids that had validation errors (to set has_invalid_deps)
     invalid_memo_ids: HashSet<u32>,
@@ -256,30 +314,18 @@ fn is_sub_path_ignoring_optionals(
 fn collect_reactive_identifiers(
     func: &HirFunction,
     functions: &[HirFunction],
-) -> HashSet<IdentifierId> {
-    let mut reactive = HashSet::default();
+) -> IdBitSet<IdentifierId> {
+    let mut reactive = IdBitSet::default();
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
-            // Check instruction lvalue
-            if instr.lvalue.reactive {
-                reactive.insert(instr.lvalue.identifier);
-            }
-            // Check inner lvalues (Destructure patterns, StoreLocal, DeclareLocal, etc.)
-            // Matches TS eachInstructionLValue which yields both instr.lvalue and
-            // eachInstructionValueLValue(instr.value)
-            each_lvalue(&instr.value, |lvalue| {
-                if lvalue.reactive {
-                    reactive.insert(lvalue.identifier);
-                }
-            });
-            for operand in each_instruction_value_operand_with_functions(&instr.value, functions) {
-                if operand.reactive {
-                    reactive.insert(operand.identifier);
+            for place in lvalues(instr).chain(operands(&instr.value, functions)) {
+                if place.reactive {
+                    reactive.insert(place.identifier);
                 }
             }
         }
-        for operand in each_terminal_operand(&block.terminal) {
+        for operand in terminal_operands(&block.terminal) {
             if operand.reactive {
                 reactive.insert(operand.identifier);
             }
@@ -296,10 +342,10 @@ fn find_optional_places(
     func: &HirFunction,
 ) -> Result<IdMap<IdentifierId, bool>, CompilerDiagnostic> {
     let mut optionals: IdMap<IdentifierId, bool> = IdMap::new();
-    let mut visited: HashSet<BlockId> = HashSet::default();
+    let mut visited: IdBitSet<BlockId> = IdBitSet::default();
 
     for (_block_id, block) in &func.body.blocks {
-        if visited.contains(&block.id) {
+        if visited.contains(block.id) {
             continue;
         }
         if let Terminal::Optional {
@@ -397,7 +443,7 @@ fn find_optional_places(
 fn add_dependency(
     dep: &Temporary,
     dependencies: &mut Vec<InferredDependency>,
-    locals: &HashSet<IdentifierId>,
+    locals: &IdBitSet<IdentifierId>,
 ) {
     match dep {
         Temporary::Aggregate {
@@ -422,7 +468,7 @@ fn add_dependency(
             context,
             loc,
         } => {
-            if !locals.contains(identifier) {
+            if !locals.contains(*identifier) {
                 let inferred = InferredDependency::Local {
                     identifier: *identifier,
                     path: path.clone(),
@@ -440,7 +486,7 @@ fn add_dependency(
 fn add_dependency_inferred(
     dep: &InferredDependency,
     dependencies: &mut Vec<InferredDependency>,
-    locals: &HashSet<IdentifierId>,
+    locals: &IdBitSet<IdentifierId>,
 ) {
     match dep {
         InferredDependency::Global { .. } => {
@@ -449,7 +495,7 @@ fn add_dependency_inferred(
             }
         }
         InferredDependency::Local { identifier, .. } => {
-            if !locals.contains(identifier) && !contains_dep(dependencies, dep) {
+            if !locals.contains(*identifier) && !contains_dep(dependencies, dep) {
                 dependencies.push(dep.clone());
             }
         }
@@ -460,7 +506,7 @@ fn visit_candidate_dependency(
     place: &Place,
     temporaries: &IdMap<IdentifierId, Temporary>,
     dependencies: &mut Vec<InferredDependency>,
-    locals: &HashSet<IdentifierId>,
+    locals: &IdBitSet<IdentifierId>,
 ) {
     if let Some(dep) = temporaries.get(place.identifier) {
         add_dependency(dep, dependencies, locals);
@@ -481,7 +527,7 @@ fn collect_dependencies(
     }
 
     let optionals = find_optional_places(func)?;
-    let mut locals: HashSet<IdentifierId> = HashSet::default();
+    let mut locals: IdBitSet<IdentifierId> = IdBitSet::default();
 
     if is_function_expression {
         for param in &func.params {
@@ -497,7 +543,7 @@ fn collect_dependencies(
     // collection loop and the callbacks — StartMemoize clears them, FinishMemoize
     // reads and clears them. We simulate this by saving/restoring.
     let mut saved_dependencies: Option<Vec<InferredDependency>> = None;
-    let mut saved_locals: Option<HashSet<IdentifierId>> = None;
+    let mut saved_locals: Option<IdBitSet<IdentifierId>> = None;
 
     for (_block_id, block) in &func.body.blocks {
         // Process phis
@@ -604,21 +650,13 @@ fn collect_dependencies(
                 }
                 InstructionValue::LoadContext { place, .. }
                 | InstructionValue::LoadLocal { place, .. } => {
-                    if let Some(temp) = temporaries.get(place.identifier).cloned() {
-                        match &temp {
-                            Temporary::Local { .. } => {
-                                // Update loc to the load site
-                                let mut updated = temp.clone();
-                                if let Temporary::Local { loc, .. } = &mut updated {
-                                    *loc = place.loc;
-                                }
-                                temporaries.insert(lvalue_id, updated);
-                            }
-                            _ => {
-                                temporaries.insert(lvalue_id, temp);
-                            }
+                    if let Some(mut temp) = temporaries.get(place.identifier).cloned() {
+                        if let Temporary::Local { loc, .. } = &mut temp {
+                            // Update loc to the load site
+                            *loc = place.loc;
                         }
-                        if locals.contains(&place.identifier) {
+                        temporaries.insert(lvalue_id, temp);
+                        if locals.contains(place.identifier) {
                             locals.insert(lvalue_id);
                         }
                     }
@@ -741,17 +779,17 @@ fn collect_dependencies(
                         visit_candidate_dependency(object, temporaries, &mut dependencies, &locals);
                     } else {
                         // Extend path
-                        let obj_temp = temporaries.get(object.identifier).cloned();
-                        if let Some(Temporary::Local {
+                        if let Some(&Temporary::Local {
                             identifier,
-                            path,
+                            ref path,
                             context,
                             ..
-                        }) = obj_temp
+                        }) = temporaries.get(object.identifier)
                         {
                             let optional =
                                 optionals.get(object.identifier).copied().unwrap_or(false);
-                            let mut new_path = path.clone();
+                            let mut new_path = Vec::with_capacity(path.len() + 1);
+                            new_path.extend_from_slice(path);
                             new_path.push(DependencyPathEntry {
                                 optional,
                                 property: property.clone(),
@@ -781,8 +819,8 @@ fn collect_dependencies(
                         &mut None,
                         true,
                     )?;
-                    temporaries.insert(lvalue_id, function_deps.clone());
                     add_dependency(&function_deps, &mut dependencies, &locals);
+                    temporaries.insert(lvalue_id, function_deps);
                 }
                 InstructionValue::StartMemoize {
                     manual_memo_id,
@@ -865,7 +903,7 @@ fn collect_dependencies(
                 }
                 InstructionValue::ArrayExpression { elements, loc, .. } => {
                     let mut array_deps: Vec<InferredDependency> = Vec::new();
-                    let empty_locals = HashSet::default();
+                    let empty_locals = IdBitSet::default();
                     for elem in elements {
                         let place = match elem {
                             ArrayElement::Place(p) => Some(p),
@@ -949,7 +987,7 @@ fn collect_dependencies(
                                                                         crate::hir::Effect::Read,
                                                                     reactive: cb
                                                                         .reactive
-                                                                        .contains(identifier),
+                                                                        .contains(*identifier),
                                                                     loc: *loc,
                                                                 },
                                                                 constant: false,
@@ -994,11 +1032,9 @@ fn collect_dependencies(
                     }
 
                     // Visit all operands except for MethodCall's property
-                    for operand in
-                        each_instruction_value_operand_with_functions(&instr.value, functions)
-                    {
+                    for operand in operands(&instr.value, functions) {
                         visit_candidate_dependency(
-                            &operand,
+                            operand,
                             temporaries,
                             &mut dependencies,
                             &locals,
@@ -1061,7 +1097,7 @@ fn collect_dependencies(
                                                                         crate::hir::Effect::Read,
                                                                     reactive: cb
                                                                         .reactive
-                                                                        .contains(identifier),
+                                                                        .contains(*identifier),
                                                                     loc: *loc,
                                                                 },
                                                                 constant: false,
@@ -1115,26 +1151,22 @@ fn collect_dependencies(
                 }
                 _ => {
                     // Default: visit all operands
-                    for operand in
-                        each_instruction_value_operand_with_functions(&instr.value, functions)
-                    {
+                    for operand in operands(&instr.value, functions) {
                         visit_candidate_dependency(
-                            &operand,
+                            operand,
                             temporaries,
                             &mut dependencies,
                             &locals,
                         );
                     }
                     // Track lvalues as locals
-                    for lv in each_instruction_lvalue_ids(&instr.value, lvalue_id) {
-                        locals.insert(lv);
-                    }
+                    locals.extend(lvalues(instr).map(|lvalue| lvalue.identifier));
                 }
             }
         }
 
         // Terminal operands
-        for operand in &each_terminal_operand(&block.terminal) {
+        for operand in terminal_operands(&block.terminal) {
             if optionals.contains_key(operand.identifier) {
                 continue;
             }
@@ -1164,7 +1196,7 @@ fn cmp_property_literal(a: &PropertyLiteral, b: &PropertyLiteral) -> std::cmp::O
 fn validate_dependencies(
     mut inferred: Vec<InferredDependency>,
     manual_dependencies: &[ManualMemoDependency],
-    reactive: &HashSet<IdentifierId>,
+    reactive: &IdBitSet<IdentifierId>,
     manual_memo_loc: Option<SourceLocation>,
     category: ErrorCategory,
     exhaustive_deps_report_mode: &str,
@@ -1586,11 +1618,11 @@ fn print_manual_memo_dependency(dep: &ManualMemoDependency, identifiers: &[Ident
 
 fn is_optional_dependency(
     identifier: IdentifierId,
-    reactive: &HashSet<IdentifierId>,
+    reactive: &IdBitSet<IdentifierId>,
     identifiers: &[Identifier],
     types: &[Type],
 ) -> bool {
-    if reactive.contains(&identifier) {
+    if reactive.contains(identifier) {
         return false;
     }
     let ty = get_identifier_type(identifier, identifiers, types);
@@ -1599,7 +1631,7 @@ fn is_optional_dependency(
 
 fn is_optional_dependency_inferred(
     dep: &InferredDependency,
-    reactive: &HashSet<IdentifierId>,
+    reactive: &IdBitSet<IdentifierId>,
     identifiers: &[Identifier],
     types: &[Type],
 ) -> bool {
@@ -1745,17 +1777,6 @@ fn create_diagnostic(
         details: Vec::new(),
         suggestions: suggestion.map(|s| vec![s]),
     })
-}
-
-/// Collect lvalue identifier ids from instruction value (for the default branch).
-/// Thin wrapper around canonical `each_instruction_value_lvalue` that maps to ids.
-fn each_instruction_lvalue_ids(
-    value: &InstructionValue,
-    lvalue_id: IdentifierId,
-) -> Vec<IdentifierId> {
-    let mut ids = vec![lvalue_id];
-    each_lvalue(value, |place| ids.push(place.identifier));
-    ids
 }
 
 #[cold]

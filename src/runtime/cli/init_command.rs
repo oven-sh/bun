@@ -654,23 +654,34 @@ impl InitCommand {
         // allocated `Expr.init` from the AST store (also lives until process exit).
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
 
+        // A package.json that was loaded is written back only when this is set.
+        let mut package_json_changed = false;
+
         if !minimal {
             if !fields.name.is_empty() {
-                object.put_string(&bump, b"name", &fields.name)?;
+                package_json_changed |= set_string(object, &bump, b"name", &fields.name)?;
             }
             if !fields.entry_point.is_empty() {
                 if object.has_property(b"module") {
-                    object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
+                    package_json_changed |=
+                        set_string(object, &bump, b"module", &fields.entry_point)?;
                 } else if object.has_property(b"main") {
-                    object.put_string(&bump, b"main", &fields.entry_point)?;
+                    package_json_changed |=
+                        set_string(object, &bump, b"main", &fields.entry_point)?;
                 } else {
-                    object.put_string(&bump, b"module", &fields.entry_point)?;
-                    object.put_string(&bump, b"type", b"module")?;
+                    package_json_changed |=
+                        set_string(object, &bump, b"module", &fields.entry_point)?;
+                    // "type" changes how node loads every .js file of the package,
+                    // so it is a default for a new package.json only.
+                    if !did_load_package_json {
+                        object.put_string(&bump, b"type", b"module")?;
+                    }
                 }
             }
 
-            if fields.private {
+            // "private" decides whether the package can be published, so it is
+            // a default for a new package.json only.
+            if fields.private && !did_load_package_json {
                 object.put(
                     &bump,
                     b"private",
@@ -740,6 +751,8 @@ impl InitCommand {
 
             need_run_bun_install =
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
+            // Each of the three adds its entries to the object below.
+            package_json_changed |= need_run_bun_install;
 
             // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
             if !minimal && is_type_script_entry_point(&fields.entry_point) {
@@ -755,6 +768,7 @@ impl InitCommand {
                         .as_e_object_mut()
                         .put_string(&bump, b"typecheck", command)?;
                     object.put(&bump, b"scripts", scripts)?;
+                    package_json_changed = true;
                 }
             }
 
@@ -799,6 +813,9 @@ impl InitCommand {
         }
 
         'write_package_json: {
+            if did_load_package_json && !package_json_changed {
+                break 'write_package_json;
+            }
             let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
                 .as_ref()
             {
@@ -810,7 +827,10 @@ impl InitCommand {
             };
             let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
-            buffer_writer.append_newline = true;
+            // A package.json that was loaded keeps its indentation and whether it
+            // ends with a newline, like `bun add` and `bun pm pkg set`.
+            buffer_writer.append_newline =
+                !did_load_package_json || package_json_contents.list.last() == Some(&b'\n');
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
 
             let print_result = js_printer::print_json(
@@ -821,7 +841,11 @@ impl InitCommand {
                 },
                 &bun_ast::Source::init_empty_file(b"package.json"),
                 js_printer::PrintJsonOptions {
-                    indent: Default::default(),
+                    indent: if did_load_package_json {
+                        json::guess_indentation(package_json_contents.list.as_slice())
+                    } else {
+                        Default::default()
+                    },
                     mangled_props: None,
                     ..Default::default()
                 },
@@ -868,6 +892,9 @@ impl InitCommand {
 
                 if package_json_file.is_some() && !did_load_package_json {
                     bun_core::prettyln!(" + <r><d>package.json<r>");
+                    Output::flush();
+                } else if package_json_file.is_some() && package_json_changed {
+                    bun_core::prettyln!(" ~ <r><d>package.json<r>");
                     Output::flush();
                 }
 
@@ -1928,6 +1955,23 @@ fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Exp
         .get(key)
         .filter(|value| value.data.is_e_object())
         .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+}
+
+/// Sets `key` in `package_json` to the string `value`. Returns whether that
+/// changed the object: `false` when `key` already holds the same string.
+fn set_string(
+    package_json: &mut bun_ast::E::Object,
+    bump: &bun_alloc::Arena,
+    key: &[u8],
+    value: &[u8],
+) -> Result<bool, bun_alloc::AllocError> {
+    if let Some(existing) = package_json.get(key) {
+        if existing.as_utf8_string_literal() == Some(value) {
+            return Ok(false);
+        }
+    }
+    package_json.put_string(bump, key, value)?;
+    Ok(true)
 }
 
 fn is_type_script_entry_point(entry_point: &[u8]) -> bool {

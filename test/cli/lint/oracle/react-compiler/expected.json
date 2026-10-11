@@ -2785,7 +2785,7 @@
   },
   "fork": {
    "exit": 1,
-   "files": 12,
+   "files": 14,
    "diagnostics": {
     "arguments.jsx": [
      {
@@ -2874,6 +2874,26 @@
       "severity": "error"
      }
     ],
+    "computed-string.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 132
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
     "default.jsx": [
      {
       "code": "react(todo)",
@@ -2945,6 +2965,26 @@
       ],
       "message": "Logical assignment operators (||=, &&=, ??=) are not yet supported",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "own-name-of-the-component.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 125
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
       "severity": "error"
      }
     ],
@@ -3509,6 +3549,131 @@
       ],
       "message": "This value cannot be modified",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "names": {
+   "exit": 1,
+   "files": 2,
+   "diagnostics": {
+    "defaults-with-jsx.jsx": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 6,
+         "offset": 153
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 29,
+         "length": 2,
+         "line": 5,
+         "offset": 124
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrayExpression` cannot be safely reordered",
+        "span": {
+         "column": 28,
+         "length": 9,
+         "line": 17,
+         "offset": 340
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrayExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ArrowFunctionExpression` cannot be safely reordered",
+        "span": {
+         "column": 29,
+         "length": 6,
+         "line": 5,
+         "offset": 124
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`JSXElement` cannot be safely reordered",
+        "span": {
+         "column": 28,
+         "length": 7,
+         "line": 9,
+         "offset": 193
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `JSXElement` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ObjectExpression` cannot be safely reordered",
+        "span": {
+         "column": 28,
+         "length": 29,
+         "line": 1,
+         "offset": 27
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ObjectExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`TaggedTemplateExpression` cannot be safely reordered",
+        "span": {
+         "column": 28,
+         "length": 6,
+         "line": 21,
+         "offset": 413
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `TaggedTemplateExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
       "severity": "error"
      }
     ]
@@ -4114,6 +4279,71 @@
       "column": 3,
       "endLine": 35,
       "endColumn": 14,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "defaults-with-jsx.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ObjectExpression` cannot be safely reordered\n\n> 1 | export function A({ icon = { on: <Eye />, off: <Off /> } }) {\n    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `ObjectExpression` cannot be safely reordered\n  2 |   return <div>{icon.on}</div>;\n  3 | }\n  4 |\n\n",
+      "line": 1,
+      "column": 28,
+      "endLine": 1,
+      "endColumn": 57,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n\n  3 | }\n  4 |\n> 5 | export function B({ Empty = () => <div /> }) {\n    |                             ^^^^^^^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `ArrowFunctionExpression` cannot be safely reordered\n  6 |   return <Empty />;\n  7 | }\n  8 |\n\n",
+      "line": 5,
+      "column": 29,
+      "endLine": 5,
+      "endColumn": 42,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/static-components",
+      "severity": 2,
+      "message": "Error: Cannot create components during render\n\nComponents created during render will reset their state each time they are created. Declare components outside of render.\n\n  4 |\n  5 | export function B({ Empty = () => <div /> }) {\n> 6 |   return <Empty />;\n    |           ^^^^^ This component is created during render\n  7 | }\n  8 |\n  9 | export function C({ icon = <Eye /> }) {\n\n  3 | }\n  4 |\n> 5 | export function B({ Empty = () => <div /> }) {\n    |                             ^^^^^^^^^^^^^ The component is created during render here\n  6 |   return <Empty />;\n  7 | }\n  8 |",
+      "line": 6,
+      "column": 11,
+      "endLine": 6,
+      "endColumn": 16,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `JSXElement` cannot be safely reordered\n\n   7 | }\n   8 |\n>  9 | export function C({ icon = <Eye /> }) {\n     |                            ^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `JSXElement` cannot be safely reordered\n  10 |   return <div>{icon}</div>;\n  11 | }\n  12 |\n\n",
+      "line": 9,
+      "column": 28,
+      "endLine": 9,
+      "endColumn": 35,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `ArrayExpression` cannot be safely reordered\n\n  15 | }\n  16 |\n> 17 | export function E({ icon = [<Eye />] }) {\n     |                            ^^^^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `ArrayExpression` cannot be safely reordered\n  18 |   return <div>{icon}</div>;\n  19 | }\n  20 |\n\n",
+      "line": 17,
+      "column": 28,
+      "endLine": 17,
+      "endColumn": 37,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::node.lowerReorderableExpression) Expression type `TaggedTemplateExpression` cannot be safely reordered\n\n  19 | }\n  20 |\n> 21 | export function F({ text = css`a` }) {\n     |                            ^^^^^^ (BuildHIR::node.lowerReorderableExpression) Expression type `TaggedTemplateExpression` cannot be safely reordered\n  22 |   return <div>{text}</div>;\n  23 | }\n  24 |\n\n",
+      "line": 21,
+      "column": 28,
+      "endLine": 21,
+      "endColumn": 34,
       "suggestions": []
      }
     ],

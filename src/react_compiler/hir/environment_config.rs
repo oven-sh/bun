@@ -88,6 +88,9 @@ pub struct EnvironmentConfig {
     /// An effect on a variable is reported where it is. Upstream puts the first effect of a kind on a variable for
     /// all the later ones, so that each write to a captured variable is reported at the first.
     pub effects_keep_their_place: bool,
+    /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
+    /// it. Upstream does not compile such a function.
+    pub jsx_can_be_reordered: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -140,6 +143,7 @@ impl Default for EnvironmentConfig {
             joined_ref_values_keep_their_place: false,
             captured_refs_are_known_in_functions: true,
             effects_keep_their_place: false,
+            jsx_can_be_reordered: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

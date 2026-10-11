@@ -72,6 +72,11 @@ pub trait Host {
         &[]
     }
 
+    /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
+    fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
+        None
+    }
+
     /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
     /// in the scope of the module.
     fn is_module_level(&self, ref_: Ref) -> bool {

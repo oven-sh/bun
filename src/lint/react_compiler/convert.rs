@@ -220,7 +220,7 @@ impl<'a> Converter<'a, '_> {
         }
         let declaration = symbol.declarations().next();
         let is_outside = !self.root.contains(symbol.scope().span())
-            || matches!(declaration, Some(Declaration::Fn(func)) if self.is_without_its_name(func));
+            || matches!(declaration, Some(Declaration::Fn(func)) if self.has_its_name_from_outside(func));
         let name = StoreStr::new(symbol.name().bytes());
         let import = match declaration {
             Some(Declaration::ImportDefault(import)) => Some(VariableBinding::ImportDefault {
@@ -400,10 +400,13 @@ impl<'a> Converter<'a, '_> {
 
     /// Upstream's compiler fails on a function expression that refers to itself by its name. oxc's does not: the
     /// name is as good as one from outside.
+    fn has_its_name_from_outside(&self, func: Func<'a>) -> bool {
+        self.flavor == Flavor::Oxlint && func.kind() == FnKind::Expr
+    }
+
+    /// The function that is compiled keeps its name: it says what the function is.
     fn is_without_its_name(&self, func: Func<'a>) -> bool {
-        self.flavor == Flavor::Oxlint
-            && func.kind() == FnKind::Expr
-            && func.estree_span() != self.root
+        self.has_its_name_from_outside(func) && func.estree_span() != self.root
     }
 
     fn function(&mut self, func: Func<'a>) -> Converts<G::Fn> {
@@ -596,7 +599,12 @@ impl<'a> Converter<'a, '_> {
             }
             KeyKind::ComputedString(name) => {
                 let span = key.inner_span(self.file);
-                (self.string(name.bytes(), span)?, computed)
+                let flags = match self.flavor {
+                    // oxc's lowering takes it for a key that is not computed. Upstream's cannot destructure by it.
+                    Flavor::Oxlint => flags::PROPERTY_NONE,
+                    Flavor::Eslint => computed,
+                };
+                (self.string(name.bytes(), span)?, flags)
             }
             KeyKind::ComputedNumber(name) => {
                 let span = key.inner_span(self.file);

@@ -49,6 +49,7 @@ fn config_of(flavor: Flavor) -> EnvironmentConfig {
         joined_ref_values_keep_their_place: is_oxlint,
         captured_refs_are_known_in_functions: false,
         effects_keep_their_place: is_oxlint,
+        jsx_can_be_reordered: false,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

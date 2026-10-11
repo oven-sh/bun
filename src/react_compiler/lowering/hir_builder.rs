@@ -991,6 +991,16 @@ impl<'h> HirBuilder<'h> {
                 if let Some(binding) = self.import_bindings.get(&ref_) {
                     return Ok(binding.clone());
                 }
+                if let Some(namespace) = self.host.namespace_of_import_item(ref_)
+                    && let Some(VariableBinding::ImportNamespace { module, .. }) =
+                        self.import_bindings.get(&namespace)
+                {
+                    return Ok(VariableBinding::ImportSpecifier {
+                        name,
+                        module: *module,
+                        imported: name,
+                    });
+                }
                 return Ok(VariableBinding::Global { name });
             }
             _ => {}

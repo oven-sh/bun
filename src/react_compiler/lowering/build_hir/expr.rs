@@ -1418,6 +1418,11 @@ fn is_reorderable_expression(
             }
             stmts.is_empty()
         }
+        Data::ECall(call)
+            if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>
+        {
+            false
+        }
         Data::ECall(call) if call.optional_chain.is_none() => {
             is_reorderable_expression(builder, &call.target, allow_local_identifiers)
                 && call

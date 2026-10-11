@@ -87,6 +87,7 @@ pub(super) fn expression_type_name(expr: &Expr) -> &'static str {
         Data::EImport(_) => "CallExpression",
         Data::EAwait(_) => "AwaitExpression",
         Data::EYield(_) => "YieldExpression",
+        Data::ETemplate(template) if template.tag.is_some() => "TaggedTemplateExpression",
         Data::ETemplate(_) => "TemplateLiteral",
         Data::EArrow(_) => "ArrowFunctionExpression",
         Data::EFunction(_) => "FunctionExpression",

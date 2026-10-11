@@ -745,12 +745,8 @@ fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
 /// - `ImportSpecifier` from known React module: use the `imported` name
 /// - `ImportSpecifier` from unknown module: return None (TS returns a generic
 ///   custom hook type with hookKind 'Custom', not 'useMemo'/'useCallback')
-/// - `ModuleLocal`: use the binding name. Bun's `resolve_identifier` currently
-///   classifies named/namespace imports as `ModuleLocal` whenever the symbol's
-///   `namespace_alias` is unset (the common case under `bun build`), so the
-///   module/imported pair is not available here; falling back to the local
-///   name matches upstream's `globals.get(name)` lookup for the un-aliased
-///   case and for bundler-flattened `React.useMemo` accesses.
+/// - `ModuleLocal`: return None (the module's own declaration, whatever its name: TS
+///   returns the custom hook type)
 /// - `ImportDefault`/`ImportNamespace` from known React module: use the local name
 /// - `ImportDefault`/`ImportNamespace` from unknown module: return None
 fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
@@ -773,7 +769,6 @@ fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
                 None
             }
         }
-        NonLocalKind::ModuleLocal { name } => Some(name.slice()),
-        NonLocalKind::BunOpaque(_) => None,
+        NonLocalKind::ModuleLocal { .. } | NonLocalKind::BunOpaque(_) => None,
     }
 }

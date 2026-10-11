@@ -161,8 +161,10 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
       "arguments.jsx",
       "catch.jsx",
       "clock.jsx",
+      "computed-string.jsx",
       "default.jsx",
       "import.jsx",
+      "own-name-of-the-component.jsx",
       "ref-in-memo.jsx",
       "update.jsx",
       "virtual.jsx",
@@ -200,6 +202,22 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
       ["react(immutability)", 5, 3],
       ["react(immutability)", 7, 5],
       ["react(immutability)", 9, 3],
+    ]);
+    expect(exit).toBe(1);
+  });
+
+  test("a module's own useMemo is not React's, and what has JSX in it cannot be evaluated earlier", async () => {
+    const { diagnostics, exit } = await report(small.names);
+    expect(diagnostics).toEqual(expected.reports.names.diagnostics);
+    expect(diagnostics["own-hooks.tsx"]).toBeUndefined();
+    // Not for D, whose default has no JSX in it.
+    expect(placesOf(diagnostics["defaults-with-jsx.jsx"])).toEqual([
+      ["react(static-components)", 6, 11],
+      ["react(todo)", 1, 28],
+      ["react(todo)", 17, 28],
+      ["react(todo)", 21, 28],
+      ["react(todo)", 5, 29],
+      ["react(todo)", 9, 28],
     ]);
     expect(exit).toBe(1);
   });
@@ -299,19 +317,22 @@ ${chain}
 
   // The threads of `bun lint` have more stack than a thread usually has. That is for what cannot ask how much is left.
   // A thread usually has 4 MB, which hold some 700 levels, and 18 MB on Windows. With all of the stack it would be eight times as deep.
-  test.skipIf(isDebug || isASAN)("what is nested deeper than the stack of a usual thread holds is left alone", async () => {
-    const depth = isWindows ? 10_000 : 2_000;
-    const { diagnostics, exit } = await report({
-      ".oxlintrc.json": rc(),
-      "deep.tsx": long(
-        1,
-        () => "if (props.a) {".repeat(depth) + "f(bad);" + "}".repeat(depth),
-        units => [units, "<div>{bad}</div>"],
-      ),
-    });
-    expect(placesOf(diagnostics["deep.tsx"])).toEqual([["react(todo)", 3, 17]]);
-    expect(exit).toBe(1);
-  });
+  test.skipIf(isDebug || isASAN)(
+    "what is nested deeper than the stack of a usual thread holds is left alone",
+    async () => {
+      const depth = isWindows ? 10_000 : 2_000;
+      const { diagnostics, exit } = await report({
+        ".oxlintrc.json": rc(),
+        "deep.tsx": long(
+          1,
+          () => "if (props.a) {".repeat(depth) + "f(bad);" + "}".repeat(depth),
+          units => [units, "<div>{bad}</div>"],
+        ),
+      });
+      expect(placesOf(diagnostics["deep.tsx"])).toEqual([["react(todo)", 3, 17]]);
+      expect(exit).toBe(1);
+    },
+  );
 
   test("a try in which nothing but a read that nobody uses can throw does not end the process", async () => {
     const { files, exit } = await report({
@@ -447,6 +468,18 @@ describe.concurrent(
         ].map(
           place =>
             `react-hooks/hooks ${place} Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values`,
+        ),
+        "defaults-with-jsx.jsx": [
+          ["todo 1:28-1:57 Todo", "ObjectExpression"],
+          ["todo 5:29-5:42 Todo", "ArrowFunctionExpression"],
+          ["static-components 6:11-6:16 Error: Cannot create components during render"],
+          ["todo 9:28-9:35 Todo", "JSXElement"],
+          ["todo 17:28-17:37 Todo", "ArrayExpression"],
+          ["todo 21:28-21:34 Todo", "TaggedTemplateExpression"],
+        ].map(([start, kind]) =>
+          kind === undefined
+            ? `react-hooks/${start}`
+            : `react-hooks/${start}: (BuildHIR::node.lowerReorderableExpression) Expression type \`${kind}\` cannot be safely reordered`,
         ),
         "disabled.jsx": [],
         // All at the first.

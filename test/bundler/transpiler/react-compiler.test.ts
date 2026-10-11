@@ -518,6 +518,82 @@ describe("bundler", () => {
     },
   });
 
+  // They were taken for React's by their names, and the calls were dropped.
+  itBundled("react-compiler/ModulesOwnUseCallbackAndUseMemoAreCalled", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Component(props) {
+          const f = useCallback(() => [props.a], [props.a]);
+          const m = useMemo(() => [props.a], [props.a]);
+          return <div onClick={f}>{m}</div>;
+        }
+        function useCallback(callback, dependencies) {
+          return () => "mine";
+        }
+        const useMemo = (callback, dependencies) => "mine";
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      // The declaration and the call.
+      expect(out.match(/\buseCallback\(/g)).toHaveLength(2);
+      expect(out.match(/\buseMemo\(/g)).toHaveLength(1);
+    },
+  });
+
+  // A member of a namespace import was a global of its name to the compiler, and the module's own hooks were React's.
+  // For a server also `useState(x)` was `x`, and `useEffect` was not called.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`react-compiler/HooksThatAreNotReactsAreCalled-${target}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import * as hooks from "./hooks.js";
+          import * as React from "./hooks.js";
+          function OfANamespace(props) {
+            const f = hooks.useCallback(() => [props.a], [props.a]);
+            const m = hooks.useMemo(() => [props.a], [props.a]);
+            const [s] = hooks.useState("init");
+            const e = hooks.useEffect(() => {}, []);
+            return [f(), m, s, e].join(" ");
+          }
+          function OfANamespaceCalledReact(props) {
+            const [s] = React.useState("init");
+            const e = React.useEffect(() => {}, []);
+            return [s, e].join(" ");
+          }
+          function Own(props) {
+            const f = useCallback(() => [props.a], [props.a]);
+            const m = useMemo(() => [props.a], [props.a]);
+            return [f(), m].join(" ");
+          }
+          function useCallback() {
+            return () => "mine";
+          }
+          const useMemo = () => "mine";
+          console.log([OfANamespace({ a: 1 }), OfANamespaceCalledReact({ a: 1 }), Own({ a: 1 })].join(", "));
+        `,
+        "/hooks.js": `
+          export const useCallback = () => () => "theirs";
+          export const useMemo = () => "theirs";
+          export const useState = () => ["theirs"];
+          export const useEffect = () => "theirs";
+        `,
+        "/node_modules/react/compiler-runtime.js": `
+          export const c = n => Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+        `,
+        "/node_modules/react/package.json": `{"name":"react","type":"module"}`,
+      },
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      run: { stdout: "theirs theirs theirs theirs, theirs theirs, mine mine" },
+    });
+  }
+
   itBundled("react-compiler/SelfRefConstArrow", {
     files: {
       "/entry.tsx": /* tsx */ `

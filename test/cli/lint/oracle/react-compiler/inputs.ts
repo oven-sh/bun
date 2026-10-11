@@ -240,6 +240,46 @@ const writes = `export default function Component(props) {
 }
 `;
 
+/** They are not React's, whatever their names. */
+const ownHooks = `export function Component(props) {
+  const f = useCallback(() => [props.a()], [props.a()]);
+  const m = useMemo(() => [props.a()], [props.a()]);
+  return <div onClick={f}>{m}</div>;
+}
+
+function useCallback<T>(callback: T, dependencies?: Array<unknown>): T {
+  return callback;
+}
+
+const useMemo = <T,>(callback: () => T, dependencies?: Array<unknown>): T => callback();
+`;
+
+/** JSX cannot be evaluated earlier, nor can what has JSX in it. */
+const defaultsWithJsx = `export function A({ icon = { on: <Eye />, off: <Off /> } }) {
+  return <div>{icon.on}</div>;
+}
+
+export function B({ Empty = () => <div /> }) {
+  return <Empty />;
+}
+
+export function C({ icon = <Eye /> }) {
+  return <div>{icon}</div>;
+}
+
+export function D({ icon = { on: 1 } }) {
+  return <div>{icon.on}</div>;
+}
+
+export function E({ icon = [<Eye />] }) {
+  return <div>{icon}</div>;
+}
+
+export function F({ text = css\`a\` }) {
+  return <div>{text}</div>;
+}
+`;
+
 /** A ref is read in render at the top, and then there are `n` of one thing. */
 export const long = (n: number, unit: (k: number) => string, result: (units: string) => [body: string, returns: string]) => {
   const [body, returns] = result(Array.from({ length: n }, (_, k) => unit(k)).join("\n"));
@@ -391,6 +431,22 @@ function Component(props) {
   return <div />;
 }
 `,
+    "own-name-of-the-component.jsx": `import { memo, useRef } from "react";
+
+export default memo(function Tree({ items }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  return <div>{bad}{items.map(item => <Tree key={item.id} items={item.items} />)}<Tree items={[]} /></div>;
+});
+`,
+    "computed-string.jsx": `import { useRef } from "react";
+
+export function Component({ ["data-testid"]: testId, a }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  return <div data-testid={testId}>{a}{bad}</div>;
+}
+`,
     "default.jsx": `function Component({ icon = <Icon />, empty = <></>, either = props.a || other() }) {
   return <div>{icon}{empty}{either}</div>;
 }
@@ -452,6 +508,7 @@ function Component(props) {
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
+  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),
@@ -534,6 +591,8 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "casts.tsx": casts,
   "defaults.tsx": defaults,
   "writes.jsx": writes,
+  "own-hooks.tsx": ownHooks,
+  "defaults-with-jsx.jsx": defaultsWithJsx,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

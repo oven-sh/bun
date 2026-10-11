@@ -299,19 +299,22 @@ ${chain}
 
   // The threads of `bun lint` have more stack than a thread usually has. That is for what cannot ask how much is left.
   // A thread usually has 4 MB, which hold some 700 levels, and 18 MB on Windows. With all of the stack it would be eight times as deep.
-  test.skipIf(isDebug || isASAN)("what is nested deeper than the stack of a usual thread holds is left alone", async () => {
-    const depth = isWindows ? 10_000 : 2_000;
-    const { diagnostics, exit } = await report({
-      ".oxlintrc.json": rc(),
-      "deep.tsx": long(
-        1,
-        () => "if (props.a) {".repeat(depth) + "f(bad);" + "}".repeat(depth),
-        units => [units, "<div>{bad}</div>"],
-      ),
-    });
-    expect(placesOf(diagnostics["deep.tsx"])).toEqual([["react(todo)", 3, 17]]);
-    expect(exit).toBe(1);
-  });
+  test.skipIf(isDebug || isASAN)(
+    "what is nested deeper than the stack of a usual thread holds is left alone",
+    async () => {
+      const depth = isWindows ? 10_000 : 2_000;
+      const { diagnostics, exit } = await report({
+        ".oxlintrc.json": rc(),
+        "deep.tsx": long(
+          1,
+          () => "if (props.a) {".repeat(depth) + "f(bad);" + "}".repeat(depth),
+          units => [units, "<div>{bad}</div>"],
+        ),
+      });
+      expect(placesOf(diagnostics["deep.tsx"])).toEqual([["react(todo)", 3, 17]]);
+      expect(exit).toBe(1);
+    },
+  );
 
   test("a try in which nothing but a read that nobody uses can throw does not end the process", async () => {
     const { files, exit } = await report({

@@ -89,7 +89,7 @@ impl FuncNameMatching {
         func_name: Ident<'a>,
         cx: &Cx<'a, Self>,
     ) {
-        let ExprKind::Assign { target, value, .. } = assignment.kind() else {
+        let Some((_, target, value)) = assignment.as_assign() else {
             return;
         };
         if value != function || utils::is_assignment_target(assignment) {

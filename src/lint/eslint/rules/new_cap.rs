@@ -126,7 +126,7 @@ impl NewCap {
 
     #[inline(never)]
     fn check_new<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::New(call) = e.kind()
+        if let Some(call) = e.as_new()
             && let callee = callee_of(call)
             && let Some(name) = extract_name(callee)
             && get_cap(&name) == Cap::Lower
@@ -138,7 +138,7 @@ impl NewCap {
 
     #[inline(never)]
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Call(call) = e.kind()
+        if let Some(call) = e.as_call()
             && let callee = callee_of(call)
             && let Some(name) = extract_name(callee)
             && get_cap(&name) == Cap::Upper

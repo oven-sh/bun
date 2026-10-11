@@ -25,7 +25,7 @@ impl Rule for NoMultiAssign {
                 member.init() == Some(e) && !member.flags().contains(Flags::ACCESSOR)
             }
             Node::Expr(parent) if !self.ignore_non_declaration => {
-                matches!(parent.kind(), ExprKind::Assign { value, .. } if value == e)
+                matches!(parent.as_assign(), Some((_, _, value)) if value == e)
                     // A default value in a destructuring assignment.
                     && !utils::is_assignment_target(parent)
             }

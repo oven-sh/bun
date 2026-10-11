@@ -28,25 +28,33 @@ fn has_placeholder(value: &[u8], is_oxlint: bool) -> bool {
 fn find_candidates(file: &File) -> Vec<u32> {
     let text = file.text();
     let has_jsx = file.has_exprs([ExprTag::Jsx]);
-    let starts: &[u8] = if has_jsx { b"$\\&" } else { b"$\\" };
-    let (mut found, mut at) = (Vec::new(), 0);
+    let mut found = Vec::new();
+    let mut backslashes = file.backslashes().iter();
+    while let Some(&at) = backslashes.next() {
+        match text.get(at as usize + 1) {
+            Some(b'$' | b'x' | b'u' | b'0' | b'4') => found.push(at),
+            // The second starts no escape.
+            Some(b'\\') => _ = backslashes.next(),
+            _ => {}
+        }
+    }
+    let escapes = found.len();
+    let starts: &[u8] = if has_jsx { b"$&" } else { b"$" };
+    let mut at = 0;
     while let Some(next) = strings::index_of_any_pos(text, starts, at) {
         at = next + 1;
         let is_candidate = match (text.get(next), text.get(at)) {
             (Some(b'$'), Some(b'{' | b'\\')) => true,
             (Some(b'$'), Some(b'&')) => has_jsx,
-            (Some(b'\\'), Some(b'$' | b'x' | b'u' | b'0' | b'4')) => true,
-            // The second starts no escape.
-            (Some(b'\\'), Some(b'\\')) => {
-                at += 1;
-                false
-            }
             (Some(b'&'), Some(after)) => *after == b'#' || after.is_ascii_alphabetic(),
             _ => false,
         };
         if is_candidate {
             found.push(next as u32);
         }
+    }
+    if 0 < escapes && escapes < found.len() {
+        found.sort_unstable();
     }
     found
 }

@@ -15,9 +15,7 @@ fn single_super_call<'a>(body: List<'a, Stmt<'a>>) -> Option<List<'a, Expr<'a>>>
     if body.len() != 1 {
         return None;
     }
-    let StmtKind::Expr(e) = body.first()?.kind() else {
-        return None;
-    };
+    let e = body.first()?.as_expr()?;
     let call = e.as_call()?;
     (call.callee().tag() == ExprTag::Super).then(|| call.args())
 }

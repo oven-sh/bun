@@ -98,7 +98,9 @@ impl Rule for NoNonoctalDecimalEscape {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {
-        has_decimal_escape(file.text()).then(Vec::new)
+        let text = file.text();
+        let is_decimal_escape = |at: &u32| matches!(text.get(*at as usize + 1), Some(b'8' | b'9'));
+        file.backslashes().iter().any(is_decimal_escape).then(Vec::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

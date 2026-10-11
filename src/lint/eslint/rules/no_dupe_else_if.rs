@@ -19,8 +19,8 @@ fn split(operator: BinOp, e: Expr<'_>) -> Operands<'_> {
     let mut pending: SmallVec<[Expr<'_>; 8]> = SmallVec::new();
     pending.push(e);
     while let Some(e) = pending.pop() {
-        match e.kind() {
-            ExprKind::Binary { op, left, right } if op == operator => pending.extend([right, left]),
+        match e.as_binary() {
+            Some((op, left, right)) if op == operator => pending.extend([right, left]),
             _ => operands.push(e),
         }
     }
@@ -68,8 +68,8 @@ fn equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     if a.tag() != b.tag() || !bun_core::StackCheck::init().is_safe_to_recurse() {
         return false;
     }
-    if let ExprKind::Binary { op: op @ (BinOp::Or | BinOp::And), left, right } = a.kind()
-        && let ExprKind::Binary { op: other_op, left: other_left, right: other_right } = b.kind()
+    if let Some((op @ (BinOp::Or | BinOp::And), left, right)) = a.as_binary()
+        && let Some((other_op, other_left, other_right)) = b.as_binary()
         && op == other_op
     {
         return equal(left, other_left) && equal(right, other_right)

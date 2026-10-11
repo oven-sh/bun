@@ -14,18 +14,18 @@
 //! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
 use crate::collections::{IdMap, IndexMap};
-use std::collections::BTreeSet;
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::rc::Rc;
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
-    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
-    InstructionValue, MutableRange, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
-    ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
+    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionKind, InstructionValue,
+    MutableRange, ParamPattern, Place, PlaceOrSpread, PropertyLiteral, ReactFunctionType,
+    ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
 };
 use crate::optimization::dead_code_elimination::find_semantic_only_caught_instructions;
 
@@ -181,13 +181,9 @@ fn find_temporaries_used_outside_declaring_scope(
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             // Handle operands
-            for op_id in visitors::each_instruction_operand(instr, env)
-                .into_iter()
-                .map(|p| p.identifier)
-                .collect::<Vec<_>>()
-            {
+            for operand in visitors::operands(&instr.value, &env.functions) {
                 handle_place(
-                    op_id,
+                    operand.identifier,
                     &declarations,
                     &traversal,
                     &pruned_scopes,
@@ -214,13 +210,9 @@ fn find_temporaries_used_outside_declaring_scope(
         }
 
         // Terminal operands
-        for op_id in visitors::each_terminal_operand(&block.terminal)
-            .into_iter()
-            .map(|p| p.identifier)
-            .collect::<Vec<_>>()
-        {
+        for operand in visitors::terminal_operands(&block.terminal) {
             handle_place(
-                op_id,
+                operand.identifier,
                 &declarations,
                 &traversal,
                 &pruned_scopes,
@@ -910,10 +902,6 @@ struct NodeSet {
 }
 
 impl NodeSet {
-    fn is_empty(&self) -> bool {
-        self.words.is_empty()
-    }
-
     fn contains(&self, index: usize) -> bool {
         self.words
             .get(index / 64)
@@ -958,6 +946,10 @@ impl NodeSet {
         self.trim();
     }
 
+    fn intersects(&self, other: &NodeSet) -> bool {
+        (self.words.iter().zip(&other.words)).any(|(word, theirs)| word & theirs != 0)
+    }
+
     fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.words.iter().enumerate().flat_map(|(i, &word)| {
             let mut rest = word;
@@ -982,13 +974,13 @@ impl NodeSet {
 ///
 /// Port of `reduceMaybeOptionalChains` from CollectHoistablePropertyLoads.ts.
 fn reduce_maybe_optional_chains(nodes: &mut NodeSet, registry: &mut PropertyPathRegistry) {
+    if !nodes.intersects(&registry.optional_nodes) {
+        return;
+    }
+
     // Collect indices of nodes that have optional in their path
     let mut optional_chain_nodes = nodes.clone();
     optional_chain_nodes.intersect_with(&registry.optional_nodes);
-
-    if optional_chain_nodes.is_empty() {
-        return;
-    }
 
     loop {
         let mut changed = false;
@@ -1380,71 +1372,62 @@ fn propagate_non_null(
     nodes: &IdMap<BlockId, BlockInfo>,
     registry: &mut PropertyPathRegistry,
 ) -> IdMap<BlockId, NodeSet> {
-    let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
-    // BlockIds are environment-wide; size dense vectors to this function's max id.
-    let vec_len = block_ids
-        .iter()
-        .map(|b| b.0 as usize)
-        .max()
-        .map(|m| m + 1)
-        .unwrap_or(0);
+    let block_ids = func.body.blocks.keys().as_slice();
+    // BlockIds are environment-wide; the dense vectors are for the range of this function's.
+    let ids = || {
+        let preds = func.body.blocks.values().flat_map(|block| &block.preds);
+        block_ids.iter().chain(preds).map(|id| id.0)
+    };
+    let first = ids().min().unwrap_or(0);
+    let vec_len = ids().max().map_or(0, |last| (last - first) as usize + 1);
+    let index_of = move |id: BlockId| (id.0 - first) as usize;
 
-    // Build successor map. Use BTreeSet to iterate successors in sorted BlockId
-    // order, matching the TS Set<BlockId> insertion order (blocks are created in
-    // ascending BlockId order).
-    let mut block_successors: Vec<BTreeSet<BlockId>> = vec![BTreeSet::new(); vec_len];
+    // Build successor map, each list in sorted BlockId order, matching the TS
+    // Set<BlockId> insertion order (blocks are created in ascending BlockId order).
+    let mut edges: Vec<(usize, BlockId)> = Vec::with_capacity(block_ids.len() * 2);
     for (block_id, block) in &func.body.blocks {
         for pred in &block.preds {
-            block_successors[pred.0 as usize].insert(*block_id);
+            edges.push((index_of(*pred), *block_id));
         }
     }
-
-    // Clone nodes into mutable working set, indexed by BlockId.
-    let mut working: Vec<Option<NodeSet>> = vec![None; vec_len];
-    for (k, v) in nodes.iter() {
-        working[k.0 as usize] = Some(v.assumed_non_null_objects.clone());
+    edges.sort_unstable();
+    let mut successor_starts = vec![0; vec_len + 1];
+    for &(pred, _) in &edges {
+        successor_starts[pred + 1] += 1;
     }
+    for index in 0..vec_len {
+        successor_starts[index + 1] += successor_starts[index];
+    }
+    let successors: Vec<BlockId> = edges.into_iter().map(|(_, block_id)| block_id).collect();
 
-    let mut reversed_block_ids = block_ids.clone();
-    reversed_block_ids.reverse();
-
-    let mut traversal_state: Vec<Option<TraversalState>> = vec![None; vec_len];
+    let mut graph = NonNullPropagation {
+        func,
+        first,
+        successor_starts,
+        successors,
+        // Clone nodes into mutable working set.
+        working: vec![None; vec_len],
+        traversal_state: vec![None; vec_len],
+    };
+    for (k, v) in nodes.iter() {
+        graph.working[index_of(k)] = Some(v.assumed_non_null_objects.clone());
+    }
 
     for _ in 0..100 {
         let mut changed = false;
 
         // Forward pass (using predecessors)
-        for s in traversal_state.iter_mut() {
-            *s = None;
-        }
-        for &block_id in &block_ids {
-            let block_changed = recursively_propagate_non_null(
-                block_id,
-                PropagationDirection::Forward,
-                &mut traversal_state,
-                &mut working,
-                func,
-                &block_successors,
-                registry,
-            );
-            changed |= block_changed;
+        graph.traversal_state.fill(None);
+        for &block_id in block_ids {
+            changed |=
+                graph.recursively_propagate(block_id, PropagationDirection::Forward, registry);
         }
 
         // Backward pass (using successors)
-        for s in traversal_state.iter_mut() {
-            *s = None;
-        }
-        for &block_id in &reversed_block_ids {
-            let block_changed = recursively_propagate_non_null(
-                block_id,
-                PropagationDirection::Backward,
-                &mut traversal_state,
-                &mut working,
-                func,
-                &block_successors,
-                registry,
-            );
-            changed |= block_changed;
+        graph.traversal_state.fill(None);
+        for &block_id in block_ids.iter().rev() {
+            changed |=
+                graph.recursively_propagate(block_id, PropagationDirection::Backward, registry);
         }
 
         if !changed {
@@ -1453,8 +1436,8 @@ fn propagate_non_null(
     }
 
     let mut result = IdMap::new();
-    for id in block_ids {
-        if let Some(set) = working[id.0 as usize].take() {
+    for &id in block_ids {
+        if let Some(set) = graph.working[index_of(id)].take() {
             result.insert(id, set);
         }
     }
@@ -1473,92 +1456,98 @@ enum PropagationDirection {
     Backward,
 }
 
-fn recursively_propagate_non_null(
-    node_id: BlockId,
-    direction: PropagationDirection,
-    traversal_state: &mut [Option<TraversalState>],
-    working: &mut [Option<NodeSet>],
-    func: &HirFunction,
-    block_successors: &[BTreeSet<BlockId>],
-    registry: &mut PropertyPathRegistry,
-) -> bool {
-    // Avoid re-visiting computed or currently active nodes
-    if traversal_state[node_id.0 as usize].is_some() {
-        return false;
-    }
-    traversal_state[node_id.0 as usize] = Some(TraversalState::Active);
-
-    let neighbors_of = |node_id: BlockId| -> Vec<BlockId> {
-        match direction {
-            PropagationDirection::Backward => block_successors[node_id.0 as usize]
-                .iter()
-                .copied()
-                .collect(),
-            PropagationDirection::Forward => func
-                .body
-                .blocks
-                .get(&node_id)
-                .map(|b| b.preds.iter().copied().collect())
-                .unwrap_or_default(),
-        }
-    };
-
-    // (node, its neighbors, how many of them were looked at)
-    let mut stack = Vec::with_capacity(16);
-    stack.push((node_id, neighbors_of(node_id), 0));
-    let mut changed = false;
-    while let Some((node_id, neighbors, next)) = stack.last_mut() {
-        if let Some(&neighbor) = neighbors.get(*next) {
-            *next += 1;
-            if traversal_state[neighbor.0 as usize].is_none() {
-                traversal_state[neighbor.0 as usize] = Some(TraversalState::Active);
-                stack.push((neighbor, neighbors_of(neighbor), 0));
-            }
-            continue;
-        }
-        changed |=
-            propagate_from_neighbors(*node_id, neighbors, traversal_state, working, registry);
-        stack.pop();
-    }
-    changed
+/// The vectors are indexed by [`NonNullPropagation::index_of`].
+struct NonNullPropagation<'a> {
+    func: &'a HirFunction,
+    first: u32,
+    /// Where the successors of each block start in `successors`, and the end of the last.
+    successor_starts: Vec<usize>,
+    successors: Vec<BlockId>,
+    working: Vec<Option<NodeSet>>,
+    traversal_state: Vec<Option<TraversalState>>,
 }
 
-fn propagate_from_neighbors(
-    node_id: BlockId,
-    neighbors: &[BlockId],
-    traversal_state: &mut [Option<TraversalState>],
-    working: &mut [Option<NodeSet>],
-    registry: &mut PropertyPathRegistry,
-) -> bool {
-    // Compute intersection of 'done' neighbors only (filter out 'active' = cycle nodes)
-    let done_neighbor_sets: Vec<NodeSet> = neighbors
-        .iter()
-        .filter(|n| traversal_state[n.0 as usize] == Some(TraversalState::Done))
-        .filter_map(|n| working[n.0 as usize].clone())
-        .collect();
+impl<'a> NonNullPropagation<'a> {
+    #[inline]
+    fn index_of(&self, id: BlockId) -> usize {
+        (id.0 - self.first) as usize
+    }
 
-    let neighbor_intersection = if done_neighbor_sets.is_empty() {
-        NodeSet::default()
-    } else {
-        let mut iter = done_neighbor_sets.into_iter();
-        let first = iter.next().unwrap();
-        iter.fold(first, |mut acc, s| {
-            acc.intersect_with(&s);
-            acc
-        })
-    };
+    fn recursively_propagate(
+        &mut self,
+        node_id: BlockId,
+        direction: PropagationDirection,
+        registry: &mut PropertyPathRegistry,
+    ) -> bool {
+        // Avoid re-visiting computed or currently active nodes
+        let index = self.index_of(node_id);
+        if self.traversal_state[index].is_some() {
+            return false;
+        }
+        self.traversal_state[index] = Some(TraversalState::Active);
 
-    let prev_objects = working[node_id.0 as usize].clone().unwrap_or_default();
-    let mut merged = prev_objects.clone();
-    merged.union_with(&neighbor_intersection);
-    reduce_maybe_optional_chains(&mut merged, registry);
+        // (node, how many of its neighbors were looked at)
+        let mut stack = Vec::with_capacity(16);
+        stack.push((node_id, 0));
+        let mut changed = false;
+        while let Some((node_id, next)) = stack.last_mut() {
+            let node_id = *node_id;
+            if let Some(&neighbor) = self.neighbors_of(node_id, direction).get(*next) {
+                *next += 1;
+                let neighbor_index = self.index_of(neighbor);
+                if self.traversal_state[neighbor_index].is_none() {
+                    self.traversal_state[neighbor_index] = Some(TraversalState::Active);
+                    stack.push((neighbor, 0));
+                }
+                continue;
+            }
+            changed |= self.propagate_from_neighbors(node_id, direction, registry);
+            stack.pop();
+        }
+        changed
+    }
 
-    // Compare with previous value — can't just check size due to reduce_maybe_optional_chains
-    let changed = prev_objects != merged;
-    working[node_id.0 as usize] = Some(merged);
-    traversal_state[node_id.0 as usize] = Some(TraversalState::Done);
+    fn neighbors_of(&self, node_id: BlockId, direction: PropagationDirection) -> &[BlockId] {
+        match direction {
+            PropagationDirection::Backward => {
+                let index = self.index_of(node_id);
+                &self.successors[self.successor_starts[index]..self.successor_starts[index + 1]]
+            }
+            PropagationDirection::Forward => (self.func.body.blocks.get(&node_id))
+                .map_or(&[], |block| block.preds.iter().as_slice()),
+        }
+    }
 
-    changed
+    fn propagate_from_neighbors(
+        &mut self,
+        node_id: BlockId,
+        direction: PropagationDirection,
+        registry: &mut PropertyPathRegistry,
+    ) -> bool {
+        // Compute intersection of 'done' neighbors only (filter out 'active' = cycle nodes)
+        let mut done_neighbor_sets = self
+            .neighbors_of(node_id, direction)
+            .iter()
+            .map(|n| self.index_of(*n))
+            .filter(|&n| self.traversal_state[n] == Some(TraversalState::Done))
+            .filter_map(|n| self.working[n].as_ref());
+        let mut merged = done_neighbor_sets.next().cloned().unwrap_or_default();
+        for set in done_neighbor_sets {
+            merged.intersect_with(set);
+        }
+
+        let index = self.index_of(node_id);
+        let prev_objects = self.working[index].take().unwrap_or_default();
+        merged.union_with(&prev_objects);
+        reduce_maybe_optional_chains(&mut merged, registry);
+
+        // Compare with previous value — can't just check size due to reduce_maybe_optional_chains
+        let changed = prev_objects != merged;
+        self.working[index] = Some(merged);
+        self.traversal_state[index] = Some(TraversalState::Done);
+
+        changed
+    }
 }
 
 fn collect_hoistable_and_propagate(
@@ -1852,7 +1841,7 @@ fn collect_minimal_deps_in_subtree(
 #[derive(Clone)]
 struct Decl {
     id: EvaluationOrder,
-    scope_stack: Vec<ScopeId>, // copy of the scope stack at time of declaration
+    scope_stack: Rc<[ScopeId]>, // copy of the scope stack at time of declaration
 }
 
 /// Context for dependency collection.
@@ -1860,6 +1849,8 @@ struct DependencyCollectionContext<'a> {
     declarations: IdMap<DeclarationId, Decl>,
     reassignments: IdMap<IdentifierId, Decl>,
     scope_stack: Vec<ScopeId>,
+    /// Made for the first declaration since `scope_stack` changed.
+    scope_stack_copy: Option<Rc<[ScopeId]>>,
     dep_stack: Vec<Vec<ReactiveScopeDependency>>,
     deps: IndexMap<ScopeId, Vec<ReactiveScopeDependency>>,
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
@@ -1876,6 +1867,7 @@ impl<'a> DependencyCollectionContext<'a> {
             declarations: IdMap::new(),
             reassignments: IdMap::new(),
             scope_stack: Vec::new(),
+            scope_stack_copy: None,
             dep_stack: Vec::new(),
             deps: IndexMap::new(),
             temporaries,
@@ -1887,6 +1879,7 @@ impl<'a> DependencyCollectionContext<'a> {
     fn enter_scope(&mut self, scope_id: ScopeId) {
         self.dep_stack.push(Vec::new());
         self.scope_stack.push(scope_id);
+        self.scope_stack_copy = None;
     }
 
     fn exit_scope(
@@ -1903,6 +1896,7 @@ impl<'a> DependencyCollectionContext<'a> {
             )
         })?;
         self.scope_stack.pop();
+        self.scope_stack_copy = None;
 
         // Propagate dependencies upward
         for dep in &scoped_deps {
@@ -1923,10 +1917,16 @@ impl<'a> DependencyCollectionContext<'a> {
         self.scope_stack.last().copied()
     }
 
-    fn declare(&mut self, identifier_id: IdentifierId, decl: Decl, env: &Environment) {
+    fn declare(&mut self, identifier_id: IdentifierId, id: EvaluationOrder, env: &Environment) {
         if self.inner_fn_context.is_some() {
             return;
         }
+        let scope_stack =
+            (self.scope_stack_copy).get_or_insert_with(|| self.scope_stack[..].into());
+        let decl = Decl {
+            id,
+            scope_stack: Rc::clone(scope_stack),
+        };
         let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
         if !self.declarations.contains_key(decl_id) {
             self.declarations.insert(decl_id, decl.clone());
@@ -2021,7 +2021,7 @@ impl<'a> DependencyCollectionContext<'a> {
         let Some(&orig_scope_id) = original_decl.scope_stack.last() else {
             return;
         };
-        for &scope_id in &original_decl.scope_stack {
+        for &scope_id in original_decl.scope_stack.iter() {
             if self.scope_stack.contains(&scope_id) {
                 continue;
             }
@@ -2128,59 +2128,28 @@ fn visit_inner_function_blocks(
     let semantic_only =
         find_semantic_only_caught_instructions(&env.functions[func_id.0 as usize], env);
 
-    // Clone inner function's instructions and block structure to avoid
-    // borrow conflicts when mutating env through handle_instruction.
-    let inner_instrs: HirVec<Instruction> = env.functions[func_id.0 as usize].instructions.clone();
-    let inner_blocks: Vec<(
-        BlockId,
-        HirVec<InstructionId>,
-        Vec<(BlockId, IdentifierId)>,
-        Terminal,
-    )> = env.functions[func_id.0 as usize]
-        .body
-        .blocks
-        .iter()
-        .map(|(bid, blk)| {
-            let phi_ops: Vec<(BlockId, IdentifierId)> = blk
-                .phis
-                .iter()
-                .flat_map(|phi| {
-                    phi.operands
-                        .iter()
-                        .map(|(pred, place)| (*pred, place.identifier))
-                })
-                .collect();
-            (
-                *bid,
-                blk.instructions.clone(),
-                phi_ops,
-                blk.terminal.clone(),
-            )
-        })
-        .collect();
+    // Nothing looks at the function itself through `env` while it is visited.
+    let func = std::mem::replace(
+        &mut env.functions[func_id.0 as usize],
+        crate::ssa::enter_ssa::placeholder_function(),
+    );
 
-    for (inner_bid, inner_instr_ids, inner_phis, inner_terminal) in &inner_blocks {
-        for &(_pred_id, op_id) in inner_phis {
-            if let Some(maybe_optional) = ctx.temporaries.get(op_id) {
-                ctx.visit_dependency(maybe_optional.clone(), env);
+    for (inner_bid, block) in &func.body.blocks {
+        for phi in &block.phis {
+            for operand in phi.operands.values() {
+                if let Some(maybe_optional) = ctx.temporaries.get(operand.identifier) {
+                    ctx.visit_dependency(maybe_optional.clone(), env);
+                }
             }
         }
 
-        for &iid in inner_instr_ids {
-            let inner_instr = &inner_instrs[iid.0 as usize];
+        for &iid in &block.instructions {
+            let inner_instr = &func.instructions[iid.0 as usize];
             match &inner_instr.value {
                 InstructionValue::FunctionExpression { lowered_func, .. }
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
                     // Recursively visit nested function expressions
-                    let scope_stack_copy = ctx.scope_stack.clone();
-                    ctx.declare(
-                        inner_instr.lvalue.identifier,
-                        Decl {
-                            id: inner_instr.id,
-                            scope_stack: scope_stack_copy,
-                        },
-                        env,
-                    );
+                    ctx.declare(inner_instr.lvalue.identifier, inner_instr.id, env);
                     visit_inner_function_blocks(lowered_func.func, ctx, env);
                 }
                 _ => {
@@ -2192,14 +2161,16 @@ fn visit_inner_function_blocks(
         }
 
         if !ctx.is_deferred_dependency_terminal(*inner_bid) {
-            let terminal_ops = visitors::each_terminal_operand(inner_terminal);
-            for op in &terminal_ops {
+            for op in visitors::terminal_operands(&block.terminal) {
                 ctx.visit_operand(op, env);
             }
         }
     }
+
+    env.functions[func_id.0 as usize] = func;
 }
 
+/// For what is not a function: the callers visit those.
 fn handle_instruction(
     instr: &Instruction,
     is_semantic_only: bool,
@@ -2207,20 +2178,12 @@ fn handle_instruction(
     env: &mut Environment,
 ) {
     let id = instr.id;
-    let scope_stack_copy = ctx.scope_stack.clone();
-    ctx.declare(
-        instr.lvalue.identifier,
-        Decl {
-            id,
-            scope_stack: scope_stack_copy,
-        },
-        env,
-    );
+    ctx.declare(instr.lvalue.identifier, id, env);
 
     if is_semantic_only {
         // See `find_semantic_only_caught_instructions`.
-        for operand in visitors::each_instruction_value_operand(&instr.value, env) {
-            ctx.visit_operand_root(&operand, env);
+        for operand in visitors::operands(&instr.value, &[]) {
+            ctx.visit_operand_root(operand, env);
         }
         return;
     }
@@ -2245,15 +2208,7 @@ fn handle_instruction(
             if lvalue.kind == InstructionKind::Reassign {
                 ctx.visit_reassignment(&lvalue.place, env);
             }
-            let scope_stack_copy = ctx.scope_stack.clone();
-            ctx.declare(
-                lvalue.place.identifier,
-                Decl {
-                    id,
-                    scope_stack: scope_stack_copy,
-                },
-                env,
-            );
+            ctx.declare(lvalue.place.identifier, id, env);
         }
         // Not in upstream, where `a++` is not an output of its scope: a render that reuses the scope loses it.
         InstructionValue::PrefixUpdate {
@@ -2264,48 +2219,23 @@ fn handle_instruction(
         } => {
             ctx.visit_operand(val, env);
             ctx.visit_reassignment(lvalue, env);
-            let scope_stack_copy = ctx.scope_stack.clone();
-            ctx.declare(
-                lvalue.identifier,
-                Decl {
-                    id,
-                    scope_stack: scope_stack_copy,
-                },
-                env,
-            );
+            ctx.declare(lvalue.identifier, id, env);
         }
         InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::DeclareContext { lvalue, .. } => {
             if lvalue.kind.unhoisted().is_none() {
-                let scope_stack_copy = ctx.scope_stack.clone();
-                ctx.declare(
-                    lvalue.place.identifier,
-                    Decl {
-                        id,
-                        scope_stack: scope_stack_copy,
-                    },
-                    env,
-                );
+                ctx.declare(lvalue.place.identifier, id, env);
             }
         }
         InstructionValue::Destructure {
             value: val, lvalue, ..
         } => {
             ctx.visit_operand(val, env);
-            let pattern_places = visitors::each_pattern_operand(&lvalue.pattern);
-            for place in &pattern_places {
+            for place in visitors::pattern_operands(&lvalue.pattern) {
                 if lvalue.kind == InstructionKind::Reassign {
                     ctx.visit_reassignment(place, env);
                 }
-                let scope_stack_copy = ctx.scope_stack.clone();
-                ctx.declare(
-                    place.identifier,
-                    Decl {
-                        id,
-                        scope_stack: scope_stack_copy,
-                    },
-                    env,
-                );
+                ctx.declare(place.identifier, id, env);
             }
         }
         InstructionValue::StoreContext {
@@ -2314,15 +2244,7 @@ fn handle_instruction(
             if !ctx.has_declared(lvalue.place.identifier, env)
                 || lvalue.kind != InstructionKind::Reassign
             {
-                let scope_stack_copy = ctx.scope_stack.clone();
-                ctx.declare(
-                    lvalue.place.identifier,
-                    Decl {
-                        id,
-                        scope_stack: scope_stack_copy,
-                    },
-                    env,
-                );
+                ctx.declare(lvalue.place.identifier, id, env);
             }
             // Visit all operands (lvalue.place AND value)
             ctx.visit_operand(&lvalue.place, env);
@@ -2330,8 +2252,7 @@ fn handle_instruction(
         }
         _ => {
             // Visit all value operands
-            let operands = visitors::each_instruction_value_operand(&instr.value, env);
-            for operand in &operands {
+            for operand in visitors::operands(&instr.value, &[]) {
                 ctx.visit_operand(operand, env);
             }
         }
@@ -2351,24 +2272,10 @@ fn collect_dependencies(
     for param in &func.params {
         match param {
             ParamPattern::Place(place) => {
-                ctx.declare(
-                    place.identifier,
-                    Decl {
-                        id: EvaluationOrder(0),
-                        scope_stack: vec![],
-                    },
-                    env,
-                );
+                ctx.declare(place.identifier, EvaluationOrder(0), env);
             }
             ParamPattern::Spread(spread) => {
-                ctx.declare(
-                    spread.place.identifier,
-                    Decl {
-                        id: EvaluationOrder(0),
-                        scope_stack: vec![],
-                    },
-                    env,
-                );
+                ctx.declare(spread.place.identifier, EvaluationOrder(0), env);
             }
         }
     }
@@ -2422,15 +2329,7 @@ fn handle_function_deps(
             match &instr.value {
                 InstructionValue::FunctionExpression { lowered_func, .. }
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
-                    let scope_stack_copy = ctx.scope_stack.clone();
-                    ctx.declare(
-                        instr.lvalue.identifier,
-                        Decl {
-                            id: instr.id,
-                            scope_stack: scope_stack_copy,
-                        },
-                        env,
-                    );
+                    ctx.declare(instr.lvalue.identifier, instr.id, env);
 
                     // Recursively visit inner function
                     let inner_func_id = lowered_func.func;
@@ -2452,8 +2351,7 @@ fn handle_function_deps(
 
         // Terminal operands
         if !ctx.is_deferred_dependency_terminal(*block_id) {
-            let terminal_ops = visitors::each_terminal_operand(&block.terminal);
-            for op in &terminal_ops {
+            for op in visitors::terminal_operands(&block.terminal) {
                 ctx.visit_operand(op, env);
             }
         }

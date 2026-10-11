@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// Disallow duplicate case labels.
 pub struct NoDuplicateCase;
@@ -54,6 +55,22 @@ fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
     });
 }
 
+/// For a `switch` of which no test can be written differently: two are [`equal`] if they are of one kind and have one text.
+#[inline(never)]
+fn check_by_text<'a>(cases: List<'a, Case<'a>>, cx: &Cx<'a, NoDuplicateCase>) {
+    let mut first_of = FxHashMap::default();
+    for case in cases {
+        let Some(test) = case.test() else {
+            continue;
+        };
+        let first = *first_of.entry((test.tag() as u8, test.text())).or_insert(test);
+        debug_assert_eq!(Some(first), cases.iter().filter_map(Case::test).find(|&it| equal(cx.file(), it, test, true)));
+        if first != test {
+            report(case, first.span(), cx);
+        }
+    }
+}
+
 impl Rule for NoDuplicateCase {
     const META: Meta = Meta::eslint("no-duplicate-case", Kind::Problem).recommended();
     const ON: On = On::new().stmts(&[StmtTag::Switch]);
@@ -70,6 +87,9 @@ impl Rule for NoDuplicateCase {
         // Spares the tokens of the file for `case Kind.A: case Kind.B:`.
         let mut tests = cases.iter().filter_map(Case::test);
         let is_text_enough = !tests.any(|it| !is_single_token(it) && can_be_written_differently(it));
+        if is_text_enough && cases.len() > 8 {
+            return check_by_text(cases, cx);
+        }
         for (i, case) in cases.iter().enumerate() {
             let Some(test) = case.test() else {
                 continue;

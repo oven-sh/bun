@@ -1,4 +1,4 @@
-use crate::collections::FxHashMap as HashMap;
+use crate::collections::IdMap;
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::environment::Environment;
@@ -12,8 +12,8 @@ pub(crate) fn validate_no_capitalized_calls(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    let mut capital_load_globals: HashMap<IdentifierId, StoreStr> = HashMap::default();
-    let mut capitalized_properties: HashMap<IdentifierId, StoreStr> = HashMap::default();
+    let mut capital_load_globals: IdMap<IdentifierId, StoreStr> = IdMap::new();
+    let mut capitalized_properties: IdMap<IdentifierId, StoreStr> = IdMap::new();
 
     let reason = "Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config";
 
@@ -36,7 +36,7 @@ pub(crate) fn validate_no_capitalized_calls(
                 }
                 InstructionValue::CallExpression { callee, loc, .. } => {
                     let callee_id = callee.identifier;
-                    if let Some(callee_name) = capital_load_globals.get(&callee_id) {
+                    if let Some(callee_name) = capital_load_globals.get(callee_id) {
                         env.record_error(CompilerErrorDetail {
                             category: ErrorCategory::CapitalizedCalls,
                             reason: reason.to_string(),
@@ -63,7 +63,7 @@ pub(crate) fn validate_no_capitalized_calls(
                 }
                 InstructionValue::MethodCall { property, loc, .. } => {
                     let property_id = property.identifier;
-                    if let Some(prop_name) = capitalized_properties.get(&property_id) {
+                    if let Some(prop_name) = capitalized_properties.get(property_id) {
                         env.record_error(CompilerErrorDetail {
                             category: ErrorCategory::CapitalizedCalls,
                             reason: reason.to_string(),

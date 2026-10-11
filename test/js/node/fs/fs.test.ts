@@ -66,6 +66,7 @@ import { join } from "node:path";
 
 import { spawnSync } from "bun";
 import { mkfifo } from "mkfifo";
+import { dupPathDestinationRows, opensAsDup } from "../../bun/io/dup-path-destination";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 
@@ -871,6 +872,27 @@ describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
 // Writes at or above the preallocate threshold take the fallocate() path, which
 // grows the file before the data lands. O_APPEND then writes past the grown end,
 // leaving a hole of zeroes where the data belongs.
+// See dup-path-destination.ts.
+describe.skipIf(!opensAsDup)("writeFile to a path that opens as a dup of a descriptor", () => {
+  dupPathDestinationRows(
+    [
+      {
+        title: "fs.writeFileSync(path, string)",
+        write: dest => `fs.writeFileSync(${dest}, Buffer.alloc(100, "S").toString())`,
+        size: 100,
+        result: "undefined",
+      },
+      {
+        title: "fs.promises.writeFile(path, string)",
+        write: dest => `await fs.promises.writeFile(${dest}, Buffer.alloc(100, "S").toString())`,
+        size: 100,
+        result: "undefined",
+      },
+    ],
+    [{ title: `fs.writeFileSync(path, "")`, write: `fs.writeFileSync("/dev/stdout", "")`, result: "undefined" }],
+  );
+});
+
 describe("writeFile with a preallocate-sized buffer", () => {
   const big = Buffer.alloc(3 * 1024 * 1024, "A");
 

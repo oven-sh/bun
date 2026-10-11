@@ -26,6 +26,14 @@ fn has_dangling_underscore(identifier: &[u8]) -> bool {
     identifier != b"_" && (identifier.starts_with(b"_") || identifier.ends_with(b"_"))
 }
 
+/// Whether the name that is written at `written` can have a dangling underscore. It can be private, and an escape can stand for
+/// an underscore: `\u005f`, `\u{5f}`.
+#[inline]
+fn may_dangle(text: &[u8], written: Span) -> bool {
+    matches!(text.get(written.start as usize), Some(b'_' | b'#' | b'\\'))
+        || matches!(text.get(written.end.wrapping_sub(1) as usize), Some(b'_' | b'f' | b'F' | b'}'))
+}
+
 /// ESTree's `object` and `property.name` of a `MemberExpression`. In `a[b]` the name is `b`.
 fn object_and_property_name(e: Expr<'_>) -> Option<(Expr<'_>, &[u8])> {
     match e.kind() {
@@ -81,7 +89,11 @@ impl NoUnderscoreDangle {
         let pat = declaration.pat();
         if let PatKind::Ident(name) = pat.kind() {
             let is_using = matches!(declaration.var_kind(), VarKind::Using | VarKind::AwaitUsing);
-            if self.is_unexpected(name.bytes()) && is_declarator() && !(is_using && self.allow_in_using_declarations) {
+            if may_dangle(cx.text(), pat.span())
+                && self.is_unexpected(name.bytes())
+                && is_declarator()
+                && !(is_using && self.allow_in_using_declarations)
+            {
                 let place = if cx.language().is_oxlint { pat.span() } else { declaration.span() };
                 cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
             }
@@ -125,10 +137,10 @@ impl NoUnderscoreDangle {
         {
             return;
         }
-        let place = match e.kind() {
-            ExprKind::Dot { name, .. } if cx.language().is_oxlint => name.span(),
+        let place = match e.member_name() {
+            Some(name) if cx.language().is_oxlint => name.span(),
             // It says nothing about `a[_b]`.
-            ExprKind::Index { .. } if cx.language().is_oxlint => return,
+            None if cx.language().is_oxlint => return,
             _ => e.span(),
         };
         cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", identifier);
@@ -234,10 +246,10 @@ impl Rule for NoUnderscoreDangle {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let mut on = On::new()
-            .stmts(&[StmtTag::Fn])
-            .var_decls()
-            .exprs(&[ExprTag::Dot, ExprTag::Index]);
+        let mut on = On::new().stmts(&[StmtTag::Fn]).var_decls().exprs(&[ExprTag::Dot]);
+        if !file.language().is_oxlint {
+            on = on.exprs(&[ExprTag::Index]);
+        }
         if !file.is_javascript() {
             on = on.types(&[TypeTag::Ref]);
         }
@@ -254,7 +266,16 @@ impl Rule for NoUnderscoreDangle {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_member_expression(e, cx);
+        let written = match e.member_name_start() {
+            Some(start) => Span::new(start, e.span().end),
+            None => match e.index() {
+                Some(index) if index.tag() == ExprTag::Ident => index.span(),
+                _ => return,
+            },
+        };
+        if may_dangle(cx.text(), written) {
+            self.check_member_expression(e, cx);
+        }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

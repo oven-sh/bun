@@ -13,6 +13,9 @@ pub struct IdLength {
     exception_patterns: Vec<Regex>,
     /// An option of oxlint.
     check_generic: bool,
+    /// A name that starts with so many letters, digits, `_` and `$` of ASCII has the right length, whatever follows them.
+    /// `usize::MAX`: no start tells.
+    enough: usize,
 }
 
 const TOO_SHORT: Message = Message::new(
@@ -97,19 +100,35 @@ fn is_definition(member: Member) -> bool {
 }
 
 impl IdLength {
-    /// What to report about an identifier named `name`, which is without its `#`.
-    fn problem(&self, name: &[u8], is_private: bool) -> Option<Message> {
+    /// Whether the name that `text` starts with has the right length by [`IdLength::enough`].
+    #[inline]
+    fn is_right_by_its_start(&self, text: &[u8]) -> bool {
+        let start = text.get(..self.enough);
+        start.is_some_and(|it| it.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$')))
+    }
+
+    /// The same for the name that is written at `start`.
+    #[inline]
+    fn is_right_at(&self, file: &File, start: u32) -> bool {
+        file.text().get(start as usize..).is_some_and(|it| self.is_right_by_its_start(it))
+    }
+
+    /// What to report about an identifier named `name`, which is without its `#`, and the limit that the message names.
+    fn problem(&self, name: &[u8], is_private: bool) -> Option<(Message, &'static str, f64)> {
+        if self.is_right_by_its_start(name) {
+            return None;
+        }
         let length = get_grapheme_count(name) as f64;
-        let message = if length < self.min {
-            if is_private { TOO_SHORT_PRIVATE } else { TOO_SHORT }
+        let problem = if length < self.min {
+            (if is_private { TOO_SHORT_PRIVATE } else { TOO_SHORT }, "min", self.min)
         } else if length > self.max {
-            if is_private { TOO_LONG_PRIVATE } else { TOO_LONG }
+            (if is_private { TOO_LONG_PRIVATE } else { TOO_LONG }, "max", self.max)
         } else {
             return None;
         };
         let is_exception = self.exceptions.iter().any(|it| **it == *name)
             || self.exception_patterns.iter().any(|it| it.test(name));
-        (!is_exception).then_some(message)
+        (!is_exception).then_some(problem)
     }
 
     /// Reports an identifier named `name` if its length is wrong. `at` is only asked then: where
@@ -122,13 +141,10 @@ impl IdLength {
         if !cx.state.get_or_insert_with(name, || problem().1.is_some()) {
             return;
         }
-        if let (name, Some(message)) = problem()
+        if let (name, Some((message, limit, value))) = problem()
             && let Some(at) = at()
         {
-            cx.report(at, message)
-                .data("name", name)
-                .data("min", text::number_to_string(self.min))
-                .data("max", text::number_to_string(self.max));
+            cx.report(at, message).data("name", name).data(limit, text::number_to_string(value));
         }
     }
 
@@ -266,7 +282,7 @@ impl IdLength {
 /// wherever it is written, and at the names of properties and members, but at no reference to a variable.
 impl IdLength {
     fn check_ident<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
-        if !name.is_string() {
+        if !self.is_right_at(cx.file(), name.start()) && !name.is_string() {
             self.check(cx, name.name(), || Some(name.span()));
         }
     }
@@ -309,9 +325,13 @@ impl IdLength {
         if !self.properties && !matches!(member.parent(), Node::Class(_)) {
             return;
         }
-        match member.constructor_keyword() {
-            Some(keyword) if member.key().is_none() => self.check_ident(keyword, cx),
-            _ => self.check_key(member.key(), cx),
+        match member.key() {
+            None => {
+                if let Some(keyword) = member.constructor_keyword() {
+                    self.check_ident(keyword, cx);
+                }
+            }
+            key => self.check_key(key, cx),
         }
     }
 
@@ -342,10 +362,7 @@ impl IdLength {
     }
 
     /// `a.b`: a private name, or what an assignment or a property of an object pattern assigns to.
-    fn check_member_expression_as_oxlint<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Dot { name, .. } = e.kind() else {
-            return;
-        };
+    fn check_member_expression_as_oxlint<'a>(&self, e: Expr<'a>, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
         self.check(cx, name.name(), || {
             let is_assigned_to = || match e.parent() {
                 Node::Expr(parent) => matches!(parent.kind(), ExprKind::Assign { target, .. } if target == e),
@@ -368,7 +385,7 @@ impl IdLength {
                     self.check_ident(name, cx);
                 }
             }
-            TypeKind::Ref { name, .. } => {
+            TypeKind::Ref { name, .. } if name.len() > 1 => {
                 for name in name.parts().skip(1) {
                     self.check_ident(name, cx);
                 }
@@ -424,15 +441,21 @@ impl Rule for IdLength {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let patterns = options.strings("exceptionPatterns");
+        let min = options.number("min").unwrap_or(2.0);
+        let max = options.number("max").unwrap_or(f64::INFINITY);
         IdLength {
-            min: options.number("min").unwrap_or(2.0),
-            max: options.number("max").unwrap_or(f64::INFINITY),
+            min,
+            max,
             properties: options.str("properties") != Some("never"),
             exceptions: (options.strings("exceptions").iter())
                 .map(|it| it.as_bytes().into())
                 .collect(),
             exception_patterns: patterns.iter().filter_map(|it| Regex::new(it, "u").ok()).collect(),
             check_generic: options.bool_or("checkGeneric", true),
+            enough: match max == f64::INFINITY {
+                true => min.ceil() as usize,
+                false => usize::MAX,
+            },
         }
     }
 
@@ -483,14 +506,19 @@ impl Rule for IdLength {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match (e.tag(), cx.language().is_oxlint) {
-            (ExprTag::Ident, false) => self.check_reference(e, cx),
-            (ExprTag::Dot, false) => {
-                if let ExprKind::Dot { name, .. } = e.kind() {
-                    self.check(cx, name.name(), || is_assigned_member(e).then(|| name.span()));
+        if let Some(start) = e.member_name_start() {
+            if !self.is_right_at(cx.file(), start)
+                && let Some(name) = e.member_name()
+            {
+                match cx.language().is_oxlint {
+                    true => self.check_member_expression_as_oxlint(e, name, cx),
+                    false => self.check(cx, name.name(), || is_assigned_member(e).then(|| name.span())),
                 }
             }
-            (ExprTag::Dot, true) => self.check_member_expression_as_oxlint(e, cx),
+            return;
+        }
+        match (e.tag(), cx.language().is_oxlint) {
+            (ExprTag::Ident, false) => self.check_reference(e, cx),
             (ExprTag::PrivateIdentifier, true) => {
                 if let ExprKind::PrivateIdentifier(name) = e.kind() {
                     self.check(cx, name, || Some(e.span()));

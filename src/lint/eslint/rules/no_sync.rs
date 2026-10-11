@@ -17,13 +17,12 @@ impl NoSync {
     }
 
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let name = match e.kind() {
-            ExprKind::Dot { name, .. } => name.bytes(),
-            ExprKind::Index { index, .. } => match index.as_ident() {
+        let name = match e.member_name() {
+            Some(name) => name.bytes(),
+            None => match e.index().and_then(Expr::as_ident) {
                 Some(name) => name.bytes(),
                 None => return,
             },
-            _ => return,
         };
         if name.ends_with(b"Sync") && ast_utils::is_member_expression(e) && self.applies(e.into(), cx) {
             cx.report(e, NO_SYNC).data("propertyName", name.strip_prefix(b"#").unwrap_or(name));

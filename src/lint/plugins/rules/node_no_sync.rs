@@ -47,17 +47,25 @@ impl Rule for NoSync {
 /// The last name in `a.b.c` that ends in `Sync`.
 fn get_sync_property_name(callee: Expr<'_>) -> Option<Name<'_>> {
     let is_sync = |name: &Name| name.bytes().ends_with(b"Sync");
-    let mut at = get_inner_expression(callee);
+    let mut at = callee;
     loop {
-        if let Some(name) = at.as_ident() {
-            return Some(name).filter(is_sync);
-        }
-        if at.is_private_member() || at.is_chain_root() {
-            return None;
-        }
-        if let Some(name) = static_property_name(at).filter(is_sync) {
+        let name = match at.tag() {
+            ExprTag::Ident => return at.as_ident().filter(is_sync),
+            ExprTag::Dot if !at.is_private_member() && !at.is_chain_root() => at.member_name().map(Ident::name),
+            ExprTag::Index if !at.is_chain_root() => static_property_name(at),
+            ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation => {
+                let inner = get_inner_expression(at);
+                if inner == at {
+                    return None;
+                }
+                at = inner;
+                continue;
+            }
+            _ => return None,
+        };
+        if let Some(name) = name.filter(is_sync) {
             return Some(name);
         }
-        at = get_inner_expression(at.object()?);
+        at = at.object()?;
     }
 }

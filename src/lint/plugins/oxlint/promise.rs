@@ -19,7 +19,9 @@ pub(crate) fn is_promise(call_expr: Call<'_>) -> Option<Name<'_>> {
     let (member_expr, prop_name) = method_of(call_expr)?;
     let name = prop_name.bytes();
     let is_promise = matches!(name, b"then" | b"catch" | b"finally")
-        || PROMISE_STATIC_METHODS.iter().any(|it| it.as_bytes() == name)
+        || PROMISE_STATIC_METHODS
+            .iter()
+            .any(|it| it.as_bytes() == name)
             && get_inner_expression(member_expr.object()?).is_ident("Promise");
     is_promise.then_some(prop_name)
 }

@@ -14,7 +14,10 @@ const REPLACE: Message = Message::new(
     "replace",
     "Replace `{{ deleteText }}` with `{{ insertText }}`",
 );
-const UNCHECKED: Message = Message::new("unchecked", "Files like this are not checked: {{ reason }}.");
+const UNCHECKED: Message = Message::new(
+    "unchecked",
+    "Files like this are not checked: {{ reason }}.",
+);
 
 fn show_invisibles(shown: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(shown.len() * 2);

@@ -12,7 +12,10 @@ use crate::rule::{Message, Meta, Plugin};
 pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
     let of = |plugin: &str| {
         let found = MESSAGES.binary_search_by(|it| (it.0, it.1).cmp(&(plugin, meta.name)));
-        found.ok().and_then(|at| MESSAGES.get(at)).map_or(&[][..], |it| it.2)
+        found
+            .ok()
+            .and_then(|at| MESSAGES.get(at))
+            .map_or(&[][..], |it| it.2)
     };
     match meta.plugin {
         Plugin::Eslint => [of("eslint"), &[]],

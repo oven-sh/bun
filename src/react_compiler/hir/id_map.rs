@@ -4,8 +4,8 @@
 //! [`IdMap`] and [`IdSet`] iterate in insertion order, as a JavaScript `Map` and `Set` do.
 //! [`IdBitSet`] iterates in the order of the ids.
 //!
-//! The tables are as long as the range of the ids, so one of these per function or per pass is
-//! cheap and one per instruction is not, unless it stays within [`SCAN_MAX`] entries.
+//! A table has two levels, so that what is written for it grows with the ids that are in it and
+//! only a thirty-second part with their range. Up to [`SCAN_MAX`] entries there is none.
 
 use core::fmt;
 use core::marker::PhantomData;
@@ -17,14 +17,94 @@ use bun_collections::array_hash_map::MapAllocator;
 /// With no more entries than this the keys are scanned and there is no table.
 const SCAN_MAX: usize = 8;
 
+/// The ids that share a page of a [`Table`].
+const PAGE: u32 = 32;
+
+/// A number for each id, zero for most.
+#[derive(Clone)]
+struct Table<A: MapAllocator> {
+    /// By id / [`PAGE`] less `first_page`: which of the pages in `slots` is that of the id,
+    /// counted from one, or zero.
+    pages: Vec<u32, A>,
+    slots: Vec<u32, A>,
+    first_page: u32,
+}
+
+impl<A: MapAllocator> Table<A> {
+    #[inline]
+    fn new() -> Self {
+        Table {
+            pages: Vec::new_in(A::default()),
+            slots: Vec::new_in(A::default()),
+            first_page: 0,
+        }
+    }
+
+    /// Nothing was ever written.
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.pages.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.pages.clear();
+        self.slots.clear();
+    }
+
+    #[inline]
+    fn get(&self, id: u32) -> u32 {
+        match self
+            .pages
+            .get((id / PAGE).wrapping_sub(self.first_page) as usize)
+        {
+            Some(&page) if page != 0 => self.slots[((page - 1) * PAGE + id % PAGE) as usize],
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    fn get_mut(&mut self, id: u32) -> &mut u32 {
+        let known = (id / PAGE).checked_sub(self.first_page);
+        let page = match known.and_then(|at| self.pages.get(at as usize)) {
+            Some(&page) if page != 0 => page,
+            _ => self.add_page(id / PAGE),
+        };
+        &mut self.slots[((page - 1) * PAGE + id % PAGE) as usize]
+    }
+
+    /// `pages` doubles at the end where it is too short, so that ids which come in rising or in
+    /// falling order lengthen it seldom.
+    #[inline(never)]
+    fn add_page(&mut self, number: u32) -> u32 {
+        if self.pages.is_empty() {
+            self.first_page = number;
+        }
+        if number < self.first_page {
+            let missing = (self.first_page - number).max(self.pages.len() as u32);
+            let missing = missing.min(self.first_page);
+            let mut pages =
+                Vec::with_capacity_in(missing as usize + self.pages.len(), A::default());
+            pages.resize(missing as usize, 0);
+            pages.extend_from_slice(&self.pages);
+            self.pages = pages;
+            self.first_page -= missing;
+        }
+        let at = (number - self.first_page) as usize;
+        if at >= self.pages.len() {
+            self.pages.resize((at + 1).max(self.pages.len() * 2), 0);
+        }
+        self.slots.extend_from_slice(&[0; PAGE as usize]);
+        self.pages[at] = self.slots.len() as u32 / PAGE;
+        self.pages[at]
+    }
+}
+
 /// The keys in insertion order, and where each is.
 #[derive(Clone)]
 struct IdIndex<K, A: MapAllocator> {
     keys: Vec<K, A>,
-    /// By id less `base`: the position of the key plus one, or zero. Empty until there are more
-    /// than [`SCAN_MAX`] keys.
-    slots: Vec<u32, A>,
-    base: u32,
+    /// By id: the position of the key plus one. Empty until there are more than [`SCAN_MAX`] keys.
+    places: Table<A>,
 }
 
 impl<K, A: MapAllocator> IdIndex<K, A> {
@@ -32,14 +112,13 @@ impl<K, A: MapAllocator> IdIndex<K, A> {
     fn new() -> Self {
         IdIndex {
             keys: Vec::new_in(A::default()),
-            slots: Vec::new_in(A::default()),
-            base: 0,
+            places: Table::new(),
         }
     }
 
     fn clear(&mut self) {
         self.keys.clear();
-        self.slots.clear();
+        self.places.clear();
     }
 }
 
@@ -47,13 +126,12 @@ impl<K: Copy + Into<u32>, A: MapAllocator> IdIndex<K, A> {
     #[inline]
     fn position(&self, key: K) -> Option<usize> {
         let id = key.into();
-        if self.slots.is_empty() {
+        if self.places.is_empty() {
             return self.keys.iter().position(|&key| key.into() == id);
         }
-        match self.slots.get(id.wrapping_sub(self.base) as usize) {
-            Some(&slot) if slot != 0 => Some(slot as usize - 1),
-            _ => None,
-        }
+        let at = (self.places.get(id) as usize).checked_sub(1)?;
+        debug_assert!(self.keys[at].into() == id);
+        Some(at)
     }
 
     /// Appends a key that is not there and says where it is.
@@ -61,52 +139,30 @@ impl<K: Copy + Into<u32>, A: MapAllocator> IdIndex<K, A> {
     fn push(&mut self, key: K) -> usize {
         let at = self.keys.len();
         self.keys.push(key);
-        if self.slots.is_empty() {
-            if at >= SCAN_MAX {
-                self.fill_slots();
-            }
-            return at;
-        }
-        match key.into().checked_sub(self.base) {
-            Some(slot) => {
-                let slot = slot as usize;
-                if slot >= self.slots.len() {
-                    self.slots.resize(slot + 1, 0);
-                }
-                self.slots[slot] = at as u32 + 1;
-            }
-            None => self.fill_slots(),
+        if !self.places.is_empty() {
+            *self.places.get_mut(key.into()) = at as u32 + 1;
+        } else if at >= SCAN_MAX {
+            self.fill_places();
         }
         at
     }
 
-    #[inline]
-    fn slot_of(&mut self, key: K) -> &mut u32 {
-        &mut self.slots[(key.into() - self.base) as usize]
-    }
-
-    /// Below the least id there is as much room as the table had, so that ids which come in
-    /// falling order do not fill it each time.
     #[cold]
     #[inline(never)]
-    fn fill_slots(&mut self) {
-        let ids = || self.keys.iter().map(|&key| key.into());
-        let (least, greatest) = (ids().min().unwrap_or(0), ids().max().unwrap_or(0));
-        self.base = least.saturating_sub(self.slots.len() as u32);
-        self.slots.clear();
-        self.slots.resize((greatest - self.base) as usize + 1, 0);
-        for at in 0..self.keys.len() {
-            *self.slot_of(self.keys[at]) = at as u32 + 1;
+    fn fill_places(&mut self) {
+        self.places.clear();
+        for (at, &key) in self.keys.iter().enumerate() {
+            *self.places.get_mut(key.into()) = at as u32 + 1;
         }
     }
 
     /// Keeps the order of the rest.
     fn shift_remove_at(&mut self, at: usize) -> K {
         let key = self.keys.remove(at);
-        if !self.slots.is_empty() {
-            *self.slot_of(key) = 0;
-            for later in at..self.keys.len() {
-                *self.slot_of(self.keys[later]) -= 1;
+        if !self.places.is_empty() {
+            *self.places.get_mut(key.into()) = 0;
+            for &later in &self.keys[at..] {
+                *self.places.get_mut(later.into()) -= 1;
             }
         }
         key
@@ -115,10 +171,10 @@ impl<K: Copy + Into<u32>, A: MapAllocator> IdIndex<K, A> {
     /// The last key takes the place of the removed one.
     fn swap_remove_at(&mut self, at: usize) -> K {
         let key = self.keys.swap_remove(at);
-        if !self.slots.is_empty() {
-            *self.slot_of(key) = 0;
+        if !self.places.is_empty() {
+            *self.places.get_mut(key.into()) = 0;
             if let Some(&moved) = self.keys.get(at) {
-                *self.slot_of(moved) = at as u32 + 1;
+                *self.places.get_mut(moved.into()) = at as u32 + 1;
             }
         }
         key
@@ -269,9 +325,8 @@ impl<K: Copy + Into<u32>, V, A: MapAllocator> IdMap<K, V, A> {
             keeps
         });
         keys.truncate(kept);
-        if kept != before && !self.index.slots.is_empty() {
-            self.index.slots.clear();
-            self.index.fill_slots();
+        if kept != before && !self.index.places.is_empty() {
+            self.index.fill_places();
         }
     }
 }
@@ -520,7 +575,8 @@ impl<K: Copy + Into<u32>> IdBitSet<K> {
     pub(crate) fn insert(&mut self, k: K) -> bool {
         let id = k.into() as usize;
         if id / 64 >= self.words.len() {
-            self.words.resize(id / 64 + 1, 0);
+            self.words
+                .resize((id / 64 + 1).max(self.words.len() * 2), 0);
         }
         let word = &mut self.words[id / 64];
         let bit = 1u64 << (id % 64);

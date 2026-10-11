@@ -25,12 +25,6 @@ const ERROR_DESCRIPTION: &str = "React refs are values that are not needed for r
 
 type RefId = u32;
 
-static REF_ID_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-fn next_ref_id() -> RefId {
-    REF_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-}
-
 // --- RefAccessType / RefAccessRefType / RefFnType ---
 
 /// Corresponds to TS `RefAccessType`.
@@ -333,7 +327,7 @@ struct Joins {
     keeps_place: bool,
     stack: bun_core::StackCheck,
     is_out_of_stack: Cell<bool>,
-    /// How many ids the joins have made.
+    /// How many ids were made. The next one.
     new_ids: Cell<u32>,
     values: Joined<RefAccessRefType>,
     returned: Joined<RefAccessType>,
@@ -349,8 +343,9 @@ impl Joins {
     }
 
     fn next_ref_id(&self) -> RefId {
-        self.new_ids.set(self.new_ids.get().wrapping_add(1));
-        next_ref_id()
+        let id = self.new_ids.get();
+        self.new_ids.set(id.wrapping_add(1));
+        id
     }
 
     /// `join(a, b)` behind a pointer. What types hold is shared, so that the same two meet again and again on the way
@@ -687,7 +682,7 @@ impl Env {
                 ref_id: None,
             },
             TypeKind::Ref => RefAccessType::Ref {
-                ref_id: next_ref_id(),
+                ref_id: self.joins.next_ref_id(),
             },
             TypeKind::Other => RefAccessType::None,
         }
@@ -1430,7 +1425,7 @@ fn validate_no_ref_access_in_render_impl(
                         join_ref_access_types(
                             &existing,
                             &RefAccessType::Ref {
-                                ref_id: next_ref_id(),
+                                ref_id: ref_env.joins.next_ref_id(),
                             },
                             &ref_env.joins,
                         ),

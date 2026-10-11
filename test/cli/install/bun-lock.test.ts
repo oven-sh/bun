@@ -3009,16 +3009,88 @@ it("a peer no version in the tree satisfies stays on the one it was bound to", a
   });
   const lock = await installAndReadLock(String(dir));
   expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.0", "b/z": "z@2.0.0", "p/z": "z@2.0.0" });
+  await expectNothingToDedupe(String(dir));
+});
 
+async function expectNothingToDedupe(cwd: string) {
   await using proc = spawn({
     cmd: [bunExe(), "dedupe", "--check"],
-    cwd: String(dir),
-    env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    cwd,
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out, err, code }).toEqual({ out: expect.stringContaining("No duplicates"), err: "", code: 0 });
+}
+
+// The lower z is in the tree only because the higher z depends on it. The range that brought the higher one in
+// accepts both, but moving it down removes the higher z, and with it the only reason the lower one is there.
+it.each<{
+  shape: string;
+  manifests: OrderedManifests;
+  dependencies: Record<string, string>;
+  z: Record<string, string>;
+}>([
+  {
+    shape: "c peers z@*, z@3.0.0 -> z@2.0.0",
+    manifests: {
+      c: { "1.0.0": { peerDependencies: { z: "*" } } },
+      z: { "2.0.0": {}, "3.0.0": { dependencies: { z: "2.0.0" } } },
+    },
+    dependencies: { c: "1.0.0" },
+    z: { "z": "z@3.0.0", "z/z": "z@2.0.0" },
+  },
+  {
+    shape: "c -> z@*, z@3.0.0 -> z@2.0.0",
+    manifests: {
+      c: { "1.0.0": { dependencies: { z: "*" } } },
+      z: { "2.0.0": {}, "3.0.0": { dependencies: { z: "2.0.0" } } },
+    },
+    dependencies: { c: "1.0.0" },
+    z: { "z": "z@3.0.0", "z/z": "z@2.0.0" },
+  },
+  {
+    shape: "c -> z@^1.0.0, z@1.5.0 -> z@~1.2.0",
+    manifests: {
+      c: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+      z: { "1.2.0": {}, "1.5.0": { dependencies: { z: "~1.2.0" } } },
+    },
+    dependencies: { c: "1.0.0" },
+    z: { "z": "z@1.5.0", "z/z": "z@1.2.0" },
+  },
+  {
+    shape: "c -> z@*, z@2.0.0 -> y -> z@1.0.0",
+    manifests: {
+      c: { "1.0.0": { dependencies: { z: "*" } } },
+      y: { "1.0.0": { dependencies: { z: "1.0.0" } } },
+      z: { "1.0.0": {}, "2.0.0": { dependencies: { y: "1.0.0" } } },
+    },
+    dependencies: { c: "1.0.0" },
+    z: { "z": "z@2.0.0", "y/z": "z@1.0.0" },
+  },
+  {
+    shape: "root z@*, z@2.0.0 -> z@1.0.0",
+    manifests: { z: { "1.0.0": {}, "2.0.0": { dependencies: { z: "1.0.0" } } } },
+    dependencies: { z: "*" },
+    z: { "z": "z@2.0.0", "z/z": "z@1.0.0" },
+  },
+  {
+    // d holds the lower z whatever happens to the higher one, so c shares it.
+    shape: "c -> z@*, z@3.0.0 -> z@2.0.0, d -> z@^2.0.0",
+    manifests: {
+      c: { "1.0.0": { dependencies: { z: "*" } } },
+      d: { "1.0.0": { dependencies: { z: "^2.0.0" } } },
+      z: { "2.0.0": {}, "3.0.0": { dependencies: { z: "2.0.0" } } },
+    },
+    dependencies: { c: "1.0.0", d: "1.0.0" },
+    z: { "z": "z@2.0.0" },
+  },
+])("a version is not dropped for one that only it depends on: $shape", async ({ manifests, dependencies, z }) => {
+  using server = (await registryWithHolds(manifests)).server;
+  using dir = projectOn(server, { "package.json": { name: "foo", dependencies } });
+  expect(instancesOf(await installAndReadLock(String(dir)), "z")).toEqual(z);
+  await expectNothingToDedupe(String(dir));
 });
 
 // The bundled-shadow-* fixtures are described in

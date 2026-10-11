@@ -21,6 +21,8 @@ struct Pass<'a> {
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
     pinned: &'a DynamicBitSet,
+    /// Versions no edge may move onto; see `dedupe_lockfile`.
+    closed: &'a DynamicBitSet,
     /// `collapse_appended`: edges onto packages below this id (loaded from the lockfile) and root/workspace rows stay where they are.
     frozen_below: Option<PackageID>,
     /// Per group: each edge with the package that owns it.
@@ -46,16 +48,18 @@ impl<'a> Pass<'a> {
         groups: &'a [Vec<PackageID>],
         group_of: &'a [u32],
         pinned: &'a DynamicBitSet,
+        closed: &'a DynamicBitSet,
         frozen_below: Option<PackageID>,
-        max_candidates: usize,
         max_edges: usize,
     ) -> Pass<'a> {
         let package_count = lockfile.packages.len();
+        let max_candidates = groups.iter().map(Vec::len).max().unwrap_or(0);
         Pass {
             lockfile,
             groups,
             group_of,
             pinned,
+            closed,
             frozen_below,
             edges: vec![Vec::new(); groups.len()],
             candidates: Vec::with_capacity(max_candidates),
@@ -152,6 +156,7 @@ impl<'a> Pass<'a> {
         let groups = self.groups;
         let group_of = self.group_of;
         let pinned = self.pinned;
+        let closed = self.closed;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_res = lockfile.packages.items_resolution();
         let dep_slices = lockfile.packages.items_dependencies();
@@ -242,8 +247,10 @@ impl<'a> Pass<'a> {
                     Some(range) => {
                         let query = &range.npm().version;
                         for c in 0..n {
-                            let id = self.candidates[c];
-                            if query.satisfies(pkg_res[id as usize].npm().version, buf, buf) {
+                            let id = self.candidates[c] as usize;
+                            if (c == cur_c || !closed.is_set(id))
+                                && query.satisfies(pkg_res[id].npm().version, buf, buf)
+                            {
                                 self.sat.set(row + c);
                                 self.movable.set(e);
                             }
@@ -251,13 +258,11 @@ impl<'a> Pass<'a> {
                         // No version is in range: an unmet peer is bound to the highest there is (`existing_peer_target`), so it goes along with whatever stays; any other edge stays put.
                         if !self.movable.is_set(e) && dep.behavior.is_peer() {
                             self.movable.set(e);
-                            self.sat.set_range_value(
-                                Range {
-                                    start: row,
-                                    end: row + n,
-                                },
-                                true,
-                            );
+                            for c in 0..n {
+                                if c == cur_c || !closed.is_set(self.candidates[c] as usize) {
+                                    self.sat.set(row + c);
+                                }
+                            }
                         } else if !self.movable.is_set(e) {
                             self.sat.set(row + cur_c);
                             self.required.set(cur_c);
@@ -403,7 +408,6 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
     let mut groups: Vec<Vec<PackageID>> = Vec::new();
     let mut group_of: Vec<u32> = vec![u32::MAX; pkg_res.len()];
     let mut pinned = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
-    let mut max_candidates = 0;
 
     if has_patches {
         for id in 0..pkg_res.len() {
@@ -441,7 +445,6 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
         for &id in &candidates {
             group_of[id as usize] = groups.len() as u32;
         }
-        max_candidates = max_candidates.max(candidates.len());
         groups.push(candidates);
     }
 
@@ -469,6 +472,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
         .map(|p| p as PackageID)
         .collect();
     let mut kept: Vec<(PackageID, Vec<PackageID>)> = Vec::new();
+    let mut closed = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
 
     // Walked over the original resolutions: pinning every removed version that led to the orphan keeps those paths intact on the re-run.
     let (cur, live) = loop {
@@ -480,8 +484,8 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
                 &groups,
                 &group_of,
                 &pinned,
+                &closed,
                 frozen_below,
-                max_candidates,
                 max_edges,
             );
             loop {
@@ -492,6 +496,29 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
                 }
                 live = after;
             }
+        }
+
+        // A version that stays must be held by an edge that was on it before the run and whose owner stays. One held only by edges that moved onto it won on the vote of a package the move removed (`z@*` on z@3, z@3 -> z@2): it is closed and the run starts over.
+        let mut held = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
+        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+            if !live.is_set(owner) {
+                continue;
+            }
+            let rows = slice.begin() as usize..slice.end() as usize;
+            for &target in &lockfile.buffers.resolutions[rows] {
+                if (target as usize) < pkg_res.len() {
+                    held.set(target as usize);
+                }
+            }
+        }
+        let closed_before = closed.count();
+        for &v in groups.iter().flatten() {
+            if live.is_set(v as usize) && !held.is_set(v as usize) {
+                closed.set(v as usize);
+            }
+        }
+        if closed.count() != closed_before {
+            continue;
         }
 
         let orphaned: Vec<PackageID> = patched

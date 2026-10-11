@@ -1178,6 +1178,7 @@ it("names folder and tarball packages without a package.json name after their fo
     "tarball-dep": "file:./tarball-pkg.tgz",
     "remote-dep": `http://localhost:${server.port}/remote-pkg.tgz`,
     "signed-url-dep": `http://localhost:${server.port}/signed-pkg.tgz?token=abc/def`,
+    "fragment-url-dep": `http://localhost:${server.port}/pinned-pkg.tgz#abc/def`,
   };
   await write(packageJson, JSON.stringify({ name: "deps-without-names", dependencies }));
 
@@ -1194,6 +1195,7 @@ it("names folder and tarball packages without a package.json name after their fo
           "dependencies": {
             "empty-name-dep": "file:./pkgs/empty-name-pkg",
             "folder-dep": "file:./pkgs/folder-pkg",
+            "fragment-url-dep": "http://localhost:1234/pinned-pkg.tgz#abc/def",
             "odd-folder-dep": "file:./pkgs/odd@folder",
             "remote-dep": "http://localhost:1234/remote-pkg.tgz",
             "signed-url-dep": "http://localhost:1234/signed-pkg.tgz?token=abc/def",
@@ -1205,6 +1207,8 @@ it("names folder and tarball packages without a package.json name after their fo
         "empty-name-dep": ["empty-name-pkg@file:pkgs/empty-name-pkg", {}],
 
         "folder-dep": ["folder-pkg@file:pkgs/folder-pkg", {}],
+
+        "fragment-url-dep": ["pinned-pkg@http://localhost:1234/pinned-pkg.tgz#abc/def", {}, "<integrity>"],
 
         "odd-folder-dep": ["unnamed-package@file:pkgs/odd@folder", {}],
 
@@ -1220,6 +1224,7 @@ it("names folder and tarball packages without a package.json name after their fo
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
     "empty-name-dep",
     "folder-dep",
+    "fragment-url-dep",
     "odd-folder-dep",
     "remote-dep",
     "signed-url-dep",

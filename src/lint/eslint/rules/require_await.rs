@@ -20,7 +20,7 @@ impl<'a> State<'a> {
     /// `None`: the file has no async function with something in it.
     pub fn new(file: &'a File<'a>, with_generators: bool) -> Option<State<'a>> {
         let is_candidate = |func: &Func| {
-            (func.flags().contains(Flags::ASYNC) || func.kind() == FnKind::Constructor && func.is_async())
+            func.is_async()
                 && (with_generators || !func.is_generator())
                 && ast_utils::is_function_with_body(*func)
                 && !ast_utils::is_empty_function(*func)

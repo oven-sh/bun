@@ -85,13 +85,24 @@ pub(crate) struct Context<'c, 'm> {
 /// ESLint's `ruleFilter`.
 pub(crate) type RuleFilter<'f> = dyn Fn(&RuleId, Severity) -> bool + Sync + 'f;
 
+/// Which fixes and suggestions the rules that are built in make.
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
+pub(crate) enum Fixes {
+    /// Those that the run reads.
+    #[default]
+    IfRead,
+    /// All: a processor is given them.
+    ForProcessor,
+    /// ESLint's `disableFixes`: none, and no rule in JavaScript is asked either.
+    Disabled,
+}
+
 /// How a text is linted, if not like a file.
 #[derive(Copy, Clone, Default)]
 struct How<'h> {
     /// See [`LintOptions::again`].
     again: Option<Again<'h>>,
-    /// ESLint's `disableFixes`.
-    without_fixes: bool,
+    fixes: Fixes,
     /// See [`LintOptions::physical_path_len`].
     physical_path_len: Option<usize>,
     /// It is a script in a file: its language, and which rules run.
@@ -317,17 +328,17 @@ impl Context<'_, '_> {
     }
 
     /// The same for a block that a processor has found in a file, whose path is the first `physical_path_len` bytes of `path`.
-    /// `without_fixes`: ESLint's `disableFixes`. `None`: it [may be misread](may_be_misread), and no rule has run.
+    /// `None`: it [may be misread](may_be_misread), and no rule has run.
     pub(crate) fn verify_block_if_read(
         &self,
         path: &[u8],
         physical_path_len: usize,
         text: &[u8],
         config: &ResolvedConfig,
-        without_fixes: bool,
+        fixes: Fixes,
     ) -> Option<LintResult> {
         let how = How {
-            without_fixes,
+            fixes,
             physical_path_len: Some(physical_path_len),
             ..How::default()
         };
@@ -464,7 +475,12 @@ impl Context<'_, '_> {
                 let waits_for_demand = self.help_on_demand && is_whole && !as_what.with_help;
                 let options = LintOptions {
                     again: as_what.again,
-                    wants_fixes: options.wants_fixes && !as_what.without_fixes,
+                    wants_fixes: match as_what.fixes {
+                        Fixes::IfRead => options.wants_fixes,
+                        Fixes::ForProcessor => true,
+                        Fixes::Disabled => false,
+                    },
+                    disables_fixes: as_what.fixes == Fixes::Disabled,
                     // A processor is given the messages.
                     wants_texts_of_fixes: options.wants_texts_of_fixes
                         || as_what.physical_path_len.is_some(),

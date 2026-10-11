@@ -4,7 +4,7 @@
 //! is linted like a file at that path.
 
 use crate::configs::{Flavor, Loaded};
-use crate::lint::Context;
+use crate::lint::{Context, Fixes};
 use crate::paths;
 use crate::results::FileResult;
 use bun_lint::js_plugin::{self, Block, Processor, Refusal, Route, read_messages, write_messages};
@@ -19,8 +19,7 @@ struct Text<'t> {
     /// How much of `path` is the path of the file on the disk.
     physical_path_len: usize,
     text: &'t [u8],
-    /// ESLint's `disableFixes`.
-    without_fixes: bool,
+    fixes: Fixes,
 }
 
 fn thrown(message: Vec<u8>) -> LintResult {
@@ -98,9 +97,9 @@ impl Context<'_, '_> {
                 .concat(),
             );
         }
-        let (len, without_fixes) = (file.physical_path_len, file.without_fixes);
+        let (len, fixes) = (file.physical_path_len, file.fixes);
         // What only the parser of the configuration can read is for ESLint's own `Linter`, which has that parser.
-        self.verify_block_if_read(path, len, text, config, without_fixes)
+        self.verify_block_if_read(path, len, text, config, fixes)
             .unwrap_or_else(|| match loaded.for_eslint {
                 Some(_) => {
                     let it = Text { path, text, ..file };
@@ -168,7 +167,10 @@ impl Context<'_, '_> {
         let path = paths::to_native(it.path.to_vec());
         let mut lint = |supports_autofix: bool, blocks: Vec<Block>| {
             let file = Text {
-                without_fixes: it.without_fixes || !supports_autofix,
+                fixes: match supports_autofix && it.fixes != Fixes::Disabled {
+                    true => Fixes::ForProcessor,
+                    false => Fixes::Disabled,
+                },
                 ..it
             };
             let mut lists = vec![b'['];
@@ -218,7 +220,7 @@ impl Context<'_, '_> {
             path: &path,
             physical_path_len: it.physical_path_len,
             text: it.text,
-            without_fixes: it.without_fixes,
+            without_fixes: it.fixes == Fixes::Disabled,
         };
         let configuration = config.for_eslint.as_deref().unwrap_or(&for_eslint.whole);
         match (self.js_plugins).lint_with_eslint(configuration, &for_eslint.run, text, &|id| {
@@ -271,20 +273,30 @@ impl Context<'_, '_> {
         config: &Arc<ResolvedConfig>,
         on_circular_fixes: &dyn Fn(&[u8]),
     ) -> FileResult {
-        let without_fixes = !self.lint_options().wants_fixes;
+        let reads_fixes = self.lint_options().wants_fixes;
         let mut deprecated = None;
         let mut verify = |text: &[u8]| {
             let it = Text {
                 path: path_to_verify,
                 physical_path_len: path_to_verify.len(),
                 text,
-                without_fixes,
+                fixes: Fixes::IfRead,
             };
-            if loaded.routes(config, path_to_verify) != Route::Eslint {
-                return self.verify_routed(loaded, it, config);
+            let mut result = match loaded.routes(config, path_to_verify) {
+                Route::Eslint => {
+                    let (result, used) = self.verify_with_eslint(loaded, it, config);
+                    deprecated = used;
+                    result
+                }
+                _ => self.verify_routed(loaded, it, config),
+            };
+            // ESLint and a processor have them whoever reads them.
+            if !reads_fixes {
+                for message in result.messages.iter_mut().chain(&mut result.suppressed) {
+                    message.fix = None;
+                    message.suggestions = Vec::new();
+                }
             }
-            let (result, used) = self.verify_with_eslint(loaded, it, config);
-            deprecated = used;
             result
         };
         let mut result = self.verify_text_by(

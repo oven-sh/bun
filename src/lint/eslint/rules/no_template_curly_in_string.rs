@@ -200,9 +200,7 @@ impl Rule for NoTemplateCurlyInString {
 
     #[inline]
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if member.flags().contains(Flags::STRING_NAME) {
-            check_key(member.key(), cx);
-        }
+        check_key(member.key(), cx);
     }
 
     #[inline]

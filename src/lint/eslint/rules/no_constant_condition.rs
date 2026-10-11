@@ -1,4 +1,3 @@
-use super::no_constant_binary_expression::is_variable;
 use bun_lint::prelude::*;
 
 /// Disallow constant expressions in conditions.
@@ -25,10 +24,6 @@ fn has_yield_from(statement: Stmt, from: u32) -> bool {
         .is_some_and(|func| func.yields().any(|it| within.contains(it.span())))
 }
 
-fn is_constant(test: Expr) -> bool {
-    !is_variable(test) && ast_utils::is_constant(test, true)
-}
-
 /// For oxlint the parentheses around a test are part of it.
 fn place(test: Expr) -> Span {
     if test.file().language().is_oxlint { test.outer_span() } else { test.span() }
@@ -36,10 +31,8 @@ fn place(test: Expr) -> Span {
 
 impl NoConstantCondition {
     #[inline(never)]
-    fn check<'a>(test: Expr<'a>, cx: &Cx<'a, Self>) {
-        if ast_utils::is_constant(test, true) {
-            cx.report(place(test), UNEXPECTED);
-        }
+    fn report<'a>(test: Expr<'a>, cx: &Cx<'a, Self>) {
+        cx.report(place(test), UNEXPECTED);
     }
 
     #[inline(never)]
@@ -58,7 +51,7 @@ impl NoConstantCondition {
         };
         // oxlint looks for a `yield` only with the default option.
         let looks_for_yield = !cx.language().is_oxlint || self.check_loops == CheckLoops::AllExceptWhileTrue;
-        if is_constant(test) && !(looks_for_yield && has_yield_from(statement, from)) {
+        if ast_utils::is_constant(test, true) && !(looks_for_yield && has_yield_from(statement, from)) {
             cx.report(place(test), UNEXPECTED);
         }
     }
@@ -93,17 +86,17 @@ impl Rule for NoConstantCondition {
     #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some((test, ..)) = e.as_cond()
-            && !is_variable(test)
+            && ast_utils::is_constant(test, true)
         {
-            Self::check(test, cx);
+            Self::report(test, cx);
         }
     }
 
     #[inline]
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.as_if() {
-            Some((test, ..)) if is_variable(test) => {}
-            Some((test, ..)) => Self::check(test, cx),
+            Some((test, ..)) if ast_utils::is_constant(test, true) => Self::report(test, cx),
+            Some(_) => {}
             None => self.check_loop(statement, cx),
         }
     }

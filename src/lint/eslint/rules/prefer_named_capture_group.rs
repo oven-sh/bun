@@ -152,9 +152,7 @@ impl Rule for PreferNamedCaptureGroup {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Regex]);
-        // What `RegExp` is reached from. Finding the calls takes resolving every name of the file.
-        let names = ["RegExp", "global", "globalThis", "self", "window"];
-        if file.has_exprs([ExprTag::Call, ExprTag::New]) && file.mentions_any(&names) { on.finish() } else { on }
+        if file.has_exprs([ExprTag::Call, ExprTag::New]) { on.finish() } else { on }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

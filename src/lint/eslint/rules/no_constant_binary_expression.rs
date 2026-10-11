@@ -266,55 +266,6 @@ fn is_constant_operand(a: Expr<'_>, b: Expr<'_>, is_strict: bool) -> bool {
             })
 }
 
-/// Whether `is_constant` plainly does not hold for `e`, in whatever position: by what it is, if it is no `Binary`.
-fn is_variable_operand(mut e: Expr<'_>) -> bool {
-    while e.unary_op() == Some(UnOp::Not)
-        && let Some(operand) = e.operand()
-    {
-        e = operand;
-    }
-    match e.tag() {
-        ExprTag::Dot | ExprTag::Index | ExprTag::This => true,
-        ExprTag::Ident => !e.is_ident("undefined"),
-        ExprTag::Call => !e.callee().is_some_and(|it| it.is_ident("Boolean")),
-        _ => false,
-    }
-}
-
-/// The same, also by an operand of an operator that computes.
-fn is_variable_result(e: Expr<'_>) -> bool {
-    match e.binary_op() {
-        None => is_variable_operand(e),
-        Some(BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma) => false,
-        Some(_) => e.left().is_some_and(is_variable_operand) || e.right().is_some_and(is_variable_operand),
-    }
-}
-
-/// The same, also by both operands of a logical operator, down the left operands.
-pub(super) fn is_variable(mut e: Expr<'_>) -> bool {
-    while let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) {
-        match op {
-            BinOp::Comma => return false,
-            BinOp::And | BinOp::Or | BinOp::Nullish if !is_variable_result(right) => return false,
-            BinOp::And | BinOp::Or | BinOp::Nullish => {}
-            _ if is_variable_operand(right) => return true,
-            _ => {}
-        }
-        e = left;
-    }
-    is_variable_operand(e)
-}
-
-/// The same for the left operand of each link of a chain, of which it does not go down the whole.
-fn is_variable_link(e: Expr<'_>) -> bool {
-    match e.binary_op() {
-        Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
-            e.left().is_some_and(is_variable_result) && e.right().is_some_and(is_variable_result)
-        }
-        _ => is_variable_result(e),
-    }
-}
-
 /// ESLint's `isStaticLiteral`.
 fn is_static_literal(e: Expr<'_>) -> bool {
     if matches!(e.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call) {
@@ -382,7 +333,8 @@ impl Rule for NoConstantBinaryExpression {
             return;
         };
         let may_be_constant = match op {
-            BinOp::And | BinOp::Or => !is_variable_link(left),
+            // That is all of the test.
+            BinOp::And | BinOp::Or => is_constant_in(left, true, &mut cx.state),
             BinOp::Nullish => !matches!(left.tag(), ExprTag::Dot | ExprTag::Index),
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => may_be_static_literal(left) && may_be_static_literal(right),
             _ => [left, right].into_iter().any(|it| may_be_null_or_boolean(it) || may_be_always_new(it)),
@@ -440,11 +392,9 @@ impl NoConstantBinaryExpression {
         let (left_place, right_place) = if cx.language().is_oxlint { (e, e) } else { (left, right) };
         match op {
             BinOp::And | BinOp::Or => {
-                if is_constant_in(left, true, &mut cx.state) {
-                    cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
-                        .data("property", "truthiness")
-                        .data("operator", bin_op_text(op));
-                }
+                cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
+                    .data("property", "truthiness")
+                    .data("operator", bin_op_text(op));
             }
             BinOp::Nullish => {
                 if has_constant_nullishness(left, false) {

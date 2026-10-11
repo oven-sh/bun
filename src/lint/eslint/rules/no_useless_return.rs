@@ -317,7 +317,8 @@ fn what_is_known<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
         return Some(if is_executed { Known::Useful } else { Known::Nothing });
     }
     match parent {
-        Node::Func(_) if list.is_some() => Some(Known::Useless),
+        // A `return` in a static block is an error.
+        Node::Func(func) if list.is_some() && func.kind() != FnKind::StaticBlock => Some(Known::Useless),
         Node::Stmt(parent) => match parent.tag() {
             StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => Some(Known::Useful),
             StmtTag::If => None,

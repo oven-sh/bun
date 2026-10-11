@@ -486,6 +486,8 @@ impl<'e> Host<'e> {
     }
 
     /// The same. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if not all of it.
+    /// `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is part of what a
+    /// rule does.
     pub fn run_on_block<'a>(
         &self,
         file: &'a File<'a>,

@@ -70,6 +70,11 @@ fn has_other_line_breaks(text: &[u8]) -> bool {
     false
 }
 
+#[inline]
+fn is_method(func: Func) -> bool {
+    matches!(func.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor)
+}
+
 /// What is counted once in a file, when it is needed.
 #[derive(Default)]
 pub struct Counts<'a> {
@@ -130,8 +135,7 @@ impl Rule for MaxLinesPerFunction {
 
     #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        let is_method = || matches!(func.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor);
-        if func.has_body() || cx.language().is_oxlint && is_method() {
+        if func.has_body() || cx.language().is_oxlint && is_method(func) {
             self.add_candidate(func, cx);
         }
     }
@@ -157,7 +161,7 @@ impl MaxLinesPerFunction {
         // For oxlint a method of a class is a function also if it has no body.
         let is_method_without_body = || {
             cx.language().is_oxlint
-                && matches!(func.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor)
+                && is_method(func)
                 && matches!(func.owner(), Node::Member(member) if matches!(member.parent(), Node::Class(_)))
         };
         if !ast_utils::is_function_with_body(func) && !is_method_without_body() {
@@ -176,7 +180,7 @@ impl MaxLinesPerFunction {
         }
         let is_iife = || match (func.owner(), func.kind()) {
             (_, FnKind::Method | FnKind::Getter | FnKind::Setter) => false,
-            (Node::Expr(e), _) => e.parent().as_expr().and_then(Expr::as_call).is_some_and(|call| call.callee() == e),
+            (Node::Expr(e), _) => ast_utils::is_callee(e),
             _ => false,
         };
         if self.counts_iifes || !is_iife() {

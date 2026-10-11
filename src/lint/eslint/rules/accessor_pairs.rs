@@ -163,14 +163,6 @@ impl Rule for AccessorPairs {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let is_argument_or_value = match e.parent() {
-            Node::Expr(parent) => parent.tag() == ExprTag::Call,
-            Node::Prop(_) => true,
-            _ => false,
-        };
-        if !is_argument_or_value {
-            return;
-        }
         let Some(props) = e.as_object() else {
             return;
         };

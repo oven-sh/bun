@@ -89,8 +89,11 @@ pub struct LintOptions<'o> {
     pub allow_inline_config: bool,
     /// `--report-unused-disable-directives-severity`, which overrides the configuration.
     pub report_unused_disable_directives: Option<Severity>,
-    /// Whether anything reads [`LintMessage::fix`] and [`LintMessage::suggestions`].
+    /// Whether anything reads [`LintMessage::fix`] and [`LintMessage::suggestions`]. If not, the rules here make none. A rule in
+    /// JavaScript is asked all the same, as by ESLint and by oxlint: what its functions do shows, and they can throw.
     pub wants_fixes: bool,
+    /// ESLint's `disableFixes`: no rule is asked for a fix or a suggestion.
+    pub disables_fixes: bool,
     /// Whether anything reads the texts of these. If not, they are empty: see `Sink::drops_texts_of_fixes`.
     pub wants_texts_of_fixes: bool,
     /// Whether anything reads [`LintMessage::help`].
@@ -133,6 +136,7 @@ impl Default for LintOptions<'_> {
             allow_inline_config: true,
             report_unused_disable_directives: None,
             wants_fixes: true,
+            disables_fixes: false,
             wants_texts_of_fixes: true,
             wants_help: true,
             wants_messages: true,
@@ -644,6 +648,7 @@ impl<S: RuleSet> Linter<S> {
             }));
         }
         let before_js = problems.len();
+        let wants_fixes = options.wants_fixes && !options.disables_fixes;
         // First, for the variables that they mark as used.
         if let (Some(host), Some(settings), None) =
             (options.js_plugins, &config.js_settings, options.again)
@@ -665,14 +670,14 @@ impl<S: RuleSet> Linter<S> {
                     file,
                     settings,
                     &enabled,
-                    options.wants_fixes,
+                    !options.disables_fixes,
                     options.physical_path_len,
                 ) {
                     Ok(reports) => {
                         problems.reserve(reports.len());
                         for report in reports {
                             if let Some(rule) = running_js.get(report.rule as usize) {
-                                problems.push(js_message(report, rule));
+                                problems.push(js_message(report, rule, wants_fixes));
                             }
                         }
                     }
@@ -737,7 +742,7 @@ impl<S: RuleSet> Linter<S> {
             true => comments.iter().any(|it| is_directive(&it)),
             false => !disable_directives.is_empty(),
         };
-        let wants_places = options.wants_places || options.wants_fixes || has_directives;
+        let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
         file.sink.wants_help.set(options.wants_help);
         file.sink.drops_messages.set(!options.wants_messages);
@@ -754,7 +759,7 @@ impl<S: RuleSet> Linter<S> {
                 severity: slot.severity,
             })
         };
-        let mut diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
+        let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
         if let Some(thrown) = file.sink.thrown.take() {
             let said = [&thrown.error[..], b"\nOccurred while linting ", file.path()];
             let mut said = said.concat();
@@ -851,7 +856,7 @@ impl<S: RuleSet> Linter<S> {
                         file,
                         settings,
                         &enabled,
-                        options.wants_fixes,
+                        !options.disables_fixes,
                         options.physical_path_len,
                     )
                 }
@@ -864,7 +869,7 @@ impl<S: RuleSet> Linter<S> {
                         let (rule, id) = back.get(it.rule as usize)?;
                         Some(LintMessage {
                             rule_id: Some(id.clone()),
-                            ..js_message(it, rule)
+                            ..js_message(it, rule, wants_fixes)
                         })
                     };
                     problems.extend(reports.into_iter().filter_map(of_rule));
@@ -940,7 +945,7 @@ impl<S: RuleSet> Linter<S> {
         if has_directives {
             apply_comments(
                 report_unused,
-                options.wants_fixes,
+                wants_fixes,
                 options.wants_suppressions,
                 &mut problems,
             );
@@ -1037,7 +1042,8 @@ fn to_message(
     }
 }
 
-fn js_message(report: js_plugin::Report, rule: &RunningJs) -> LintMessage {
+/// `wants_fixes`: [`LintOptions::wants_fixes`]
+fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) -> LintMessage {
     let id = report.message_id;
     LintMessage {
         rule_id: Some(RuleId::Js(Arc::clone(&rule.configured.rule))),
@@ -1048,8 +1054,10 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs) -> LintMessage {
         column: report.column,
         end: report.end,
         is_fatal: false,
-        fix: report.fix,
-        suggestions: (report.suggestions.into_iter().map(Into::into)).collect(),
+        fix: report.fix.filter(|_| wants_fixes),
+        suggestions: (report.suggestions.into_iter().filter(|_| wants_fixes))
+            .map(Into::into)
+            .collect(),
         suppressions: Vec::new(),
         comments_apply_at: None,
         details: None,

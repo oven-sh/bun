@@ -732,6 +732,167 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // ESLint 10.12.0 and oxlint 1.87.0 call `fix`, and the `fix` of each suggestion, when a problem is reported, whoever reads what
+  // they return.
+  describe("a rule is asked for its fixes whatever is printed", () => {
+    const rules = `{
+      "fix-throws": {
+        meta: { fixable: "code" },
+        create: context => ({
+          VariableDeclaration: node =>
+            context.report({ node, message: "bad", fix() { throw new Error("The fixer threw."); } }),
+        }),
+      },
+      "suggestion-throws": {
+        meta: { hasSuggestions: true },
+        create: context => ({
+          VariableDeclaration: node =>
+            context.report({ node, message: "bad", suggest: [{ desc: "do", fix() { throw new Error("The suggestion threw."); } }] }),
+        }),
+      },
+      "not-fixable": {
+        create: context => ({
+          VariableDeclaration: node => context.report({ node, message: "bad", fix: fixer => fixer.remove(node) }),
+        }),
+      },
+      counts: {
+        meta: { fixable: "code" },
+        create(context) {
+          let calls = 0;
+          return {
+            VariableDeclaration: node => context.report({ node, message: "counted", fix: () => (calls++, null) }),
+            "Program:exit": node => context.report({ node, message: "calls: " + calls }),
+          };
+        },
+      },
+    }`;
+    const forEslint = (rule: string, severity = "error") => ({
+      "eslint.config.mjs": `export default [{ plugins: { demo: { rules: ${rules} } }, rules: { "demo/${rule}": "${severity}" } }];`,
+      "a.js": "var a = 1;\n",
+    });
+    // Named, for `--silent` is a flag of oxlint.
+    const eslint = (rule: string, flags: string[], severity?: string) =>
+      lint(forEslint(rule, severity), ["-c", "eslint.config.mjs", ...flags, "a.js"]);
+    const thrown = (rule: string, message: string) => ({
+      stdout: "",
+      stderr: `error: ${message}\nOccurred while linting <dir>/a.js:1\nRule: "demo/${rule}"`,
+      exitCode: 2,
+    });
+    const said = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof lint>>) => ({ stdout, stderr, exitCode });
+
+    test.each([
+      [[]],
+      [["-f", "unix"]],
+      [["-f", "json"]],
+      [["-f", "pretty"]],
+      [["--silent"]],
+      [["--quiet", "-f", "unix"]],
+    ])(
+      "one that throws ends the run of ESLint's flavour: %j",
+      async flags => {
+        const [fix, suggestion, notFixable] = await Promise.all(
+          ["fix-throws", "suggestion-throws", "not-fixable"].map(rule => eslint(rule, flags)),
+        );
+        expect(said(fix)).toEqual(thrown("fix-throws", "The fixer threw."));
+        expect(said(suggestion)).toEqual(thrown("suggestion-throws", "The suggestion threw."));
+        expect(said(notFixable)).toEqual(
+          thrown("not-fixable", 'Fixable rules must set the `meta.fixable` property to "code" or "whitespace".'),
+        );
+      },
+      timeout,
+    );
+
+    test(
+      "with --quiet a rule that warns does not run, unless the warnings are counted",
+      async () => {
+        const [quiet, counted] = await Promise.all([
+          eslint("fix-throws", ["--quiet", "-f", "unix"], "warn"),
+          eslint("fix-throws", ["--quiet", "--max-warnings", "0", "-f", "unix"], "warn"),
+        ]);
+        expect({ stdout: quiet.stdout, exitCode: quiet.exitCode }).toEqual({ stdout: "", exitCode: 0 });
+        expect(said(counted)).toEqual(thrown("fix-throws", "The fixer threw."));
+      },
+      timeout,
+    );
+
+    test(
+      "what a fixer does shows in what the rule reports afterwards",
+      async () => {
+        const { stdout, exitCode } = await eslint("counts", ["-f", "unix"]);
+        expect(stdout).toBe(
+          "<dir>/a.js:1:1: counted [Error/demo/counts]\n<dir>/a.js:1:1: calls: 1 [Error/demo/counts]\n\n2 problems",
+        );
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.each([[[]], [["-f", "unix"]], [["-f", "json"]]])(
+      "one that throws is reported for the file in oxlint's flavour: %j",
+      async flags => {
+        const { stdout, exitCode } = await lint(
+          {
+            ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/fix-throws": "error" } }),
+            "plugin.mjs": `export default { meta: { name: "demo" }, rules: ${rules} };`,
+            "a.js": "var a = 1;\n",
+          },
+          flags,
+        );
+        expect(stdout).toContain("Error running JS plugin.");
+        expect(stdout).toContain("The fixer threw.");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // `supportsAutofix: false` is ESLint's `disableFixes`: then, and only then, no rule is asked.
+    test.each([
+      [true, 'fix={"range":[10,10],"text":"/**/"} suggestions=1', 'fix={"range":[0,3],"text":"let"} suggestions=0'],
+      [false, "fix=null suggestions=0", "fix=null suggestions=0"],
+    ])(
+      "`postprocess` is given the fixes whatever is printed: supportsAutofix: %j",
+      async (supportsAutofix, ofPlugin, builtIn) => {
+        const files = {
+          "eslint.config.mjs": `
+            const fixes = {
+              meta: { fixable: "code", hasSuggestions: true },
+              create: context => ({
+                VariableDeclaration: node =>
+                  context.report({
+                    node,
+                    message: "bad",
+                    fix: fixer => fixer.insertTextAfter(node, "/**/"),
+                    suggest: [{ desc: "remove", fix: fixer => fixer.remove(node) }],
+                  }),
+              }),
+            };
+            const shown = it => " fix=" + JSON.stringify(it.fix ?? null) + " suggestions=" + (it.suggestions?.length ?? 0);
+            const processor = {
+              supportsAutofix: ${supportsAutofix},
+              preprocess: text => [{ text, filename: "0.js" }],
+              postprocess: lists => lists.flat().map(it => ({ ...it, message: it.message + shown(it) })),
+            };
+            export default [
+              { files: ["**/*.x"], processor },
+              { plugins: { demo: { rules: { fixes } } }, rules: { "demo/fixes": "error", "no-var": "error" } },
+            ];`,
+          "a.x": "var a = 1;\n",
+        };
+        const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.x"]);
+        expect(stdout).toBe(
+          [
+            `<dir>/a.x:1:1: bad ${ofPlugin} [Error/demo/fixes]`,
+            `<dir>/a.x:1:1: Unexpected var, use let or const instead. ${builtIn} [Error/no-var]`,
+            "",
+            "2 problems",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+  });
+
   test(
     "a plugin that cannot be loaded",
     async () => {

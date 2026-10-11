@@ -102,17 +102,21 @@ fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
 }
 
 impl NoWarningComments {
+    /// `rest` without the one `/[\s<decoration>]/iu` that it starts with.
+    fn after_space_or_decoration<'t>(&self, rest: &'t [u8]) -> Option<&'t [u8]> {
+        match strings::js_whitespace_len(rest) {
+            0 => (self.decoration.iter()).find_map(|c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c))),
+            len => rest.get(len..),
+        }
+    }
+
     /// `/^[\s<decoration>]*term\b/iu`
     fn starts_with(&self, term: &[u8], value: &[u8]) -> bool {
         let mut rest = value;
         while !is_here(term, rest) {
-            let after_decoration = |c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c));
-            rest = match strings::js_whitespace_len(rest) {
-                0 => match self.decoration.iter().find_map(after_decoration) {
-                    Some(rest) => rest,
-                    None => return false,
-                },
-                len => rest.get(len..).unwrap_or_default(),
+            rest = match self.after_space_or_decoration(rest) {
+                Some(rest) => rest,
+                None => return false,
             };
         }
         true
@@ -125,13 +129,9 @@ impl NoWarningComments {
             if !first.is_ascii() || first_bytes.contains(&first.to_ascii_lowercase()) {
                 return true;
             }
-            let after_decoration = |c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c));
-            rest = match strings::js_whitespace_len(rest) {
-                0 => match self.decoration.iter().find_map(after_decoration) {
-                    Some(rest) => rest,
-                    None => return false,
-                },
-                len => rest.get(len..).unwrap_or_default(),
+            rest = match self.after_space_or_decoration(rest) {
+                Some(rest) => rest,
+                None => return false,
             };
         }
         false

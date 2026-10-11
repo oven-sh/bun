@@ -398,8 +398,13 @@ fn check_and_lint_in(
         );
         context.timing.add(&context.timing.rules, started);
         // A task of the checker can run again: the last time counts.
-        if let Some(linted) = linted {
-            results.lock()[at] = Some(linted);
+        match linted {
+            Some(linted) => results.lock()[at] = Some(linted),
+            // It is linted without types. Of a tree that is too deep for the parser the linter says so itself.
+            None if !checker.hir(file).ran_out_of_stack && checker.bound(file).ran_out_of_stack => {
+                context.out_of_stack.lock().push(path.to_vec());
+            }
+            None => {}
         }
     };
     let command_line = bun_sema_driver::parse_command_line(&[b"--skipLibCheck"], &environment.cwd);

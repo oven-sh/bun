@@ -158,7 +158,7 @@ function serializeConfigObject(given, index) {
   const config = withoutMatchers(given);
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
   const out = serialize(rest);
-  if (!isOfOxlint && Object.getPrototypeOf(rest.rules ?? null) === Object.prototype) {
+  if (!isOfOxlint && rest.rules != null && Object.getPrototypeOf(rest.rules) === Object.prototype) {
     for (const id of Object.keys(out.rules)) out.rules[id] = serializeRule(rest.rules[id]);
   }
   if (typeof out.basePath === "string") out.basePath = portablePath(out.basePath, require("node:path"));

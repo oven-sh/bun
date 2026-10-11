@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `core/importType.js` of eslint-plugin-import: what kind of module a file means by a name.
 
 use crate::import_package_path::file_package_path;

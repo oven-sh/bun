@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `moduleVisitor` of eslint-module-utils: every place where a file names a module. And
 //! `isStaticRequire` of eslint-plugin-import.
 

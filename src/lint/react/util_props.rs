@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/props.js` of eslint-plugin-react.
 //!
 //! | upstream | here |

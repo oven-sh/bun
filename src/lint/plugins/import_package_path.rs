@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `pkgUp` and `readPkgUp` of eslint-module-utils, `core/packagePath.js` of eslint-plugin-import:
 //! the `package.json` that a file belongs to. What they answer is absolute and separated by `/`.
 

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! How the rules of eslint-plugin-import call minimatch 3.1.5 with options, or with the working directory.
 //! `minimatch(path, pattern)` alone is `Pattern::new(pattern, Options::MINIMATCH_3).matches(path)`.
 

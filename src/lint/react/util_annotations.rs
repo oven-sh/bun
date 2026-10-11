@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/annotations.js` of eslint-plugin-react.
 
 use bun_lint::prelude::*;

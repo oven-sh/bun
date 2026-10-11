@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `resolve` of eslint-module-utils: the file that a file means by a name, for the resolvers of
 //! `settings["import/resolver"]`.
 

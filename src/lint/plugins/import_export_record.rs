@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! What `ExportMapBuilder.parse` of eslint-plugin-import 2.32.0 reads out of one file, without what it asks the context: the
 //! resolver, `esModuleInterop` and `import/docstyle` are applied by who asks. And `unambiguous` of eslint-module-utils.
 
@@ -80,10 +79,6 @@ pub(crate) struct Reexport {
 pub(crate) struct Dependency {
     /// `source.value`
     pub(crate) specifier: Box<[u8]>,
-    /// `source.loc.start`
-    pub(crate) line: u32,
-    pub(crate) column: u32,
-    pub(crate) is_only_importing_types: bool,
     /// It replaces what `imports` has for the path.
     pub(crate) is_dynamic: bool,
     /// Each once.
@@ -315,18 +310,13 @@ impl<'a> Visitor<'a> {
         &mut self,
         stmt: Stmt<'a>,
         source: Option<&'a [u8]>,
-        is_only_importing_types: bool,
         imported_specifiers: Vec<ImportedSpecifier>,
     ) {
-        let (Some(specifier), Some(span)) = (source, stmt.module_specifier_span()) else {
+        let (Some(specifier), Some(_)) = (source, stmt.module_specifier_span()) else {
             return;
         };
-        let start = self.file.position(span.start);
         self.export_map.imports.push(Dependency {
             specifier: specifier.into(),
-            line: start.line,
-            column: start.column,
-            is_only_importing_types,
             is_dynamic: false,
             imported_specifiers,
         });
@@ -340,9 +330,6 @@ impl<'a> Visitor<'a> {
             n.namespace().map(|_| ImportedSpecifier::Namespace),
         ];
         let mut imported_specifiers: Vec<_> = whole.into_iter().flatten().collect();
-        let specifiers_only_importing_types = imported_specifiers.is_empty()
-            && !named.is_empty()
-            && named.iter().all(ImportSpec::is_type_only);
         self.imported.clear();
         for specifier in named {
             let imported = specifier.imported().name();
@@ -350,12 +337,7 @@ impl<'a> Visitor<'a> {
                 imported_specifiers.push(ImportedSpecifier::Named(imported.bytes().into()));
             }
         }
-        self.capture_dependency(
-            stmt,
-            Some(n.spec().bytes()),
-            n.is_type_only() || specifiers_only_importing_types,
-            imported_specifiers,
-        );
+        self.capture_dependency(stmt, Some(n.spec().bytes()), imported_specifiers);
     }
 
     /// `processSpecifier`, of an `ExportSpecifier`.
@@ -402,13 +384,9 @@ impl<'a> Visitor<'a> {
                     self.add(object, identifier);
                 }
             }
-            StmtKind::ExportStar {
-                spec,
-                alias,
-                type_only,
-            } => {
+            StmtKind::ExportStar { spec, alias, .. } => {
                 let source = spec.map_or(&b""[..], Name::bytes);
-                self.capture_dependency(ast_node, Some(source), type_only, Vec::new());
+                self.capture_dependency(ast_node, Some(source), Vec::new());
                 self.export_map.star_exports.push(source.into());
                 if let Some(exported) = alias {
                     self.set(Some(exported.bytes()), Docs::default(), When::Always);
@@ -423,7 +401,7 @@ impl<'a> Visitor<'a> {
             StmtKind::ExportNamed(export) => {
                 let source =
                     (export.has_from()).then(|| export.spec().map_or(&b""[..], Name::bytes));
-                self.capture_dependency(ast_node, source, false, Vec::new());
+                self.capture_dependency(ast_node, source, Vec::new());
                 for specifier in export.items() {
                     self.process_specifier(specifier, source);
                 }
@@ -563,16 +541,10 @@ fn process_dynamic_imports<'a>(file: &'a File<'a>, imports: &mut Vec<Dependency>
         }
     }
     utils::sort::sort_unstable_by_key(&mut sources, |it| it.0);
-    imports.extend(sources.iter().map(|&(at, value)| {
-        let start = file.position(at);
-        Dependency {
-            specifier: value.bytes().into(),
-            line: start.line,
-            column: start.column,
-            is_only_importing_types: false,
-            is_dynamic: true,
-            imported_specifiers: vec![ImportedSpecifier::Namespace],
-        }
+    imports.extend(sources.iter().map(|&(_, value)| Dependency {
+        specifier: value.bytes().into(),
+        is_dynamic: true,
+        imported_specifiers: vec![ImportedSpecifier::Namespace],
     }));
     has_dynamic_imports
 }

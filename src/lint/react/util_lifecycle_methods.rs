@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/lifecycleMethods.js` of eslint-plugin-react.
 
 pub(crate) const INSTANCE: [&str; 16] = [

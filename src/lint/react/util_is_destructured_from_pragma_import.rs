@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/isDestructuredFromPragmaImport.js` of eslint-plugin-react.
 
 use crate::util_variable::{get_latest_variable_definition, get_variable_from_context};

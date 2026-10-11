@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `sourceCode.isSpaceBetweenTokens`, which ESLint 10 no longer has: eslint-plugin-react gets it
 //! from `fixupPluginRules` of @eslint/compat. And `markVariableAsUsed` of `lib/util/eslint.js`.
 

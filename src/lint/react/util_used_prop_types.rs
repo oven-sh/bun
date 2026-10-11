@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/usedPropTypes.js` of eslint-plugin-react: the visitor that fills
 //! `Component::used_prop_types` and `Component::ignore_unused_prop_types_validation`.
 //!

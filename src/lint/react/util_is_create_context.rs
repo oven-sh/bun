@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/isCreateContext.js` of eslint-plugin-react.
 
 use crate::util_is_create_element::is_member_called;

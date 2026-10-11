@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/propTypes.js` of eslint-plugin-react: `propTypesInstructions`, the visitor that stores
 //! in each component which props it declares. What reads a declaration is in
 //! `util_prop_types_declaration`.

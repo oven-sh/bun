@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/componentUtil.js` of eslint-plugin-react.
 //!
 //! The whole of an optional chain is taken for the `MemberExpression` or the `CallExpression`, not

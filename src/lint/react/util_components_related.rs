@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `getRelatedComponent` of `lib/util/Components.js` of eslint-plugin-react, without the list that
 //! it adds to: that is `Components::get_related_component`.
 

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/Components.js` of eslint-plugin-react from `getWrapperFunctions` on: what detects the
 //! components of a file. The list that it fills is [`ComponentList`].
 //!

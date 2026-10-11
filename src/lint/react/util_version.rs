@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/version.js` of eslint-plugin-react.
 //!
 //! What `semver.coerce` returns has no prerelease, so `testReactVersion(context, range)` is a

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `class Components` of `lib/util/Components.js` of eslint-plugin-react: the list of the
 //! components of a file. Nothing here detects one.
 //!

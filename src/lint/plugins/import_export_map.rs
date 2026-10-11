@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `ExportMap` and `ExportMapBuilder` of eslint-plugin-import 2.32.0: what another file exports, as it is on the disk,
 //! for the settings, the resolvers and the `esModuleInterop` of the file that asks.
 
@@ -192,11 +191,6 @@ impl<'a> ExportMap<'a> {
     /// `parseGoal === 'ambiguous'`
     pub(crate) fn is_ambiguous(self) -> bool {
         !self.facts.record.is_module
-    }
-
-    /// The keys of `reexports`.
-    pub(crate) fn reexport_names(self) -> impl Iterator<Item = &'a [u8]> {
-        self.reexports().map(|it| it.key().unwrap_or(UNDEFINED))
     }
 
     fn id(self) -> Id {

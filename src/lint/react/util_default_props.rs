@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/defaultProps.js` of eslint-plugin-react: the visitor that finds the `defaultProps` of
 //! the components.
 //!

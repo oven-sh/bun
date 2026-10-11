@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/propTypes.js` of eslint-plugin-react: what reads a declaration of prop types, be it
 //! made of calls of `PropTypes` or a type of TypeScript. The listeners are in `util_prop_types`.
 //!

@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `settings["import/.."]` of eslint-plugin-import, as `ignore.js`, `getParserPath`, `importType.js`
 //! and the `ExportMap` read them. A value of a type that they throw on says nothing here.
 
@@ -49,11 +48,6 @@ fn truthy(value: Option<&Json>) -> Option<&Json> {
 fn strings_in(json: Option<&Json>) -> impl Iterator<Item = &[u8]> {
     let items = json.and_then(Json::as_array).unwrap_or_default();
     items.iter().filter_map(Json::as_str)
-}
-
-/// The strings of an array.
-pub(crate) fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
-    strings_in(json).collect()
 }
 
 /// Whether `require(name)` gives `package`: `name` is the package, or what `require.resolve` says, a file in it.

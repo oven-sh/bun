@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/makeNoMethodSetStateRule.js` of eslint-plugin-react.
 
 use crate::util_ast::name_of_key;

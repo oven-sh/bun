@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/pragma.js` of eslint-plugin-react. Each reads the settings, and the first all the
 //! comments: ask once for a file, in `register`.
 

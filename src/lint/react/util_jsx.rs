@@ -1,4 +1,3 @@
-#![allow(dead_code)] // until every rule of the plugin is written
 //! `lib/util/jsx.js` of eslint-plugin-react.
 //!
 //! | upstream | here |
@@ -55,11 +54,6 @@ pub(crate) fn is_fragment(jsx: Jsx<'_>, react_pragma: &[u8], fragment_pragma: &[
         } => is_jsx_identifier(obj, react_pragma) && property.bytes() == fragment_pragma,
         _ => is_jsx_identifier(name, fragment_pragma),
     })
-}
-
-/// `isJSXAttributeKey`
-pub(crate) fn is_jsx_attribute_key(prop: Prop<'_>) -> bool {
-    prop.is_jsx_attribute() && prop.key().is_some_and(|it| it.is("key"))
 }
 
 /// `isJSXValue` in `isReturningJSX`. Nothing in it has an effect, so the order does not show.

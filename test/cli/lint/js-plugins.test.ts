@@ -2027,7 +2027,10 @@ export default {
     async () => {
       const files = {
         "eslint.config.mjs": `export default [{ rules: { "no-var": "error", "no-debugger": "error" } }];`,
-        "a.js": Buffer.from("/* \xf0\x9f\x98 \xe2\x82 \xf0\x9f \xc3 \xed\xa0\x80 \xff */ debugger; var x = 1;\n", "latin1"),
+        "a.js": Buffer.from(
+          "/* \xf0\x9f\x98 \xe2\x82 \xf0\x9f \xc3 \xed\xa0\x80 \xff */ debugger; var x = 1;\n",
+          "latin1",
+        ),
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
       // What ESLint 10.12 says.

@@ -50,19 +50,35 @@ impl ConfigError {
         }
     }
 
-    /// `problem`, in the configuration file at `config_path`, which may be absent. The syntax tree
-    /// of the file is left in `session`.
-    pub fn of_problem(
+    /// `problems`, in the configuration file at `config_path`, which may be absent. It is parsed
+    /// once for all of them: each of thousands of `paths` can have one. The syntax tree of the file
+    /// is left in `session`.
+    pub fn of_problems<'a>(
         host: &dyn Host,
         session: &Session,
         config_path: &[u8],
-        problem: &crate::verify::Problem,
-    ) -> ConfigError {
-        let at = (!config_path.is_empty())
+        problems: impl IntoIterator<Item = &'a Problem>,
+    ) -> Vec<ConfigError> {
+        let mut problems = problems.into_iter().peekable();
+        if problems.peek().is_none() {
+            return Vec::new();
+        }
+        let file = (!config_path.is_empty())
             .then(|| host.read(config_path))
             .flatten()
-            .and_then(|text| TsConfigSourceFile::parse(host, session, text))
-            .and_then(|file| problem.span_in(&file))
+            .and_then(|text| TsConfigSourceFile::parse(host, session, text));
+        problems
+            .map(|problem| Self::of_problem(file.as_ref(), config_path, problem))
+            .collect()
+    }
+
+    fn of_problem(
+        file: Option<&TsConfigSourceFile>,
+        config_path: &[u8],
+        problem: &Problem,
+    ) -> ConfigError {
+        let at = file
+            .and_then(|file| problem.span_in(file))
             .map(|(from, to)| (config_path.to_vec(), from, to));
         ConfigError {
             code: problem.code,
@@ -585,12 +601,17 @@ fn get_extended_config(
             extended_config_cache,
             &mut errors,
         );
+        // What is made of the files of a cycle depends on where it was entered. typescript-go keeps
+        // it, so there the options of a project depend on which project was loaded first.
+        let is_in_cycle = errors.iter().any(|error| error.code == 18000);
         let entry = Rc::new(ExtendedConfigCacheEntry {
             extended_config,
             errors,
         });
-        let mut cache = extended_config_cache.0.borrow_mut();
-        cache.insert(path, Rc::clone(&entry));
+        if !is_in_cycle {
+            let mut cache = extended_config_cache.0.borrow_mut();
+            cache.insert(path, Rc::clone(&entry));
+        }
         entry
     });
     errors.extend(entry.errors.iter().cloned());
@@ -786,12 +807,13 @@ fn project_from_raw(
     let mut options = Options::from_compiler_options(base, &compiler);
     options.use_case_sensitive_file_names = host.is_case_sensitive();
     options.verify(&compiler, config_path);
-    errors.extend(
-        options
-            .problems
-            .iter()
-            .map(|problem| ConfigError::of_problem(host, session, config_path, problem)),
-    );
+    let about_options = &options.problems;
+    errors.extend(ConfigError::of_problems(
+        host,
+        session,
+        config_path,
+        about_options,
+    ));
     // `hasZeroOrNoReferences`
     let has_no_references = raw.references.items.as_ref().is_none_or(Vec::is_empty);
     // Errors outside `compilerOptions`.
@@ -840,9 +862,10 @@ fn project_from_raw(
         b"exclude",
         &mut problems,
     ));
-    errors.extend(problems.iter().map(|problem| ConfigError {
+    let outside_options = ConfigError::of_problems(host, session, config_path, &problems);
+    errors.extend(outside_options.into_iter().map(|error| ConfigError {
         is_about_options: false,
-        ..ConfigError::of_problem(host, session, config_path, problem)
+        ..error
     }));
     let validated_files = raw.files.strings();
     let literal = substitute_all(validated_files.clone());

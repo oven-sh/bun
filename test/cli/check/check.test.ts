@@ -755,9 +755,113 @@ describe.concurrent("bun check", () => {
         `export const probe: never = [${imported.map((_, at) => `v${at}`)}] as const;\n`,
     });
     const { stdout, exitCode } = await check(dir);
-    expect(stdout).toBe(
-      `a.ts(7,14): error TS2322: Type 'readonly [2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`,
-    );
+    expect(stdout).toBe(`a.ts(7,14): error TS2322: Type '[2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`);
+    expect(exitCode).toBe(1);
+  });
+
+  // It is declared in one place if only one of them declares it: the property of a mapped type has no declaration of
+  // its own. Then it has the modifiers that are written there. What `tsc` reports.
+  test("`readonly`, `private` and `protected` on a property that several members of an intersection or a union have", async () => {
+    using dir = tempDir("bun-check", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          noEmit: true,
+          target: "ES2022",
+          module: "ESNext",
+          moduleResolution: "bundler",
+          moduleDetection: "force",
+          skipLibCheck: true,
+          types: [],
+        },
+        include: ["*.ts"],
+      }),
+      "index.ts": `interface I {
+  readonly id: string
+}
+type Writable<T> = { -readonly [K in keyof T]: T[K] }
+
+declare const a: Writable<I> & I
+declare const b: { id: string } & I
+
+a.id = 'x'
+b.id = 'x'
+`,
+      "swapped.ts": `declare class C {
+  readonly id: string
+}
+type Writable<T> = { -readonly [K in keyof T]: T[K] }
+
+declare const a: C & Writable<C>
+a.id = 'x'
+// @ts-expect-error
+a.id = 'y'
+`,
+      "readers.ts": `interface I {
+  readonly id?: string
+}
+type Writable<T> = { -readonly [K in keyof T]: T[K] }
+declare const a: Writable<I> & I
+
+delete a.id
+;[a.id] = ['x']
+declare const copy: { [K in keyof typeof a]: (typeof a)[K] }
+export const probe: never = copy
+`,
+      "protected.ts": `declare class Account {
+  protected balance: number
+  private pin: string
+  owner: string
+}
+declare const a: Record<'balance' | 'pin', unknown> & Account
+
+a.balance
+a.pin
+`,
+      "union.ts": `declare class Account {
+  protected balance: number
+  owner: string
+}
+type Writable<T> = { -readonly [K in keyof T]: T[K] }
+// @ts-expect-error
+declare const u: Account | Writable<Pick<Account, 'balance'>>
+u.balance
+`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout.split("\n")).toEqual([
+      `index.ts(9,3): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
+      `protected.ts(8,3): error TS2445: Property 'balance' is protected and only accessible within class 'Account' and its subclasses.`,
+      `protected.ts(9,3): error TS2341: Property 'pin' is private and only accessible within class 'Account'.`,
+      `readers.ts(7,8): error TS2704: The operand of a 'delete' operator cannot be a read-only property.`,
+      `readers.ts(8,5): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
+      `readers.ts(10,14): error TS2322: Type '{ readonly id?: string | undefined; }' is not assignable to type 'never'.`,
+      `swapped.ts(7,3): error TS2540: Cannot assign to 'id' because it is a read-only property.`,
+      `union.ts(8,3): error TS2445: Property 'balance' is protected and only accessible within class 'Account' and its subclasses.`,
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Each error about an entry parsed the file again and looked through all the entries: 18 s for 4,000 in a release build.
+  // `tsc` takes 75 s for 60,000.
+  test("a configuration file with an error in each of many `paths`", async () => {
+    const n = isDebug || isASAN ? 2_000 : 60_000;
+    const notRelative = Array.from({ length: n }, (_, i) => `"@m/${i}": ["one.ts"]`);
+    const twoStars = Array.from({ length: n }, (_, i) => `"@*/${i}/*": ["./one.ts"]`);
+    using dir = tempDir("bun-check", {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es5"], "paths": {
+${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
+      "a.ts": `export const bad: number = "";\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    const lines = stdout.split("\n");
+    expect(lines.length).toBe(2 * n);
+    expect([lines[0], lines[n - 1], lines[n], lines[2 * n - 1]]).toEqual([
+      `tsconfig.json(2,10): error TS5090: Non-relative paths are not allowed. Did you forget a leading './'?`,
+      `tsconfig.json(${n + 1},${`"@m/${n - 1}": [`.length + 1}): error TS5090: Non-relative paths are not allowed. Did you forget a leading './'?`,
+      `tsconfig.json(${n + 2},1): error TS5061: Pattern '@*/0/*' can have at most one '*' character.`,
+      `tsconfig.json(${2 * n + 1},1): error TS5061: Pattern '@*/${n - 1}/*' can have at most one '*' character.`,
+    ]);
     expect(exitCode).toBe(1);
   });
 
@@ -827,16 +931,23 @@ describe.concurrent("bun check", () => {
         ]),
       ],
       [
-        "a cycle that the projects enter at each of its files",
+        // What `tsc -p` reports for each. In `tsc -b` it depends on which project was loaded first.
+        "a cycle that the projects enter at each of its files gives each the options that it has alone",
         {
-          "a.json": `{ "extends": "./b.json", "compilerOptions": { ${common} } }`,
-          "b.json": `{ "extends": "./a.json", "compilerOptions": { "strict": false } }`,
+          "a.json": `{ "extends": "./b.json", "compilerOptions": { ${common}, "noUnusedLocals": true } }`,
+          "b.json": `{ "extends": "./a.json", "compilerOptions": { "noImplicitAny": false } }`,
           ...projects(
-            ["a", "b", "a"].map(name => own(`"../${name}.json"`, `, "composite": true, "types": [], "lib": ["es5"]`)),
-            bad,
+            ["a", "b", "a", "b"].map(name =>
+              own(`"../${name}.json"`, `, "composite": true, "types": [], "lib": ["es5"]`),
+            ),
+            `function unused() {}\nexport function f(x) { return x; }\n` + bad,
           ),
         },
-        [0, 1, 2].flatMap(i => [`error TS18000: Circularity detected while resolving configuration: {0}`, isBad(i)]),
+        [0, 1, 2, 3].flatMap(i => [
+          `error TS18000: Circularity detected while resolving configuration: {0}`,
+          `p${i}/a.ts(1,10): error TS6133: 'unused' is declared but its value is never read.`,
+          isBad(i, 3),
+        ]),
       ],
       [
         "`null` unsets what one of them inherits, and a file is missing for two",
@@ -1660,8 +1771,7 @@ describe.concurrent("bun check", () => {
     test.skipIf(process.platform === "win32")("a named pipe in the project directory is ignored", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
       // Reading a pipe that nobody writes to blocks forever.
-      // Not `spawnSync`: the tests that run beside this one have children that wait for their input.
-      expect(await Bun.spawn(["mkfifo", join(String(dir), "pipe.ts")]).exited).toBe(0);
+      expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe.ts")]).exitCode).toBe(0);
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
         `"a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,

@@ -611,6 +611,10 @@ pub struct IndexInfo {
     pub key: TypeId,
     pub value: TypeId,
     pub readonly: bool,
+    /// It is `enumNumberIndexInfo`, the reverse mapping from a number to the name of a member of an
+    /// enum. `keyof` and inference leave it out, in a type that has it from an enum object as well
+    /// (`getRestType`).
+    pub is_enum_number_index_info: bool,
     /// The index signature that declares it (`getIndexInfosOfIndexSymbol`).
     pub declaration: Option<(FileId, crate::hir::MemberId)>,
     /// The declarations with computed names that it is built from (`getObjectLiteralIndexInfo`):
@@ -626,6 +630,7 @@ impl IndexInfo {
             key,
             value,
             readonly,
+            is_enum_number_index_info: false,
             declaration: None,
             components: ComponentsId::NONE,
         }
@@ -674,9 +679,10 @@ pub struct Shape<'s> {
     /// For a type created by `createDefaultPropertyWrapperForModule`: `originalSymbol`, the module,
     /// which is the `Parent` of its `default`.
     pub default_of: Option<Sym>,
-    /// For a type created by `getSpreadType`, which creates a new type on every call: its left and
-    /// right operands.
-    pub spread_of: Option<(TypeId, TypeId)>,
+    /// For a type created by `getSpreadType` or `getRestType`, which create a new type on every
+    /// call: the left and the right operand of the spread, or the type that is destructured and
+    /// `never`.
+    pub created_from: Option<(TypeId, TypeId)>,
     /// The number of types `getSpreadType` had created for the same object literal before this
     /// one. `mapType` iterates over a union of named unions by its origin, which is not the order
     /// of `CompareTypes`.
@@ -795,7 +801,7 @@ impl<'s> Shape<'s> {
             instantiation_expression: None,
             instantiation_target: None,
             default_of: None,
-            spread_of: None,
+            created_from: None,
             spread_rank: 0,
             properties_of: None,
             single_signature_arguments: None,
@@ -3326,6 +3332,7 @@ follow_struct!(IndexInfo {
     key,
     value,
     readonly,
+    is_enum_number_index_info,
     declaration,
     components
 });
@@ -3348,7 +3355,7 @@ follow_struct!(Shape<'_> {
     instantiation_expression,
     instantiation_target,
     default_of,
-    spread_of,
+    created_from,
     spread_rank,
     properties_of,
     single_signature_arguments,
@@ -3597,7 +3604,7 @@ clone_in_struct!(Shape {
     instantiation_expression,
     instantiation_target,
     default_of,
-    spread_of,
+    created_from,
     spread_rank,
     properties_of,
     single_signature_arguments,

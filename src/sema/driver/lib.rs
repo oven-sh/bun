@@ -43,6 +43,7 @@ use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -1753,7 +1754,8 @@ fn check_project_of(
             // `tscCompilation`: "these are unrecoverable errors--exit to report them as
             // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
             Err(errors) => {
-                let errors = errors.iter().map(|it| of_config_error(disk, config, it));
+                let mut last = None;
+                let errors = (errors.iter()).map(|it| of_config_error(disk, config, it, &mut last));
                 match request.build {
                     true => report
                         .diagnostics
@@ -2188,9 +2190,10 @@ fn check_with_references(
         (index_of.get(&*to_path(&root_config_path, is_case_sensitive))).and_then(|it| *it);
     let about_references: Vec<Vec<ConfigError>> = (projects.iter())
         .map(|p| {
-            (verify_project_references(&p.project, &resolved).iter())
-                .map(|(config_path, problem)| {
-                    ConfigError::of_problem(host, &configuration, config_path, problem)
+            (verify_project_references(&p.project, &resolved).chunk_by(|a, b| a.0 == b.0))
+                .flat_map(|in_one_file| {
+                    let problems = in_one_file.iter().map(|it| &it.1);
+                    ConfigError::of_problems(host, &configuration, in_one_file[0].0, problems)
                 })
                 .collect()
         })
@@ -2318,8 +2321,9 @@ fn check_with_references(
             // `upToDateStatusTypeSolution`: there is no program. `buildProject` reports each of
             // `GetConfigFileParsingDiagnostics` as it comes.
             let errors = project.errors.iter().filter(|e| !e.is_about_options);
+            let mut last = None;
             let diagnostics: Vec<Diagnostic> = errors
-                .map(|error| of_config_error(host, &project.config_path, error))
+                .map(|error| of_config_error(host, &project.config_path, error, &mut last))
                 .collect();
             return Ok((!diagnostics.is_empty()).then(|| Report {
                 diagnostics,
@@ -2626,8 +2630,17 @@ fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
     });
 }
 
+/// The path, the text and the line starts of the file that the last error given to `of_config_error`
+/// is in: each of thousands of `paths` can have one.
+type LastConfigFile = Option<(Vec<u8>, Cow<'static, [u8]>, Vec<u32>)>;
+
 /// `error`, of the project whose configuration file is at `config_path`.
-fn of_config_error(host: &dyn Host, config_path: &[u8], error: &ConfigError) -> Diagnostic {
+fn of_config_error(
+    host: &dyn Host,
+    config_path: &[u8],
+    error: &ConfigError,
+    last: &mut LastConfigFile,
+) -> Diagnostic {
     let mut reported = global(error.code, &error.args);
     reported.message_chain = message_chain_of(&error.chain);
     for chain in &reported.message_chain {
@@ -2637,16 +2650,23 @@ fn of_config_error(host: &dyn Host, config_path: &[u8], error: &ConfigError) -> 
         return reported;
     }
     let path = error.at.as_ref().map_or(config_path, |at| &at.0[..]);
-    let Some(text) = host.read(path) else {
+    if last.as_ref().is_none_or(|last| last.0 != path) {
+        let Some(text) = host.read(path) else {
+            return reported;
+        };
+        let starts = compute_ecma_line_starts(&text);
+        *last = Some((path.to_vec(), text, starts));
+    }
+    let Some((_, text, starts)) = last else {
         return reported;
     };
-    let starts = compute_ecma_line_starts(&text);
-    let related = error.related.iter().map(|(from, to, code, args)| {
-        located(path, &text, &starts, *from, *to, global(*code, args))
-    });
+    let related = error
+        .related
+        .iter()
+        .map(|(from, to, code, args)| located(path, text, starts, *from, *to, global(*code, args)));
     reported.related = related.collect();
     match error.at {
-        Some((_, from, to)) => located(path, &text, &starts, from, to, reported),
+        Some((_, from, to)) => located(path, text, starts, from, to, reported),
         None => reported,
     }
 }
@@ -2686,7 +2706,9 @@ fn check_named_files(
     let conditions = request.conditions.iter().map(|it| it.to_vec());
     project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
-    let of_configuration = |error: &ConfigError| of_config_error(host, &config_path, error);
+    let last = RefCell::new(None);
+    let of_configuration =
+        |error: &ConfigError| of_config_error(host, &config_path, error, &mut last.borrow_mut());
     // `GetDiagnosticsOfAnyProgram`: configuration file parsing errors are reported regardless of
     // any other diagnostics.
     report.diagnostics.extend(
@@ -2772,14 +2794,9 @@ fn check_named_files(
     }
     let trace = program.files.resolution_trace.iter();
     report.resolution_trace = trace.map(|it| global(it.code, &it.args).text).collect();
-    about_options.extend(
-        program
-            .files
-            .program_problems()
-            .iter()
-            .map(|problem| ConfigError::of_problem(host, &session, &config_path, problem))
-            .map(|error| of_configuration(&error)),
-    );
+    let problems = program.files.program_problems();
+    let problems = ConfigError::of_problems(host, &session, &config_path, problems.iter());
+    about_options.extend(problems.iter().map(of_configuration));
 
     let checking = Instant::now();
     let mut to_check: Vec<FileId> = (0..program.files.modules.len())

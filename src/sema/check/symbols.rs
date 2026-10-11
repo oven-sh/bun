@@ -2299,7 +2299,7 @@ impl<'p, 's> Checker<'p, 's> {
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(ty);
         shape.mapper = self.mapper_of_object_literal_type(ty);
         if let TypeData::Synth(widened) = self.data(ty) {
-            (shape.spread_of, shape.spread_rank) = (widened.spread_of, widened.spread_rank);
+            (shape.created_from, shape.spread_rank) = (widened.created_from, widened.spread_rank);
             shape.has_no_instantiable_symbol = widened.has_no_instantiable_symbol;
             shape.pattern_at = widened.pattern_at;
             if widened.literal == Literalness::Partial {
@@ -3285,6 +3285,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         shape.symbol = assigned_symbol;
         shape.is_object_rest_type = true;
+        shape.created_from = Some((ty, TypeId::NEVER));
         self.synth(shape)
     }
 

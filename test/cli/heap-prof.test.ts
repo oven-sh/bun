@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
@@ -262,7 +262,8 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
 // A default-named profile takes its sequence number when the profiler starts,
 // as in node, so a default-named snapshot written while the program runs gets
 // a later number. The snapshots are "{}": only their names matter here.
-test.each([
+// Sequential on a debug build, where six children at once exceed the 5 s of `bun bd test`.
+test.concurrentIf(!isDebug).each([
   {
     flags: ["--cpu-prof"],
     snapshots: 2,

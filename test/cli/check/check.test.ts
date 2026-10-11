@@ -22358,6 +22358,46 @@ describe.concurrent("--check", () => {
     });
   });
 
+  // A page that an argument names is checked, also when its path is a pattern that matches another page: `{a,b}` matches
+  // `a`, and `p{1}.html` matches `p1.html`.
+  test.each([
+    ["{a,b}/app", ["./index.html"], ["index"]],
+    ["{a,b}/app", ["index.html"], ["index"]],
+    ["{a,b}/app", ["./index.html", "./about.html"], ["index", "about"]],
+    ["{a,b}/app", ["./index.html", "<root>/{a,b}/app/about.html"], ["index", "about"]],
+    [".", ["./{a,b}/app/index.html"], ["index"]],
+    [".", ["<root>/{a,b}/app/index.html"], ["index"]],
+    ["names", ["./p{1}.html"], ["named"]],
+    ["names", ["./index.html", "./p{1}.html"], ["index", "named"]],
+    // A pattern that matches its own text stays a pattern: it finds the page with that name too.
+    ...(isWindows ? [] : [["stars", ["./*.html"], ["index", "named"]] as [string, string[], string[]]]),
+  ])("bun --check in %s, %j: the scripts of the pages that are named", async (cwd, pages, checked) => {
+    const page = (script: string) => `<!doctype html>\n<script type="module" src="${script}"></script>\n`;
+    const wrong = (name: string) => `export const ${name}: number = "1";\n`;
+    using dir = project({
+      ...(isWindows ? {} : { "stars/*.html": page("./named.ts"), "stars/index.html": page("./index.ts") }),
+      "stars/index.ts": wrong("index"),
+      "stars/named.ts": wrong("named"),
+      "{a,b}/app/index.html": page("./index.ts"),
+      "{a,b}/app/about.html": page("./about.ts"),
+      "{a,b}/app/index.ts": wrong("index"),
+      "{a,b}/app/about.ts": wrong("about"),
+      "a/app/index.html": page("./other.ts"),
+      "a/app/about.html": page("./other.ts"),
+      "a/app/other.ts": wrong("other"),
+      "names/index.html": page("./index.ts"),
+      "names/p{1}.html": page("./named.ts"),
+      "names/p1.html": page("./other.ts"),
+      "names/index.ts": wrong("index"),
+      "names/named.ts": wrong("named"),
+      "names/other.ts": wrong("other"),
+    });
+    const args = pages.map(it => it.replace("<root>", String(dir)));
+    const { stderr, exitCode } = await run(join(String(dir), cwd), ["--check", ...args]);
+    const reported = ["index", "about", "named", "other"].filter(it => stderr.includes(`${it}.ts(1,14): error TS2322`));
+    expect({ reported, exitCode }).toEqual({ reported: checked, exitCode: 1 });
+  });
+
   // A directory is the tsconfig.json in it, as for `tsc -p`.
   test.each([
     ["tsconfig.build.json", "tsconfig.build.json", "."],

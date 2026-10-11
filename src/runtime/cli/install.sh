@@ -284,7 +284,7 @@ bash)
         tilde_bash_config=$(tildify "$bash_config")
 
         if [[ -w $bash_config ]]; then
-            if ! grep -Fq '# bun' "$bash_config"; then
+            if ! grep -Fxq '# bun' "$bash_config"; then
                 {
                     echo -e '\n# bun'
 

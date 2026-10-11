@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { isBroken, isMacOS, tempDir } from "harness";
+import { isBroken, isMacOS, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { closeSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { routes, static_responses } from "./bun-serve-static-helpers";
@@ -412,6 +413,64 @@ describe("a Response whose .body was read stays the program's after it is used a
       // The route has its own share of the payload.
       expect(await (await fetch(new URL("/a", server.url))).text()).toBe(text);
     });
+  });
+
+  // The share has the window and the type of the payload behind the stream.
+  // [name, body, the bytes it holds, the Content-Type the route serves]
+  const windows: [string, (dir: string) => BodyInit, string, string | null][] = [
+    ["a slice of a Blob", () => new Blob([text]).slice(6, 10), "byte", null],
+    ["a Blob with a type", () => new Blob([text], { type: "text/html" }), text, "text/html;charset=utf-8"],
+    [
+      "a slice of a Blob with a type",
+      () => new Blob([text], { type: "text/html" }).slice(6, 10, "text/x-part"),
+      "byte",
+      "text/x-part",
+    ],
+    ["a slice of a Bun.file()", dir => Bun.file(join(dir, "a.txt")).slice(6, 10), "byte", "text/plain;charset=utf-8"],
+    ["a ReadableStream that closed with nothing in it", () => new ReadableStream({ start: c => c.close() }), "", null],
+  ];
+  test.each(windows)("over %s, the route and the stream give the same bytes", async (name, body, bytes, type) => {
+    using dir = tempDir("serve-route-body-window", { "a.txt": text });
+    const response = new Response(body(String(dir)));
+    const stream = response.body!;
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/a": response },
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    const served = await fetch(new URL("/a", server.url));
+    expect({
+      served: await served.text(),
+      type: served.headers.get("content-type"),
+      length: served.headers.get("content-length"),
+      locked: stream.locked,
+      sameStream: response.body === stream,
+      bodyUsed: response.bodyUsed,
+    }).toEqual({
+      served: bytes,
+      type,
+      length: String(bytes.length),
+      locked: false,
+      sameStream: true,
+      bodyUsed: false,
+    });
+    expect(await new Response(stream).text()).toBe(bytes);
+  });
+
+  // Two readers would compete for the bytes of a pipe. So the route takes the
+  // pipe over, as it did before, and the stream is spent.
+  test.skipIf(isWindows)("a pipe behind .body goes to the route, not to two readers", async () => {
+    using dir = tempDir("serve-route-fifo", {});
+    const fifo = join(String(dir), "body.fifo");
+    mkfifo(fifo);
+    const response = new Response(Bun.file(fifo));
+    const stream = response.body!;
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/a": response },
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    expect(stream.locked).toBe(true);
   });
 
   // A network body that arrives after `.body` was read sits in a byte stream.

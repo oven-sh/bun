@@ -1187,15 +1187,12 @@ describe.concurrent("what keeps the process alive: a request that stops the read
 
   // Node.js: [], because its parser stops the reads with that chunk and is gone before they start again.
   test(
-    "an Upgrade request whose body ends in the read that fills it: the tunnel behind it reads",
+    "an Upgrade request whose chunked body ends in the read that fills it: the tunnel behind it reads",
     () =>
       expectRow(
-        "an Upgrade request whose body ends in the read that fills it",
+        "an Upgrade request whose chunked body ends in the read that fills it",
         { CLOSE: "before" },
-        {
-          events: ["still alive"],
-          received: 0,
-        },
+        { events: ["still alive"], received: 0 },
       ),
     timeout,
   );

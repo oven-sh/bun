@@ -184,8 +184,10 @@ const rows = {
     start() {
       setImmediate(() => {
         row.socket.pause();
-        row.first.end("first");
-        row.res.end("done");
+        after(4, () => {
+          row.first.end("first");
+          row.res.end("done");
+        });
       });
       row.client.once("data", () => after(6, rest));
     },
@@ -236,18 +238,25 @@ const rows = {
       ifStillAlive(() => row.client.end(Buffer.alloc(2000, "x")));
     },
   },
-  // The last bytes of the body come in the read that fills the request: the tunnel behind them reads.
-  "an Upgrade request whose body ends in the read that fills it": {
+  // A chunk of the body fills the request, and the read that brought it also ends the body: the tunnel behind it reads.
+  "an Upgrade request whose chunked body ends in the read that fills it": {
     upgrade: true,
     own: true,
-    length: full.length + 500,
+    head:
+      "POST / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      `${first.length.toString(16)}\r\n${first}\r\n`,
     start() {
+      const almost = Buffer.alloc(full.length - first.length - 500, "x");
       row.req.pause();
       row.socket.write(switching);
-      row.client.once("data", () => row.client.write(Buffer.alloc(full.length - first.length - 500, "x")));
+      row.client.once("data", () => {
+        row.client.write(`${almost.length.toString(16)}\r\n`);
+        row.client.write(almost);
+        row.client.write("\r\n");
+      });
       (function untilAlmostFull() {
         if (row.req.readableLength < full.length - 500) return setImmediate(untilAlmostFull);
-        row.client.write(Buffer.alloc(1000, "x"));
+        row.client.write(`${first.length.toString(16)}\r\n${first}\r\n0\r\n\r\n`);
         rest();
         ifStillAlive(() => row.client.end());
       })();
@@ -317,12 +326,12 @@ const rows = {
   "pipelined requests behind bytes that the socket holds": {
     head: get("/first"),
     before: capacity,
+    peerPaused: true,
     request(req, res) {
       result.events.push(req.url);
       if (req.url === "/first") {
         if (CLOSE !== "after") close();
         row.socket = req.socket;
-        row.client.pause();
         res.end("first");
         // A little more than the connection takes.
         row.socket.write(Buffer.alloc(row.capacity + unread.length, "y"));
@@ -581,6 +590,8 @@ function onListening() {
   }));
   // Only the server's side of the connection may keep this process alive.
   client.unref();
+  // Before its first read: what the connection takes is then what `capacity` measured.
+  if (kind.peerPaused) client.pause();
   client.on("error", () => {});
   client.once(secure ? "secureConnect" : "connect", () => {
     if (kind.head) return void client.write(kind.head);

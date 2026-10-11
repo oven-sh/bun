@@ -273,14 +273,22 @@ describe("a Bun.file() that was asked before its file existed uploads the file",
         if (isLinux) {
           // An upload of 0 bytes through sendfile left its descriptor for the file open.
           const target = realpathSync(p);
-          const openOnFile = readdirSync("/proc/self/fd").filter(fd => {
-            try {
-              return readlinkSync(`/proc/self/fd/${fd}`) === target;
-            } catch {
-              return false;
-            }
-          });
-          expect(openOnFile).toEqual([]);
+          const openOnFile = () =>
+            readdirSync("/proc/self/fd").filter(fd => {
+              try {
+                return readlinkSync(`/proc/self/fd/${fd}`) === target;
+              } catch {
+                return false;
+              }
+            });
+          // fetch() closes the descriptor when it drops the request. That can be one turn of the event loop after the response.
+          const deadline = performance.now() + 5000;
+          let open = openOnFile();
+          while (open.length > 0 && performance.now() < deadline) {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            open = openOnFile();
+          }
+          expect(open).toEqual([]);
         }
 
         // A handle with a file behind it is a body, so GET refuses it. The asked handle passed as "no body".

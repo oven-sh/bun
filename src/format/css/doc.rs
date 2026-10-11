@@ -36,6 +36,13 @@ pub(crate) enum Alignment {
     Spaces(u32),
     /// `align("> ", ..)`
     Text(&'static str),
+    /// `ifBreak(align(" ".repeat(broken), x), align(" ".repeat(flat), x), { groupId })`, with `x` in it once: a document
+    /// of Prettier can have the same thing in two places, these cannot.
+    IfBreak {
+        group_id: u32,
+        broken: u32,
+        flat: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -702,14 +709,15 @@ impl Elements {
     }
 
     pub(crate) fn start_indent(&mut self, command: IndentCommand) {
-        let index = self
-            .indents
-            .iter()
-            .position(|it| *it == command)
-            .unwrap_or_else(|| {
-                self.indents.push(command);
-                self.indents.len() - 1
-            });
+        let known = match command {
+            // There is no other for the same group.
+            IndentCommand::Align(Alignment::IfBreak { .. }) => None,
+            _ => self.indents.iter().position(|it| *it == command),
+        };
+        let index = known.unwrap_or_else(|| {
+            self.indents.push(command);
+            self.indents.len() - 1
+        });
         self.start(Element::StartIndent(index as u32));
     }
 
@@ -770,7 +778,7 @@ impl Elements {
         self.end(Element::Nothing);
     }
 
-    /// Where the next element goes, for `remove_lines_from` and `duplicate`.
+    /// Where the next element goes, for `remove_lines_from`.
     pub(crate) fn position(&mut self) -> usize {
         self.settled = self.list.len();
         self.settled
@@ -963,29 +971,6 @@ impl Elements {
             Doc::LineSuffixBoundary => self.line_suffix_boundary(),
             Doc::BreakParent => self.break_parent(),
             Doc::Line(line) => self.line(*line),
-        }
-    }
-
-    /// Writes `self.list[start..end]`, which is complete, once more.
-    pub(crate) fn duplicate(&mut self, start: usize, end: usize) {
-        self.mark_groups();
-        let shift = (self.list.len() - start) as u32;
-        for index in start..end {
-            let mut element = self.list[index];
-            match &mut element {
-                Element::StartGroup { end, .. }
-                | Element::StartItem { end }
-                | Element::Else { end }
-                | Element::StartLineSuffix { end } => {
-                    *end += shift;
-                }
-                Element::StartIfBreak { otherwise, end, .. } => {
-                    *otherwise += shift;
-                    *end += shift;
-                }
-                _ => {}
-            }
-            self.list.push(element);
         }
     }
 
@@ -1291,7 +1276,11 @@ impl<'o> Printer<'o> {
                 value.extend_from_slice(text.as_bytes());
                 length += text.len();
             }
-            IndentCommand::Dedent | IndentCommand::DedentToRoot | IndentCommand::MarkAsRoot => {}
+            // The printer has made spaces of the first.
+            IndentCommand::Align(Alignment::IfBreak { .. })
+            | IndentCommand::Dedent
+            | IndentCommand::DedentToRoot
+            | IndentCommand::MarkAsRoot => {}
         }
         if matches!(command, IndentCommand::Indent | IndentCommand::Align(_)) {
             before_last = Some(indent);
@@ -1507,7 +1496,20 @@ impl<'o> Printer<'o> {
                 Element::TextGroup => should_remeasure = false,
                 Element::StartIndent(command) => {
                     self.frames.push(frame);
-                    indent = self.make_indent(indent, elements.indents[command as usize]);
+                    let command = match elements.indents[command as usize] {
+                        IndentCommand::Align(Alignment::IfBreak {
+                            group_id,
+                            broken,
+                            flat,
+                        }) => IndentCommand::Align(Alignment::Spaces(
+                            match group_mode(&self.group_modes, group_id) {
+                                Some(Mode::Break) => broken,
+                                _ => flat,
+                            },
+                        )),
+                        command => command,
+                    };
+                    indent = self.make_indent(indent, command);
                 }
                 Element::StartGroup {
                     end: group_end,

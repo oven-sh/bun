@@ -122,7 +122,7 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::S
             true
         }
         // The lines of a block quote start with a text, which the other documents have no way to say.
-        Doc::Align(Alignment::Text(_), _)
+        Doc::Align(Alignment::Text(_) | Alignment::IfBreak { .. }, _)
         | Doc::Dedent(_)
         | Doc::DedentToRoot(_)
         | Doc::IfBreak { .. }

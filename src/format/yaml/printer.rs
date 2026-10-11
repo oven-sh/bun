@@ -1276,20 +1276,25 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.out.end_group();
         self.out.end_group();
 
+        // `ifBreak([hardline, ": ", align(2, value)], align(tabWidth, [colon, value]), { groupId })`. The value is
+        // written once: with it in both, a mapping in a mapping would be written four times, and so on.
         self.out.start_if_break(group_id);
         self.out.hard_line();
         self.out.token(": ");
-        self.start_align(2);
-        let value_start = self.out.position();
-        self.print(value_id, is_last_descendant);
-        let value_end = self.out.position();
-        self.out.end_indent();
         self.out.otherwise();
-        self.start_align(self.tab_width);
-        write_colon(self.out);
-        self.out.duplicate(value_start, value_end);
-        self.out.end_indent();
         self.out.end_if_break();
+        self.out
+            .start_indent(IndentCommand::Align(Alignment::IfBreak {
+                group_id,
+                broken: 2,
+                flat: self.tab_width,
+            }));
+        self.out.start_if_break(group_id);
+        self.out.otherwise();
+        write_colon(self.out);
+        self.out.end_if_break();
+        self.print(value_id, is_last_descendant);
+        self.out.end_indent();
         self.out.end_group();
     }
 }

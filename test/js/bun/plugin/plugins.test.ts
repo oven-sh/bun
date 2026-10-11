@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -1259,7 +1259,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     expect(await run(name, source)).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
 
-  // No onLoad is called for a key with no extension and no namespace.
+  // No onLoad is called for a bare name with no '.' and no namespace.
   it("is not found when only the filter of an onLoad that is not called for it matches", async () => {
     const source = `
       try { require.resolve("bare.img"); } catch (error) { console.log("require.resolve()", error.message.split("\\n")[0]); }
@@ -1401,6 +1401,15 @@ describe.concurrent("the registry is not asked for a bare name that onResolve an
     });
   });
 
+  it("whatever the extension of the bare name starts with", async () => {
+    expect(await run("entry.mjs", `console.log((await import("dir/served.1")).default);`)).toEqual({
+      stdout: "onResolve dir/served.1\nonResolve served.1\nserved.1\n",
+      stderr: "",
+      exitCode: 0,
+      asked: ["/not-answered"],
+    });
+  });
+
   it("and onResolve is not asked again about an answer in a namespace", async () => {
     expect(await run("entry.cjs", `console.log(require("moved.namespace").default);`)).toEqual({
       stdout: "onResolve moved.namespace\ninner.js\n",
@@ -1440,7 +1449,7 @@ describe.concurrent("the registry is not asked for a bare name that onResolve an
           name: "answers",
           setup(build) {
             build.onResolve({ filter: /^itself-/ }, logged(({ path }) => ({ path })));
-            build.onResolve({ filter: /\\.virtual$/ }, logged(({ path }) => ({ path: basename(path) })));
+            build.onResolve({ filter: /\\.(virtual|1)$/ }, logged(({ path }) => ({ path: basename(path) })));
             build.onResolve({ filter: /\\.redirect$/ }, logged(({ path }) => ({ path: redirects[path] })));
             build.onResolve({ filter: /\\.declines$/ }, logged(({ path }) => (path === "file.declines" ? { path: "c-package/" + path } : undefined)));
             build.onResolve({ filter: /\\.namespace$/ }, logged(() => ({ path: "inner.js", namespace: "custom" })));
@@ -1450,7 +1459,7 @@ describe.concurrent("the registry is not asked for a bare name that onResolve an
               contents: "export default " + JSON.stringify(path),
               loader: "js",
             }));
-            build.onLoad({ filter: /^(itself-served\\.js|served\\.virtual)$/ }, ({ path }) => ({
+            build.onLoad({ filter: /^(itself-served\\.js|served\\.(virtual|1))$/ }, ({ path }) => ({
               contents: "export default " + JSON.stringify(path),
               loader: "js",
             }));
@@ -1654,4 +1663,376 @@ describe.concurrent("onResolve", () => {
       exitCode: 0,
     });
   });
+});
+
+// A plugin is asked about a path because it is one, however it is spelled: with no extension, with an extension that
+// starts with a digit or an underscore, with a dot or a colon in its query, under a directory with a colon in its name.
+describe.concurrent("a path is in the file namespace", () => {
+  // A colon is not valid in a file name on Windows.
+  const colon = isWindows ? [] : ["with:colon/note.txt"];
+  const names = ["video.3gp", "log.1", "old._bak", "LICENSE", "plain.ts?v=1.2.3", "plain.ts?t=12:30", ...colon];
+  const S = `const S = ${JSON.stringify(names.map(name => "./" + name))};\n`;
+  const files = {
+    ...Object.fromEntries(
+      ["video.3gp", "log.1", "old._bak", "LICENSE", "plain.ts", "tool.1", "worker.1", ...colon].map(name => [
+        "src/" + name,
+        `console.log("from disk");`,
+      ]),
+    ),
+    "plugin.ts": `
+      import { basename, isAbsolute } from "node:path";
+      globalThis.asked = [];
+      Bun.plugin({
+        name: "paths",
+        setup(build) {
+          // (The entry point is asked about by its absolute path.)
+          build.onResolve({ filter: /.*/ }, ({ path }) => void (isAbsolute(path) || asked.push(path)));
+          build.onLoad({ filter: /(\\.3gp|\\.1|\\._bak|LICENSE|note\\.txt)$|plain\\.ts\\?/ }, ({ path }) => ({
+            contents: "console.log(" + JSON.stringify("onLoad " + basename(path.split("?")[0])) + ");",
+            loader: "js",
+          }));
+        },
+      });
+    `,
+  };
+  async function run(name: string, source: string, args = ["--preload", "./plugin.ts", "src/" + name]) {
+    using dir = tempDir("plugin-paths", { ...files, ["src/" + name]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const loaded = names.map(name => "onLoad " + name.split("?")[0].split("/").pop() + "\n").join("");
+  it.each([
+    ["an import statement", "entry.mjs", names.map(name => `import "./${name}";\n`).join("")],
+    ["import()", "entry.mjs", S + `for (const s of S) await import(s);`],
+    ["require()", "entry.cjs", S + `for (const s of S) require(s);`],
+    ["import.meta.require()", "entry.mjs", S + `for (const s of S) import.meta.require(s);`],
+  ])("onResolve and onLoad are asked about it by %s", async (_, name, source) => {
+    expect(await run(name, source + `\nconsole.log("asked", asked.join());`)).toEqual({
+      stdout: loaded + "asked " + names.map(name => "./" + name).join() + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("onResolve is asked about it by what only resolves, and not about what is not a path", async () => {
+    const source = `
+      const S = ["./video.3gp", "./LICENSE", "./plain.ts?v=1.2.3"];
+      const resolvers = {
+        "require.resolve()": s => require.resolve(s),
+        "require.resolve() with paths": s => require.resolve(s, { paths: [import.meta.dir] }),
+        "Bun.resolveSync()": s => Bun.resolveSync(s, import.meta.dir),
+        "import.meta.resolveSync()": s => import.meta.resolveSync(s),
+      };
+      for (const [name, resolve] of Object.entries(resolvers)) {
+        asked.length = 0;
+        S.forEach(s => resolve(s));
+        console.log(name + ":", asked.join());
+      }
+      asked.length = 0;
+      for (const s of [".", "..", "ws", "node:fs", "unregistered:thing.js"]) try { require.resolve(s); } catch {}
+      console.log("not a path:", asked.join());
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout:
+        ["require.resolve()", "require.resolve() with paths", "Bun.resolveSync()", "import.meta.resolveSync()"]
+          .map(name => name + ": ./video.3gp,./LICENSE,./plain.ts?v=1.2.3\n")
+          .join("") + "not a path: \n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("onLoad is asked about it when it is the entry point", async () => {
+    expect(await run("tool.1", `console.log("from disk");`)).toEqual({
+      stdout: "onLoad tool.1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("onLoad is asked about it when it is the entry point of a Worker", async () => {
+    const source = `
+      const worker = new Worker(new URL("./worker.1", import.meta.url).href, { preload: [import.meta.dir + "/../plugin.ts"] });
+      await new Promise(resolve => worker.addEventListener("close", resolve));
+    `;
+    expect(await run("entry.mjs", source, ["src/entry.mjs"])).toEqual({
+      stdout: "onLoad worker.1\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// What onResolve answers is a module if it is on disk or an onLoad is called for it, and onLoad is called for a
+// path whatever its extension is, and in a namespace that starts with '/' if that namespace has an onLoad.
+it.concurrent(
+  "what onResolve answers that is not on disk is a module when it is a path with any extension",
+  async () => {
+    // A colon is not valid in a file name on Windows.
+    const colon = isWindows ? "" : `"colon.virt": { path: absent + "thing:x.abc" },`;
+    using dir = tempDir("plugin-virtual-paths", {
+      "entry.mjs": `
+      import { basename } from "node:path";
+      const absent = import.meta.dir + "/absent/";
+      const answers = {
+        "digit.virt": { path: absent + "thing.3gp" },
+        "none.virt": { path: absent + "thing" },
+        ${colon}
+        "slash.virt": { path: "thing", namespace: "/slash" },
+        "slash-digit.virt": { path: "thing.1", namespace: "/slash" },
+      };
+      Bun.plugin({
+        name: "virtual paths",
+        setup(build) {
+          build.onResolve({ filter: /\\.virt$/ }, ({ path }) => answers[path]);
+          build.onLoad({ filter: /[\\\\/]absent[\\\\/]/ }, ({ path }) => ({
+            exports: { default: "file " + basename(path) },
+            loader: "object",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "/slash" }, ({ path }) => ({
+            exports: { default: "/slash " + path },
+            loader: "object",
+          }));
+        },
+      });
+      const S = [...Object.keys(answers), "/slash:direct"];
+      const imported = [];
+      for (const s of S) imported.push((await import(s)).default);
+      console.log(imported.join());
+      console.log(S.map(s => require(s).default).join());
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const served =
+      [
+        "file thing.3gp",
+        "file thing",
+        ...(isWindows ? [] : ["file thing:x.abc"]),
+        "/slash thing",
+        "/slash thing.1",
+      ].join() + ",/slash direct\n";
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: served + served, stderr: "", exitCode: 0 });
+  },
+);
+
+// The letter of a drive is not a namespace, A and Z included.
+it.concurrent.if(isWindows)("a path that starts with any drive is in the file namespace", async () => {
+  const source = `
+    const answers = { "a.drive": "A:\\\\absent\\\\thing.virt", "z.drive": "Z:\\\\absent\\\\thing.virt" };
+    Bun.plugin({
+      name: "drives",
+      setup(build) {
+        build.onResolve({ filter: /\\.drive$/ }, ({ path }) => ({ path: answers[path] }));
+        build.onLoad({ filter: /thing\\.virt$/ }, ({ path }) => ({ exports: { default: "onLoad " + path }, loader: "object" }));
+      },
+    });
+    console.log(require("a.drive").default, require("z.drive").default);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "onLoad A:\\absent\\thing.virt onLoad Z:\\absent\\thing.virt\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The source of `bun -e` and of `bun -` is in memory, under the key "<cwd>/[eval]" or "<cwd>/[stdin]": not a file.
+// (The name of the working directory has a '.' in it: the key used to be read as a file with an extension then.)
+it.concurrent("onResolve and onLoad are not asked about the [eval] and [stdin] entries", async () => {
+  using dir = tempDir("plugin.eval-entry", {
+    "plugin.ts": `
+      Bun.plugin({
+        name: "catch-all",
+        setup(build) {
+          build.onResolve({ filter: /.*/ }, () => void console.log("onResolve"));
+          build.onLoad({ filter: /.*/ }, () => ({ contents: "console.log('onLoad')", loader: "js" }));
+        },
+      });
+    `,
+  });
+  async function run(args: string[], stdin?: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.ts", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  expect(await Promise.all([run(["-e", `console.log("from -e")`]), run(["-"], `console.log("from stdin")`)])).toEqual([
+    { stdout: "from -e\n", stderr: "", exitCode: 0 },
+    { stdout: "from stdin\n", stderr: "", exitCode: 0 },
+  ]);
+});
+
+// `bun test` asks plugins before it looks for a builtin module, so that `mock.module()` can replace one. The name of
+// a builtin is not a path: an onLoad in the file namespace is not asked about it.
+it.concurrent("under bun test, onLoad is asked about a file with no extension and not about a builtin", async () => {
+  using dir = tempDir("plugin-paths-bun-test", {
+    "LICENSE": "not JavaScript",
+    "plugin.ts": `
+      import { basename } from "node:path";
+      Bun.plugin({
+        name: "a file with no extension, and the names of builtins",
+        setup(build) {
+          build.onLoad({ filter: /LICENSE$|^(ws|undici|bun)$/ }, ({ path }) => ({
+            exports: { default: "onLoad " + basename(path) },
+            loader: "object",
+          }));
+        },
+      });
+    `,
+    "license.test.js": `
+      import { expect, test } from "bun:test";
+      import license from "./LICENSE";
+      test("what onLoad is asked about", () => {
+        expect([license, require("./LICENSE").default]).toEqual(["onLoad LICENSE", "onLoad LICENSE"]);
+        expect([typeof require("ws").WebSocket, typeof require("undici").fetch, typeof require("bun").serve]).toEqual([
+          "function",
+          "function",
+          "function",
+        ]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--preload", "./plugin.ts", "license.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass\n 0 fail\n");
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("what an onResolve callback resolves itself", () => {
+  const files = {
+    "src/helper.js": `module.exports = "helper";`,
+    "src/target.js": `module.exports = "target";`,
+    "src/inner.js": ``,
+    "custom/target.js": ``,
+    "custom/inner.js": ``,
+    "other/inner.js": ``,
+  };
+  async function run(plugin: string, source: string) {
+    using dir = tempDir("plugin-onresolve-nested", { ...files, "src/plugin.cjs": plugin, "src/entry.cjs": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./src/plugin.cjs", "src/entry.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A callback that matches every path is not called again for "./helper", which it would be without end.
+  it("is not asked of onResolve again when it is a path with no extension", async () => {
+    const plugin = `
+      globalThis.asked = [];
+      Bun.plugin({
+        name: "requires a helper",
+        setup(build) {
+          build.onResolve({ filter: /.*/ }, ({ path }) => {
+            asked.push(require("node:path").basename(path));
+            require("./helper");
+          });
+        },
+      });
+    `;
+    expect(await run(plugin, `console.log(require("./target.js"), require("./helper"), asked.join());`)).toEqual({
+      stdout: "target helper entry.cjs,target.js,helper\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is apart from the paths of the require.resolve() that the callback is asked about", async () => {
+    const plugin = `
+      const { join, relative } = require("node:path");
+      const root = join(__dirname, "..");
+      globalThis.nested = [];
+      Bun.plugin({
+        name: "resolves in a callback",
+        setup(build) {
+          build.onResolve({ filter: /target\\.js$/ }, () => {
+            nested.push(require.resolve("./inner.js", { paths: [join(root, "other")] }), Bun.resolveSync("./inner.js", __dirname));
+          });
+        },
+      });
+      globalThis.short = path => relative(root, path).replaceAll("\\\\", "/");
+    `;
+    const source = `
+      const resolved = require.resolve("./target.js", { paths: [require("node:path").join(__dirname, "..", "custom")] });
+      console.log(short(resolved), nested.map(short).join());
+    `;
+    expect(await run(plugin, source)).toEqual({
+      stdout: "custom/target.js other/inner.js,src/inner.js\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// `args.path` is a string of its own. It used to point into the key of the module, which is freed when the module
+// does not load.
+it.concurrent("the path that onLoad is given stays what it was when the module is gone", async () => {
+  const source = `
+    const kept = [], keptInNamespace = [];
+    Bun.plugin({
+      name: "keeps args.path",
+      setup(build) {
+        build.onResolve({ filter: /\\.kept$/ }, ({ path }) => ({ path }));
+        build.onLoad({ filter: /\\.kept$/ }, ({ path }) => { kept.push(path); throw new Error("not loaded"); });
+        build.onResolve({ filter: /\\.kept-in-namespace$/ }, ({ path }) => ({ path, namespace: "kept" }));
+        build.onLoad({ filter: /.*/, namespace: "kept" }, ({ path }) => { keptInNamespace.push(path); throw new Error("not loaded"); });
+      },
+    });
+    const key = (i, extension) => "/absent/a-path-that-is-long-enough-to-have-a-buffer-of-its-own/" + i + extension;
+    for (let i = 0; i < 100; i++) {
+      try { require(key(i, ".kept")); } catch {}
+      try { require(key(i, ".kept-in-namespace")); } catch {}
+    }
+    Bun.gc(true);
+    const others = [];
+    for (let i = 0; i < 5000; i++) others.push("another string that is given the memory that was freed " + i);
+    Bun.gc(true);
+    console.log(
+      kept.length,
+      kept.filter((path, i) => path !== key(i, ".kept")).length,
+      keptInNamespace.length,
+      keptInNamespace.filter((path, i) => path !== key(i, ".kept-in-namespace")).length,
+      others.length,
+    );
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "100 0 100 0 5000\n", stderr: "", exitCode: 0 });
 });

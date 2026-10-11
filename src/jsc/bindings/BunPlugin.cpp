@@ -841,9 +841,12 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const B
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     const auto& builtinNames = WebCore::builtinNames(vm);
+    // `pathString` can borrow the caller's bytes. `args.path` outlives this call: it shares or copies them.
+    auto* pathJS = Bun::toJS(globalObject, *path);
+    RETURN_IF_EXCEPTION(scope, {});
     paramsObject->putDirect(
         vm, builtinNames.pathPublicName(),
-        jsString(vm, pathString));
+        pathJS);
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -1063,6 +1066,17 @@ extern "C" bool Bun__hasOnLoad(Zig::GlobalObject* globalObject, const BunString*
         return false;
     auto pathString = path->toWTFString(BunString::ZeroCopy);
     return group->find(globalObject, pathString);
+}
+
+extern "C" bool Bun__hasPluginNamespace(Zig::GlobalObject* globalObject, bool isOnLoad, const uint8_t* namespacePtr, size_t namespaceLength)
+{
+    const Zig::BunPlugin::Base& plugins = isOnLoad
+        ? static_cast<const Zig::BunPlugin::Base&>(globalObject->onLoadPlugins)
+        : static_cast<const Zig::BunPlugin::Base&>(globalObject->onResolvePlugins);
+    std::span<const Latin1Character> name { reinterpret_cast<const Latin1Character*>(namespacePtr), namespaceLength };
+    return plugins.namespaces.containsIf([&](const String& registered) {
+        return WTF::equal(StringView(registered), name);
+    });
 }
 
 extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path)

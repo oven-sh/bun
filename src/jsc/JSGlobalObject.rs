@@ -7,6 +7,7 @@ use crate::ErrorCode as NodeErrorCode;
 use crate::StringJsc as _;
 use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
+use crate::module_loader::PluginHook;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
@@ -751,9 +752,24 @@ impl JSGlobalObject {
         (!key.is_dead()).then_some(key)
     }
 
+    /// Whether an `onResolve` or an `onLoad` (which, by `hook`) is registered in `namespace_`.
+    pub(crate) fn has_plugin_namespace(&self, hook: PluginHook, namespace_: &[u8]) -> bool {
+        // SAFETY: C++ reads `namespace_` during the call and keeps no pointer into it.
+        unsafe {
+            Bun__hasPluginNamespace(
+                self,
+                hook == PluginHook::OnLoad,
+                namespace_.as_ptr(),
+                namespace_.len(),
+            )
+        }
+    }
+
     /// Whether an `onLoad` would be called to load `key`.
     pub(crate) fn has_on_load(&self, key: &[u8]) -> JsResult<bool> {
-        let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
+        let Some((namespace_, path)) =
+            crate::module_loader::plugin_namespace_and_path(self, PluginHook::OnLoad, key)
+        else {
             return Ok(false);
         };
         let namespace_ = BunString::from_bytes(namespace_);
@@ -1532,6 +1548,12 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         namespace_: Option<&BunString>,
         path: &BunString,
+    ) -> bool;
+    fn Bun__hasPluginNamespace(
+        global: &JSGlobalObject,
+        is_on_load: bool,
+        namespace_ptr: *const u8,
+        namespace_len: usize,
     ) -> bool;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is

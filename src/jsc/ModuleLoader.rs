@@ -243,52 +243,80 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
-/// The namespace (`b""` for `file`) and path that plugins are asked about for `specifier`, if they are asked.
-pub(crate) fn plugin_namespace_and_path(specifier: &[u8]) -> Option<(&[u8], &[u8])> {
-    if !could_be_plugin(specifier) {
+/// Which callbacks of `Bun.plugin()` a string is decoded for. Each kind has its own set of namespaces.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PluginHook {
+    OnResolve,
+    OnLoad,
+}
+
+/// The namespace (`b""` for `file`) and path that the `hook` callbacks are asked about for `specifier`, if they are asked.
+/// In the `file` namespace the path is `specifier`, whole.
+///
+/// A path (absolute, or relative to the importer) is in the `file` namespace, whatever its extension, query or
+/// directory names are. The one exception: a namespace may start with '/', so what is before the first ':' of a path
+/// is the namespace if `hook` callbacks are registered in it. Any other string with a ':' is `namespace:path`, and a
+/// bare name is asked about if it has a '.'.
+pub(crate) fn plugin_namespace_and_path<'a>(
+    global: &JSGlobalObject,
+    hook: PluginHook,
+    specifier: &'a [u8],
+) -> Option<(&'a [u8], &'a [u8])> {
+    if specifier == b"." || specifier == b".." || global.bun_vm().is_eval_or_stdin_entry(specifier)
+    {
         return None;
     }
-    let namespace = extract_namespace(specifier);
-    Some(if namespace.is_empty() {
-        (namespace, specifier)
-    } else {
-        (namespace, &specifier[namespace.len() + 1..])
-    })
-}
-
-/// The `namespace:` prefix of `specifier`, or `b""` if it has none
-/// (Windows drive-letter prefixes are not namespaces).
-fn extract_namespace(specifier: &[u8]) -> &[u8] {
-    let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
-        return b"";
-    };
-    if cfg!(windows)
-        && colon == 1
-        && specifier.len() > 3
-        && bun_paths::resolve_path::is_sep_any(specifier[2])
-        && ((specifier[0] > b'a' && specifier[0] < b'z')
-            || (specifier[0] > b'A' && specifier[0] < b'Z'))
-    {
-        return b"";
+    let colon = index_of_namespace_colon(specifier);
+    if bun_paths::is_package_path(specifier) {
+        return match colon {
+            Some(0) => Some((b"", specifier)),
+            Some(colon) => Some((&specifier[..colon], &specifier[colon + 1..])),
+            None => bare_name_has_dot(specifier).then_some((b"", specifier)),
+        };
     }
-    &specifier[..colon]
-}
-
-/// Cheap pre-filter before calling into a plugin: has a file extension or a `namespace:`.
-fn could_be_plugin(specifier: &[u8]) -> bool {
-    if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
-        let ext = &specifier[last_dot + 1..];
-        // '.' followed by either a letter or a non-ascii character
-        // maybe there are non-ascii file extensions?
-        // we mostly want to cheaply rule out "../" and ".." and "./"
-        if !ext.is_empty()
-            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
-        {
-            return true;
+    if let Some(colon) = colon {
+        let namespace = &specifier[..colon];
+        if is_namespace_charset(namespace) && global.has_plugin_namespace(hook, namespace) {
+            return Some((namespace, &specifier[colon + 1..]));
         }
     }
-    !bun_paths::is_absolute(specifier)
-        && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+    Some((b"", specifier))
+}
+
+/// The index of the first ':' of `specifier`, unless it is the one of a Windows drive.
+fn index_of_namespace_colon(specifier: &[u8]) -> Option<usize> {
+    let colon = bun_core::strings::index_of_char_usize(specifier, b':')?;
+    let is_drive = cfg!(windows)
+        && colon == 1
+        && bun_paths::resolve_path::is_drive_letter(specifier[0])
+        && specifier
+            .get(2)
+            .is_some_and(|&c| bun_paths::resolve_path::is_sep_any(c));
+    (!is_drive).then_some(colon)
+}
+
+/// Whether `namespace` has only the characters a registered namespace can have (`isValidNamespaceString` in
+/// BunPlugin.cpp). The registry is not asked about any other prefix.
+fn is_namespace_charset(namespace: &[u8]) -> bool {
+    !namespace.is_empty()
+        && namespace
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'/' | b'@' | b'_' | b'-'))
+}
+
+/// A bare name with no '.' and no ':' is a package or a builtin (`react`, `ws`): plugins are not asked about it.
+fn bare_name_has_dot(name: &[u8]) -> bool {
+    bun_core::strings::contains_char(name, b'.')
+}
+
+/// What the `file` namespace was asked about before it was asked about every path: no namespace, and a letter after
+/// the last '.'. While an `onResolve` callback runs, `onResolve` is still asked about nothing else in the `file`
+/// namespace, so a catch-all callback that requires `./helper` is not called again for it without end.
+pub(crate) fn has_letter_extension_and_no_namespace(specifier: &[u8]) -> bool {
+    index_of_namespace_colon(specifier).is_none()
+        && bun_core::strings::last_index_of_char(specifier, b'.')
+            .and_then(|last_dot| specifier.get(last_dot + 1))
+            .is_some_and(|&c| c.is_ascii_alphabetic() || c > 127)
 }
 
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin serves it).
@@ -303,16 +331,23 @@ unsafe extern "C" fn Bun__runVirtualModule(
     }
 
     // SAFETY: C++ passed a valid `bun.String*`.
-    let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
-    let Some((namespace, after_namespace)) = plugin_namespace_and_path(specifier_slice.slice())
+    let specifier = unsafe { &*specifier_ptr };
+    let specifier_utf8 = specifier.to_utf8();
+    let Some((namespace, after_namespace)) =
+        plugin_namespace_and_path(global, PluginHook::OnLoad, &specifier_utf8)
     else {
         return JSValue::ZERO;
     };
 
-    match global.run_on_load_plugins(
-        &bun_core::String::from_bytes(namespace),
-        &bun_core::String::from_bytes(after_namespace),
-    ) {
+    // In the `file` namespace the path is the key, which `args.path` shares.
+    let after_namespace_string;
+    let path = if namespace.is_empty() {
+        specifier
+    } else {
+        after_namespace_string = bun_core::String::from_bytes(after_namespace);
+        &after_namespace_string
+    };
+    match global.run_on_load_plugins(&bun_core::String::from_bytes(namespace), path) {
         Ok(Some(v)) => v,
         Ok(None) | Err(_) => JSValue::ZERO,
     }

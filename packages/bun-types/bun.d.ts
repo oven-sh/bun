@@ -6664,8 +6664,9 @@ declare module "bun" {
    * - `onLoad` returns source code or an object that becomes the module's exports
    * - `onResolve` redirects a module specifier to another module specifier. It does not chain.
    *
-   * Plugin hooks must define a `filter` RegExp and only match when the
-   * import specifier contains a "." or a ":".
+   * Plugin hooks must define a `filter` RegExp. At runtime a hook is asked
+   * about every path (absolute, or one that starts with "./" or "../"), and
+   * about any other import specifier only when it contains a "." or a ":".
    *
    * ES Module resolution semantics mean that plugins may be initialized _after_
    * a module is resolved. You might need to load plugins at the very beginning

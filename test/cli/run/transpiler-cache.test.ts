@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, bunRun, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 
@@ -33,10 +33,6 @@ const env = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache_dir,
   BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
 };
-
-// For the tests that run 4 to 10 processes in sequence. A debug build takes about 0.5s to start
-// one, and about 2s when the script loads process.stdout.
-const manyRuns = isDebug ? { timeout: 30_000 } : {};
 
 let prev_cache_count = 0;
 function newCacheCount() {
@@ -285,7 +281,7 @@ describe("transpiler cache", () => {
     );
     expect(newCacheCount()).toBe(0);
   });
-  test("--feature flag invalidates cache", manyRuns, () => {
+  test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it
     const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;
     const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
@@ -338,7 +334,7 @@ describe("transpiler cache", () => {
       return result.stdout.toString().trim();
     };
 
-    test("bunfig [define] invalidates cache", manyRuns, () => {
+    test("bunfig [define] invalidates cache", () => {
       // `bun run <file>` loads bunfig.toml after the command line is parsed,
       // so the define table only exists once the runtime is up.
       const projectA = join(temp_dir, "a");
@@ -375,7 +371,7 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
 
-    test("--define invalidates cache", manyRuns, () => {
+    test("--define invalidates cache", () => {
       writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
 
       expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
@@ -392,6 +388,13 @@ describe("transpiler cache", () => {
 
       expect(run(temp_dir, ["run", "--define", 'BVAL:"cli"', "./a.js"])).toBe("cli");
       expect(newCacheCount()).toBe(0);
+    });
+
+    test("--define order and repeated keys do not change the cache key", () => {
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+
+      expect(run(temp_dir, ["--define", 'BVAL:"cli"', "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(1);
 
       // The key is built from the resolved map: flag order does not matter,
       // and a key given twice keeps its last value, so `x` then `cli` is
@@ -411,7 +414,7 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
 
-    test("--define passed to bun test invalidates cache", manyRuns, () => {
+    test("--define passed to bun test invalidates cache", () => {
       // `bun test` builds its define table on its own boot path. The test file
       // is below the minimum cache size; the module it imports is not, and
       // `bun a.js` loads that same module.
@@ -437,10 +440,11 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
 
-    test("--drop invalidates cache", manyRuns, () => {
+    test("--drop invalidates cache", () => {
+      // Not process.stdout.write: a debug build takes 1.4s to load process.stdout, in each run.
       writeFileSync(
         join(temp_dir, "a.js"),
-        `console.log("logged");\nprocess.stdout.write("written\\n");` + "\n//" + filler,
+        `console.log("logged");\nawait Bun.write(Bun.stdout, "written\\n");` + "\n//" + filler,
       );
 
       expect(run(temp_dir, ["a.js"])).toBe("logged\nwritten");

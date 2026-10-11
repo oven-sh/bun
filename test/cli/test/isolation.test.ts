@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -8,11 +8,12 @@ import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery }
 // Every case spawns at least one full `bun test --isolate` child; the heavy
 // ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
 // 5s default on debug/ASAN runners.
-setDefaultTimeout(isASAN ? 120_000 : 30_000);
+const isSlowBuild = isDebug || isASAN;
+setDefaultTimeout(isSlowBuild ? 120_000 : 30_000);
 
 // A child `bun test` does not inherit the timeout above, and its slowest test takes 6s on a
 // debug build. Less than the timeout above, so that the child is the one to report a slow test.
-const childTimeout = isASAN ? ["--timeout=30000"] : [];
+const childTimeout = isSlowBuild ? ["--timeout=30000"] : [];
 
 // Two test files where the first leaks state and the second observes it.
 // Under --isolate the second file must see a clean world.

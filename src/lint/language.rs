@@ -265,13 +265,13 @@ impl LanguageOptions {
     /// `parser` is a string: `"espree"`, `"@typescript-eslint/parser"`, `"typescript-eslint/parser"`
     /// or `"typescript"`, each with or without `@version`. Any other is [`Parser::Other`].
     pub fn from_json(language_options: &Json, settings: &Json) -> LanguageOptions {
-        Self::from_json_for(language_options, settings, Tables::Today)
+        Self::from_json_for(language_options, settings.clone(), Tables::Today)
     }
 
     /// The same. `whose`: whose environments `$env` names.
     pub(crate) fn from_json_for(
         language_options: &Json,
-        settings: &Json,
+        settings: Json,
         whose: Tables,
     ) -> LanguageOptions {
         let parser_options = language_options
@@ -377,7 +377,7 @@ impl LanguageOptions {
             without_modules: false,
             infers_globals: InferGlobals::No,
             parser_options,
-            settings: settings.clone(),
+            settings,
             config_globals: OnceLock::new(),
         }
     }

@@ -878,7 +878,7 @@ impl Config {
         // oxlint has no such setting.
         config.has_unknown_resolver =
             !self.prefers_typescript_rules && flat::names_unknown_resolver(&settings);
-        config.language = LanguageOptions::from_json_for(&language_options, &settings, whose);
+        config.language = LanguageOptions::from_json_for(&language_options, settings, whose);
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
@@ -916,7 +916,7 @@ impl Config {
             config.for_eslint = for_eslint::build(&for_eslint::Parts {
                 language: config.language_name.as_deref(),
                 language_options: &language_options,
-                settings: &settings,
+                settings: &config.language.settings,
                 linter,
                 rules: &rules,
                 parser: parser_location.filter(|it| it.get(b"module").is_some()),

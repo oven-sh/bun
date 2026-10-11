@@ -155,15 +155,20 @@ impl<'a> Binding<'a> {
             .unwrap_or_else(|| self.symbol.scope())
     }
 
-    /// For oxlint `typeof a` in a type is not one.
-    fn references(self) -> impl Iterator<Item = Reference<'a>> {
+    /// Whether `reference`, which is one to `symbol`, is one to this. For oxlint `typeof a` in a type is none, which writes
+    /// nothing.
+    #[inline]
+    fn has(self, reference: Reference<'a>) -> bool {
         let symbol = self.symbol;
-        let is_oxlint = symbol.file().language().is_oxlint;
-        let is_class = (symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME);
-        symbol.references().filter(move |&it| {
-            (!is_oxlint || !is_type_only_reference(symbol, it))
-                && (!is_class || Binding::of(symbol, it) == self)
-        })
+        (reference.is_write()
+            || !symbol.file().language().is_oxlint
+            || !is_type_only_reference(symbol, reference))
+            && (!(symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME)
+                || Binding::of(symbol, reference) == self)
+    }
+
+    fn references(self) -> impl Iterator<Item = Reference<'a>> {
+        self.symbol.references().filter(move |&it| self.has(it))
     }
 }
 
@@ -466,7 +471,7 @@ fn written_by<'a>(
 }
 
 /// Whether `written`, the only assignment to `variable`, is the initializer of a `let`, `const` or `using` declaration
-/// in a list of statements, and a statement that can be reached evaluates the variable after that declaration, in the
+/// in a list of statements, and a statement that can be reached evaluates the variable after that initializer, in the
 /// same function (`home`). It is in the block of the list, where every way to it leads over the declaration.
 fn is_read_after_declaration<'a>(
     variable: Binding<'a>,
@@ -488,15 +493,16 @@ fn is_read_after_declaration<'a>(
     };
     let is_in_list = match declaration.parent() {
         Node::Func(_) | Node::File(_) => true,
-        Node::Stmt(block) => block.as_block().is_some(),
+        Node::Stmt(around) => around.tag() == StmtTag::Module || around.as_block().is_some(),
         _ => false,
     };
     if !is_in_list {
         return false;
     }
-    let end = declaration.span().end;
-    let read = (variable.references())
-        .find(|it| it.is_read() && start_of(it) >= end && it.scope().variable_scope() == home);
+    let end = declarator.span().end;
+    let read = variable.symbol.references().find(|&it| {
+        it.is_read() && start_of(&it) >= end && it.scope().variable_scope() == home && variable.has(it)
+    });
     let Some(identifier) = read.and_then(Reference::expr) else {
         return false;
     };
@@ -1176,22 +1182,24 @@ impl NoUselessAssignment {
         let State { uses, writers, evaluated_in, .. } = &mut cx.state;
         let home = variable.scope().variable_scope();
         let (mut writes, mut written) = (0, None);
-        for reference in variable.references() {
-            if reference.is_write() {
+        for reference in variable.symbol.references() {
+            if reference.is_write() && variable.has(reference) {
                 writes += 1;
                 written = Some(reference);
-            }
-            // What a function reads can be read at any time.
-            if reference.is_read()
-                && reference.scope().variable_scope() != home
-                && code_path_scope(reference.scope()) != code_path_scope(variable.scope())
-            {
-                return;
             }
         }
         if let (1, None, Some(written)) = (writes, variable.class, written)
             && is_read_after_declaration(variable, written, home, (writers, evaluated_in))
         {
+            return;
+        }
+        // What a function reads can be read at any time.
+        if variable.symbol.references().any(|it| {
+            it.is_read()
+                && it.scope().variable_scope() != home
+                && variable.has(it)
+                && code_path_scope(it.scope()) != code_path_scope(variable.scope())
+        }) {
             return;
         }
         uses.look_at(variable);

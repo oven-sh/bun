@@ -5,8 +5,8 @@ use crate::jest::{
     Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
     ParsedGeneralJestFnCall, PossibleJestNode, Scopes, for_each_call_named_like,
     is_in_call_or_member, is_type_of_jest_fn_call, is_vitest, iter_possible_jest_call_node,
-    iter_possible_jest_call_node_with_scope, mention_bits, mentions_any, mentions_jest_method,
-    parent_expression, parse_general_jest_fn_call, parse_jest_fn_call,
+    iter_possible_jest_call_node_with_scope, mentions_jest_method, parent_expression,
+    parse_general_jest_fn_call, parse_jest_fn_call, tests_as_written,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -744,36 +744,12 @@ pub(crate) mod no_conditional_in_test {
 
     const NO_CONDITIONAL_IN_TEST: Message = Message::new("", "Avoid having conditionals in tests.");
 
-    pub(crate) fn should_run(file: &File) -> bool {
-        mentions_any(
-            file,
-            &const { mention_bits(["fit", "it", "test", "xit", "xtest"]) },
-        )
-    }
-
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
-        let mut tests: Vec<Span> = Vec::new();
-        for_each_call_named_like(file, &[JestGeneralFnKind::Test], &mut |call_expr| {
-            if is_type_of_jest_fn_call(
-                file,
-                PossibleJestNode::new(call_expr),
-                &[JestFnKind::General(JestGeneralFnKind::Test)],
-            ) {
-                tests.push(call_expr.span());
-            }
-        });
+        let tests = tests_as_written(file);
         if tests.is_empty() {
             return;
         }
-        // Those that are in no other, in the order of the source.
-        utils::sort::sort_unstable_by_key(&mut tests, |it| (it.start, std::cmp::Reverse(it.end)));
-        let mut end = 0;
-        tests.retain(|it| {
-            let is_in_no_other = it.end > end;
-            end = end.max(it.end);
-            is_in_no_other
-        });
         let check = |node: Node<'a>| {
             let span = node.span();
             let before = tests.partition_point(|it| it.start <= span.start);

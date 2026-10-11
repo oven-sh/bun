@@ -16,8 +16,8 @@ use super::analyzer::{
 };
 use super::matters::Marks;
 use crate::ast::{
-    Case, Expr, ExprTag, File, FnBody, FnKind, Func, List, Node, PatTag, PropKind, Stmt, StmtKind,
-    StmtTag, VarDecl,
+    Case, Expr, ExprTag, File, FnBody, FnKind, Func, Handle, List, Node, PatTag, PropKind, Stmt,
+    StmtKind, StmtTag, VarDecl,
 };
 use bun_sema::atom::Atom;
 
@@ -123,6 +123,7 @@ pub(super) fn is_end_reachable(root: Node, mut reach: Option<&mut Reach>) -> boo
         _ => return true,
     };
     let mut quick = Quick {
+        file: root.file(),
         reach: reach.as_deref_mut(),
         head: 1,
         rest: 0,
@@ -185,7 +186,8 @@ struct Jumps {
 }
 
 /// ESLint's `CodePathState`, with a bit in the place of a segment.
-struct Quick<'r> {
+struct Quick<'r, 'a> {
+    file: &'a File<'a>,
     reach: Option<&'r mut Reach>,
     /// `forkContext.head`: a bit for each of the `count` parallel routes.
     head: u64,
@@ -216,33 +218,41 @@ fn add(context: &mut Option<u64>, routes: u64) {
     *context = Some(context.unwrap_or(0) | routes);
 }
 
-impl<'a> Quick<'_> {
+impl<'a> Quick<'_, 'a> {
     fn statements(&mut self, statements: List<'a, Stmt<'a>>) {
-        for stmt in statements {
-            // Most have no statement in them and lead nowhere else, and whether they may throw matters in a `try` statement only.
-            let is_plain = self.tries.is_empty()
-                && !matches!(
-                    stmt.tag(),
-                    StmtTag::Block
-                        | StmtTag::Module
-                        | StmtTag::Return
-                        | StmtTag::Throw
-                        | StmtTag::Break
-                        | StmtTag::Continue
-                        | StmtTag::If
-                        | StmtTag::Labeled
-                        | StmtTag::While
-                        | StmtTag::DoWhile
-                        | StmtTag::For
-                        | StmtTag::ForIn
-                        | StmtTag::ForOf
-                        | StmtTag::Switch
-                        | StmtTag::Try
-                );
-            match is_plain {
-                true => self.plain_statement(stmt),
-                false => self.statement(stmt),
+        match statements.listed_ids() {
+            Some(ids) => {
+                (ids.iter()).for_each(|&id| self.statement_of_list(Stmt::from_raw(self.file, id)))
             }
+            None => (statements.iter()).for_each(|stmt| self.statement_of_list(stmt)),
+        }
+    }
+
+    #[inline]
+    fn statement_of_list(&mut self, stmt: Stmt<'a>) {
+        // Most have no statement in them and lead nowhere else, and whether they may throw matters in a `try` statement only.
+        let is_plain = self.tries.is_empty()
+            && !matches!(
+                stmt.tag(),
+                StmtTag::Block
+                    | StmtTag::Module
+                    | StmtTag::Return
+                    | StmtTag::Throw
+                    | StmtTag::Break
+                    | StmtTag::Continue
+                    | StmtTag::If
+                    | StmtTag::Labeled
+                    | StmtTag::While
+                    | StmtTag::DoWhile
+                    | StmtTag::For
+                    | StmtTag::ForIn
+                    | StmtTag::ForOf
+                    | StmtTag::Switch
+                    | StmtTag::Try
+            );
+        match is_plain {
+            true => self.plain_statement(stmt),
+            false => self.statement(stmt),
         }
     }
 

@@ -59,6 +59,15 @@ impl<'a, T: Handle<'a>> List<'a, T> {
         T::from_raw(self.file, id)
     }
 
+    /// The ids of the elements, if they are listed in `Hir::ids` and none of them is left out.
+    #[inline]
+    pub(crate) fn listed_ids(self) -> Option<&'a [u32]> {
+        match self.is_indirect && !self.file.has_synthetic_nodes() {
+            true => (self.file.hir.ids).get(self.start as usize..(self.start + self.len) as usize),
+            false => None,
+        }
+    }
+
     #[inline]
     pub fn iter(self) -> Iter<'a, T> {
         Iter {

@@ -141,6 +141,8 @@ struct PerFile {
     is_vitest: bool,
     /// The numbers of the identifiers that are named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
     named_like_jest: OnceCell<Vec<u32>>,
+    /// [`tests_as_written`]
+    tests_as_written: OnceCell<Vec<Span>>,
     possible_jest_nodes: OnceCell<PossibleJestNodes>,
 }
 
@@ -220,6 +222,7 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
             is_jest: is_jestlike_file(file.path()) || imports(|source| source == b"@jest/globals"),
             is_vitest: imports(is_vitest_import_source),
             named_like_jest: OnceCell::new(),
+            tests_as_written: OnceCell::new(),
             possible_jest_nodes: OnceCell::new(),
         }
     })
@@ -442,6 +445,32 @@ pub(crate) fn for_each_call_named_like<'a>(
             at = parent;
         }
     }
+}
+
+/// The calls that are tests by what is written, whatever `it` and `test` refer to: those that are in no other, in the order of
+/// the source.
+pub(crate) fn tests_as_written<'a>(file: &'a File<'a>) -> &'a [Span] {
+    let find = || {
+        let mut tests: Vec<Span> = Vec::new();
+        for_each_call_named_like(file, &[JestGeneralFnKind::Test], &mut |call_expr| {
+            if is_type_of_jest_fn_call(
+                file,
+                PossibleJestNode::new(call_expr),
+                &[JestFnKind::General(JestGeneralFnKind::Test)],
+            ) {
+                tests.push(call_expr.span());
+            }
+        });
+        utils::sort::sort_unstable_by_key(&mut tests, |it| (it.start, std::cmp::Reverse(it.end)));
+        let mut end = 0;
+        tests.retain(|it| {
+            let is_in_no_other = it.end > end;
+            end = end.max(it.end);
+            is_in_no_other
+        });
+        tests
+    };
+    per_file(file).map_or(&[][..], |it| it.tests_as_written.get_or_init(find))
 }
 
 impl PossibleJestNodes {

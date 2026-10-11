@@ -659,6 +659,13 @@ pub(crate) mod expect_expect {
         fn is_match(&self, names: &[&[u8]]) -> bool {
             match self {
                 AssertFunctionMatcher::Pattern(pattern) => pattern.test(&names.join(&b"."[..])),
+                AssertFunctionMatcher::Exact(expected) if names.len() <= 1 => {
+                    let name = names.first().copied().unwrap_or_default();
+                    matches!(name.get(expected.len()), None | Some(b'.'))
+                        && name
+                            .get(..expected.len())
+                            .is_some_and(|it| it.eq_ignore_ascii_case(expected.as_bytes()))
+                }
                 AssertFunctionMatcher::Exact(expected) => {
                     let mut name = names.iter().enumerate().flat_map(|(i, part)| {
                         let dot = (i > 0).then_some(b'.');

@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, is_global_reference, static_property_name,
 };
-use crate::unicorn::{outermost_wrapper, statements_around};
+use crate::unicorn::statements_around;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
@@ -42,19 +42,31 @@ impl Rule for NoImmediateMutation {
         // Whether it is all of a statement, but for `as T` and the like, and the statement before gives the variable
         // that is changed a new value of that kind.
         let is_initialized = |variable: Name<'a>, init_type: InitType| {
-            let Some(Node::Stmt(statement)) = outermost_wrapper(expr).map(Expr::parent) else {
-                return false;
+            let mut at = expr;
+            let statement = loop {
+                if at.is_chain_root() {
+                    return false;
+                }
+                match at.parent() {
+                    Node::Expr(parent)
+                        if matches!(
+                            parent.tag(),
+                            ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation
+                        ) =>
+                    {
+                        at = parent;
+                    }
+                    Node::Stmt(statement) if statement.tag() == StmtTag::Expr => break statement,
+                    _ => return false,
+                }
             };
-            if statement.tag() != StmtTag::Expr {
-                return false;
-            }
             let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
             prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };
         let mutation = match expr.as_call() {
             Some(call) => call_mutation(call, is_initialized),
-            None => match (expr.assign_op(), expr.left(), expr.right()) {
-                (Some(None), Some(target), Some(value)) => property_assignment(target, value, is_initialized),
+            None => match expr.as_assign() {
+                Some((None, target, value)) => property_assignment(target, value, is_initialized),
                 _ => None,
             },
         };
@@ -113,12 +125,9 @@ fn property_assignment<'a>(
     value: Expr<'a>,
     is_initialized: impl Fn(Name<'a>, InitType) -> bool,
 ) -> Option<Mutation<'a>> {
-    if target.is_private_member() {
-        return None;
-    }
     let object = target.object().filter(|it| it.tag() != ExprTag::This)?;
     let variable = get_inner_expression(object).as_ident()?;
-    if !is_initialized(variable, InitType::Object) {
+    if target.is_private_member() || !is_initialized(variable, InitType::Object) {
         return None;
     }
     let is_self_reference = target.index().is_some_and(|it| expression_references_variable(it, variable))

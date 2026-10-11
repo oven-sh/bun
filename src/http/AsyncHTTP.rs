@@ -180,7 +180,8 @@ fn make_client<'a>(
         result_callback: noop_callback(),
         if_modified_since: b"",
         request_content_len_buf: [0u8; b"18446744073709551615".len()],
-        http_proxy,
+        // The client dials and authenticates a proxy from this one parse, whoever made the URL.
+        http_proxy: http_proxy.map(|proxy| URL::parse_single_reader(proxy.href)),
         proxy_settings: None,
         proxy_headers,
         proxy_authorization: None,

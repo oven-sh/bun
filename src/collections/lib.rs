@@ -8,7 +8,7 @@
     const_trait_impl,
     allocator_api
 )]
-#![allow(incomplete_features, internal_features)]
+#![allow(incomplete_features)]
 #![warn(unused_must_use)]
 
 pub mod hive_array;
@@ -257,7 +257,6 @@ impl<T, const N: usize> Extend<T> for SmallList<T, N> {
     }
 }
 
-#[allow(clippy::len_without_is_empty)]
 impl<T, const N: usize> SmallList<T, N> {
     // ── constructors ───────────────────────────────────────────────────────
     #[inline]

@@ -4,7 +4,9 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     pub(crate) fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,
@@ -147,7 +149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // property on the target object of the "with" statement. We must not rename
         // it or we risk changing the behavior of the code.
         if is_inside_with_scope {
-            self.symbols[ref_.inner_index() as usize].set_must_not_be_renamed(true);
+            self.set_must_not_be_renamed_through_links(ref_);
         }
 
         // Track how many times we've referenced this symbol

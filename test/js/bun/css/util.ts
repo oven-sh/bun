@@ -40,7 +40,7 @@ export function minify_error_test_with_options(source: string, expectedError: st
     let error_string: string | undefined = undefined;
     try {
       __minifyErrorTestWithOptions(source, expectedError, options);
-    } catch (err) {
+    } catch (err: any) {
       error_string = err.toString();
     }
     expect(error_string).toEqual(expectedError);
@@ -77,7 +77,7 @@ export function attrTest(source: string, expected: string, minify: boolean, targ
 }
 
 //
-export function indoc(...args: any) {
+export function indoc(...args: Parameters<typeof dedent>) {
   return dedent(...args);
 }
 

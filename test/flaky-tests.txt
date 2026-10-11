@@ -1,4 +1,4 @@
-# Test files known to be flaky in CI. The runner (scripts/runner.node.mjs)
+# Test files known to be flaky in CI. The runner (scripts/runner.node.ts)
 # retries every failing file up to --retries times either way; this list only
 # changes how a pass-on-retry is reported. A listed file is annotated as
 # "flaky", an unlisted one as "flaky-new" so a new flake stands out.

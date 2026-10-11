@@ -111,7 +111,7 @@ export default function compose(...streams) {
         }
       });
     } else if (isWebStream(head)) {
-      const writable = isTransformStream(head) ? head.writable : head;
+      const writable = (isTransformStream(head) ? head.writable : head) as WritableStream;
       const writer = writable.getWriter();
 
       d._write = async function (chunk, encoding, callback) {
@@ -174,7 +174,7 @@ export default function compose(...streams) {
         }
       };
     } else if (isWebStream(tail)) {
-      const readable = isTransformStream(tail) ? tail.readable : tail;
+      const readable = (isTransformStream(tail) ? tail.readable : tail) as ReadableStream;
       const reader = readable.getReader();
       d._read = async function () {
         while (true) {

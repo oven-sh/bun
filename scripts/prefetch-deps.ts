@@ -1,7 +1,7 @@
 /**
  * Warm a read-only prefetch cache for the build's network downloads.
  *
- * Run at CI-image bake time from bootstrap.{sh,ps1}. Produces a directory
+ * Run at CI-image bake time by the `prefetch` tool of scripts/build/ci-images/spec.ts. Produces a directory
  * that, when pointed at via `BUN_BUILD_PREFETCH_DIR`, lets a fresh build
  * complete with no network round-trips for matching dep versions.
  *

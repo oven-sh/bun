@@ -118,8 +118,8 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
 
   test("empty string", () => {
     expect($.braces("")).toEqual([""]);
-    expect($.braces("", { parse: true })).toBeString();
-    expect($.braces("", { tokenize: true })).toBeString();
+    expect(($.braces as any)("", { parse: true })).toBeString();
+    expect(($.braces as any)("", { tokenize: true })).toBeString();
   });
 
   test("unicode", () => {

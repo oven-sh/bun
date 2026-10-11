@@ -102,7 +102,7 @@ namespace WebCore {
 using namespace JSC;
 
 DOMGCOutputConstraint::DOMGCOutputConstraint(VM& vm, JSHeapData& heapData)
-    : MarkingConstraint("Domo", "DOM Output", ConstraintVolatility::SeldomGreyed, ConstraintConcurrency::Concurrent, ConstraintParallelism::Parallel)
+    : MarkingConstraint("Domo"_s, "DOM Output"_s, ConstraintVolatility::SeldomGreyed, ConstraintConcurrency::Concurrent, ConstraintParallelism::Parallel)
     , m_vm(vm)
     , m_heapData(heapData)
     , m_lastExecutionVersion(vm.heap.mutatorExecutionVersion())

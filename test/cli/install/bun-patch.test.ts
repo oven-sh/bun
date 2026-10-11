@@ -1,10 +1,10 @@
-import { $, ShellOutput } from "bun";
+import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
-const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
+const expectNoError = (o: $.ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
 const platformPath = (path: string) => path;
 
@@ -447,7 +447,7 @@ describe("bun patch <pkg>", async () => {
         return { subdir, absPath };
       }
 
-      async function check(tempdir: string, commit: ShellOutput) {
+      async function check(tempdir: string, commit: $.ShellOutput) {
         expect(commit.stderr.toString()).not.toContain("ENOENT");
         expect(commit.stderr.toString()).not.toContain("error");
         expect(commit.exitCode).toBe(0);

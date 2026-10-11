@@ -156,12 +156,6 @@ impl FloatValue {
     }
 }
 
-impl From<FloatValue> for f64 {
-    fn from(value: FloatValue) -> Self {
-        value.value()
-    }
-}
-
 impl PartialEq for FloatValue {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0

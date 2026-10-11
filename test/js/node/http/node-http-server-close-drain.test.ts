@@ -469,7 +469,9 @@ test("https: no clientError when the client closes behind a chunked request whos
     socket.on("error", () => {});
     let response = "";
     socket.on("data", chunk => (response += chunk));
-    await serverSocketClosed.promise;
+    const clientSocketClosed = Promise.withResolvers<void>();
+    socket.on("close", () => clientSocketClosed.resolve());
+    await Promise.all([serverSocketClosed.promise, clientSocketClosed.promise]);
     expect({ errors, stored: response.endsWith("stored") }).toEqual({ errors: [], stored: true });
   } finally {
     socket.destroy();

@@ -937,12 +937,13 @@ fn validate_no_ref_access_in_render_impl(
 
             // Process phis
             for phi in &block.phis {
-                let joined = (phi.operands.values()).fold(RefAccessType::None, |joined, operand| {
-                    match ref_env.get(operand.identifier) {
-                        Some(ty) => join_ref_access_types(&joined, ty, &ref_env.joins),
-                        None => joined,
-                    }
-                });
+                let joined =
+                    (phi.operands.values()).fold(RefAccessType::None, |joined, operand| {
+                        match ref_env.get(operand.identifier) {
+                            Some(ty) => join_ref_access_types(&joined, ty, &ref_env.joins),
+                            None => joined,
+                        }
+                    });
                 ref_env.set(phi.place.identifier, joined);
             }
 
@@ -963,9 +964,11 @@ fn validate_no_ref_access_in_render_impl(
                                 loc: instr.loc,
                                 ref_id: Some(*ref_id),
                             },
-                            _ => {
-                                ref_env.ref_type_of_type(instr.lvalue.identifier, identifiers, types)
-                            }
+                            _ => ref_env.ref_type_of_type(
+                                instr.lvalue.identifier,
+                                identifiers,
+                                types,
+                            ),
                         };
                         ref_env.set(instr.lvalue.identifier, lookup_type);
                     }

@@ -237,6 +237,7 @@ describe("css tests", () => {
     // minifier must neither let such a value replace the earlier one nor move it ahead of it.
     minify_test(`a { color: red; color: banana }`, `a{color:red;color:banana}`);
     minify_test(`a { color: red; color: rgb(1 2) }`, `a{color:red;color:rgb(1 2)}`);
+    minify_test(`a { color: red; color: contrast-color(blue) }`, `a{color:red;color:contrast-color(blue)}`);
     minify_test(`a { color: red; color: var(--c) }`, `a{color:red;color:var(--c)}`);
     minify_test(`a { color: banana; color: red }`, `a{color:red}`);
     minify_test(`a { color: red; color: banana; color: blue }`, `a{color:red;color:#00f}`);
@@ -248,6 +249,11 @@ describe("css tests", () => {
     minify_test(`a { width: 100px; width: var(--w) }`, `a{width:100px;width:var(--w)}`);
     minify_test(`a { height: 100vh; height: 100dvb; height: var(--h) }`, `a{height:100dvb;height:var(--h)}`);
     minify_test(`a { width: 100px; width: anchor-size(width) }`, `a{width:100px;width:anchor-size(width)}`);
+    minify_test(`a { width: 100px; width: calc-size(auto, size) }`, `a{width:100px;width:calc-size(auto,size)}`);
+    // `inherit` is valid in every browser, so the reorder made the earlier value win.
+    minify_test(`a { width: 100px; width: inherit }`, `a{width:100px;width:inherit}`);
+    minify_test(`a { min-width: 100px; min-width: var(--w) }`, `a{min-width:100px;min-width:var(--w)}`);
+    minify_test(`a { max-height: 100px; max-height: inherit }`, `a{max-height:100px;max-height:inherit}`);
     minify_test(`a { max-height: 1px; max-height: banana }`, `a{max-height:1px;max-height:banana}`);
     minify_test(`a { inline-size: 1px; inline-size: var(--w) }`, `a{inline-size:1px;inline-size:var(--w)}`);
     minify_test(`a { min-width: 1px; height: 2px; width: env(foo) }`, `a{min-width:1px;height:2px;width:env(foo)}`);

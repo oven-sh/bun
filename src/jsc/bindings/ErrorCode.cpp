@@ -1682,6 +1682,39 @@ JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope& scope, JSC::JSGlobalObject*
     return {};
 }
 
+JSC::EncodedJSValue INVALID_HTTP_TOKEN(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral label, JSC::JSValue token)
+{
+    MessageBuilder builder;
+    builder.append(label, " must be a valid HTTP token [\""_s);
+    JSValueToStringSafe(globalObject, builder, token);
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
+    builder.append("\"]"_s);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_HTTP_TOKEN, builder));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue HTTP_INVALID_HEADER_VALUE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, const WTF::String& name)
+{
+    MessageBuilder builder;
+    builder.append("Invalid value \""_s);
+    JSValueToStringSafe(globalObject, builder, value);
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
+    builder.append("\" for header \""_s, name, '"');
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_HTTP_INVALID_HEADER_VALUE, builder));
+    scope.release();
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_CHAR(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral what, const WTF::String& field)
+{
+    MessageBuilder builder;
+    builder.append("Invalid character in "_s, what, " [\""_s, field, "\"]"_s);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_CHAR, builder));
+    scope.release();
+    return {};
+}
+
 } // namespace ERR
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)

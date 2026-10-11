@@ -21,6 +21,7 @@ import { type Duplex, duplexPair } from "node:stream";
 import { after, describe, test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
+import { WebSocketServer } from "ws";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const cert = readFileSync(join(fixtures, "cert.pem"), "utf8");
@@ -193,6 +194,16 @@ function code(fn: () => unknown): string | undefined {
   return undefined;
 }
 
+// The message of the error that `fn` throws.
+function message(fn: () => unknown): string | undefined {
+  try {
+    fn();
+  } catch (error: any) {
+    return error.message;
+  }
+  return undefined;
+}
+
 // A test of what Node.js does where Bun still differs, and not because of these headers: todo in Bun.
 const differs = typeof Bun === "undefined" ? test : test.todo;
 
@@ -295,6 +306,102 @@ describe("writeHead(status, headers) with no header set before sends the header 
       transport,
     });
     assert.deepStrictEqual(headers, ["X-U: 1; 2", "X-A: 3", "X-A: 4", "Transfer-Encoding: chunked"]);
+  });
+
+  test("an array value of a name in the uniqueHeaders option: an empty array is an empty value", async () => {
+    const transport = plain({ uniqueHeaders: ["x-u", "x-v"] });
+    const { headers } = await respond(res => res.writeHead(200, { "X-U": [], "X-V": ["1"] }).end(), { transport });
+    assert.deepStrictEqual(headers, ["X-U: ", "X-V: 1", "Transfer-Encoding: chunked"]);
+  });
+
+  test("Cookie joins null and undefined as empty strings", async () => {
+    const { headers } = await respond(res => res.writeHead(200, { Cookie: ["a", null, undefined, "b"] as any }).end());
+    assert.deepStrictEqual(headers, ["Cookie: a; ; ; b", "Transfer-Encoding: chunked"]);
+  });
+
+  test("a Proxy of each form of the argument", async () => {
+    const sent: string[][] = [];
+    for (const [, form] of forms) {
+      const { headers } = await respond(res => res.writeHead(200, new Proxy(form("X-A", "1", "X-B", "2"), {})).end());
+      sent.push(headers);
+    }
+    const lines = ["X-A: 1", "X-B: 2", "Transfer-Encoding: chunked"];
+    assert.deepStrictEqual(sent, [lines, lines, lines]);
+  });
+
+  test("an object: a getter is read, and a property that is not enumerable or has a Symbol for its name is not a header", async () => {
+    const { headers } = await respond(res => {
+      const object = {
+        get "X-A"() {
+          return "got";
+        },
+        "X-B": "2",
+        [Symbol("s")]: "3",
+      };
+      Object.defineProperty(object, "X-Hidden", { value: "4", enumerable: false });
+      res.writeHead(200, object).end();
+    });
+    assert.deepStrictEqual(headers, ["X-A: got", "X-B: 2", "Transfer-Encoding: chunked"]);
+  });
+
+  test("an object: the names that are array indexes come first", async () => {
+    const { headers } = await respond(res => res.writeHead(200, { b: "1", 1: "one", a: "2", 0: "zero" }).end());
+    assert.deepStrictEqual(headers, ["0: zero", "1: one", "b: 1", "a: 2", "Transfer-Encoding: chunked"]);
+  });
+
+  test("values that are not strings: null, a boolean, a number and a BigInt", async () => {
+    const { headers } = await respond(res =>
+      res.writeHead(200, { "X-A": null, "X-B": true, "X-C": 0, "X-D": 5n } as any).end(),
+    );
+    assert.deepStrictEqual(headers, ["X-A: null", "X-B: true", "X-C: 0", "X-D: 5", "Transfer-Encoding: chunked"]);
+  });
+
+  test("a string in the place of the headers, and a string in the place of a pair", async () => {
+    const sent: string[][] = [];
+    for (const head of [
+      (res: http.ServerResponse) => res.writeHead(200, undefined, "ab" as any),
+      (res: http.ServerResponse) => res.writeHead(200, [["X-A", "1"], "xy"] as any),
+    ]) {
+      const { headers } = await respond(res => head(res).end());
+      sent.push(headers);
+    }
+    assert.deepStrictEqual(sent, [
+      ["0: a", "1: b", "Transfer-Encoding: chunked"],
+      ["X-A: 1", "x: y", "Transfer-Encoding: chunked"],
+    ]);
+  });
+
+  test("a value with a character above 0x7f is sent as one byte", async () => {
+    const { headers } = await respond(res => res.writeHead(200, { "X-A": "caf\u00e9" }).end());
+    assert.deepStrictEqual(headers, ["X-A: caf\u00e9", "Transfer-Encoding: chunked"]);
+  });
+
+  for (const transport of transports.slice(0, 2)) {
+    test(`a head of 20 KiB, and one line of 20 KiB: ${transport.name}`, async () => {
+      const sent: unknown[] = [];
+      const cookies = Array.from({ length: 20 }, (_, i) => `c${i}=${Buffer.alloc(1000, "x").toString()}`);
+      const long = Buffer.alloc(20000, "y").toString();
+      for (const value of [cookies, [long]]) {
+        const { headers, body } = await respond(
+          res => res.writeHead(200, { "Set-Cookie": value, "Content-Length": "2" }).end("ok"),
+          { transport },
+        );
+        sent.push({ same: headers.join() === [...value.map(cookie => `Set-Cookie: ${cookie}`), "Content-Length: 2"].join(), body });
+      }
+      assert.deepStrictEqual(sent, [
+        { same: true, body: "ok" },
+        { same: true, body: "ok" },
+      ]);
+    });
+  }
+
+  // The server answers such a request itself, with writeHead(400, { Connection: "close" }) in Bun.
+  test("the reply to a request with no Host header closes the connection", async () => {
+    const { status, all, requests } = await respond(res => res.end(), { request: "GET / HTTP/1.1\r\n\r\n", then: GET });
+    assert.deepStrictEqual(
+      { status, headers: all.filter(line => !/^date:/i.test(line)), requests },
+      { status: "HTTP/1.1 400 Bad Request", headers: ["Connection: close", "Transfer-Encoding: chunked"], requests: 0 },
+    );
   });
 
   test("a server with insecureHTTPParser sends a control character in a value", async () => {
@@ -603,6 +710,101 @@ describe("writeHead(status, headers) with no header set before reads the argumen
       );
     });
   }
+
+  // Each value below is made a string two times, as in Node.js: once for the check, once for the line.
+  test("a list that grows during writeHead() is read to its new end", async () => {
+    const sent: string[][] = [];
+    for (const grow of [
+      (value: object) => {
+        const list: unknown[] = ["X-A", value];
+        return [list, () => list.push("X-B", "2")] as const;
+      },
+      (value: object) => {
+        const list: unknown[] = [["X-A", value]];
+        return [list, () => list.push(["X-B", "2"])] as const;
+      },
+      (value: object) => {
+        const values: unknown[] = [value];
+        return [["X-A", values], () => values.push("2")] as const;
+      },
+    ]) {
+      const { headers } = await respond(res => {
+        let grown = false;
+        const [list, push] = grow({
+          toString() {
+            if (!grown) push();
+            grown = true;
+            return "1";
+          },
+        });
+        res.writeHead(200, list as any).end();
+      });
+      sent.push(headers);
+    }
+    assert.deepStrictEqual(sent, [
+      ["X-A: 1", "X-B: 2", "Transfer-Encoding: chunked"],
+      ["X-A: 1", "X-B: 2", "Transfer-Encoding: chunked"],
+      ["X-A: 1", "X-A: 2", "Transfer-Encoding: chunked"],
+    ]);
+  });
+
+  test("a list that shrinks during writeHead() is read to its new end", async () => {
+    const { headers } = await respond(res => {
+      const list: unknown[] = [
+        "X-A",
+        {
+          toString() {
+            list.length = 2;
+            return "1";
+          },
+        },
+        "X-B",
+        "2",
+      ];
+      res.writeHead(200, list as any).end();
+    });
+    assert.deepStrictEqual(headers, ["X-A: 1", "Transfer-Encoding: chunked"]);
+  });
+
+  test("a flat list is checked for an odd count once, before its first entry", async () => {
+    const { result } = await respond(res => {
+      let grown = false;
+      const list: unknown[] = [
+        "X-A",
+        {
+          toString() {
+            if (!grown) list.push("X-B");
+            grown = true;
+            return "1";
+          },
+        },
+      ];
+      // The name without a value fails as a value that is undefined, not as an odd count.
+      const thrown = code(() => res.writeHead(200, list as any));
+      res.end();
+      return thrown;
+    });
+    assert.strictEqual(result, "ERR_HTTP_INVALID_HEADER_VALUE");
+  });
+
+  test("an object: a property that the walk deletes is not sent, one that it adds is not sent, one that it changes is sent", async () => {
+    const { headers } = await respond(res => {
+      const object: Record<string, unknown> = {
+        "X-A": {
+          toString() {
+            delete object["X-B"];
+            object["X-C"] = "changed";
+            object["X-New"] = "new";
+            return "1";
+          },
+        },
+        "X-B": "2",
+        "X-C": "3",
+      };
+      res.writeHead(200, object as any).end();
+    });
+    assert.deepStrictEqual(headers, ["X-A: 1", "X-C: changed", "Transfer-Encoding: chunked"]);
+  });
 
   test("a value whose toString() calls writeHead() does not make the outer call throw", async () => {
     const { headers, result } = await respond(res => {
@@ -1115,6 +1317,115 @@ for (const [name, form] of forms) {
   });
 }
 
+for (const transport of transports) {
+  describe(`writeHead(status, headers) with no header set before frames the body on ${transport.name}`, () => {
+    test("Transfer-Encoding: chunked", async () => {
+      const { headers, body } = await respond(res => res.writeHead(200, { "Transfer-Encoding": "chunked" }).end("ok"), {
+        transport,
+      });
+      assert.deepStrictEqual(
+        { headers, body },
+        { headers: ["Transfer-Encoding: chunked"], body: "2\r\nok\r\n0\r\n\r\n" },
+      );
+    });
+
+    test("Content-Length, and no body for a HEAD request", async () => {
+      const replies: unknown[] = [];
+      for (const request of [GET, HEAD]) {
+        const { headers, body } = await respond(res => res.writeHead(200, { "Content-Length": "2" }).end("ok"), {
+          transport,
+          request,
+        });
+        replies.push({ headers, body });
+      }
+      assert.deepStrictEqual(replies, [
+        { headers: ["Content-Length: 2"], body: "ok" },
+        { headers: ["Content-Length: 2"], body: "" },
+      ]);
+    });
+
+    test("no framing header after removeHeader('Transfer-Encoding'): the body ends with the connection", async () => {
+      const { headers, body, requests } = await respond(
+        res => {
+          res.removeHeader("Transfer-Encoding");
+          res.writeHead(200, { "X-A": "1" }).end("ok");
+        },
+        { transport, request: KEEP_ALIVE },
+      );
+      assert.deepStrictEqual({ headers, body, requests }, { headers: ["X-A: 1"], body: "ok", requests: 1 });
+    });
+
+    test("no framing header for an HTTP/1.0 request: the body ends with the connection", async () => {
+      const { headers, body } = await respond(res => res.writeHead(200, { "X-A": "1" }).end("ok"), {
+        transport,
+        request: HTTP_1_0,
+      });
+      assert.deepStrictEqual({ headers, body }, { headers: ["X-A: 1"], body: "ok" });
+    });
+
+    test("maxRequestsPerSocket: the Keep-Alive line of the server names the limit", async () => {
+      const server = transport.server as http.Server;
+      server.maxRequestsPerSocket = 5;
+      try {
+        const { all } = await respond(res => res.writeHead(200, { "Content-Length": "2" }).end("ok"), {
+          transport,
+          request: KEEP_ALIVE,
+          then: GET,
+        });
+        assert.deepStrictEqual(
+          all.filter(line => !/^date:/i.test(line)),
+          ["Content-Length: 2", "Connection: keep-alive", "Keep-Alive: timeout=5, max=5"],
+        );
+      } finally {
+        server.maxRequestsPerSocket = 0;
+      }
+    });
+  });
+}
+
+describe("writeHead(status, headers) with no header set before sends no byte before the first write", () => {
+  // Sends `request`, and gives the bytes that arrived by the time `until` settles and by the time the connection ends.
+  async function exchange(request: string, until: Promise<unknown>) {
+    const socket = net.connect(await port(shared.server), "127.0.0.1");
+    let raw = "";
+    socket.setEncoding("latin1");
+    socket.on("data", chunk => (raw += chunk));
+    socket.on("error", () => {});
+    const closed = once(socket, "close");
+    await once(socket, "connect");
+    socket.write(request);
+    await until;
+    const early = raw;
+    return { early, late: closed.then(() => raw) };
+  }
+
+  for (const queued of [false, true]) {
+    test(queued ? "a response that waits behind another one" : "a response that has the connection", async () => {
+      const waiting: http.ServerResponse[] = [];
+      const { promise: headWritten, resolve } = Promise.withResolvers<void>();
+      answer = (res, req) => {
+        if (req.url === "/other") return res.end();
+        waiting.push(res);
+        if (queued && waiting.length === 1) return;
+        res.writeHead(200, { "X-A": "1", "Content-Length": "2" });
+        resolve();
+      };
+      const first = queued ? "GET /first HTTP/1.1\r\nHost: x\r\n\r\n" : "";
+      const { early, late } = await exchange(
+        first + GET,
+        // A whole request on another connection is answered after writeHead(): bytes of this head would be here by then.
+        headWritten.then(() => respond(res => res.end(), { request: "GET /other HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" })),
+      );
+      for (const res of waiting.reverse()) res.end("ok");
+      const raw = await late;
+      assert.deepStrictEqual(
+        { early, replies: raw.split("HTTP/1.1 200 OK").length - 1, last: raw.slice(raw.lastIndexOf("HTTP/1.1")).includes("X-A: 1") },
+        { early: "", replies: queued ? 2 : 1, last: true },
+      );
+    });
+  }
+});
+
 describe("writeHead(status, headers) with no header set before keeps nothing when it throws", () => {
   const unprintable = {
     valueOf() {
@@ -1138,6 +1449,14 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
     ["an invalid character in an array value", ["X-A", "1", "X-B", ["ok", "a\nb"]], "ERR_INVALID_CHAR"],
     ["a value whose valueOf() throws", { "X-A": "1", "X-B": unprintable }, "RangeError"],
     ["a flat list with an odd count", ["X-A", "1", "X-B"], "ERR_INVALID_ARG_VALUE"],
+    ["a name that is a Symbol in a flat list", ["X-A", "1", Symbol("s"), "1"], "ERR_INVALID_HTTP_TOKEN"],
+    // eslint-disable-next-line no-sparse-arrays
+    ["a name that is a hole in a flat list", ["X-A", "1", , "1"], "ERR_INVALID_HTTP_TOKEN"],
+    // eslint-disable-next-line no-sparse-arrays
+    ["a hole in an array value", ["X-A", "1", "X-B", ["1", , "3"]], "ERR_HTTP_INVALID_HEADER_VALUE"],
+    ["a value that is a Symbol", ["X-A", "1", "X-B", Symbol("s")], "TypeError"],
+    ["a Content-Length that is a BigInt", { "X-A": "1", "Content-Length": 2n }, "TypeError"],
+    ["a character above 0xff in a value", { "X-A": "1", "X-B": "\u0100" }, "ERR_INVALID_CHAR"],
     ["Content-Length with Trailer", ["X-A", "1", "Content-Length", "2", "Trailer", "X-T"], "ERR_HTTP_TRAILER_INVALID"],
   ] as const) {
     test(name, async () => {
@@ -1158,6 +1477,29 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
       );
     });
   }
+
+  test("the messages of the errors", async () => {
+    const { result } = await respond(res => {
+      const messages = [
+        message(() => res.writeHead(200, [{}, "1"] as any)),
+        message(() => res.writeHead(200, [Symbol("s"), "1"] as any)),
+        message(() => res.writeHead(200, [null, "1"] as any)),
+        message(() => res.writeHead(200, { "bad name": "1" })),
+        message(() => res.writeHead(200, ["X-U", undefined] as any)),
+        message(() => res.writeHead(200, ["X-B", "a\nb"])),
+      ];
+      res.end();
+      return messages;
+    });
+    assert.deepStrictEqual(result, [
+      'Header name must be a valid HTTP token ["{}"]',
+      'Header name must be a valid HTTP token ["Symbol(s)"]',
+      'Header name must be a valid HTTP token ["null"]',
+      'Header name must be a valid HTTP token ["bad name"]',
+      'Invalid value "undefined" for header "X-U"',
+      'Invalid character in header content ["X-B"]',
+    ]);
+  });
 
   for (const [name, form] of forms) {
     // What the entries before the failure said about the connection stays.
@@ -1288,10 +1630,8 @@ describe("where Bun still differs from Node.js after writeHead(status, headers)"
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
-  const { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } = await import("harness");
+  const { bunEnv, nodeExe } = await import("harness");
   const node = nodeExe();
-  // CI has its own time for each test. A local debug or ASAN build needs about 4 s to start a process.
-  const spawnTimeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
 
   describe("Bun only", () => {
     // Node.js has no setter for headersSent.
@@ -1494,6 +1834,34 @@ if (typeof Bun !== "undefined") {
       });
     }
 
+    // Node.js checks what toString() gives and sends what valueOf() gives: here, a second header line.
+    test("a value whose valueOf() gives a text that the check refuses: writeHead() throws", async () => {
+      const { headers, body, result } = await respond(res => {
+        const value = { toString: () => "ok", valueOf: () => "a\r\nX-Injected: 1" };
+        const thrown = code(() => res.writeHead(200, { "X-A": value as any }));
+        res.end("ok");
+        return thrown;
+      });
+      assert.deepStrictEqual(
+        { headers, body, result },
+        { headers: ["Content-Length: 2"], body: "ok", result: "ERR_INVALID_CHAR" },
+      );
+    });
+
+    // The handle takes the head of writeHead(status, headers) as one string of bytes.
+    test("the handle refuses a head that is a string of 16-bit characters, and the response stays as it was", async () => {
+      const { headers, body, result } = await respond(res => {
+        const kHandle = Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle")!;
+        const thrown = code(() => (res as any)[kHandle].writeHead(200, undefined, "\u0100X-A: 1\r\n"));
+        res.end("ok");
+        return thrown;
+      });
+      assert.deepStrictEqual(
+        { headers, body, result },
+        { headers: ["Content-Length: 2"], body: "ok", result: "ERR_INVALID_ARG_VALUE" },
+      );
+    });
+
     // Node.js throws ERR_INVALID_CHAR here. The native handle writes one byte for each character.
     test("a Content-Disposition that is not ASCII, after a Content-Length, is sent", async () => {
       const { headers, body } = await respond(res =>
@@ -1540,27 +1908,63 @@ if (typeof Bun !== "undefined") {
       );
     });
 
-    test(
-      "the same after a WebSocket took the connection: end() does not write to it",
-      { timeout: spawnTimeout },
-      async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), join(dirname(fileURLToPath(import.meta.url)), "node-http-writehead-fixture.ts")],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
+    // The response of an Upgrade request, used after a WebSocket took its connection. The connection has no place for trailers then.
+    test("the same after a WebSocket took the connection: end() does not write to it", async () => {
+      const wss = new WebSocketServer({ noServer: true });
+      const firstTrailer = Buffer.alloc(200, "a").toString();
+      const { promise: ended, resolve } = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => {
+        res.on("error", () => {});
+        if (req.url === "/first") {
+          // A response with trailers, so that the connection has had a place for trailers.
+          res.write("first-body");
+          res.addTrailers({ "x-first": firstTrailer });
+          res.end();
+          return;
+        }
+        wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+          ws.on("error", () => {});
+          // Whether end() throws for a response with no connection is not the subject here.
+          code(() => {
+            res.writeHead(200, { "Content-Length": 4 });
+            res.addTrailers({ "x-second": Buffer.alloc(100, "b").toString() });
+            res.end("late");
+          });
+          resolve();
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        assert.deepStrictEqual(
-          { stdout, stderr, exitCode, signalCode: proc.signalCode },
-          { stdout: '{"ended":true}\n', stderr: "", exitCode: 0, signalCode: null },
+      });
+      const client = net.connect(await port(server), "127.0.0.1");
+      client.on("error", () => {});
+      let received = "";
+      let upgradeSent = false;
+      client.setEncoding("latin1");
+      client.on("data", chunk => {
+        received += chunk;
+        if (upgradeSent || !received.endsWith(`0\r\nx-first: ${firstTrailer}\r\n\r\n`)) return;
+        upgradeSent = true;
+        client.write(
+          "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         );
-      },
-    );
+      });
+      await once(client, "connect");
+      client.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await ended;
+      // The 101 is the last thing that the connection got: none of "late" or its trailers.
+      while (!received.includes("HTTP/1.1 101 Switching Protocols\r\n")) await once(client, "data");
+      const closed = once(client, "close");
+      client.destroy();
+      await closed;
+      for (const ws of wss.clients) ws.terminate();
+      wss.close();
+      assert.deepStrictEqual(
+        { late: received.includes("late"), trailer: received.includes("x-second") },
+        { late: false, trailer: false },
+      );
+    });
 
     // The ws module of Bun answers a refused handshake with res.writeHead(status, headers).
     test("ws refuses a handshake through the response of the request", async () => {
-      const { WebSocketServer } = await import("ws");
       const server = http.createServer();
       const wss = new WebSocketServer({ noServer: true });
       server.on("request", req => wss.handleUpgrade(req, req.socket, Buffer.alloc(0), () => {}));
@@ -1582,7 +1986,7 @@ if (typeof Bun !== "undefined") {
   });
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", { timeout: spawnTimeout }, async () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

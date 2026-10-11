@@ -180,6 +180,12 @@ JSC::EncodedJSValue MISSING_OPTION(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCII
 JSC::EncodedJSValue INVALID_MIME_SYNTAX(JSC::ThrowScope&, JSC::JSGlobalObject*, const String& part, const String& input, int position);
 JSC::EncodedJSValue INVALID_THIS(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral expectedType);
 JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral message);
+/// `{label} must be a valid HTTP token ["{token}"]`
+JSC::EncodedJSValue INVALID_HTTP_TOKEN(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral label, JSC::JSValue token);
+/// `Invalid value "{value}" for header "{name}"`
+JSC::EncodedJSValue HTTP_INVALID_HEADER_VALUE(JSC::ThrowScope&, JSC::JSGlobalObject*, JSC::JSValue value, const WTF::String& name);
+/// `Invalid character in {what} ["{field}"]`
+JSC::EncodedJSValue INVALID_CHAR(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCIILiteral what, const WTF::String& field);
 
 // URL
 

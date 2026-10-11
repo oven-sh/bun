@@ -62,7 +62,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
-  outgoingMessageInternals,
+  renderRawHead,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -214,9 +214,9 @@ function strictContentLength(response, headerState, fromEnd) {
       if (rawHead !== undefined) {
         if (response[kReplayingPipelinedOps]) {
           // A queued response is checked when its calls are replayed, where a throw has no caller. What only a raw head is checked for stays out of there.
-          if (rawHead.te || NumberIsNaN(contentLength)) return;
+          if (rawHead.charCodeAt(0) & RAW_HEAD_TRANSFER_ENCODING || NumberIsNaN(contentLength)) return;
         } else if (NumberIsNaN(contentLength)) {
-          // matchHeader() left NaN for a Content-Length that is not a number. In Node no write() is more than NaN and no end() equals it, as with Infinity in the handle.
+          // A Content-Length line that is not a number left NaN. In Node no write() is more than NaN and no end() equals it, as with Infinity in the handle.
           return Infinity;
         }
       }
@@ -2368,8 +2368,19 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 }
 
-// What walkRawHead() returns for a writeHead() with no header set before. Node renders those headers as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468). A handle writes the head later.
+// The headers of a writeHead() on a response with no header set before, which Node renders as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468). renderRawHead() makes them one string: a character of RAW_HEAD_* bits, then the lines. A handle writes it later.
 const kRawHead = Symbol("kRawHead");
+// kRawHead* in src/jsc/bindings/NodeHTTP.cpp - keep in sync.
+const RAW_HEAD_CONTENT_LENGTH = 1 << 0;
+const RAW_HEAD_TRANSFER_ENCODING = 1 << 1;
+const RAW_HEAD_CHUNKED = 1 << 2;
+const RAW_HEAD_DATE = 1 << 3;
+const RAW_HEAD_KEEP_ALIVE = 1 << 4;
+const RAW_HEAD_CLOSE = 1 << 5;
+const RAW_HEAD_PERSIST = 1 << 6;
+const RAW_HEAD_TRAILER = 1 << 7;
+// What renderRawHead() reports of one call: the RAW_HEAD_* bits, and the number of the last Content-Length line.
+const rawHeadFacts = new Float64Array(2);
 
 function setRawHead(response, headers) {
   if (!response[kHandle]) {
@@ -2380,8 +2391,16 @@ function setRawHead(response, headers) {
   }
   const contentLength = response._contentLength;
   let rawHead;
+  let facts = 0;
+  rawHeadFacts[0] = 0;
   try {
-    rawHead = outgoingMessageInternals.walkRawHead!(response, headers);
+    try {
+      rawHead = renderRawHead(headers, response._isLenientHeaderValidation(), response[kUniqueHeaders], rawHeadFacts);
+    } finally {
+      // Node's matchHeader(), for each line that the walk reached.
+      facts = rawHeadFacts[0];
+      if (facts !== 0) matchRawHead(response, facts, rawHeadFacts[1]);
+    }
     if (response[headerStateSymbol] === NodeHTTPHeaderState.sent) {
       // The toString() of a value sent the head from inside the walk. Node sends a second head then. A handle cannot.
       if (response.finished) return;
@@ -2394,7 +2413,7 @@ function setRawHead(response, headers) {
       response.shouldKeepAlive = false;
     }
     // The last check of _storeHeader: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L555-L557
-    if (rawHead.trailer && !rawHeadIsChunked(response, rawHead)) {
+    if (facts & RAW_HEAD_TRAILER && !rawHeadIsChunked(response, facts)) {
       throw $ERR_HTTP_TRAILER_INVALID();
     }
   } catch (error) {
@@ -2406,13 +2425,39 @@ function setRawHead(response, headers) {
   response[kRawHead] = rawHead;
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L616-L650
+function matchRawHead(response, facts, contentLength) {
+  if (facts & (RAW_HEAD_CLOSE | RAW_HEAD_PERSIST)) {
+    response._removedConnection = false;
+    if (facts & RAW_HEAD_CLOSE) response._last = true;
+    if (facts & RAW_HEAD_PERSIST) response.shouldKeepAlive = true;
+  }
+  if (facts & RAW_HEAD_TRANSFER_ENCODING) {
+    response._removedTE = false;
+    if (facts & RAW_HEAD_CHUNKED) response.chunkedEncoding = true;
+  }
+  if (facts & RAW_HEAD_CONTENT_LENGTH) {
+    response._contentLength = contentLength;
+    response._removedContLen = false;
+  }
+  if (facts & RAW_HEAD_KEEP_ALIVE) response._defaultKeepAlive = false;
+}
+
 // What _storeHeader leaves in chunkedEncoding for a raw head: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L519-L548
-function rawHeadIsChunked(response, rawHead) {
-  if (!rawHead.contLen && !rawHead.te) {
+function rawHeadIsChunked(response, facts) {
+  if (!(facts & (RAW_HEAD_CONTENT_LENGTH | RAW_HEAD_TRANSFER_ENCODING))) {
     if (!response._hasBody) return false;
     if (response.useChunkedEncodingByDefault && !response._removedTE) return true;
   }
   return response.chunkedEncoding === true;
+}
+
+// Whether the head names a Content-Length: in the lines of kRawHead, or else in the header store.
+function headHasContentLength(res) {
+  const rawHead = res[kRawHead];
+  return rawHead !== undefined
+    ? (rawHead.charCodeAt(0) & RAW_HEAD_CONTENT_LENGTH) !== 0
+    : res.hasHeader("content-length");
 }
 
 function moveRawHeadToStore(res) {
@@ -2420,11 +2465,15 @@ function moveRawHeadToStore(res) {
   // After end() the head is out, and appendHeader() would throw.
   if (rawHead === undefined || res._header) return;
   res[kRawHead] = undefined;
-  if (rawHead.contLen) res._contentLength = null;
-  if (rawHead.te) res.chunkedEncoding = false;
-  const lines = rawHead.flat;
-  for (let i = 0, length = lines.length; i < length; i += 2) {
-    OutgoingMessagePrototype.appendHeader.$call(res, lines[i], lines[i + 1]);
+  const facts = rawHead.charCodeAt(0);
+  if (facts & RAW_HEAD_CONTENT_LENGTH) res._contentLength = null;
+  if (facts & RAW_HEAD_TRANSFER_ENCODING) res.chunkedEncoding = false;
+  // A name has no colon, and a value has no line break.
+  const lines = rawHead.slice(1).split("\r\n");
+  for (let i = 0, length = lines.length - 1; i < length; i++) {
+    const line = lines[i];
+    const colon = line.indexOf(":");
+    OutgoingMessagePrototype.appendHeader.$call(res, line.slice(0, colon), line.slice(colon + 2));
   }
 }
 
@@ -2491,7 +2540,7 @@ $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 // Like Node.js's _storeHeader(), the defaults never touch kOutHeaders, so
 // getHeaders()/getHeaderNames()/hasHeader() keep reporting only the headers
 // the user actually set, even after the headers have been flushed.
-// The headers of a writeHead() with no header set before are not in kOutHeaders: they go into the array as kRawHead has them.
+// The headers of a writeHead() with no header set before are not in kOutHeaders: the string of kRawHead takes the place of the array.
 // Reusable backing array for renderNativeHeaders. The native writeHead
 // consumes the array synchronously, so it can be reused across requests;
 // the busy flag covers re-entrancy (a user toString() on a header value
@@ -2516,6 +2565,9 @@ const AUTO_HEADER_KEEP_ALIVE_TIMEOUT = 1 << 3;
 // line, so it is rendered natively with the other auto headers rather than being
 // pushed into the flat array (which goes out first).
 const AUTO_HEADER_TRANSFER_ENCODING_CHUNKED = 1 << 4;
+// What the NUL-named pairs of the flat array say, for a head that is the string of kRawHead.
+const AUTO_HEADER_NO_BODY = 1 << 7;
+const AUTO_HEADER_CLOSE_DELIMITED = 1 << 8;
 // The largest Keep-Alive timeout, in seconds, handed to the native writeHead (it takes a uint32).
 const kMaxNativeKeepAliveSecs = 0x7fffffff;
 // Out-parameters of renderNativeHeaders, read by its callers in the same
@@ -2531,13 +2583,17 @@ function renderNativeHeaders(res) {
   let autoHeaders = 0;
   let keepAliveSecs = 0;
   const headersMap = res[kOutHeaders];
-  let flat: string[];
-  if (scratchFlatHeadersBusy) {
-    flat = [];
-  } else {
-    scratchFlatHeadersBusy = true;
-    scratchFlatHeaders.length = 0;
-    flat = scratchFlatHeaders;
+  // With the string of kRawHead there is no array: the string is the head.
+  let rawHead: string | undefined = res[kRawHead];
+  let flat!: string[];
+  if (rawHead === undefined) {
+    if (scratchFlatHeadersBusy) {
+      flat = [];
+    } else {
+      scratchFlatHeadersBusy = true;
+      scratchFlatHeaders.length = 0;
+      flat = scratchFlatHeaders;
+    }
   }
   let hasDate = false;
   let hasConnection = false;
@@ -2546,18 +2602,15 @@ function renderNativeHeaders(res) {
   let headTransferEncoding;
   let headContentLength;
   try {
-    const rawHead = res[kRawHead];
     if (rawHead !== undefined) {
       // The lines that writeHead() took from its argument are the head, whatever the store holds by now.
-      const lines = rawHead.flat;
-      for (let i = 0, length = lines.length; i < length; i++) flat.push(lines[i]);
-      hasDate = rawHead.date;
-      hasConnection = rawHead.connection;
-      if (rawHead.te) headTransferEncoding = true;
-      if (rawHead.contLen) headContentLength = true;
-      // matchHeader() left the other two on the response: a Keep-Alive line, and `close` in a Connection line.
-      hasKeepAlive = res._defaultKeepAlive === false;
-      if (res._last) res[kMustCloseConnection] = true;
+      const facts = rawHead.charCodeAt(0);
+      hasDate = (facts & RAW_HEAD_DATE) !== 0;
+      hasConnection = (facts & (RAW_HEAD_CLOSE | RAW_HEAD_PERSIST)) !== 0;
+      hasKeepAlive = (facts & RAW_HEAD_KEEP_ALIVE) !== 0;
+      if (facts & RAW_HEAD_TRANSFER_ENCODING) headTransferEncoding = true;
+      if (facts & RAW_HEAD_CONTENT_LENGTH) headContentLength = true;
+      if (facts & RAW_HEAD_CLOSE) res[kMustCloseConnection] = true;
     } else if (headersMap !== null && headersMap !== undefined) {
       for (const key in headersMap) {
         const entry = headersMap[key];
@@ -2676,6 +2729,8 @@ function renderNativeHeaders(res) {
           if (!hasMax && timeoutSecs >= 0 && timeoutSecs <= kMaxNativeKeepAliveSecs) {
             autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
             keepAliveSecs = timeoutSecs;
+          } else if (rawHead !== undefined) {
+            rawHead += `Connection: keep-alive\r\nKeep-Alive: timeout=${timeoutSecs}${hasMax ? `, max=${maxRequestsPerSocket}` : ""}\r\n`;
           } else {
             // Rare path (maxRequestsPerSocket set, or seconds the native side cannot take): render both lines in JS, as Node prints them.
             flat.push("Connection", "keep-alive");
@@ -2706,14 +2761,16 @@ function renderNativeHeaders(res) {
       // chunk) is suppressed, like Node.js's `_hasBody && chunkedEncoding`
       // gate - a HEAD response ends at the first empty line whatever headers
       // it carries (RFC 9112 6.3).
-      flat.push("\u0000", "2");
+      if (rawHead !== undefined) autoHeaders |= AUTO_HEADER_NO_BODY;
+      else flat.push("\u0000", "2");
     }
 
     if (closeDelimited) {
       // The NUL-named sentinel pair tells the native writeHead the body is
       // close-delimited: written raw, with the connection closed after the
       // response (it is not a real header).
-      flat.push("\u0000", "1");
+      if (rawHead !== undefined) autoHeaders |= AUTO_HEADER_CLOSE_DELIMITED;
+      else flat.push("\u0000", "1");
     } else if (forceChunked) {
       // Advertise chunked so native frames the body instead of auto-writing Content-Length.
       // Not in the flat array: Node's _storeHeader emits this after Connection, flat array goes first.
@@ -2728,7 +2785,7 @@ function renderNativeHeaders(res) {
   }
   renderedAutoHeaders = autoHeaders;
   renderedKeepAliveSecs = keepAliveSecs;
-  return flat;
+  return rawHead ?? flat;
 }
 
 const kMustCloseConnection = Symbol("kMustCloseConnection");
@@ -3144,10 +3201,7 @@ function accountQueuedHeaderBytes(res, queued) {
   const rawHead = res[kRawHead];
   const outHeaders = res[kOutHeaders];
   if (rawHead !== undefined) {
-    const lines = rawHead.flat;
-    for (let i = 0, length = lines.length; i < length; i += 2) {
-      bytes += lines[i].length + 4 + lines[i + 1].length;
-    }
+    bytes += rawHead.length - 1;
   } else if (outHeaders !== null && outHeaders !== undefined) {
     for (const key in outHeaders) {
       const entry = outHeaders[key];
@@ -3166,9 +3220,10 @@ function accountQueuedHeaderBytes(res, queued) {
   // lengths: "Date: <29-byte IMF-fixdate>\r\n" (37), "Connection: keep-alive\r\n"
   // (24), "Transfer-Encoding: chunked\r\n" (28), plus the terminating "\r\n".
   if (rawHead !== undefined) {
-    if (!rawHead.date) bytes += 37;
-    if (!rawHead.connection) bytes += 24;
-    if (!rawHead.contLen && !rawHead.te) bytes += 28;
+    const facts = rawHead.charCodeAt(0);
+    if (!(facts & RAW_HEAD_DATE)) bytes += 37;
+    if (!(facts & (RAW_HEAD_CLOSE | RAW_HEAD_PERSIST))) bytes += 24;
+    if (!(facts & (RAW_HEAD_CONTENT_LENGTH | RAW_HEAD_TRANSFER_ENCODING))) bytes += 28;
   } else {
     if (!res.hasHeader("date")) bytes += 37;
     if (!res.hasHeader("connection")) bytes += 24;
@@ -3636,7 +3691,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   if (
     trailer &&
     this._hasBody &&
-    !(this[kRawHead]?.contLen ?? this.hasHeader("content-length")) &&
+    !headHasContentLength(this) &&
     this.req?.httpVersionMajor === 1 &&
     this.req?.httpVersionMinor >= 1
   ) {
@@ -3905,7 +3960,13 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   let written = 0;
   if (chunk) {
     written = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
-    if (written > 0 && !(this[kRawHead]?.contLen ?? this.getHeader("content-length") !== undefined)) {
+    const rawHead = this[kRawHead];
+    if (
+      written > 0 &&
+      !(rawHead !== undefined
+        ? rawHead.charCodeAt(0) & RAW_HEAD_CONTENT_LENGTH
+        : this.getHeader("content-length") !== undefined)
+    ) {
       // Chunked framing overhead: <hex length>\r\n<chunk>\r\n
       written += written.toString(16).length + 4;
     }
@@ -4099,7 +4160,7 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   if (
     !this[kImplicitHeaderFromEnd] &&
     (rawHead !== undefined
-      ? !rawHead.contLen && !rawHead.te
+      ? !(rawHead.charCodeAt(0) & (RAW_HEAD_CONTENT_LENGTH | RAW_HEAD_TRANSFER_ENCODING))
       : !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding"))
   ) {
     this[kFramingFrozenChunked] = true;

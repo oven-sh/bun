@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, renderRawHead, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -21,6 +21,8 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
     httpAllowHalfOpen: boolean,
   ) => void;
   setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
+  // The lines of writeHead(status, headers) behind one character of RAW_HEAD_* bits. `out` gets the bits and the Content-Length number, also when it throws.
+  renderRawHead: (headers: unknown, lenient: boolean, uniqueHeaders: Set<string> | null | undefined, out: Float64Array) => string;
   drainMicrotasks: () => void;
 };
 
@@ -57,14 +59,6 @@ const http1ServerPipeline: {
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
   finishDrainedResponse?: (res: unknown) => void;
   kMustCloseConnection?: symbol;
-} = {};
-
-// node:_http_outgoing registers walkRawHead() here for node:_http_server, which keeps it out of its own exports.
-const outgoingMessageInternals: {
-  walkRawHead?: (
-    message: unknown,
-    headers: unknown,
-  ) => { connection: boolean; contLen: boolean; te: boolean; date: boolean; trailer: boolean; flat: string[] };
 } = {};
 
 export const enum NodeHTTPResponseAbortEvent {
@@ -563,10 +557,10 @@ export {
   noBodySymbol,
   onDataIncomingMessage,
   optionsSymbol,
-  outgoingMessageInternals,
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,
+  renderRawHead,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

@@ -800,6 +800,9 @@ impl InferenceState {
         match (&mut self.variables, &other.variables) {
             (Variables::Dense(this), Variables::Dense(that)) => {
                 changed |= this.merge_from(that, |mine, theirs| {
+                    if theirs.is_empty() || mine.as_slice() == theirs.as_slice() {
+                        return None;
+                    }
                     let mut all = mine.clone();
                     all.union_with(theirs).then_some(all)
                 });

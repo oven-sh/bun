@@ -211,11 +211,14 @@ async function opendir(dir: string, options?) {
 // Node.js closes a FileHandle's fd in its native finalizer and raises
 // ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
-let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
-function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
+type CollectedFileHandle = { fd: number; path: string | undefined; closeRequested?: boolean };
+let fileHandleRegistry: FinalizationRegistry<CollectedFileHandle> | undefined;
+function onFileHandleCollected(held: CollectedFileHandle) {
   try {
     fs.closeSync(held.fd);
   } catch {}
+  // close() or an autoClose teardown asked for this close, and the ref that it waited for was never released.
+  if (held.closeRequested) return;
   const suffix = held.path !== undefined ? ` (${held.path})` : "";
   const err: NodeJS.ErrnoException = new Error(
     "A FileHandle object was closed during garbage collection. This used to be allowed " +
@@ -242,49 +245,51 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
-// readFile, writeFile and appendFile of this module take a FileHandle and run as one native
-// task on its descriptor number. The ref keeps close(), an autoClose teardown and a transfer
-// away from that number until the call settles, and the `finally` keeps a handle that the
-// caller dropped reachable until then. Node v26.3.0 takes no ref here: its close() closes at
-// once and it allows the transfer. Node reads handle.fd for each request, so a request that is
-// already issued completes, and a call that makes another request rejects with
-// ERR_OUT_OF_RANGE. A closed handle takes no ref, so the native call rejects with
-// ERR_OUT_OF_RANGE as in node and [kUnref] does not reach its last-ref arm again.
-async function readFileOfHandle(handle, fd, options) {
-  if (fd === -1) return _readFile(fd, options);
+type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
+
+// Node takes no ref for a FileHandle argument (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1930-L1931); Bun holds one until the call settles, so close() waits.
+function releaseWhenSettled(handle, promise) {
+  // The reaction keeps a handle that the caller dropped reachable until the call settles.
+  const release = () => handle[kUnref]();
+  promise.$then(release, release);
+  return promise;
+}
+
+function readFileOfHandle(handle, fd, options) {
+  handle[kRef]();
   try {
-    handle[kRef]();
-    return await _readFile(fd, options);
-  } finally {
+    return releaseWhenSettled(handle, _readFile(fd, options));
+  } catch (err) {
     handle[kUnref]();
+    throw err;
   }
 }
 
-async function writeFileOfHandle(handle, fd, data, options) {
-  if (fd === -1) return _writeFile(fd, data, options);
+function writeFileOfHandle(handle, fd, data, options) {
+  handle[kRef]();
   try {
-    handle[kRef]();
-    // The iterator getters are caller code, so they run under the ref.
+    // An iterable is written chunk by chunk, and on Windows each chunk goes to this descriptor number.
     if (
       !$isTypedArrayView(data) &&
       typeof data !== "string" &&
       ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
     ) {
-      return await writeFileAsyncIterator(fd, data, options);
+      return releaseWhenSettled(handle, writeFileAsyncIterator(fd, data, options, undefined, undefined));
     }
-    return await _writeFile(fd, data, options);
-  } finally {
+    return releaseWhenSettled(handle, _writeFile(fd, data, options));
+  } catch (err) {
     handle[kUnref]();
+    throw err;
   }
 }
 
-async function appendFileOfHandle(handle, fd, data, options) {
-  if (fd === -1) return _appendFile(fd, data, options);
+function appendFileOfHandle(handle, fd, data, options) {
+  handle[kRef]();
   try {
-    handle[kRef]();
-    return await _appendFile(fd, data, options);
-  } finally {
+    return releaseWhenSettled(handle, _appendFile(fd, data, options));
+  } catch (err) {
     handle[kUnref]();
+    throw err;
   }
 }
 
@@ -356,22 +361,24 @@ const exports = {
   readdir: asyncWrap(fs.readdir, "readdir"),
   readFile: async function (fileHandleOrFdOrPath, options) {
     const fd = fileHandleOrFdOrPath?.[kFd];
-    if (fd !== undefined) return readFileOfHandle(fileHandleOrFdOrPath, fd, options);
-    return _readFile(fileHandleOrFdOrPath, options);
+    return fd === undefined
+      ? _readFile(fileHandleOrFdOrPath, options)
+      : readFileOfHandle(fileHandleOrFdOrPath, fd, options);
   },
-  writeFile: async function (fileHandleOrFdOrPath, data, options) {
+  writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
     const fd = fileHandleOrFdOrPath?.[kFd];
-    if (fd !== undefined) return writeFileOfHandle(fileHandleOrFdOrPath, fd, data, options);
+    if (fd !== undefined) return writeFileOfHandle(fileHandleOrFdOrPath, fd, args[0], args[1]);
     if (
-      !$isTypedArrayView(data) &&
-      typeof data !== "string" &&
-      ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
+      !$isTypedArrayView(args[0]) &&
+      typeof args[0] !== "string" &&
+      ($isCallable(args[0]?.[Symbol.iterator]) || $isCallable(args[0]?.[Symbol.asyncIterator]))
     ) {
       $debug("fs.promises.writeFile async iterator slow path!");
       // Node accepts an arbitrary async iterator here
-      return writeFileAsyncIterator(fileHandleOrFdOrPath, data, options);
+      // @ts-expect-error
+      return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
     }
-    return _writeFile(fileHandleOrFdOrPath, data, options);
+    return _writeFile(fileHandleOrFdOrPath, ...args);
   },
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpath, "realpath"),
@@ -450,6 +457,25 @@ function asyncWrap(fn: any, name: string) {
   return wrapped;
 }
 
+function closeAfterLastUnref(handle) {
+  handle[kClosePromise] = PromisePrototypeFinally.$call(
+    new Promise((resolve, reject) => {
+      handle[kCloseResolve] = resolve;
+      handle[kCloseReject] = reject;
+    }),
+    () => {
+      handle[kClosePromise] = undefined;
+      handle[kCloseReject] = undefined;
+      handle[kCloseResolve] = undefined;
+    },
+  );
+  // A handle that is collected before its last [kUnref] still gets its descriptor closed, and nothing is reported.
+  if (fileHandleRegistry?.unregister(handle)) {
+    const held = { fd: handle[kFd], path: undefined, closeRequested: true };
+    fileHandleRegistry.register(handle, held, handle[kCloseResolve]);
+  }
+}
+
 {
   const {
     writeFile,
@@ -468,22 +494,6 @@ function asyncWrap(fn: any, name: string) {
     close,
   } = exports;
   let isArrayBufferView;
-
-  // The deferred arm of close() and of [kCloseSync]. Other operations hold the descriptor, so
-  // the last [kUnref] closes it and settles kClosePromise through these two functions.
-  function closeAfterLastUnref(handle) {
-    handle[kClosePromise] = PromisePrototypeFinally.$call(
-      new Promise((resolve, reject) => {
-        handle[kCloseResolve] = resolve;
-        handle[kCloseReject] = reject;
-      }),
-      () => {
-        handle[kClosePromise] = undefined;
-        handle[kCloseReject] = undefined;
-        handle[kCloseResolve] = undefined;
-      },
-    );
-  }
 
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
   // These functions await the result so that errors propagate correctly with
@@ -717,8 +727,7 @@ function asyncWrap(fn: any, name: string) {
           if (typeof length !== "number") length = buffer.byteLength - offset;
           if (typeof position !== "number") position = null;
         } else {
-          // filehandle.write(string[, position[, encoding]]): `length` is the
-          // encoding. Node rejects a non-string before it validates the encoding.
+          // filehandle.write(string[, position[, encoding]]): `length` is the encoding. Node rejects a non-string before it validates the encoding.
           if (typeof buffer !== "string") {
             throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
           }
@@ -785,10 +794,9 @@ function asyncWrap(fn: any, name: string) {
         return this[kClosePromise];
       }
 
-      fileHandleRegistry?.unregister(this);
-
       if (--this[kRefs] === 0) {
         this[kFd] = -1;
+        fileHandleRegistry?.unregister(this);
         this[kClosePromise] = PromisePrototypeFinally.$call(close(fd), () => {
           this[kClosePromise] = undefined;
         });
@@ -1183,6 +1191,10 @@ function asyncWrap(fn: any, name: string) {
       let refAcquired = false;
       function acquireRef() {
         if (!refAcquired) {
+          // The arguments of the write are read by now, and a getter of them can end the writer or close the handle.
+          if (error) throw error;
+          if (closed) throw $ERR_INVALID_STATE_TypeError("The writer is closed");
+          if (handle[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
           refAcquired = true;
           handle[kRef]();
         }
@@ -1198,6 +1210,7 @@ function asyncWrap(fn: any, name: string) {
 
       // Write a single buffer with retry on zero-byte writes (up to 5 retries).
       async function writeAll(buf, offset, length, position, signal) {
+        acquireRef();
         asyncPending++;
         try {
           let retries = 0;
@@ -1235,6 +1248,7 @@ function asyncWrap(fn: any, name: string) {
       // Writev with retry. On partial write, concatenates remaining
       // buffers and falls back to writeAll.
       async function writevAll(buffers, position, signal) {
+        acquireRef();
         asyncPending++;
         try {
           let totalSize = 0;
@@ -1357,7 +1371,6 @@ function asyncWrap(fn: any, name: string) {
           chunkByteLength ??= chunk.byteLength;
           const position = pos;
           if (pos >= 0) pos += chunkByteLength;
-          acquireRef();
           return writeAll(chunk, 0, chunkByteLength, position, signal);
         },
 
@@ -1390,7 +1403,6 @@ function asyncWrap(fn: any, name: string) {
           if (bytesRemaining > 0) bytesRemaining -= totalSize;
           const position = pos;
           if (pos >= 0) pos += totalSize;
-          acquireRef();
           return writevAll(chunks, position, signal);
         },
 
@@ -1479,11 +1491,11 @@ function asyncWrap(fn: any, name: string) {
           if (error) {
             return Promise.$reject(error);
           }
-          if (closed) {
-            return Promise.$resolve(totalBytesWritten);
-          }
           if (closing) {
             return pendingEndPromise;
+          }
+          if (closed) {
+            return Promise.$resolve(totalBytesWritten);
           }
           validateObject(options, "options");
           const { signal } = options;
@@ -1502,6 +1514,12 @@ function asyncWrap(fn: any, name: string) {
           if (error) return -1;
           if (closed) return totalBytesWritten;
           if (asyncPending) return -1;
+          if (autoClose && !handle[kClosePromise] && handle[kRefs] > (refAcquired ? 2 : 1)) {
+            // The close has to wait for another operation of the handle: the end starts here and end() returns its promise.
+            closing = true;
+            pendingEndPromise = cleanup().$then(returnTotalBytesWritten);
+            return -1;
+          }
           closed = true;
           handle[kLocked] = false;
           releaseRef();
@@ -1546,7 +1564,7 @@ function asyncWrap(fn: any, name: string) {
       };
     }
 
-    // Synchronously close the FileHandle (used by pullSync/writer autoClose).
+    // The close of an autoClose pullSync()/writer(). Node closes at once (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L304-L312); Bun waits for the last [kUnref] when another operation holds a ref, as close() does.
     [kCloseSync]() {
       if (this[kFd] === -1) return;
       if (this[kClosePromise]) {
@@ -1555,9 +1573,6 @@ function asyncWrap(fn: any, name: string) {
         throw $ERR_INVALID_STATE("The FileHandle is closing");
       }
       if (this[kRefs] > 1) {
-        // Another operation of this handle holds the descriptor, so the close waits for the
-        // last [kUnref], as close() does. Node v26.3.0 closes here at once.
-        fileHandleRegistry?.unregister(this);
         this[kRefs]--;
         closeAfterLastUnref(this);
         this[kCloseSyncDeferred] = true;
@@ -1607,14 +1622,20 @@ function asyncWrap(fn: any, name: string) {
     }
 
     [kUnref]() {
-      if (--this[kRefs] === 0) {
+      // Two statements, as in node (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L456-L458): a receiver that drops the write keeps its count.
+      this[kRefs]--;
+      if (this[kRefs] === 0) {
         // Close the captured fd directly: this.close() would see kFd === -1
         // and short-circuit without ever closing the descriptor, leaking it
         // on the deferred-close path (close() called while an op was still
         // in flight).
         const fd = this[kFd];
+        // The ref was taken on a closed handle. A close that is in progress settles its own promise.
+        if (fd === -1) return;
         this[kFd] = -1;
-        (fd !== -1 ? close(fd) : Promise.$resolve()).$then(this[kCloseResolve], this[kCloseReject]);
+        const resolve = this[kCloseResolve];
+        if (resolve !== undefined) fileHandleRegistry?.unregister(resolve);
+        close(fd).$then(resolve, this[kCloseReject]);
       }
     }
   }
@@ -1677,10 +1698,8 @@ function flagTruncates(flag): boolean {
   return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
 }
 
-async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding) {
+async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
-  let flag;
-  let mode;
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");

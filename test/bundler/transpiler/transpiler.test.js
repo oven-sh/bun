@@ -283,7 +283,7 @@ describe("Bun.Transpiler", () => {
       );
       ts.expectPrintedMin_("function f(h) { const t = h; return t`x`; }", "function f(h) {\n  return h`x`;\n}");
     });
-    it("gives a template tag the `this` that the source gives it", async () => {
+    it.concurrent("gives a template tag the `this` that the source gives it", async () => {
       const src = `
         function getThis() { return this; }
         var tools = { tag: getThis };
@@ -366,7 +366,7 @@ describe("Bun.Transpiler", () => {
         const key = twin("é") + "-x";
         expect(withDefine.transformSync(`x = ({ "${key}": 1 })[K]`)).toBe(`x = { "${key}": 1 }["é-x"];\n`);
       });
-      it("gives the value of the property read when bun runs a file", async () => {
+      it.concurrent("gives the value of the property read when bun runs a file", async () => {
         const key = twin("é");
         const codePoint = name => "U+" + name.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
         // [label, expression, printed result]

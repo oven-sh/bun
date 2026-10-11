@@ -51,7 +51,7 @@ class Table {
     }
     // Arrays with the same rows are one, also those that are the same only once their members are one.
     const one = this.arrays.map((_, array) => array);
-    for (let found = true; found;) {
+    for (let found = true; found; ) {
       found = false;
       const seen = new Map();
       this.arrays.forEach((rows, array) => {

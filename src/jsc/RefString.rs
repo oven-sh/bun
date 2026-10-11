@@ -17,7 +17,7 @@ pub(crate) type Hash = u32;
 pub type Map =
     bun_collections::HashMap<Hash, NonNull<RefString>, bun_collections::IdentityContext<Hash>>;
 
-/// The bytes are longer than [`bun_core::String::max_length`], so they were not interned.
+/// The bytes are not interned yet and are longer than [`bun_core::String::max_length`]; nothing was allocated.
 #[derive(Debug)]
 pub struct StringTooLong;
 
@@ -71,7 +71,7 @@ impl RefString {
     ///
     /// Frees the byte
     /// buffer and then the `RefString` itself (self-destroying). Because
-    /// `RefString` is heap-allocated and held as `*mut RefString` (see `Map`),
+    /// `RefString` is heap-allocated and held as `NonNull<RefString>` (see `Map`),
     /// this stays an explicit raw-pointer destroy rather than `impl Drop`.
     ///
     /// SAFETY: `this` must be the unique live reference to a `RefString`

@@ -306,8 +306,7 @@ impl FileSystemRouter {
             r.ref_();
             r
         };
-        // Intern all three before claiming any: a claim taken before a later
-        // string is refused would never be released.
+        // Intern all three before claiming any, so a refusal leaves no unreleased claim.
         let mut intern = |bytes: &[u8]| {
             vm.ref_counted_string(bytes, None)
                 .map_err(|_| global_this.throw_string_too_long())

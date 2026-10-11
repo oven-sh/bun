@@ -4885,9 +4885,7 @@ impl VirtualMachine {
         })
     }
 
-    /// Interns a copy of `input_` in the VM's ref-string map and returns the
-    /// ref-counted entry. Bytes that are not in the map yet and are longer than
-    /// [`bun_core::String::max_length`] are refused before anything is allocated.
+    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
     pub fn ref_counted_string(
         &mut self,
         input_: &[u8],
@@ -4921,8 +4919,7 @@ impl VirtualMachine {
                     // `*mut RefString` ctx pointer first.
                     impl_: core::ptr::null_mut(),
                     ctx: self_ctx,
-                    // `create_external` can run `free_ref_string` before it
-                    // returns, while `v` still borrows the map.
+                    // Set once `create_external` succeeds: its refusal runs `free_ref_string` while `v` borrows the map.
                     on_before_deinit: None,
                 }));
                 // SAFETY: `ref_` is the unique live `*mut RefString` (just
@@ -4937,8 +4934,7 @@ impl VirtualMachine {
                     free_ref_string,
                 );
                 if s.tag() == bun_core::Tag::Dead {
-                    // `create_external` freed `ref_` and its buffer: the limit
-                    // dropped after the check above.
+                    // The limit dropped after the check above; `create_external` already freed `ref_`.
                     return Err(StringTooLong);
                 }
                 // SAFETY: `s` owns the impl, so `free_ref_string` has not run

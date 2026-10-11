@@ -1221,28 +1221,50 @@ it("throws ERR_STRING_TOO_LONG for a directory path over the string limit", asyn
   });
 });
 
-it("keeps an already interned origin usable after the string limit drops below it", async () => {
+it("checks the string limit only for an origin that is not interned yet, before it copies the origin", async () => {
   using dir = tempDir("fsr-intern-hit", { "index.tsx": "export default 1;" });
-  // The length check belongs to the intern itself, on the miss path. A router
-  // that repeats an origin interned under the old limit finds it in the map and
-  // still constructs; only a new origin over the limit is refused.
+  // The length check belongs to the intern itself: on the miss path, ahead of
+  // its copy of the bytes. A router that repeats an origin interned under the
+  // old limit finds it in the map and still constructs. A new origin over the
+  // limit is refused, and the process does not grow by its 32 MiB.
   const code = /* js */ `
     const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
     const dir = process.argv[1];
-    const interned = "https://a.example/" + Buffer.alloc(1_200_000, "x").toString();
-    const fresh = "https://b.example/" + Buffer.alloc(1_200_000, "y").toString();
+    // The buffers stay reachable, so a collection cannot hide growth.
+    const buffers = [];
+    const flat = (prefix, bytes) => {
+      const buffer = Buffer.alloc(bytes, "x");
+      buffer.write(prefix);
+      buffers.push(buffer);
+      return buffer.toString();
+    };
+    const interned = flat("https://a.example/", 1_200_000);
+    const fresh = flat("https://b.example/", 32 * 1024 * 1024);
     const make = origin => {
       try {
-        new Bun.FileSystemRouter({ dir, style: "nextjs", origin });
-        return "ok";
+        return new Bun.FileSystemRouter({ dir, style: "nextjs", origin });
       } catch (e) {
         return e?.code ?? e?.name;
       }
     };
-    const before = make(interned);
+    // A router that stays reachable keeps its origin in the map.
+    const first = make(interned);
     // 1 MiB is the floor this hook accepts.
     setSyntheticAllocationLimitForTesting(1024 * 1024);
-    console.log(JSON.stringify({ before, hit: make(interned), miss: make(fresh) }));
+    const hit = make(interned);
+    const memory = () => [process.memoryUsage.rss(), process.resourceUsage().maxRSS * 1024];
+    const before = memory();
+    const miss = make(fresh);
+    const after = memory();
+    console.log(
+      JSON.stringify({
+        hit: hit instanceof Bun.FileSystemRouter,
+        miss,
+        missCopied: after.some((bytes, i) => bytes - before[i] > 8 * 1024 * 1024),
+        held: first.origin.length,
+        buffers: buffers.length,
+      }),
+    );
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code, String(dir)],
@@ -1252,7 +1274,7 @@ it("keeps an already interned origin usable after the string limit drops below i
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-    stdout: { before: "ok", hit: "ok", miss: "ERR_STRING_TOO_LONG" },
+    stdout: { hit: true, miss: "ERR_STRING_TOO_LONG", missCopied: false, held: 1_200_000, buffers: 2 },
     stderr: "",
     exitCode: 0,
   });

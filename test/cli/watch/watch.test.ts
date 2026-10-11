@@ -651,10 +651,9 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
   });
 });
 
-// The --watch twin of the hot.test.ts test of the same name: the ref-string
-// intern behind both flags refused to build a string over
-// `String::max_length()` by writing through the pointer its constructor had
-// already freed.
+// The --watch twin of the hot.test.ts test of the same name: over
+// `String::max_length()` the ref-string intern behind both flags wrote through
+// a pointer that the string constructor had already freed.
 it("throws ERR_STRING_TOO_LONG for a module whose transpiled text is over the string limit", async () => {
   using dir = tempDir("watch-string-limit", {
     "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,
@@ -667,7 +666,7 @@ it("throws ERR_STRING_TOO_LONG for a module whose transpiled text is over the st
       process.exit(0);
     `,
   });
-  watchee = spawn({
+  const proc = spawn({
     cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.cjs"],
     cwd: String(dir),
     env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
@@ -675,7 +674,8 @@ it("throws ERR_STRING_TOO_LONG for a module whose transpiled text is over the st
     stderr: "pipe",
     stdin: "ignore",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([watchee.stdout.text(), watchee.stderr.text(), watchee.exited]);
+  watchee = proc;
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "caught:ERR_STRING_TOO_LONG\n",
     stderr: "",

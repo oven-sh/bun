@@ -347,6 +347,16 @@ describe.concurrent("prettier/prettier", () => {
     expect(places.map(it => it.split(": ")[0])).toEqual(["a.js:3:1"]);
   });
 
+  // It is linted script by script, under the name of the file. `--fix` once made one comment of this script.
+  test("bun/format leaves the scripts of a component alone", async () => {
+    const script = "// a\nconst a = 1;\nexport default { data: () => ({ a }) };\n";
+    const files = {
+      ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
+      "a.vue": `<template>\n  <p>{{ a }}</p>\n</template>\n\n<script>\n${script}</script>\n`,
+    };
+    expect(await run(files, "-f", "unix")).toMatchObject({ stdout: "", exitCode: 0 });
+  });
+
   test("the rule of the package is asked: an option that is not Prettier's", async () => {
     const blocks = [{ rules: { "prettier/prettier": ["error", { optionOfTheirs: true }] } }];
     const files = { "a.js": "const a = {b:1}\n", ...installed(), "eslint.config.mjs": config(blocks) };

@@ -448,7 +448,10 @@ impl Context<'_, '_> {
                     };
                 }
                 file.set_modules(self.modules);
-                file.set_formatter(self.formatter, as_what.physical_path_len);
+                // Under the name of a component the formatter would print one of its scripts as a component.
+                if as_what.script.is_none() {
+                    file.set_formatter(self.formatter, as_what.physical_path_len);
+                }
                 if let Some(inferred) = self.inferred {
                     file.set_inferred_globals(inferred);
                 }

@@ -1655,8 +1655,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// What the `stop()` promise (node:http: 'close') and the loop unref wait for. A connection counts from accept, before its TLS handshake completes.
     pub(crate) fn is_closed(&self) -> bool {
         // node:http: a request holds the loop itself, and its connection is not at rest while it owes a response.
-        (self.config.is_node_http_server || self.pending_requests.get() == 0)
-            && !self.has_listener()
+        !self.has_listener()
+            && (self.config.is_node_http_server || self.pending_requests.get() == 0)
             && !self.has_active_web_sockets()
             && !self.has_loop_holding_connections()
     }

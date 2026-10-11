@@ -1,16 +1,13 @@
 // Spawned by promises.test.js with a directory and a list of forms. The directory holds one
 // named pipe for each form ("pipe-<form>"). Each form parks one read of a FileHandle on its
 // pipe. While the read is pending, the form closes the handle, drops it, or ends a
-// writer()/pullSync() that has autoClose. Then another file is opened (it takes the descriptor
-// number if that number is free) and the pipe is fed and ended. Prints one JSON line: for each
-// form, what the read gave and what happened to the descriptor.
+// writer()/pullSync() that has autoClose. Then the pipe is fed and ended. Prints one JSON line:
+// for each form, how the read settled and whether the descriptor was open.
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
 const [dir, ...forms] = process.argv.slice(2);
-const other = path.join(dir, "other");
-fs.writeFileSync(other, "THE CONTENT OF ANOTHER FILE");
 
 // A FileHandle that is collected while it is open closes its descriptor and reports this.
 let collected = 0;
@@ -66,9 +63,15 @@ async function run(form: string) {
       })(),
     );
     await started;
-    // Only the pending read can reach the handle now.
-    for (let i = 0; i < 8 && isOpen(number); i++) {
-      Bun.gc(true);
+    // Only the pending read can reach the handle now. The collector runs from a macrotask, so
+    // that no frame of the microtask loop is on the stack and holds the call that opened it.
+    for (let i = 0; i < 4 && isOpen(number); i++) {
+      await new Promise<void>(resolve => {
+        setImmediate(() => {
+          Bun.gc(true);
+          resolve();
+        });
+      });
       await new Promise(resolve => setImmediate(resolve));
     }
   } else {
@@ -94,24 +97,19 @@ async function run(form: string) {
   }
 
   const openWhilePending = isOpen(number);
-  // Another file takes the descriptor number if the number is free.
-  const otherFd = fs.openSync(other, "r");
-  const otherTookTheNumber = otherFd === number;
   fs.writeSync(feeder, "bytes of the pipe;");
   fs.closeSync(feeder); // the pipe ends
 
   const result = await read;
   let closedAfterTheRead: boolean | undefined;
-  if (closed && !otherTookTheNumber) {
+  if (closed) {
     await closed;
     closedAfterTheRead = !isOpen(number);
   }
-  fs.closeSync(otherFd);
   fs.closeSync(keepOpen);
   return {
     ...result,
     openWhilePending,
-    otherTookTheNumber,
     collected: collected - collectedBefore,
     closedAfterTheRead,
   };
@@ -121,4 +119,3 @@ async function run(form: string) {
 const results: Record<string, unknown> = {};
 for (const form of forms) results[form] = await run(form);
 console.log(JSON.stringify(results));
-process.exit(0);

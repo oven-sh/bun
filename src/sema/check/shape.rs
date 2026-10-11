@@ -4251,7 +4251,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// the types in them. So does a union keep them apart (`signatures`, `union_as_object`).
     pub(super) fn structured_members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let TypeData::Intersection(parts) = self.data(ty) else {
-            return self.members(ty);
+            // The members of a substitution type are those of an intersection.
+            let members = self.members(ty)?;
+            return Some(self.structured(members));
         };
         // They are kept as the members of an object type: the shape with the key `ty` has the
         // properties, which are many more.

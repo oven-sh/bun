@@ -11,7 +11,6 @@
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
-use bun_core::strings;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Strong,
     virtual_machine::VirtualMachine,
@@ -267,50 +266,6 @@ impl Vm for ThreadVm {
     }
 }
 
-/// What a line of `/proc/self/cgroup` names: a directory, under which other one it is, and the file in it and in those above it
-/// that has a limit. `0::/a/b` with one hierarchy, `9:memory:/a/b` with one for each controller.
-#[cfg_attr(not(any(target_os = "linux", test)), expect(dead_code))]
-fn group_in(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
-    let (_, rest) = strings::split_once_char(line, b':')?;
-    let (controllers, group) = strings::split_once_char(rest, b':')?;
-    if controllers.is_empty() {
-        return Some((group, b"/sys/fs/cgroup", b"memory.max"));
-    }
-    (strings::split(controllers, b",").any(|it| it == b"memory")).then_some((
-        group,
-        b"/sys/fs/cgroup/memory",
-        b"memory.limit_in_bytes",
-    ))
-}
-
-/// What such a file says. `max`: there is no limit.
-fn limit_in(text: &[u8]) -> Option<usize> {
-    core::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()
-}
-
-/// The least that the control groups of this process allow it: a container's limit.
-#[cfg(target_os = "linux")]
-fn limit_of_the_groups() -> Option<usize> {
-    use bun_sys::{Fd, File};
-    let groups = File::read_from(Fd::cwd(), b"/proc/self/cgroup").ok()?;
-    let limits = strings::split(&groups, b"\n")
-        .filter_map(group_in)
-        .flat_map(|(group, root, file)| {
-            let above = core::iter::successors(Some(group), |it| {
-                Some(&it[..strings::last_index_of_char(it, b'/')?])
-            });
-            above.filter_map(move |it| {
-                limit_in(&File::read_from(Fd::cwd(), &[root, it, b"/", file].concat()).ok()?)
-            })
-        });
-    limits.min()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn limit_of_the_groups() -> Option<usize> {
-    None
-}
-
 /// What all engines together may take: half of the memory that is to be had, in the machine and in the container. A linter does
 /// not take the machine.
 fn memory_for_engines() -> usize {
@@ -329,10 +284,8 @@ fn memory_for_engines() -> usize {
 /// The memory of the machine, or of the container. `BUN_LINT_MEMORY`: for tests.
 pub(super) fn memory() -> usize {
     let said = bun_core::getenv_z(bun_core::zstr!("BUN_LINT_MEMORY"));
-    said.and_then(limit_in).unwrap_or_else(|| {
-        let machine = bun_core::get_total_memory_size();
-        limit_of_the_groups().map_or(machine, |it| it.min(machine))
-    })
+    said.and_then(|it| core::str::from_utf8(it).ok()?.parse().ok())
+        .unwrap_or_else(bun_core::get_total_memory_size)
 }
 
 /// Runs the `exit` handlers of the VM of this thread, if it has one. If it `frees`, and with
@@ -786,36 +739,5 @@ impl Engine for Engines {
         // Cores are left to compile on while the VMs run.
         let is_for_few = engines <= usize::from(bun_core::get_thread_count()) / 2;
         (self.start.is_for_few).store(is_for_few, core::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{group_in, limit_in};
-
-    #[test]
-    fn reads_the_groups() {
-        let unified = (
-            &b"/a/b.scope"[..],
-            &b"/sys/fs/cgroup"[..],
-            &b"memory.max"[..],
-        );
-        assert_eq!(group_in(b"0::/a/b.scope"), Some(unified));
-        let own = (
-            &b"/docker/1"[..],
-            &b"/sys/fs/cgroup/memory"[..],
-            &b"memory.limit_in_bytes"[..],
-        );
-        assert_eq!(group_in(b"9:memory:/docker/1"), Some(own));
-        assert_eq!(group_in(b"4:cpu,memory:/docker/1"), Some(own));
-        assert_eq!(group_in(b"1:name=systemd:/"), None);
-        assert_eq!(group_in(b""), None);
-    }
-
-    #[test]
-    fn reads_a_limit() {
-        assert_eq!(limit_in(b"629145600\n"), Some(629_145_600));
-        assert_eq!(limit_in(b"max\n"), None);
-        assert_eq!(limit_in(b""), None);
     }
 }

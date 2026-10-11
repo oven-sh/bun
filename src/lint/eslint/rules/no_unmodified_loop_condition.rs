@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 
 /// Disallow unmodified loop conditions.
 pub struct NoUnmodifiedLoopCondition {
@@ -160,8 +159,6 @@ struct Above<'a> {
 pub struct State<'a> {
     /// The tests of the loops.
     tests: Vec<Span>,
-    /// For the nodes that are far below the test, as in `a + a + ..`.
-    above: FxHashMap<Node<'a>, Above<'a>>,
     /// `has_dynamic_expressions`
     is_dynamic: FxHashMap<Expr<'a>, bool>,
     is_oxlint: bool,
@@ -222,23 +219,12 @@ fn has_dynamic_expressions(root: Expr, is_oxlint: bool) -> bool {
 }
 
 impl NoUnmodifiedLoopCondition {
-    /// Walks up from `node`, whose child on the way is `child`. All the walks together take time in
-    /// proportion to the number of nodes.
-    fn look_above<'a>(&self, mut child: Node<'a>, mut node: Node<'a>, state: &mut State<'a>) -> Above<'a> {
-        const NEAR: usize = 32;
-        let mut passed: SmallVec<[Node<'a>; NEAR]> = SmallVec::new();
-        // With how many nodes have been passed up to it.
-        let mut group = None;
-        // How many nodes have been passed up to the outermost conditional expression that makes no group.
-        let mut alone_below = 0;
-        let above = loop {
-            if passed.len() >= NEAR
-                && let Some(&known) = state.above.get(&node)
-            {
-                break known;
-            }
+    /// Walks up from `node`, whose child on the way is `child`.
+    fn look_above<'a>(&self, mut child: Node<'a>, mut node: Node<'a>, is_oxlint: bool) -> Above<'a> {
+        let (mut group, mut is_alone) = (None, false);
+        loop {
             let node_type = utils::estree_type_name(node);
-            let is_end = is_sentinel(node_type) && !(state.is_oxlint && is_passed_by_oxlint(node));
+            let is_end = is_sentinel(node_type) && !(is_oxlint && is_passed_by_oxlint(node));
             if is_end || matches!(node, Node::File(_)) {
                 let statement = node.as_stmt().filter(|it| {
                     let test = match it.kind() {
@@ -248,32 +234,19 @@ impl NoUnmodifiedLoopCondition {
                     };
                     is_end && test.is_some_and(|test| Node::Expr(test) == child)
                 });
-                break Above { statement, group: None, is_alone: false };
+                return Above { statement, group, is_alone };
             }
-            passed.push(node);
             if (node_type == "BinaryExpression"
                 || !self.check_conditional_expressions && node_type == "ConditionalExpression")
                 && let Some(expression) = node.as_expr()
             {
-                group = Some((expression, passed.len()));
+                group = Some(expression);
             } else if node_type == "ConditionalExpression" {
-                alone_below = passed.len();
+                is_alone = true;
             }
             child = node;
             node = utils::estree_parent(node);
-        };
-        let group_from = |count: usize| {
-            above.group.or_else(|| group.filter(|it| count < it.1).map(|it| it.0))
-        };
-        let from = |count: usize| Above {
-            statement: above.statement,
-            group: group_from(count),
-            is_alone: above.is_alone || count < alone_below,
-        };
-        for (count, &node) in passed.iter().enumerate().skip(NEAR) {
-            state.above.insert(node, from(count));
         }
-        from(0)
     }
 
     /// ESLint's `toLoopCondition`.
@@ -293,7 +266,7 @@ impl NoUnmodifiedLoopCondition {
             // The name is a part of it.
             _ => child,
         };
-        let Above { statement, group, is_alone } = self.look_above(child, node, state);
+        let Above { statement, group, is_alone } = self.look_above(child, node, state.is_oxlint);
         let statement = statement?;
         // What is dynamic in a group is so in those around it.
         let is_oxlint = state.is_oxlint;

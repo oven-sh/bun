@@ -70,8 +70,6 @@ pub struct Known<'a> {
     containing_loops: AncestorMemo<'a, Option<Stmt<'a>>>,
     writes_to_variables: FxHashMap<usize, Writes>,
     writes_to_globals: FxHashMap<Name<'a>, Writes>,
-    /// [`Known::is_written_in_top_loop`], by its arguments, for the loops that are far up from where it was asked.
-    is_written_in_top_loop: FxHashMap<(Stmt<'a>, u32, u32), bool>,
     /// Where the functions start that are reported as oxlint does.
     reported_as_oxlint: FxHashSet<u32>,
 }
@@ -116,38 +114,16 @@ impl<'a> Known<'a> {
     /// Whether `last` is not before ESLint's `getTopLoopNode`: the outermost of the loops around `node`, and `node` itself, that
     /// start at `border` or after it.
     fn is_written_in_top_loop(&mut self, node: Stmt<'a>, border: u32, last: u32) -> bool {
-        /// So far out nothing is remembered.
-        const PLAIN_STEPS: usize = 4;
-        let outer = |known: &mut Self, it: Stmt<'a>| {
-            known.get_containing_loop_node(it.into()).filter(|outer| outer.span().start >= border)
-        };
-        let (mut at, mut steps) = (node, 0);
-        let answer = loop {
+        let mut at = node;
+        loop {
             if at.span().start <= last {
-                break true;
+                return true;
             }
-            if steps >= PLAIN_STEPS
-                && let Some(&known) = self.is_written_in_top_loop.get(&(at, border, last))
-            {
-                break known;
-            }
-            match outer(self, at) {
+            match self.get_containing_loop_node(at.into()).filter(|outer| outer.span().start >= border) {
                 Some(outer) => at = outer,
-                None => break false,
+                None => return false,
             }
-            steps += 1;
-        };
-        let mut passed = Some(node);
-        for step in 0..steps {
-            let Some(it) = passed.filter(|_| steps > PLAIN_STEPS) else {
-                break;
-            };
-            if step >= PLAIN_STEPS {
-                self.is_written_in_top_loop.insert((it, border, last), answer);
-            }
-            passed = outer(self, it);
         }
-        answer
     }
 
     /// Whether one of the `writes` to a variable can modify it between the iterations of the loop: it is in another function, or

@@ -47,7 +47,6 @@ pub const LSCONN_ST_VERNEG_FAILURE: c_int = 10;
 /// `enum lsquic_dg_status`, the `status` of `NqVtable::on_datagram_status`.
 pub const LSQ_DG_ACKED: c_int = 0;
 pub const LSQ_DG_LOST: c_int = 1;
-pub const LSQ_DG_UNSENT: c_int = 2;
 
 pub const N_LSQVER: c_int = 8;
 

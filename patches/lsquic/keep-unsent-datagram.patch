@@ -1,0 +1,232 @@
+send ctl: keep a scheduled packet that holds a DATAGRAM frame
+
+A DATAGRAM frame counts as "regen" (po_regen_sz, BQUIC_FRAME_REGEN_MASK)
+so that a lost packet does not retransmit it (lsquic 3.0.3, issues #312
+and #325).  The code for the scheduled queue reads the same mark as "lsquic
+can generate this frame again".  lsquic_send_ctl_squeeze_sched() drops a
+delayed packet that holds nothing else, and
+lsquic_send_ctl_next_packet_to_send() cuts the regen frames out of a packet
+with PO_REPACKNO, or drops it.  That is right for an ACK frame.  A DATAGRAM
+frame cannot be generated again: on_dg_write handed its payload over.  So a
+datagram that lsquic framed while it could not send (after an RTO, or when
+the socket refused the packet) never reached the wire.
+
+Both places keep the packet now.  A packet with DATAGRAM frames alone sets
+no retransmission alarm, so two rules keep the RTO timer running:
+- lost packets are rescheduled in front of a kept packet, where they were
+  when that packet was dropped;
+- a DATAGRAM packet that waits behind sc_next_limit == 0 makes sure that
+  the retransmission alarm is set.
+
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -2264,7 +2264,8 @@ lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *ctl)
+         }
+         if ((packet_out->po_flags & PO_REPACKNO)
+                     && packet_out->po_regen_sz == packet_out->po_data_sz
+-                    && packet_out->po_frame_types != QUIC_FTBIT_PATH_CHALLENGE)
++                    && packet_out->po_frame_types != QUIC_FTBIT_PATH_CHALLENGE
++                    && !(packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM))
+         {
+             LSQ_DEBUG("send prediction: packet #%"PRIu64" would be dropped, "
+                 "continue", packet_out->po_packno);
+@@ -2281,6 +2282,86 @@ lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *ctl)
+ }
+ 
+ 
++/* A packet with DATAGRAM frames waits in the scheduled queue, and only an
++ * RTO (or an ACK) lets lsquic send again.  A packet in flight sets the
++ * retransmission alarm only if it holds a retransmittable frame, and a
++ * DATAGRAM frame is not one.  Make sure that the alarm is set.  The engine
++ * is told as well: lsquic_send_ctl_next_packet_to_send() also runs from
++ * lsquic_engine_send_unsent_packets(), after which the engine does not ask
++ * the connection for its next tick time.
++ */
++static void
++send_ctl_ensure_retx_alarm (struct lsquic_send_ctl *ctl,
++                                                    enum packnum_space pns)
++{
++    enum alarm_id al_id;
++
++    if (lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_INIT + pns))
++        return;
++
++    LSQ_DEBUG("a DATAGRAM packet waits for an RTO that is not scheduled: "
++        "set the RETX_%s alarm", lsquic_pns2str[pns]);
++    lsquic_alarmset_set(ctl->sc_alset, AL_RETX_INIT + pns,
++                            lsquic_time_now() + calculate_packet_rto(ctl));
++    lsquic_engine_add_conn_to_attq(ctl->sc_enpub, ctl->sc_conn_pub->lconn,
++        lsquic_alarmset_mintime(ctl->sc_alset, &al_id), N_AEWS + al_id);
++}
++
++
++/* Give a new number to a scheduled packet that holds DATAGRAM frames.  The
++ * packet was not sent, and lsquic cannot generate a DATAGRAM frame again
++ * (its payload is the application's), so these frames stay in the packet.
++ * The other regen frames are cut out, as update_for_resending() cuts them
++ * out: an ACK frame that waited is stale.
++ */
++static void
++send_ctl_renumber_datagram_packet (struct lsquic_send_ctl *ctl,
++                                        struct lsquic_packet_out *packet_out)
++{
++    const enum quic_ft_bit chop = BQUIC_FRAME_REGEN_MASK
++                                                    & ~QUIC_FTBIT_DATAGRAM;
++    struct packet_out_frec_iter pofi;
++    struct frame_rec *frec;
++    lsquic_packno_t oldno;
++    unsigned short adj;
++
++    oldno = packet_out->po_packno;
++    packet_out->po_packno = send_ctl_next_packno(ctl);
++    packet_out->po_flags &= ~PO_SENT_SZ;
++    lsquic_packet_out_set_ecn(packet_out, ctl->sc_ecn);
++    if (ctl->sc_ver_neg->vn_tag)
++    {
++        assert(packet_out->po_flags & PO_VERSION);
++        packet_out->po_ver_tag = *ctl->sc_ver_neg->vn_tag;
++    }
++
++    if (packet_out->po_frame_types & chop)
++    {
++        adj = 0;
++        for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
++                                                frec = lsquic_pofi_next(&pofi))
++        {
++            frec->fe_off -= adj;
++            if (chop & (1 << frec->fe_frame_type))
++            {
++                adj += frec->fe_len;
++                memmove(packet_out->po_data + frec->fe_off,
++                        packet_out->po_data + frec->fe_off + frec->fe_len,
++                        packet_out->po_data_sz - frec->fe_off - frec->fe_len);
++                packet_out->po_data_sz -= frec->fe_len;
++                frec->fe_frame_type = 0;
++            }
++        }
++        packet_out->po_frame_types &= ~chop;
++        packet_out->po_regen_sz -= adj;
++        ctl->sc_bytes_scheduled -= adj;
++        packet_out->po_acct_sz -= adj;
++    }
++    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "renumber packet #%"PRIu64" -> #%"
++        PRIu64", its DATAGRAM frames stay", oldno, packet_out->po_packno);
++}
++
++
+ lsquic_packet_out_t *
+ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+                                                 const struct to_coal *to_coal)
+@@ -2310,6 +2391,9 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+         {
+             LSQ_DEBUG("sc_n_consec_rtos: %d, sc_next_limit is 0",
+                       ctl->sc_n_consec_rtos);
++            if (packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
++                send_ctl_ensure_retx_alarm(ctl,
++                                        lsquic_packet_out_pns(packet_out));
+             return NULL;
+         }
+     }
+@@ -2318,7 +2402,12 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+ 
+     if (packet_out->po_flags & PO_REPACKNO)
+     {
+-        if (packet_out->po_regen_sz < packet_out->po_data_sz
++        if (packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
++        {
++            send_ctl_renumber_datagram_packet(ctl, packet_out);
++            packet_out->po_flags &= ~PO_REPACKNO;
++        }
++        else if (packet_out->po_regen_sz < packet_out->po_data_sz
+             && packet_out->po_frame_types != QUIC_FTBIT_PADDING)
+         {
+             update_for_resending(ctl, packet_out);
+@@ -2870,16 +2959,60 @@ send_ctl_log_packet_q (const lsquic_send_ctl_t *ctl, const char *prefix,
+ #endif
+ 
+ 
++/* lsquic_send_ctl_squeeze_sched() kept a delayed packet that holds only
++ * DATAGRAM frames, and lost packets wait.  While a packet is delayed, the
++ * tick does not reschedule lost packets, and a packet with DATAGRAM frames
++ * alone sets no retransmission alarm when it leaves.  So the
++ * retransmissions go in front of the delayed packets, where they were when
++ * such a packet was dropped, and each packet takes its number when it
++ * leaves.  If no retransmission goes in front, the alarm is set instead.
++ */
++static void
++send_ctl_resched_lost_before_kept (struct lsquic_send_ctl *ctl)
++{
++    struct lsquic_packet_out *packet_out;
++    unsigned n_kept;
++
++    /* A delayed packet with a retransmittable frame sets the alarm when it
++     * leaves, but the DATAGRAM packets in front of it can use up what may
++     * be sent after an RTO.
++     */
++    TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
++        if (packet_out->po_frame_types & ctl->sc_retx_frames)
++        {
++            send_ctl_ensure_retx_alarm(ctl, PNS_APP);
++            return;
++        }
++
++    n_kept = ctl->sc_n_scheduled;
++    if (lsquic_send_ctl_reschedule_packets(ctl) > 0)
++    {
++        for ( ; n_kept > 0; --n_kept)
++        {
++            packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets);
++            TAILQ_REMOVE(&ctl->sc_scheduled_packets, packet_out, po_next);
++            TAILQ_INSERT_TAIL(&ctl->sc_scheduled_packets, packet_out, po_next);
++        }
++        lsquic_send_ctl_reset_packnos(ctl);
++        LSQ_DEBUG("lost packets rescheduled in front of delayed DATAGRAM "
++            "packets");
++    }
++    else
++        send_ctl_ensure_retx_alarm(ctl, PNS_APP);
++}
++
++
+ int
+ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
+ {
+     struct lsquic_packet_out *packet_out, *next;
+-    int dropped;
++    int dropped, kept_datagrams;
+ #ifndef NDEBUG
+     int pre_squeeze_logged = 0;
+ #endif
+ 
+     dropped = 0;
++    kept_datagrams = 0;
+     for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
+                                                             packet_out = next)
+     {
+@@ -2890,6 +3023,16 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
+             if (packet_out->po_flags & PO_ENCRYPTED)
+                 send_ctl_return_enc_data(ctl, packet_out);
+         }
++        /* A DATAGRAM frame counts as regen so that a lost packet does not
++         * retransmit it.  This packet was not sent, and lsquic cannot
++         * generate the frame again: the packet stays.
++         */
++        else if (packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
++        {
++            if (packet_out->po_flags & PO_ENCRYPTED)
++                send_ctl_return_enc_data(ctl, packet_out);
++            kept_datagrams = 1;
++        }
+         else
+         {
+ #ifndef NDEBUG
+@@ -2910,6 +3053,9 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
+     if (dropped)
+         lsquic_send_ctl_reset_packnos(ctl);
+ 
++    if (kept_datagrams && !TAILQ_EMPTY(&ctl->sc_lost_packets))
++        send_ctl_resched_lost_before_kept(ctl);
++
+ #ifndef NDEBUG
+     if (pre_squeeze_logged)
+         LOG_PACKET_Q(&ctl->sc_scheduled_packets,

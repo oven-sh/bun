@@ -134,6 +134,11 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // A DATAGRAM frame counts as "regen" so that a lost packet does not
+    // retransmit it. The scheduled queue read the same mark as "can be
+    // generated again" and dropped a packet it could not send yet (after an
+    // RTO, or when the socket refused it), or cut the frame out of it.
+    "patches/lsquic/keep-unsent-datagram.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

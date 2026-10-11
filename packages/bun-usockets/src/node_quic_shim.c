@@ -150,7 +150,7 @@ static void nq_on_datagram(lsquic_conn_t *c, const void *buf, size_t sz) {
     }
 }
 /* lsquic_sys mirrors these values as LSQ_DG_*. */
-_Static_assert(LSQ_DG_ACKED == 0 && LSQ_DG_LOST == 1 && LSQ_DG_UNSENT == 2,
+_Static_assert(LSQ_DG_ACKED == 0 && LSQ_DG_LOST == 1,
                "lsquic_sys::LSQ_DG_* must match enum lsquic_dg_status");
 static void nq_on_datagram_status(lsquic_conn_t *c, uint64_t id, int status) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);

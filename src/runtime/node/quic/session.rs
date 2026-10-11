@@ -2575,8 +2575,6 @@ lsquic_callback! {
         let status = match status {
             lsquic::LSQ_DG_ACKED => DatagramStatus::Acknowledged,
             lsquic::LSQ_DG_LOST => DatagramStatus::Lost,
-            // Node keeps a datagram it cannot send queued and retries it: https://github.com/nodejs/node/blob/v26.3.0/src/quic/application.cc#L280-L349
-            lsquic::LSQ_DG_UNSENT => DatagramStatus::Lost,
             _ => {
                 debug_assert!(false, "unknown lsquic_dg_status");
                 DatagramStatus::Lost

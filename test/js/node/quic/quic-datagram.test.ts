@@ -1,6 +1,7 @@
 // `ondatagramstatus(id, status)` reports each datagram under the id that
 // `sendDatagram()` returned for it, whatever order the acknowledgements and
-// the losses are declared in, and whatever lsquic does with the packet.
+// the losses are declared in, and whatever lsquic does with the packet. A
+// datagram that lsquic may not send yet waits, and leaves later.
 import { describe, expect, test } from "bun:test";
 import { createPrivateKey, randomBytes } from "node:crypto";
 import { createSocket } from "node:dgram";
@@ -93,9 +94,10 @@ async function relayTo(serverPort: number) {
 /**
  * A server, a relay in front of it, and a client session through the relay.
  * The first byte of each datagram the client sends is its id, so the server
- * side knows which ids arrived.
+ * side knows which ids arrived. `maxIdleTimeout` is in seconds: an outage
+ * must end before it.
  */
-async function sessionThroughRelay() {
+async function sessionThroughRelay(maxIdleTimeout = 10) {
   const received: number[] = [];
   let onReceived = () => {};
   const serverSession = Promise.withResolvers<any>();
@@ -116,7 +118,7 @@ async function sessionThroughRelay() {
     {
       sni,
       alpn: ["quic-test"],
-      transportParams: { maxIdleTimeout: 10 },
+      transportParams: { maxIdleTimeout },
       ondatagram(datagram: Uint8Array) {
         received.push(datagram[0]);
         onReceived();
@@ -136,7 +138,7 @@ async function sessionThroughRelay() {
       alpn: "quic-test",
       servername: "localhost",
       verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 10 },
+      transportParams: { maxIdleTimeout },
       onerror() {},
       ondatagram() {
         fromServer++;
@@ -379,12 +381,11 @@ describe("ondatagramstatus", () => {
   });
 
   // After a retransmission timeout lsquic sends at most two packets until an
-  // ACK arrives, and the stream data it resends is one of them. It still
-  // frames each datagram into a packet, and drops the packets it may not
-  // send. Node keeps such a datagram queued. Both tests below pin the status
-  // that Bun gives it: 'lost', under its id.
+  // ACK arrives, and the stream data it resends is one of them. A datagram
+  // that it frames meanwhile waits in its packet, as it waits in the queue
+  // of Node, and leaves when lsquic may send again.
   test.each([{ listener: true }, { listener: false }])(
-    "counts a datagram that is dropped before the send as lost (ondatagramstatus: $listener)",
+    "sends a datagram that had to wait after a retransmission timeout (ondatagramstatus: $listener)",
     async ({ listener }) => {
       await using net = await sessionThroughRelay();
       const { client, relay } = net;
@@ -394,32 +395,30 @@ describe("ondatagramstatus", () => {
       await net.timeout(echo);
       if (!listener) client.ondatagramstatus = undefined;
 
-      // The outage ends for all but the packets with a LARGE datagram: the
-      // relay loses the one of these three that may leave.
+      // The outage ends, and the relay loses no packet after it. At most one
+      // of these three may leave before an ACK arrives.
+      relay.lose = () => false;
       relay.release();
       for (let i = 0; i < 3; i++) net.send();
 
-      // The echo arrives when the connection has recovered. The datagrams
-      // after it pass the relay, and their acknowledgements let the client
-      // declare a datagram that did leave lost.
       await echo.echoed(64);
       for (let i = 0; i < 6; i++) net.send(MEDIUM);
       await net.settled();
 
       // Datagrams 1 to 24 are the warm-up, and 25 is the one of the timeout.
-      expect(net.received()).toEqual([...range(1, 24), ...range(29, 34)]);
+      expect(net.received()).toEqual([...range(1, 24), ...range(26, 34)]);
       expect(net.statuses()).toEqual(
         listener
-          ? { ...all("acknowledged", 1, 24), ...all("lost", 25, 28), ...all(arrived, 29, 34) }
-          : { ...all("acknowledged", 1, 24), 25: ["lost"] },
+          ? { ...all(arrived, 1, 24), 25: ["lost"], ...all(arrived, 26, 34) }
+          : { ...all(arrived, 1, 24), 25: ["lost"] },
       );
       const { datagramsSent: sent, datagramsAcknowledged: acknowledged, datagramsLost: lost } = client.stats;
       expect({ sent, counted: acknowledged + lost }).toEqual({ sent: 34n, counted: 34n });
-      expect(lost).toBeGreaterThanOrEqual(4n);
+      expect(lost).toBeGreaterThanOrEqual(1n);
     },
   );
 
-  test("reports a datagram that is cut out of a packet before the send as lost, under its id", async () => {
+  test("keeps a datagram in a packet that gets a new number before the send", async () => {
     await using net = await sessionThroughRelay();
     const { relay } = net;
     const echo = await net.echoStream();
@@ -429,19 +428,21 @@ describe("ondatagramstatus", () => {
     relay.outage = true;
     await net.serverDatagrams(4);
     await net.timeout(echo);
+    // From here the relay loses no packet. It keeps what the client sends
+    // until the outage ends.
+    relay.lose = () => false;
     // Datagram 26 uses up what lsquic may still send before an ACK.
     net.send();
 
     // Datagram 27 and stream data, written in one dispatch of the session,
-    // share a packet. lsquic may not send that packet yet, and keeps it
-    // because of the stream data.
+    // share a packet. lsquic may not send that packet yet.
     await net.deliverTwo(() => {
       echo.write(8);
       net.send();
     });
     // The client sends an ACK for the next two. lsquic gives new numbers to
-    // the packets that wait behind an ACK, and it cuts the DATAGRAM frame out
-    // of a packet that it renumbers.
+    // the packets that wait behind an ACK. The DATAGRAM frame stays in its
+    // packet.
     await net.deliverTwo();
 
     relay.release();
@@ -449,12 +450,73 @@ describe("ondatagramstatus", () => {
     for (let i = 0; i < 6; i++) net.send(MEDIUM);
     await net.settled();
 
-    expect(net.received()).toEqual([...range(1, 24), ...range(28, 33)]);
-    expect(net.statuses()).toEqual({
-      ...all("acknowledged", 1, 24),
-      ...all("lost", 25, 27),
-      ...all(arrived, 28, 33),
+    // Datagram 27 shares its packet with stream data, so lsquic starts a
+    // probe timer for that packet, and the timer can end before the ACK.
+    expect(net.received()).toEqual([...range(1, 24), ...range(26, 33)]);
+    expect(net.statuses()).toEqual({ ...all(arrived, 1, 24), 25: ["lost"], ...all(arrived, 26, 33) });
+  });
+
+  // A packet with only DATAGRAM frames starts no retransmission timer. While
+  // one waits, lsquic still resends the lost stream data at each timeout,
+  // and the stream data leaves first.
+  test("resends stream data before a datagram that waits for the next timeout", async () => {
+    // This outage lasts for two retransmission timeouts, or more on a slow
+    // machine: each one is twice as long as the one before.
+    await using net = await sessionThroughRelay(60);
+    const { relay } = net;
+    const echo = await net.echoStream();
+    await net.warmUp();
+
+    // The outage: the relay loses the stream data of the client and each
+    // LARGE datagram, and keeps the other packets.
+    let chunks = 0;
+    let onChunk = () => {};
+    relay.lose = packet => {
+      if (!carriesChunk(packet)) return carriesLarge(packet);
+      chunks++;
+      onChunk();
+      return true;
+    };
+    relay.outage = true;
+    const inOutage = net.send();
+    await new Promise<void>(resolve => (relay.onClientPacket = () => resolve()));
+    echo.write(CHUNK);
+    expect(await net.status(inOutage)).toBe("lost");
+    // That timeout resent the stream data. The relay loses this packet too.
+    const resent = chunks + 1;
+    await new Promise<void>(resolve => (onChunk = () => chunks === resent && resolve()));
+
+    // The stream data took one of the two packets that a timeout allows, so
+    // datagram 27 waits in lsquic for the next timeout. The client and the
+    // relay share one event loop: packets that leave together reach the relay
+    // in one turn of it.
+    let secondJustLeft = false;
+    relay.onClientPacket = packet => {
+      if (!carriesLarge(packet)) return;
+      secondJustLeft = true;
+      setImmediate(() => (secondJustLeft = false));
+    };
+    net.send(MEDIUM);
+    net.send();
+
+    // The next timeout resends the stream data, and the relay loses it once
+    // more. The outage ends with that packet.
+    const leftInFrontOfStreamData = await new Promise<boolean>(resolve => {
+      onChunk = () => {
+        relay.lose = () => false;
+        relay.release();
+        resolve(secondJustLeft);
+      };
     });
+    expect(leftInFrontOfStreamData).toBe(false);
+
+    // The datagram that waited arrives, and lsquic resends the stream data.
+    await echo.echoed(CHUNK);
+    for (let i = 0; i < 2; i++) net.send(MEDIUM);
+    await net.settled();
+
+    expect(net.received()).toEqual([...range(1, 24), ...range(26, 29)]);
+    expect(net.statuses()).toEqual({ ...all(arrived, 1, 24), 25: ["lost"], ...all(arrived, 26, 29) });
   });
 
   test("stops at a callback that destroys the session", async () => {

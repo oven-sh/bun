@@ -1,6 +1,6 @@
 --- a/include/lsquic.h
 +++ b/include/lsquic.h
-@@ -243,6 +243,53 @@ struct lsquic_stream_if {
+@@ -243,6 +243,52 @@ struct lsquic_stream_if {
       * The user may pick it off immediately using lsquic_stream_get_hset().
       */
      void (*on_hset_in)  (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
@@ -19,8 +19,7 @@
 +                                uint64_t error_code);
 +    /**
 +     * Optional callback fired once for each DATAGRAM frame when its packet
-+     * is acknowledged, when its packet is declared lost, or when the frame
-+     * is dropped before its packet is sent.  `dgram_id` is the value that
++     * is acknowledged or declared lost.  `dgram_id` is the value that
 +     * on_dg_write gave lsquic_conn_set_datagram_id() for that frame (0 if it
 +     * gave none).  `status` is one of enum lsquic_dg_status.  bun addition.
 +     */
@@ -54,7 +53,7 @@
  };
  
  struct ssl_ctx_st;
-@@ -880,6 +927,12 @@ struct lsquic_engine_settings {
+@@ -880,6 +926,12 @@ struct lsquic_engine_settings {
       */
      unsigned        es_ping_period;
  
@@ -67,7 +66,7 @@
      /**
       * Source Connection ID length.  Only applicable to the IETF QUIC
       * versions.  Valid values are 0 through 20, inclusive.
-@@ -1209,6 +1262,57 @@ struct lsquic_engine_settings {
+@@ -1209,6 +1261,57 @@ struct lsquic_engine_settings {
       * and @ref LSQUIC_DF_MAX_HEADER_SETS_CLIENT in client mode.
       */
      unsigned        es_max_header_sets;
@@ -125,7 +124,7 @@
  };
  
  /* Initialize `settings' to default values */
-@@ -1630,6 +1734,13 @@ lsquic_conn_cancel_pending_streams (lsquic_conn_t *, unsigned n);
+@@ -1630,6 +1733,13 @@ lsquic_conn_cancel_pending_streams (lsquic_conn_t *, unsigned n);
  void
  lsquic_conn_going_away (lsquic_conn_t *);
  
@@ -139,7 +138,7 @@
  /**
   * This forces connection close.  on_conn_closed and on_close callbacks
   * will be called.  Closing an established IETF QUIC connection sends a
-@@ -1864,6 +1975,20 @@ lsquic_stream_is_pushed (const lsquic_stream_t *s);
+@@ -1864,6 +1974,20 @@ lsquic_stream_is_pushed (const lsquic_stream_t *s);
  int
  lsquic_stream_is_rejected (const lsquic_stream_t *s);
  
@@ -160,7 +159,7 @@
  /**
   * Retained for API compatibility with removed server push support.  Current
   * LSQUIC versions do not create pushed streams.
-@@ -2061,6 +2186,131 @@ lsquic_logger_lopt (const char *optarg);
+@@ -2061,6 +2185,129 @@ lsquic_logger_lopt (const char *optarg);
   */
  unsigned lsquic_engine_quic_versions (const lsquic_engine_t *);
  
@@ -242,8 +241,6 @@
 +    LSQ_DG_ACKED,
 +    /** The packet that carried the frame was sent and declared lost. */
 +    LSQ_DG_LOST,
-+    /** The frame was dropped before its packet was sent. */
-+    LSQ_DG_UNSENT,
 +};
 +
 +/**
@@ -1838,8 +1835,8 @@
 +/* bun: tell the application what became of each DATAGRAM frame in the
 + * packet, under the id that write_datagram stored in the frame record.
 + * DATAGRAM frames are never retransmitted (RFC 9221 Section 5), so a caller
-+ * is the last place that can name them: the packet was acknowledged, it was
-+ * declared lost, or it is dropped or stripped before it is sent.
++ * is the last place that can name them: the packet was acknowledged or it
++ * was declared lost.
 + */
 +static void
 +send_ctl_report_datagrams (struct lsquic_send_ctl *ctl,
@@ -1882,28 +1879,6 @@
                  LSQ_DEBUG("acking via regular record #%"PRIu64,
                                                          packet_out->po_packno);
              }
-@@ -2288,6 +2318,10 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
- 
-     if (packet_out->po_flags & PO_REPACKNO)
-     {
-+        /* bun: a scheduled packet that gets a new number loses its DATAGRAM
-+         * frames: it is dropped below, or update_for_resending chops them
-+         * out with the other regenerated frames. */
-+        send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_UNSENT);
-         if (packet_out->po_regen_sz < packet_out->po_data_sz
-             && packet_out->po_frame_types != QUIC_FTBIT_PADDING)
-         {
-@@ -2871,6 +2905,10 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
-             send_ctl_sched_remove(ctl, packet_out);
-             LSQ_DEBUG("Dropping packet #%"PRIu64" from scheduled queue",
-                 packet_out->po_packno);
-+            /* bun: a delayed packet that holds nothing but regenerated
-+             * frames is not sent later, and a DATAGRAM frame counts as
-+             * one (write_datagram adds it to po_regen_sz). */
-+            send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_UNSENT);
-             send_ctl_destroy_chain(ctl, packet_out, NULL);
-             send_ctl_destroy_packet(ctl, packet_out);
-             ++dropped;
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
 @@ -694,6 +694,8 @@ lsquic_stream_destroy (lsquic_stream_t *stream)

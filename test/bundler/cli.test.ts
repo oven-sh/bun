@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } 
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
-describe.concurrent(
+(describe.concurrent as any)(
   "bun build",
   () => {
     test("warnings dont return exit code 1", async () => {
@@ -488,6 +488,27 @@ describe.concurrent("--no-bundle with --outdir", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
     expect(out).toContain("jsx");
     expect(out).toContain("app");
+  });
+
+  test("reports the size of the written file", async () => {
+    using dir = tempDir("no-bundle-outdir-size", {
+      "src/app.js": `console.log(1);\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.js", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/app\.js\s+16 bytes/);
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
+    expect(out).toBe("console.log(1);\n");
   });
 
   test("writes multiple entry points", async () => {

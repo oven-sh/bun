@@ -53,9 +53,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSValue dataValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
 
-    WTF::String dataString = WTF::nullString();
-    WTF::String encodingString = WTF::nullString();
-
     JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 

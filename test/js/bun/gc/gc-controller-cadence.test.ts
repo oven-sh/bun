@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { join } from "path";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -149,6 +151,15 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     // Observed ~128 before the fix (env var ignored).
     expect(eden).toBeLessThan(5);
   });
+
+  // A parked app whose timers still allocate a little (a TUI redrawing its prompt) is idle: after 30 ticks in which the
+  // heap grew by less than the slack, the tick goes from BUN_GC_TIMER_INTERVAL to 30 s. The back-off used to test for no
+  // growth at all, so a trickle of a few KB per tick kept it requesting an eden collection on every tick for as long as
+  // the app sat there (20 ms ticks, 4 KB every 20 ms for 1.6 s: ~80 collections before, ~32 after).
+  test.concurrent("the tick backs off while timers allocate a trickle", async () => {
+    const { eden } = await countEdenCollections({ BUN_GC_TIMER_INTERVAL: "20" }, 80, 4_000, 20);
+    expect(eden).toBeLessThan(55);
+  });
 });
 
 // After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
@@ -193,6 +204,256 @@ describe("idle release", () => {
     expect(fulls).toBe(0);
     expect(exitCode).toBe(0);
   });
+
+  // Every JS thread runs them for its own heap: a Worker that has finished a burst and sits idle gives its garbage back
+  // like the main thread does (a pool of 8 Workers with 50 MB each held on to 400 MB for good when only the main thread
+  // ran them). The Worker's 100 MB have survived a full collection before nothing refers to them any more, so only
+  // another full collection of the Worker's heap frees them, and nothing but its idle collection asks for one. Linux: it
+  // reads /proc; ASAN and debug builds take too long to fill the heap.
+  (!isLinux || isASAN || isDebug ? test.skip : test.concurrent)(
+    "a Worker's garbage is given back by the Worker's own idle collection",
+    async () => {
+      using dir = tempDir("idle-worker", {
+        "worker.js": `
+          let junk = Array.from({ length: 100 }, (_, i) => new Array(128 * 1024).fill(i));
+          Bun.gc(true);
+          postMessage("full");
+          setTimeout(() => { junk = null; }, 300);
+          setInterval(() => {}, 1000);
+        `,
+        "main.js": `
+          const resident = () => Number(/^VmRSS:\\s+(\\d+) kB/m.exec(require("fs").readFileSync("/proc/self/status", "utf8"))[1]) >> 10;
+          globalThis.worker = new Worker(new URL("./worker.js", import.meta.url).href);
+          worker.onmessage = () => {
+            const full = resident();
+            const deadline = performance.now() + 8000;
+            const timer = setInterval(() => {
+              if (resident() > full - 80 && performance.now() < deadline) return;
+              console.log(JSON.stringify({ full, now: resident() }));
+              process.exit(0);
+            }, 100);
+          };
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "main.js")],
+        env: { ...bunEnv, BUN_IDLE_GC_SECONDS: "2", BUN_GC_TIMER_DISABLE: undefined, BUN_GC_TIMER_INTERVAL: undefined },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const { full, now } = JSON.parse(stdout);
+      expect(full).toBeGreaterThan(100);
+      expect(now).toBeLessThan(full - 80);
+      expect(exitCode).toBe(0);
+    },
+    15_000, // It fills 100 MB and waits for the collection.
+  );
+
+  // A requested collection advances at the mutator's safepoints while the mutator holds the collector's conn, and a
+  // program parked in the event loop has none: a heap that does not finish marking in the first increment used to sit in
+  // its concurrent phase until the program did something (the timer's eden requests are subsumed by it and provide no
+  // safepoint). The JS thread now parks without heap access while an idle collection is unfinished, so the collector
+  // thread finishes it. Not on Windows (libuv), where the ticks still drive it; debug/ASAN builds take too long to build
+  // the heap. The child exits by itself so that JSC's buffered GC log is complete when it is read.
+  (isWindows || isASAN || isDebug ? test.skip : test.concurrent)(
+    "an idle collection finishes while the program is parked",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `globalThis.live = new Map();
+           for (let i = 0; i < 400_000; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i], extra: { a: i, c: [i, i + 1] } });
+           Bun.gc(true);
+           console.error("PARKED");
+           setTimeout(() => process.exit(0), 4000);`,
+        ],
+        env: {
+          ...bunEnv,
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_JSC_logGC: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          // No courtesy safepoints on the first parks after JS ran: the collection gets none unless the park provides for it.
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const log = stderr.slice(stderr.indexOf("PARKED"));
+      // Every full collection that started while parked (the idle one starts ~1 s in) has ended by the time the program exits.
+      const starts = [...log.matchAll(/=> FullCollection/g)].map(m => m.index);
+      expect(starts.length, log).toBeGreaterThan(0);
+      for (const start of starts)
+        expect(log.indexOf("END]", start), log.slice(start, start + 600)).toBeGreaterThan(start);
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
+  // An idle collection is requested, not run: it proceeds at the mutator's safepoints, and in a program that runs no JS
+  // there are none once it parks in the event loop. With the collection requested on the 30 s tick (a 20 ms tick goes
+  // slow after 0.6 s) a server held on to 1.5 GB of a burst's garbage for a minute and a half after its traffic stopped:
+  // the JS thread now gives up heap access while it is parked with such a collection unfinished, and the collector thread
+  // finishes it. 50 MB stay alive so that the collection does not finish in the step that starts it; the 300 MB that
+  // nothing refers to any more a second in have survived a full collection, so only another one frees them. Linux: it
+  // reads /proc; ASAN and debug builds take too long to fill the heap.
+  (!isLinux || isASAN || isDebug ? test.skip : test.concurrent)(
+    "a burst's garbage is given back within seconds of the idle collection",
+    async () => {
+      using dir = tempDir("idle-garbage", {
+        "child.js": `
+        const entry = i => ({ id: i, name: "user-" + i + "-" + "x".repeat(200), tags: ["a" + i, "b" + i], extra: { a: i, c: [i, i + 1] } });
+        globalThis.live = new Map();
+        for (let i = 0; i < 90_000; i++) live.set(i, entry(i));
+        globalThis.junk = Array.from({ length: 300 }, (_, i) => new Array(128 * 1024).fill(i));
+        Bun.gc(true);
+        console.log("full");
+        setTimeout(() => { globalThis.junk = null; }, 1000);
+        process.stdin.once("data", () => process.exit(0));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "child.js")],
+        env: { ...bunEnv, BUN_IDLE_GC_SECONDS: "2", BUN_GC_TIMER_DISABLE: undefined, BUN_GC_TIMER_INTERVAL: "20" },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const resident = () =>
+        Number(/^VmRSS:\s+(\d+) kB/m.exec(readFileSync(`/proc/${proc.pid}/status`, "utf8"))![1]) >> 10;
+      await proc.stdout.getReader().read();
+      const full = resident();
+      expect(full).toBeGreaterThan(330);
+      const deadline = performance.now() + 6000;
+      while (resident() > full - 250 && performance.now() < deadline) await Bun.sleep(100);
+      expect(resident()).toBeLessThan(full - 250);
+      proc.stdin.write("exit\n");
+      await proc.stdin.flush();
+      expect(await proc.exited).toBe(0);
+    },
+    15_000, // It fills 350 MB and waits for the collection.
+  );
+});
+
+// Before the last idle collection the controller asks JSC to let go of what it gets back cheaply
+// (VM::shrinkFootprintNow): for a --compile --bytecode executable, the unlinked bytecode of functions that have no linked
+// code any more (an earlier idle collection unlinked it), which is decoded again from the executable when such a
+// function is next called. Debug and ASAN executables are too big to compile a copy of per run.
+let dir: ReturnType<typeof tempDir> | undefined;
+afterAll(() => dir?.[Symbol.dispose]());
+describe.skipIf(isDebug || isASAN)("the last idle collection drops code that can be decoded again", () => {
+  const app = `
+    import { heapStats } from "bun:jsc";
+    ${Array.from({ length: 60 }, (_, i) => `function f${i}(a) { let s = a + ${i}; for (let k = 0; k < 3; k++) s += k * ${i + 1}; return [s, "f${i}"].join(":"); }`).join("\n    ")}
+    const all = [${Array.from({ length: 60 }, (_, i) => `f${i}`).join(", ")}];
+    const run = () => all.map((f, i) => f(i)).join("|");
+    const count = () => heapStats().objectTypeCounts.UnlinkedFunctionCodeBlock ?? 0;
+    const expected = run();
+    Bun.gc(true);
+    const before = count();
+    console.error("COUNTED " + before);
+    // Says what the count is four times a second, on the stream the collections are logged on, and ends when it has dropped.
+    const report = after => {
+      console.log(JSON.stringify({ before, after, same: run() === expected }));
+      process.exit(0);
+    };
+    setInterval(() => {
+      const now = count();
+      console.error("COUNT " + now);
+      if (now < before - 40) report(now);
+    }, 250);
+    setTimeout(() => report(count()), 12_000);
+  `;
+
+  // Built by whichever of the two tests gets there first (no hooks in here: the tests run alongside the rest of the file).
+  let built: Promise<string> | undefined;
+  const executable = () =>
+    (built ??= (async () => {
+      dir = tempDir("idle-drop-code", { "app.js": app });
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "--outfile", "app", "app.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(exitCode, out + err).toBe(0);
+      return join(String(dir), "app" + (isWindows ? ".exe" : ""));
+    })());
+
+  // `endAfter`: the run is ended (the child killed) once it has said its count after that many full collections have been
+  // logged since it counted (the collection it forces in order to count is logged before).
+  async function run(seconds: string, endAfter = Infinity) {
+    const exe = await executable();
+    await using proc = Bun.spawn({
+      cmd: [exe],
+      env: {
+        ...bunEnv,
+        BUN_IDLE_GC_SECONDS: seconds,
+        BUN_JSC_logGC: "1",
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        // Code ages in milliseconds instead of the seconds it normally takes, so that an idle collection finds the
+        // functions' CodeBlocks old as it would a minute into a real idle period.
+        BUN_JSC_useEagerCodeBlockJettisonTiming: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let log = "";
+    // The last count the child has said, and how many full collections had been logged before it (tearing the VM down
+    // at exit, as the ASAN lanes do, logs one after).
+    const observed = () => {
+      const [, before, rest = ""] = /COUNTED (\d+)([^]*)/.exec(log) ?? [];
+      const said = rest.slice(0, rest.lastIndexOf("COUNT "));
+      const after = /COUNT (\d+)\s*$/.exec(rest.slice(said.length).split("\n")[0])?.[1];
+      return {
+        before: Number(before),
+        idleCollections: said.split("=> FullCollection").length - 1,
+        after: after === undefined ? undefined : Number(after),
+      };
+    };
+    const reading = (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stderr) {
+        log += decoder.decode(chunk, { stream: true });
+        const { idleCollections, after } = observed();
+        if (idleCollections >= endAfter && after !== undefined) proc.kill();
+      }
+    })();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, reading]);
+    const same = stdout.trim().startsWith("{") ? (JSON.parse(stdout.trim()).same as boolean) : undefined;
+    return { ...observed(), same, log, exitCode };
+  }
+
+  test.concurrent(
+    "the second of two drops it, and it comes back",
+    async () => {
+      const { before, after, same, idleCollections, log, exitCode } = await run("1,1");
+      expect(before, log).toBeGreaterThan(60);
+      expect(idleCollections, log).toBeGreaterThanOrEqual(2);
+      expect(after, log).toBeLessThan(before - 40);
+      expect(same, log).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+    15_000, // It may be the one that writes the executable, of 100 MB and more.
+  );
+
+  // The first of two is a collection like any other: it has run, and the code is still there.
+  test.concurrent(
+    "the first of two does not",
+    async () => {
+      const { before, after, idleCollections, log } = await run("1,30", 1);
+      expect(before, log).toBeGreaterThan(60);
+      expect(idleCollections, log).toBe(1);
+      expect(after, log).toBeGreaterThan(before - 40);
+    },
+    15_000,
+  );
 });
 
 // Those idle full collections are tagged (GCRequest::isIdle) so JSC may also let idle FTL code — which has no execution
@@ -261,3 +522,75 @@ describe("idle release lets FTL code age out", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A leak test reads the footprint right after Bun.gc(true). The allocator hands freed pages back after a purge delay, on
+// its own thread, so what the collection had just freed was still resident then: 250 MB of dead typed arrays left RSS
+// where it was. MADV_FREE (macOS) and ASAN's allocator do not show in RSS either way.
+test.skipIf(!isLinux || isASAN)("Bun.gc(true) returns what it freed to the OS before it returns", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const rss = () => process.memoryUsage.rss() / 1048576;
+        let arrays = [];
+        for (let i = 0; i < 2000; i++) arrays.push(new Uint8Array(128 * 1024).fill(1));
+        const held = rss();
+        arrays = null;
+        Bun.gc(true);
+        console.log(JSON.stringify({ released: held - rss() }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout).released).toBeGreaterThan(200);
+  expect(exitCode).toBe(0);
+});
+
+// One thread at a time hands the allocator's free ranges back, and its own purge thread is often the one: it starts on what
+// was freed once the purge delay has passed, and a few hundred MB keep it busy for tens of milliseconds. Bun.gc(true) in the
+// middle of that found the purge taken, skipped its own, and returned with all of it still resident.
+test.skipIf(!isLinux || isASAN)(
+  "Bun.gc(true) returns what is free to the OS while the purge thread is at work",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const rss = () => process.memoryUsage.rss() / 1048576;
+          // The allocator starts its purge thread the first time a thread blocks.
+          await Bun.sleep(1);
+          const rounds = [];
+          for (let round = 0; round < 3; round++) {
+            const arrays = [];
+            for (let i = 0; i < 48; i++) arrays.push(new Uint8Array(8 * 1024 * 1024).fill(1));
+            const held = rss();
+            // transfer(0) frees the 8 MB here and now, no collection involved. They stay resident until they are purged.
+            for (const array of arrays) array.buffer.transfer(0);
+            // Wait for the purge thread to start on them, which it does once the purge delay (100 ms) has passed. A round in
+            // which it was not seen at work says nothing about the two at once, so it does not count as passed.
+            const deadline = performance.now() + 1000;
+            let started = false;
+            while (!(started = rss() <= held - 32) && performance.now() < deadline);
+            Bun.gc(true);
+            rounds.push({ held, started, released: held - rss() });
+          }
+          console.log(JSON.stringify(rounds));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    for (const { started, released } of JSON.parse(stdout)) {
+      expect(started, stdout).toBe(true);
+      expect(released, stdout).toBeGreaterThan(300);
+    }
+    expect(exitCode).toBe(0);
+  },
+);

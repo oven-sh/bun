@@ -37,7 +37,7 @@ pub(crate) struct BunxCommand;
 //
 // Invariant: string fields borrow from `argv`, which is process-lifetime —
 // that is what makes the `&'static [u8]` typing sound here.
-pub struct Options {
+pub(crate) struct Options {
     /// CLI arguments to pass to the command being run.
     // `Box<[u8]>` to match `ContextData::passthrough` /
     // `Run::run_binary`'s `&[Box<[u8]>]` param.

@@ -3826,10 +3826,72 @@ describe("an infinite number in an eslint.config.mjs", () => {
     expect(exitCode).toBe(expected.length === 0 ? 0 : 1);
   });
 
+  // ESLint hands options on as `structuredClone` makes them, and ajv sees an object without properties in a `Map`.
+  test.concurrent.each([
+    [
+      `"max-depth": ["error", NaN]`,
+      'Key "rules": Key "max-depth":\n\tValue null should be integer.\n\tValue null should be >= 0.\n\tValue null should be object.\n\tValue null should match exactly one schema in oneOf.',
+    ],
+    [
+      `"max-depth": ["error", { max: NaN }]`,
+      'Key "rules": Key "max-depth":\n\tValue {"max":null} should be integer.\n\tValue null should be integer.\n\tValue null should be >= 0.\n\tValue {"max":null} should match exactly one schema in oneOf.',
+    ],
+    [`"no-magic-numbers": ["error", { ignore: [NaN] }]`, ["4:9 No magic number: 123."]],
+    [
+      `"max-depth": ["error", function f() {}]`,
+      'Config "mine": Key "rules": Key "max-depth": function f() {} could not be cloned.',
+    ],
+    [
+      `"max-depth": ["error", { max: () => 1 }]`,
+      'Config "mine": Key "rules": Key "max-depth": () => 1 could not be cloned.',
+    ],
+    [
+      `"max-depth": ["off", Symbol("s")]`,
+      'Config "mine": Key "rules": Key "max-depth": Symbol(s) could not be cloned.',
+    ],
+    [
+      `"max-depth": ["error", new URL("http://a/")]`,
+      'Config "mine": Key "rules": Key "max-depth": Cannot clone object of unsupported type.',
+    ],
+    [`"max-depth": ["error", new Map()]`, []],
+    [`"max-depth": ["error", /x/]`, []],
+    [
+      `"max-depth": ["error", { max: new Set() }]`,
+      'Key "rules": Key "max-depth":\n\tValue {"max":{}} should be integer.\n\tValue {} should be integer.\n\tValue {"max":{}} should match exactly one schema in oneOf.',
+    ],
+    [
+      `"max-depth": ["error", new (class A { max = 2 })()]`,
+      ["3:5 Blocks are nested too deeply (3). Maximum allowed is 2."],
+    ],
+    [
+      `"max-depth": ["error", new (class A { x = 2 })()]`,
+      'Key "rules": Key "max-depth":\n\tValue {"x":2} should be integer.\n\tValue {"x":2} should NOT have additional properties.\n\t\tUnexpected property "x". Expected properties: "maximum", "max".\n\tValue {"x":2} should match exactly one schema in oneOf.',
+    ],
+    [`"max-depth": ["error", 1n]`, "TypeError: Do not know how to serialize a BigInt"],
+    [`"max-depth": ["error", undefined]`, []],
+    [`"max-depth": ["error", { max: undefined }]`, []],
+    [`"eqeqeq": ["error", undefined]`, []],
+  ] as [string, string[] | string][])("what else JSON has no word for: %s", async (rule, expected) => {
+    const files = {
+      "eslint.config.mjs": `export default [{ name: "mine", rules: { ${rule} } }];\n`,
+      "a.js": "if (a) {\n  if (b) {\n    if (c) {\n      d(123);\n    }\n  }\n}\n",
+    };
+    const { raw, stderr, exitCode } = await lint(files, ["a.js"]);
+    if (typeof expected === "string") {
+      expect(stderr).toBe(`error: ${expected}`);
+      expect(exitCode).toBe(2);
+      return;
+    }
+    type Message = { line: number; column: number; message: string };
+    const messages: Message[] = JSON.parse(raw).results[0].messages;
+    expect(messages.map(it => `${it.line}:${it.column} ${it.message}`)).toEqual(expected);
+  });
+
   test("what a rule in JavaScript sees", async () => {
     const files = {
       "eslint.config.mjs": `
-        const show = it => (typeof it === "object" ? Object.entries(it).map(([key, value]) => key + "=" + value) : String(it));
+        const isPlain = it => Object.getPrototypeOf(it) === Object.prototype;
+        const show = it => (isPlain(it) ? Object.entries(it).map(([key, value]) => key + "=" + value) : String(it));
         const rule = {
           meta: { schema: false },
           create: context => ({
@@ -3841,11 +3903,12 @@ describe("an infinite number in an eslint.config.mjs", () => {
         export default [{
           plugins: { p: { rules: { show: rule } } },
           settings: { s: -Infinity },
-          rules: { "p/show": ["error", Infinity, { max: -Infinity }] },
+          rules: { "p/show": ["error", Infinity, { max: -Infinity }, NaN, /x/u] },
         }];`,
       "a.js": "a;\n",
     };
     const { raw } = await lint(files, ["a.js"]);
-    expect(JSON.parse(raw).results[0].messages[0].message).toBe("options Infinity,max=-Infinity settings -Infinity");
+    const message = "options Infinity,max=-Infinity,NaN,/x/u settings -Infinity";
+    expect(JSON.parse(raw).results[0].messages[0].message).toBe(message);
   });
 });

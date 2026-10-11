@@ -6,8 +6,9 @@
 
 use super::{Checks, Tops};
 use crate::ast::{
-    BinOp, Chain, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member, MemberKind, Node,
-    Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag, UnOp, VarKind,
+    BinOp, Chain, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member,
+    MemberKind, Node, Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag,
+    UnOp, VarKind,
 };
 use crate::language::SourceType;
 use crate::regex;

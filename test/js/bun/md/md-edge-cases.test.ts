@@ -1320,6 +1320,35 @@ describe("pathological autolink inputs", () => {
     expect(trimmed).toContain('<a href="http://a.bc/?x=(1)">');
     expect(trimmed).not.toContain('x=(1))"');
   }, 90_000);
+
+  test("autolink candidates behind delimiters that are not paired render in linear time", async () => {
+    await expectRendersQuickly(`
+      const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+      // No "*" is paired, so no "*" is a boundary and no "www." is a link.
+      const input = fill(40000, "*www.a.bc/") + "x(";
+      const html = Bun.markdown.html(input, { autolinks: true });
+      if (html !== Bun.markdown.html(input)) {
+        throw new Error("unexpected output: " + JSON.stringify(html.slice(0, 120)));
+      }
+      console.log("DONE");
+    `);
+  }, 90_000);
+
+  test("autolinks behind paired delimiters render in linear time", async () => {
+    await expectRendersQuickly(`
+      const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+      // Each link comes after a paired "**". The size is such that a walk
+      // over all delimiters for each link does not end before the child is
+      // killed.
+      const n = 200000;
+      const html = Bun.markdown.html(fill(n, "**http://a.bc/d ok** "), { autolinks: true });
+      const unit = '<strong><a href="http://a.bc/d">http://a.bc/d</a> ok</strong> ';
+      if (html !== "<p>" + fill(n, unit).slice(0, -1) + "</p>\\n") {
+        throw new Error("unexpected output: " + JSON.stringify(html.slice(0, 120)));
+      }
+      console.log("DONE");
+    `);
+  }, 90_000);
 });
 
 // ============================================================================

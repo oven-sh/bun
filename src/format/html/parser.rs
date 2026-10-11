@@ -6,9 +6,6 @@ use super::error::{ErrorKind, SyntaxError};
 use super::lexer::{self, ContentType, GetTagContentType, LexedAttribute, Parts, Token, TokenType};
 use std::borrow::Cow;
 
-/// How many elements, blocks and cases can be in each other.
-pub(crate) const MAX_DEPTH: usize = 400;
-
 #[derive(Copy, Clone)]
 pub(crate) struct Options<'f> {
     pub(crate) lexer: lexer::Options,
@@ -41,8 +38,6 @@ struct TreeBuilder<'a, 't, 'k> {
     allow_htm_component_closing_tags: bool,
     is_tag_name_case_sensitive: bool,
     is_nested_too_deeply: bool,
-    /// How many elements, blocks and cases are around what is built.
-    base_depth: usize,
     stack_check: bun_core::StackCheck,
 }
 
@@ -284,8 +279,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         self.skip_expansion_exp_tokens(start)?;
         let last = self.index;
         let end = self.advance();
-        let base_depth = self.base_depth + self.container_stack.len() + 1;
-        if base_depth > MAX_DEPTH || !self.stack_check.is_safe_to_recurse() {
+        if !self.stack_check.is_safe_to_recurse() {
             self.is_nested_too_deeply = true;
             return None;
         }
@@ -313,7 +307,6 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             allow_htm_component_closing_tags: self.allow_htm_component_closing_tags,
             is_tag_name_case_sensitive: self.is_tag_name_case_sensitive,
             is_nested_too_deeply: false,
-            base_depth,
             stack_check: self.stack_check,
         };
         builder.build();
@@ -499,9 +492,6 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         }
         let id = self.add_to_parent(node);
         self.container_stack.push(id);
-        if self.base_depth + self.container_stack.len() > MAX_DEPTH {
-            self.is_nested_too_deeply = true;
-        }
     }
 
     fn consume_element_end_tag(&mut self, end_tag_token: Token) {
@@ -727,7 +717,6 @@ pub(crate) fn parse<'a>(
         allow_htm_component_closing_tags: options.lexer.allow_htm_component_closing_tags,
         is_tag_name_case_sensitive: is_case_sensitive,
         is_nested_too_deeply: false,
-        base_depth: 0,
         stack_check: bun_core::StackCheck::init(),
     };
     builder.build();

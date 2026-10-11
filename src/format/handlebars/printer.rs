@@ -7,6 +7,7 @@ use super::tokenizer::is_void_tag;
 use crate::FormatOptions;
 use crate::css::doc::{self, Doc, Elements, IndentCommand, Line};
 use crate::options::EmbeddedLanguageFormatting;
+use crate::stack::Stack;
 use crate::text;
 use bun_core::strings;
 
@@ -60,6 +61,7 @@ pub(crate) struct Printer<'a> {
     pub(crate) is_damaged: bool,
     /// How many `<pre>` are around what is being printed.
     pub(crate) pre_depth: usize,
+    pub(crate) stack: Stack,
 }
 
 impl<'a> Printer<'a> {
@@ -230,6 +232,9 @@ impl<'a> Printer<'a> {
 
     /// `path.map(print, "body")` or `"children"`. `outer`: `nodes` are what follows `{{else}}` in that block.
     fn children(&mut self, nodes: &'a [NodeId], parent: Parent, outer: Option<(Call, u8)>) {
+        if !self.stack.has_room() {
+            return;
+        }
         for (index, &id) in nodes.iter().enumerate() {
             let node = self.tree.node(id);
             // Whether a backslash at the end of a text would escape what follows it. Before a mustache, Prettier doubles it.
@@ -1004,6 +1009,7 @@ impl<'a> Printer<'a> {
     /// `needs_opposite_quote`: Prettier's `needsOppositeQuote`, if it is a string.
     fn expression(&mut self, id: NodeId, needs_opposite_quote: bool) {
         match self.tree.kind(id) {
+            Kind::SubExpression { .. } if !self.stack.has_room() => {}
             Kind::SubExpression { call } => {
                 self.start_group();
                 self.token("(");

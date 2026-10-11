@@ -4,9 +4,10 @@
 //! `@glimmer/syntax` has them (`HandlebarsNodeVisitors`). What it refuses is only refused when it gets to see the
 //! statement, which it does not in an HTML comment: `is_valid`.
 
+use super::Error;
 use super::ast::{self, Call, Head, Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::lexer::{Token, TokenKind};
-use super::{Error, MAX_DEPTH};
+use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal};
 use bun_core::strings;
 use smallvec::SmallVec;
@@ -142,7 +143,7 @@ struct Parser<'a> {
     statements: &'a mut Vec<Statement>,
     /// The parameters and pairs of the calls that are being parsed.
     pending: Vec<NodeId>,
-    depth: usize,
+    stack: Stack,
     /// Something of what has been parsed since this was last `false` is not in the tree.
     is_damaged: bool,
 }
@@ -204,12 +205,11 @@ impl Parser<'_> {
         }
     }
 
-    fn enter(&mut self) -> Result<(), Error> {
-        self.depth += 1;
-        if self.depth > MAX_DEPTH {
-            Err(Error::NestedTooDeeply)
-        } else {
-            Ok(())
+    /// Before what can be in itself.
+    fn enter(&self) -> Result<(), Error> {
+        match self.stack.has_room() {
+            true => Ok(()),
+            false => Err(Error::NestedTooDeeply),
         }
     }
 
@@ -472,7 +472,6 @@ impl Parser<'_> {
                 is_splat: false,
             }
         };
-        self.depth -= 1;
         Ok(expression)
     }
 
@@ -794,7 +793,6 @@ impl Parser<'_> {
                 if let Some(Kind::BlockStatement { strip, .. }) = self.tree.kind_mut(node) {
                     *strip |= ast::CHAINED;
                 }
-                self.depth -= 1;
                 Ok(Some(Inverse {
                     strip: header.strip,
                     chained: Some(node),
@@ -840,7 +838,6 @@ impl Parser<'_> {
                 is_inverted,
             );
         }
-        self.depth -= 1;
         Ok(())
     }
 
@@ -989,7 +986,6 @@ impl Parser<'_> {
                     self.program()?;
                     self.close_block(open)?;
                     self.end_statement(index, StatementKind::Unsupported);
-                    self.depth -= 1;
                 }
                 _ => return Ok(()),
             }
@@ -1013,7 +1009,7 @@ pub(crate) fn parse(
         tree,
         statements,
         pending: Vec::new(),
-        depth: 0,
+        stack: Stack::for_tree(),
         is_damaged: false,
     };
     parser.program()?;

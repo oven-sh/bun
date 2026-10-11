@@ -13,6 +13,7 @@ use crate::html::preprocess::slice;
 use crate::options::{
     AttributePosition, FormatOptions, HtmlWhitespaceSensitivity, SvelteOptions, SveltePart as Part,
 };
+use crate::stack::Stack;
 use crate::text::{
     has_newline, has_newline_backwards, is_previous_line_empty, skip_newline, skip_spaces,
 };
@@ -299,7 +300,7 @@ pub(crate) struct Printer<'a, 'o> {
     /// The same for `isInsideQuotedAttribute`.
     quoted_depth: u32,
     failure: Option<Failure>,
-    stack_check: bun_core::StackCheck,
+    stack: Stack,
     /// `comments` of the module, the instance and the style sheet.
     comments: [Vec<LeadingComment>; 3],
     /// `comments` of the attributes: those that lead, and those that trail.
@@ -325,7 +326,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             pre_depth: 0,
             quoted_depth: 0,
             failure: None,
-            stack_check: bun_core::StackCheck::init(),
+            stack: Stack::for_tree(),
             comments: Default::default(),
             comments_of_attributes: FxHashMap::default(),
         }
@@ -1650,7 +1651,7 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     /// `print`, for what is in a fragment.
     fn print(&mut self, id: Id, place: Place) -> Doc<'a> {
-        if !self.stack_check.is_safe_to_recurse() {
+        if !self.stack.has_room() {
             self.failure = Some(Failure::NestedTooDeeply);
             return EMPTY;
         }
@@ -2033,8 +2034,9 @@ impl<'a, 'o> Printer<'a, 'o> {
             if let Some(at) = parts.iter().rposition(|&it| self.tree[it].end == start) {
                 children.insert(index, parts.remove(at));
             } else if index == children.len() - 1
-                && let Some(&part) = by_start.iter().rfind(|&&it| self.tree[it].start == end)
-                && children.len() < 1 << 20
+                // It ends further on, so this comes to an end.
+                && let Some(&part) = (by_start.iter())
+                    .rfind(|&&it| self.tree[it].start == end && self.tree[it].end > end)
             {
                 children.push(part);
             }

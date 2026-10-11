@@ -19,13 +19,11 @@ mod tokenizer;
 use crate::css::doc::{self, Elements};
 use crate::options::{HtmlWhitespaceSensitivity, QuoteStyle};
 use crate::range::{Offsets, normalized_len};
+use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal, Refused};
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
-
-/// How deep blocks and elements can be in each other, and expressions in parentheses.
-const MAX_DEPTH: usize = 256;
 
 #[derive(Copy, Clone, Debug)]
 enum Error {
@@ -162,8 +160,12 @@ pub fn format(
         out: &mut scratch.elements,
         is_damaged: false,
         pre_depth: 0,
+        stack: Stack::new(),
     };
     printer.template(template);
+    if printer.stack.ran_out() {
+        return Err(FormatError::NestedTooDeeply);
+    }
     scratch.is_damaged = printer.is_damaged
         || scratch.tree.is_damaged
         || positions::Positions::can_be_wrong(&content);

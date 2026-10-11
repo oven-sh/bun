@@ -2,6 +2,8 @@
 //! so they are kept as it has them until all is said, and written to the document of `ir` then.
 
 use crate::html::writer::Writer;
+use crate::stack::Stack;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
 /// Code in another language, which is formatted where it is written.
@@ -88,7 +90,70 @@ pub(crate) fn dedent(contents: Doc<'_>) -> Doc<'_> {
     Doc::Dedent(Box::new(contents))
 }
 
+/// In a loop: a document is nested as deeply as the markup, and what the compiler makes to let go of one calls itself for
+/// each level without asking whether there is stack for that.
+impl Drop for Doc<'_> {
+    fn drop(&mut self) {
+        let mut rest = Vec::new();
+        self.take_contents(&mut rest);
+        while let Some(mut doc) = rest.pop() {
+            doc.take_contents(&mut rest);
+        }
+    }
+}
+
 impl<'a> Doc<'a> {
+    /// What it is. It is nothing afterwards.
+    fn take(&mut self) -> Doc<'a> {
+        std::mem::replace(self, EMPTY)
+    }
+
+    /// What is in it.
+    fn contents(&self) -> &[Doc<'a>] {
+        match self {
+            Doc::List(parts) | Doc::Fill(parts) => parts,
+            Doc::Group(contents)
+            | Doc::Indent(contents)
+            | Doc::Dedent(contents)
+            | Doc::LineSuffix(contents) => std::slice::from_ref(&**contents),
+            _ => &[],
+        }
+    }
+
+    fn contents_mut(&mut self) -> &mut [Doc<'a>] {
+        match self {
+            Doc::List(parts) | Doc::Fill(parts) => parts,
+            Doc::Group(contents)
+            | Doc::Indent(contents)
+            | Doc::Dedent(contents)
+            | Doc::LineSuffix(contents) => std::slice::from_mut(&mut **contents),
+            _ => &mut [],
+        }
+    }
+
+    /// Moves what is in it, and has something in it, to `rest`.
+    fn take_contents(&mut self, rest: &mut Vec<Doc<'a>>) {
+        for doc in self.contents_mut() {
+            if !doc.contents().is_empty() {
+                rest.push(doc.take());
+            }
+        }
+    }
+
+    /// Whether `is` is true for `self`. If it says `None`: for all that is in it.
+    fn all(&self, is: impl Fn(&Doc<'a>) -> Option<bool>) -> bool {
+        let mut rest = SmallVec::<[&Doc<'a>; 8]>::new();
+        rest.push(self);
+        while let Some(doc) = rest.pop() {
+            match is(doc) {
+                Some(true) => {}
+                Some(false) => return false,
+                None => rest.extend(doc.contents()),
+            }
+        }
+        true
+    }
+
     /// The string that it is.
     fn as_string(&self) -> Option<&[u8]> {
         match self {
@@ -100,27 +165,25 @@ impl<'a> Doc<'a> {
 
     /// `isLine`
     pub(crate) fn is_line(&self) -> bool {
-        match self {
-            Doc::Line | Doc::Softline | Doc::Hardline => true,
-            Doc::List(parts) => parts.iter().all(Doc::is_line),
-            _ => false,
-        }
+        self.all(|doc| match doc {
+            Doc::Line | Doc::Softline | Doc::Hardline => Some(true),
+            Doc::List(_) => None,
+            _ => Some(false),
+        })
     }
 
     /// `isEmptyDoc`
     pub(crate) fn is_empty(&self) -> bool {
-        match self {
-            Doc::Text(text) => text.is_empty(),
-            Doc::Token(text) => text.is_empty(),
-            Doc::Line | Doc::Softline => true,
-            Doc::List(parts) => parts.is_empty(),
-            Doc::Group(contents)
-            | Doc::Indent(contents)
-            | Doc::Dedent(contents)
-            | Doc::LineSuffix(contents) => contents.is_empty(),
-            Doc::Fill(parts) => parts.iter().all(Doc::is_empty),
-            Doc::Hardline | Doc::Literalline | Doc::BreakParent | Doc::Code(_) => false,
-        }
+        self.all(|doc| match doc {
+            Doc::Text(text) => Some(text.is_empty()),
+            Doc::Token(text) => Some(text.is_empty()),
+            Doc::Line | Doc::Softline => Some(true),
+            Doc::List(parts) => Some(parts.is_empty()),
+            Doc::Group(_) | Doc::Indent(_) | Doc::Dedent(_) | Doc::LineSuffix(_) | Doc::Fill(_) => {
+                None
+            }
+            Doc::Hardline | Doc::Literalline | Doc::BreakParent | Doc::Code(_) => Some(false),
+        })
     }
 
     /// What the plugin trims a fragment of: a line, a string of blanks, `breakParent`.
@@ -135,46 +198,51 @@ impl<'a> Doc<'a> {
 
     /// Nothing at all is printed for it.
     fn is_nothing(&self) -> bool {
-        match self {
-            Doc::Text(text) => text.is_empty(),
-            Doc::Token(text) => text.is_empty(),
-            Doc::List(parts) | Doc::Fill(parts) => parts.iter().all(Doc::is_nothing),
-            Doc::Group(contents)
-            | Doc::Indent(contents)
-            | Doc::Dedent(contents)
-            | Doc::LineSuffix(contents) => contents.is_nothing(),
-            _ => false,
-        }
+        self.all(|doc| match doc {
+            Doc::Text(text) => Some(text.is_empty()),
+            Doc::Token(text) => Some(text.is_empty()),
+            Doc::List(_)
+            | Doc::Fill(_)
+            | Doc::Group(_)
+            | Doc::Indent(_)
+            | Doc::Dedent(_)
+            | Doc::LineSuffix(_) => None,
+            _ => Some(false),
+        })
     }
 
-    /// Puts the name in the place of code that is a name. Returns whether there is no other code.
+    /// Puts the name in the place of code that is a name, up to the first code that is none. Returns whether there is no
+    /// such code.
     pub(crate) fn replace_code_by_names(&mut self) -> bool {
-        match self {
-            Doc::List(parts) | Doc::Fill(parts) => parts.iter_mut().all(Doc::replace_code_by_names),
-            Doc::Group(contents)
-            | Doc::Indent(contents)
-            | Doc::Dedent(contents)
-            | Doc::LineSuffix(contents) => contents.replace_code_by_names(),
-            Doc::Code(code) => match &**code {
-                Code::Js(js)
-                    if js.kind == JsKind::Expression
-                        && bun_lint::utils::text::is_identifier_name(&js.text) =>
-                {
-                    *self = Doc::Text(js.text.clone());
-                    true
+        // What has not been looked at. The last comes first.
+        let mut rest = vec![self];
+        while let Some(doc) = rest.pop() {
+            if let Doc::Code(code) = doc {
+                match &**code {
+                    Code::Js(js)
+                        if js.kind == JsKind::Expression
+                            && bun_lint::utils::text::is_identifier_name(&js.text) =>
+                    {
+                        *doc = Doc::Text(js.text.clone());
+                    }
+                    _ => return false,
                 }
-                _ => false,
-            },
-            _ => true,
+            } else {
+                rest.extend(doc.contents_mut().iter_mut().rev());
+            }
         }
+        true
     }
 
     /// `getParts`
     fn parts_mut(&mut self) -> Option<&mut Vec<Doc<'a>>> {
-        match self {
-            Doc::List(parts) | Doc::Fill(parts) => Some(parts),
-            Doc::Group(contents) => contents.parts_mut(),
-            _ => None,
+        let mut doc = self;
+        loop {
+            match doc {
+                Doc::List(parts) | Doc::Fill(parts) => return Some(parts),
+                Doc::Group(contents) => doc = &mut **contents,
+                _ => return None,
+            }
         }
     }
 }
@@ -221,44 +289,51 @@ pub(crate) fn trim_right<'a>(mut group: &mut Vec<Doc<'a>>, is_white_space: fn(&D
 }
 
 /// Whether the last thing in `doc` is a line break that is one only if its group is broken.
-fn ends_with_soft_line(doc: &Doc<'_>) -> bool {
-    match doc {
-        Doc::Line | Doc::Softline => true,
-        Doc::List(parts) | Doc::Fill(parts) => (parts
-            .iter()
-            .rev()
-            .find(|it| !matches!(it.as_string(), Some(b""))))
-        .is_some_and(ends_with_soft_line),
-        Doc::Indent(contents) | Doc::Dedent(contents) => ends_with_soft_line(contents),
-        _ => false,
+fn ends_with_soft_line(mut doc: &Doc<'_>) -> bool {
+    loop {
+        doc = match doc {
+            Doc::Line | Doc::Softline => return true,
+            Doc::List(parts) | Doc::Fill(parts) => {
+                match (parts.iter().rev()).find(|it| !matches!(it.as_string(), Some(b""))) {
+                    Some(last) => last,
+                    None => return false,
+                }
+            }
+            Doc::Indent(contents) | Doc::Dedent(contents) => &**contents,
+            _ => return false,
+        };
     }
 }
 
 /// Writes `doc`, and lets go of each part of it when that is written: what is written takes as much memory again.
 /// `write_code` writes the code in it.
 pub(crate) fn write<'a>(
-    doc: Doc<'a>,
+    mut doc: Doc<'a>,
     out: &mut Writer<'_, '_>,
+    stack: &Stack,
     write_code: &mut dyn FnMut(&Code<'a>, &mut Writer<'_, '_>),
 ) {
-    match doc {
-        Doc::Text(text) => out.string(&text),
+    if !stack.has_room() {
+        return;
+    }
+    match &mut doc {
+        Doc::Text(text) => out.string(text),
         Doc::Token(text) => {
             if !text.is_empty() {
                 out.token(text);
             }
         }
         Doc::List(parts) => {
-            for part in parts {
-                write(part, out, write_code);
+            for part in std::mem::take(parts) {
+                write(part, out, stack, write_code);
             }
         }
         // The writer takes what has a start and an end for something.
         Doc::Group(contents) if contents.is_nothing() => {}
         Doc::Group(contents) => {
-            let id = ends_with_soft_line(&contents).then(|| out.new_group_id());
+            let id = ends_with_soft_line(contents).then(|| out.new_group_id());
             out.start_group_with(false, id);
-            write(*contents, out, write_code);
+            write(contents.take(), out, stack, write_code);
             out.end_group();
             if let Some(id) = id {
                 out.note_line_at_end_of_group(id);
@@ -266,24 +341,24 @@ pub(crate) fn write<'a>(
         }
         Doc::Indent(contents) => {
             out.start_indent();
-            write(*contents, out, write_code);
+            write(contents.take(), out, stack, write_code);
             out.end_indent();
         }
         Doc::Dedent(contents) => {
             out.start_dedent();
-            write(*contents, out, write_code);
+            write(contents.take(), out, stack, write_code);
             out.end_dedent();
         }
         Doc::LineSuffix(contents) => {
             out.start_line_suffix();
-            write(*contents, out, write_code);
+            write(contents.take(), out, stack, write_code);
             out.end_line_suffix();
         }
         Doc::Fill(parts) => {
             out.start_fill();
-            for part in parts {
+            for part in std::mem::take(parts) {
                 out.start_item();
-                write(part, out, write_code);
+                write(part, out, stack, write_code);
                 out.end_item();
             }
             out.end_fill();
@@ -293,6 +368,6 @@ pub(crate) fn write<'a>(
         Doc::Hardline => out.hardline(),
         Doc::Literalline => out.text(b"\n"),
         Doc::BreakParent => out.break_parent(),
-        Doc::Code(code) => write_code(&code, out),
+        Doc::Code(code) => write_code(code, out),
     }
 }

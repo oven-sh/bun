@@ -11,9 +11,6 @@ use bun_core::strings;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 
-/// How many elements and blocks can be in each other.
-const MAX_DEPTH: usize = 400;
-
 /// What Svelte throws: its code, and where.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct Error {
@@ -450,13 +447,9 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    fn push(&mut self, id: Id, fragment: FragmentId) -> Result<()> {
+    fn push(&mut self, id: Id, fragment: FragmentId) {
         self.stack.push(id);
         self.fragments.push(fragment);
-        match self.stack.len() > MAX_DEPTH {
-            true => fail("nested_too_deeply", self.index),
-            false => Ok(()),
-        }
     }
 
     fn pop(&mut self) {
@@ -929,7 +922,8 @@ impl<'a> Parser<'a, '_> {
             self.tree.fragments[fragment as usize].push(text);
             self.expect(&close_tag)?;
         } else {
-            return self.push(id, fragment);
+            self.push(id, fragment);
+            return Ok(());
         }
         self.tree[id].end = self.index as u32;
         Ok(())
@@ -1380,7 +1374,8 @@ impl<'a> Parser<'a, '_> {
     fn add_block(&mut self, kind: Kind<'a>, start: usize, fragment: FragmentId) -> Result<()> {
         let block = self.tree.add(kind, start, start);
         self.append(block);
-        self.push(block, fragment)
+        self.push(block, fragment);
+        Ok(())
     }
 
     /// The expression of `{#each`.
@@ -1622,7 +1617,8 @@ impl<'a> Parser<'a, '_> {
                 let child = self.tree.add(kind, brace, brace);
                 self.append(child);
                 self.fragments.pop();
-                self.push(child, consequent)
+                self.push(child, consequent);
+                Ok(())
             }
             Kind::EachBlock { fallback, .. } => {
                 if !self.eat(b"else") {

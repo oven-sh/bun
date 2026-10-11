@@ -367,10 +367,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
           "attributes-of-a-script-next-to-quotes: SyntaxError",
           "attributes-of-a-script: SyntaxError",
           "attributes-of-the-options: SyntaxError",
-          "blocks-in-each-other: RangeError",
+          "blocks-in-each-other: SyntaxError",
           "braces: SyntaxError",
           "comments-not-closed: SyntaxError",
-          "elements-in-each-other: RangeError",
+          "elements-in-each-other: SyntaxError",
           "end-tags: SyntaxError",
           "ends-of-scripts: SyntaxError",
           "less-than: SyntaxError",
@@ -381,7 +381,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
           "style-sheets: SyntaxError",
           "styles-with-a-quote-not-closed: SyntaxError",
           "textareas-not-closed: SyntaxError",
-          "the-mark-of-the-plugin-in-elements: RangeError",
+          "the-mark-of-the-plugin-in-elements: SyntaxError",
           "the-same-attribute: SyntaxError",
         ]
       `);

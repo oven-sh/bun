@@ -8,6 +8,7 @@ use crate::js::format::{ExprOptions, write_expression};
 use crate::js::print::function::{FormatFunctionOptions, write_function};
 use crate::options::{Flavor, HtmlRoot, InHtml};
 use crate::prelude::*;
+use crate::stack::Stack;
 use crate::{FormatError, write};
 
 pub(crate) struct How<'o> {
@@ -220,7 +221,12 @@ fn write_body(content: &[u8], parser: Parser, out: &mut Writer<'_, '_>, how: &Ho
     out.hardline();
     // The plugin writes the error to stderr, and leaves what is in the tag as it is.
     if !out.end_attempt(attempt, is_written) {
-        doc::write(preformatted_body(content), out, &mut |_, _| {});
+        doc::write(
+            preformatted_body(content),
+            out,
+            &Stack::new(),
+            &mut |_, _| {},
+        );
     }
 }
 

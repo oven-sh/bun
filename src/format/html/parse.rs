@@ -108,8 +108,6 @@ struct Context<'a, 't> {
     tree: &'t mut Tree<'a>,
     /// Whether `parseVue` is the function that parses. The options can be those of HTML all the same.
     is_vue: bool,
-    /// How many conditional comments are around what is parsed.
-    depth: usize,
 }
 
 impl<'a> Context<'a, '_> {
@@ -435,12 +433,10 @@ impl<'a> Context<'a, '_> {
         };
         let content_start = span.start + 4 + opening_len as u32;
         let content = Span::new(content_start, content_start + data_len as u32);
-        if self.depth >= 16 {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Err(ParseError::NestedTooDeeply);
         }
-        self.depth += 1;
         let parsed = self.parse(content, options);
-        self.depth -= 1;
         let is_complete = match parsed {
             Ok(root) => {
                 // Prettier parses it with blanks in the place of what is before it, so the first child is a text.
@@ -515,7 +511,6 @@ pub(crate) fn parse<'a>(
         text,
         tree,
         is_vue: parser == Parser::Vue,
-        depth: 0,
     };
     let root = context.parse(all, parse_options(parser))?;
     if let Some(len) = front_matter_len {

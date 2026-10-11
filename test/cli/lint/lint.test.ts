@@ -2392,6 +2392,27 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // The parser stops where the stack ends. What makes the suggestion of no-unused-vars went out through the pattern with a call
+  // for each level, and larger frames: a little before that depth the stack overflowed.
+  test("a pattern that is nested about as deep as the stack holds", async () => {
+    const config = { root: true, parserOptions: { ecmaVersion: 2018 }, rules: { "no-unused-vars": "error" } };
+    const files: Record<string, string> = { ".eslintrc.json": JSON.stringify(config) };
+    for (let depth = 1_000; depth < 45_000; depth = Math.ceil(depth * 1.04)) {
+      files[`arrays-${depth}.js`] = `let ${"[".repeat(depth)}a${"]".repeat(depth)} = x;\n`;
+      files[`objects-${depth}.js`] = `let ${"{a:".repeat(depth)}b${"}".repeat(depth)} = x;\n`;
+      files[`rest-${depth}.js`] = `let ${"[...".repeat(depth)}a${"]".repeat(depth)} = x;\n`;
+    }
+    const { raw, exitCode } = await lint(files, ["-f", "json"]);
+    expect(exitCode).toBe(1);
+    const results: { messages: { ruleId: string | null }[] }[] = JSON.parse(raw);
+    const rules = results.map(it => it.messages.map(it => it.ruleId ?? "refused").join());
+    expect(rules).toContain("no-unused-vars");
+    expect(rules.filter(it => it !== "refused")).toEqual(
+      rules.flatMap(it => (it === "refused" ? [] : "no-unused-vars")),
+    );
+    expect(rules).toHaveLength(Object.keys(files).length - 1);
+  });
+
   // A file to which links give several names, and rules that look at several files. It must be the same in every run.
   describe("a file that has several names by links", () => {
     const project = (configuration: Record<string, string>) => {

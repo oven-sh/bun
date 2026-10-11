@@ -4,10 +4,11 @@
 //!
 //! The states are those of the tokenizer, with all that they let through and all that they drop.
 
+use super::Error;
 use super::ast::{Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::parser::{Statement, StatementKind};
 use super::positions::Positions;
-use super::{Error, MAX_DEPTH};
+use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal};
 use bun_core::strings;
 
@@ -172,6 +173,8 @@ struct Builder<'a> {
     stack: Vec<Frame>,
     /// The children so far of everything that is open.
     children: Vec<NodeId>,
+    /// For blocks in each other.
+    room: Stack,
 }
 
 impl Builder<'_> {
@@ -286,9 +289,6 @@ impl Builder<'_> {
     fn finish_tag(&mut self) -> Result<(), Error> {
         if self.tag.is_end {
             return self.finish_end_tag(false);
-        }
-        if self.stack.len() >= MAX_DEPTH {
-            return Err(Error::NestedTooDeeply);
         }
         // Prettier sorts them by where they start. Each list is in that order.
         self.sorted_tag_parts.clear();
@@ -1179,7 +1179,7 @@ impl Builder<'_> {
         if first >= last {
             return Ok(Range::default());
         }
-        if self.stack.len() >= MAX_DEPTH {
+        if !self.room.has_room() {
             return Err(Error::NestedTooDeeply);
         }
         let depth = self.stack.len();
@@ -1250,6 +1250,7 @@ pub(crate) fn build(
         dashes: [0; 2],
         stack: Vec::new(),
         children: Vec::new(),
+        room: Stack::for_tree(),
     };
     let mut body = builder.body((0, statements.len()))?;
     if let Some(front_matter) = front_matter {

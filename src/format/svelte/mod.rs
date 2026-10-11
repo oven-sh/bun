@@ -17,6 +17,7 @@ use crate::html::js::Parse;
 use crate::html::writer::Writer;
 use crate::js::context::JsFormatContext;
 use crate::options::{EmbeddedLanguageFormatting, Flavor, FormatOptions, JavaScriptParser};
+use crate::stack::Stack;
 use parser::Js;
 
 /// Everything that is allocated to format a text and can be used again for the next one.
@@ -64,10 +65,7 @@ fn format_with_js(
     }
     let text = bun_core::strings::crlf_as_lf(text);
     let snipped = snip::snip(&text);
-    let tree = parser::parse(&snipped.text, js).map_err(|error| match error.code {
-        "nested_too_deeply" => FormatError::NestedTooDeeply,
-        _ => FormatError::SyntaxError,
-    })?;
+    let tree = parser::parse(&snipped.text, js).map_err(|_| FormatError::SyntaxError)?;
     let host = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
@@ -107,13 +105,17 @@ fn format_with_js(
     };
     let mut context = JsFormatContext::without_file(text, host.clone(), &[]);
     context.parse_javascript = parse_javascript;
+    let stack = Stack::new();
     let root = crate::ir::run::write_with(context, text, &mut scratch.document, |f| {
         let mut writer = Writer::new(f, Some(0), true);
-        doc::write(document, &mut writer, &mut |code, out| {
+        doc::write(document, &mut writer, &stack, &mut |code, out| {
             code::write_code(code, out, &how)
         });
         writer.finish();
     })?;
+    if stack.ran_out() {
+        return Err(FormatError::NestedTooDeeply);
+    }
     if original.starts_with(crate::text::BOM) {
         out.extend_from_slice(crate::text::BOM);
     }

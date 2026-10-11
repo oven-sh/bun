@@ -33,6 +33,7 @@ use crate::hir::ReactiveValue;
 use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
 use crate::hir::is_primitive_type;
+use crate::hir::visitors::Places;
 
 // =============================================================================
 // State
@@ -610,7 +611,7 @@ struct InterState<'a> {
     value_block_statements: Option<Statements>,
     /// fbt wants these inside the macro call: they stay inline and their operands get the names.
     inline_macro_operands: &'a HashSet<IdentifierId>,
-    operands_of_macro_operands: IdMap<DeclarationId, Vec<Place>>,
+    operands_of_macro_operands: IdMap<DeclarationId, Places>,
 }
 
 impl<'a> InterState<'a> {
@@ -783,7 +784,7 @@ fn promote_interposed_place(
 
 /// Last defined first: a promoted operand becomes a statement ahead of the earlier operands.
 fn promote_interposed_operands(
-    mut operands: Vec<Place>,
+    mut operands: Places,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &HashSet<IdentifierId>,

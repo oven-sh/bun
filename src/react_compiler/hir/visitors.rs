@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 use crate::collections::FxHashMap as HashMap;
+use smallvec::SmallVec;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -17,10 +18,15 @@ use crate::hir::{
 // Iterator functions (return Vec instead of generators)
 // =============================================================================
 
+/// An instruction seldom has more.
+pub type Places = SmallVec<[Place; 4]>;
+pub type Ids = SmallVec<[IdentifierId; 4]>;
+pub type Blocks = SmallVec<[BlockId; 4]>;
+
 /// Yields `instr.lvalue` plus the value's lvalues.
 /// Equivalent to TS `eachInstructionLValue`.
-pub fn each_instruction_lvalue(instr: &Instruction) -> Vec<Place> {
-    let mut result = Vec::new();
+pub fn each_instruction_lvalue(instr: &Instruction) -> Places {
+    let mut result = SmallVec::new();
     result.push(instr.lvalue.clone());
     result.extend(each_instruction_value_lvalue(&instr.value));
     result
@@ -28,8 +34,8 @@ pub fn each_instruction_lvalue(instr: &Instruction) -> Vec<Place> {
 
 /// Yields lvalues from DeclareLocal/StoreLocal/DeclareContext/StoreContext/Destructure/PostfixUpdate/PrefixUpdate.
 /// Equivalent to TS `eachInstructionValueLValue`.
-pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Vec<Place> {
-    let mut result = Vec::new();
+pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Places {
+    let mut result = SmallVec::new();
     match value {
         InstructionValue::DeclareContext { lvalue, .. }
         | InstructionValue::StoreContext { lvalue, .. }
@@ -87,13 +93,13 @@ pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Vec<Place> {
 
 /// Delegates to each_instruction_value_operand.
 /// Equivalent to TS `eachInstructionOperand`.
-pub fn each_instruction_operand(instr: &Instruction, env: &Environment) -> Vec<Place> {
+pub fn each_instruction_operand(instr: &Instruction, env: &Environment) -> Places {
     each_instruction_value_operand(&instr.value, env)
 }
 
 /// Yields operand places from an InstructionValue.
 /// Equivalent to TS `eachInstructionValueOperand`.
-pub fn each_instruction_value_operand(value: &InstructionValue, env: &Environment) -> Vec<Place> {
+pub fn each_instruction_value_operand(value: &InstructionValue, env: &Environment) -> Places {
     each_instruction_value_operand_with_functions(value, &env.functions)
 }
 
@@ -102,8 +108,8 @@ pub fn each_instruction_value_operand(value: &InstructionValue, env: &Environmen
 pub fn each_instruction_value_operand_with_functions(
     value: &InstructionValue,
     functions: &[HirFunction],
-) -> Vec<Place> {
-    let mut result = Vec::new();
+) -> Places {
+    let mut result = SmallVec::new();
     match value {
         InstructionValue::NewExpression { callee, args, .. }
         | InstructionValue::CallExpression { callee, args, .. } => {
@@ -306,8 +312,8 @@ pub fn each_instruction_value_operand_with_functions(
 
 /// Yields each arg's place.
 /// Equivalent to TS `eachCallArgument`.
-pub fn each_call_argument(args: &[PlaceOrSpread]) -> Vec<Place> {
-    let mut result = Vec::new();
+pub fn each_call_argument(args: &[PlaceOrSpread]) -> Places {
+    let mut result = SmallVec::new();
     for arg in args {
         result.push(arg.place().clone());
     }
@@ -316,8 +322,8 @@ pub fn each_call_argument(args: &[PlaceOrSpread]) -> Vec<Place> {
 
 /// Yields places from array/object patterns.
 /// Equivalent to TS `eachPatternOperand`.
-pub fn each_pattern_operand(pattern: &Pattern) -> Vec<Place> {
-    let mut result = Vec::new();
+pub fn each_pattern_operand(pattern: &Pattern) -> Places {
+    let mut result = SmallVec::new();
     match pattern {
         Pattern::Array(arr) => {
             for item in &arr.items {
@@ -372,8 +378,8 @@ pub fn does_pattern_contain_spread_element(pattern: &Pattern) -> bool {
 
 /// Yields successor block IDs (NOT fallthroughs, this is intentional).
 /// Equivalent to TS `eachTerminalSuccessor`.
-pub fn each_terminal_successor(terminal: &Terminal) -> Vec<BlockId> {
-    let mut result = Vec::new();
+pub fn each_terminal_successor(terminal: &Terminal) -> Blocks {
+    let mut result = SmallVec::new();
     match terminal {
         Terminal::Goto { block, .. } => {
             result.push(*block);
@@ -450,8 +456,8 @@ pub fn each_terminal_successor(terminal: &Terminal) -> Vec<BlockId> {
 
 /// Yields places used by terminal.
 /// Equivalent to TS `eachTerminalOperand`.
-pub fn each_terminal_operand(terminal: &Terminal) -> Vec<Place> {
-    let mut result = Vec::new();
+pub fn each_terminal_operand(terminal: &Terminal) -> Places {
+    let mut result = SmallVec::new();
     match terminal {
         Terminal::If { test, .. } => {
             result.push(test.clone());
@@ -694,8 +700,8 @@ pub fn map_terminal_successors(terminal: &mut Terminal, f: &mut impl FnMut(Block
 /// Yields ALL block IDs referenced by a terminal (successors + fallthroughs + internal blocks).
 /// Unlike `each_terminal_successor` which yields only standard control flow successors,
 /// this function yields every block ID that `map_terminal_successors` would visit.
-pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
-    let mut result = Vec::new();
+pub fn each_terminal_all_successors(terminal: &Terminal) -> Blocks {
+    let mut result = SmallVec::new();
     for_each_terminal_all_successor(terminal, &mut |block| result.push(block));
     result
 }
@@ -1017,7 +1023,7 @@ impl ScopeBlockTraversal {
 
 /// Collect all lvalue IdentifierIds from an instruction.
 /// Convenience wrapper around `each_instruction_lvalue` that maps to ids.
-pub fn each_instruction_lvalue_ids(instr: &Instruction) -> Vec<IdentifierId> {
+pub fn each_instruction_lvalue_ids(instr: &Instruction) -> Ids {
     each_instruction_lvalue(instr)
         .into_iter()
         .map(|p| p.identifier)
@@ -1026,7 +1032,7 @@ pub fn each_instruction_lvalue_ids(instr: &Instruction) -> Vec<IdentifierId> {
 
 /// Collect all operand IdentifierIds from an instruction.
 /// Convenience wrapper around `each_instruction_operand` that maps to ids.
-pub fn each_instruction_operand_ids(instr: &Instruction, env: &Environment) -> Vec<IdentifierId> {
+pub fn each_instruction_operand_ids(instr: &Instruction, env: &Environment) -> Ids {
     each_instruction_operand(instr, env)
         .into_iter()
         .map(|p| p.identifier)
@@ -1035,10 +1041,7 @@ pub fn each_instruction_operand_ids(instr: &Instruction, env: &Environment) -> V
 
 /// Collect all operand IdentifierIds from an instruction value.
 /// Convenience wrapper around `each_instruction_value_operand` that maps to ids.
-pub fn each_instruction_value_operand_ids(
-    value: &InstructionValue,
-    env: &Environment,
-) -> Vec<IdentifierId> {
+pub fn each_instruction_value_operand_ids(value: &InstructionValue, env: &Environment) -> Ids {
     each_instruction_value_operand(value, env)
         .into_iter()
         .map(|p| p.identifier)
@@ -1047,7 +1050,7 @@ pub fn each_instruction_value_operand_ids(
 
 /// Collect all operand IdentifierIds from a terminal.
 /// Convenience wrapper around `each_terminal_operand` that maps to ids.
-pub fn each_terminal_operand_ids(terminal: &Terminal) -> Vec<IdentifierId> {
+pub fn each_terminal_operand_ids(terminal: &Terminal) -> Ids {
     each_terminal_operand(terminal)
         .into_iter()
         .map(|p| p.identifier)

@@ -11,11 +11,12 @@ use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{
-    each_instruction_lvalue_ids, each_instruction_value_operand, each_terminal_operand,
+    Places, each_instruction_lvalue_ids, each_instruction_value_operand, each_terminal_operand,
 };
 use crate::hir::{
     Effect, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue, Place, Type,
 };
+use smallvec::smallvec;
 
 /// Validates that local variables cannot be reassigned after render.
 /// This prevents a category of bugs in which a closure captures a
@@ -230,10 +231,10 @@ fn get_context_reassignment(
                     // For calls with noAlias signatures, only check the callee/receiver
                     // (not args) to avoid false positives from callbacks that reassign
                     // context variables.
-                    let operands: Vec<Place> = match &instr.value {
+                    let operands: Places = match &instr.value {
                         InstructionValue::CallExpression { callee, .. } => {
                             if env.has_no_alias_signature(callee.identifier) {
-                                vec![callee.clone()]
+                                smallvec![callee.clone()]
                             } else {
                                 each_instruction_value_operand(&instr.value, env)
                             }
@@ -242,14 +243,14 @@ fn get_context_reassignment(
                             receiver, property, ..
                         } => {
                             if env.has_no_alias_signature(property.identifier) {
-                                vec![receiver.clone(), property.clone()]
+                                smallvec![receiver.clone(), property.clone()]
                             } else {
                                 each_instruction_value_operand(&instr.value, env)
                             }
                         }
                         InstructionValue::TaggedTemplateExpression { tag, .. } => {
                             if env.has_no_alias_signature(tag.identifier) {
-                                vec![tag.clone()]
+                                smallvec![tag.clone()]
                             } else {
                                 each_instruction_value_operand(&instr.value, env)
                             }

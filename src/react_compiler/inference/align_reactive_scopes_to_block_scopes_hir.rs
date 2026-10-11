@@ -52,7 +52,7 @@ struct ValueBlockNode {
 
 /// Returns all block IDs referenced by a terminal, including both direct
 /// successors and fallthrough.
-fn all_terminal_block_ids(terminal: &Terminal) -> Vec<BlockId> {
+fn all_terminal_block_ids(terminal: &Terminal) -> visitors::Blocks {
     visitors::each_terminal_all_successors(terminal)
 }
 

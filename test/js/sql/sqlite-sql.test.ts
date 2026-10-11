@@ -1359,14 +1359,19 @@ describe("Transactions", () => {
     expect(await balances()).toEqual([{ balance: 1 }, { balance: 500 }]);
   });
 
-  // SQLite answers a COMMIT with no open transaction with an error, so begin() rejects. A COMMIT that
-  // goes first stores the row instead.
+  // SQLite answers a COMMIT with no open transaction with an error, so begin() rejects with it. A COMMIT
+  // that goes first stores the row instead.
   test.each(closes)("a tx.%s that is not awaited rolls back before begin() sends COMMIT", async (_, close) => {
-    const begin = sql.begin(async tx => {
-      await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
-      close(tx);
-    });
-    expect(await code(begin)).not.toBeNull();
+    const error = await sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+        close(tx);
+      })
+      .then(
+        () => null,
+        err => err,
+      );
+    expect(error?.message).toBe("cannot commit - no transaction is active");
     expect(await balances()).toEqual(untouched);
   });
 

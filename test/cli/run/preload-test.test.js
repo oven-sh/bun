@@ -256,22 +256,37 @@ plugin({
       },
     );
 
-    test("--preload does not ask the registry for a package of that name", async () => {
+    // Only the builtin `_tls_wrap` warns when it loads: that shows the load. It loads `node:tls`, which takes
+    // seconds in a debug build.
+    const warning = "[DEP0192] DeprecationWarning: The _tls_wrap module is deprecated. Use `node:tls` instead.";
+    // "(node:<pid>) <warning>", then a hint that names the executable.
+    const warnings = stderr =>
+      stderr
+        .split("\n")
+        .map(line => line.replace(/^\(node:\d+\) /, ""))
+        .filter(line => line && !line.startsWith("(Use `"));
+
+    test("--preload loads the builtin, and does not ask the registry for a package of that name", async () => {
       using dir = tempDir("preload-builtin-name-autoinstall", { "main.js": `console.log("main ran");` });
-      const args = builtins.flatMap(name => ["--preload", name]);
-      expect(await run(String(dir), args)).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0, requests: [] });
-    });
+      const args = [...builtins, "_tls_wrap"].flatMap(name => ["--preload", name]);
+      const { stdout, stderr, exitCode, requests } = await run(String(dir), args);
+      expect({ stdout, warnings: warnings(stderr), exitCode, requests }).toEqual({
+        stdout: "main ran\n",
+        warnings: [warning],
+        exitCode: 0,
+        requests: [],
+      });
+    }, 30_000);
 
     // The `preload` option of a Worker is "equivalent to passing the `--preload` CLI argument". Its resolver also
-    // takes a bare name for a `./name` file. Only the builtin `_tls_wrap` warns when it loads: that shows the load.
-    // It loads `node:tls`, which takes seconds in a debug build.
+    // takes a bare name for a `./name` file: `util` is the builtin, and `./util` is the file.
     test("Worker preload loads the builtin, not a file that the resolver has for that name", async () => {
       using dir = tempDir("preload-builtin-name-worker", {
         ...packages("path", "abort-controller", "_tls_wrap", "lodashy"),
         "util.ts": `console.log("util.ts ran");`,
         "worker.js": `postMessage("worker ran");`,
         "main.js": `
-          const preload = ["path", "bun:sqlite", "abort-controller", "util", "_tls_wrap", "lodashy"];
+          const preload = ["path", "bun:sqlite", "abort-controller", "util", "_tls_wrap", "./util", "lodashy"];
           const worker = new Worker("./worker.js", { preload });
           worker.onmessage = e => {
             console.log(e.data);
@@ -283,14 +298,9 @@ plugin({
         `,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), []);
-      // "(node:<pid>) <warning>", then a hint that names the executable.
-      const warnings = stderr
-        .split("\n")
-        .map(line => line.replace(/^\(node:\d+\) /, ""))
-        .filter(line => line && !line.startsWith("(Use `"));
-      expect({ stdout, warnings, exitCode }).toEqual({
-        stdout: "node_modules/lodashy ran\nworker ran\n",
-        warnings: ["[DEP0192] DeprecationWarning: The _tls_wrap module is deprecated. Use `node:tls` instead."],
+      expect({ stdout, warnings: warnings(stderr), exitCode }).toEqual({
+        stdout: "util.ts ran\nnode_modules/lodashy ran\nworker ran\n",
+        warnings: [warning],
         exitCode: 0,
       });
     }, 30_000);

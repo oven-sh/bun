@@ -763,6 +763,144 @@ describe.concurrent("version-scoped targets", () => {
     });
   });
 
+  // `intersects` is what npm's semver 7.7.4 answers, and npm applies a rule on that answer. Every rule sets 1.0.0.
+  // `untouched` is what the declared range resolves to without it.
+  describe.concurrent.each([
+    // #41371. `^1.0.0` ends at `<2.0.0-0`, so a selector that starts at a 2.0.0 prerelease does not intersect it.
+    { declared: "^1.0.0", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">=2.0.0-0", intersects: false, untouched: "1.1.0" },
+    { declared: "~1.0.0", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0.x", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.x", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "1", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "<2", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "1.0.0 - 1.0", selector: ">=1.1.0-alpha.0 <2", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0.0 - 1.x", selector: ">=2.0.0-alpha.0 <3", intersects: false, untouched: "1.1.0" },
+    // the same pairs with the selector as the sugar
+    { declared: ">=2.0.0-alpha.0 <3", selector: "^1.0.0", intersects: false, untouched: "2.0.0" },
+    { declared: ">=1.1.0-alpha.0 <2", selector: "~1.0.0", intersects: false, untouched: "1.1.0" },
+    { declared: ">=2.0.0-alpha.0", selector: "1.x", intersects: false, untouched: "2.0.0" },
+    { declared: ">=2.0.0-alpha.0", selector: "1", intersects: false, untouched: "2.0.0" },
+    { declared: ">=2.0.0-alpha.0", selector: "<2", intersects: false, untouched: "2.0.0" },
+    { declared: ">=1.1.0-alpha.0", selector: "1.0.0 - 1.0", intersects: false, untouched: "2.0.0" },
+    // ranges that do meet, and a bound written in full, which keeps its form
+    { declared: "^1.0.0", selector: ">=1.1.0-alpha.0 <2", intersects: true, untouched: "1.1.0" },
+    { declared: "~1.0.0", selector: ">=1.0.1-alpha.0 <1.1", intersects: true, untouched: "1.0.1" },
+    { declared: ">=1.0.0 <2.0.0-beta", selector: ">=2.0.0-alpha.0 <3", intersects: true, untouched: "1.1.0" },
+    { declared: ">=1.0.0 <2.0.0", selector: ">=2.0.0-alpha.0 <3", intersects: true, untouched: "1.1.0" },
+
+    // `<x` and `>x` are `<0.0.0-0`, the empty set.
+    { declared: "^1.0.0", selector: "<x", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">*", intersects: false, untouched: "1.1.0" },
+    // neither side has a lower bound
+    { declared: "<2", selector: "<x", intersects: false, untouched: "1.1.0" },
+    { declared: "<=1.0.1", selector: ">x", intersects: false, untouched: "1.0.1" },
+    // the other alternative of the selector still matches
+    { declared: "^1.0.0", selector: "<x || 1", intersects: true, untouched: "1.1.0" },
+
+    // `>1` is `>=2.0.0` and `>1.0` is `>=1.1.0`, so neither meets a range that ends below that bound.
+    { declared: "^1.0.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: "> 1", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1.x", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1 || <1.0.0", intersects: false, untouched: "1.1.0" },
+    { declared: "1.x", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: ">=1.0.0 <2.0.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "~1.0.0 || ^1.1.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "~1.0.0", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    { declared: "~1.0.0", selector: ">1.0.x", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0.x", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    { declared: ">=1.0.0 <1.1.0", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    // the same pairs with `>` in the declared range
+    { declared: ">1", selector: "^1.0.0", intersects: false, untouched: "2.0.0" },
+    { declared: ">1", selector: "<2.0.0", intersects: false, untouched: "2.0.0" },
+    { declared: ">1.0", selector: "~1.0.0", intersects: false, untouched: "2.0.0" },
+    // pairs that already did not meet
+    { declared: "1.0.0 - 1.1.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "1.0.1", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    // ranges that do meet
+    { declared: "^2.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: "2.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: "<=2.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: ">=1.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: "^1.0.0", selector: ">1 || 1.0.1", intersects: true, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1.0", intersects: true, untouched: "1.1.0" },
+    { declared: "1.1.0", selector: ">1.0", intersects: true, untouched: "1.1.0" },
+    { declared: "<=1.1.0", selector: ">1.0", intersects: true, untouched: "1.1.0" },
+    { declared: ">1", selector: "^2.0.0", intersects: true, untouched: "2.0.0" },
+    { declared: ">1.0", selector: "~1.1.0", intersects: true, untouched: "2.0.0" },
+  ])("a declared range and a selector with a derived bound %j", ({ declared, selector, intersects, untouched }) => {
+    test(intersects ? "the rule applies" : "the rule leaves the edge alone", async () => {
+      const dir = await project({
+        dependencies: { "no-deps": declared },
+        overrides: { [`no-deps@${selector}`]: "1.0.0" },
+      });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe(intersects ? "1.0.0" : untouched);
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+  });
+
+  // one-range-dep declares no-deps@^1.0.0. The key of #41371 is at the top level of `overrides`.
+  describe.concurrent.each([
+    { rule: { "one-range-dep": { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } } },
+    { rule: { "one-range-dep": { "no-deps@>1": "1.0.0" } } },
+    { rule: { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } },
+    { rule: { "no-deps@>=2.0.0-0": "1.0.0" } },
+  ])("a selector that starts at the next major %j", ({ rule }) => {
+    test("leaves a transitive ^ edge alone", async () => {
+      const dir = await project({ dependencies: { "one-range-dep": "1.0.0" }, overrides: rule });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+  });
+
+  test("a selector that no version satisfies leaves a * edge alone", async () => {
+    // npm applies the rule here: its `*` comparator intersects every comparator, `<0.0.0-0` included.
+    // Bun does not, because no version satisfies the selector.
+    const dir = await project({ dependencies: { "no-deps": "*" }, overrides: { "no-deps@<x": "1.0.0" } });
+    await installOk(dir);
+    expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("2.0.0");
+    await installNoChanges(dir, "--frozen-lockfile");
+  });
+
+  // #43138. An edge pinned at an exact prerelease matches a ranged selector only when the
+  // prerelease satisfies it, which needs a comparator with a prerelease of the same
+  // major.minor.patch. `<1.0.0` has none, so the rule leaves the edge alone, as in npm.
+  // `>=1.0.0-0 <1.0.0` applies because `Bun.semver.satisfies` admits the prerelease (npm
+  // tests each comparator alone and does not). `*` matches every edge, as in npm, and
+  // `>=0.0.0` parses to the same range (npm reads it as a comparator and does not match).
+  describe.concurrent.each([
+    { declared: "1.0.0-rc.1", selector: "<1.0.0", applies: false },
+    { declared: "1.0.0-rc.1 || 1.0.0-rc.0", selector: "<1.0.0", applies: false },
+    { declared: "1.0.0-rc.1", selector: ">=1.0.0-0 <1.0.0", applies: true },
+    { declared: "1.0.0-rc.1", selector: "1.0.0-rc.1", applies: true },
+    { declared: "1.0.0-rc.1", selector: "*", applies: true },
+    { declared: "1.0.0-rc.1", selector: ">=0.0.0", applies: true },
+  ])("an exact prerelease edge and a ranged selector %j", ({ declared, selector, applies }) => {
+    test(applies ? "the rule applies" : "the rule leaves the edge alone", async () => {
+      const dir = await project({
+        dependencies: { "no-deps-tags": declared },
+        overrides: { [`no-deps-tags@${selector}`]: "1.0.0" },
+      });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "no-deps-tags")).toBe(applies ? "1.0.0" : "1.0.0-rc.1");
+      await installNoChanges(dir, "--frozen-lockfile");
+    });
+  });
+
+  test("an exact prerelease selector matches a declared range only when the range admits it", async () => {
+    const dir = await project({
+      dependencies: { "no-deps": "<2" },
+      overrides: { "no-deps@2.0.0-alpha.0": "1.0.0" },
+    });
+    await installOk(dir);
+    expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+    await installNoChanges(dir, "--frozen-lockfile");
+  });
+
   test("pnpm key whose range contains > after ||", async () => {
     const dir = await project({
       dependencies: { "one-range-dep": "1.0.0", ofd2: twoParents.ofd2 },

@@ -374,7 +374,7 @@ fn abs_node_modules_path(
 /// The alias is the install destination inside `node_modules` (renamed aside,
 /// deleted and re-created), so on top of `is_safe_install_folder_name` it must
 /// be a single path component, or two for a scoped name.
-pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
+pub fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if alias.len() >= MAX_PATH_BYTES || !crate::dependency::is_safe_install_folder_name(alias) {
         return false;
     }
@@ -638,20 +638,14 @@ impl<'a> PackageInstaller<'a> {
             if defer_this_bin {
                 deferred.push(dep_id);
             }
-            // globally linked packages shouls always belong to the root
+            // globally linked packages should always belong to the root
             // tree (0).
-            let global = if !manager.options.global || tree_id != 0 {
-                false
-            } else {
-                'global: {
-                    for request in manager.update_requests.iter() {
-                        if request.package_id == package_id {
-                            break 'global true;
-                        }
-                    }
-                    break 'global false;
-                }
-            };
+            let global = tree_id == 0
+                && manager.links_bins_globally(
+                    package_id,
+                    self.successfully_installed
+                        .is_set_allow_out_of_bound(package_id as usize, false),
+                );
 
             loop {
                 // `node_modules_path` (mut) and `target_node_modules_path`
@@ -1649,8 +1643,8 @@ impl<'a> PackageInstaller<'a> {
                         if package_manager::enqueue_git_for_checkout(
                             self.manager_mut(),
                             dependency_id,
+                            package_id,
                             alias.slice(string_buf!()),
-                            resolution,
                             context,
                             download_patch_hash,
                         ) == package_manager::GitEnqueueResult::OfflineMiss

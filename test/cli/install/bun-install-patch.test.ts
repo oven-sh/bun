@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { rm } from "fs/promises";
+import { lstat, readdir, rm } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -17,7 +17,6 @@ import { pathToFileURL } from "url";
 const normalizeBunSnapshot = (str: string) => {
   str = normalizeBunSnapshot_(str);
   str = str.replace(/.*Resolved, downloaded and extracted.*\n?/g, "");
-  str = str.replaceAll("fstatat()", "stat()");
   return str.trim();
 };
 
@@ -458,12 +457,117 @@ diff --git a/package.json b/package.json
       const { stdout, stderr, exitCode } = await runBun(dir, env, "install", "--linker=hoisted");
       expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
         "Resolving dependencies
-        error: failed applying patch file: ENOENT: No such file or directory (stat())
+        error: failed applying patch file: ENOENT: node_modules/is-even/index.js: No such file or directory (open())
         error: failed to apply patchfile (patches/is-even@1.0.0.patch)"
       `);
       expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
       expect(exitCode).toBe(1);
     }
+  });
+
+  // https://github.com/oven-sh/bun/issues/33571
+  // The new directories used to get the file's mode (0644), which only root can enter
+  // (CAP_DAC_OVERRIDE), so as root the install runs without that capability.
+  const asRoot = process.getuid?.() === 0;
+  const setpriv = asRoot ? Bun.which("setpriv") : null;
+  test.skipIf(isWindows || (asRoot && !setpriv))(
+    "should apply a patch that adds a file in a directory the package does not have",
+    async () => {
+      await using project = createProject("patch-new-dir", {
+        "package.json": packageJson({ "is-odd": "3.0.1" }, { "is-odd@3.0.1": "patches/is-odd@3.0.1.patch" }),
+        patches: {
+          "is-odd@3.0.1.patch": /* patch */ `diff --git a/android/build/x/results.bin b/android/build/x/results.bin
+new file mode 100644
+--- /dev/null
++++ b/android/build/x/results.bin
+@@ -0,0 +1 @@
++hi
+`,
+        },
+      });
+      const { dir, env } = project;
+
+      const unprivileged = setpriv ? [setpriv, "--bounding-set", "-dac_override,-dac_read_search"] : [];
+      await using proc = Bun.spawn({
+        cmd: [...unprivileged, bunExe(), "install"],
+        cwd: dir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.replace(installProgress, "")).toBe("");
+      expect(await file(dir, "node_modules", "is-odd", "android", "build", "x", "results.bin").text()).toBe("hi\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("a hunk whose - side matches nothing fails the install", async () => {
+    await using project = createProject("patch-stale-hunk", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      patches: {
+        "is-even@1.0.0.patch": /* patch */ `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-a line that exists in no version of this package
++module.exports = "STALE-HUNK-APPLIED";
+`,
+      },
+    });
+    const { dir, env } = project;
+
+    const { stderr, exitCode } = await runBun(dir, env, "install");
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      error: failed applying patch file: hunk #1 does not apply to index.js (expected at line 1)
+      error: failed to apply patchfile (patches/is-even@1.0.0.patch)"
+    `);
+    const index = file(dir, "node_modules", "is-even", "index.js");
+    expect((await index.exists()) && (await index.text()).includes("STALE-HUNK-APPLIED")).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a hunk with a stale + start is placed by its context", async () => {
+    await using project = createProject("patch-stale-start", {
+      "package.json": packageJson({ "is-even": "1.0.0" }, { "is-even@1.0.0": "patches/is-even@1.0.0.patch" }),
+      patches: {
+        // Hunk 1 adds two lines, so hunk 2's correct `+` start is 10. The header says 8, as
+        // `yarn patch-commit` emits.
+        "is-even@1.0.0.patch": /* patch */ `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1,2 +1,4 @@
+ 'use strict';
++// FIRST-A
++// FIRST-B
+
+@@ -8,2 +8,3 @@
+   }
++  // SECOND-MARKER
+   return !isOdd(i);
+`,
+      },
+    });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+
+    expect(await file(dir, "node_modules", "is-even", "index.js").text()).toMatchInlineSnapshot(`
+      "'use strict';
+      // FIRST-A
+      // FIRST-B
+
+      var isOdd = require('is-odd');
+
+      module.exports = function isEven(i) {
+        if (typeof i !== 'number') {
+          throw new TypeError('is-even expects a number.');
+        }
+        // SECOND-MARKER
+        return !isOdd(i);
+      };
+      "
+    `);
   });
 
   describe("bun patch with --linker=isolated", () => {
@@ -486,10 +590,16 @@ diff --git a/package.json b/package.json
       expect(stdout).toContain(patchMessage("is-even", folder));
       expect(exitCode).toBe(0);
 
+      // The copy to edit is in the store entry, behind the project's link, so it finds is-odd.
+      const isLink = async () => (await lstat(join(dir, folder))).isSymbolicLink();
+      expect(await isLink()).toBe(true);
+      await addLogStatement(join(dir, folder, "index.js"), "PATCHED with isolated linker!");
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("PATCHED with isolated linker!\ntrue\n");
+
       // `bun patch --commit` writes the patch file, records it in package.json and bun.lock, and
       // reinstalls with it applied.
-      await addLogStatement(join(dir, folder, "index.js"), "PATCHED with isolated linker!");
       await bunOk(dir, env, "patch", "--commit", folder);
+      expect(await isLink()).toBe(true);
 
       expect(await file(dir, "patches", "is-even@1.0.0.patch").text()).toMatchInlineSnapshot(`
         "diff --git a/index.js b/index.js
@@ -522,27 +632,23 @@ diff --git a/package.json b/package.json
       const { dir, env } = project;
       await bunOk(dir, env, "install", "--linker=isolated");
 
-      // By name, and again by name and version: both find the only is-odd in the tree.
-      const folder = "node_modules/is-odd";
+      // By name, and again by name and version: both find the only is-odd in the tree. The root does
+      // not link it, so its only folder is the one in the store.
+      const folder = "node_modules/.bun/is-odd@0.1.2/node_modules/is-odd";
       expect(await bunOk(dir, env, "patch", "is-odd")).toContain(patchMessage("is-odd", folder));
       expect(await bunOk(dir, env, "patch", "is-odd@0.1.2")).toContain(patchMessage("is-odd", folder));
 
+      // is-even loads the folder that is being edited.
       await addLogStatement(join(dir, folder, "index.js"), "Transitive patch with isolated!");
+      expect(await bunOk(dir, env, "run", "index.ts")).toBe("Transitive patch with isolated!\nfalse\n");
+
       await bunOk(dir, env, "patch", "--commit", folder);
       await expectPatchedDependencies(dir, { "is-odd@0.1.2": "patches/is-odd@0.1.2.patch" });
 
-      // `bun patch` ran without `--linker`, so it laid the tree out hoisted. The next install builds
-      // the store again, with the patched package where is-even resolves it from.
-      expect(normalizeBunSnapshot(await bunOk(dir, env, "install", "--linker", "isolated"))).toMatchInlineSnapshot(`
-        "bun install <version> (<revision>)
-
-        + is-even@1.0.0
-
-        2 packages installed"
-      `);
-      expect(
-        await file(dir, "node_modules", ".bun", "is-odd@0.1.2", "node_modules", "is-odd", "index.js").text(),
-      ).toContain('console.log("Transitive patch with isolated!");');
+      // `bun patch` ran without `--linker`. It kept the layout, and left nothing for the root to resolve.
+      expect((await readdir(join(dir, "node_modules"))).sort()).toEqual([".bun", "is-even"]);
+      expect(await bunOk(dir, env, "install", "--linker", "isolated")).toContain("(no changes)");
+      expect(await file(dir, folder, "index.js").text()).toContain('console.log("Transitive patch with isolated!");');
       expect(await bunOk(dir, env, "run", "index.ts")).toBe("Transitive patch with isolated!\nfalse\n");
     });
 
@@ -576,11 +682,9 @@ diff --git a/package.json b/package.json
       const patchPath = "patches/@zackradisic%2Fhls-dl@0.0.1.patch";
       await expectPatchedDependencies(dir, { "@zackradisic/hls-dl@0.0.1": patchPath });
 
-      // For an added file, the a/ path is the folder bun diffed rather than a path in the package.
-      const [firstLine, ...rest] = (await file(dir, patchPath).text()).split("\n");
-      expect(firstLine).toMatch(/^diff --git a\/.* b\/index\.js$/);
-      expect(rest.join("\n")).toMatchInlineSnapshot(`
-        "new file mode 100644
+      expect(await file(dir, patchPath).text()).toMatchInlineSnapshot(`
+        "diff --git a/index.js b/index.js
+        new file mode 100644
         index 0000000000000000000000000000000000000000..da9666e70d80cbc1ae062154779e278852484c7e
         --- /dev/null
         +++ b/index.js
@@ -618,8 +722,8 @@ diff --git a/package.json b/package.json
       const { dir, env } = project;
       await bunOk(dir, env, "install", "--linker=isolated");
 
-      // Patch from the workspace root.
-      const folder = "node_modules/is-even";
+      // Patch from the workspace root, which does not link is-even itself.
+      const folder = "node_modules/.bun/is-even@1.0.0/node_modules/is-even";
       expect(await bunOk(dir, env, "patch", "is-even")).toContain(patchMessage("is-even", folder));
       await addLogStatement(join(dir, folder, "index.js"), "WORKSPACE PATCH with isolated!");
       await bunOk(dir, env, "patch", "--commit", folder);

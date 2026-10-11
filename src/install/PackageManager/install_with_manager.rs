@@ -837,22 +837,29 @@ pub fn install_with_manager(
         let mut linker = manager.options.node_linker;
         loop {
             match linker {
-                NodeLinker::Auto => match config_version {
-                    ConfigVersion::V0 => {
-                        linker = NodeLinker::Hoisted;
-                        continue;
-                    }
-                    ConfigVersion::V1 => {
-                        if !load_result.migrated_from_npm()
-                            && manager.lockfile.workspace_paths.len() > 0
-                        {
-                            linker = NodeLinker::Isolated;
-                            continue;
+                NodeLinker::Auto => {
+                    let isolated_by_default = match config_version {
+                        ConfigVersion::V0 => false,
+                        ConfigVersion::V1 => {
+                            !load_result.migrated_from_npm()
+                                && manager.lockfile.workspace_paths.len() > 0
                         }
-                        linker = NodeLinker::Hoisted;
-                        continue;
-                    }
-                },
+                    };
+                    // Neither a flag nor the config names a linker, so the tree that
+                    // `bun install --linker=isolated` laid out stays isolated.
+                    linker = if isolated_by_default
+                        || bun_sys::directory_exists_at(
+                            bun_sys::Fd::cwd(),
+                            bun_paths::path_literal!("node_modules/.bun"),
+                        )
+                        .unwrap_or(false)
+                    {
+                        NodeLinker::Isolated
+                    } else {
+                        NodeLinker::Hoisted
+                    };
+                    continue;
+                }
 
                 NodeLinker::Hoisted => {
                     let summary = install_hoisted_packages(
@@ -896,6 +903,11 @@ pub fn install_with_manager(
         Global::crash();
     }
 
+    // Deleted while the rest of this function runs; its end waits for the deletion.
+    let _old_modules_removal = (install_summary.old_modules.as_ref())
+        .filter(|_| install_summary.fail == 0)
+        .map(crate::prune::OldModules::remove);
+
     let did_meta_hash_change =
         // If the lockfile was frozen, we already checked it
         !manager.options.enable.frozen_lockfile()
@@ -928,7 +940,7 @@ pub fn install_with_manager(
                 || manager.options.enable.force_save_lockfile()));
 
     if should_save_lockfile {
-        super::package_json_write_back::write_migrated_root(manager);
+        super::package_json_write_back::write_migrated(manager);
         save_lockfile(
             manager,
             &load_result,
@@ -2199,7 +2211,7 @@ fn save_lockfile_only(
         packages_len_before_install,
     )?;
 
-    super::package_json_write_back::write_migrated_root(manager);
+    super::package_json_write_back::write_migrated(manager);
     let saved = save_lockfile(
         manager,
         load_result,

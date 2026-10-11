@@ -357,9 +357,10 @@ test.concurrent("migrate npm lockfile with missing `resolved` when scope registr
         "@myscope/b": "2.0.0",
       },
     }),
+    // With a path: a URL that is only a host gets its `/` when it is parsed.
     "bunfig.toml": `
 [install.scopes]
-"@myscope" = { url = "https://example-registry.invalid" }
+"@myscope" = { url = "https://example-registry.invalid/npm/repo" }
 `,
     "package-lock.json": JSON.stringify({
       name: "repro",
@@ -400,9 +401,9 @@ test.concurrent("migrate npm lockfile with missing `resolved` when scope registr
   expect(exitCode).toBe(0);
 
   const lock = await Bun.file(join(String(dir), "bun.lock")).text();
-  expect(lock).toContain("https://example-registry.invalid/@myscope/a/-/a-1.0.0.tgz");
-  expect(lock).toContain("https://example-registry.invalid/@myscope/b/-/b-2.0.0.tgz");
-  expect(lock).not.toContain("invalid@myscope");
+  expect(lock).toContain("https://example-registry.invalid/npm/repo/@myscope/a/-/a-1.0.0.tgz");
+  expect(lock).toContain("https://example-registry.invalid/npm/repo/@myscope/b/-/b-2.0.0.tgz");
+  expect(lock).not.toContain("repo@myscope");
 });
 
 test.concurrent("npm lockfile with relative workspaces", async () => {
@@ -581,48 +582,51 @@ test.concurrent("npm lockfile migration skips extraneous packages that also decl
   `);
 });
 
-test.concurrent("bun update <name> re-resolves a file: dependency of a file: package in the same run as the migration", async () => {
-  // package-lock.json (as `npm install --package-lock-only` writes it) keeps `b` the way
-  // vendor/a/package.json declares it, relative to vendor/a. Updating `b` resolves that row again
-  // straight from the migrated lockfile, so it has to be looked up from vendor/a, not the project.
-  await using testDir = tempDir("migrate-nested-file-dep", {
-    "package.json": JSON.stringify({ name: "app", dependencies: { a: "file:./vendor/a" } }),
-    "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "file:../b" } }),
-    "vendor/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
-    "package-lock.json": JSON.stringify({
-      name: "app",
-      lockfileVersion: 3,
-      requires: true,
-      packages: {
-        "": { name: "app", dependencies: { a: "file:./vendor/a" } },
-        "node_modules/a": { resolved: "vendor/a", link: true },
-        "node_modules/b": { resolved: "vendor/b", link: true },
-        "vendor/a": { version: "1.0.0", dependencies: { b: "file:../b" } },
-        "vendor/b": { version: "1.0.0" },
-      },
-    }),
-  });
+test.concurrent(
+  "bun update <name> re-resolves a file: dependency of a file: package in the same run as the migration",
+  async () => {
+    // package-lock.json (as `npm install --package-lock-only` writes it) keeps `b` the way
+    // vendor/a/package.json declares it, relative to vendor/a. Updating `b` resolves that row again
+    // straight from the migrated lockfile, so it has to be looked up from vendor/a, not the project.
+    await using testDir = tempDir("migrate-nested-file-dep", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { a: "file:./vendor/a" } }),
+      "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "file:../b" } }),
+      "vendor/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "app", dependencies: { a: "file:./vendor/a" } },
+          "node_modules/a": { resolved: "vendor/a", link: true },
+          "node_modules/b": { resolved: "vendor/b", link: true },
+          "vendor/a": { version: "1.0.0", dependencies: { b: "file:../b" } },
+          "vendor/b": { version: "1.0.0" },
+        },
+      }),
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "update", "b"],
-    cwd: String(testDir),
-    env: bunEnv,
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("migrated lockfile from package-lock.json");
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "b"],
+      cwd: String(testDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
 
-  const bunLock = await Bun.file(join(testDir, "bun.lock")).text();
-  expect(bunLock).toContain(`"a": ["a@file:vendor/a", { "dependencies": { "b": "file:../b" } }]`);
-  expect(bunLock).toContain(`"a/b": ["b@file:vendor/b", {}]`);
-  expect(await Bun.file(join(testDir, "node_modules", "a", "node_modules", "b", "package.json")).json()).toEqual({
-    name: "b",
-    version: "1.0.0",
-  });
-});
+    const bunLock = await Bun.file(join(testDir, "bun.lock")).text();
+    expect(bunLock).toContain(`"a": ["a@file:vendor/a", { "dependencies": { "b": "file:../b" } }]`);
+    expect(bunLock).toContain(`"a/b": ["b@file:vendor/b", {}]`);
+    expect(await Bun.file(join(testDir, "node_modules", "a", "node_modules", "b", "package.json")).json()).toEqual({
+      name: "b",
+      version: "1.0.0",
+    });
+  },
+);
 
 // The bun.lock parser fails closed on a tarball URL outside the configured registry that has no `integrity`;
 // migration applies the same rule instead of importing an unverifiable URL.
@@ -2589,6 +2593,99 @@ describe("package-lock.json migration fixes", () => {
         }),
       ]).toStrictEqual([]);
       expect(install.exitCode).toBe(0);
+    });
+  });
+
+  // `npm install --install-links` packs a `file:` directory and installs the copy. The entry is not a link: it sits
+  // at its `node_modules` key and `resolved` is `file:` plus the directory. Which directory a dependency names is for
+  // the `file:` spec of its declarer to say, so the entry is skipped and the install resolves the spec.
+  describe("file: directories that npm --install-links copied", () => {
+    const skipped = (name: string) =>
+      `warn: skipped "${name}" from package-lock.json: a folder npm copied (--install-links)`;
+
+    test.concurrent("are resolved from the file: specs in package.json", async () => {
+      const dependencies = { d: "file:../packages/d", v: "file:vendor/v" };
+      using copy = tempDir("npm-migrate-install-links", {
+        "root/package.json": JSON.stringify({ name: "root", dependencies }),
+        "root/package-lock.json": npmLock("root", {
+          "": { name: "root", dependencies },
+          "node_modules/d": { version: "1.0.0", resolved: "file:../packages/d", dependencies: { e: "file:../e" } },
+          "node_modules/e": { version: "1.0.0", resolved: "file:../packages/e" },
+          "node_modules/v": { version: "2.0.0", resolved: "file:vendor/v" },
+        }),
+        "root/vendor/v/package.json": JSON.stringify({ name: "v", version: "2.0.0" }),
+        "packages/d/package.json": JSON.stringify({ name: "d", version: "1.0.0", dependencies: { e: "file:../e" } }),
+        "packages/d/index.js": "module.exports = 'd';",
+        "packages/e/package.json": JSON.stringify({ name: "e", version: "1.0.0" }),
+      });
+      const dir = join(String(copy), "root");
+      writeExtra(dir, {});
+
+      const install = await run(dir, "install");
+      expect(install.stderr).toContain("migrated lockfile from package-lock.json");
+      expect(install.stderr).toContain(skipped("d"));
+      expect(install.stderr).toContain(skipped("v"));
+      // `e` goes with the `d` that declares it
+      expect(install.stderr).not.toContain("not depended on by any package");
+      expect(install.stderr).not.toContain("error");
+      expect(await Bun.file(join(dir, "node_modules", "d", "index.js")).text()).toBe("module.exports = 'd';");
+      expect(await Bun.file(join(dir, "node_modules", "v", "package.json")).json()).toEqual({
+        name: "v",
+        version: "2.0.0",
+      });
+      expect(install.exitCode).toBe(0);
+      const { lock } = await readLock(dir);
+      await frozen(dir);
+
+      // the lockfile of a fresh resolve
+      fs.rmSync(join(dir, "package-lock.json"));
+      fs.rmSync(join(dir, "bun.lock"));
+      const fresh = await run(dir, "install", "--lockfile-only");
+      expect(fresh.exitCode).toBe(0);
+      expect((await readLock(dir)).lock.packages).toStrictEqual(lock.packages);
+    });
+
+    // Written by hand, in the shape above.
+    test.concurrent("one that a registry package declares is dropped", async () => {
+      const dependencies = { evil: "1.0.0" };
+      using copy = tempDir("npm-migrate-install-links-registry-declares", {
+        "root/package.json": JSON.stringify({ name: "root", dependencies }),
+        "root/package-lock.json": npmLock("root", {
+          "": { name: "root", dependencies },
+          "node_modules/evil": {
+            version: "1.0.0",
+            resolved: `${OFFLINE_REGISTRY}evil/-/evil-1.0.0.tgz`,
+            dependencies: { loot: "file:../../../secret" },
+          },
+          "node_modules/loot": { version: "1.0.0", resolved: "file:../secret" },
+        }),
+        "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+        "secret/credentials.txt": "do-not-link-me",
+      });
+      const dir = join(String(copy), "root");
+      writeExtra(dir, {});
+
+      const { stderr, text, lock } = await migrate(dir);
+      expect(stderr).toContain(skipped("loot"));
+      expect(Object.keys(lock.packages)).toStrictEqual(["evil"]);
+      expect(text).not.toContain("secret");
+      expect(text).not.toContain("loot");
+      await frozen(dir);
+    });
+
+    test.concurrent("a local tarball is still a tarball", async () => {
+      const dependencies = { "no-deps": "file:no-deps-1.0.0.tgz" };
+      using dir = synthetic("npm-migrate-install-links-tarball", {
+        "package.json": JSON.stringify({ name: "root", dependencies }),
+        "package-lock.json": npmLock("root", {
+          "": { name: "root", dependencies },
+          "node_modules/no-deps": { version: "1.0.0", resolved: "file:no-deps-1.0.0.tgz" },
+        }),
+      });
+
+      const { stderr, lock } = await migrate(String(dir));
+      expect(stderr).not.toContain("skipped");
+      expect(lock.packages["no-deps"][0]).toBe("no-deps@no-deps-1.0.0.tgz");
     });
   });
 

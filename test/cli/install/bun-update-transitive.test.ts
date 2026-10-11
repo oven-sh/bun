@@ -3692,6 +3692,45 @@ function expectInteractiveDryRun(stdout: string, ...rows: string[]) {
   expect(stdout).not.toContain("Would update");
 }
 
+// A merge-damaged or hand-trimmed bun.lock. With a dependency listed for the root there is no entry to resolve it to, which is the usual parse error.
+test.concurrent.each<[string, "lists no dependency" | "lists a-dep", number]>([
+  ["outdated", "lists no dependency", 0],
+  ["outdated", "lists a-dep", 1],
+  ["update", "lists no dependency", 0],
+  ["update", "lists a-dep", 0],
+  ["update --dry-run", "lists no dependency", 0],
+  ["update --dry-run", "lists a-dep", 0],
+  ["update -i", "lists no dependency", 0],
+  ["update -i", "lists a-dep", 1],
+  ["install", "lists no dependency", 0],
+  ["install", "lists a-dep", 0],
+  ["install --frozen-lockfile", "lists no dependency", 1],
+  ["install --frozen-lockfile", "lists a-dep", 1],
+])(
+  '`bun %s` reads a bun.lock that has no "packages" and %s like one with "packages": {}',
+  async (command, root, expectedExitCode) => {
+    const [withoutPackages, withEmptyPackages] = await Promise.all(
+      [{}, { packages: {} }].map(async packages => {
+        const dependencies = root === "lists a-dep" ? { dependencies: { "a-dep": "1.0.1" } } : {};
+        const { packageDir: dir } = await registry.createTestDir({
+          files: {
+            "package.json": stringify(pkgJson({ "a-dep": "1.0.1" })),
+            "bun.lock": stringify({
+              lockfileVersion: 1,
+              workspaces: { "": { name: "foo", ...dependencies } },
+              ...packages,
+            }),
+          },
+        });
+        const { stdout, stderr, exitCode } = await run(dir, ...command.split(" "));
+        return { stdout: normalize(stdout), stderr, exitCode };
+      }),
+    );
+    expect(withoutPackages).toEqual(withEmptyPackages);
+    expect(withoutPackages.exitCode).toBe(expectedExitCode);
+  },
+);
+
 test.concurrent("`bun update -i --prod --dry-run` lists only dependencies", async () => {
   const { dir } = await staleSiblings(DEV_A_DEP);
   const before = await lockText(dir);

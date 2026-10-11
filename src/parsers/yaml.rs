@@ -2123,7 +2123,7 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) explicit_document_start_line: Option<Line>,
 
-    pub(crate) anchors: StringHashMap<Expr>,
+    pub(crate) anchors: StringHashMap<Anchored>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
@@ -2137,6 +2137,11 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub(crate) stack_check: StackCheck,
+    /// `stack_check.remaining()` where the innermost `parse_node` began.
+    node_stack_left: usize,
+    /// The least of those inside that node so far, an alias counting as the
+    /// stack its target took (`Anchored::stack`).
+    least_stack_left: usize,
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
@@ -2181,6 +2186,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
+            node_stack_left: usize::MAX,
+            least_stack_left: usize::MAX,
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
         }
@@ -3265,6 +3272,14 @@ pub(crate) struct OpenCollection {
     node: Expr,
 }
 
+/// What an alias resolves to.
+#[derive(Clone, Copy)]
+pub(crate) struct Anchored {
+    node: Expr,
+    /// The stack it took to parse `node`; see `Parser::parse_node`.
+    stack: usize,
+}
+
 /// A collection node's identity, for pointer comparison.
 fn collection_id(node: &Expr) -> Option<usize> {
     match node.data {
@@ -3312,8 +3327,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
-        self.anchors
-            .put(Enc::key_bytes(anchor.name.slice(self.input)), node)
+        let stack = self.node_stack_left - self.least_stack_left;
+        self.anchors.put(
+            Enc::key_bytes(anchor.name.slice(self.input)),
+            Anchored { node, stack },
+        )
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3354,10 +3372,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<Expr, ParseError> {
+    fn resolve_alias(&mut self, name: StringRange) -> Result<Anchored, ParseError> {
         let name = name.slice(self.input);
-        if let Some(node) = self.anchors.get(Enc::key_bytes(name)) {
-            return Ok(*node);
+        if let Some(anchored) = self.anchors.get(Enc::key_bytes(name)) {
+            return Ok(*anchored);
         }
         let Some(OpenCollection { node, .. }) = self
             .open_collections
@@ -3372,7 +3390,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             CyclicAliases::Reject => Err(ParseError::CyclicAlias),
             CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
-                Ok(node)
+                Ok(Anchored { node, stack: 0 })
             }
         }
     }
@@ -3841,11 +3859,27 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(())
     }
 
+    /// Whoever walks the returned tree recurses through aliases, which this
+    /// parser does not: `&a [[... *a ...]]` repeated nests to any depth while
+    /// each line stays shallow. So an alias is charged the stack its target took
+    /// to parse, and a document is too deep exactly when it would be with every
+    /// alias written out.
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
-        if !self.stack_check.is_safe_to_recurse() {
+        let stack_left = self.stack_check.remaining();
+        if stack_left == 0 {
             return Err(ParseError::StackOverflow);
         }
+        let outer_node_stack_left = core::mem::replace(&mut self.node_stack_left, stack_left);
+        let outer_least_stack_left = core::mem::replace(&mut self.least_stack_left, stack_left);
+        // An error ends the parse, so only a parsed node restores these.
+        let node = self.parse_node_unchecked(opts)?;
+        self.node_stack_left = outer_node_stack_left;
+        self.least_stack_left = self.least_stack_left.min(outer_least_stack_left);
+        Ok(node)
+    }
 
+    #[inline(always)]
+    fn parse_node_unchecked(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
 
@@ -3901,8 +3935,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let mut copy = self.resolve_alias(alias)?;
+                    let Anchored {
+                        node: mut copy,
+                        stack,
+                    } = self.resolve_alias(alias)?;
 
+                    self.least_stack_left = self
+                        .node_stack_left
+                        .checked_sub(stack)
+                        .filter(|stack_left| *stack_left > 0)
+                        .ok_or(ParseError::StackOverflow)?
+                        .min(self.least_stack_left);
                     self.charge_alias_expansion(copy)?;
 
                     // update position from the anchor node to the alias node.

@@ -18,9 +18,12 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
+use crate::package_manager_real::package_json_write_back;
 use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
+use crate::yarn_berry::scalar_text;
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
 // A single long-lived `Buf` for the whole function would lock out every other
@@ -162,6 +165,13 @@ fn missing_package_entry(
         ),
     );
     MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency
+}
+
+/// `parts` resolved against the top-level dir, or `None` when the result does not fit a path buffer.
+fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
+    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
+    path.join(parts).ok()?;
+    Some(path)
 }
 
 fn collect_patch_paths(
@@ -470,7 +480,7 @@ fn e_object(expr: &Expr) -> &E::Object {
     }
 }
 
-fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
+pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     match &mut expr.data {
         ExprData::EObject(o) => &mut **o,
         _ => unreachable!("e_object_mut called on non-object"),
@@ -1005,10 +1015,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         ) {
                             // create a link package for the workspace dependency only if it doesn't already exist
                             if dep.version.tag == dependency::VersionTag::Workspace {
-                                let mut link_path_buf =
-                                    bun_paths::AutoAbsPath::init_top_level_dir();
-                                let _ = link_path_buf.append(workspace_path); // OOM/capacity error is non-actionable here
-                                let _ = link_path_buf.join(&[link_path]); // path-buffer overflow unreachable for bounded inputs
+                                // A link that does not fit a path buffer names no workspace.
+                                let Some(link_path_buf) =
+                                    join_top_level_dir(&[workspace_path, link_path])
+                                else {
+                                    return Err(
+                                        MigratePnpmLockfileError::NonExistentWorkspaceDependency,
+                                    );
+                                };
 
                                 for existing_workspace_path in lockfile.workspace_paths.values() {
                                     let mut workspace_path_buf =
@@ -1041,8 +1055,20 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 ..Default::default()
                             };
 
-                            let mut abs_link_path = bun_paths::AutoAbsPath::init_top_level_dir();
-                            let _ = abs_link_path.join(&[workspace_path, link_path]); // path-buffer overflow unreachable for bounded inputs
+                            let Some(abs_link_path) =
+                                join_top_level_dir(&[workspace_path, link_path])
+                            else {
+                                log.add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "pnpm-lock.yaml dependency '{}' of importer '{}' has a link path that is too long",
+                                        bstr::BStr::new(dep.name.slice(string_bytes!(lockfile))),
+                                        bstr::BStr::new(workspace_path)
+                                    ),
+                                );
+                                return Err(invalid_pnpm_lockfile());
+                            };
 
                             let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
                             if pkg_entry.found_existing {
@@ -1239,10 +1265,21 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 // pnpm records injected workspace packages as `name@file:<workspace dir>`.
                 if res.tag == resolution::Tag::Folder {
-                    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                    let _ = path_buf.join(&[res.folder().slice(string_bytes!(lockfile))]);
+                    let Some(folder_path) =
+                        join_top_level_dir(&[res.folder().slice(string_bytes!(lockfile))])
+                    else {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "pnpm-lock.yaml package '{}' has a directory path that is too long",
+                                bstr::BStr::new(name_str)
+                            ),
+                        );
+                        return Err(invalid_pnpm_lockfile());
+                    };
                     if let Some(workspace_pkg_id) = pkg_map
-                        .get(path_buf.slice())
+                        .get(folder_path.slice())
                         .copied()
                         .filter(|id| (*id as usize) < workspace_pkgs_end)
                     {
@@ -1471,9 +1508,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
                 strings::without_prefix_if_possible_comptime(reference, b"link:")
             {
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
-                if let Some(pkg_id) = pkg_map.get(path_buf.slice()) {
+                if let Some(pkg_id) =
+                    join_top_level_dir(&[maybe_symlink_or_folder_or_workspace_path])
+                        .and_then(|path| pkg_map.get(path.slice()))
+                {
                     lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
                     continue;
                 }
@@ -1539,9 +1577,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
                 strings::without_prefix_if_possible_comptime(reference, b"link:")
             {
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
-                if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
+                if let Some(link_pkg_id) =
+                    join_top_level_dir(&[workspace_path, maybe_symlink_or_folder_or_workspace_path])
+                        .and_then(|path| pkg_map.get(path.slice()))
+                {
                     lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                     continue;
                 }
@@ -1592,9 +1631,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     | dependency::VersionTag::Workspace => {
                         let maybe_symlink_or_folder_or_workspace_path =
                             strings::without_prefix(reference, b"link:");
-                        let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                        let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
-                        if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
+                        if let Some(link_pkg_id) =
+                            join_top_level_dir(&[maybe_symlink_or_folder_or_workspace_path])
+                                .and_then(|path| pkg_map.get(path.slice()))
+                        {
                             lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                             continue;
                         }
@@ -1627,7 +1667,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
-    lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
+    lockfile
+        .fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false, false>(manager)?;
 
     update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
@@ -2326,7 +2367,7 @@ fn parse_append_importer_dependencies(
     ))
 }
 
-fn sort_appended_dependencies(lockfile: &mut Lockfile, off: usize) {
+pub(crate) fn sort_appended_dependencies(lockfile: &mut Lockfile, off: usize) {
     let buffers = &mut lockfile.buffers;
     let bytes = buffers.string_bytes.as_slice();
     let mut appended = buffers.dependencies.split_off(off);
@@ -2418,7 +2459,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
 }
 
 /// Copies the settings pnpm keeps in `pnpm-workspace.yaml` and the `pnpm` key into the fields bun reads, in the
-/// cached root package.json; `package_json_write_back::write_migrated_root` writes it if the lockfile is saved.
+/// cached root package.json; `package_json_write_back::write_migrated` writes it if the lockfile is saved.
 fn update_package_json_after_migration(
     lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
@@ -2426,6 +2467,7 @@ fn update_package_json_after_migration(
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();
+    let silent = manager.options.log_level.is_silent();
 
     let Some(root_pkg_json) = root_package_json(manager, log) else {
         return Ok(());
@@ -2445,7 +2487,7 @@ fn update_package_json_after_migration(
     if let Some(pnpm_obj) = json.get_object(b"pnpm") {
         if let Some(overrides) = pnpm_obj.get(b"overrides").filter(is_non_empty_object) {
             if copy_into_root(&mut json, &bump, b"overrides", &overrides, None)? {
-                copied.push("pnpm.overrides to overrides");
+                copied.push("copied pnpm.overrides to overrides");
             }
         }
         if let Some(patched) = pnpm_obj
@@ -2459,7 +2501,7 @@ fn update_package_json_after_migration(
                 &patched,
                 Some(patches),
             )? {
-                copied.push("pnpm.patchedDependencies to patchedDependencies");
+                copied.push("copied pnpm.patchedDependencies to patchedDependencies");
             }
         }
         if let Some(only_built) = pnpm_obj.get(b"onlyBuiltDependencies") {
@@ -2478,13 +2520,24 @@ fn update_package_json_after_migration(
             // Quoted and block scalars are copied into the parse arena, so it has to outlive the print below.
             let contents: &[u8] = bump.alloc_slice_copy(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
+            let ws_root = match bun_parsers::yaml::YAML::parse(
                 &yaml_source,
                 log,
                 &bump,
                 bun_parsers::yaml::CyclicAliases::Reject,
-            ) else {
-                break 'read_pnpm_workspace_yaml;
+            ) {
+                Ok(ws_root) => ws_root,
+                Err(err) => {
+                    // A syntax error is in `log` already.
+                    if matches!(err, bun_parsers::yaml::YamlParseError::StackOverflow) {
+                        log.add_error(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            b"pnpm-workspace.yaml is nested too deeply",
+                        );
+                    }
+                    break 'read_pnpm_workspace_yaml;
+                }
             };
 
             if let Some(packages_expr) = ws_root.get(b"packages") {
@@ -2499,8 +2552,21 @@ fn update_package_json_after_migration(
                 }
             }
 
-            catalog_obj = ws_root.get_object(b"catalog").filter(is_non_empty_object);
-            catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
+            let strings_of = |field: &'static str| -> Option<Expr> {
+                let map = ws_root.get_object(field.as_bytes())?;
+                let mut skipped = 0;
+                let strings = string_entries(contents, &map, field == "catalogs", &mut skipped);
+                if skipped > 0 && !silent {
+                    bun_core::warn!(
+                        "\"{}\" in pnpm-workspace.yaml has entries that are not strings ({}); they were not copied to package.json",
+                        field,
+                        skipped,
+                    );
+                }
+                Some(strings).filter(is_non_empty_object)
+            };
+            catalog_obj = strings_of("catalog");
+            catalogs_obj = strings_of("catalogs");
             // The migrated root skips `Package::parse`, so the catalog these declare is recorded in the lockfile here.
             if let Some(lockfile) = lockfile {
                 let catalogs = &mut lockfile.catalogs;
@@ -2510,10 +2576,8 @@ fn update_package_json_after_migration(
                     &mut sbuf!(lockfile),
                 )?;
             }
-            workspace_overrides_obj = ws_root.get_object(b"overrides").filter(is_non_empty_object);
-            workspace_patched_deps_obj = ws_root
-                .get_object(b"patchedDependencies")
-                .filter(is_non_empty_object);
+            workspace_overrides_obj = strings_of("overrides");
+            workspace_patched_deps_obj = strings_of("patchedDependencies");
             if let Some(only_built) = ws_root.get(b"onlyBuiltDependencies") {
                 workspace_only_built_deps =
                     collect_only_built_dependencies(&only_built, &mut trusted_names);
@@ -2525,7 +2589,7 @@ fn update_package_json_after_migration(
     if catalog_obj.is_none() && catalogs_obj.is_none() {
         if let Some(paths) = &workspace_paths {
             e_object_mut(&mut json).put(&bump, b"workspaces", paths_array(paths))?;
-            copied.push("pnpm-workspace.yaml to workspaces");
+            copied.push("copied pnpm-workspace.yaml to workspaces");
         }
     } else {
         // An existing `workspaces` array is replaced by the object form.
@@ -2545,12 +2609,12 @@ fn update_package_json_after_migration(
         if existing.is_none() {
             e_object_mut(&mut json).put(&bump, b"workspaces", workspaces)?;
         }
-        copied.push("pnpm-workspace.yaml to workspaces");
+        copied.push("copied pnpm-workspace.yaml to workspaces");
     }
 
     if let Some(overrides) = workspace_overrides_obj {
         if copy_into_root(&mut json, &bump, b"overrides", &overrides, None)? {
-            copied.push("pnpm-workspace.yaml overrides to overrides");
+            copied.push("copied pnpm-workspace.yaml overrides to overrides");
         }
     }
     if let Some(patched) = workspace_patched_deps_obj {
@@ -2561,16 +2625,16 @@ fn update_package_json_after_migration(
             &patched,
             Some(patches),
         )? {
-            copied.push("pnpm-workspace.yaml patchedDependencies to patchedDependencies");
+            copied.push("copied pnpm-workspace.yaml patchedDependencies to patchedDependencies");
         }
     }
 
     if !trusted_names.is_empty() && add_trusted_dependencies(&mut json, &bump, &trusted_names)? {
         if pnpm_only_built_deps {
-            copied.push("pnpm.onlyBuiltDependencies to trustedDependencies");
+            copied.push("copied pnpm.onlyBuiltDependencies to trustedDependencies");
         }
         if workspace_only_built_deps {
-            copied.push("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies");
+            copied.push("copied pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies");
         }
     }
 
@@ -2585,15 +2649,49 @@ fn update_package_json_after_migration(
         Global::crash();
     }
 
-    // Commands that load the lockfile twice (`bun update -r`, `bun audit fix`) migrate the already
-    // edited entry the second time, so only the pnpm-workspace.yaml copies repeat.
-    for what in copied {
-        if !manager.migrated_package_json_moves.contains(&what) {
-            manager.migrated_package_json_moves.push(what);
-        }
-    }
+    package_json_write_back::record_migrated(manager, WorkspaceTarget::root(), copied);
 
     Ok(())
+}
+
+/// A new object with the entries of the pnpm-workspace.yaml map `map` that package.json can take: a scalar key with a
+/// scalar value (`named`: with a map of those), both as the text that was written. A YAML key can be any node, a
+/// value any tree.
+fn string_entries(source: &[u8], map: &Expr, named: bool, skipped: &mut usize) -> Expr {
+    let text_of = |scalar: &Expr| -> Option<Expr> {
+        let text =
+            scalar_text(source, scalar).filter(|_| !matches!(scalar.data, ExprData::ENull(_)));
+        Some(Expr::init(E::EString::init(text?), scalar.loc))
+    };
+    let entries = e_object(map).properties.slice();
+    let mut properties = js_ast::G::PropertyList::init_capacity(entries.len());
+    for prop in entries {
+        let key = prop.key.as_ref().and_then(text_of);
+        let value = prop.value.as_ref().and_then(|value| match &value.data {
+            ExprData::EObject(_) if named => Some(string_entries(source, value, false, skipped)),
+            _ if named => None,
+            _ => text_of(value),
+        });
+        if key.is_none() || value.is_none() {
+            *skipped += 1;
+            continue;
+        }
+        VecExt::append(
+            &mut properties,
+            js_ast::G::Property {
+                key,
+                value,
+                ..Default::default()
+            },
+        );
+    }
+    Expr::init(
+        E::Object {
+            properties,
+            ..Default::default()
+        },
+        map.loc,
+    )
 }
 
 fn is_non_empty_object(expr: &Expr) -> bool {

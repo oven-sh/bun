@@ -340,6 +340,13 @@ mod host {
                 while idx < line.len() && line[idx] == b' ' {
                     idx += 1;
                 }
+                // `env -S prog args`, `env -Sprog args`: the launcher is split at spaces anyway.
+                if line[idx..].starts_with(b"-S") {
+                    idx += b"-S".len();
+                    while idx < line.len() && line[idx] == b' ' {
+                        idx += 1;
+                    }
+                }
                 let rest = &line[idx..];
                 // tokenizer.next(): program token
                 let prog_start = idx;

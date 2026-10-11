@@ -356,6 +356,7 @@ pub(crate) mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+pub(crate) mod pm_cache_prune_command;
 #[path = "pm_diff_command.rs"]
 pub(crate) mod pm_diff_command;
 pub(crate) mod pm_diff_normalize;
@@ -1861,13 +1862,20 @@ pub(crate) mod command {
         // if template_name is "react" — deprecated; redirect to react-app/vite.
         if template_name == b"react" {
             pretty_errorln!(
-                "The \"react\" template has been deprecated.\n\
-It is recommended to use \"react-app\" or \"vite\" instead.\n\n\
-To create a project using Create React App, run\n\n\
-  <d>bun create react-app<r>\n\n\
-To create a React project using Vite, run\n\n\
-  <d>bun create vite<r>\n\n\
-Then select \"React\" from the list of frameworks.\n"
+                "\
+The \"react\" template has been deprecated.
+It is recommended to use \"react-app\" or \"vite\" instead.
+
+To create a project using Create React App, run
+
+  <d>bun create react-app<r>
+
+To create a React project using Vite, run
+
+  <d>bun create vite<r>
+
+Then select \"React\" from the list of frameworks.
+"
             );
             Global::exit(1);
         }
@@ -1875,8 +1883,9 @@ Then select \"React\" from the list of frameworks.\n"
         // if template_name is "next" — redirect to next-app.
         if template_name == b"next" {
             pretty_errorln!(
-                "<yellow>warn: No template <b>create-next<r> found.\n\
-To create a project with the official Next.js scaffolding tool, run\n\
+                "\
+<yellow>warn: No template <b>create-next<r> found.
+To create a project with the official Next.js scaffolding tool, run
   <b>bun create next-app <cyan>[destination]<r>"
             );
             Global::exit(1);
@@ -1912,7 +1921,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             return BunxCommand::exec(ctx, &bunx_args);
         }
 
-        CreateCommand::exec(&ctx, example_tag, template)
+        CreateCommand::exec(ctx, example_tag, template)
     }
 
     /// `bun ./bun.lockb` — print lockfile as yarn.lock (or its hash with `--hash`).
@@ -1955,34 +1964,20 @@ To create a project with the official Next.js scaffolding tool, run\n\
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 
-        // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
         let json_output = cli.json_output;
         let ctx = init(Tag::InfoCommand, log)?;
         let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
 
-        // Handle arguments correctly for standalone info command
-        let mut package_name: &[u8] = b"";
-        let mut property_path: Option<&[u8]> = None;
-
-        // Find non-flag arguments starting from argv[2] (after "bun info").
-        let mut found_package = false;
-        let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
-            // Skip flags
-            if !arg.is_empty() && arg[0] == b'-' {
-                continue;
-            }
-            if !found_package {
-                package_name = arg;
-                found_package = true;
-            } else {
-                property_path = Some(arg);
-                break;
-            }
+        // `["info", "<spec>", "<field>"...]`
+        let mut positionals: &'static [&'static [u8]] = pm.options.positionals;
+        if positionals.first().is_some_and(|p| *p == b"info") {
+            positionals = &positionals[1..];
         }
+        let package_name: &[u8] = positionals.first().copied().unwrap_or(b"");
+        let fields: &[&[u8]] = positionals.get(1..).unwrap_or(&[]);
 
-        super::pm_view_command::view(pm, package_name, property_path, json_output)
+        super::pm_view_command::view(pm, package_name, fields, json_output)
     }
 
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
@@ -2012,6 +2007,10 @@ Flags:
   <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
   <cyan>-p, --package <blue>\\<package\\><r>    Specify package to install when binary name differs from package name
   <cyan>--no-install<r>           Skip installation if package is not already installed
+  <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
+  <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
+  <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 
@@ -2245,27 +2244,7 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
                 pm_print_help(PmSubcommand::Prune);
             }
             Tag::InfoCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
-  Display package metadata from the registry.
-
-<b>Examples:<r>
-  <d>View basic information about a package<r>
-  <b><green>bun info<r> <blue>react<r>
-
-  <d>View specific version<r>
-  <b><green>bun info<r> <blue>react@18.0.0<r>
-
-  <d>View specific property<r>
-  <b><green>bun info<r> <blue>react<r> version
-  <b><green>bun info<r> <blue>react<r> dependencies
-  <b><green>bun info<r> <blue>react<r> versions
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Info);
             }
             Tag::WhyCommand => {
                 pretty!(
@@ -2323,23 +2302,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                 Output::flush();
             }
             Tag::PackageManagerCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>
-  Run package manager utilities.
-
-<b>Commands:<r>
-  <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder
-  <b><green>bun pm<r> <blue>ls<r>               list the tree of installed dependencies
-  <b><green>bun pm<r> <blue>whoami<r>           print the current npm username
-  <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
-  <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder
-  <b><green>bun pm<r> <blue>cache rm<r>         clear the cache
-
-Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Pm);
             }
             _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
         }

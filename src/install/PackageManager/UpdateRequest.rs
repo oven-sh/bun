@@ -342,6 +342,27 @@ impl PackageManager {
     pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
         self.index_of_update_request(name_hash, name).is_some()
     }
+
+    /// Whether a package in the root `node_modules` of a global install links its bins into the
+    /// global bin dir: the ones named on the command line, and the direct dependencies of the
+    /// global package.json that this run installed. The links of the others stay as they are.
+    pub(crate) fn links_bins_globally(&self, package_id: PackageID, installed: bool) -> bool {
+        self.options.global
+            && (self
+                .update_requests
+                .iter()
+                .any(|request| request.package_id == package_id)
+                || (installed
+                    && self
+                        .lockfile
+                        .packages
+                        .items_resolutions()
+                        .first()
+                        .is_some_and(|root| {
+                            root.get(self.lockfile.buffers.resolutions.as_slice())
+                                .contains(&package_id)
+                        })))
+    }
 }
 
 pub use super::Subcommand;

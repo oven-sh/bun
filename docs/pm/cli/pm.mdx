@@ -163,6 +163,19 @@ bun list --trusted
 └── esbuild@0.21.5
 ```
 
+To print the packages installed globally with `bun add -g`:
+
+```bash terminal icon="terminal"
+bun pm ls -g
+# or
+bun list --global
+```
+
+```txt
+<$HOME>/.bun/install/global node_modules (1 installed)
+└── typescript@5.0.4
+```
+
 ## licenses
 
 List every installed package grouped by license, as read from each package's `package.json` in `node_modules`. Bun lists packages without a `license` field under `Unknown`. Bun marks packages only reachable through `devDependencies` with `(dev)`.
@@ -330,7 +343,46 @@ To clear Bun's global module cache:
 
 ```bash terminal icon="terminal"
 bun pm cache rm
+bun pm cache rm --dry-run   # print the directories that would be deleted
 ```
+
+This deletes everything in the cache directory, including the [global store](/pm/global-store) at `<cache>/links/`. Every project with `globalStore = true` symlinks into that directory, so run `bun install` again in each of them afterwards. Bun refuses to clear a directory that is or contains your project, your home directory or your Bun install.
+
+To refresh stale registry metadata without deleting the cache, use `bun install --force` or `bun add <pkg> --force`. See [Cache](/pm/cli/install#cache).
+
+To remove only the packages that are older than 30 days:
+
+```bash terminal icon="terminal"
+bun pm cache prune
+bun pm cache prune --max-age 7   # older than 7 days
+bun pm cache prune --dry-run     # list what would be removed
+```
+
+- The age of a package is the time since Bun downloaded it or, on file systems that record access times, since an install last linked it from the cache.
+- The next `bun install` that needs a removed package downloads it again. Keep this in mind before `bun install --offline`.
+- The [global store](/pm/global-store) in `<cache>/links/`, cached git clones and package manifests stay.
+- The size in the summary is the size of the removed files. A file that a `node_modules` tree hardlinks stays on disk until that tree is removed too.
+
+To move the cache entries a lockfile needs between machines as one file, for example through a CI cache:
+
+```bash terminal icon="terminal"
+# after an install
+bun pm cache pack .ci/bun-cache.pack
+
+# on another runner, before the install
+bun pm cache unpack .ci/bun-cache.pack
+bun install --frozen-lockfile
+```
+
+- `pack` writes every package of `bun.lock` that is in the local cache. It warns about packages it had to leave out, except optional packages for another platform.
+- `unpack` adds the entries the cache does not have and never changes an entry that exists. A damaged or incomplete pack is refused as a whole.
+- The file is not compressed; CI caches compress on their own.
+- Make one pack per operating system, and a new one after upgrading Bun.
+
+<Warning>
+  `bun install` trusts its cache, so a pack is as trusted as the cache directory itself. Its checksums detect damage,
+  not tampering. Only unpack a file that you packed.
+</Warning>
 
 ## migrate
 
@@ -339,6 +391,8 @@ To migrate another package manager's lockfile without installing anything:
 ```bash terminal icon="terminal"
 bun pm migrate
 ```
+
+Pass `--dry-run` to run the migration without writing `bun.lock` or `package.json`.
 
 ## untrusted
 
@@ -366,6 +420,7 @@ bun pm trust <names>
 Options for the `trust` command:
 
 - `--all`: Trust all untrusted dependencies.
+- `--dry-run`: Print the scripts that would run and the packages that would be trusted, without running scripts or writing `package.json` and `bun.lock`.
 
 ## default-trusted
 
@@ -406,6 +461,7 @@ Options:
   --message=<val>, -m  Custom commit message, use %s for version substitution
   --preid=<val>        Prerelease identifier (i.e beta → 1.0.1-beta.0)
   --force, -f          Bypass dirty git history check
+  --dry-run            Print the new version without writing, running scripts, or tagging
 
 Examples:
   bun pm version patch
@@ -423,7 +479,7 @@ bun pm version patch
 v1.0.1
 ```
 
-Supports `patch`, `minor`, `major`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or specific versions like `1.2.3`. By default it creates a git commit and tag; pass `--no-git-tag-version` to skip them.
+Supports `patch`, `minor`, `major`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or specific versions like `1.2.3`. By default it creates a git commit and tag, also inside a git worktree or submodule; pass `--no-git-tag-version` to skip them. Pass `--dry-run` to print the new version without writing `package.json`, running lifecycle scripts, or touching git.
 
 ## pkg
 
@@ -436,6 +492,8 @@ scripts.build              # dot notation
 contributors[0]            # array access
 workspaces.0               # dot with numeric index
 scripts[test:watch]        # bracket for special chars
+exports[./package.json]    # a bracketed name is literal, dots included
+contributors.name          # get: the name of every element
 ```
 
 Examples:
@@ -461,3 +519,5 @@ bun pm pkg delete scripts.test contributors[0]    # multiple/nested
 # fix
 bun pm pkg fix                                    # auto-fix common issues
 ```
+
+With `--json`, a value that is not valid JSON is an error. `set`, `delete`, and `fix` accept `--dry-run`, which prints the resulting `package.json` instead of writing it.

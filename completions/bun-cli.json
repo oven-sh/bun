@@ -3516,6 +3516,32 @@
             "rm": {
               "name": "rm",
               "description": "clear the cache"
+            },
+            "prune": {
+              "name": "prune",
+              "description": "remove the packages that are older than 30 days",
+              "flags": [
+                {
+                  "name": "max-age",
+                  "description": "Remove cache entries older than this many days (default 30)",
+                  "hasValue": true,
+                  "valueType": "days",
+                  "defaultValue": "30"
+                },
+                {
+                  "name": "dry-run",
+                  "description": "Print what would be removed without deleting anything",
+                  "hasValue": false
+                }
+              ]
+            },
+            "pack": {
+              "name": "pack",
+              "description": "write the cache entries this lockfile needs into one file"
+            },
+            "unpack": {
+              "name": "unpack",
+              "description": "restore the cache entries of a pack that the cache does not have"
             }
           }
         },

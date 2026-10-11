@@ -1831,35 +1831,20 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let mut shim_dir_buffer = bun_paths::w_path_buffer_pool::get();
             let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
-            // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
-            // capacity in WCHARs; the call writes at most that many wide chars.
-            let len = unsafe {
-                sys::windows::GetTempPathW(
-                    u32::try_from(temp_path_buffer.len()).expect("int cast"),
-                    temp_path_buffer.as_mut_ptr(),
-                )
-            };
-            if len == 0 {
+            let Some(len) =
+                bun_install::RunCommand::windows_node_shim_dir(&mut shim_dir_buffer[..])
+            else {
                 return Err(crate::Error::FailedToGetTempPath);
-            }
+            };
 
             let converted = strings::convert_utf16_to_utf8_in_buffer(
                 &mut target_path_buffer,
-                &temp_path_buffer[..len as usize],
+                &shim_dir_buffer[..len],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            const FILE_NAME: &str = "\\node.exe";
             let conv_len = converted.len();
             let total = conv_len + FILE_NAME.len();
             target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
@@ -1942,7 +1927,23 @@ impl RunCommand {
         cwd: &[u8],
         force_using_bun: bool,
     ) -> crate::Result<Vec<u8>> {
-        let env_loader = this_transpiler.env_mut();
+        Self::path_for_run(
+            this_transpiler.env_mut(),
+            package_json_dir,
+            original_path,
+            cwd,
+            force_using_bun,
+        )
+    }
+
+    /// [`Self::configure_path_for_run_with_package_json_dir`] for a caller without a `Transpiler`.
+    pub(crate) fn path_for_run(
+        env_loader: &mut DotEnv::Loader,
+        package_json_dir: &[u8],
+        original_path: Option<&mut Vec<u8>>,
+        cwd: &[u8],
+        force_using_bun: bool,
+    ) -> crate::Result<Vec<u8>> {
         // Snapshot PATH up front. The env
         // map owns `Box<[u8]>` values, so a borrow would dangle once the
         // caller (`configure_path_for_run`) overwrites PATH. Own a copy instead.
@@ -2011,7 +2012,7 @@ impl RunCommand {
             }
 
             if !force_using_bun {
-                let env_mut = this_transpiler.env_mut();
+                let env_mut = &mut *env_loader;
                 env_mut
                     .map
                     .put(b"NODE", bun_node_exe.as_bytes())

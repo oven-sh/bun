@@ -66,6 +66,10 @@ pub fn detect_and_load_other_lockfile<'a>(
             break 'yarn;
         };
         let migrate_result = yarn::migrate_yarn_lockfile(this, manager, log, &data);
+        if migrate_result.is_err() {
+            // Left in `log`, the reasons would fail the install that resolves from package.json instead.
+            print_errors_and_reset(manager, log);
+        }
         return finish_migration(migrate_result, manager, log, &timer, zstr!("yarn.lock"));
     }
 
@@ -142,15 +146,50 @@ fn finish_migration<'a>(
         Err(err) => return migrating_error(err, lockfile_name),
     };
     if let Err(err) = record_trusted_dependencies(&mut *ok.lockfile, manager, log) {
-        if !manager.options.log_level.is_silent() && log.has_errors() {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-            Output::flush();
-        }
-        log.reset();
+        print_errors_and_reset(manager, log);
         return migrating_error(err, lockfile_name);
     }
     report_migrated(manager, log, timer, lockfile_name);
     LoadResult::Ok(ok)
+}
+
+fn print_errors_and_reset(manager: &PackageManager, log: &mut bun_ast::Log) {
+    if !manager.options.log_level.is_silent() && log.has_errors() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        Output::flush();
+    }
+    log.reset();
+}
+
+/// `overrides` / `resolutions` of the root package.json, parsed the way an install does.
+pub(crate) fn parse_root_overrides(
+    this: &mut Lockfile,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    json: bun_ast::Expr,
+    workspace_names: &WorkspaceMap,
+) -> Result<(), Error> {
+    if json.as_property(b"overrides").is_none() && json.as_property(b"resolutions").is_none() {
+        return Ok(());
+    }
+    let root_package = *this.packages.get(0);
+    let (mut builder, lf) = this.string_builder_split();
+    lf.overrides
+        .parse_count(manager, log, source, workspace_names, json, &mut builder);
+    builder.allocate()?;
+    lf.overrides.parse_append(
+        manager,
+        lf.dependencies.as_slice(),
+        &root_package,
+        log,
+        source,
+        workspace_names,
+        json,
+        &mut builder,
+    )?;
+    builder.clamp();
+    Ok(())
 }
 
 /// Other lockfiles have no `trustedDependencies`; read the root's and the members' from package.json like `Package::parse_with_json` does, since `bun pm migrate` saves this lockfile as-is.

@@ -286,8 +286,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // Loads the lockfile, and migrating one rewrites the cached root package.json: do it before reading the entry.
     let patch_commit: Option<PatchCommitResult> =
         if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
-            let mut pathbuf = bun_paths::path_buffer_pool::get();
-            patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
+            patch_package::do_patch_commit(manager, log_level)?
         } else {
             None
         };
@@ -921,41 +920,20 @@ pub fn update_package_json_and_install_and_cli(
     Ok(())
 }
 
-// Convert "/Users/Jarred Sumner" => "/Users/Jarred\ Sumner"
+// The folder as it reads inside double quotes: a space stays, a POSIX shell wants `\` doubled.
 struct ShellPathFormatter<'a> {
     folder: &'a [u8],
 }
 
 impl fmt::Display for ShellPathFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut remaining = self.folder;
-        while let Some(space) = strings::index_of_char(remaining, b' ') {
-            write!(
-                writer,
-                "{}",
-                bun_core::fmt::fmt_path_u8(
-                    &remaining[..space as usize],
-                    bun_core::fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        path_sep: if cfg!(windows) {
-                            bun_core::fmt::PathSep::Windows
-                        } else {
-                            bun_core::fmt::PathSep::Posix
-                        },
-                    },
-                ),
-            )?;
-            writer.write_str("\\ ")?;
-            remaining = &remaining[(space as usize + 1).min(remaining.len())..];
-        }
-
         write!(
             writer,
             "{}",
             bun_core::fmt::fmt_path_u8(
-                remaining,
+                self.folder,
                 bun_core::fmt::PathFormatOptions {
-                    escape_backslashes: true,
+                    escape_backslashes: !cfg!(windows),
                     path_sep: if cfg!(windows) {
                         bun_core::fmt::PathSep::Windows
                     } else {

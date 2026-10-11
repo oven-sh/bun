@@ -332,6 +332,21 @@ impl<'a> Installer<'a> {
         }
     }
 
+    /// `on_package_download_error` for a download that only optional dependencies need.
+    pub(crate) fn on_optional_package_download_error(
+        &mut self,
+        task_id: crate::package_manager_task::Id,
+    ) {
+        let Some(callbacks) = self.manager_mut().task_queue.remove(&task_id) else {
+            return;
+        };
+        for install_ctx in callbacks.as_slice() {
+            if let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx {
+                self.on_optional_dependency_scripts_failed(entry_id);
+            }
+        }
+    }
+
     pub(crate) fn apply_package_patch(
         &mut self,
         entry_id: StoreEntryId,
@@ -1810,7 +1825,17 @@ impl Task {
                     }
 
                     let bin = pkg_bins[pkg_id as usize];
-                    if bin.tag == bin::Tag::None {
+                    // The folder in the entry's own `node_modules`, not the name one dependent
+                    // uses. A tarball without a package name has neither a folder nor a command.
+                    let Some(own_name) = (bin.tag != bin::Tag::None)
+                        .then(|| {
+                            installer.entry_store_node_modules_package_name(
+                                dep_id, pkg_id, &pkg_res, pkg_names,
+                            )
+                        })
+                        .flatten()
+                        .filter(|name| !name.is_empty())
+                    else {
                         match installer.commit_global_store_entry(self.entry_id) {
                             sys::Result::Ok(()) => {}
                             sys::Result::Err(e) => {
@@ -1819,12 +1844,9 @@ impl Task {
                         }
                         step = self.next_step(current_step);
                         continue;
-                    }
+                    };
 
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
-                    let dependencies = lockfile.buffers.dependencies.as_slice();
-
-                    let dep_name = dependencies[dep_id as usize].name.slice(string_buf);
 
                     let mut abs_target_buf = paths::path_buffer_pool::get();
                     let mut abs_dest_buf = paths::path_buffer_pool::get();
@@ -1841,7 +1863,7 @@ impl Task {
 
                     let mut target_node_modules_path: Option<DefaultAbsPath> = None;
 
-                    let mut target_package_name = strings::StringOrTinyString::init(dep_name);
+                    let mut target_package_name = strings::StringOrTinyString::init(own_name);
 
                     if let Some(replacement_entry_id) = installer.maybe_replace_node_modules_path(
                         entry_node_ids,
@@ -1880,7 +1902,7 @@ impl Task {
                     let mut bin_linker = bin_real::Linker {
                         bin,
                         global_bin_path: manager_ref.options.bin_path,
-                        package_name: strings::StringOrTinyString::init(dep_name),
+                        package_name: strings::StringOrTinyString::init(own_name),
                         target_package_name,
                         string_buf,
                         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
@@ -1901,14 +1923,14 @@ impl Task {
                     {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
-                            strings::StringOrTinyString::init(dep_name);
+                            strings::StringOrTinyString::init(own_name);
                         bin_linker.err = None;
                         bin_linker.skipped_due_to_missing_bin = false;
 
                         if manager_ref.options.log_level.is_verbose() {
                             bun_core::pretty_errorln!(
                                 "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
-                                bstr::BStr::new(dep_name),
+                                bstr::BStr::new(own_name),
                                 bstr::BStr::new(bin_linker.target_package_name.slice()),
                             );
                         }
@@ -2510,11 +2532,11 @@ impl<'a> Installer<'a> {
 
         let nodes = &store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
-        let node_dep_ids = nodes.items_dep_id();
 
         let pkgs = lockfile.packages.slice();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_metas = pkgs.items_meta();
+        let pkg_resolutions = pkgs.items_resolution();
         let pkg_resolutions_lists = pkgs.items_resolutions();
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_bins = pkgs.items_bin();
@@ -2533,15 +2555,38 @@ impl<'a> Installer<'a> {
             Which::Staging,
         );
 
-        for dep in entry_deps[parent_entry_id.get() as usize].slice() {
-            let node_id = entry_node_ids[dep.entry_id.get() as usize];
-            let dep_id = node_dep_ids[node_id.get() as usize];
-            let pkg_id = node_pkg_ids[node_id.get() as usize];
-            let bin = pkg_bins[pkg_id as usize];
-            if bin.tag == bin::Tag::None {
-                continue;
+        let pkg_id_of = |entry_id: StoreEntryId| {
+            node_pkg_ids[entry_node_ids[entry_id.get() as usize].get() as usize]
+        };
+
+        // Public hoisting gives the root entry dependencies that the root package does not declare.
+        let parent_pkg_id = pkg_id_of(parent_entry_id);
+        let parent_dependencies = match pkg_resolutions[parent_pkg_id as usize].tag {
+            ResolutionTag::Root | ResolutionTag::Workspace => {
+                pkgs.items_dependencies()[parent_pkg_id as usize]
             }
-            let alias = lockfile.buffers.dependencies[dep_id as usize].name;
+            _ => Default::default(),
+        };
+
+        let mut deps_with_bins: Vec<_> = entry_deps[parent_entry_id.get() as usize]
+            .slice()
+            .iter()
+            .filter(|dep| pkg_bins[pkg_id_of(dep.entry_id) as usize].tag != bin::Tag::None)
+            .collect();
+        deps_with_bins.sort_by_key(|dep| {
+            let dependency = &lockfile.buffers.dependencies[dep.dep_id as usize];
+            bin_real::LinkOrder::new(
+                parent_dependencies.contains(dep.dep_id)
+                    && bin_real::LinkOrder::declares(dependency.behavior),
+                pkg_resolutions[pkg_id_of(dep.entry_id) as usize].tag,
+                dependency.name.slice(string_buf),
+            )
+        });
+
+        for dep in deps_with_bins {
+            let pkg_id = pkg_id_of(dep.entry_id);
+            let bin = pkg_bins[pkg_id as usize];
+            let alias = lockfile.buffers.dependencies[dep.dep_id as usize].name;
 
             let mut target_node_modules_path: Option<DefaultAbsPath> = None;
             let package_name = strings::StringOrTinyString::init(alias.slice(string_buf));

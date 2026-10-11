@@ -1,6 +1,7 @@
 use core::cell::{Cell, RefCell};
 use core::ops::Range;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, index_sort};
@@ -9,6 +10,7 @@ use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
+use bun_threading::{WaitGroup, WorkPool};
 
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
 use crate::isolated_install::{Store, Timings, build_store};
@@ -66,7 +68,7 @@ struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
     checked: usize,
-    /// No install is linking: a `StagingPath` is what one that died left.
+    /// No install is linking: a `StagingPath` or an `OldModules` is what one that died left.
     leftovers: bool,
 }
 
@@ -1609,14 +1611,16 @@ fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
     read_entries_and_leftovers(dir, false)
 }
 
-/// `leftovers`: also the `StagingPath`s, the only names returned that start with a dot.
+/// `leftovers`: also the `StagingPath`s and the `OldModules`, the only names returned that start with a dot.
 fn read_entries_and_leftovers(dir: &Dir, leftovers: bool) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if name.first() == Some(&b'.')
-            && !(leftovers && name.starts_with(StagingPath::PREFIX.as_bytes()))
+            && !(leftovers
+                && (name.starts_with(StagingPath::PREFIX.as_bytes())
+                    || name.starts_with(OldModules::PREFIX.as_bytes())))
         {
             continue;
         }
@@ -1984,20 +1988,22 @@ fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
     }
 }
 
-fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
+/// Returns whether a link was removed.
+fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) -> bool {
     let mut alias = Vec::new();
+    let mut unlinked = false;
     for (name, kind) in read_entries(dir) {
         match kind {
             EntryKind::SymLink => {
                 if should_unlink(dir, &name, &name) {
-                    let _ = remove_link(dir, &name);
+                    unlinked |= remove_link(dir, &name).is_ok();
                 }
             }
             EntryKind::Directory if name.first() == Some(&b'@') => {
                 let Ok(scope_dir) = dir.open_at(&name) else {
                     continue;
                 };
-                let mut unlinked = false;
+                let mut unlinked_from_scope = false;
                 for (inner, inner_kind) in read_entries(&scope_dir) {
                     if inner_kind != EntryKind::SymLink {
                         continue;
@@ -2007,15 +2013,48 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
                     alias.push(b'/');
                     alias.extend_from_slice(&inner);
                     if should_unlink(&scope_dir, &alias, &inner) {
-                        unlinked |= remove_link(&scope_dir, &inner).is_ok();
+                        unlinked_from_scope |= remove_link(&scope_dir, &inner).is_ok();
                     }
                 }
                 drop(scope_dir);
-                if unlinked {
+                if unlinked_from_scope {
                     rmdir(dir, &name);
                 }
+                unlinked |= unlinked_from_scope;
             }
             _ => {}
+        }
+    }
+    unlinked
+}
+
+// An install that skips a dependency (`--omit`, `--os`, `--cpu`) still installs its dependent, without the link to it.
+fn unlink_removed_dependencies(store: &Dir) {
+    for (entry, kind) in read_entries(store) {
+        if kind != EntryKind::Directory || &*entry == b"node_modules" {
+            continue;
+        }
+        let Some(node_modules) = open_real_subdir(store, &entry)
+            .and_then(|entry_dir| open_real_subdir(&entry_dir, b"node_modules"))
+        else {
+            continue;
+        };
+        unlink_links(&node_modules, &|dir, _, name| is_dangling(dir, name));
+
+        // `append_dependency_link_name` links a dependency with the package's own name inside the package.
+        let (package, _) = split_store_key(&entry);
+        let Some(package_dir) = descend(&node_modules, &package) else {
+            continue;
+        };
+        let Some(nested) = open_real_subdir(&package_dir, b"node_modules") else {
+            continue;
+        };
+        let unlinked = unlink_links(&nested, &|dir, alias, name| {
+            alias == &*package && is_dangling(dir, name)
+        });
+        drop(nested);
+        if unlinked {
+            rmdir(&package_dir, b"node_modules");
         }
     }
 }
@@ -2087,10 +2126,13 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
                 if layout != Layout::Isolated {
                     continue;
                 }
-                let Some(hidden) = open_real_subdir(plan.dir(idx), b"node_modules") else {
-                    continue;
-                };
-                unlink_links(&hidden, &|dir, _, name| is_dangling(dir, name));
+                if let Some(hidden) = open_real_subdir(plan.dir(idx), b"node_modules") {
+                    unlink_links(&hidden, &|dir, _, name| is_dangling(dir, name));
+                }
+                // The planner already read `plan.dir(idx)` to its end.
+                if let Ok(store) = Dir::open(&folder.path) {
+                    unlink_removed_dependencies(&store);
+                }
             }
             FolderKind::NodeModules => {
                 if let (Layout::Isolated, Some(direct)) = (layout, &folder.direct) {
@@ -2109,5 +2151,37 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
                 prune_bins(plan.dir(idx));
             }
         }
+    }
+}
+
+/// The name of the `node_modules/.old_modules-<hex>` that holds the tree of the other linker,
+/// which `isolated_install::move_node_modules_aside` moved out of the way of this install.
+pub(crate) struct OldModules(pub(crate) Box<[u8]>);
+
+/// Dropping it waits for the deletion to end.
+pub(crate) struct OldModulesRemoval(Arc<WaitGroup>);
+
+impl OldModules {
+    pub(crate) const PREFIX: &'static str = ".old_modules-";
+
+    /// Deletes it on another thread. What cannot be deleted stays until `bun prune`.
+    pub(crate) fn remove(&self) -> OldModulesRemoval {
+        let done = Arc::new(WaitGroup::init_with_count(1));
+        handle_oom(WorkPool::go(
+            (self.0.clone(), done.clone()),
+            |(name, done): (Box<[u8]>, Arc<WaitGroup>)| {
+                if let Ok(node_modules) = Dir::open(ROOT_DIR) {
+                    let _ = node_modules.delete_tree(&name);
+                }
+                done.finish();
+            },
+        ));
+        OldModulesRemoval(done)
+    }
+}
+
+impl Drop for OldModulesRemoval {
+    fn drop(&mut self) {
+        self.0.wait();
     }
 }

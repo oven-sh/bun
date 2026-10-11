@@ -9,8 +9,9 @@ use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_dotenv as dotenv;
 use bun_http as http;
+use bun_install::package_manager::options::PublishTarget;
+use bun_install::package_manager::workspace_manifests;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
@@ -27,7 +28,6 @@ use bun_core::OSPathChar;
 use bun_install::Access;
 use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
-use bun_sys::FdExt as _;
 
 // `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
 // JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
@@ -87,22 +87,17 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 pub(crate) struct PublishCommand;
 
 /// What `bun publish` sends, built by [`Context::from_tarball_path`] or
-/// [`Context::from_workspace`]. The script fields and `script_env` are `None`
-/// for a tarball publish, which runs no lifecycle scripts.
-pub(crate) struct Context<'a> {
-    pub(crate) manager: &'a mut PackageManager,
-    pub(crate) command_ctx: Command::Context<'a>,
-
+/// [`Context::from_workspace`]. It borrows nothing, so `--recursive` holds one
+/// per package. The scripts are `None` for a tarball publish, which runs none.
+pub(crate) struct Context {
     pub(crate) package_name: Box<[u8]>,
     pub(crate) package_version: Box<[u8]>,
     pub(crate) tarball_bytes: Box<[u8]>,
-    pub(crate) uses_workspaces: bool,
 
     pub(crate) normalized_pkg_info: Box<[u8]>,
 
     pub(crate) publish_script: Option<Box<[u8]>>,
     pub(crate) postpublish_script: Option<Box<[u8]>>,
-    pub(crate) script_env: Option<&'a mut dotenv::Loader>,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -130,14 +125,13 @@ bun_core::oom_from_alloc!(FromTarballError);
 
 pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
-impl<'a> Context<'a> {
+impl Context {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
     pub(crate) fn from_tarball_path(
-        ctx: Command::Context<'a>,
-        manager: &'a mut PackageManager,
+        manager: &mut PackageManager,
         original_cwd: &[u8],
         tarball_path: &[u8],
-    ) -> Result<Context<'a>, FromTarballError> {
+    ) -> Result<Context, FromTarballError> {
         let mut abs_buf = bun_paths::path_buffer_pool::get();
         let abs_tarball_path = join_abs_string_buf_checked::<path::platform::Auto>(
             original_cwd,
@@ -339,12 +333,8 @@ impl<'a> Context<'a> {
                 }
             };
 
-            if let Some(private) = json.get(b"private") {
-                if let Some(is_private) = private.as_bool() {
-                    if is_private {
-                        return Err(FromTarballError::PrivatePackage);
-                    }
-                }
+            if pack::is_private_package(&json) {
+                return Err(FromTarballError::PrivatePackage);
             }
 
             let name: Box<[u8]> = json_get_string_cloned(&json, &bump, b"name")?
@@ -362,12 +352,11 @@ impl<'a> Context<'a> {
                 }
             }
 
-            let version: Box<[u8]> = json_get_string_cloned(&json, &bump, b"version")?
-                .ok_or(FromTarballError::MissingPackageVersion)?
+            let version = json_get_string_cloned(&json, &bump, b"version")?
+                .ok_or(FromTarballError::MissingPackageVersion)?;
+            let version: Box<[u8]> = pack::published_version(version)
+                .ok_or(FromTarballError::InvalidPackageVersion)?
                 .into();
-            if version.is_empty() {
-                return Err(FromTarballError::InvalidPackageVersion);
-            }
 
             (name, version, json, source)
         };
@@ -387,6 +376,10 @@ impl<'a> Context<'a> {
         let mut json = json;
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
+            strings::without_suffix_comptime(
+                manager.original_package_json_path.as_bytes(),
+                b"package.json",
+            ),
             &package_name,
             &package_version,
             &mut json,
@@ -409,34 +402,23 @@ impl<'a> Context<'a> {
         );
 
         Ok(Context {
-            manager,
-            command_ctx: ctx,
             package_name,
             package_version,
             tarball_bytes: tarball_bytes.into(),
-            uses_workspaces: false,
             normalized_pkg_info,
             publish_script: None,
             postpublish_script: None,
-            script_env: None,
         })
     }
 
-    /// `bun publish` without a tarball path. Automatically pack the current workspace and get
-    /// information required for publishing
-    // Note: `'static` matches `pack::pack`'s return. The embedded
-    // `&mut PackageManager` / `Command::Context` are process-lifetime
-    // singletons reborrowed through raw pointers there.
+    /// `bun publish` without a tarball path. Automatically pack the package of `abs_package_json_path`
+    /// and get information required for publishing
     pub(crate) fn from_workspace(
-        ctx: Command::Context<'a>,
-        manager: &'a mut PackageManager,
-    ) -> Result<Context<'static>, FromWorkspaceError> {
-        // Note: capture the package.json path before constructing
-        // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
-        let abs_pkg_json =
-            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
-
-        let mut pack_ctx = pack::Context {
+        ctx: Command::Context<'_>,
+        manager: &mut PackageManager,
+        abs_package_json_path: &ZStr,
+    ) -> Result<Context, FromWorkspaceError> {
+        let pack_ctx = pack::Context {
             manager,
             command_ctx: ctx,
             bundled_deps: Vec::new(),
@@ -444,7 +426,7 @@ impl<'a> Context<'a> {
         };
 
         // `pack::<true>` returns `Some(Context)` on success.
-        Ok(pack::pack::<true>(&mut pack_ctx, &abs_pkg_json)?
+        Ok(pack::pack::<true>(pack_ctx, abs_package_json_path)?
             .expect("pack::<true> always yields a publish context"))
     }
 }
@@ -493,11 +475,27 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-        let manager_ptr: *mut PackageManager = manager;
+
+        // CI sets it for every npm client in the job, so unlike the flag it does not stop the publish.
+        const PROVENANCE_KEYS: [&[u8]; 2] = [b"NPM_CONFIG_PROVENANCE", b"npm_config_provenance"];
+        if PROVENANCE_KEYS.iter().any(|key| {
+            (manager.env_mut().get(key)).is_some_and(|value| !value.is_empty() && value != b"false")
+        }) {
+            bun_core::warn!(
+                "NPM_CONFIG_PROVENANCE is ignored: bun publish cannot generate provenance statements",
+            );
+        }
 
         if cli.positionals.len() > 1 {
+            if Self::is_workspace_publish(manager) {
+                Output::err_generic(
+                    "--recursive and --filter cannot be used with a tarball path",
+                    (),
+                );
+                Global::crash();
+            }
+
             let context = match Context::from_tarball_path(
-                ctx,
                 manager,
                 &original_cwd,
                 cli.positionals[1],
@@ -512,10 +510,15 @@ impl PublishCommand {
                         FromTarballError::MissingPackageVersion => {
                             Output::err_generic("missing `version` string in package.json", ());
                         }
-                        FromTarballError::InvalidPackageName
-                        | FromTarballError::InvalidPackageVersion => {
+                        FromTarballError::InvalidPackageName => {
                             Output::err_generic(
                                 "package.json `name` and `version` fields must be non-empty strings",
+                                (),
+                            );
+                        }
+                        FromTarballError::InvalidPackageVersion => {
+                            Output::err_generic(
+                                "package.json `version` is not a valid semver version",
                                 (),
                             );
                         }
@@ -526,8 +529,8 @@ impl PublishCommand {
                             );
                         }
                         FromTarballError::InvalidPackageJSON => {
-                            // SAFETY: `manager.log` is set once at init.
-                            let _ = unsafe { &mut *(*manager_ptr).log }
+                            let _ = manager
+                                .log_mut()
                                 .print(std::ptr::from_mut(Output::error_writer()));
                             Output::err_generic("failed to parse tarball package.json", ());
                         }
@@ -545,136 +548,242 @@ impl PublishCommand {
                 }
             };
 
-            if let Err(err) = Self::publish(&context) {
-                err.report_and_crash();
+            match Self::publish(manager, &context) {
+                Ok(Published::Yes) => Self::print_published(manager, &context),
+                Ok(Published::AlreadyOnRegistry) => {}
+                Err(err) => err.report_and_crash(),
             }
-
-            bun_core::prettyln!(
-                "\n<green> +<r> {}@{}{}",
-                bstr::BStr::new(&context.package_name),
-                bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-                if PackageManager::get().options.dry_run {
-                    " (dry-run)"
-                } else {
-                    ""
-                },
-            );
-
             return Ok(());
         }
 
-        let context = match Context::from_workspace(ctx, manager) {
-            Ok(c) => c,
-            Err(err) => {
-                use pack::PackError;
-                match err {
-                    PackError::OutOfMemory => bun_core::out_of_memory(),
-                    PackError::MissingPackageName => {
-                        Output::err_generic("missing `name` string in package.json", ());
-                    }
-                    PackError::MissingPackageVersion => {
-                        Output::err_generic("missing `version` string in package.json", ());
-                    }
-                    PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
-                        Output::err_generic(
-                            "package.json `name` and `version` fields must be non-empty strings",
-                            (),
-                        );
-                    }
-                    PackError::RestrictedUnscopedPackage => {
-                        Output::err_generic("unable to restrict access to unscoped package", ());
-                    }
-                    PackError::PrivatePackage => {
-                        Output::err_generic("attempted to publish a private package", ());
-                    }
-                }
-                Global::crash();
-            }
-        };
-
-        if let Err(err) = Self::publish(&context) {
-            err.report_and_crash();
+        if Self::is_workspace_publish(manager) {
+            return Self::exec_workspaces(ctx, manager, &original_cwd);
         }
 
+        let abs_package_json_path =
+            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+        let context = match Context::from_workspace(&mut *ctx, manager, &abs_package_json_path) {
+            Ok(c) => c,
+            Err(err) => Self::report_pack_error_and_crash(err),
+        };
+
+        match Self::publish(manager, &context) {
+            Ok(Published::Yes) => {
+                Self::finish_directory_publish(ctx, manager, &context, &abs_package_json_path)
+            }
+            Ok(Published::AlreadyOnRegistry) => Ok(()),
+            Err(err) => err.report_and_crash(),
+        }
+    }
+
+    fn report_pack_error_and_crash(err: FromWorkspaceError) -> ! {
+        use pack::PackError;
+        match err {
+            PackError::OutOfMemory => bun_core::out_of_memory(),
+            PackError::MissingPackageName => {
+                Output::err_generic("missing `name` string in package.json", ());
+            }
+            PackError::MissingPackageVersion => {
+                Output::err_generic("missing `version` string in package.json", ());
+            }
+            PackError::InvalidPackageName => {
+                Output::err_generic(
+                    "package.json `name` and `version` fields must be non-empty strings",
+                    (),
+                );
+            }
+            PackError::InvalidPackageVersion => {
+                Output::err_generic("package.json `version` is not a valid semver version", ());
+            }
+            PackError::RestrictedUnscopedPackage => {
+                Output::err_generic("unable to restrict access to unscoped package", ());
+            }
+            PackError::PrivatePackage => {
+                Output::err_generic("attempted to publish a private package", ());
+            }
+        }
+        Global::crash();
+    }
+
+    /// `-r` / `--filter`: packs every selected workspace package that has something to publish, then publishes
+    /// them, dependencies first. Every failure ends the run: a pack that fails publishes nothing, and no package
+    /// gets to the registry ahead of a dependency that did not. What is there already is skipped, so a re-run goes on.
+    fn exec_workspaces(
+        ctx: Command::Context<'_>,
+        manager: &mut PackageManager,
+        original_cwd: &[u8],
+    ) -> Result<(), Error> {
+        struct Packed {
+            abs_package_json_path: bun_core::ZBox,
+            /// The options as this package's `publishConfig` left them.
+            target: PublishTarget,
+            context: Context,
+        }
+
+        let bump = bun_alloc::Arena::new();
+        let mut packed: Vec<Packed> = Vec::new();
+        for abs_package_json_path in
+            workspace_manifests::selected_in_dependency_order(manager, original_cwd)
+        {
+            let abs_package_json_path = bun_core::ZBox::from_bytes(&abs_package_json_path);
+            // Copied out: the scripts `pack()` runs invalidate the cache this points into.
+            let root = pack::package_json_entry(manager, &abs_package_json_path).root;
+            let string_field = |key: &[u8]| -> Box<[u8]> {
+                let value = root.get(key);
+                let value = value.as_ref().and_then(Expr::as_utf8_string_literal);
+                value.unwrap_or(b"").into()
+            };
+            let (name, version) = (string_field(b"name"), string_field(b"version"));
+
+            if pack::is_private_package(&root) {
+                bun_core::prettyln!(
+                    "<d>skipped {}: private<r>",
+                    bstr::BStr::new(if name.is_empty() {
+                        abs_package_json_path.as_bytes()
+                    } else {
+                        &*name
+                    }),
+                );
+                continue;
+            }
+
+            let cli_target = manager.options.publish_target(&name);
+
+            // Asked before its scripts run. `pack()` reports a name or version that is not one.
+            if let Some(version) = pack::published_version(&version).filter(|_| !name.is_empty()) {
+                let version = dependency::without_build_tag(version);
+                bun_core::handle_oom(manager.options.apply_publish_config(&root, &bump, &name));
+                let registry = manager.scope_for_package_name(&name);
+                if !Self::has_credentials(registry) {
+                    PublishError::NeedAuth.report_and_crash();
+                }
+                let exists = Self::check_package_version_exists(manager, &name, version, registry);
+                bun_core::handle_oom(manager.options.set_publish_target(&cli_target));
+                if exists {
+                    bun_core::prettyln!(
+                        "<d>skipped {}@{}: already on the registry<r>",
+                        bstr::BStr::new(&name),
+                        bstr::BStr::new(version),
+                    );
+                    continue;
+                }
+            }
+
+            bun_core::prettyln!("\n<b><magenta>{}<r>", bstr::BStr::new(&name));
+            let context = match Context::from_workspace(&mut *ctx, manager, &abs_package_json_path)
+            {
+                Ok(context) => context,
+                Err(err) => Self::report_pack_error_and_crash(err),
+            };
+            let target = manager.options.publish_target(&name);
+            bun_core::handle_oom(manager.options.set_publish_target(&cli_target));
+            packed.push(Packed {
+                abs_package_json_path,
+                target,
+                context,
+            });
+        }
+
+        for Packed {
+            abs_package_json_path,
+            target,
+            context,
+        } in &packed
+        {
+            bun_core::handle_oom(manager.options.set_publish_target(target));
+            bun_core::prettyln!(
+                "\n<b><magenta>{}<r>",
+                bstr::BStr::new(&context.package_name)
+            );
+            match Self::publish(manager, context) {
+                Ok(Published::Yes) => Self::finish_directory_publish(
+                    &mut *ctx,
+                    manager,
+                    context,
+                    abs_package_json_path,
+                )?,
+                Ok(Published::AlreadyOnRegistry) => {}
+                Err(err) => err.report_and_crash(),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn print_published(manager: &PackageManager, context: &Context) {
         bun_core::prettyln!(
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
             bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-            if PackageManager::get().options.dry_run {
+            if manager.options.dry_run {
                 " (dry-run)"
             } else {
                 ""
             },
         );
+    }
 
-        if PackageManager::get()
+    /// The ` + name@version` line, then the `publish` and `postpublish` scripts of the package.
+    fn finish_directory_publish(
+        ctx: Command::Context<'_>,
+        manager: &PackageManager,
+        context: &Context,
+        abs_package_json_path: &ZStr,
+    ) -> Result<(), Error> {
+        Self::print_published(manager, context);
+
+        if !manager
             .options
             .do_
             .contains(install::PackageManagerDoStub::RUN_SCRIPTS)
         {
-            let abs_workspace_path: Box<[u8]> =
-                strings::without_trailing_slash(strings::without_suffix_comptime(
-                    PackageManager::get().original_package_json_path.as_bytes(),
-                    b"package.json",
-                ))
-                .into();
-            let script_env = context.script_env.expect("from_workspace sets script_env");
+            return Ok(());
+        }
+
+        let abs_workspace_path = strings::without_trailing_slash(strings::without_suffix_comptime(
+            abs_package_json_path.as_bytes(),
+            b"package.json",
+        ));
+        let script_env = manager.env_mut();
+        // `pack()` left the last three describing the package it packed last.
+        let variables: [(&[u8], &[u8]); 4] = [
+            (b"npm_command", b"publish"),
+            (b"npm_package_json", abs_package_json_path.as_bytes()),
+            (b"npm_package_name", &*context.package_name),
+            (b"npm_package_version", &*context.package_version),
+        ];
+        for (key, value) in variables {
             script_env
                 .map
-                .put(b"npm_command", b"publish")
+                .put(key, value)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+        }
 
-            // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
-            // is held by `context`; `run_package_script_foreground` needs
-            // `&mut ContextData` too. Re-derive from the raw pointer.
-            let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
-
-            if let Some(publish_script) = &context.publish_script {
-                if let Err(e) = Run::run_package_script_foreground(
-                    // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
-                    publish_script,
-                    b"publish",
-                    &abs_workspace_path,
-                    script_env,
-                    &[],
-                    context.manager.options.log_level == LogLevel::Silent,
-                    // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
-                ) {
-                    if matches!(e, crate::Error::MissingShell) {
-                        Output::err_generic(
-                            "failed to find shell executable to run publish script",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                    return Err(e);
+        let use_system_shell = ctx.debug.use_system_shell;
+        let scripts: [(&[u8], &Option<Box<[u8]>>); 2] = [
+            (b"publish", &context.publish_script),
+            (b"postpublish", &context.postpublish_script),
+        ];
+        for (name, script) in scripts {
+            let Some(script) = script else { continue };
+            if let Err(e) = Run::run_package_script_foreground(
+                ctx,
+                script,
+                name,
+                abs_workspace_path,
+                script_env,
+                &[],
+                manager.options.log_level == LogLevel::Silent,
+                use_system_shell,
+            ) {
+                if matches!(e, crate::Error::MissingShell) {
+                    Output::err_generic(
+                        "failed to find shell executable to run {} script",
+                        (bstr::BStr::new(name),),
+                    );
+                    Global::crash();
                 }
-            }
-
-            if let Some(postpublish_script) = &context.postpublish_script {
-                if let Err(e) = Run::run_package_script_foreground(
-                    // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
-                    postpublish_script,
-                    b"postpublish",
-                    &abs_workspace_path,
-                    script_env,
-                    &[],
-                    context.manager.options.log_level == LogLevel::Silent,
-                    // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
-                ) {
-                    if matches!(e, crate::Error::MissingShell) {
-                        Output::err_generic(
-                            "failed to find shell executable to run postpublish script",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                    return Err(e);
-                }
+                return Err(e);
             }
         }
 
@@ -784,22 +893,31 @@ impl PublishCommand {
         false
     }
 
-    fn publish(ctx: &Context<'_>) -> Result<(), PublishError> {
-        let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
+    /// `-r` or `--filter`: the run covers workspace packages, not only the current one.
+    fn is_workspace_publish(manager: &PackageManager) -> bool {
+        manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty()
+    }
+
+    fn has_credentials(registry: &Npm::Registry::Scope) -> bool {
+        let registry_url = registry.url.url();
+        !registry.token.is_empty()
+            || !registry.auth.is_empty()
+            || (!registry_url.password.is_empty() && !registry_url.username.is_empty())
+    }
+
+    fn publish(manager: &PackageManager, ctx: &Context) -> Result<Published, PublishError> {
+        let registry = manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
-        if registry.token.is_empty()
-            && registry.auth.is_empty()
-            && (registry_url.password.is_empty() || registry_url.username.is_empty())
-        {
+        if !Self::has_credentials(registry) {
             return Err(PublishError::NeedAuth);
         }
 
-        let tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
+        let tolerate_republish = manager.options.publish_config.tolerate_republish;
         if tolerate_republish {
             let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
             let package_exists = Self::check_package_version_exists(
-                ctx.manager,
+                manager,
                 &ctx.package_name,
                 version_without_build_tag,
                 registry,
@@ -810,7 +928,7 @@ impl PublishCommand {
                     "Registry already knows about version {}; skipping.",
                     bstr::BStr::new(version_without_build_tag),
                 );
-                return Ok(());
+                return Ok(Published::AlreadyOnRegistry);
             }
         }
 
@@ -818,12 +936,12 @@ impl PublishCommand {
         let registry_href = registry_url.href_without_auth();
         bun_core::pretty!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
-            bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
-                ctx.manager.options.publish_config.tag
+            bstr::BStr::new(if !manager.options.publish_config.tag.is_empty() {
+                manager.options.publish_config.tag
             } else {
                 b"latest"
             }),
-            if let Some(access) = ctx.manager.options.publish_config.access {
+            if let Some(access) = manager.options.publish_config.access {
                 access.as_str()
             } else {
                 "default"
@@ -832,8 +950,8 @@ impl PublishCommand {
         );
 
         // dry-run stops here
-        if ctx.manager.options.dry_run {
-            return Ok(());
+        if manager.options.dry_run {
+            return Ok(Published::Yes);
         }
 
         // Note: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
@@ -841,7 +959,7 @@ impl PublishCommand {
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
         let publish_req_body: &'static [u8] =
-            crate::cli::cli_adopt(Self::construct_publish_request_body(ctx)?);
+            crate::cli::cli_adopt(Self::construct_publish_request_body(manager, ctx)?);
 
         let mut print_buf: Vec<u8> = Vec::new();
 
@@ -849,13 +967,13 @@ impl PublishCommand {
             &mut print_buf,
             registry,
             Some(publish_req_body.len()),
-            if !ctx.manager.options.publish_config.otp.is_empty() {
-                Some(ctx.manager.options.publish_config.otp)
+            if !manager.options.publish_config.otp.is_empty() {
+                Some(manager.options.publish_config.otp)
             } else {
                 None
             },
-            ctx.uses_workspaces,
-            ctx.manager.options.publish_config.auth_type,
+            Self::is_workspace_publish(manager),
+            manager.options.publish_config.auth_type,
         )?;
 
         let mut response_buf = MutableString::init(1024)?;
@@ -871,8 +989,8 @@ impl PublishCommand {
         // arena so the URL outlives `print_buf.clear()` below.
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
-        let http_proxy = ctx.manager.http_proxy(&publish_url);
-        let reject_unauthorized = ctx.manager.tls_reject_unauthorized();
+        let http_proxy = manager.http_proxy(&publish_url);
+        let reject_unauthorized = manager.tls_reject_unauthorized();
 
         let mut req = http::AsyncHTTP::init_sync(
             http::Method::PUT,
@@ -950,15 +1068,15 @@ impl PublishCommand {
                     Output::flush();
                 }
 
-                let otp = Self::get_otp(ctx, registry, &mut response_buf, &mut print_buf)?;
+                let otp = Self::get_otp(manager, ctx, registry, &mut response_buf, &mut print_buf)?;
 
                 let otp_headers = Self::construct_publish_headers(
                     &mut print_buf,
                     registry,
                     Some(publish_req_body.len()),
                     Some(&otp),
-                    ctx.uses_workspaces,
-                    ctx.manager.options.publish_config.auth_type,
+                    Self::is_workspace_publish(manager),
+                    manager.options.publish_config.auth_type,
                 )?;
 
                 response_buf.reset();
@@ -1010,7 +1128,7 @@ impl PublishCommand {
             _ => {}
         }
 
-        Ok(())
+        Ok(Published::Yes)
     }
 
     fn press_enter_to_open_in_browser(auth_url: &ZStr) {
@@ -1037,13 +1155,14 @@ impl PublishCommand {
     }
 
     fn get_otp(
-        ctx: &Context<'_>,
+        manager: &PackageManager,
+        ctx: &Context,
         registry: &Npm::Registry::Scope,
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
         let bump = bun_alloc::Arena::new();
-        let manager_log: &mut bun_ast::Log = ctx.manager.log_mut();
+        let manager_log: &mut bun_ast::Log = manager.log_mut();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
         let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
@@ -1184,12 +1303,12 @@ impl PublishCommand {
                     registry,
                     None,
                     None,
-                    ctx.uses_workspaces,
-                    ctx.manager.options.publish_config.auth_type,
+                    Self::is_workspace_publish(manager),
+                    manager.options.publish_config.auth_type,
                 )?;
-                let reject_unauthorized = ctx.manager.tls_reject_unauthorized();
+                let reject_unauthorized = manager.tls_reject_unauthorized();
 
-                let http_proxy = ctx.manager.http_proxy(&done_url);
+                let http_proxy = manager.http_proxy(&done_url);
 
                 loop {
                     response_buf.reset();
@@ -1316,7 +1435,8 @@ impl PublishCommand {
     }
 
     pub(crate) fn normalized_package(
-        manager: &mut PackageManager,
+        manager: &PackageManager,
+        abs_workspace_path: &[u8],
         package_name: &[u8],
         package_version: &[u8],
         json: &mut Expr,
@@ -1340,6 +1460,8 @@ impl PublishCommand {
         let registry = manager.scope_for_package_name(package_name);
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
+
+        Expr::set_string(json, &bump, b"version", leak!(version_without_build_tag))?;
 
         let integrity_fmt = {
             let mut v = Vec::new();
@@ -1452,25 +1574,23 @@ impl PublishCommand {
         )?;
 
         {
-            let workspace_root = match bun_sys::open_a(
-                strings::without_suffix_comptime(
-                    manager.original_package_json_path.as_bytes(),
-                    b"package.json",
-                ),
-                bun_sys::O::DIRECTORY,
-                0,
-            ) {
+            let workspace_root = match bun_sys::open_a(abs_workspace_path, bun_sys::O::DIRECTORY, 0)
+            {
                 Ok(fd) => fd,
                 Err(e) => {
                     Output::err(e, "failed to open workspace directory", ());
                     Global::crash();
                 }
             };
-            let _close = scopeguard::guard(workspace_root, |fd| {
-                let _ = fd.close();
-            });
+            let _close = bun_sys::CloseOnDrop::new(workspace_root);
 
-            Self::normalize_bin(json, &bump, package_name, workspace_root)?;
+            Self::normalize_bin(
+                json,
+                &bump,
+                package_name,
+                workspace_root,
+                abs_workspace_path,
+            )?;
         }
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -1505,13 +1625,10 @@ impl PublishCommand {
     /// or `None` if none is present.
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
         let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
-        let _close = scopeguard::guard(workspace_dir, |d| {
-            let _ = d.close();
-        });
+        let _close = bun_sys::CloseOnDrop::new(workspace_dir);
 
         let mut iter = DirIterator::iterate(workspace_dir);
-        iter.resolve_unknown_entry_types = true;
-        while let Some(entry) = iter.next().ok().flatten() {
+        while let Some(entry) = pack::next_dir_entry(&mut iter, b"") {
             // Symlinks are not packed, so a symlinked README is not the readme either.
             if entry.kind != bun_sys::EntryKind::File {
                 continue;
@@ -1549,6 +1666,7 @@ impl PublishCommand {
         bump: &bun_alloc::Arena,
         package_name: &[u8],
         workspace_root: Fd,
+        abs_workspace_path: &[u8],
     ) -> Result<(), AllocError> {
         // Note: see `normalized_package` — `E::String` stores
         // `&'static [u8]` (lifetime erased per the parser's Str convention);
@@ -1691,6 +1809,24 @@ impl PublishCommand {
                 };
                 let normalized_bin_dir = bun_core::ZBox::from_bytes(bin_dir_subpath);
 
+                // The rule pack has for it: what is not in the tarball is not listed either.
+                let not_packed = match pack::bin_kind_without_following_symlinks(
+                    abs_workspace_path,
+                    normalized_bin_dir.as_bytes(),
+                ) {
+                    FileKind::Directory => None,
+                    FileKind::Unknown => Some("does not exist"),
+                    _ => Some("is not a directory"),
+                };
+                if let Some(why) = not_packed {
+                    bun_core::warn!(
+                        "bin directory '{}' {}",
+                        bstr::BStr::new(normalized_bin_dir.as_bytes()),
+                        why,
+                    );
+                    return Ok(());
+                }
+
                 let bin_dir = match bun_sys::openat(
                     workspace_root,
                     &normalized_bin_dir,
@@ -1698,30 +1834,14 @@ impl PublishCommand {
                     0,
                 ) {
                     Ok(fd) => fd,
-                    Err(e) => match e.get_errno() {
-                        bun_sys::E::ENOENT | bun_sys::E::ENAMETOOLONG => {
-                            bun_core::warn!(
-                                "bin directory '{}' does not exist",
-                                bstr::BStr::new(normalized_bin_dir.as_bytes()),
-                            );
-                            return Ok(());
-                        }
-                        bun_sys::E::ENOTDIR => {
-                            bun_core::warn!(
-                                "bin directory '{}' is not a directory",
-                                bstr::BStr::new(normalized_bin_dir.as_bytes()),
-                            );
-                            return Ok(());
-                        }
-                        _ => {
-                            Output::err(
-                                e,
-                                "failed to open bin directory: '{}'",
-                                (bstr::BStr::new(normalized_bin_dir.as_bytes()),),
-                            );
-                            Global::crash();
-                        }
-                    },
+                    Err(e) => {
+                        Output::err(
+                            e,
+                            "failed to open bin directory: '{}'",
+                            (bstr::BStr::new(normalized_bin_dir.as_bytes()),),
+                        );
+                        Global::crash();
+                    }
                 };
 
                 let mut dirs: Vec<(Fd, Box<[u8]>)> = Vec::new();
@@ -1732,8 +1852,7 @@ impl PublishCommand {
                     let _close = bun_sys::CloseOnDrop::new(dir);
 
                     let mut iter = DirIterator::iterate(dir);
-                    iter.resolve_unknown_entry_types = true;
-                    while let Some(entry) = iter.next().ok().flatten() {
+                    while let Some(entry) = pack::next_dir_entry(&mut iter, &dir_subpath) {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
                             // Entry names are UTF-8 on every platform.
                             let name = entry.name.slice_u8();
@@ -1935,9 +2054,12 @@ impl PublishCommand {
         Ok(headers)
     }
 
-    fn construct_publish_request_body(ctx: &Context<'_>) -> Result<Box<[u8]>, AllocError> {
-        let tag: &[u8] = if !ctx.manager.options.publish_config.tag.is_empty() {
-            ctx.manager.options.publish_config.tag
+    fn construct_publish_request_body(
+        manager: &PackageManager,
+        ctx: &Context,
+    ) -> Result<Box<[u8]>, AllocError> {
+        let tag: &[u8] = if !manager.options.publish_config.tag.is_empty() {
+            manager.options.publish_config.tag
         } else {
             b"latest"
         };
@@ -1975,7 +2097,7 @@ impl PublishCommand {
             );
         }
 
-        if let Some(access) = ctx.manager.options.publish_config.access {
+        if let Some(access) = manager.options.publish_config.access {
             let _ = write!(&mut buf, ",\"access\":\"{}\"", access.as_str());
         } else {
             buf.extend_from_slice(b",\"access\":null");
@@ -2010,6 +2132,12 @@ impl PublishCommand {
 
         Ok(buf.into_boxed_slice())
     }
+}
+
+enum Published {
+    Yes,
+    /// `--tolerate-republish`: the registry already had this `name@version`, so nothing was sent.
+    AlreadyOnRegistry,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

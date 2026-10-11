@@ -2523,16 +2523,8 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
+    // A missing "packages" object is parsed like an empty one.
     let pkgs_expr = root.get(b"packages");
-
-    // A missing "packages" object is parsed like an empty one. With no
-    // workspace packages there is nothing to resolve, otherwise the workspace
-    // packages appended above and the root's dependencies on them still need
-    // the resolution pass below (which also sizes `buffers.resolutions`).
-    if pkgs_expr.is_none() && workspace_pkgs_len == 0 {
-        lockfile.init_empty();
-        return Ok(());
-    }
 
     {
         if let Some(pkgs_expr) = &pkgs_expr {

@@ -1361,70 +1361,62 @@ fn run_tasks_erased(
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
+                    let is_required = manager.is_network_task_required(task.id);
+                    let waiters = forget_failed_git_task(manager, task.id, name);
 
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
-                    } else if cb.has_on_package_download_error && cb.is_store_installer {
+                        continue;
+                    }
+
+                    if cb.is_store_installer {
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
                         // never reaches checkout, so drain every waiting
                         // checkout for this repo or the install loop blocks
                         // forever on the entry's pending-task slot.
-                        let mut drained_any = false;
-                        if let Some(waiters) = manager.task_queue.remove(&task.id) {
-                            let pkg_resolutions = manager.lockfile.packages.items_resolution();
-                            for waiter in waiters.iter() {
-                                let dep_id = match waiter {
-                                    bun_install::TaskCallbackContext::Dependency(id) => *id,
-                                    _ => continue,
-                                };
-                                let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                                if pkg_id == INVALID_PACKAGE_ID {
-                                    continue;
-                                }
-                                let res = &pkg_resolutions[pkg_id as usize];
-                                if res.tag != bun_install::ResolutionTag::Git {
-                                    continue;
-                                }
-                                // SAFETY: `res.tag == Git` checked just above —
-                                // `value.git` is the active union arm.
-                                let res_git = res.git();
-                                let checkout_id = Task::Id::for_git_checkout(
-                                    manager.lockfile.str(&res_git.repo),
-                                    manager.lockfile.str(&res_git.resolved),
-                                );
-                                drained_any = true;
+                        for waiter in waiters.iter() {
+                            let &bun_install::TaskCallbackContext::GitCheckout {
+                                package_id, ..
+                            } = waiter
+                            else {
+                                continue;
+                            };
+                            let res =
+                                manager.lockfile.packages.items_resolution()[package_id as usize];
+                            let git = res.git();
+                            let checkout_id = Task::Id::for_git_checkout(
+                                manager.lockfile.str(&git.repo),
+                                manager.lockfile.str(&git.resolved),
+                            );
+                            if is_required {
                                 (cb.on_package_download_error_store)(
                                     extract_ctx,
                                     checkout_id,
                                     name,
-                                    res,
+                                    &res,
                                     err,
                                     url,
                                 );
+                            } else {
+                                cb.store_installer(extract_ctx)
+                                    .on_optional_package_download_error(checkout_id);
                             }
                         }
-                        if !drained_any {
-                            // No clone waiters recorded (or all were skipped
-                            // above) — fall back to the clone task's own
-                            // resolution so the originating entry is still
-                            // released.
-                            // SAFETY: `clone.res.tag == Git` — git-clone tasks are
-                            // only enqueued for git resolutions; `value.git` is
-                            // the active union arm.
-                            let resolved = &clone.res.git().resolved;
-                            let checkout_id =
-                                Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
-                            (cb.on_package_download_error_store)(
-                                extract_ctx,
-                                checkout_id,
-                                name,
-                                &clone.res,
-                                err,
-                                url,
-                            );
-                        }
-                    } else if log_level != Options::LogLevel::Silent {
+                    }
+
+                    if !is_required {
+                        bun_ast::add_warning_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "{} cloning repository for <b>{}<r>",
+                            err.name(),
+                            bstr::BStr::new(name),
+                        );
+                    } else if !cb.is_store_installer {
+                        // Also under `--silent`: git's own lines were warnings if the
+                        // dependency that requires the clone joined it after they were logged.
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
@@ -1439,16 +1431,19 @@ fn run_tasks_erased(
 
                 manager.git_repositories.insert(task.id, repo_fd);
 
-                if cb.has_on_extract && cb.is_package_installer {
+                if cb.has_on_extract {
                     // Installing! The clone task is shared by every dependency on
                     // this repo URL; enqueue a checkout per waiter, not just one.
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
                         continue;
                     };
                     for waiter in waiters.iter() {
-                        let dep_id = match waiter {
-                            bun_install::TaskCallbackContext::Dependency(id) => *id,
-                            _ => continue,
+                        let &bun_install::TaskCallbackContext::GitCheckout {
+                            dependency_id: dep_id,
+                            package_id,
+                        } = waiter
+                        else {
+                            continue;
                         };
                         // reshaped for borrowck — copy the small `String` handles
                         // so the `&manager.lockfile` borrow doesn't extend across
@@ -1457,16 +1452,7 @@ fn run_tasks_erased(
                             let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                             (dep.name, dep.behavior.is_required())
                         };
-                        let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                        if pkg_id == INVALID_PACKAGE_ID {
-                            continue;
-                        }
-                        let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
-                        if res.tag != bun_install::ResolutionTag::Git {
-                            continue;
-                        }
-                        // SAFETY: `res.tag == Git` checked just above —
-                        // `value.git` is the active union arm.
+                        let res = manager.lockfile.packages.items_resolution()[package_id as usize];
                         let git = *res.git();
                         // SAFETY: `string_bytes` lives as long as `manager.lockfile`
                         // and is not reallocated while resolve tasks are draining.
@@ -1534,11 +1520,22 @@ fn run_tasks_erased(
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
-                    let _ = manager.task_queue.remove(&task.id);
+                    let is_required = manager.is_network_task_required(task.id);
+                    let _ = forget_failed_git_task(manager, task.id, name);
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
-                    } else {
+                    } else if is_required {
                         let _ = manager.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "no commit matching \"{}\" found for \"{}\" (but repository exists)",
+                                bun_core::fmt::escape_control_chars(commit.committish.slice()),
+                                bstr::BStr::new(name),
+                            ),
+                        );
+                    } else {
+                        manager.log_mut().add_warning_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -1600,6 +1597,7 @@ fn run_tasks_erased(
                             err.name(),
                             bstr::BStr::new(alias.slice()),
                         );
+                        let _ = forget_failed_git_task(manager, task.id, alias.slice());
                     }
 
                     continue;
@@ -1894,6 +1892,15 @@ pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
 }
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
+    let committish = this.lockfile.str(&repository.committish);
+    alloc_github_url_for_ref(this, repository, committish)
+}
+
+pub(crate) fn alloc_github_url_for_ref(
+    this: &PackageManager,
+    repository: &Repository,
+    committish: &[u8],
+) -> Vec<u8> {
     let mut github_api_url: &[u8] = b"https://api.github.com";
     if let Some(url) = this.env().get(b"GITHUB_API_URL") {
         if !url.is_empty() {
@@ -1903,7 +1910,6 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
 
     let owner = this.lockfile.str(&repository.owner);
     let repo = this.lockfile.str(&repository.repo);
-    let committish = this.lockfile.str(&repository.committish);
 
     let mut out = Vec::new();
     write!(
@@ -1957,6 +1963,17 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
     this.network_dedupe_map
         .get(&task_id)
         .is_some_and(|e| e.failed)
+}
+
+/// A later dependency that joins an entry left in `task_queue` waits forever. Returns the waiters.
+fn forget_failed_git_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+) -> TaskCallbackList {
+    fail_update_requests(this, task_id, name, None);
+    let _ = this.network_dedupe_map.remove(&task_id);
+    this.task_queue.remove(&task_id).unwrap_or_default()
 }
 
 /// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.

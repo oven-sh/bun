@@ -75,33 +75,71 @@ impl<'a> Interval<'a> {
     }
 
     fn is_non_empty(&self) -> bool {
-        match (self.lower, self.upper) {
-            (Some(l), Some(u)) => match l.version.order_without_build(u.version, l.buf, u.buf) {
-                Ordering::Less => true,
-                Ordering::Equal => l.inclusive && u.inclusive,
-                Ordering::Greater => false,
-            },
-            _ => true,
+        let Some(u) = self.upper else {
+            return true;
+        };
+        // `0.0.0-0` is the lowest version, so a missing lower bound starts there and `<0.0.0-0` alone is empty.
+        let l = self.lower.unwrap_or(Bound {
+            version: Comparator::null_set().version,
+            buf: b"",
+            inclusive: true,
+        });
+        match l.version.order_without_build(u.version, l.buf, u.buf) {
+            Ordering::Less => true,
+            Ordering::Equal => l.inclusive && u.inclusive,
+            Ordering::Greater => false,
         }
     }
 }
 
+impl Query {
+    /// `*` (a lone `>=0.0.0`). `>=0.0.0-0` is not `*`.
+    fn is_star(&self) -> bool {
+        let range = &self.range;
+        self.next.is_none()
+            && range.left.op == Op::Gte
+            && range.left.version.is_zero()
+            && !range.left.version.tag.has_pre()
+            && !range.has_right()
+    }
+}
+
 impl Group {
-    /// Whether some version satisfies both groups; prerelease-exclusion rules are not modelled, comparators are compared directly.
+    /// The AND chains that are OR'd together.
+    fn alternatives(&self) -> impl Iterator<Item = &Query> {
+        core::iter::successors(Some(&self.head), |list| list.next.as_deref()).map(|list| &list.head)
+    }
+
+    /// `satisfies`, except that `*` admits a prerelease too.
+    fn admits(&self, self_buf: &[u8], version: Version, version_buf: &[u8]) -> bool {
+        self.satisfies(version, self_buf, version_buf)
+            || (version.tag.has_pre() && self.alternatives().any(Query::is_star))
+    }
+
+    fn admits_an_exact_version_of(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
+        other
+            .alternatives()
+            .filter_map(Query::exact_version)
+            .any(|version| self.admits(self_buf, version, other_buf))
+    }
+
+    /// Whether some version satisfies both groups; an exact version goes through `satisfies`, two ranges compare bounds only.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
-        let mut a = Some(&self.head);
-        while let Some(list_a) = a {
-            a = list_a.next.as_deref();
+        if self.admits_an_exact_version_of(self_buf, other, other_buf)
+            || other.admits_an_exact_version_of(other_buf, self, self_buf)
+        {
+            return true;
+        }
+        let is_range = |query: &&Query| query.exact_version().is_none();
+        for a in self.alternatives().filter(is_range) {
             let mut base = Interval::default();
-            base.and_query(&list_a.head, self_buf);
+            base.and_query(a, self_buf);
             if !base.is_non_empty() {
                 continue;
             }
-            let mut b = Some(&other.head);
-            while let Some(list_b) = b {
-                b = list_b.next.as_deref();
+            for b in other.alternatives().filter(is_range) {
                 let mut i = base;
-                i.and_query(&list_b.head, other_buf);
+                i.and_query(b, other_buf);
                 if i.is_non_empty() {
                     return true;
                 }

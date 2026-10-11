@@ -273,6 +273,66 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(dir)).newArray).toEqual(["one", "two", "three"]);
     });
 
+    it("should accept any valid JSON value with --json flag", async () => {
+      using dir = tempDir("pm-pkg-json-valid", {
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }, null, 2),
+      });
+      const { error, code } = await runPmPkg(
+        [
+          "set",
+          "a=0",
+          "b=-1.5e3",
+          "c=1E+2",
+          'd="str \\u00e9\\n"',
+          'e={"k":[1,{"m":null}],"":""}',
+          "f= [ true ,\tfalse ]\n",
+          "--json",
+        ],
+        dir,
+      );
+      expect(error).toBe("");
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        version: "1.0.0",
+        a: 0,
+        b: -1500,
+        c: 100,
+        d: "str \u00e9\n",
+        e: { k: [1, { m: null }], "": "" },
+        f: [true, false],
+      });
+      expect(code).toBe(0);
+    });
+
+    // npm runs the value through JSON.parse and refuses to write on failure: never a package.json
+    // that no longer parses (`NaN`), never a silent fallback to a string, never half of the value.
+    it.each([
+      ["undefined", "Unexpected undefined"],
+      ["NaN", "Unexpected NaN"],
+      ["Infinity", "Unexpected Infinity"],
+      ["-Infinity", 'Expected number but found "-Infinity"'],
+      ["abc", "Unexpected abc"],
+      ["{x:1}", 'Expected string but found "x"'],
+      ["1/0", "Unsupported syntax: Operators are not allowed in JSON"],
+      ["+1", "Unsupported syntax: Operators are not allowed in JSON"],
+      ["[1,]", "JSON does not support trailing commas"],
+      ['{"a":1,}', "JSON does not support trailing commas"],
+      ["//c 1", "JSON does not support comments"],
+      ["1 2", "Unexpected 2"],
+      ["[1] {}", "Unexpected {"],
+    ])("should reject the invalid JSON value %s with --json flag", async (value, message) => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { output, error, code } = await runPmPkg(["set", `x=${value}`, "--json"], dir, false);
+      expect(output).toBe("");
+      expect(error).toBe(
+        `error: Invalid JSON value for "x": ${message}\n` +
+          "note: --json parses each value as JSON. To store the text as a string, drop --json.\n",
+      );
+      expect(await readRaw(dir)).toBe(before);
+      expect(code).toBe(1);
+    });
+
     it("should treat values as strings without --json flag", async () => {
       using dir = makeTestDir();
       const { code } = await runPmPkg(
@@ -514,6 +574,38 @@ describe.concurrent("bun pm pkg", () => {
       const { error, code } = await runPmPkg(["set"], dir, false);
       expect(error).toContain("set expects a key=value pair");
       expect(code).toBe(1);
+    });
+  });
+
+  describe("--dry-run", () => {
+    it("set prints the result without writing package.json", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { output, error, code } = await runPmPkg(["set", "description=New description", "--dry-run"], dir);
+      expect(error).toBe("");
+      expect(output).toBe(before.replace("A test package", "New description") + "\n");
+      expect(code).toBe(0);
+      expect(await readRaw(dir)).toBe(before);
+    });
+
+    it("delete prints the result without writing package.json", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { output, error, code } = await runPmPkg(["delete", "description", "--dry-run"], dir);
+      expect(error).toBe("");
+      expect(output).toBe(before.replace('  "description": "A test package",\n', "") + "\n");
+      expect(code).toBe(0);
+      expect(await readRaw(dir)).toBe(before);
+    });
+
+    it("fix prints the result without writing package.json", async () => {
+      const before = JSON.stringify({ name: "TEST-PACKAGE", version: "1.0.0" }, null, 2) + "\n";
+      using dir = tempDir("pm-pkg-fix-dry-run", { "package.json": before });
+      const { output, error, code } = await runPmPkg(["fix", "--dry-run"], String(dir));
+      expect(error).toBe("");
+      expect(output).toBe(before.replace("TEST-PACKAGE", "test-package"));
+      expect(code).toBe(0);
+      expect(await readRaw(String(dir))).toBe(before);
     });
   });
 
@@ -930,6 +1022,66 @@ describe.concurrent("bun pm pkg", () => {
       ]);
       expect(getOutput1.output.trim()).toBe('"first"');
       expect(getOutput2.output.trim()).toBe('"success"');
+    });
+
+    // The grammar `bun pm view` shares: brackets hold one literal name, dots included.
+    it("should take a bracketed name literally in get, set and delete", async () => {
+      const exports = { ".": { import: "./i.mjs" }, "./package.json": "./package.json" };
+      using dir = tempDir("pm-pkg-literal-brackets", {
+        "package.json": JSON.stringify({ name: "x", exports, list: [{ b: 1 }, { b: 2 }] }, null, 2),
+      });
+
+      expect(await runPmPkg(["get", "exports[./package.json]"], dir)).toEqual({
+        output: '"./package.json"\n',
+        error: "",
+        code: 0,
+      });
+      expect(await runPmPkg(["get", "exports[.].import", "list.0.b", "list[1].b", "list[1]b"], dir)).toEqual({
+        output: '{\n  "exports[.].import": "./i.mjs",\n  "list.0.b": 1,\n  "list[1].b": 2,\n  "list[1]b": 2\n}\n',
+        error: "",
+        code: 0,
+      });
+
+      expect(await runPmPkg(["set", "exports[./a.js]=./a.js", "exports[.].require=./r.cjs"], dir)).toEqual({
+        output: "",
+        error: "",
+        code: 0,
+      });
+      expect((await readPkg(dir)).exports).toEqual({
+        ".": { import: "./i.mjs", require: "./r.cjs" },
+        "./package.json": "./package.json",
+        "./a.js": "./a.js",
+      });
+
+      expect(await runPmPkg(["delete", "exports[./package.json]", "exports[.].import", "list[0].b"], dir)).toEqual({
+        output: "",
+        error: "",
+        code: 0,
+      });
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        exports: { ".": { require: "./r.cjs" }, "./a.js": "./a.js" },
+        list: [{}, { b: 2 }],
+      });
+    });
+
+    it("should read a name after an array from every element (npm compatibility)", async () => {
+      expect(await runPmPkg(["get", "contributors.name"], readonlyDir)).toEqual({
+        output: '{\n  "contributors[0].name": "John Doe",\n  "contributors[1].name": "Jane Smith"\n}\n',
+        error: "",
+        code: 0,
+      });
+      // Only one element has it: one value, printed bare.
+      expect(await runPmPkg(["get", "contributors.email"], readonlyDir)).toEqual({
+        output: '"john@example.com"\n',
+        error: "",
+        code: 0,
+      });
+      expect(await runPmPkg(["get", "name", "contributors[email]", "contributors.nope"], readonlyDir)).toEqual({
+        output: '{\n  "name": "test-package",\n  "contributors[0][email]": "john@example.com"\n}\n',
+        error: "",
+        code: 0,
+      });
     });
 
     it("should handle edge cases with special characters", async () => {

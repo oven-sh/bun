@@ -582,23 +582,45 @@ pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
     StoreURLFormatter { url }
 }
 
+/// `(authority_start, host_start, query_start)`: the userinfo is
+/// `authority_start..host_start`, the query string begins at `query_start`.
+fn url_credential_offsets(url: &[u8]) -> (usize, usize, usize) {
+    // RFC 3986: the authority follows `scheme://` (or, for an scp-like
+    // `user@host:path`, starts the string) and ends at the first `/`, `?`
+    // or `#`; the userinfo is everything in it up to the last `@`.
+    let authority_start = match strings::index_of_char_usize(url, b':') {
+        Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
+        _ => 0,
+    };
+    let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
+        .map_or(url.len(), |i| authority_start + i);
+    let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
+        .map_or(authority_start, |at| authority_start + at + 1);
+    let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
+        .map_or(url.len(), |i| host_start + i);
+    (authority_start, host_start, query_start)
+}
+
+/// Appends `specifier` without the userinfo and the query string of a
+/// `scheme://` URL (the `#fragment` stays); anything else is appended as it is.
+pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]) {
+    let (authority_start, host_start, query_start) = url_credential_offsets(specifier);
+    if authority_start == 0 {
+        out.extend_from_slice(specifier);
+        return;
+    }
+    out.extend_from_slice(&specifier[..authority_start]);
+    out.extend_from_slice(&specifier[host_start..query_start]);
+    let query = &specifier[query_start..];
+    if let Some(fragment) = strings::index_of_char_usize(query, b'#') {
+        out.extend_from_slice(&query[fragment..]);
+    }
+}
+
 impl fmt::Display for StoreURLFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let url = self.url;
-
-        // RFC 3986: the authority follows `scheme://` (or, for an scp-like
-        // `user@host:path`, starts the string) and ends at the first `/`, `?`
-        // or `#`; the userinfo is everything in it up to the last `@`.
-        let authority_start = match strings::index_of_char_usize(url, b':') {
-            Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
-            _ => 0,
-        };
-        let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
-            .map_or(url.len(), |i| authority_start + i);
-        let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
-            .map_or(authority_start, |at| authority_start + at + 1);
-        let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
-            .map_or(url.len(), |i| host_start + i);
+        let (authority_start, host_start, query_start) = url_credential_offsets(url);
 
         write!(
             writer,

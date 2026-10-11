@@ -57,6 +57,9 @@ pub struct Summary {
     /// Multiple versions of the same package might add to the count, and each version
     /// might have a different number of scripts
     pub(crate) packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
+
+    /// Set when this install replaced the tree of the other linker.
+    pub(crate) old_modules: Option<crate::prune::OldModules>,
 }
 
 #[repr(u8)]

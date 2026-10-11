@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -311,4 +311,197 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
       expect(exitCode).toBe(1);
     },
   );
+});
+
+async function runBun(args: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
+  await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// The package.json that `bun install` finds above the directory it runs in becomes the root of
+// the install: it says which lifecycle scripts are trusted, and its .npmrc and bunfig.toml apply.
+// In a directory with the mode of /tmp any local user can put one above somebody else's project.
+describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared directory above the cwd", () => {
+  // Its postinstall runs only if the root of the install trusts it.
+  const dep = JSON.stringify({
+    name: "dep",
+    version: "1.0.0",
+    scripts: { postinstall: `echo ran > "$POSTINSTALL_MARKER"` },
+  });
+
+  // `shared/package.json` claims `shared/proj` as its workspace.
+  const workspaceFiles = {
+    "shared/package.json": JSON.stringify({ name: "planted", workspaces: ["proj"], trustedDependencies: ["dep"] }),
+    "shared/proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+    "shared/proj/dep/package.json": dep,
+  };
+
+  // `shared/sub` has no package.json. The walk goes on above a manifest it ignores: the empty
+  // project at the top keeps it inside the fixture.
+  const projectFiles = {
+    "package.json": JSON.stringify({ name: "fence", version: "0.0.0" }),
+    "shared/package.json": JSON.stringify({
+      name: "planted",
+      version: "1.0.0",
+      dependencies: { dep: "file:./dep" },
+      trustedDependencies: ["dep"],
+    }),
+    "shared/dep/package.json": dep,
+    "shared/sub/.keep": "",
+  };
+
+  const marker = (root: string) => join(root, "postinstall-ran");
+  const installIn = (root: string, ...subdirectory: string[]) =>
+    runBun(["install"], join(root, ...subdirectory), { ...bunEnv, POSTINSTALL_MARKER: marker(root) });
+  const ignored = (root: string) =>
+    `warn: other local users can add files to ${join(root, "shared")}, so bun ignored the package.json in it\n`;
+
+  test.each([
+    ["everyone", 0o1777],
+    ["the group", 0o1770],
+  ])("writable by %s: is not the workspace root", async (_, mode) => {
+    using dir = tempDir("root-discovery-sticky-workspace", workspaceFiles);
+    const root = String(dir);
+    chmodSync(join(root, "shared"), mode);
+
+    const { stdout, stderr, exitCode } = await installIn(root, "shared", "proj");
+
+    expect(stderr).toContain(ignored(root));
+    expect(stdout).toContain("Blocked 1 postinstall");
+    expect({
+      postinstall: existsSync(marker(root)),
+      "shared/proj/bun.lock": existsSync(join(root, "shared", "proj", "bun.lock")),
+      "shared/bun.lock": existsSync(join(root, "shared", "bun.lock")),
+      "shared/node_modules": existsSync(join(root, "shared", "node_modules")),
+    }).toEqual({
+      postinstall: false,
+      "shared/proj/bun.lock": true,
+      "shared/bun.lock": false,
+      "shared/node_modules": false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("is not read, so one that is not JSON does not fail the install", async () => {
+    using dir = tempDir("root-discovery-sticky-invalid", { ...workspaceFiles, "shared/package.json": "{{{" });
+    const root = String(dir);
+    chmodSync(join(root, "shared"), 0o1777);
+
+    const { stderr, exitCode } = await installIn(root, "shared", "proj");
+
+    expect(stderr).toContain(ignored(root));
+    expect(stderr).not.toContain("error");
+    expect(existsSync(join(root, "shared", "proj", "bun.lock"))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  async function expectFenceInstalled(root: string) {
+    const { stdout, stderr, exitCode } = await installIn(root, "shared", "sub");
+
+    expect(stderr).toContain(ignored(root));
+    expect(stderr).not.toContain("error");
+    expect(stdout).not.toContain("+ dep");
+    expect({
+      postinstall: existsSync(marker(root)),
+      "shared/bun.lock": existsSync(join(root, "shared", "bun.lock")),
+      "shared/node_modules": existsSync(join(root, "shared", "node_modules")),
+    }).toEqual({ postinstall: false, "shared/bun.lock": false, "shared/node_modules": false });
+    expect(exitCode).toBe(0);
+  }
+
+  test("is not the project of a directory without a package.json", async () => {
+    using dir = tempDir("root-discovery-sticky-project", projectFiles);
+    const root = String(dir);
+    chmodSync(join(root, "shared"), 0o1777);
+
+    await expectFenceInstalled(root);
+  });
+
+  // root opens the file whatever its mode is
+  test.skipIf(process.getuid?.() === 0)("is passed over as well when it cannot be opened", async () => {
+    using dir = tempDir("root-discovery-sticky-unreadable", projectFiles);
+    const root = String(dir);
+    chmodSync(join(root, "shared", "package.json"), 0);
+    chmodSync(join(root, "shared"), 0o1777);
+
+    await expectFenceInstalled(root);
+  });
+
+  test("is the project when the command runs in that directory", async () => {
+    using dir = tempDir("root-discovery-sticky-cwd", projectFiles);
+    const root = String(dir);
+    chmodSync(join(root, "shared"), 0o1777);
+
+    const { stdout, stderr, exitCode } = await installIn(root, "shared");
+
+    expect(stderr).not.toContain("warn:");
+    expect(stdout).toContain("+ dep");
+    expect(existsSync(marker(root))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["sticky, writable by its owner only", 0o1755],
+    ["writable by everyone, not sticky", 0o777],
+  ])("%s: is still the workspace root", async (_, mode) => {
+    using dir = tempDir("root-discovery-not-shared", workspaceFiles);
+    const root = String(dir);
+    chmodSync(join(root, "shared"), mode);
+
+    const { stdout, stderr, exitCode } = await installIn(root, "shared", "proj");
+
+    expect(stderr).not.toContain("warn:");
+    expect(stdout).not.toContain("Blocked");
+    expect(existsSync(marker(root))).toBe(true);
+    expect(existsSync(join(root, "shared", "bun.lock"))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A working directory can be PATH_MAX - 1 bytes long, and `<cwd>/package.json` is 13 bytes longer.
+// On Windows the path buffer is longer than any path the OS accepts.
+describe.concurrent.skipIf(isWindows)("working directory close to PATH_MAX", () => {
+  /** A project in a directory whose absolute path is exactly `cwdBytes` bytes long. */
+  function deepProject(cwdBytes: number) {
+    const dir = tempDir("root-discovery-deep-cwd", {
+      "project/package.json": JSON.stringify({ name: "deep", version: "1.0.0" }),
+    });
+    let cwd = String(dir);
+    // The last name has to stay under NAME_MAX (255).
+    while (cwdBytes - Buffer.byteLength(cwd) > 256) cwd = join(cwd, Buffer.alloc(200, "d").toString());
+    cwd = join(cwd, Buffer.alloc(cwdBytes - Buffer.byteLength(cwd) - 1, "L").toString());
+    expect(Buffer.byteLength(cwd)).toBe(cwdBytes);
+    // package.json may be too long to write by its final path: the directory is moved there with it inside.
+    mkdirSync(dirname(cwd), { recursive: true });
+    renameSync(join(String(dir), "project"), cwd);
+    return { cwd, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  test("the longest <cwd>/package.json that can be opened is read", async () => {
+    using project = deepProject(POSIX_PATH_BUFFER_BYTES - 1 - "/package.json".length);
+
+    expect(await runBun(["pm", "pkg", "get", "name"], project.cwd)).toEqual({
+      stdout: '"deep"\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    ["PATH_MAX bytes long, leaving no room for the NUL", POSIX_PATH_BUFFER_BYTES - "/package.json".length],
+    ["as long as it can be", POSIX_PATH_BUFFER_BYTES - 1],
+  ])("<cwd>/package.json is %s", (_, cwdBytes) => {
+    test.each(["install", "pm ls"])("bun %s fails with ENAMETOOLONG", async command => {
+      using project = deepProject(cwdBytes);
+
+      const { stdout, stderr, exitCode } = await runBun(command.split(" "), project.cwd);
+
+      expect(stderr.replaceAll(project.cwd, "<cwd>")).toContain(
+        'ENAMETOOLONG: File name too long: could not open "<cwd>/package.json" (open)\n',
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
 });

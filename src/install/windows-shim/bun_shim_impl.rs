@@ -238,6 +238,7 @@ pub enum FailReason {
     InterpreterNotFound,
     InterpreterNotFoundBun,
     ElevationRequired,
+    BatchFileArgument,
 }
 
 impl FailReason {
@@ -258,6 +259,9 @@ impl FailReason {
             FailReason::BinNotFound => "bin executable does not exist on disk",
             FailReason::ElevationRequired => "process requires elevation",
             FailReason::CreateProcessFailed => "could not create process",
+            FailReason::BatchFileArgument => {
+                "an argument with one of % & | < > ^ cannot be passed to a .cmd or .bat file"
+            }
 
             FailReason::CouldNotDirectLaunch => {
                 if !IS_STANDALONE {
@@ -333,6 +337,9 @@ impl core::fmt::Display for FailReason {
                 "    powershell -c \"irm bun.sh/install.ps1|iex\"\n",
                 "\n",
             ),
+            FailReason::BatchFileArgument => {
+                "cmd.exe runs the file and would read the character as a command or a variable.\n\n"
+            }
             _ => concat!(
                 "Bun failed to remap this bin to its proper location within node_modules.\n",
                 "This is an indication of a corrupted node_modules directory.\n",
@@ -746,7 +753,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             break 'find_args (&cmd_line_u16[0..0], &cmd_line_u8[0..0]);
         }
     };
-    let _ = user_arguments_u16; // only read under DBG
 
     if DBG {
         // Raw dump of the UTF-16-LE arg tail. Display via `fmt16` on the
@@ -1212,6 +1218,17 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     return LauncherRet::LaunchFellThrough;
                 }
                 return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
+            }
+
+            // BinLinkingShim.rs gives these two extensions the launcher `cmd /c`. cmd.exe reads
+            // the line again and drops its outer quotes, so no quoting protects an argument.
+            if (filename_u16.ends_with(bun_core::w!(".cmd\""))
+                || filename_u16.ends_with(bun_core::w!(".bat\"")))
+                && user_arguments_u16
+                    .iter()
+                    .any(|&unit| is_cmd_special_character(unit))
+            {
+                return LauncherMode::fail(MODE, FailReason::BatchFileArgument);
             }
 
             // SAFETY: buf2 has room for shebang_arg_len_u8 + 2 + length_of_filename_u8 bytes.
@@ -1767,6 +1784,13 @@ pub(crate) fn main() -> ! {
 }
 
 // ───── helpers ─────
+
+/// The set of `batch_arg_has_cmd_metachars` in `src/which/lib.rs` without `"`, which in a raw
+/// command line is the quoting around an argument.
+fn is_cmd_special_character(unit: u16) -> bool {
+    // % & | < > ^ \r \n
+    matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)
+}
 
 /// Lossy (replacement-char) UTF-16-LE formatter — only
 /// used for debug logging under `if DBG`, so lossiness is fine.

@@ -1605,7 +1605,8 @@ impl MinimumReleaseAgeExcludes {
             let (name, specs) = (&entry[..name_start + at], &entry[name_start + at + 1..]);
             let first_of_entry = list.len();
             for spec in strings::split(specs, b"||") {
-                let Some(version) = parse_exact_version(spec) else {
+                let Some(version) = Semver::Version::parse_exact(SlicedString::init(spec, spec))
+                else {
                     list.truncate(first_of_entry);
                     log.add_warning_fmt(
                         None,
@@ -1647,19 +1648,6 @@ impl MinimumReleaseAgeExcludes {
     }
 }
 
-/// Ranges, dist-tags, empty input, and trailing bytes are all rejected.
-fn parse_exact_version(spec: &[u8]) -> Option<Semver::Version> {
-    let spec = strings::trim(spec, &strings::WHITESPACE_CHARS);
-    let parsed = Semver::Version::parse_utf8(spec);
-    if !parsed.valid
-        || parsed.wildcard != Semver::query::Wildcard::None
-        || parsed.len as usize != spec.len()
-    {
-        return None;
-    }
-    Some(parsed.version.min())
-}
-
 impl PackageManifest {
     pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {
@@ -1681,6 +1669,40 @@ impl PackageManifest {
     /// Published release versions, oldest first (prereleases excluded), as sorted at serialization time.
     pub fn release_versions(&self) -> &[Semver::Version] {
         self.pkg.releases.keys.get(&self.versions)
+    }
+
+    /// Published prerelease versions, oldest first, as sorted at serialization time.
+    pub fn prerelease_versions(&self) -> &[Semver::Version] {
+        self.pkg.prereleases.keys.get(&self.versions)
+    }
+
+    /// Resolves the spec of `name@spec` like `npm view`: an exact dist-tag name wins, else the best range match.
+    pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
+        use crate::dependency::{Tag, TagExt as _};
+        let spec: &[u8] = if spec.is_empty() { b"latest" } else { spec };
+        // Checked before classifying because published tag names like `v12-lts` read as a range.
+        if let Some((_, version)) = self.dist_tags().find(|(tag, _)| *tag == spec) {
+            return self.find_by_version(version).ok_or(Error::DistTagNotFound);
+        }
+        match Tag::infer(spec) {
+            Tag::DistTag => Err(Error::DistTagNotFound),
+            Tag::Npm => {
+                // `v1.2.3` -> `1.2.3`, as `dependency::parse_with_tag` does.
+                let range = if spec.len() > 1 && spec[0] == b'v' {
+                    &spec[1..]
+                } else {
+                    spec
+                };
+                let query = Semver::query::parse(range, SlicedString::init(range, range))?;
+                // Only unknown words (e.g. `npm:x@1`): the lenient parser produced a match-all group.
+                if query.is_empty() {
+                    return Err(Error::NoMatchingVersion);
+                }
+                self.find_best_version(&query, range)
+                    .ok_or(Error::NoMatchingVersion)
+            }
+            _ => Err(Error::NoMatchingVersion),
+        }
     }
 
     /// `(tag, version)` pairs of the dist-tags.
@@ -2321,22 +2343,19 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                let bin_props = obj.get().properties();
-                                match bin_props.len() {
-                                    0 => break 'bin,
-                                    1 => {}
-                                    _ => {
-                                        extern_string_count_bin += bin_props.len() * 2;
-                                    }
-                                }
-
-                                for bin_prop in bin_props {
-                                    string_builder.count(bin_prop.key.slice());
+                                let mut entries: usize = 0;
+                                for bin_prop in obj.get().properties() {
                                     let Some(v) = bin_prop.value.as_str() else {
-                                        break 'bin;
+                                        continue;
                                     };
+                                    string_builder.count(bin_prop.key.slice());
                                     string_builder.count(v);
+                                    entries += 1;
                                 }
+                                if entries > 1 {
+                                    extern_string_count_bin += entries * 2;
+                                }
+                                break 'bin;
                             }
                             JSON::E::JsonValue::String(str_) => {
                                 // The build pass reads `directories.bin` when `bin` is empty.
@@ -2616,14 +2635,17 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                let bin_props = obj.get().properties();
-                                match bin_props.len() {
+                                // npm (normalize-package-bin) skips an entry whose value is not a string.
+                                let mut entries = obj
+                                    .get()
+                                    .properties()
+                                    .iter()
+                                    .filter_map(|p| Some((p.key.slice(), p.value.as_str()?)));
+                                match entries.clone().count() {
                                     0 => {}
                                     1 => {
-                                        let bin_name = bin_props[0].key.slice();
-                                        let Some(value) = bin_props[0].value.as_str() else {
-                                            break 'bin;
-                                        };
+                                        let (bin_name, value) =
+                                            entries.next().expect("counted: one entry");
 
                                         package_version.bin = Bin {
                                             tag: bin::Tag::NamedFile,
@@ -2634,15 +2656,14 @@ impl PackageManifest {
                                             ]),
                                         };
                                     }
-                                    _ => {
+                                    len => {
                                         let group_start = extern_strings_bin_entries_cursor;
-                                        let group_len = bin_props.len() * 2;
+                                        let group_len = len * 2;
 
                                         let mut is_identical = match &prev_extern_bin_group {
                                             Some(r) => r.len() == group_len,
                                             None => false,
                                         };
-                                        let mut group_i: u32 = 0;
 
                                         // The boxed slice is fully initialised
                                         // (`vec![Default; n].into_boxed_slice()` in the counting
@@ -2650,15 +2671,16 @@ impl PackageManifest {
                                         // indexing at `group_start + group_i` works — no
                                         // `from_raw_parts`/`.add()` needed, and the `prev` read
                                         // at a disjoint index needs no split.
-                                        for bin_prop in bin_props {
-                                            let k = bin_prop.key.slice();
-                                            let cur = string_builder.append::<ExternalString>(k);
-                                            all_extern_strings_bin_entries
-                                                [group_start + group_i as usize] = cur;
+                                        for (group_i, s) in
+                                            entries.flat_map(|(k, v)| [k, v]).enumerate()
+                                        {
+                                            let cur = string_builder.append::<ExternalString>(s);
+                                            all_extern_strings_bin_entries[group_start + group_i] =
+                                                cur;
                                             if is_identical {
                                                 let prev = prev_extern_bin_group.as_ref().unwrap();
                                                 let prev_item = all_extern_strings_bin_entries
-                                                    [prev.start + group_i as usize];
+                                                    [prev.start + group_i];
                                                 is_identical = cur.hash == prev_item.hash;
                                                 if cfg!(debug_assertions) && is_identical {
                                                     let first =
@@ -2674,34 +2696,6 @@ impl PackageManifest {
                                                     }
                                                 }
                                             }
-                                            group_i += 1;
-
-                                            let Some(v) = bin_prop.value.as_str() else {
-                                                break 'bin;
-                                            };
-                                            let cur = string_builder.append::<ExternalString>(v);
-                                            all_extern_strings_bin_entries
-                                                [group_start + group_i as usize] = cur;
-                                            if is_identical {
-                                                let prev = prev_extern_bin_group.as_ref().unwrap();
-                                                let prev_item = all_extern_strings_bin_entries
-                                                    [prev.start + group_i as usize];
-                                                is_identical = cur.hash == prev_item.hash;
-                                                if cfg!(debug_assertions) && is_identical {
-                                                    let first =
-                                                        cur.slice(string_builder.allocated_slice());
-                                                    let second = prev_item
-                                                        .slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
-                                                        Output::panic(format_args!(
-                                                            "Bin group is not identical: {} != {}",
-                                                            bstr::BStr::new(first),
-                                                            bstr::BStr::new(second),
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                            group_i += 1;
                                         }
 
                                         let final_range = if is_identical {

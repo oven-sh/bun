@@ -1,6 +1,7 @@
 import { spawn } from "bun";
-import { describe, expect, it, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir, tempDirWithFiles } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 describe.concurrent("bun info", () => {
@@ -233,12 +234,12 @@ describe.concurrent("bun info", () => {
         "error: No version of "is-number" satisfying "999.0.0" found
 
         Recent versions:
+        - 3.0.0
         - 4.0.0
         - 5.0.0
         - 6.0.0
         - 7.0.0
-        - 7.0.0
-          ... and 11 more
+          ... and 10 more
         "
       `);
       expect(code).toBe(1);
@@ -321,8 +322,8 @@ describe.concurrent("bun info", () => {
       expect(error).toBe("");
       expect(output).toMatchInlineSnapshot(`
         "[
-          "0.0.1-security",
           "0.0.0",
+          "0.0.1-security",
           "0.0.2"
         ]
         "
@@ -336,7 +337,7 @@ describe.concurrent("bun info", () => {
 
       expect(error).toBe("");
       expect(output).toMatchInlineSnapshot(`
-        "0.0.1-security
+        "0.0.0
         "
       `);
       expect(code).toBe(0);
@@ -398,6 +399,8 @@ describe.concurrent("bun info with control characters in the packument", () => {
         version: "1.0.0",
         license: "L" + hostile,
         description: "D" + hostile,
+        bin: { ["b" + hostile]: "cli.js" },
+        deprecated: "X" + hostile,
         dependencies: { ["dep" + hostile]: "^1" + hostile },
         dist: { tarball: "T" + hostile, shasum: "S" + hostile, integrity: "I" + hostile },
       },
@@ -434,6 +437,9 @@ describe.concurrent("bun info with control characters in the packument", () => {
       D<escaped>
       H<escaped>
       keywords: K<escaped>, plain
+      bin: b<escaped>
+
+      DEPRECATED ⚠️  - X<escaped>
 
       dependencies (1):
       - dep<escaped>: ^1<escaped>
@@ -464,6 +470,344 @@ describe.concurrent("bun info with control characters in the packument", () => {
     expect(stdout).toBe(`D${escapedMultiline}\n`);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  it.each([[["description", "license"]], [["dist"]]])("leaves no control character in %j", async fields => {
+    const { stdout, stderr, exitCode } = await view("pm", "view", "hostile", ...fields);
+
+    expect(stdout).toContain("PWNED");
+    expect(stdout).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f\u0080-\u009f]/);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("escapes the dist-tags listed for an unknown one", async () => {
+    const { stdout, stderr, exitCode } = await view("info", "hostile@nosuchtag");
+
+    expect(stdout).toBe("");
+    expect(stderr.replaceAll(escaped, "<escaped>")).toBe(
+      [
+        'error: Package "hostile" with tag "nosuchtag" not found, but package exists',
+        "",
+        "Tags:",
+        "- latest: 1.0.0",
+        "- tag<escaped>: 1.0.0",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+});
+
+// Everything below runs against an in-process stub registry, so the expected
+// output is exact and nothing touches the network.
+describe.concurrent("bun pm view (local registry)", () => {
+  const tgz = (name: string, v: string) => `http://127.0.0.1/${name}/-/${name}-${v}.tgz`;
+  const shasum = "0123456789abcdef0123456789abcdef01234567";
+  const byPublishOrder = (name: string, order: string[]) =>
+    Object.fromEntries(order.map(v => [v, { name, version: v, dist: { tarball: tgz(name, v), shasum } }]));
+  const packuments: Record<string, unknown> = {
+    "zz-basic": {
+      name: "zz-basic",
+      description: "basic package",
+      homepage: "https://zz.example/home",
+      license: "MIT",
+      readme: "# the readme",
+      readmeFilename: "README.md",
+      customRoot: "root-only",
+      keywords: ["alpha", "beta"],
+      maintainers: [
+        { name: "m-one", email: "one@zz.example" },
+        { name: "m-two", email: "two@zz.example" },
+      ],
+      "dist-tags": { latest: "2.0.0", next: "1.0.0" },
+      time: {
+        created: "2024-01-01T00:00:00.000Z",
+        modified: "2024-06-01T12:34:56.789Z",
+        "1.0.0": "2024-01-02T00:00:00.000Z",
+        "2.0.0": "2024-01-03T00:00:00.000Z",
+      },
+      versions: {
+        "1.0.0": {
+          name: "zz-basic",
+          version: "1.0.0",
+          description: "basic v1",
+          license: "MIT",
+          dist: { tarball: tgz("zz-basic", "1.0.0"), shasum },
+        },
+        "2.0.0": {
+          name: "zz-basic",
+          version: "2.0.0",
+          description: "basic package",
+          license: "MIT",
+          keywords: ["alpha", "beta"],
+          list: ["l0", "l1"],
+          flag: false,
+          maintainers: [
+            { name: "m-one", email: "one@zz.example" },
+            { name: "m-two", email: "two@zz.example" },
+          ],
+          repository: { type: "git", url: "git+https://zz.example/basic.git" },
+          exports: { ".": { import: "./i.mjs" }, "./package.json": "./package.json" },
+          bin: { zz: "cli.js", yy: "cli2.js" },
+          dependencies: { "left-pad": "^1.0.0" },
+          dist: { tarball: tgz("zz-basic", "2.0.0"), shasum },
+        },
+      },
+    },
+    // Root fields differ from the only version's fields (a proxy that does not hoist).
+    "zz-conflict": {
+      name: "zz-conflict",
+      description: "ROOT description",
+      homepage: "https://zz.example/root-home",
+      license: "GPL-3.0",
+      keywords: ["rootkw"],
+      "dist-tags": { latest: "1.0.0" },
+      versions: {
+        "1.0.0": {
+          name: "zz-conflict",
+          version: "1.0.0",
+          description: "VERSION description",
+          homepage: "https://zz.example/version-home",
+          license: { type: "ISC", url: "https://zz.example/license" },
+          keywords: ["verkw"],
+          bin: { conflict: "cli.js", other: "other.js" },
+          deprecated: "use something else",
+          dist: { tarball: tgz("zz-conflict", "1.0.0"), shasum },
+        },
+      },
+    },
+    "zz-nolicense": {
+      name: "zz-nolicense",
+      "dist-tags": { latest: "1.0.0" },
+      versions: byPublishOrder("zz-nolicense", ["1.0.0"]),
+    },
+    // Published out of semver order (a backport after a major).
+    "zz-many": {
+      name: "zz-many",
+      "dist-tags": { latest: "10.0.0" },
+      versions: byPublishOrder("zz-many", ["0.0.0", "1.0.0", "1.0.1", "10.0.0", "2.0.0", "9.0.0", "2.0.0-beta.1"]),
+    },
+  };
+
+  let server: ReturnType<typeof Bun.serve>;
+  let registry: string;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const doc = packuments[decodeURIComponent(new URL(req.url).pathname.replace(/^\/|\/$/g, ""))];
+        return doc ? Response.json(doc) : Response.json({ error: "Not found" }, { status: 404 });
+      },
+    });
+    registry = `http://127.0.0.1:${server.port}/`;
+  });
+  afterAll(() => server.stop(true));
+
+  async function view(args: string[], { name = "app" as string | null, command = ["pm", "view"] } = {}) {
+    using dir = tempDir("view-local", {
+      "cwd/.keep": "",
+      ...(name === null ? {} : { "cwd/package.json": JSON.stringify({ name }) }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...command, ...args],
+      cwd: join(String(dir), "cwd"),
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(readdirSync(join(String(dir), "cwd")).sort()).toEqual(name === null ? [".keep"] : [".keep", "package.json"]);
+    return { out, err, code };
+  }
+
+  test("prints every requested field, labelled when there is more than one", async () => {
+    expect(await view(["zz-basic", "name", "version"])).toEqual({
+      out: `name = "zz-basic"\nversion = "2.0.0"\n`,
+      err: "",
+      code: 0,
+    });
+    expect(await view(["zz-basic", "version", "keywords", "repository.url", "version"])).toEqual({
+      out: `version = "2.0.0"\nkeywords = ["alpha", "beta"]\nrepository.url = "git+https://zz.example/basic.git"\n`,
+      err: "",
+      code: 0,
+    });
+    expect(await view(["zz-basic", "name", "version", "--json"])).toEqual({
+      out: `{\n  "name": "zz-basic",\n  "version": "2.0.0"\n}\n`,
+      err: "",
+      code: 0,
+    });
+    expect(await view(["zz-basic", "--json", "name", "version"], { command: ["info"] })).toEqual({
+      out: `{\n  "name": "zz-basic",\n  "version": "2.0.0"\n}\n`,
+      err: "",
+      code: 0,
+    });
+  });
+
+  test("a field that does not exist is skipped; it is an error when nothing is left", async () => {
+    // One field left after skipping: printed bare, like a single field.
+    expect(await view(["zz-basic", "nonexistent", "version"])).toEqual({ out: "2.0.0\n", err: "", code: 0 });
+    // `false` is a value, not a missing field.
+    expect(await view(["zz-basic", "flag", "--json"])).toEqual({ out: "false\n", err: "", code: 0 });
+    expect(await view(["zz-basic", "nonexistent"])).toEqual({
+      out: "",
+      err: "error: Property nonexistent not found\n",
+      code: 1,
+    });
+    expect(await view(["zz-basic", "list[5]", "maintainers[0].nope"])).toEqual({
+      out: "",
+      err: "error: Property list[5] not found\nerror: Property maintainers[0].nope not found\n",
+      code: 1,
+    });
+    expect(await view(["zz-basic", "nonexistent", "nope", "--json"])).toEqual({
+      out: `{ "error": "Property not found", "version": "zz-basic", "property": "nonexistent" }\n`,
+      err: "",
+      code: 1,
+    });
+  });
+
+  test("an index composes with a property: maintainers[0].name", async () => {
+    expect(await view(["zz-basic", "maintainers[0].name"])).toEqual({ out: "m-one\n", err: "", code: 0 });
+    expect(await view(["zz-basic", "maintainers.1.email"])).toEqual({ out: "two@zz.example\n", err: "", code: 0 });
+    expect(await view(["zz-basic", "list.1"])).toEqual({ out: "l1\n", err: "", code: 0 });
+  });
+
+  test("a property after an array expands to one result per element", async () => {
+    expect(await view(["zz-basic", "maintainers.name"])).toEqual({
+      out: `maintainers[0].name = "m-one"\nmaintainers[1].name = "m-two"\n`,
+      err: "",
+      code: 0,
+    });
+    expect(await view(["zz-basic", "maintainers.name", "--json"])).toEqual({
+      out: `{\n  "maintainers[0].name": "m-one",\n  "maintainers[1].name": "m-two"\n}\n`,
+      err: "",
+      code: 0,
+    });
+    // Nothing to expand, one field left: printed bare.
+    expect(await view(["zz-conflict", "maintainers.name", "keywords"])).toEqual({
+      out: `["verkw"]\n`,
+      err: "",
+      code: 0,
+    });
+  });
+
+  test("bracket keys are literal and may contain dots", async () => {
+    expect(await view(["zz-basic", "exports[./package.json]"])).toEqual({ out: "./package.json\n", err: "", code: 0 });
+    expect(await view(["zz-basic", "exports[.].import"])).toEqual({ out: "./i.mjs\n", err: "", code: 0 });
+    expect(await view(["zz-basic", "time[1.0.0]"])).toEqual({ out: "2024-01-02T00:00:00.000Z\n", err: "", code: 0 });
+    expect(await view(["zz-basic", "dist-tags.next"])).toEqual({ out: "1.0.0\n", err: "", code: 0 });
+    expect(await view(["zz-basic", "list[]"])).toEqual({
+      out: "",
+      err: "error: Empty brackets are not valid syntax for retrieving values.\n",
+      code: 1,
+    });
+    expect(await view(["zz-basic", "name", "list[]", "--json"])).toEqual({
+      out: `{ "error": "Empty brackets are not valid syntax for retrieving values.", "version": "zz-basic", "property": "list[]" }\n`,
+      err: "",
+      code: 1,
+    });
+  });
+
+  test("the selected version comes with what the registry says about the whole package", async () => {
+    // Root-only keys are visible, version keys win, `readme` only when asked for.
+    expect(await view(["zz-basic@1.0.0", "description", "readmeFilename", "customRoot", "dist-tags.latest"])).toEqual({
+      out: `description = "basic v1"\nreadmeFilename = "README.md"\ncustomRoot = "root-only"\ndist-tags.latest = "2.0.0"\n`,
+      err: "",
+      code: 0,
+    });
+    expect(await view(["zz-basic", "readme"])).toEqual({ out: "# the readme\n", err: "", code: 0 });
+
+    const json = await view(["zz-basic@1.0.0", "--json"]);
+    expect(json.err).toBe("");
+    // Two-space indentation.
+    expect(json.out).toStartWith(`{\n  "name": "zz-basic",\n  "version": "1.0.0",\n  "description": "basic v1",\n`);
+    expect(JSON.parse(json.out)).toEqual({
+      name: "zz-basic",
+      version: "1.0.0",
+      description: "basic v1",
+      license: "MIT",
+      dist: { tarball: tgz("zz-basic", "1.0.0"), shasum },
+      versions: ["1.0.0", "2.0.0"],
+      homepage: "https://zz.example/home",
+      readmeFilename: "README.md",
+      customRoot: "root-only",
+      keywords: ["alpha", "beta"],
+      maintainers: (packuments["zz-basic"] as any).maintainers,
+      "dist-tags": { latest: "2.0.0", next: "1.0.0" },
+      time: (packuments["zz-basic"] as any).time,
+    });
+    expect(json.code).toBe(0);
+  });
+
+  test("the summary describes the selected version, not the packument root", async () => {
+    expect(await view(["zz-conflict"])).toEqual({
+      out: `zz-conflict@1.0.0 | ISC | deps: 0 | versions: 1
+VERSION description
+https://zz.example/version-home
+keywords: verkw
+bin: conflict, other
+
+DEPRECATED ⚠️  - use something else
+
+dist
+ .tarball: http://127.0.0.1/zz-conflict/-/zz-conflict-1.0.0.tgz
+ .shasum: ${shasum}
+
+dist-tags:
+latest: 1.0.0
+`,
+      err: "",
+      code: 0,
+    });
+    const v1 = await view(["zz-basic@1.0.0"]);
+    expect(v1.out.split("\n").slice(0, 2)).toEqual(["zz-basic@1.0.0 | MIT | deps: 0 | versions: 2", "basic v1"]);
+    const nolicense = await view(["zz-nolicense"]);
+    expect(nolicense.out.split("\n")[0]).toBe("zz-nolicense@1.0.0 | Proprietary | deps: 0 | versions: 1");
+  });
+
+  test("versions are sorted by semver, not publish order", async () => {
+    const json = await view(["zz-many", "versions", "--json"]);
+    expect({ ...json, out: JSON.parse(json.out) }).toEqual({
+      out: ["0.0.0", "1.0.0", "1.0.1", "2.0.0-beta.1", "2.0.0", "9.0.0", "10.0.0"],
+      err: "",
+      code: 0,
+    });
+    expect(await view(["zz-many", "versions[6]"])).toEqual({ out: "10.0.0\n", err: "", code: 0 });
+  });
+
+  test("the --json error objects stay flat", async () => {
+    expect(await view(["zz-basic@9.9.9", "--json"])).toEqual({
+      out: `{ "error": "No matching version found", "version": "zz-basic@9.9.9" }\n`,
+      err: "",
+      code: 1,
+    });
+    expect(await view(["zz-basic@notatag", "version", "--json"])).toEqual({
+      out: `{ "error": "Dist-tag not found", "version": "zz-basic@notatag" }\n`,
+      err: "",
+      code: 1,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/20673
+  test.each([[["pm", "view"]], [["info"]]])("%j runs without a package.json and creates nothing", async command => {
+    expect(await view(["zz-basic", "version"], { name: null, command })).toEqual({ out: "2.0.0\n", err: "", code: 0 });
+    // No name and nothing to infer it from.
+    expect(await view([], { name: null, command })).toEqual({
+      out: "",
+      err: "error: No package name was given and no package.json was found\n",
+      code: 1,
+    });
+    expect(await view(["--json"], { name: null, command })).toEqual({
+      out: `{ "error": "No package name was given and no package.json was found", "version": "" }\n`,
+      err: "",
+      code: 1,
+    });
+    // With one, it is the package viewed.
+    expect(await view([], { name: "zz-nolicense", command })).toMatchObject({
+      out: expect.stringMatching(/^zz-nolicense@1\.0\.0 /),
+      code: 0,
+    });
   });
 });
 
@@ -532,6 +876,184 @@ describe.concurrent("version ranges with prerelease tags longer than 8 bytes", (
   });
 });
 
+// The version part of `name@spec` resolves like `npm view`: a dist-tag with exactly that name wins, otherwise a
+// range picks the best published match. An unknown tag is an error; it is never handed to the range parser
+// (which skips unknown words and would match `latest`).
+describe.concurrent("bun info version spec", () => {
+  const packument = (name: string, tags: Record<string, string>, published: string[]) => ({
+    name,
+    "dist-tags": tags,
+    versions: Object.fromEntries(
+      published.map(v => [
+        v,
+        {
+          name,
+          version: v,
+          dist: { tarball: `http://localhost/${name}/-/${name}-${v}.tgz`, shasum: Buffer.alloc(40, "0").toString() },
+        },
+      ]),
+    ),
+  });
+  const packuments: Record<string, object> = {
+    // `v1-lts` (the Angular `vNN-lts` shape) reads as the range `1` to the spec classifier; it is a tag.
+    "zz-tags": packument("zz-tags", { latest: "2.0.0", next: "3.0.0", beta: "2.5.0", "v1-lts": "1.0.0" }, [
+      "1.0.0",
+      "1.5.0",
+      "2.0.0",
+      "2.5.0",
+      "3.0.0",
+    ]),
+    "zz-case": packument("zz-case", { latest: "1.0.0", Next: "2.0.0" }, ["1.0.0", "2.0.0"]),
+    "zz-dangling": packument("zz-dangling", { latest: "9.9.9", "v0-legacy": "0.5.0" }, ["1.0.0"]),
+    "zz-onlypre": packument("zz-onlypre", { latest: "1.0.0-beta.2" }, ["1.0.0-beta.1", "1.0.0-beta.2"]),
+  };
+  let server: ReturnType<typeof Bun.serve>;
+  let dir: string;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const body = packuments[decodeURIComponent(new URL(req.url).pathname).replace(/^\/+|\/+$/g, "")];
+        return body ? Response.json(body) : Response.json({ error: "Not found" }, { status: 404 });
+      },
+    });
+    dir = tempDirWithFiles("view-spec", { "package.json": JSON.stringify({ name: "app", version: "0.0.0" }) });
+  });
+  afterAll(() => server?.stop(true));
+
+  async function info(...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "info", ...args],
+      cwd: dir,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: server.url.origin, NPM_CONFIG_REGISTRY: server.url.origin, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([[["zz-tags@nosuchtag"]], [["zz-tags@nosuchtag", "version"]], [["zz-tags@nosuchtag", "dist.tarball"]]])(
+    "an unknown dist-tag is an error and lists the tags that exist: %p",
+    async args => {
+      const { stdout, stderr, exitCode } = await info(...args);
+      expect(stdout).toBe("");
+      expect(stderr).toMatchInlineSnapshot(`
+        "error: Package "zz-tags" with tag "nosuchtag" not found, but package exists
+
+        Tags:
+        - latest: 2.0.0
+        - next: 3.0.0
+        - beta: 2.5.0
+        - v1-lts: 1.0.0
+        "
+      `);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("an unknown dist-tag is an error with --json", async () => {
+    const { stdout, stderr, exitCode } = await info("zz-tags@nosuchtag", "version", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ error: "Dist-tag not found", version: "zz-tags@nosuchtag" });
+    expect(exitCode).toBe(1);
+  });
+
+  test("dist-tags are case-sensitive", async () => {
+    const lower = await info("zz-case@next", "version");
+    expect(lower.stdout).toBe("");
+    expect(lower.stderr).toStartWith(`error: Package "zz-case" with tag "next" not found, but package exists\n`);
+    expect(lower.exitCode).toBe(1);
+    const exact = await info("zz-case@Next", "version");
+    expect(exact.stderr).toBe("");
+    expect(exact.stdout).toBe("2.0.0\n");
+    expect(exact.exitCode).toBe(0);
+  });
+
+  // Same message as `bun add pkg@<tag>` for this state; the `Tags:` list under it shows where the tag points.
+  test.each([
+    [["zz-dangling"], "latest"],
+    [["zz-dangling@latest"], "latest"],
+    [["zz-dangling", "version"], "latest"],
+    [["zz-dangling@v0-legacy", "version"], "v0-legacy"],
+  ] as const)("a tag that points at an unpublished version is an error: %p", async (args, tag) => {
+    const { stdout, stderr, exitCode } = await info(...args);
+    expect(stdout).toBe("");
+    expect(stderr).toStartWith(`error: Package "zz-dangling" with tag "${tag}" not found, but package exists\n`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("known dist-tags, exact versions and ranges resolve", async () => {
+    const resolved: Record<string, string> = {};
+    for (const spec of [
+      "zz-tags",
+      "zz-tags@next",
+      "zz-tags@beta",
+      "zz-tags@v1-lts",
+      "zz-tags@3.0.0",
+      "zz-tags@v3.0.0",
+      "zz-tags@^1",
+      "zz-onlypre",
+    ]) {
+      const { stdout, stderr, exitCode } = await info(spec, "version");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      resolved[spec] = stdout.trim();
+    }
+    expect(resolved).toEqual({
+      "zz-tags": "2.0.0",
+      "zz-tags@next": "3.0.0",
+      "zz-tags@beta": "2.5.0",
+      // the tag, not the newest `1.x`
+      "zz-tags@v1-lts": "1.0.0",
+      "zz-tags@3.0.0": "3.0.0",
+      "zz-tags@v3.0.0": "3.0.0",
+      "zz-tags@^1": "1.5.0",
+      "zz-onlypre": "1.0.0-beta.2",
+    });
+  });
+
+  test.each(["github:a/b", "file:./zz-tags", "npm:other@1.0.0", "1.0.0.tgz"])(
+    "a spec that is neither a tag nor a range matches nothing: %s",
+    async spec => {
+      const { stdout, stderr, exitCode } = await info(`zz-tags@${spec}`, "version");
+      expect(stdout).toBe("");
+      expect(stderr).toStartWith(`error: No version of "zz-tags" satisfying "${spec}" found\n`);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("`Recent versions:` lists each published version once, newest last", async () => {
+    const release = await info("zz-tags@9.9.9", "version");
+    expect(release.stdout).toBe("");
+    expect(release.stderr).toMatchInlineSnapshot(`
+      "error: No version of "zz-tags" satisfying "9.9.9" found
+
+      Recent versions:
+      - 1.0.0
+      - 1.5.0
+      - 2.0.0
+      - 2.5.0
+      - 3.0.0
+      "
+    `);
+    expect(release.exitCode).toBe(1);
+    // Prereleases are listed only when nothing else was ever published.
+    const pre = await info("zz-onlypre@9.9.9", "version");
+    expect(pre.stdout).toBe("");
+    expect(pre.stderr).toMatchInlineSnapshot(`
+      "error: No version of "zz-onlypre" satisfying "9.9.9" found
+
+      Recent versions:
+      - 1.0.0-beta.1
+      - 1.0.0-beta.2
+      "
+    `);
+    expect(pre.exitCode).toBe(1);
+  });
+});
+
 // LSan's default conservative scan only flags the `send_sync` response-metadata
 // leak when no idle thread parks with a stale pointer in a callee-saved
 // register; excluding registers as roots makes the check deterministic.
@@ -545,7 +1067,7 @@ test.skipIf(!isASAN)(
         "0.0.1": {
           name: "leakpkg",
           version: "0.0.1",
-          dist: { tarball: "http://localhost/leakpkg-0.0.1.tgz", shasum: "0".repeat(40) },
+          dist: { tarball: "http://localhost/leakpkg-0.0.1.tgz", shasum: Buffer.alloc(40, "0").toString() },
         },
       },
       time: { "0.0.1": "2020-01-01T00:00:00.000Z" },

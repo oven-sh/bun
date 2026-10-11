@@ -308,7 +308,8 @@ pub mod dir_iterator {
             // literal matches <sys/dirent.h>.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             14 /* DT_WHT */ => EntryKind::Whiteout,
-            // DT_UNKNOWN: see `WrappedIterator::resolve_unknown_entry_types`.
+            // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
+            // provide d_type. Callers should lstatat() to resolve when needed.
             _ => EntryKind::Unknown,
         }
     }
@@ -746,8 +747,6 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         name_filter: Option<Vec<u16>>,
         state: State,
-        /// `lstat` entries the filesystem reports as `Unknown` (FUSE, NFS, XFS `ftype=0`).
-        pub resolve_unknown_entry_types: bool,
     }
     impl WrappedIterator {
         #[inline]
@@ -776,16 +775,6 @@ pub mod dir_iterator {
         /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
-            #[cfg(not(windows))] // The Windows iterator always knows the kind.
-            if self.resolve_unknown_entry_types {
-                let mut entry = self.state.next(self.dir)?;
-                if let Some(e) = entry.as_mut().filter(|e| e.kind == EntryKind::Unknown) {
-                    if let Ok(st) = super::lstatat(self.dir, e.name.as_zstr()) {
-                        e.kind = super::kind_from_mode(st.st_mode as super::Mode);
-                    }
-                }
-                return Ok(entry);
-            }
             self.state.next(self.dir)
         }
     }
@@ -797,7 +786,6 @@ pub mod dir_iterator {
                 dir,
                 name_filter: None,
                 state: State::new(),
-                resolve_unknown_entry_types: false,
             }
         }
         #[cfg(windows)]
@@ -805,7 +793,6 @@ pub mod dir_iterator {
             WrappedIterator {
                 dir,
                 state: State::new(),
-                resolve_unknown_entry_types: false,
             }
         }
     }
@@ -7160,13 +7147,10 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
-/// duplicate the syscall body.
+/// `NtQueryAttributesFile` on an NT-prefixed wide path relative to `dir`.
+/// Like `GetFileAttributesW`, a final-component reparse point is not followed.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
@@ -7202,16 +7186,34 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
         // `directory_exists_at()` branches on.
         return Err(Error::new(rc, Tag::access));
     }
+    Ok(basic_info.FileAttributes)
+}
+/// Attributes of the entry `sub` itself (a reparse point is not followed).
+#[cfg(windows)]
+pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Maybe<WindowsFileAttributes> {
+    use bun_windows_sys::externs as w;
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+    let dword = nt_query_attributes_at(dir, path)?;
+    Ok(WindowsFileAttributes {
+        is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+    })
+}
+/// Shared by the UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`)
+/// entry points.
+#[cfg(windows)]
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
+    use bun_windows_sys::externs as w;
+    let attrs = nt_query_attributes_at(dir, path)?;
     // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
     // marker (OneDrive sets it) and does not affect directory-ness; only
     // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
-    Ok(
-        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
-            ExistsAtType::Directory
-        } else {
-            ExistsAtType::File
-        },
-    )
+    Ok(if (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+        ExistsAtType::Directory
+    } else {
+        ExistsAtType::File
+    })
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {

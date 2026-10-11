@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/37830
 // Concurrent `bun x <pkg>` processes share one install directory
-// (<tmpdir>/bunx-<uid>-<pkg>@<ver>). With a cold cache they all installed
+// (<install cache>/.bunx-<uid>/<pkg>@<ver>). With a cold cache they all installed
 // into it at the same time and raced each other: some died with
 // "EEXIST/ENOENT: failed copying files from cache to destination", others
 // executed a half-written node_modules ("Cannot find module ...").
@@ -115,8 +115,8 @@ test("concurrent bunx spawns of the same package do not corrupt the shared insta
     },
   });
 
-  // A fresh temp dir gives this run its own bunx install dir
-  // (<tmpdir>/bunx-<uid>-pkg-37830@latest) and a cold install cache.
+  // A fresh install cache (on Windows: temp dir) gives this run its own bunx
+  // install dir, and the cache is cold.
   using tmp = tempDir("bunx-concurrent-tmp", {});
   using cache = tempDir("bunx-concurrent-cache", {});
   using cwd = tempDir("bunx-concurrent-cwd", {});

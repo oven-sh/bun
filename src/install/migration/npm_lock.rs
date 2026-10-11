@@ -764,6 +764,12 @@ impl<'a> Migrator<'a> {
                     && version_tag == DepTag::Folder
                     && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
+                if let Some((t, false)) = found
+                    && self.is_copied_folder(t)
+                {
+                    self.skip_copied_folder(t, name);
+                    continue;
+                }
                 if let Some((t, _)) = found
                     && is_local
                 {
@@ -962,6 +968,27 @@ impl<'a> Migrator<'a> {
         self.shadow(t);
     }
 
+    /// `npm install --install-links` copies a `file:` directory: an ordinary entry whose `resolved` is `file:<dir>`.
+    fn is_copied_folder(&self, t: u32) -> bool {
+        entry_object(&self.entries[t as usize])
+            .get(b"resolved")
+            .and_then(|resolved| resolved.as_str())
+            .is_some_and(|r| r.starts_with(b"file:") && DepTag::infer(r) == DepTag::Folder)
+    }
+
+    /// Which directory a dependency names is for its declarer's `file:` spec to say, not for the lockfile: the edge is
+    /// dropped, and the install resolves it like a dependency added after the lockfile was written.
+    fn skip_copied_folder(&mut self, t: u32, name: &[u8]) {
+        if !self.silent && !self.shadowed.is_set(t as usize) {
+            bun_core::warn!(
+                "skipped \"{}\" from {}: a folder npm copied (--install-links)",
+                bstr::BStr::new(name),
+                self.lockfile_name,
+            );
+        }
+        self.shadow(t);
+    }
+
     fn shadow(&mut self, j: u32) {
         if self.shadowed.is_set(j as usize) {
             return;
@@ -1065,28 +1092,7 @@ pub(super) fn apply_root_overrides(
     ) else {
         return Err(Error::InvalidPackageJSON);
     };
-    let json = parsed.root;
-    if json.as_property(b"overrides").is_none() && json.as_property(b"resolutions").is_none() {
-        return Ok(());
-    }
-
     let empty = WorkspaceMap::init();
     let names = workspace_map.unwrap_or(&empty);
-    let root_package = *this.packages.get(0);
-    let (mut builder, lf) = this.string_builder_split();
-    lf.overrides
-        .parse_count(manager, log, &source, names, json, &mut builder);
-    builder.allocate()?;
-    lf.overrides.parse_append(
-        manager,
-        lf.dependencies.as_slice(),
-        &root_package,
-        log,
-        &source,
-        names,
-        json,
-        &mut builder,
-    )?;
-    builder.clamp();
-    Ok(())
+    super::parse_root_overrides(this, manager, log, &source, parsed.root, names)
 }

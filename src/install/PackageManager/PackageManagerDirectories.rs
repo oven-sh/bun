@@ -390,40 +390,91 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 
 pub struct CacheDir {
     pub path: Vec<u8>,
+    /// Nothing names a cache directory: `path` is below the working directory, whoever owns that.
+    pub is_cwd_fallback: bool,
 }
 
 /// `ENAMETOOLONG` when the configured directory does not fit a `PathBuffer`.
+/// An empty variable counts as unset: `abs(&[b""])` is the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
     options: Option<&Options>,
 ) -> sys::Maybe<CacheDir> {
-    let parts: &[&[u8]] = if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
+    const CWD_FALLBACK: &[u8] = b"node_modules/.bun-cache";
+    let parts: &[&[u8]] = if let Some(dir) = env
+        .get(b"BUN_INSTALL_CACHE_DIR")
+        .filter(|dir| !dir.is_empty())
+    {
         &[dir]
     } else if let Some(dir) = options
         .map(|opts| opts.cache_directory)
         .filter(|dir| !dir.is_empty())
     {
         &[dir]
-    } else if let Some(dir) = env.get(b"BUN_INSTALL") {
+    } else if let Some(dir) = env.get(b"BUN_INSTALL").filter(|dir| !dir.is_empty()) {
         &[dir, b"install/", b"cache/"]
     } else if let Some(dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
+        .get_not_empty()
+        .or_else(|| env_var::HOME.get_not_empty())
     {
         &[dir, b".bun/", b"install/", b"cache/"]
     } else {
-        &[b"node_modules/.bun-cache"]
+        &[CWD_FALLBACK]
     };
 
     let mut buf = path::path_buffer_pool::get();
     let Some(abs) = FileSystem::instance().abs_buf_checked(parts, &mut buf[..]) else {
         return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(parts[0]));
     };
-    Ok(CacheDir { path: abs.to_vec() })
+    Ok(CacheDir {
+        path: abs.to_vec(),
+        is_cwd_fallback: parts[0] == CWD_FALLBACK,
+    })
 }
 
 // ─────────────────────── cached folder name printers ──────────────────────────
-//
+
+/// What a cache root entry (or an entry of a `@scope` directory) is, by name: what `bun pm cache prune`
+/// may delete. Every writer into the cache root is listed next to its variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheEntryKind {
+    /// `<name>@<version>...`, `@G@...`, `@GH@...`, `@T@...` (the printers below).
+    Package,
+    /// `@<scope>`: holds scoped `Package` and `Index` entries.
+    Scope,
+    /// `<name>/<version>...` symlinks to `Package` directories (`ExtractTarball::extract`).
+    Index,
+    /// `links/` (isolated installer), `<hex>.git` (`GitRunner`), `@t@`
+    /// (`RuntimeTranspilerCache`), `.<tmp>` staging, and non-directories
+    /// (`.npm` manifests, `bun-<os>-<arch>-v*` from `StandaloneModuleGraph`).
+    Other,
+}
+
+impl CacheEntryKind {
+    pub fn from_name(name: &[u8], kind: sys::EntryKind, in_scope: bool) -> CacheEntryKind {
+        if kind != sys::EntryKind::Directory || name.is_empty() || name[0] == b'.' {
+            return CacheEntryKind::Other;
+        }
+        if name[0] == b'@' {
+            if in_scope || name.starts_with(b"@t@") {
+                return CacheEntryKind::Other;
+            }
+            return if bun_core::strings::contains_char(&name[1..], b'@') {
+                CacheEntryKind::Package
+            } else {
+                CacheEntryKind::Scope
+            };
+        }
+        if bun_core::strings::contains_char(name, b'@') {
+            return CacheEntryKind::Package;
+        }
+        if name == b"links" || name.ends_with(b".git") {
+            return CacheEntryKind::Other;
+        }
+        CacheEntryKind::Index
+    }
+}
+
 // PERF: an earlier version used `core::fmt::write` over a `format_args!` of
 // `bun_fmt::s` / `hex_int_*` pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every

@@ -162,12 +162,16 @@ pub(crate) fn install_hoisted_packages(
     });
 
     // A partial install (security scanner) runs ahead of the real one and must not touch the layout.
+    // Without an explicit `hoisted`, `install_with_manager` came here because there is no store.
     let replacing_isolated_node_modules = packages_to_install.is_none()
+        && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
             .unwrap_or(false);
-    if replacing_isolated_node_modules {
-        crate::isolated_install::move_node_modules_aside(&this.lockfile);
-    }
+    let old_modules = if replacing_isolated_node_modules {
+        crate::isolated_install::move_node_modules_aside(&this.lockfile)
+    } else {
+        None
+    };
 
     // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
     // the packages could still not be in the cache dir
@@ -224,7 +228,10 @@ pub(crate) fn install_hoisted_packages(
         skip_delete = false;
     }
 
-    let mut summary = package_install::Summary::default();
+    let mut summary = package_install::Summary {
+        old_modules,
+        ..Default::default()
+    };
 
     {
         // BACKREF — `Tree::Iterator` borrows the four buffer slices,
@@ -274,10 +281,8 @@ pub(crate) fn install_hoisted_packages(
             buf_strings.as_slice(),
         );
 
-        #[cfg(unix)]
-        {
-            bin::Linker::ensure_umask();
-        }
+        // Outlives `installer`, whose bin queues point at it.
+        let direct_packages = bin::LinkOrder::direct_packages(&lockfile_ref)?;
 
         let mut installer: PackageInstaller = 'brk: {
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
@@ -402,8 +407,8 @@ pub(crate) fn install_hoisted_packages(
                     for _i in 0..trees_count {
                         trees.push(TreeContext {
                             binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
-                                dependencies: buf_deps,
-                                string_buf: buf_strings,
+                                lockfile: lockfile_ref,
+                                direct_packages: bun_ptr::BackRef::new(&direct_packages),
                             }),
                             pending_installs: Vec::new(),
                             install_count: 0,
@@ -600,21 +605,12 @@ pub(crate) fn install_hoisted_packages(
             return Err(crate::Error::InstallFailed);
         }
 
-        // `replace` with a fresh empty so `installer` stays whole
-        // for the `link_remaining_bins` / `complete_remaining_scripts` calls
-        // below. Route through `installer.summary` because `summary` itself is
-        // exclusively borrowed by `installer` for this scope.
-        {
-            let taken = core::mem::replace(
-                &mut installer.successfully_installed,
-                Bitset::init_empty(0)?,
-            );
-            installer.summary.successfully_installed = Some(taken);
-        }
-
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
         installer.link_remaining_bins(log_level);
+        // Bin linking reads `successfully_installed`, so the summary takes it after.
+        installer.summary.successfully_installed =
+            Some(core::mem::take(&mut installer.successfully_installed));
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.

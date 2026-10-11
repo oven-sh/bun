@@ -319,7 +319,7 @@ pub enum LockfileFormat {
 }
 
 impl LockfileFormat {
-    pub(crate) fn filename(self) -> &'static ZStr {
+    pub fn filename(self) -> &'static ZStr {
         match self {
             LockfileFormat::Text => zstr!("bun.lock"),
             LockfileFormat::Binary => zstr!("bun.lockb"),
@@ -419,7 +419,7 @@ impl<'a> LoadResult<'a> {
         }
     }
 
-    pub(crate) fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
+    pub fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
         match self {
             LoadResult::NotFound => {
                 // saving a lockfile for a new project. default to text lockfile
@@ -1502,7 +1502,9 @@ impl<'a> Cloner<'a> {
         let dependencies = self.lockfile.buffers.dependencies.as_slice();
         let index = self.weak_peers.iter().position(|peer| {
             self.mapping[peer.old_resolution as usize] == invalid_package_id
-                && !dependencies[peer.resolve_id as usize].behavior.is_optional_peer()
+                && !dependencies[peer.resolve_id as usize]
+                    .behavior
+                    .is_optional_peer()
                 && (self.lockfile)
                     .packages_named(name_hashes[peer.old_resolution as usize])
                     .is_empty()
@@ -1666,8 +1668,11 @@ pub(crate) type PendingResolutions = Vec<PendingResolution>;
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
+    /// `FILL_INTEGRITY`: take the registry manifest's integrity for npm packages the migrated lockfile had none for
+    /// (yarn berry records a checksum of its own zip archive, not of the tarball).
     pub(crate) fn fetch_necessary_package_metadata_after_yarn_or_pnpm_migration<
         const UPDATE_OS_CPU: bool,
+        const FILL_INTEGRITY: bool,
     >(
         &mut self,
         manager: &mut PackageManager,
@@ -1800,6 +1805,26 @@ impl Lockfile {
                         }
                         if pkg_meta.libc == Npm::Libc::NONE {
                             pkg_meta.libc = pkg.package.libc;
+                        }
+                    }
+                    // Only when the tarball is the one the manifest describes: under the registry it was
+                    // fetched from, or its recorded `dist.tarball`. A fresh resolve records the same value.
+                    if FILL_INTEGRITY
+                        && !pkg_meta.integrity.tag.is_supported()
+                        && pkg.package.integrity.tag.is_supported()
+                    {
+                        let url = pkg_res
+                            .npm()
+                            .url
+                            .slice(self.buffers.string_bytes.as_slice());
+                        if url.is_empty()
+                            || bun_lock::url_is_under_registry(
+                                url,
+                                &crate::yarn_berry::registry_without_auth(scope.url.href()),
+                            )
+                            || url == pkg.package.tarball_url.slice(&manifest.string_buf)
+                        {
+                            pkg_meta.integrity = pkg.package.integrity;
                         }
                     }
                 }

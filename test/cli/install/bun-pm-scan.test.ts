@@ -146,6 +146,106 @@ describe.concurrent("bun pm scan", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("scanner receives every kind of dependency, without the credentials in their URLs", async () => {
+      const commit = "d1bea82fe75aef4c0f63d535f40de4095c846f0d";
+      const dependencies = {
+        "folder-dep": "file:./folder-dep",
+        "git-https": "git+https://x-access-token:s3cret@example.com/org/repo.git?token=s3cret#main",
+        "git-ssh": "git+ssh://git@example.com/org/repo.git#main",
+        "github-dep": "github:user/repo#main",
+        "linked-dep": "link:linked-dep",
+        "local-tarball": "./local-tarball.tgz",
+        "member": "workspace:*",
+        "remote-tarball": "https://user:s3cret@example.com/remote-tarball.tgz?token=s3cret",
+      };
+      await using dir = tempDir("scan-every-kind", {
+        "package.json": JSON.stringify({ name: "test-app", workspaces: ["member"], dependencies }),
+        "member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: {
+            "": { name: "test-app", dependencies },
+            "member": { name: "member", version: "1.0.0" },
+          },
+          packages: {
+            "folder-dep": ["folder-dep@file:folder-dep", {}],
+            "git-https": [
+              `git-https@git+https://x-access-token:s3cret@example.com/org/repo.git?token=s3cret#${commit}`,
+              {},
+              commit,
+            ],
+            "git-ssh": [`git-ssh@git+ssh://git@example.com/org/repo.git#${commit}`, {}, commit],
+            "github-dep": ["github-dep@github:user/repo#abc1234", {}, "user-repo-abc1234"],
+            "linked-dep": ["linked-dep@link:linked-dep", {}],
+            "local-tarball": ["local-tarball@./local-tarball.tgz", {}],
+            "member": ["member@workspace:member"],
+            "remote-tarball": ["remote-tarball@https://user:s3cret@example.com/remote-tarball.tgz?token=s3cret", {}],
+          },
+        }),
+        "bunfig.toml": scannerBunfig,
+        "scanner.js": `
+          module.exports = {
+            scanner: {
+              version: "1",
+              scan: async function(payload) {
+                console.error("PACKAGES:" + JSON.stringify(payload.packages));
+                return [];
+              }
+            }
+          };
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "scan"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, GITHUB_API_URL: "https://user:s3cret@github.example.com/api/" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const line = stderr.split("\n").find(l => l.startsWith("PACKAGES:"));
+      expect(line, stderr).toBeDefined();
+      const packages: Bun.Security.Package[] = JSON.parse(line!.slice("PACKAGES:".length));
+      expect(packages.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+        { name: "folder-dep", version: "file:folder-dep", requestedRange: "file:./folder-dep", tarball: "" },
+        {
+          name: "git-https",
+          version: `git+https://example.com/org/repo.git#${commit}`,
+          requestedRange: "git+https://example.com/org/repo.git#main",
+          tarball: "",
+        },
+        {
+          name: "git-ssh",
+          version: `git+ssh://example.com/org/repo.git#${commit}`,
+          requestedRange: "git+ssh://example.com/org/repo.git#main",
+          tarball: "",
+        },
+        {
+          name: "github-dep",
+          version: "github:user/repo#abc1234",
+          requestedRange: "github:user/repo#main",
+          tarball: "https://github.example.com/api/repos/user/repo/tarball/abc1234",
+        },
+        { name: "linked-dep", version: "link:linked-dep", requestedRange: "link:linked-dep", tarball: "" },
+        {
+          name: "local-tarball",
+          version: "./local-tarball.tgz",
+          requestedRange: "./local-tarball.tgz",
+          tarball: "./local-tarball.tgz",
+        },
+        {
+          name: "remote-tarball",
+          version: "https://example.com/remote-tarball.tgz",
+          requestedRange: "https://example.com/remote-tarball.tgz",
+          tarball: "https://example.com/remote-tarball.tgz",
+        },
+      ]);
+      expect(stdout).toContain("No advisories found");
+      expect(exitCode).toBe(0);
+    });
+
     test("scanner version validation", async () => {
       await using dir = tempDir("scan-version-check", {
         "package.json": leftPadPkg,

@@ -1,7 +1,8 @@
 import { file, gunzipSync, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { chmod, exists, lstat, readdir, rm, symlink, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -16,6 +17,7 @@ import {
   tempDir,
   unprivilegedSpawnOptions,
 } from "harness";
+import { constants } from "os";
 import { join } from "path";
 
 // Runs `bun pm pack` for the package in `dir`, from `cwd`.
@@ -2389,6 +2391,206 @@ describe.concurrent("bundledDependencies", () => {
 
     expect(tarballEntries(join(dir, "pack-bundled-dep-not-dir-4.5.6.tgz"))).toEqual(["package/package.json"]);
   });
+
+  // No key is `name` or `@scope/name`. Without the check, each of the first eight opens a directory
+  // that is there. `\` is a separator on Windows only, and a NUL ends the path that the OS gets.
+  test.each([
+    "../../outside",
+    "other/lib",
+    "",
+    ".",
+    "..",
+    "@scope",
+    ".bin",
+    "@scope/.hidden",
+    "..\\..\\outside",
+    "x\\..\\..\\..\\outside",
+    "other\\lib",
+    "other\u0000x",
+    "C:/Users/Public",
+  ])("a dependency key of a bundled dependency that is not a package name is not looked up: %j", async key => {
+    using dir = tempDir("pack-bundled-dep-key", {
+      "outside/secret.txt": "not in the package",
+      "pkg/package.json": JSON.stringify({
+        name: "pack-bundled-dep-key",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "pkg/node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: { [key]: "1.0.0" },
+      }),
+      "pkg/node_modules/other/lib/index.js": indexJs,
+      "pkg/node_modules/@scope/.hidden/index.js": indexJs,
+      "pkg/node_modules/.bin/tool": "#!/usr/bin/env bun\n",
+    });
+    const pkg = join(dir, "pkg");
+
+    const { out, err, exitCode } = await runPack(pkg);
+    expect(err).toBe("");
+    expect(out.split("\n").filter(line => line.startsWith("bundled "))).toEqual(["bundled dep1"]);
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(pkg, "pack-bundled-dep-key-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
+  });
+
+  test("a dependency key of a bundled dependency can have capital letters", async () => {
+    using dir = tempDir("pack-bundled-dep-capitals", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-capitals",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: { JSONStream: "1.3.5", "@Scope/Name": "1.0.0" },
+      }),
+      "node_modules/JSONStream/package.json": JSON.stringify({ name: "JSONStream", version: "1.3.5" }),
+      "node_modules/@Scope/Name/package.json": JSON.stringify({ name: "@Scope/Name", version: "1.0.0" }),
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bundled-dep-capitals-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/@Scope/Name/package.json",
+      "package/node_modules/JSONStream/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
+  });
+
+  test("a dependency of a bundled dependency that is not there is left out", async () => {
+    using dir = tempDir("pack-bundled-dep-absent", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-absent",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: {
+          "never-installed": "1.0.0",
+          "a-file": "1.0.0",
+          // longer than a directory entry can be
+          [Buffer.alloc(300, "a").toString()]: "1.0.0",
+        },
+      }),
+      "node_modules/dep1/node_modules/a-file": "not a directory",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bundled-dep-absent-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
+  });
+
+  test.skipIf(isWindows)("bundled dependencies that link to each other end the lookup", async () => {
+    using dir = tempDir("pack-bundled-dep-cycle", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-cycle",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: { dep2: "1.0.0" },
+      }),
+      "node_modules/dep1/node_modules": {},
+      "node_modules/dep2/package.json": JSON.stringify({
+        name: "dep2",
+        version: "1.0.0",
+        dependencies: { dep1: "1.0.0" },
+      }),
+      "node_modules/dep2/node_modules": {},
+    });
+    await symlink("../../dep2", join(dir, "node_modules", "dep1", "node_modules", "dep2"));
+    await symlink("../../dep1", join(dir, "node_modules", "dep2", "node_modules", "dep1"));
+
+    // Each level goes through one more link. The lookup ends where the OS refuses the path (ELOOP).
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bundled-dep-cycle-1.0.0.tgz"))).toEqual(
+      expect.arrayContaining([
+        "package/node_modules/dep1/package.json",
+        "package/node_modules/dep1/node_modules/dep2/package.json",
+      ]),
+    );
+  });
+
+  // What `bun install` makes of a workspace that is a dependency.
+  test.skipIf(isWindows)("a scoped bundled dependency that is a link is followed", async () => {
+    using dir = tempDir("pack-bundled-dep-scoped-link", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-scoped-link",
+        version: "1.0.0",
+        bundledDependencies: ["@acme/core"],
+      }),
+      "node_modules/@acme": {},
+      "packages/core/package.json": JSON.stringify({ name: "@acme/core", version: "1.0.0" }),
+      ".npmignore": "packages",
+    });
+    await symlink("../../packages/core", join(dir, "node_modules", "@acme", "core"));
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bundled-dep-scoped-link-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/@acme/core/package.json",
+    ]);
+  });
+
+  // The lookup keeps every directory it found open. Before, the ones past the limit were left out: `Bundled deps: 190`, exit 0.
+  test.skipIf(isWindows)("running out of file descriptors is an error", async () => {
+    const names = Array.from({ length: 299 }, (_, i) => `d${i}`);
+    using dir = tempDir("pack-bundled-dep-emfile", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-dep-emfile",
+        version: "1.0.0",
+        bundledDependencies: ["dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.0.0",
+        dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+      }),
+      ...Object.fromEntries(
+        names.map(name => [
+          `node_modules/dep1/node_modules/${name}/package.json`,
+          JSON.stringify({ name, version: "1.0.0" }),
+        ]),
+      ),
+    });
+
+    await using proc = spawn({
+      cmd: ["sh", "-c", 'ulimit -n 200 && exec "$0" pm pack', bunExe()],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toMatch(/^EMFILE: failed to open directory "node_modules\/dep1\/node_modules\/d\d+" for packing\n$/);
+    expect(await sortedNames(dir)).toEqual(["node_modules", "package.json"]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe.concurrent("files", () => {
@@ -2843,6 +3045,39 @@ describe.concurrent("files", () => {
       { "pathname": "package/dist/index.js" },
     ]);
   });
+
+  test("leading **/ with a multi-segment pattern matches at any depth", async () => {
+    using dir = tempDir("pack-files-doublestar-path", {
+      "package.json": JSON.stringify({
+        name: "pack-files-doublestar-path",
+        version: "1.0.0",
+        files: ["**/build/out.js", "src", "!**/__tests__/**", "!**/lib/skip.js"],
+      }),
+      "build/out.js": "x",
+      "build/other.js": "x",
+      "sub/build/out.js": "x",
+      "a/b/build/out.js": "x",
+      "out.js": "x",
+      "src/index.js": "x",
+      "src/__tests__/a.test.js": "x",
+      "src/lib/__tests__/b.test.js": "x",
+      "src/lib/b.js": "x",
+      "src/lib/skip.js": "x",
+      "src/vendor/lib/skip.js": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-files-doublestar-path-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/a/b/build/out.js",
+      "package/build/out.js",
+      "package/src/index.js",
+      "package/src/lib/b.js",
+      "package/sub/build/out.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent(".gitignore/.npmignore", () => {
@@ -2943,6 +3178,262 @@ describe.concurrent(".gitignore/.npmignore", () => {
     expect(exitCode).toBe(0);
 
     expect(tarballEntries(join(dir, "pack-ignore-2-1.2.1.tgz"))).toEqual(["package/package.json"]);
+  });
+
+  test.each([".gitignore", ".npmignore"])(
+    "leading **/ with a multi-segment pattern matches at any depth (%s)",
+    async ignoreFile => {
+      using dir = tempDir("pack-ignore-doublestar-path", {
+        "package.json": JSON.stringify({ name: "pack-ignore-doublestar-path", version: "1.0.0" }),
+        [ignoreFile]: "**/docs/internal.md\n**/fixtures/tmp/\n**/__tests__/**\n",
+        "keep.js": "keep",
+        "docs/internal.md": "x",
+        "docs/public.md": "x",
+        "sub/docs/internal.md": "x",
+        "sub/fixtures/tmp/file.txt": "x",
+        "sub/fixtures/tmp.txt": "x",
+        "__tests__/root.test.js": "x",
+        "src/__tests__/a.test.js": "x",
+        "src/lib/__tests__/b.test.js": "x",
+        "src/lib/index.js": "x",
+      });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(tarballEntries(join(dir, "pack-ignore-doublestar-path-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/docs/public.md",
+        "package/keep.js",
+        "package/src/lib/index.js",
+        "package/sub/fixtures/tmp.txt",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("leading **/ in a nested ignore file is relative to that file", async () => {
+    using dir = tempDir("pack-ignore-doublestar-nested", {
+      "package.json": JSON.stringify({ name: "pack-ignore-doublestar-nested", version: "1.0.0" }),
+      "config/local.json": "outside of sub: kept",
+      "sub/.npmignore": "**/config/local.json\n",
+      "sub/config/local.json": "x",
+      "sub/a/config/local.json": "x",
+      "sub/a/config/shared.json": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-ignore-doublestar-nested-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/config/local.json",
+      "package/sub/a/config/shared.json",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a bare **/ ignores every directory", async () => {
+    using dir = tempDir("pack-ignore-doublestar-bare", {
+      "package.json": JSON.stringify({ name: "pack-ignore-doublestar-bare", version: "1.0.0" }),
+      ".npmignore": "**/\n",
+      "index.js": indexJs,
+      "a/b.js": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-ignore-doublestar-bare-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([".gitignore", ".npmignore"])(
+    "negated leading **/ with a multi-segment pattern un-ignores at any depth (%s)",
+    async ignoreFile => {
+      using dir = tempDir("pack-ignore-doublestar-negated", {
+        "package.json": JSON.stringify({ name: "pack-ignore-doublestar-negated", version: "1.0.0" }),
+        [ignoreFile]: "**/build/*.js\n!**/build/keep.js\n",
+        "keep.js": "keep",
+        "build/out.js": "x",
+        "build/keep.js": "x",
+        "build/readme.txt": "x",
+        "sub/build/out.js": "x",
+        "sub/build/keep.js": "x",
+        "a/b/build/out.js": "x",
+        "a/b/build/other.js": "x",
+      });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(tarballEntries(join(dir, "pack-ignore-doublestar-negated-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/build/keep.js",
+        "package/build/readme.txt",
+        "package/keep.js",
+        "package/sub/build/keep.js",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each([".gitignore", ".npmignore"])("trailing spaces are trimmed unless escaped (%s)", async ignoreFile => {
+    using dir = tempDir("pack-ignore-trailing-space", {
+      "package.json": JSON.stringify({ name: "pack-ignore-trailing-space", version: "1.0.0" }),
+      [ignoreFile]: "secrets   \nnotes.txt \nspaced\\ \n",
+      "index.js": indexJs,
+      "secrets/prod.env": "TOKEN=abc",
+      "notes.txt": "notes",
+      // Windows cannot create a file name that ends in a space.
+      ...(isWindows ? {} : { "spaced ": "has a trailing space in its name" }),
+      "spaced": "no trailing space",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-ignore-trailing-space-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+      "package/spaced",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // git's add_patterns_from_buffer() skips a UTF-8 BOM before it splits lines
+  test.each([".gitignore", ".npmignore"])("skips a UTF-8 BOM at the start of %s", async ignoreFile => {
+    using dir = tempDir("pack-ignore-bom", {
+      "package.json": JSON.stringify({ name: "pack-ignore-bom", version: "1.0.0" }),
+      [ignoreFile]: "﻿secrets/\n*.log\n",
+      "secrets/token.txt": "secret",
+      "debug.log": "log",
+      "index.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-ignore-bom-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/15602
+  describe("a negation re-includes files below an excluded directory", () => {
+    async function packed(ignoreFile: string, ignore: string, files: Record<string, string>) {
+      using dir = tempDir("pack-ignore-negation", {
+        "package.json": JSON.stringify({ name: "pack-ignore-negation", version: "0.0.7" }),
+        [ignoreFile]: ignore,
+        ...files,
+      });
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+      return tarballEntries(join(dir, "pack-ignore-negation-0.0.7.tgz")).map(entry => entry.slice("package/".length));
+    }
+
+    const dist = {
+      "dist/cli.js": "a",
+      "dist/sub/deep.js": "b",
+      "dist/lib/foo.js": "c",
+      "src/index.ts": "d",
+      "src/keep.js": "e",
+      "keep.js": "f",
+    };
+
+    // Every list is what `npm pack` packs for the same .npmignore.
+    test.each([
+      ["*\n!dist/**\n", ["dist/cli.js", "dist/lib/foo.js", "dist/sub/deep.js"]],
+      ["*\n!dist/*\n", ["dist/cli.js"]],
+      ["*\n!dist/**/*\n", ["dist/cli.js", "dist/lib/foo.js", "dist/sub/deep.js"]],
+      ["*\n!dist/lib/foo.js\n", ["dist/lib/foo.js"]],
+      ["*\n!*/keep.js\n", ["src/keep.js"]],
+      ["*\n!**/keep.js\n", ["keep.js", "src/keep.js"]],
+      ["*\n!dist/**\ndist/sub\n", ["dist/cli.js", "dist/lib/foo.js"]],
+      // these packed the same before
+      ["*\n!dist\n", []],
+      ["*\n!keep.js\n", ["keep.js"]],
+      ["*\n!dist\n!dist/**/*\n", ["dist/cli.js", "dist/lib/foo.js", "dist/sub/deep.js"]],
+    ])("%j", async (ignore, expected) => {
+      expect(await packed(".npmignore", ignore, dist)).toEqual(["package.json", ...expected]);
+    });
+
+    const secrets = {
+      "index.js": indexJs,
+      "secrets/keep.js": "named by the negation",
+      "secrets/token.txt": "not named by anything",
+      "secrets/deep/keep.js": "x",
+      "secrets/deep/token.txt": "x",
+    };
+
+    // The directory is excluded by a rule that does not match its files. npm forgets that rule once a negation makes
+    // it walk the directory, and packs every token.txt below. git never looks below an excluded directory, so
+    // negations like these sit in real .gitignore files without effect. Only what a negation names is packed.
+    describe.each([".npmignore", ".gitignore"])("the rest of the directory stays excluded (%s)", ignoreFile => {
+      test.each([
+        ["secrets/\n!secrets/keep.js\n", ["secrets/keep.js"]],
+        ["secrets\n!secrets/keep.js\n", ["secrets/keep.js"]],
+        ["secrets/\n!**/*.js\n", ["secrets/deep/keep.js", "secrets/keep.js"]],
+        ["secrets/\n!secrets/deep/keep.js\n", ["secrets/deep/keep.js"]],
+        // the negation names the directory, so all of it is back
+        ["secrets/\n!secrets/deep/\n", ["secrets/deep/keep.js", "secrets/deep/token.txt"]],
+        ["secrets/\n!secrets/deep/**\n", ["secrets/deep/keep.js", "secrets/deep/token.txt"]],
+        // the last rule that matches wins
+        ["!secrets/keep.js\nsecrets/\n", []],
+        ["secrets/\n!secrets/keep.js\nkeep.js\n", []],
+      ])("%j", async (ignore, expected) => {
+        expect(await packed(ignoreFile, ignore, secrets)).toEqual(["package.json", "index.js", ...expected]);
+      });
+    });
+
+    test("in the ignore file of a subdirectory", async () => {
+      expect(
+        await packed("sub/.npmignore", "build/\n!build/out/**\n", {
+          "index.js": indexJs,
+          "sub/build/tmp.txt": "x",
+          "sub/build/out/a.js": "x",
+          "build/tmp.txt": "the rule of sub does not reach here",
+        }),
+      ).toEqual(["package.json", "build/tmp.txt", "index.js", "sub/build/out/a.js"]);
+    });
+
+    test("the ignore file of a directory that no negation reaches is not read", async () => {
+      expect(
+        await packed(".npmignore", "secrets/\n!secrets/keep.js\n", {
+          ...secrets,
+          "secrets/deep/.npmignore": "!token.txt\n",
+        }),
+      ).toEqual(["package.json", "index.js", "secrets/keep.js"]);
+    });
+
+    test('below a directory that "files" includes', async () => {
+      using dir = tempDir("pack-ignore-negation-files", {
+        "package.json": JSON.stringify({ name: "pack-ignore-negation-files", version: "1.0.0", files: ["lib"] }),
+        "lib/.npmignore": "secrets/\n!secrets/keep.js\n",
+        "lib/index.js": indexJs,
+        "lib/secrets/keep.js": "x",
+        "lib/secrets/token.txt": "x",
+      });
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(tarballEntries(join(dir, "pack-ignore-negation-files-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/lib/index.js",
+        "package/lib/secrets/keep.js",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test(".git and .npmrc stay out", async () => {
+      expect(
+        await packed(".npmignore", "conf/\n!conf/**\n", {
+          "index.js": indexJs,
+          "conf/a.json": "x",
+          "conf/.npmrc": "//registry/:_authToken=secret",
+          "conf/.git/config": "x",
+        }),
+      ).toEqual(["package.json", "conf/a.json", "index.js"]);
+    });
   });
 });
 
@@ -3529,6 +4020,248 @@ describe.concurrent("bins", () => {
     expect(entryNames(tarball)).toEqual(["package/package.json", ...bins, "package/index.js"]);
     expect(tarball.entries.filter(entry => (entry.perm & 0o111) !== 0).map(entry => entry.pathname)).toEqual(bins);
   });
+
+  // Nothing re-includes `.git` and `.npmrc`: not "files", and not a bin either.
+  test.each([
+    { bin: ".npmrc" },
+    { bin: { a: "./conf/.npmrc" } },
+    { bin: ".git/config" },
+    { bin: { a: "sub/.git/hooks/pre-commit", b: "index.js" } },
+    { directories: { bin: ".git/hooks" } },
+    { directories: { bin: "sub/.git" } },
+  ])("%j does not pack .git or .npmrc", async fields => {
+    using dir = tempDir("pack-bins-never-packed", {
+      "package.json": JSON.stringify({ name: "pack-bins-never-packed", version: "1.0.0", ...fields }),
+      "index.js": indexJs,
+      ".npmrc": "//registry.example/:_authToken=secret",
+      "conf/.npmrc": "//registry.example/:_authToken=secret",
+      ".git/config": "[remote]",
+      ".git/hooks/pre-commit": "#!/bin/sh",
+      "sub/.git/hooks/pre-commit": "#!/bin/sh",
+    });
+
+    const dryRun = await runPack(dir, ["--dry-run"]);
+    expect(dryRun.err).toBe("");
+    expect(dryRun.out).toContain("Total files: 2");
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-bins-never-packed-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // longer than a directory entry can be
+  const tooLong = Buffer.alloc(300, "a").toString();
+  test.each([
+    { what: "a bin that is not there", fields: { bin: "missing.js" } },
+    { what: "a bin below a file", fields: { bin: "index.js/cli.js" } },
+    { what: "a bin with a name of 300 bytes", fields: { bin: tooLong } },
+    { what: "a directories.bin that is not there", fields: { directories: { bin: "missing" } } },
+    { what: "a directories.bin that is a file", fields: { directories: { bin: "index.js" } } },
+    { what: "a directories.bin with a name of 300 bytes", fields: { directories: { bin: tooLong } } },
+  ])("$what is left out", async ({ fields }) => {
+    const folder = (index: string) => ({
+      "package.json": JSON.stringify({ name: "pack-bins-absent", version: "1.0.0", ...fields }),
+      "index.js": index,
+    });
+    using dir = tempDir("pack-bins-absent", { a: folder(indexJs), b: folder("console.log('changed')") });
+
+    const dryRun = await runPack(join(dir, "a"), ["--dry-run"]);
+    expect(dryRun.err).toBe("");
+    expect(dryRun.out).toContain("Total files: 2");
+    expect(dryRun.exitCode).toBe(0);
+
+    const { out, err, exitCode } = await runPack(join(dir, "a"));
+    expect(err).toBe("");
+    expect(out).toContain("Total files: 2");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "a", "pack-bins-absent-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    await rm(join(dir, "a", "pack-bins-absent-1.0.0.tgz"));
+
+    // `bun pm diff` reads a folder as pack would publish it.
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b", "--name-only"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [stdout, stderr, diffExitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(line => /^[AMD] /.test(line))).toEqual(["M index.js"]);
+    expect(diffExitCode).toBe(0);
+  });
+});
+
+// `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
+// there, so the scan must not continue as if it was not.
+describe.concurrent.skipIf(isWindows)("an entry that is there and does not open", () => {
+  // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
+  async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
+    using unprivileged = unprivilegedSpawnOptions(dir);
+    const path = join(dir, locked);
+    const { mode } = await lstat(path);
+    await chmod(path, 0o000);
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        // `bun publish` stops early when it has no credentials. Nothing listens on port 1.
+        env: { ...bunEnv, npm_config_registry: "http://user:password@127.0.0.1:1/" },
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: normalizeBunSnapshot(stdout, dir), err: normalizeBunSnapshot(stderr, dir), exitCode };
+    } finally {
+      await chmod(path, mode & 0o777);
+    }
+  }
+
+  async function tarballs(dir: string) {
+    return (await readdir(dir)).filter(name => name.endsWith(".tgz"));
+  }
+
+  const manifest = (name: string, fields: object = {}) => JSON.stringify({ name, version: "1.0.0", ...fields });
+  const bundlesDep1 = manifest("pack-locked", { bundledDependencies: ["dep1"] });
+
+  test.each([
+    {
+      // Before, the hoisted copy, another version, was bundled in its place.
+      what: "the nested copy of a dependency of a bundled dependency",
+      locked: "node_modules/dep1/node_modules/dep3",
+      failsOn: "node_modules/dep1/node_modules/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { dep3: "3.3.3" } }),
+        "node_modules/dep1/node_modules/dep3/package.json": manifest("dep3", { version: "3.3.3" }),
+        "node_modules/dep3/package.json": manifest("dep3", { version: "9.9.9" }),
+      },
+    },
+    {
+      what: "the hoisted copy of a dependency of a bundled dependency",
+      locked: "node_modules/dep3",
+      failsOn: "node_modules/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { dep3: "3.3.3" } }),
+        "node_modules/dep3/package.json": manifest("dep3", { version: "3.3.3" }),
+      },
+    },
+    {
+      // A nested copy can be in it. npm takes the hoisted copy here.
+      what: "the node_modules of a bundled dependency",
+      locked: "node_modules/dep1/node_modules",
+      failsOn: "node_modules/dep1/node_modules/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { dep3: "3.3.3" } }),
+        "node_modules/dep1/node_modules": {},
+        "node_modules/dep3/package.json": manifest("dep3", { version: "3.3.3" }),
+      },
+    },
+    {
+      what: "the scope of a bundled dependency",
+      locked: "node_modules/@scope",
+      failsOn: "node_modules/@scope",
+      tree: {
+        "package.json": manifest("pack-locked", { bundledDependencies: ["@scope/dep", "plain"] }),
+        "node_modules/@scope/dep/package.json": manifest("@scope/dep"),
+        "node_modules/plain/package.json": manifest("plain"),
+      },
+    },
+    {
+      // npm leaves the dependency out here.
+      what: "the scope of a dependency of a bundled dependency",
+      locked: "node_modules/@scope",
+      failsOn: "node_modules/@scope/dep3",
+      tree: {
+        "package.json": bundlesDep1,
+        "node_modules/dep1/package.json": manifest("dep1", { dependencies: { "@scope/dep3": "3.3.3" } }),
+        "node_modules/@scope/dep3/package.json": manifest("@scope/dep3", { version: "3.3.3" }),
+      },
+    },
+  ])("$what", async ({ locked, failsOn, tree }) => {
+    using dir = tempDir("pack-locked-dep", tree);
+
+    const { out, err, exitCode } = await runWithout(dir, locked, ["pm", "pack"]);
+    expect(err).toBe(`EACCES: failed to open directory "${failsOn}" for packing`);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(await tarballs(dir)).toEqual([]);
+  });
+
+  // `bun publish` and `bun pm diff` run the same scan. The package is folder `b`, and `a` is a copy that opens.
+  // A dry run opens no file, so it sees a directory that does not open and not a file that does not.
+  const binDirectory = {
+    what: "directories.bin",
+    fields: { directories: { bin: "bin" } },
+    locked: "b/bin",
+    message: 'EACCES: failed to open directory "bin" for packing',
+  };
+  const binFile = {
+    what: "a bin",
+    fields: { bin: "bin/cli.js" },
+    locked: "b/bin/cli.js",
+    message: 'EACCES: Permission denied: failed to open file: "bin/cli.js" (open)',
+  };
+  const binBelowLocked = {
+    what: "the directory of a bin",
+    fields: { bin: "bin/cli.js" },
+    locked: "b/bin",
+    message: 'EACCES: Permission denied: failed to stat file: "bin/cli.js" (lstat)',
+  };
+  const pmPack = { command: "pm pack", cwd: "b", banner: "bun pack <version> (<revision>)" };
+  const pmPackDryRun = { ...pmPack, command: "pm pack --dry-run" };
+  const publish = { command: "publish", cwd: "b", banner: "bun publish <version> (<revision>)" };
+  const publishDryRun = { ...publish, command: "publish --dry-run" };
+  const pmDiff = { command: "pm diff ./a ./b --name-only", cwd: "", banner: "" };
+  test.each([
+    ...[pmPack, pmPackDryRun, publishDryRun, pmDiff].map(command => ({ ...binDirectory, ...command })),
+    ...[pmPack, publish].map(command => ({ ...binFile, ...command })),
+    ...[pmPack, pmPackDryRun, publishDryRun, pmDiff].map(command => ({ ...binBelowLocked, ...command })),
+  ])("$what, bun $command", async ({ fields, locked, message, command, cwd, banner }) => {
+    const folder = {
+      "package.json": manifest("pack-locked", fields),
+      // keeps the walk of the package out of the directory, so only the bin leads there
+      ".npmignore": "bin\n",
+      "index.js": indexJs,
+      "bin/cli.js": "#!/usr/bin/env bun\n",
+    };
+    using dir = tempDir("pack-locked-bin", { a: folder, b: folder });
+
+    const { out, err, exitCode } = await runWithout(dir, locked, command.split(" "), join(dir, cwd));
+    expect(err).toBe(message);
+    expect(out).toBe(banner);
+    expect(exitCode).toBe(1);
+    expect(await tarballs(join(dir, "b"))).toEqual([]);
+  });
+
+  test("a scope that no bundled dependency is in is not opened", async () => {
+    using dir = tempDir("pack-locked-other-scope", {
+      "package.json": manifest("pack-locked", { bundledDependencies: ["plain"] }),
+      "node_modules/plain/package.json": manifest("plain"),
+      "node_modules/@other/dep/package.json": manifest("@other/dep"),
+    });
+
+    const { err, exitCode } = await runWithout(dir, "node_modules/@other", ["pm", "pack"]);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-locked-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/plain/package.json",
+    ]);
+  });
 });
 
 test.concurrent("unicode", async () => {
@@ -3682,4 +4415,400 @@ test.concurrent("$npm_lifecycle_event is accurate", async () => {
     postpack"
   `);
   expect(exitCode).toBe(0);
+});
+
+// `bun pm pack`, `bun publish` and `bun pm diff <folder>` read each directory of a package with getdents64(2). A read
+// that fails is not the end of the directory. They took it as the end: pack wrote a tarball without the files it did
+// not read, printed that short count as `Total files` and exited 0, and publish sent that tarball to the registry.
+//
+// An LD_PRELOAD library makes one chosen read of one directory, by one chosen reader, return -1 with a chosen errno.
+// bun issues getdents64 through libc's syscall(), which is the symbol the library interposes.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+describe.skipIf(!isLinux || !cc)("a read of a directory fails", () => {
+  const SHIM_C = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static long (*next_syscall)(long, ...);
+// A walk of the directory is a "reader". A read at offset 0 starts a new one.
+static int reader, read_of_reader;
+
+static int env_int(const char *name, int fallback) {
+  const char *value = getenv(name);
+  return value ? atoi(value) : fallback;
+}
+
+// One line for each read of the directory. A test reads them to know that the library interposed.
+static void note(const char *what, long value) {
+  const char *log = getenv("DIR_READ_FAULT_LOG");
+  if (!log) return;
+  char line[96];
+  int len = snprintf(line, sizeof line, "reader %d read %d: %s %ld\\n", reader, read_of_reader, what, value);
+  int fd = open(log, O_WRONLY | O_APPEND | O_CREAT, 0644);
+  if (fd < 0) return;
+  if (write(fd, line, len) < 0) {}
+  close(fd);
+}
+
+static long fail(int code) {
+  note("failed", code);
+  errno = code;
+  return -1;
+}
+
+long syscall(long nr, ...) {
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
+
+  const char *dir = nr == SYS_getdents64 ? getenv("DIR_READ_FAULT_DIR") : NULL;
+  char path[PATH_MAX];
+  if (dir) {
+    char link[64];
+    snprintf(link, sizeof link, "/proc/self/fd/%d", (int)a1);
+    ssize_t n = readlink(link, path, sizeof path - 1);
+    if (n <= 0) dir = NULL;
+    else {
+      path[n] = 0;
+      if (strcmp(path, dir) != 0) dir = NULL;
+    }
+  }
+  if (!dir) return next_syscall(nr, a1, a2, a3, a4, a5, a6);
+
+  if (lseek((int)a1, 0, SEEK_CUR) == 0) {
+    reader++;
+    read_of_reader = 0;
+  }
+  read_of_reader++;
+
+  // DIR_READ_FAULT_READ is a number (that read of the reader fails) or "end" (the read that reports the end of
+  // the directory fails in its place). DIR_READ_FAULT_ERRNO is the errno, or "removed": the library removes the
+  // empty directory and the kernel fails the read.
+  const char *when = reader == env_int("DIR_READ_FAULT_READER", 1) ? getenv("DIR_READ_FAULT_READ") : NULL;
+  const char *code = getenv("DIR_READ_FAULT_ERRNO");
+  int removed = code && strcmp(code, "removed") == 0;
+  int injected = code && !removed ? atoi(code) : EIO;
+  if (when && atoi(when) == read_of_reader) {
+    if (!removed) return fail(injected);
+    rmdir(path);
+  }
+  long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
+  int answered = errno;
+  if (when && strcmp(when, "end") == 0 && rc == 0) return fail(injected);
+  note(rc < 0 ? "failed" : "ok", rc < 0 ? answered : rc);
+  errno = answered;
+  return rc;
+}
+`;
+
+  let shimDir: ReturnType<typeof tempDir>;
+  let shim: string;
+  let logs = 0;
+
+  beforeAll(async () => {
+    shimDir = tempDir("dir-read-fault", { "shim.c": SHIM_C });
+    shim = join(shimDir, "shim.so");
+    await using compile = spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(shimDir, "shim.c"), "-ldl"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      compile.stdout.text(),
+      compile.stderr.text(),
+      compile.exited,
+    ]);
+    if (exitCode !== 0) throw new Error(`failed to compile the shim:\n${stdout}${stderr}`);
+  });
+
+  afterAll(() => shimDir?.[Symbol.dispose]());
+
+  type Fault = {
+    /** The directory whose read fails. */
+    dir: string;
+    /**
+     * Which read of the directory fails, counted from 1 for each reader. "end" is the read that reports the end of
+     * the directory. Leave it out for a run in which no read fails.
+     */
+    read?: number | "end";
+    /** Which walk of the directory, counted from 1 in the process. A walk starts with a read at offset 0. */
+    reader?: number;
+    /** "removed": the directory, which is empty, is removed before the read and the kernel answers ENOENT. */
+    errno?: "EIO" | "removed";
+  };
+
+  /** The environment of a bun process in which the read fails, and the reads of the directory that the process made. */
+  function failDirRead(fault: Fault) {
+    const log = join(shimDir, `reads-${logs++}.log`);
+    const preload = bunEnv.LD_PRELOAD;
+    return {
+      env: {
+        ...bunEnv,
+        LD_PRELOAD: preload ? `${shim}:${preload}` : shim,
+        // The library compares with the link in /proc/self/fd, which is the real path.
+        DIR_READ_FAULT_DIR: realpathSync(fault.dir),
+        DIR_READ_FAULT_READ: fault.read === undefined ? undefined : String(fault.read),
+        DIR_READ_FAULT_READER: String(fault.reader ?? 1),
+        DIR_READ_FAULT_ERRNO: fault.errno === "removed" ? "removed" : String(constants.errno.EIO),
+        DIR_READ_FAULT_LOG: log,
+      },
+      /** `ok`: the byte count of each read that the kernel answered (0 is the end). `failed`: the errno of each read that failed. */
+      reads() {
+        const reads = { ok: [] as number[], failed: [] as number[] };
+        if (!existsSync(log)) return reads;
+        for (const line of readFileSync(log, "utf8").split("\n")) {
+          const match = line.match(/: (ok|failed) (-?\d+)$/);
+          if (match) reads[match[1] as "ok" | "failed"].push(Number(match[2]));
+        }
+        return reads;
+      },
+    };
+  }
+
+  async function bun(args: string[], cwd: string, env: Record<string, string | undefined>) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(stdout, cwd), err: normalizeBunSnapshot(stderr, cwd), exitCode };
+  }
+
+  const readFailed = (subpath: string) =>
+    `EIO: Input/output error: failed to read directory "${subpath}" for packing (getdents64)`;
+
+  const index = "module.exports = 1;";
+
+  test.concurrent.each([
+    // One row for each loop that reads a directory. `dir` is the directory whose first read fails.
+    { walk: "the default walk, a subdirectory", packageJson: {}, files: { "lib/index.js": index }, dir: "lib" },
+    // The resolver reads the package root before pack does: pack is the second reader.
+    { walk: "the default walk, the package root", packageJson: {}, files: { "index.js": index }, dir: "", reader: 2 },
+    {
+      walk: '"files" with a directory',
+      packageJson: { files: ["lib"] },
+      files: { "lib/index.js": index },
+      dir: "lib",
+    },
+    {
+      walk: '"files" with a glob',
+      packageJson: { files: ["lib/*.js"] },
+      files: { "lib/index.js": index },
+      dir: "lib",
+    },
+    // pack reads every directory, and cannot know that the entries it did not read match nothing.
+    {
+      walk: '"files", a directory that no pattern names',
+      packageJson: { files: ["lib"] },
+      files: { "lib/index.js": index, "other/index.js": index },
+      dir: "other",
+    },
+    {
+      walk: "directories.bin",
+      packageJson: { directories: { bin: "bin" } },
+      files: { "bin/cli.js": index },
+      dir: "bin",
+    },
+    {
+      walk: "bundledDependencies, node_modules",
+      packageJson: { bundledDependencies: ["dep"] },
+      files: { "node_modules/dep/package.json": "{}" },
+      dir: "node_modules",
+    },
+    {
+      walk: "bundledDependencies, a scope directory",
+      packageJson: { bundledDependencies: ["@scope/dep"] },
+      files: { "node_modules/@scope/dep/package.json": "{}" },
+      dir: "node_modules/@scope",
+    },
+    {
+      walk: "bundledDependencies, the dependency",
+      packageJson: { bundledDependencies: ["dep"] },
+      files: { "node_modules/dep/package.json": "{}" },
+      dir: "node_modules/dep",
+    },
+    // Every entry was read when this read fails. pack cannot know that.
+    {
+      walk: "the read that reports the end of the directory",
+      packageJson: {},
+      files: { "lib/index.js": index },
+      dir: "lib",
+      read: "end" as const,
+    },
+    { walk: "--dry-run", packageJson: {}, files: { "lib/index.js": index }, dir: "lib", args: ["--dry-run"] },
+  ])("bun pm pack: $walk", async ({ packageJson, files, dir: subpath, reader, read = 1, args = [] }) => {
+    using dir = tempDir("pack-read-fails", {
+      "package.json": JSON.stringify({ name: "pack-read-fails", version: "1.0.0", ...packageJson }),
+      ...files,
+    });
+    const before = await sortedNames(dir);
+    const fault = failDirRead({ dir: join(dir, subpath), read, reader });
+
+    const { out, err, exitCode } = await bun(["pm", "pack", ...args], dir, fault.env);
+    // If no read failed, the library did not interpose and this row shows nothing.
+    expect(fault.reads().failed).toHaveLength(1);
+    expect(err).toBe(readFailed(subpath || "."));
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(await sortedNames(dir)).toEqual(before);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("bun pm pack: the second read of a directory of 300 files", async () => {
+    // Before: a tarball with 255 of the 301 files, `Total files: 255`, exit 0.
+    using dir = tempDir("pack-read-fails-300", {
+      "package.json": JSON.stringify({ name: "pack-read-fails-300", version: "1.0.0" }),
+      ...Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`lib/big/f${i}.js`, `${i}`])),
+    });
+    const fault = failDirRead({ dir: join(dir, "lib", "big"), read: 2 });
+
+    const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+    expect(fault.reads()).toEqual({ ok: [expect.any(Number)], failed: [constants.errno.EIO] });
+    expect(err).toBe(readFailed("lib/big"));
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(await sortedNames(dir)).toEqual(["lib", "package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // pack opens a directory when its parent lists it and reads it later. A directory that is removed in between fails
+  // the read with ENOENT, which libc's readdir() and so npm report as the end of the directory.
+  test.concurrent("bun pm pack: a directory that is removed after pack opened it has no entries", async () => {
+    using dir = tempDir("pack-read-removed", {
+      "package.json": JSON.stringify({ name: "pack-read-removed", version: "1.0.0" }),
+      "lib/index.js": index,
+      "lib/gone": {},
+    });
+    const fault = failDirRead({ dir: join(dir, "lib", "gone"), read: 1, errno: "removed" });
+
+    const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+    expect(fault.reads()).toEqual({ ok: [], failed: [constants.errno.ENOENT] });
+    expect(err).toBe("");
+    expect(out).toContain("Total files: 2");
+    expect(await sortedNames(join(dir, "lib"))).toEqual(["index.js"]);
+    expect(tarballEntries(join(dir, "pack-read-removed-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/lib/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bun pm pack: postpack does not run", async () => {
+    using dir = tempDir("pack-read-fails-scripts", {
+      "package.json": JSON.stringify({
+        name: "pack-read-fails-scripts",
+        version: "1.0.0",
+        scripts: { prepack: "touch prepack.txt", postpack: "touch postpack.txt" },
+      }),
+      "lib/index.js": index,
+    });
+    const fault = failDirRead({ dir: join(dir, "lib"), read: 1 });
+
+    const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+    expect(fault.reads().failed).toHaveLength(1);
+    expect(err.split("\n")).toEqual(["$ touch prepack.txt", readFailed("lib")]);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(await sortedNames(dir)).toEqual(["lib", "package.json", "prepack.txt"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("bun pm pack: no read fails and the library changes nothing", async () => {
+    using dir = tempDir("pack-read-healthy", {
+      "package.json": JSON.stringify({ name: "pack-read-healthy", version: "1.0.0" }),
+      "lib/index.js": index,
+    });
+    const fault = failDirRead({ dir: join(dir, "lib") });
+
+    const { out, err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+    // One read with the entries, then the end of the directory.
+    expect(fault.reads()).toEqual({ ok: [expect.any(Number), 0], failed: [] });
+    expect(err).toBe("");
+    expect(out).toContain("Total files: 2");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-read-healthy-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/lib/index.js",
+    ]);
+  });
+
+  // A registry that counts the requests it receives.
+  function countingRegistry() {
+    const registry = {
+      requests: 0,
+      bunfig: "",
+      [Symbol.dispose]: () => void server.stop(true),
+    };
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        registry.requests++;
+        return new Response("OK", { status: 200 });
+      },
+    });
+    registry.bunfig = Bun.TOML.stringify({
+      install: { cache: false, registry: { url: `http://localhost:${server.port}`, token: "unused" } },
+    });
+    return registry;
+  }
+
+  test.concurrent.each([
+    { walk: "the walk of the package", packageJson: {}, dir: "lib" },
+    // The resolver reads the package root first, then the scan for the README. Before: published without `readme`.
+    { walk: "the scan for the README", packageJson: {}, dir: "", reader: 2 },
+    // `directories.bin` is read twice: the walk packs its files, then publish lists them as the `bin` entries of the
+    // manifest. Before: the registry received a manifest without the entries that the second read did not return.
+    {
+      walk: "the `bin` entries of directories.bin",
+      packageJson: { directories: { bin: "lib" } },
+      dir: "lib",
+      reader: 2,
+    },
+  ])("bun publish: $walk", async ({ packageJson, dir: subpath, reader }) => {
+    using registry = countingRegistry();
+    using dir = tempDir("publish-read-fails", {
+      "package.json": JSON.stringify({ name: "publish-read-fails", version: "1.0.0", ...packageJson }),
+      "bunfig.toml": registry.bunfig,
+      "README.md": "# publish-read-fails",
+      "lib/index.js": index,
+    });
+    const before = await sortedNames(dir);
+    const fault = failDirRead({ dir: join(dir, subpath), read: 1, reader });
+
+    const { out, err, exitCode } = await bun(["publish"], dir, fault.env);
+    expect(fault.reads().failed).toHaveLength(1);
+    expect(err).toBe(readFailed(subpath || "."));
+    expect(out).toBe("bun publish <version> (<revision>)");
+    expect(registry.requests).toBe(0);
+    expect(await sortedNames(dir)).toEqual(before);
+    expect(exitCode).toBe(1);
+  });
+
+  // A folder with a package.json is read as `bun pm pack` would publish it. The diff listed the files it did not
+  // read as added or removed and exited 0.
+  test.concurrent("bun pm diff: a folder", async () => {
+    using dir = tempDir("pm-diff-read-fails", {
+      "a/package.json": JSON.stringify({ name: "p", version: "1.0.0" }),
+      "a/lib/index.js": "module.exports = 1;\n",
+      "b/package.json": JSON.stringify({ name: "p", version: "1.0.0" }),
+      "b/lib/index.js": "module.exports = 1;\n",
+    });
+    const fault = failDirRead({ dir: join(dir, "a", "lib"), read: 1 });
+
+    const { out, err, exitCode } = await bun(["pm", "diff", "./a", "./b", "--name-only"], dir, {
+      ...fault.env,
+      NO_COLOR: "1",
+    });
+    expect(fault.reads().failed).toHaveLength(1);
+    expect(err).toBe(readFailed("lib"));
+    expect(out).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

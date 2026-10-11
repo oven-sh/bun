@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { access, exists, mkdir, readFile, readlink, symlink, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -652,4 +652,249 @@ it("bun link <package> only writes package.json and a lockfile when --save is pa
     dependencies: { "lib-to-link": "link:lib-to-link" },
   });
   expect(await readdirSorted(app)).toEqual(["bun.lock", "node_modules", "package.json"]);
+});
+
+it("link and unlink --dry-run do not touch the global link directory", async () => {
+  using dir = tempDir("link-dry-run", {
+    "package.json": JSON.stringify({ name: "linkme-dry", version: "1.0.0" }),
+  });
+  const bunInstall = join(String(dir), "bun-install");
+  const globalLinks = join(bunInstall, "install", "global", "node_modules");
+
+  const run = async (...cmd: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: bunInstall },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.replace(/^bun (un)?link v.*\n+/, ""), stderr, exitCode };
+  };
+
+  expect(await run("link", "--dry-run")).toEqual({
+    stdout: 'dry run: would link "linkme-dry"\n',
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await readdirSorted(globalLinks).catch(() => [])).toEqual([]);
+
+  expect(await run("link")).toMatchObject({
+    stdout: expect.stringContaining('Success! Registered "linkme-dry"'),
+    exitCode: 0,
+  });
+  expect(await readdirSorted(globalLinks)).toEqual(["linkme-dry"]);
+
+  expect(await run("unlink", "--dry-run")).toEqual({
+    stdout: 'dry run: would unlink "linkme-dry"\n',
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(await readdirSorted(globalLinks)).toEqual(["linkme-dry"]);
+
+  expect(await run("unlink")).toMatchObject({
+    stdout: expect.stringContaining('success: unlinked package "linkme-dry"'),
+    exitCode: 0,
+  });
+  expect(await readdirSorted(globalLinks)).toEqual([]);
+});
+
+// The registry of `bun link` is the global folder already. With `-g` the commands ran in that
+// folder: `bun link -g` and `bun unlink -g` failed on its package.json (`missing "name"`), and
+// `bun link -g <name>` removed the registration of <name> and exited 0.
+it("link and unlink ignore -g", async () => {
+  using dir = tempDir("link-global-flag", {
+    "lib/package.json": JSON.stringify({ name: "linkme-global", version: "1.0.0" }),
+    "app/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+  });
+  const bunInstall = join(String(dir), "bun-install");
+  const global = join(bunInstall, "install", "global");
+
+  const run = async (cwd: string, ...cmd: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: join(String(dir), cwd),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: bunInstall },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  expect(await run("lib", "link", "-g")).toMatchObject({
+    stdout: expect.stringContaining('Success! Registered "linkme-global"'),
+    exitCode: 0,
+  });
+  expect(await readdirSorted(global)).toEqual(["node_modules"]);
+  expect(await file(join(global, "node_modules", "linkme-global", "package.json")).json()).toEqual({
+    name: "linkme-global",
+    version: "1.0.0",
+  });
+
+  expect(await run("app", "link", "-g", "linkme-global")).toMatchObject({
+    stdout: expect.stringContaining("installed linkme-global@link:linkme-global"),
+    exitCode: 0,
+  });
+  expect(await file(join(String(dir), "app", "node_modules", "linkme-global", "package.json")).json()).toEqual({
+    name: "linkme-global",
+    version: "1.0.0",
+  });
+  expect(await readdirSorted(join(global, "node_modules"))).toEqual(["linkme-global"]);
+
+  expect(await run("lib", "unlink", "-g")).toMatchObject({
+    stdout: expect.stringContaining('success: unlinked package "linkme-global"'),
+    exitCode: 0,
+  });
+  expect(await readdirSorted(join(global, "node_modules"))).toEqual([]);
+});
+
+describe("global bin dir", () => {
+  // What a bin named `name` occupies in a bin dir: the symlink itself on POSIX, the `.exe` half
+  // of the `.exe` + `.bunx` shim pair on Windows.
+  const binEntry = (name: string) => (isWindows ? `${name}.exe` : name);
+  const linkTarget = (pkg: string, ...file: string[]) => join("..", "install", "global", "node_modules", pkg, ...file);
+  const pkgFiles = (name: string, bin: Record<string, string>) => ({
+    "package.json": JSON.stringify({ name, version: "1.0.0", bin }),
+    "cli.js": "#!/usr/bin/env node\n",
+    "dist/cli.js": "#!/usr/bin/env node\n",
+  });
+
+  async function run(command: "link" | "unlink", pkg: string, bunInstall: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), command],
+      cwd: pkg,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: bunInstall },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  it("bun link leaves what bun did not put there alone", async () => {
+    using bunInstall = tempDir("link-global", {
+      // A regular file, which is what `bun` itself is in this directory.
+      [`bin/${binEntry("bun")}`]: "the bun binary",
+      [`bin/${binEntry("adir")}/inner.txt`]: "keep",
+      "elsewhere.txt": "",
+    });
+    const binDir = join(String(bunInstall), "bin");
+    if (!isWindows) await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
+    // Bins are linked in map order: the taken names first, then the free one.
+    using pkg = tempDir(
+      "link-pkg",
+      pkgFiles("taken-names", { bun: "cli.js", adir: "cli.js", foreign: "cli.js", "taken-names": "cli.js" }),
+    );
+
+    const { err, exitCode } = await run("link", String(pkg), String(bunInstall));
+    expect(err).toContain("failed to link bin due to error EEXIST");
+
+    expect(join(binDir, "taken-names")).toBeValidBin(linkTarget("taken-names", "cli.js"));
+    expect(await readFile(join(binDir, binEntry("bun")), "utf8")).toBe("the bun binary");
+    if (isWindows) expect(await exists(join(binDir, "bun.bunx"))).toBeFalse();
+    expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
+    if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
+    expect(exitCode).toBe(1);
+  });
+
+  it("bun link takes a bin name over from another linked package", async () => {
+    using bunInstall = tempDir("link-global", {});
+    using first = tempDir("link-pkg", pkgFiles("first-owner", { shared: "cli.js" }));
+    using second = tempDir("link-pkg", pkgFiles("second-owner", { shared: "cli.js" }));
+    const bin = join(String(bunInstall), "bin", "shared");
+
+    let result = await run("link", String(first), String(bunInstall));
+    expect(result.err).toBe("");
+    expect(bin).toBeValidBin(linkTarget("first-owner", "cli.js"));
+    expect(result.exitCode).toBe(0);
+
+    result = await run("link", String(second), String(bunInstall));
+    expect(result.err).toBe("");
+    expect(bin).toBeValidBin(linkTarget("second-owner", "cli.js"));
+    expect(result.exitCode).toBe(0);
+
+    // The name is no longer the first package's to remove.
+    result = await run("unlink", String(first), String(bunInstall));
+    expect(result.out).toContain('success: unlinked package "first-owner"');
+    if (!isWindows) expect(bin).toBeValidBin(linkTarget("second-owner", "cli.js"));
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("bun link again replaces the bin links it made before", async () => {
+    using bunInstall = tempDir("link-global", {});
+    using pkg = tempDir("link-pkg", pkgFiles("moved-bin", { "moved-bin": "cli.js" }));
+    const bin = join(String(bunInstall), "bin", "moved-bin");
+
+    let result = await run("link", String(pkg), String(bunInstall));
+    expect(result.err).toBe("");
+    expect(bin).toBeValidBin(linkTarget("moved-bin", "cli.js"));
+    expect(result.exitCode).toBe(0);
+
+    await writeFile(
+      join(String(pkg), "package.json"),
+      pkgFiles("moved-bin", { "moved-bin": "dist/cli.js" })["package.json"],
+    );
+    result = await run("link", String(pkg), String(bunInstall));
+    expect(result.err).toBe("");
+    expect(bin).toBeValidBin(linkTarget("moved-bin", "dist", "cli.js"));
+    expect(result.exitCode).toBe(0);
+  });
+
+  it.skipIf(!isWindows)("bun link removes a shim it could not finish writing", async () => {
+    using bunInstall = tempDir("link-global", {});
+    using pkg = tempDir("link-pkg", pkgFiles("half-shim", { "half-shim": "cli.js" }));
+    const binDir = join(String(bunInstall), "bin");
+    // The launcher is not valid UTF-8, so encoding the .bunx sidecar fails after the file was created.
+    await writeFile(
+      join(String(pkg), "cli.js"),
+      Buffer.concat([Buffer.from("#!/usr/bin/env n"), Buffer.from([0x80, 0x80]), Buffer.from("\n")]),
+    );
+
+    let result = await run("link", String(pkg), String(bunInstall));
+    expect(result.err).toContain("InvalidBinContent");
+    expect(await Promise.all([exists(join(binDir, "half-shim.bunx")), exists(join(binDir, "half-shim.exe"))])).toEqual([
+      false,
+      false,
+    ]);
+    expect(result.exitCode).toBe(1);
+
+    await writeFile(join(String(pkg), "cli.js"), "#!/usr/bin/env node\n");
+    result = await run("link", String(pkg), String(bunInstall));
+    expect(result.err).toBe("");
+    expect(join(binDir, "half-shim")).toBeValidBin(linkTarget("half-shim", "cli.js"));
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("bun unlink removes its own bins and nothing else", async () => {
+    using bunInstall = tempDir("link-global", { "elsewhere.txt": "" });
+    using pkg = tempDir("link-pkg", pkgFiles("own-bin", { "own-bin": "cli.js" }));
+    const binDir = join(String(bunInstall), "bin");
+
+    let result = await run("link", String(pkg), String(bunInstall));
+    expect(result.err).toBe("");
+    expect(join(binDir, "own-bin")).toBeValidBin(linkTarget("own-bin", "cli.js"));
+    expect(result.exitCode).toBe(0);
+
+    // `bun unlink` removes the names in the bin map as it is now, not as it was when linking.
+    await writeFile(join(binDir, binEntry("bun")), "the bun binary");
+    await mkdir(join(binDir, binEntry("adir")));
+    await writeFile(join(binDir, binEntry("adir"), "inner.txt"), "keep");
+    if (!isWindows) await symlink(join(String(bunInstall), "elsewhere.txt"), join(binDir, "foreign"));
+    await writeFile(
+      join(String(pkg), "package.json"),
+      pkgFiles("own-bin", { "own-bin": "cli.js", bun: "cli.js", adir: "cli.js", foreign: "cli.js" })["package.json"],
+    );
+
+    result = await run("unlink", String(pkg), String(bunInstall));
+    expect(result.out).toContain('success: unlinked package "own-bin"');
+
+    expect(await exists(join(binDir, binEntry("own-bin")))).toBeFalse();
+    if (isWindows) expect(await exists(join(binDir, "own-bin.bunx"))).toBeFalse();
+    expect(await readFile(join(binDir, binEntry("bun")), "utf8")).toBe("the bun binary");
+    expect(await readFile(join(binDir, binEntry("adir"), "inner.txt"), "utf8")).toBe("keep");
+    if (!isWindows) expect(await readlink(join(binDir, "foreign"))).toBe(join(String(bunInstall), "elsewhere.txt"));
+    expect(result.exitCode).toBe(0);
+  });
 });

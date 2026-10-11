@@ -18,7 +18,6 @@ use crate::_folder_resolver::{
 };
 use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
-use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
@@ -257,17 +256,16 @@ pub enum GitEnqueueResult {
     OfflineMiss,
 }
 
+/// `dependency_id` need not resolve to `package_id`: see `TaskCallbackContext::GitCheckout`.
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
+    package_id: PackageID,
     alias: &[u8],
-    resolution: &Resolution,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
 ) -> GitEnqueueResult {
-    // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
-    // active union field. Copy out so the value no longer borrows
-    // `*resolution` while `*this` is mutably reborrowed below.
+    let resolution: Resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     let repository: Repository = *resolution.git();
     // reshaped for borrowck — `url`/`resolved` borrow
     // `this.lockfile.buffers.string_bytes`; detach the slice lifetimes so the
@@ -279,15 +277,12 @@ pub fn enqueue_git_for_checkout(
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    let repo_fd = this.git_repositories.get(&clone_id).copied();
+    let is_required = repo_fd.is_some() || is_package_required(this, dependency_id, package_id);
     // --offline: decide before any queue registration, so an optional miss leaves
     // nothing behind and a later required edge still reaches the report
-    if this.git_repositories.get(&clone_id).is_none() {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
-        if offline_git_miss(this, clone_id, alias, is_required) {
-            return GitEnqueueResult::OfflineMiss;
-        }
+    if repo_fd.is_none() && offline_git_miss(this, clone_id, alias, is_required) {
+        return GitEnqueueResult::OfflineMiss;
     }
     let checkout_queue = this
         .task_queue
@@ -303,16 +298,16 @@ pub fn enqueue_git_for_checkout(
         return GitEnqueueResult::Queued;
     }
 
-    if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
+    if let Some(repo_fd) = repo_fd {
         let task = enqueue_git_checkout(
             this,
             checkout_id,
             repo_fd,
             dependency_id,
             alias,
-            resolution,
+            &resolution,
             resolved,
-            patch_name_and_version_hash,
+            patch_name_and_version_hash.map(|hash| (package_id, hash)),
         );
         this.enqueue_git_task(task);
     } else {
@@ -323,17 +318,35 @@ pub fn enqueue_git_for_checkout(
 
         clone_queue
             .value_ptr
-            .push(TaskCallbackContext::Dependency(dependency_id));
+            .push(TaskCallbackContext::GitCheckout {
+                dependency_id,
+                package_id,
+            });
 
-        if clone_queue.found_existing {
+        if this.has_created_network_task(clone_id, is_required) {
             return GitEnqueueResult::Queued;
         }
 
-        let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-        let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
+        let task = enqueue_git_clone(this, clone_id, alias, &repository);
         this.enqueue_git_task(task);
     }
     GitEnqueueResult::Queued
+}
+
+/// False when only optional dependencies resolve to `package_id`: the install goes on without it.
+fn is_package_required(
+    this: &PackageManager,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+) -> bool {
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    dependencies[dependency_id as usize].behavior.is_required()
+        || dependencies
+            .iter()
+            .zip(this.lockfile.buffers.resolutions.as_slice())
+            .any(|(dependency, &resolved)| {
+                resolved == package_id && dependency.behavior.is_required()
+            })
 }
 
 /// Under `--offline`, an install-phase request for a package that is not in the cache
@@ -795,22 +808,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
-                let mut curr_list: Option<&Semver::semver_query::List> =
-                    Some(&aliased.npm().version.head);
-                while let Some(queries) = curr_list {
-                    let mut curr: Option<&Semver::Query> = Some(&queries.head);
-                    while let Some(query) = curr {
-                        if group.satisfies(query.range.left.version, buf, buf)
-                            || group.satisfies(query.range.right.version, buf, buf)
-                        {
-                            name = aliased.npm().name;
-                            name_hash =
-                                Semver::string::Builder::string_hash(this.lockfile.str(&name));
-                            break 'version aliased.clone();
-                        }
-                        curr = query.next.as_deref();
-                    }
-                    curr_list = queries.next.as_deref();
+                if group.intersects(buf, &aliased.npm().version, buf) {
+                    name = aliased.npm().name;
+                    name_hash = Semver::string::Builder::string_hash(this.lockfile.str(&name));
+                    break 'version aliased.clone();
                 }
 
                 // fallthrough. a package that matches the name of an alias but does not match
@@ -1432,56 +1433,36 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
 
-                // An already-resolved dependency (install-phase re-enqueue
-                // after the shared clone finished) is pinned: its install
-                // context is keyed on the stored SHA, and a branch
-                // committish's current tip may differ.
-                let pinned: Option<Vec<u8>> = if needs_ctx {
-                    None
-                } else {
-                    let pkg_id = this.lockfile.buffers.resolutions[id as usize];
-                    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
-                    // SAFETY: tag checked — `value.git` is the active union arm.
-                    (pkg_res.tag == ResolutionTag::Git)
-                        .then(|| this.lockfile.str(&pkg_res.git().resolved).to_vec())
-                };
-                let resolved = match pinned {
-                    Some(resolved) => resolved,
+                // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
+                let committish = this.lockfile.str_detached(&dep.committish);
+                let commit_id = Task::Id::for_git_commit(url, committish);
+                let resolved = match this.git_commits.get(&commit_id) {
+                    Some(resolved) => resolved.clone(),
                     None => {
-                        // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
-                        let committish = this.lockfile.str_detached(&dep.committish);
-                        let commit_id = Task::Id::for_git_commit(url, committish);
-                        match this.git_commits.get(&commit_id) {
-                            Some(resolved) => resolved.clone(),
-                            None => {
-                                let entry = this
-                                    .task_queue
-                                    .get_or_put_context(commit_id, ())
-                                    .expect("unreachable");
-                                if !entry.found_existing {
-                                    *entry.value_ptr = TaskCallbackList::default();
-                                }
-                                entry.value_ptr.push(ctx);
-
-                                if dependency.behavior.is_peer() && !install_peer {
-                                    this.peer_dependencies.write_item(id)?;
-                                    return Ok(());
-                                }
-
-                                if this.has_created_network_task(
-                                    commit_id,
-                                    dependency.behavior.is_required(),
-                                ) {
-                                    return Ok(());
-                                }
-
-                                let task = enqueue_git_commit(
-                                    this, commit_id, clone_id, alias, url, committish,
-                                );
-                                this.enqueue_git_task(task);
-                                return Ok(());
-                            }
+                        let entry = this
+                            .task_queue
+                            .get_or_put_context(commit_id, ())
+                            .expect("unreachable");
+                        if !entry.found_existing {
+                            *entry.value_ptr = TaskCallbackList::default();
                         }
+                        entry.value_ptr.push(ctx);
+
+                        if dependency.behavior.is_peer() && !install_peer {
+                            this.peer_dependencies.write_item(id)?;
+                            return Ok(());
+                        }
+
+                        if this
+                            .has_created_network_task(commit_id, dependency.behavior.is_required())
+                        {
+                            return Ok(());
+                        }
+
+                        let task =
+                            enqueue_git_commit(this, commit_id, clone_id, alias, url, committish);
+                        this.enqueue_git_task(task);
+                        return Ok(());
                     }
                 };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
@@ -1550,7 +1531,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
+                let task = enqueue_git_clone(this, clone_id, alias, &dep);
                 this.enqueue_git_task(task);
             }
             Ok(())
@@ -2084,31 +2065,12 @@ fn enqueue_git_clone(
     task_id: Task::Id,
     name: &[u8],
     repository: &Repository,
-    dependency: &Dependency,
-    res: &Resolution,
-    // if patched then we need to do apply step after network task is done
-    patch_name_and_version_hash: Option<u64>,
 ) -> NonNull<Task::Task<'static>> {
-    // Build the `Task` value *before* claiming a hive slot. Several initializers
-    // below (`.expect()`, `.unwrap()`, `panic!`) can unwind; doing them with the
-    // slot already claimed would leave a claimed-but-uninit `Task` (which carries
-    // `Log`/`Box<PatchTask>` drop glue) for the next `put()` to drop. With
-    // `get_init` the slot is claimed only after the value is fully constructed.
-    //
-    // The patched-dependency entry can be missing (or its hash not yet
-    // computed) when install state went stale — e.g. the patch was removed
-    // from package.json, leaving the hash only in
-    // `patched_dependencies_to_remove`. Install the package unpatched instead
-    // of panicking.
-    let patch = patch_name_and_version_hash.and_then(|h| {
-        Some((
-            h,
-            this.lockfile
-                .patched_dependencies
-                .get(&h)?
-                .patchfile_hash()?,
-        ))
-    });
+    // Build the `Task` value *before* claiming a hive slot. The `.expect()`s
+    // below can unwind; doing them with the slot already claimed would leave a
+    // claimed-but-uninit `Task` (which carries `Log`/`Box<PatchTask>` drop glue)
+    // for the next `put()` to drop. With `get_init` the slot is claimed only
+    // after the value is fully constructed.
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
@@ -2127,27 +2089,9 @@ fn enqueue_git_clone(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                res: *res,
             }),
         },
         id: task_id,
-        apply_patch_task: if let Some((h, patch_hash)) = patch {
-            let dep = dependency;
-            let pkg_id = match this
-                .lockfile
-                .package_index
-                .get(&dep.name_hash)
-                .unwrap_or_else(|| panic!("Package not found"))
-            {
-                PackageIndexEntry::Id(p) => *p,
-                PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
-            };
-            let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-            pt.callback.apply_mut().task_id = Some(task_id);
-            Some(pt)
-        } else {
-            None
-        },
         ..Task::uninit()
     };
     this.preallocated_resolve_tasks.get_init(value)
@@ -2200,16 +2144,17 @@ pub fn enqueue_git_checkout(
     name: &[u8],
     resolution: &Resolution,
     resolved: &[u8],
-    // if patched then we need to do apply step after network task is done
-    patch_name_and_version_hash: Option<u64>,
+    // the package to patch and its name-and-version hash, if an apply step follows the checkout
+    patch: Option<(PackageID, u64)>,
 ) -> NonNull<Task::Task<'static>> {
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
     // from package.json, leaving the hash only in
     // `patched_dependencies_to_remove`. Install the package unpatched instead
     // of panicking.
-    let patch = patch_name_and_version_hash.and_then(|h| {
+    let patch = patch.and_then(|(pkg_id, h)| {
         Some((
+            pkg_id,
             h,
             this.lockfile
                 .patched_dependencies
@@ -2248,18 +2193,7 @@ pub fn enqueue_git_checkout(
                     .expect("unreachable"),
                 }),
             },
-            apply_patch_task: if let Some((h, patch_hash)) = patch {
-                let dep_name_hash =
-                    this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
-                let pkg_id = match this
-                    .lockfile
-                    .package_index
-                    .get(&dep_name_hash)
-                    .unwrap_or_else(|| panic!("Package not found"))
-                {
-                    PackageIndexEntry::Id(p) => *p,
-                    PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
-                };
+            apply_patch_task: if let Some((pkg_id, h, patch_hash)) = patch {
                 let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
@@ -2509,9 +2443,11 @@ fn get_or_put_resolved_package_with_find_result(
     };
     let inside_bundle = this.lockfile.is_row_inside_bundle(dependency_id, behavior);
     let existing = if inside_bundle {
-        this.lockfile.get_package_id(name_hash, reusable_range, &npm_resolution)
+        this.lockfile
+            .get_package_id(name_hash, reusable_range, &npm_resolution)
     } else {
-        this.lockfile.get_package_id_outside_bundles(name_hash, reusable_range, &npm_resolution)
+        this.lockfile
+            .get_package_id_outside_bundles(name_hash, reusable_range, &npm_resolution)
     };
     if let Some(id) = existing {
         // The existing entry may come from an abbreviated manifest or a pre-`libc` lockfile.
@@ -3022,11 +2958,25 @@ fn get_or_put_resolved_package(
                     );
                 }
 
+                let path_is_top_level_relative =
+                    this.lockfile.is_trusted_folder_dependency(dependency_id);
+
                 // transitive folder dependencies do not have their dependencies resolved
                 if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
-                    && !this.lockfile.is_trusted_folder_dependency(dependency_id)
+                    && !path_is_top_level_relative
                 {
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
+                }
+
+                // One such path is one folder, so reuse the package another declarer loaded
+                if path_is_top_level_relative {
+                    if let Some(existing_id) = this.lockfile.get_package_id(
+                        name_hash,
+                        None,
+                        &Resolution::init(ResolutionTagged::Folder(folder)),
+                    ) {
+                        break 'res FolderResolutionValue::PackageId(existing_id);
+                    }
                 }
 
                 let mut package = Package::default();
@@ -3059,7 +3009,6 @@ fn get_or_put_resolved_package(
                     builder.clamp();
                 }
 
-                // these are always new
                 package = this.lockfile.append_package(&package).unwrap_or_oom();
 
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
@@ -3386,16 +3335,16 @@ impl PackageManager {
     pub(crate) fn enqueue_git_for_checkout(
         &mut self,
         dependency_id: DependencyID,
+        package_id: PackageID,
         alias: &[u8],
-        resolution: &Resolution,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
     ) -> GitEnqueueResult {
         enqueue_git_for_checkout(
             self,
             dependency_id,
+            package_id,
             alias,
-            resolution,
             task_context,
             patch_name_and_version_hash,
         )

@@ -11,7 +11,11 @@ use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
+use bun_install::{
+    CommandLineArguments, Dependency, DependencyExt as _, DependencyID, PackageID, PackageManager,
+    ResolutionTag, Subcommand, package_manager,
+};
+use bun_install_types::NodeLinker::NodeLinker;
 use bun_semver as semver;
 
 use crate::command;
@@ -25,6 +29,9 @@ const PREFIX_MIDDLE: &[u8] = b"  \xE2\x94\x9C\xE2\x94\x80 "; // "  ├─ "
 const PREFIX_CONTINUE: &[u8] = b"  \xE2\x94\x82  "; // "  │  "
 const PREFIX_SPACE: &[u8] = b"     ";
 
+// The label of a root package.json with no "name". It has spaces, so it is never a package name.
+const UNNAMED_ROOT: &[u8] = b"the root package";
+
 // Using AtomicUsize for safe interior mutability on a single-threaded CLI path.
 static MAX_DEPTH: AtomicUsize = AtomicUsize::new(100);
 
@@ -37,6 +44,8 @@ struct VersionInfo {
 struct DependentInfo {
     name: Box<[u8]>,
     version: Box<[u8]>,
+    /// What this dependent calls the package, when that is not the package's name.
+    alias: Option<Box<[u8]>>,
     spec: Box<[u8]>,
     dep_type: DependencyType,
     pkg_id: PackageID,
@@ -158,28 +167,29 @@ impl<'a> Default for GlobPattern<'a> {
 
 impl<'a> GlobPattern<'a> {
     fn init(pattern: &'a [u8]) -> GlobPattern<'a> {
-        if let Some(at_pos) = strings::index_of_char_usize(pattern, b'@') {
-            if at_pos > 0 && at_pos < pattern.len() - 1 {
-                let pkg_pattern = &pattern[0..at_pos];
-                let version_pattern = &pattern[at_pos + 1..];
+        let (name_pattern, version_pattern) = Dependency::split_name_and_maybe_version(pattern);
 
-                let mut result = Self::init_for_name(pkg_pattern);
-                result.version_pattern = version_pattern;
+        let mut result = Self::init_for_name(name_pattern);
 
-                let sliced = semver::SlicedString::init(version_pattern, version_pattern);
-                result.version_query = semver::query::parse(version_pattern, sliced).ok();
+        if let Some(version_pattern) = version_pattern {
+            result.version_pattern = version_pattern;
 
-                return result;
-            }
+            let sliced = semver::SlicedString::init(version_pattern, version_pattern);
+            // An empty group (`workspace:packages/a`, `beta`) satisfies every version.
+            result.version_query = semver::query::parse(version_pattern, sliced)
+                .ok()
+                .filter(|group| !group.is_empty());
         }
 
-        Self::init_for_name(pattern)
+        result
     }
 
+    /// `Exact` keeps the whole name in `prefix`.
     fn init_for_name(pattern: &'a [u8]) -> GlobPattern<'a> {
         if !strings::contains_char(pattern, b'*') {
             return GlobPattern {
                 pattern_type: PatternType::Exact,
+                prefix: pattern,
                 ..Default::default()
             };
         }
@@ -229,13 +239,14 @@ impl<'a> GlobPattern<'a> {
 
         GlobPattern {
             pattern_type: PatternType::Exact,
+            prefix: pattern,
             ..Default::default()
         }
     }
 
-    fn matches_name(&self, name: &[u8], pattern: &[u8]) -> bool {
+    fn matches_name(&self, name: &[u8]) -> bool {
         match self.pattern_type {
-            PatternType::Exact => strings::eql(name, pattern),
+            PatternType::Exact => strings::eql(name, self.prefix),
             PatternType::Prefix => name.starts_with(self.prefix),
             PatternType::Suffix => name.ends_with(self.suffix),
             PatternType::Middle => name.starts_with(self.prefix) && name.ends_with(self.suffix),
@@ -244,26 +255,25 @@ impl<'a> GlobPattern<'a> {
         }
     }
 
-    fn matches_version(&self, version: &[u8]) -> bool {
-        if self.version_pattern.is_empty() || self.version_pattern == b"latest" {
+    /// `version` slices into `string_bytes`. `resolution` is the printed resolution.
+    fn matches_version(
+        &self,
+        version: Option<semver::Version>,
+        string_bytes: &[u8],
+        resolution: &[u8],
+    ) -> bool {
+        if self.version_pattern.is_empty()
+            || self.version_pattern == b"latest"
+            || self.version_pattern == b"*"
+        {
             return true;
         }
 
-        if let Some(query) = &self.version_query {
-            let sliced = semver::SlicedString::init(version, version);
-            let version_result = semver::Version::parse(sliced);
-
-            if version_result.valid {
-                let semver_version = version_result.version.min();
-                return query.satisfies(semver_version, self.version_pattern, version);
-            }
+        if let (Some(query), Some(version)) = (&self.version_query, version) {
+            return query.satisfies(version, self.version_pattern, string_bytes);
         }
 
-        if strings::eql(version, self.version_pattern) {
-            return true;
-        }
-
-        version.starts_with(self.version_pattern)
+        resolution.starts_with(self.version_pattern)
     }
 }
 
@@ -275,19 +285,20 @@ impl WhyCommand {
         );
 
         bun_core::pretty!(
-            "Explain why a package is installed\n\
-\n\
-<b>Arguments:<r>\n\
-  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
-\n\
-<b>Options:<r>\n\
-  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
-  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>\n\
-\n\
-<b>Examples:<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
+            "\
+Explain why a package is installed
+
+<b>Arguments:<r>
+  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
+
+<b>Options:<r>
+  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
+  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>
+
+<b>Examples:<r>
+  <d>$<r> <b><green>bun why<r> <blue>react<r>
+  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
+  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
 "
         );
         Output::flush();
@@ -338,10 +349,10 @@ impl WhyCommand {
     ) -> Result<(), crate::Error> {
         // Detach the `Box<Lockfile>` from `pm`
         // so `load_from_cwd` can take `Option<&mut PackageManager>` without
-        // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
-        // up front so we never need `pm` again once `lockfile` is borrowed.
+        // overlapping the `&mut self` lockfile borrow.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
+        let configured_linker = pm.options.node_linker;
         // SAFETY: CLI dispatch is single-threaded and `log`'s last use is the
         // `load_from_cwd` call below, which receives it as the sole `&mut Log`;
         // no other path (`pm`, `ctx`) reborrows the process-static `Log` while
@@ -351,6 +362,7 @@ impl WhyCommand {
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
         let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
+        let linker = load_lockfile.node_linker(configured_linker);
 
         if top_only {
             MAX_DEPTH.store(1, AtomicOrdering::Relaxed);
@@ -375,33 +387,50 @@ impl WhyCommand {
 
         let mut all_dependents: HashMap<PackageID, Vec<DependentInfo>> = HashMap::default();
 
+        // A peer edge leads to the copy each placement of its owner resolves, whichever one the resolver bound it to.
+        let mut peer_targets: HashMap<DependencyID, Vec<PackageID>> = HashMap::default();
+        let served_peers = if linker == NodeLinker::Isolated {
+            bun_install::isolated_install::served_peers(pm, lockfile)?
+        } else {
+            bun_install::lockfile::tree::served_peers(lockfile)
+        };
+        for (dep_id, pkg_id) in served_peers {
+            peer_targets.entry(dep_id).or_default().push(pkg_id);
+        }
+
         let glob = GlobPattern::init(package_pattern);
 
         // The column-backed `PackageList` exposes
         // `items_name()` / `items_dependencies()` / … directly, so we read
         // columns by index instead of materialising a `Package` row.
         let pkg_names = packages.items_name();
+        let pkg_name_hashes = packages.items_name_hash();
         let _pkg_dependencies = packages.items_dependencies();
         let _pkg_resolutions = packages.items_resolutions();
         let pkg_resolution = packages.items_resolution();
 
+        // The pattern also selects a package through the name of a dependency that leads to it, so an alias finds the package behind it.
+        let mut matched_by_dependency_name = vec![false; packages.len()];
+
         for pkg_idx in 0..packages.len() {
             let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
 
-            if pkg_name.is_empty() {
-                continue;
-            }
+            let dependent_name =
+                if pkg_name.is_empty() && pkg_resolution[pkg_idx].tag == ResolutionTag::Root {
+                    UNNAMED_ROOT
+                } else {
+                    pkg_name
+                };
 
             let dependencies = pkg_dep_slices[pkg_idx].get(dependencies_items);
             let resolutions = pkg_res_slices[pkg_idx].get(resolutions_items);
 
             for (dep_idx, dependency) in dependencies.iter().enumerate() {
-                let target_id = resolutions[dep_idx];
-                if target_id as usize >= packages.len() {
-                    continue;
-                }
-
-                let dependents_entry = all_dependents.entry(target_id).or_default();
+                let dep_id = pkg_dep_slices[pkg_idx].begin() + dep_idx as DependencyID;
+                let targets: &[PackageID] = match peer_targets.get(&dep_id) {
+                    Some(served) => served,
+                    None => core::slice::from_ref(&resolutions[dep_idx]),
+                };
 
                 let mut dep_version_buf: Vec<u8> = Vec::new();
                 write!(
@@ -412,8 +441,8 @@ impl WhyCommand {
                 .expect("unreachable");
                 let dep_pkg_version: Box<[u8]> = dep_version_buf.into_boxed_slice();
 
-                let spec: Box<[u8]> =
-                    Box::<[u8]>::from(dependency.version.literal.slice(string_bytes));
+                let dep_name = dependency.name.slice(string_bytes);
+                let spec = dependency.version.literal.slice(string_bytes);
 
                 let dep_type = if dependency.behavior.contains(Behavior::DEV) {
                     DependencyType::Dev
@@ -432,30 +461,60 @@ impl WhyCommand {
                 let workspace = strings::has_prefix(&dep_pkg_version, b"workspace:")
                     || dep_pkg_version.is_empty();
 
-                dependents_entry.push(DependentInfo {
-                    name: Box::<[u8]>::from(pkg_name),
-                    version: dep_pkg_version,
-                    spec,
-                    dep_type,
-                    pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
-                    workspace,
-                });
-            }
+                for &target_id in targets {
+                    if target_id as usize >= packages.len() {
+                        continue;
+                    }
 
-            if !glob.matches_name(pkg_name, package_pattern) {
+                    matched_by_dependency_name[target_id as usize] |= glob.matches_name(dep_name);
+
+                    let target_name = pkg_names[target_id as usize].slice(string_bytes);
+                    all_dependents
+                        .entry(target_id)
+                        .or_default()
+                        .push(DependentInfo {
+                            name: Box::<[u8]>::from(dependent_name),
+                            version: dep_pkg_version.clone(),
+                            alias: (dep_name != target_name).then(|| Box::<[u8]>::from(dep_name)),
+                            spec: Box::<[u8]>::from(spec),
+                            dep_type,
+                            pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
+                            workspace,
+                        });
+                }
+            }
+        }
+
+        for pkg_idx in 0..packages.len() {
+            let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
+
+            if pkg_name.is_empty()
+                || !(glob.matches_name(pkg_name) || matched_by_dependency_name[pkg_idx])
+            {
                 continue;
             }
+
+            let resolution = &pkg_resolution[pkg_idx];
 
             let mut version_buf: Vec<u8> = Vec::new();
             write!(
                 &mut version_buf,
                 "{}",
-                pkg_resolution[pkg_idx].fmt(string_bytes, PathSep::Auto)
+                resolution.fmt(string_bytes, PathSep::Auto)
             )
             .expect("unreachable");
             let version: Box<[u8]> = version_buf.into_boxed_slice();
 
-            if !glob.matches_version(&version) {
+            let semver_version = match resolution.tag {
+                ResolutionTag::Npm => Some(resolution.npm().version),
+                ResolutionTag::Workspace => lockfile
+                    .workspace_versions
+                    .get(&pkg_name_hashes[pkg_idx])
+                    .copied(),
+                _ => None,
+            };
+
+            if !glob.matches_version(semver_version, string_bytes, &version) {
                 continue;
             }
 
@@ -466,7 +525,7 @@ impl WhyCommand {
         }
 
         if target_versions.is_empty() {
-            bun_core::prettyln!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: No packages matching '{}' found in lockfile",
                 BStr::new(package_pattern)
             );
@@ -493,6 +552,7 @@ impl WhyCommand {
                     index_sort::sort_slice_by(&mut sorted, cmp_dependents);
 
                     let mut ctx_data = TreeContext::init(&all_dependents);
+                    ctx_data.path_tracker.insert(target_version.pkg_id, false);
 
                     let len = sorted.len();
                     for (dep_idx, dep) in sorted.iter().enumerate() {
@@ -554,13 +614,19 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
         }
     }
 
-    if !package.spec.is_empty() {
+    if package.spec.is_empty() {
+        bun_core::prettyln!("");
+    } else if let Some(alias) = &package.alias {
+        bun_core::prettyln!(
+            " <d>(requires {}@{})<r>",
+            escape_control_chars(alias),
+            for_terminal(BStr::new(&package.spec))
+        );
+    } else {
         bun_core::prettyln!(
             " <d>(requires {})<r>",
             for_terminal(BStr::new(&package.spec))
         );
-    } else {
-        bun_core::prettyln!("");
     }
 }
 
@@ -610,15 +676,16 @@ fn print_dependency_tree(
     let (mut lines, mut cutoff) = (0usize, 0usize);
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
-        let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
+        // The root depends on every workspace, so it is left out of a workspace's dependents.
+        let mut sorted_dependents: Vec<DependentInfo> = dependents
+            .iter()
+            .filter(|dep| !(parent_is_workspace && dep.version.is_empty()))
+            .cloned()
+            .collect();
         index_sort::sort_slice_by(&mut sorted_dependents, cmp_dependents);
 
         let len = sorted_dependents.len();
         for (dep_idx, dep) in sorted_dependents.iter().enumerate() {
-            if parent_is_workspace && dep.version.is_empty() {
-                continue;
-            }
-
             if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
                 bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
                 lines += 1;

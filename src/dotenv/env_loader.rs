@@ -1454,6 +1454,34 @@ impl Map {
             map: self.map.clone()?,
         })
     }
+
+    /// The environment of a `git` whose repository bun names (`-C`, cwd, the clone target): the
+    /// process's own, so that nothing a project's `.env` sets reaches git, without the variables
+    /// that name another repository (`git rev-parse --local-env-vars` minus the `GIT_CONFIG*`
+    /// user settings; git exports `GIT_DIR` and `GIT_INDEX_FILE` to hooks).
+    pub fn for_git_child() -> Result<Map, AllocError> {
+        const REPOSITORY_VARS: &[&[u8]] = &[
+            b"GIT_DIR",
+            b"GIT_WORK_TREE",
+            b"GIT_IMPLICIT_WORK_TREE",
+            b"GIT_INDEX_FILE",
+            b"GIT_NAMESPACE",
+            b"GIT_OBJECT_DIRECTORY",
+            b"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            b"GIT_COMMON_DIR",
+            b"GIT_PREFIX",
+            b"GIT_GRAFT_FILE",
+            b"GIT_SHALLOW_FILE",
+            b"GIT_NO_REPLACE_OBJECTS",
+            b"GIT_REPLACE_REF_BASE",
+        ];
+        let mut loader = Loader::init();
+        loader.load_process()?;
+        for key in REPOSITORY_VARS {
+            loader.map.remove(key);
+        }
+        Ok(loader.map)
+    }
 }
 
 /// Owns the `K=V\0` strings backing a NULL-terminated envp array.

@@ -432,6 +432,15 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
 }
 
+/// `2x`, `1beta`, `v2x`: like npm-package-arg, one word that starts like a version but is not a partial version is a dist-tag.
+fn is_dist_tag_with_leading_digit(dependency: &[u8]) -> bool {
+    if strings::index_of_any(dependency, b"|+ \t\n\r\x0B\x0C").is_some() {
+        return false;
+    }
+    let parsed = Semver::Version::parse_utf8(dependency);
+    !parsed.valid && parsed.wildcard != Semver::query::Wildcard::None
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Compat aliases: dependents reference `dependency::version::Tag`,
 // `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
@@ -799,9 +808,13 @@ impl TagExt for Tag {
             }
             // 1.2.3
             // 123.tar.gz
+            // 2x
             b'0'..=b'9' => {
                 if is_tarball(dependency) {
                     return Tag::Tarball;
+                }
+                if is_dist_tag_with_leading_digit(dependency) {
+                    return Tag::DistTag;
                 }
                 return Tag::Npm;
             }
@@ -1021,7 +1034,7 @@ impl TagExt for Tag {
                     return Tag::DistTag;
                 }
                 return match dependency[1] {
-                    b'0'..=b'9' => Tag::Npm,
+                    b'0'..=b'9' if !is_dist_tag_with_leading_digit(dependency) => Tag::Npm,
                     _ => Tag::DistTag,
                 };
             }
@@ -1318,48 +1331,34 @@ pub(crate) fn parse_with_tag(
                 Ok(None) | Err(_) => return None,
             };
 
-            // Now we have parsed info, we need to find these substrings in the original dependency
-            // to create String objects that point to the original buffer
-            let owner_str: &[u8] = info.user().unwrap_or(b"");
-            let repo_str: &[u8] = info.project();
-            let committish_str: &[u8] = info.committish().unwrap_or(b"");
-
-            // Find owner in dependency string
-            let owner_idx = strings::index_of(dependency, owner_str);
-            let owner = if let Some(idx) = owner_idx {
-                sliced.sub(&dependency[idx..idx + owner_str.len()]).value()
-            } else {
-                String::from(b"")
-            };
-
-            // Find repo in dependency string
-            let repo_idx = strings::index_of(dependency, repo_str);
-            let repo = if let Some(idx) = repo_idx {
-                sliced.sub(&dependency[idx..idx + repo_str.len()]).value()
-            } else {
-                String::from(b"")
-            };
-
-            // Find committish in dependency string
-            let committish = if !committish_str.is_empty() {
-                let committish_idx = strings::index_of(dependency, committish_str);
-                if let Some(idx) = committish_idx {
-                    sliced
-                        .sub(&dependency[idx..idx + committish_str.len()])
-                        .value()
-                } else {
-                    String::from(b"")
+            // `info` is percent-decoded, and a `String` can only point into `dependency`. A part
+            // that is not there as decoded fails to resolve: left empty, a committish would
+            // install the default branch.
+            let (before_fragment, fragment) =
+                strings::split_once_char(dependency, b'#').unwrap_or((dependency, b""));
+            let find = |part: &[u8]| {
+                if part.is_empty() {
+                    return Some(String::default());
                 }
-            } else {
-                String::from(b"")
+                let at = strings::index_of(before_fragment, part)?;
+                Some(sliced.sub(&before_fragment[at..at + part.len()]).value())
+            };
+            let committish = match info.committish() {
+                None => String::default(),
+                // `/tree/<committish>`
+                Some(in_path) if fragment.is_empty() => find(in_path)?,
+                // The URL parser drops these; they must not reach the request either.
+                Some(_) if contains_control_character(fragment) => return None,
+                // The fragment goes into the request as written, and GitHub decodes it.
+                Some(_) => sliced.sub(fragment).value(),
             };
 
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
                     github: ManuallyDrop::new(Repository {
-                        owner,
-                        repo,
+                        owner: find(info.user().unwrap_or(b""))?,
+                        repo: find(info.project())?,
                         committish,
                         ..Default::default()
                     }),

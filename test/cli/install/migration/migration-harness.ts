@@ -1,6 +1,16 @@
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { dirname, join } from "path";
+
+/**
+ * A YAML sequence under `key` in which each `&a` holds the one before it. No line is deep, but whoever follows the
+ * last `*a` goes down `lines * levels` levels. Debug and ASAN builds have the stack for fewer levels in one line.
+ */
+export function yamlAliasChain(key: string) {
+  const [levels, lines] = isDebug || isASAN ? [300, 74] : [4000, 40];
+  const line = `  - &a ${Buffer.alloc(levels, "[")}*a${Buffer.alloc(levels, "]")}\n`;
+  return `${key}:\n  - &a [1]\n${Buffer.alloc(lines * line.length, line)}`;
+}
 
 export const ARBORIST = join(import.meta.dir, "npm-arborist");
 export const arboristFixtures: { name: string; root?: string }[] = JSON.parse(

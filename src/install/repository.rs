@@ -147,22 +147,22 @@ pub(crate) struct GitEnv {
 static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(None);
 
 impl GitEnv {
-    pub(crate) fn get(loader: &mut bun_dotenv::Loader) -> &'static GitEnv {
+    pub(crate) fn get() -> &'static GitEnv {
         let slot = GIT_ENV.get();
         // SAFETY: only the install thread reaches this. The slot is written
         // once, before any reference into it exists, and never reassigned.
         unsafe {
             if (*slot).is_none() {
-                *slot = Some(Self::init(loader));
+                *slot = Some(Self::init());
             }
             (*slot).as_ref().unwrap()
         }
     }
 
-    fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
-        // No prompts by default: the install's own output would hide them.
-        let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
+    fn init() -> GitEnv {
+        let mut map = bun_core::handle_oom(bun_dotenv::Map::for_git_child());
 
+        // No prompts by default: the install's own output would hide them.
         if map.get(b"GIT_ASKPASS").is_none() {
             let config = SloppyGlobalGitConfig::get();
             if !config.has_askpass {
@@ -236,6 +236,8 @@ pub trait RepositoryExt: Sized {
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
+    /// The commit in `resolved` (`<owner>-<repo>-<commit>` for GitHub).
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
     /// The ssh form of a git URL; `None` for an explicit `http(s)://` URL.
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>>;
     /// The https form of a git URL, or `None` when it has none.
@@ -328,6 +330,14 @@ impl RepositoryExt for Repository {
         }
     }
 
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        let resolved = self.resolved.slice(buf);
+        match strings::last_index_of_char(resolved, b'-') {
+            Some(i) => &resolved[i + 1..],
+            None => resolved,
+        }
+    }
+
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>> {
         // Do not cast explicit http(s) URLs to SSH
         if url.starts_with(b"http") {
@@ -339,6 +349,11 @@ impl RepositoryExt for Repository {
         }
 
         if url.starts_with(b"ssh://") {
+            // The colon of a URL that parses is a port: ssh://git@host:2222/user/repo
+            if bun_url::whatwg::Parsed::from_utf8(url).is_some() {
+                return Some(url.to_vec());
+            }
+
             // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
             // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
             let pair = hosted_git_info::UrlProtocolPair {
@@ -356,7 +371,11 @@ impl RepositoryExt for Repository {
         }
 
         if Dependency::is_scp_like_path(url) {
-            return Some(scp_like_to_url(b"ssh://git@", url));
+            let host_end = strings::index_of_any(url, b":/").unwrap_or(url.len());
+            // A user that looks like an option stays behind `git@`.
+            let has_user = url[0] != b'-' && strings::contains_char(&url[..host_end], b'@');
+            let prefix: &[u8] = if has_user { b"ssh://" } else { b"ssh://git@" };
+            return Some(scp_like_to_url(prefix, url));
         }
 
         None
@@ -432,10 +451,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
 
         if !self.repo.resolved.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
-            let mut resolved = self.repo.resolved.slice(self.string_buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
+            let resolved = self.repo.resolved_commit(self.string_buf);
             write!(writer, "{}", Install::fmt_store_path(resolved))?;
         } else if !self.repo.committish.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
@@ -475,10 +491,7 @@ impl<'a> fmt::Display for Formatter<'a> {
 
         if !self.repository.resolved.is_empty() {
             writer.write_str("#")?;
-            let mut resolved = self.repository.resolved.slice(self.buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
+            let resolved = self.repository.resolved_commit(self.buf);
             write!(writer, "{}", BStr::new(resolved))?;
         } else if !self.repository.committish.is_empty() {
             writer.write_str("#")?;

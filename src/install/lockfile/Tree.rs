@@ -607,7 +607,10 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             );
         }
 
-        Output::err_generic("dependency cycle cannot be laid out in node_modules: {}", (cycle,));
+        Output::err_generic(
+            "dependency cycle cannot be laid out in node_modules: {}",
+            (cycle,),
+        );
         bun_core::note!(
             "each of these needs the next one nested inside it, without end. \"overrides\" in package.json can keep a single version of one of them"
         );
@@ -844,38 +847,33 @@ impl Tree {
 
             // filter out disabled dependencies
             if METHOD == BuilderMethod::Filter {
-                if is_filtered_dependency_or_workspace(
-                    dep_id,
-                    parent_pkg_id,
-                    builder.workspace_filters,
-                    builder.install_root_dependencies,
-                    builder.manager.expect("manager set when METHOD == Filter"),
-                    lockfile,
-                    &*builder.resolutions,
-                ) {
-                    continue;
+                // As in `isolated_install::build_store`: the list replaces the filter for
+                // the root's own dependencies (a devDependency under `--production`).
+                match builder.packages_to_install.filter(|_| parent_pkg_id == 0) {
+                    Some(packages_to_install) => {
+                        if !packages_to_install.contains(&pkg_id) {
+                            continue;
+                        }
+                    }
+                    None => {
+                        if is_filtered_dependency_or_workspace(
+                            dep_id,
+                            parent_pkg_id,
+                            builder.workspace_filters,
+                            builder.install_root_dependencies,
+                            builder.manager.expect("manager set when METHOD == Filter"),
+                            lockfile,
+                            &*builder.resolutions,
+                        ) {
+                            continue;
+                        }
+                    }
                 }
 
                 // unresolved packages are skipped when filtering. they already had
                 // their chance to resolve.
                 if pkg_id == invalid_package_id {
                     continue;
-                }
-
-                if let Some(packages_to_install) = builder.packages_to_install {
-                    if parent_pkg_id == 0 {
-                        let mut found = false;
-                        for &package_to_install in packages_to_install {
-                            if pkg_id == package_to_install {
-                                found = true;
-                                break;
-                            }
-                        }
-
-                        if !found {
-                            continue;
-                        }
-                    }
                 }
             }
 
@@ -1366,3 +1364,72 @@ pub struct FillItem {
 // Dynamic, heap-backed ring buffer.
 pub(crate) type TreeFiller =
     bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
+
+/// Each `(peer edge, package)` pair a placement of the owner resolves, nearest `node_modules` first.
+pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
+    use bun_collections::HashMap;
+
+    let trees = lockfile.buffers.trees.as_slice();
+    let hoisted = lockfile.buffers.hoisted_dependencies.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkg_dependencies = lockfile.packages.items_dependencies();
+
+    let mut served: Vec<(DependencyID, PackageID)> = Vec::new();
+    if trees.is_empty() {
+        return served;
+    }
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+
+    // The `node_modules` folder of the package placed in `parent` under a name, if it has one.
+    let mut own_folder: HashMap<(Id, PackageNameHash), Id> = HashMap::default();
+    for tree in &trees[1..] {
+        let name_hash = dependencies[tree.dependency_id as usize].name_hash;
+        own_folder.insert((tree.parent, name_hash), tree.id);
+    }
+
+    let resolve_from = |mut tree_id: Id, name_hash: PackageNameHash| -> Option<PackageID> {
+        while let Some(tree) = trees.get(tree_id as usize) {
+            for &dep_id in tree.dependencies.get(hoisted) {
+                if dependencies[dep_id as usize].name_hash == name_hash {
+                    return Some(resolutions[dep_id as usize]);
+                }
+            }
+            tree_id = tree.parent;
+        }
+        None
+    };
+
+    let mut visit = |pkg_id: PackageID, from: Id| {
+        let deps = pkg_dependencies[pkg_id as usize];
+        for dep_id in deps.begin()..deps.end() {
+            let dep = &dependencies[dep_id as usize];
+            if !dep.behavior.is_peer() {
+                continue;
+            }
+            if let Some(target) = resolve_from(from, dep.name_hash)
+                && target != invalid_package_id
+                && seen.insert((dep_id, target), ()).is_none()
+            {
+                served.push((dep_id, target));
+            }
+        }
+    };
+
+    visit(0, 0);
+    for tree in trees {
+        for &dep_id in tree.dependencies.get(hoisted) {
+            let pkg_id = resolutions[dep_id as usize];
+            if pkg_id == invalid_package_id {
+                continue;
+            }
+            let from = own_folder
+                .get(&(tree.id, dependencies[dep_id as usize].name_hash))
+                .copied()
+                .unwrap_or(tree.id);
+            visit(pkg_id, from);
+        }
+    }
+
+    served
+}

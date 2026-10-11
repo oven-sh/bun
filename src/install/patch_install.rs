@@ -9,7 +9,7 @@ use bun_core::{ZStr, strings};
 use bun_paths as path;
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 
@@ -520,10 +520,10 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-            let _close_guard = scopeguard::guard(patch_pkg_dir, |fd| fd.close());
+            let _close_guard = sys::CloseOnDrop::new(patch_pkg_dir);
 
             // 4. apply patch
-            if let Some(e) = patchfile.apply(patch_pkg_dir) {
+            if let Err(e) = patchfile.apply(patch_pkg_dir) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),

@@ -133,7 +133,8 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        let scripts = if pm.options.do_.run_scripts() {
+        let dry_run = pm.options.dry_run;
+        let scripts = if pm.options.do_.run_scripts() && !dry_run {
             json.as_property(b"scripts")
         } else {
             None
@@ -191,6 +192,12 @@ impl PmVersionCommand {
                 Output::err_generic("Version not changed", ());
                 Global::exit(1);
             }
+        }
+
+        if dry_run {
+            Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
+            Output::flush();
+            return Ok(());
         }
 
         {
@@ -306,10 +313,8 @@ impl PmVersionCommand {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let git_dir_path =
             path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
-        if !matches!(
-            bun_sys::directory_exists_at(Fd::cwd(), git_dir_path),
-            Ok(true)
-        ) {
+        // `.git` is a file, not a directory, in a linked worktree or a submodule.
+        if !bun_sys::exists_z(git_dir_path) {
             pm.options.git_tag_version = false;
             return Ok(());
         }
@@ -321,13 +326,20 @@ impl PmVersionCommand {
         Ok(())
     }
 
+    /// node-semver's limit: https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
+    fn is_valid_version(result: &Semver::version::ParseResult<u64>) -> bool {
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        let version = result.version.min();
+        result.valid && version.major.max(version.minor).max(version.patch) <= MAX_SAFE_INTEGER
+    }
+
     fn parse_version_argument(arg: &[u8]) -> (VersionType, Option<&[u8]>) {
         if let Some(vtype) = VersionType::from_string(arg) {
             return (vtype, None);
         }
 
         let version = Semver::Version::parse(Semver::SlicedString::init(arg, arg));
-        if version.valid {
+        if Self::is_valid_version(&version) {
             return (VersionType::Specific, Some(arg));
         }
 
@@ -469,6 +481,7 @@ impl PmVersionCommand {
              \x20 <cyan>--message<d>=\\<val\\><r>, <cyan>-m<r>  <d>Custom commit message, use %s for version substitution<r>\n\
              \x20 <cyan>--preid<d>=\\<val\\><r>        <d>Prerelease identifier (i.e beta → {})<r>\n\
              \x20 <cyan>--force<r>, <cyan>-f<r>          <d>Bypass dirty git history check<r>\n\
+             \x20 <cyan>--dry-run<r>            <d>Print the new version without writing, running scripts, or tagging<r>\n\
              \n\
              <b>Examples<r>:\n\
              \x20 <d>$<r> <b><green>bun pm version<r> <cyan>patch<r>\n\
@@ -498,7 +511,7 @@ impl PmVersionCommand {
         }
 
         let current = Semver::Version::parse(Semver::SlicedString::init(current_str, current_str));
-        if !current.valid {
+        if !Self::is_valid_version(&current) {
             Output::err_generic(
                 "Current version \"{}\" is not a valid semver",
                 (BStr::new(current_str),),
@@ -518,7 +531,7 @@ impl PmVersionCommand {
                     break 'blk current_prerelease[..dot_index as usize].to_vec();
                 }
 
-                break 'blk if bun_core::fmt::parse_decimal::<u32>(current_prerelease).is_some() {
+                break 'blk if Self::next_prerelease_number(current_prerelease).is_some() {
                     Vec::new()
                 } else {
                     current_prerelease.to_vec()
@@ -528,6 +541,11 @@ impl PmVersionCommand {
         // `defer allocator.free(prerelease_id)` — handled by Drop.
 
         Self::increment_version(current_str, &current, version_type, &prerelease_id)
+    }
+
+    /// `None` for a name, and for a number with no successor in the u64 `Tag::order_pre` compares in.
+    fn next_prerelease_number(identifier: &[u8]) -> Option<u64> {
+        bun_core::fmt::parse_decimal::<u64>(identifier)?.checked_add(1)
     }
 
     fn increment_version(
@@ -613,18 +631,17 @@ impl PmVersionCommand {
 
                     if let Some(dot_index) = strings::last_index_of_char(current_prerelease, b'.') {
                         let number_str = &current_prerelease[(dot_index as usize) + 1..];
-                        let next_num = bun_core::fmt::parse_decimal::<u32>(number_str).unwrap_or(0);
+                        let next_num = Self::next_prerelease_number(number_str).unwrap_or(1);
                         return Ok(fmt_bytes(format_args!(
                             "{}.{}.{}-{}.{}",
                             new_version.major,
                             new_version.minor,
                             new_version.patch,
                             BStr::new(identifier),
-                            next_num + 1
+                            next_num
                         )));
                     } else {
-                        let num = bun_core::fmt::parse_decimal::<u32>(current_prerelease);
-                        if let Some(n) = num {
+                        if let Some(next_num) = Self::next_prerelease_number(current_prerelease) {
                             if !preid.is_empty() {
                                 return Ok(fmt_bytes(format_args!(
                                     "{}.{}.{}-{}.{}",
@@ -632,7 +649,7 @@ impl PmVersionCommand {
                                     new_version.minor,
                                     new_version.patch,
                                     BStr::new(preid),
-                                    n + 1
+                                    next_num
                                 )));
                             } else {
                                 return Ok(fmt_bytes(format_args!(
@@ -640,7 +657,7 @@ impl PmVersionCommand {
                                     new_version.major,
                                     new_version.minor,
                                     new_version.patch,
-                                    n + 1
+                                    next_num
                                 )));
                             }
                         } else {

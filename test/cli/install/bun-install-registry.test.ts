@@ -2,8 +2,8 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
+import { chmodSync, copyFileSync, existsSync, lstatSync, lutimesSync, mkdirSync, readdirSync, readFileSync } from "fs";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv,
@@ -3312,6 +3312,174 @@ describe.concurrent("binaries", () => {
       });
     });
   }
+
+  // https://github.com/oven-sh/bun/issues/14736
+  test.skipIf(isWindows)("reinstall keeps an already-correct .bin link untouched on a read-only tree", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "what-bin": "1.0.0" } }));
+
+    await runBunInstall(env, packageDir);
+    const binDir = join(packageDir, "node_modules", ".bin");
+    const binPath = join(binDir, "what-bin");
+    expect(binPath).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+    // A link that is removed and made again loses this. Root is not stopped by the chmod below.
+    lutimesSync(binPath, 1, 1);
+
+    chmodSync(binDir, 0o555);
+    let err: string, exitCode: number;
+    try {
+      await using proc = spawn({ cmd: [bunExe(), "install"], cwd: packageDir, env, stdout: "pipe", stderr: "pipe" });
+      [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    } finally {
+      chmodSync(binDir, 0o755);
+    }
+
+    expect(err).not.toContain("Failed to link");
+    expect(err).not.toContain("error:");
+    expect(binPath).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+    expect(lstatSync(binPath).mtimeMs).toBe(1000);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a stale link, a file and a directory in .bin are replaced", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    const binDir = join(packageDir, "node_modules", ".bin");
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "dep-with-map-bins": "1.0.0", "what-bin": "1.0.0" } }),
+      ),
+      write(join(binDir, "map-bin-1"), "a file"),
+      write(join(binDir, "map-bin-2", "inner.txt"), "in a directory"),
+    ]);
+    await symlink(join("..", "gone", "cli.js"), join(binDir, "what-bin"));
+
+    await runBunInstall(env, packageDir);
+
+    expect(join(binDir, "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+    expect(join(binDir, "map-bin-1")).toBeValidBin(join("..", "dep-with-map-bins", "map-bin-1"));
+    expect(join(binDir, "map-bin-2")).toBeValidBin(join("..", "dep-with-map-bins", "map-bin-2"));
+  });
+
+  describe("existing destinations in the global bin dir", () => {
+    // What a bin named `name` occupies in a bin dir: the symlink itself on POSIX, the `.exe` half
+    // of the `.exe` + `.bunx` shim pair on Windows.
+    const binEntry = (name: string) => (isWindows ? `${name}.exe` : name);
+    const linkTarget = (pkg: string, file: string) =>
+      join("..", "global-install-dir", "install", "global", "node_modules", pkg, file);
+
+    async function runGlobal(packageDir: string, env: NodeJS.Dict<string>, ...args: string[]) {
+      await write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `http://localhost:${port}/`,
+            globalBinDir: join(packageDir, "global-bin-dir"),
+          },
+        }),
+      );
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          args[0],
+          "--linker=hoisted",
+          "-g",
+          `--config=${join(packageDir, "bunfig.toml")}`,
+          ...args.slice(1),
+        ],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    test("a file, a directory and a link that bun did not make stay", async () => {
+      const { packageDir, env } = await setupTest();
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([
+        // A regular file, which is what `bun` itself is in this directory.
+        write(join(binDir, binEntry("what-bin")), "not a bin of what-bin"),
+        // The first bin of the package. The second one is free.
+        write(join(binDir, binEntry("map-bin-1"), "inner.txt"), "keep"),
+        write(join(packageDir, "elsewhere.txt"), ""),
+      ]);
+      if (!isWindows) await symlink(join(packageDir, "elsewhere.txt"), join(binDir, "dep-with-file-bin"));
+
+      const { err, exitCode } = await runGlobal(
+        packageDir,
+        env,
+        "install",
+        "what-bin",
+        "dep-with-map-bins",
+        "dep-with-file-bin",
+      );
+      expect(err).toContain("Failed to link what-bin: EEXIST");
+      expect(err).toContain("Failed to link dep-with-map-bins: EEXIST");
+      if (!isWindows) expect(err).toContain("Failed to link dep-with-file-bin: EEXIST");
+
+      expect(await file(join(binDir, binEntry("what-bin"))).text()).toBe("not a bin of what-bin");
+      expect(await file(join(binDir, binEntry("map-bin-1"), "inner.txt")).text()).toBe("keep");
+      if (!isWindows) expect(await readlink(join(binDir, "dep-with-file-bin"))).toBe(join(packageDir, "elsewhere.txt"));
+      if (isWindows) expect(await exists(join(binDir, "what-bin.bunx"))).toBeFalse();
+      // The refused bin does not take the package's other bin down.
+      expect(join(binDir, "map-bin-2")).toBeValidBin(linkTarget("dep-with-map-bins", "map-bin-2"));
+      expect(exitCode).toBe(1);
+    });
+
+    test("the package's own bin from an earlier install is replaced", async () => {
+      const { packageDir, env } = await setupTest();
+      const bin = join(packageDir, "global-bin-dir", "bin-change-dir");
+
+      let result = await runGlobal(packageDir, env, "install", "bin-change-dir@1.0.0");
+      expect(result.err).not.toContain("error:");
+      expect(bin).toBeValidBin(linkTarget("bin-change-dir", join("bin-1.0.0", "bin.js")));
+      expect(result.exitCode).toBe(0);
+
+      result = await runGlobal(packageDir, env, "install", "bin-change-dir@1.0.1");
+      expect(result.err).not.toContain("error:");
+      expect(bin).toBeValidBin(linkTarget("bin-change-dir", join("bin-1.0.1", "bin.js")));
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("the package named last takes a bin name from another global package", async () => {
+      const { packageDir, env } = await setupTest();
+      const bin = join(packageDir, "global-bin-dir", "map-bin");
+
+      let result = await runGlobal(packageDir, env, "install", "map-bin");
+      expect(result.err).not.toContain("error:");
+      expect(bin).toBeValidBin(linkTarget("map-bin", join("bin", "map-bin")));
+      expect(result.exitCode).toBe(0);
+
+      result = await runGlobal(packageDir, env, "install", "map-bin-multiple");
+      expect(result.err).not.toContain("error:");
+      expect(bin).toBeValidBin(linkTarget("map-bin-multiple", join("bin", "map-bin")));
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("a foreign entry is reported for a package with a native binlink as well", async () => {
+      const { packageDir, env } = await setupTest();
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([
+        write(join(binDir, binEntry("test-binlink-cmd")), "not a bin of test-native-binlink"),
+        // The installer first links the bin of the platform package, then retries with the
+        // package's own bin. The error has to survive the retry.
+        write(
+          join(packageDir, "global-install-dir", "install", "global", "package.json"),
+          JSON.stringify({ dependencies: {}, nativeDependencies: ["test-native-binlink"] }),
+        ),
+      ]);
+
+      const { err, exitCode } = await runGlobal(packageDir, env, "install", "test-native-binlink");
+      expect(err).toContain("Failed to link test-native-binlink: EEXIST");
+      expect(await file(join(binDir, binEntry("test-binlink-cmd"))).text()).toBe("not a bin of test-native-binlink");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test("it should correctly link binaries after deleting node_modules", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     const json: any = {
@@ -3936,6 +4104,81 @@ describe.concurrent("binaries", () => {
     await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
     await runBunInstall(env, packageDir, { savesLockfile: false });
     expectBins();
+  });
+
+  test("bin entries whose value is not a string are skipped, the others are linked", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    // npm (normalize-package-bin) drops an entry whose value is not a string and keeps the rest.
+    const script = (name: string) => `#!/usr/bin/env node\nconsole.log("${name}")`;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "one-valid": "./one-valid",
+            "two-valid": "./two-valid",
+            "none-valid": "./none-valid",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "one-valid", "package.json"),
+        JSON.stringify({
+          name: "one-valid",
+          version: "1.0.0",
+          bin: { "one-valid-1": "one-valid-1.js", "one-valid-2": 5 },
+        }),
+      ),
+      write(join(packageDir, "one-valid", "one-valid-1.js"), script("one-valid-1")),
+      write(
+        join(packageDir, "two-valid", "package.json"),
+        JSON.stringify({
+          name: "two-valid",
+          version: "1.0.0",
+          bin: { "two-valid-1": "two-valid-1.js", "two-valid-2": { nested: true }, "two-valid-3": "two-valid-3.js" },
+        }),
+      ),
+      write(join(packageDir, "two-valid", "two-valid-1.js"), script("two-valid-1")),
+      write(join(packageDir, "two-valid", "two-valid-3.js"), script("two-valid-3")),
+      write(
+        join(packageDir, "none-valid", "package.json"),
+        JSON.stringify({
+          name: "none-valid",
+          version: "1.0.0",
+          bin: { "none-valid-1": null, "none-valid-2": 5 },
+        }),
+      ),
+    ]);
+
+    const expectBins = async () => {
+      const bin = (name: string) => join(packageDir, "node_modules", ".bin", name);
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins([
+        "one-valid-1",
+        "two-valid-1",
+        "two-valid-3",
+      ]);
+      expect(bin("one-valid-1")).toBeValidBin(join("..", "one-valid", "one-valid-1.js"));
+      expect(bin("two-valid-1")).toBeValidBin(join("..", "two-valid", "two-valid-1.js"));
+      expect(bin("two-valid-3")).toBeValidBin(join("..", "two-valid", "two-valid-3.js"));
+    };
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    await expectBins();
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(
+      `"one-valid": ["one-valid@file:one-valid", { "bin": { "one-valid-1": "one-valid-1.js" } }]`,
+    );
+    expect(lockfile).toContain(
+      `"two-valid": ["two-valid@file:two-valid", { "bin": { "two-valid-1": "two-valid-1.js", "two-valid-3": "two-valid-3.js" } }]`,
+    );
+    expect(lockfile).toContain(`"none-valid": ["none-valid@file:none-valid", {}]`);
+
+    // From the lockfile.
+    await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    await expectBins();
   });
 
   test.serial("root resolution bins", async () => {
@@ -4642,6 +4885,182 @@ describe.concurrent("binaries", () => {
       });
       await runBin(packageDir, env, "directory-bin-1", "directory-bin-1\n", false);
       await runBin(packageDir, env, "directory-bin-2", "directory-bin-2\n", false);
+    });
+  });
+
+  // One `.bin` has one link per name. The order, under both linkers: what the root package or a
+  // workspace member depends on itself; then registry, tarball and git packages before workspace,
+  // `file:` and `link:` directories; then the dependency name.
+  describe("a bin name that several packages declare", () => {
+    // `aaa` sorts before the registry package `what-bin`, `zzz` after it. Both declare its bin.
+    const claim = (dir: string, name: string) => ({
+      [`${dir}/package.json`]: { name, version: "1.0.0", bin: { "what-bin": "claim.js" } },
+      [`${dir}/claim.js`]: "#!/usr/bin/env node\n",
+    });
+    const registryBin = join("..", "what-bin", "what-bin.js");
+    const aaa = join("..", "aaa", "claim.js");
+    const zzz = join("..", "zzz", "claim.js");
+    const transitive = { "uses-what-bin": "1.0.0" };
+    const direct = { "what-bin": "1.0.0" };
+
+    const cases: [title: string, linker: string, files: Record<string, object | string>, bin: string, wins: string][] =
+      [
+        [
+          "a direct file: directory, over a transitive registry package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", dependencies: { ...transitive, zzz: "file:./zzz" } },
+            ...claim("zzz", "zzz"),
+          },
+          "node_modules/.bin/what-bin",
+          zzz,
+        ],
+        [
+          "a workspace package, over a transitive registry package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: transitive },
+            ...claim("packages/zzz", "zzz"),
+          },
+          "node_modules/.bin/what-bin",
+          zzz,
+        ],
+        [
+          "a tarball that a workspace member depends on, over a transitive registry package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: transitive },
+            "packages/app/package.json": { name: "app", dependencies: { zzz: "file:../../zzz.tgz" } },
+            "zzz.tgz": claim("package", "zzz"),
+          },
+          "node_modules/.bin/what-bin",
+          zzz,
+        ],
+        [
+          "a direct registry package, over a workspace package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: direct },
+            ...claim("packages/aaa", "aaa"),
+          },
+          "node_modules/.bin/what-bin",
+          registryBin,
+        ],
+        [
+          "a direct registry package, over a direct file: directory",
+          "hoisted",
+          { "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } }, ...claim("aaa", "aaa") },
+          "node_modules/.bin/what-bin",
+          registryBin,
+        ],
+        [
+          "a registry package that a workspace member depends on, over a workspace package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"] },
+            "packages/app/package.json": { name: "app", dependencies: direct },
+            ...claim("packages/aaa", "aaa"),
+          },
+          "node_modules/.bin/what-bin",
+          registryBin,
+        ],
+        [
+          // The hoisted copy belongs to the dependency that reached it first, which is the transitive one.
+          "a registry package that is both transitive and a member's dependency, over a workspace package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: transitive },
+            "packages/app/package.json": { name: "app", dependencies: direct },
+            ...claim("packages/aaa", "aaa"),
+          },
+          "node_modules/.bin/what-bin",
+          registryBin,
+        ],
+        [
+          "a workspace package, over a transitive registry package that sorts after it",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: transitive },
+            ...claim("packages/aaa", "aaa"),
+          },
+          "node_modules/.bin/what-bin",
+          aaa,
+        ],
+        [
+          "a registry package, over a workspace package in a member's .bin",
+          "isolated",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"] },
+            "packages/app/package.json": { name: "app", dependencies: { ...direct, aaa: "workspace:*" } },
+            ...claim("packages/aaa", "aaa"),
+          },
+          "packages/app/node_modules/.bin/what-bin",
+          registryBin,
+        ],
+        [
+          "a registry package, over a file: directory in the root's .bin",
+          "isolated",
+          { "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } }, ...claim("aaa", "aaa") },
+          "node_modules/.bin/what-bin",
+          registryBin,
+        ],
+      ];
+
+    test.each(cases)("goes to %s (%s)", async (_, linker, files, bin, wins) => {
+      const { packageDir, env } = await setupTest();
+      const text = (content: object | string) => (typeof content === "string" ? content : JSON.stringify(content));
+      await Promise.all(
+        Object.entries(files).map(([path, content]) =>
+          path.endsWith(".tgz")
+            ? Bun.Archive.write(
+                join(packageDir, path),
+                Object.fromEntries(Object.entries(content).map(([name, member]) => [name, text(member)])),
+                { compress: "gzip" },
+              )
+            : write(join(packageDir, path), text(content)),
+        ),
+      );
+
+      // The second run finds node_modules in place.
+      for (const run of ["fresh", "again"]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(join(packageDir, bin)).toBeValidBin(wins);
+        expect({ run, exitCode }).toEqual({ run, exitCode: 0 });
+      }
+    });
+
+    test("goes to the registry package once it is added next to a workspace package", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
+      const bin = join(packageDir, "node_modules", ".bin", "what-bin");
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+        ...Object.entries(claim("packages/aaa", "aaa")).map(([path, content]) =>
+          write(join(packageDir, path), typeof content === "string" ? content : JSON.stringify(content)),
+        ),
+      ]);
+
+      await runBunInstall(env, packageDir);
+      expect(bin).toBeValidBin(aaa);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "add", "what-bin@1.0.0"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(bin).toBeValidBin(registryBin);
+      expect(exitCode).toBe(0);
     });
   });
 });
@@ -8729,6 +9148,39 @@ describe.concurrent("semver", () => {
       expected: "2.0.1",
     },
     {
+      // https://github.com/oven-sh/bun/issues/19065
+      // npm-package-arg: `2x` is a dist-tag, not `2.x`.
+      title: "digit-prefixed dist-tag '2x'",
+      depVersion: "2x",
+      expected: "1.0.1",
+    },
+    {
+      title: "digit-prefixed dist-tag '1x'",
+      depVersion: "1x",
+      expected: "3.0.1",
+    },
+    {
+      title: "digit-prefixed dist-tag '1beta'",
+      depVersion: "1beta",
+      expected: "2.0.1",
+    },
+    {
+      title: "digit-prefixed dist-tag '1.2x'",
+      depVersion: "1.2x",
+      expected: "2.0.0",
+    },
+    {
+      title: "'1.x' is still a range",
+      depVersion: "1.x",
+      expected: "1.0.1",
+    },
+    {
+      // a `||` union is always range syntax, never a dist-tag
+      title: "'2x || 1' is still a range",
+      depVersion: "2x || 1",
+      expected: "2.0.1",
+    },
+    {
       title: "tagged above latest",
       depVersion: "pre-3",
       expected: "3.0.1",
@@ -10747,6 +11199,22 @@ describe.concurrent("outdated", () => {
     return out;
   }
 
+  // What follows the `bun outdated v1.x` line, one entry per line.
+  const tableLines = (out: string) =>
+    out
+      .slice(out.indexOf("\n") + 1)
+      .trimEnd()
+      .split("\n");
+
+  const outdatedTable = async (env: any, cwd: string, ...args: string[]) =>
+    tableLines(await runBunOutdated({ ...env, NO_COLOR: "1" }, cwd, ...args));
+
+  // The "Package" cell of every row of the table.
+  const outdatedPackages = async (env: any, cwd: string, ...args: string[]) =>
+    (await outdatedTable(env, cwd, ...args))
+      .filter(line => line.startsWith("| ") && !line.startsWith("| Package "))
+      .map(line => line.split("|")[1].trim());
+
   test("--filter with workspace names and paths", async () => {
     const { packageDir, env } = await setupTest();
     await setupWorkspace(packageDir);
@@ -10869,6 +11337,275 @@ describe.concurrent("outdated", () => {
     expect(out).toContain("no-deps");
     expect(out).toContain("a-dep");
     expect(out).toContain("prereleases-1");
+  });
+
+  test("several dependency pattern args", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "@types/no-deps": "1.0.0",
+          "a-dep": "1.0.1",
+          "no-deps": "1.0.0",
+          "prereleases-1": "1.0.0-future.1",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    // `listed` is what `bun outdated <patterns>` prints.
+    const cases: { patterns: string[]; listed: string[] }[] = [
+      { patterns: [], listed: ["@types/no-deps", "a-dep", "no-deps", "prereleases-1"] },
+      // A dependency is listed when at least one pattern matches it.
+      { patterns: ["no-deps", "a-dep"], listed: ["a-dep", "no-deps"] },
+      { patterns: ["not-a-dependency", "a-dep"], listed: ["a-dep"] },
+      { patterns: ["no-deps", "pre*"], listed: ["no-deps", "prereleases-1"] },
+      { patterns: ["*", "a-dep"], listed: ["@types/no-deps", "a-dep", "no-deps", "prereleases-1"] },
+      // A negated pattern removes its matches, wherever it is in the list.
+      { patterns: ["prereleases-1", "*-dep*", "!no-deps"], listed: ["a-dep", "prereleases-1"] },
+      { patterns: ["!no-deps", "*", "a-dep"], listed: ["@types/no-deps", "a-dep", "prereleases-1"] },
+      { patterns: ["no-deps", "a-dep", "!a-*"], listed: ["no-deps"] },
+      // With only negated patterns, every other dependency is listed.
+      { patterns: ["!a-dep"], listed: ["@types/no-deps", "no-deps", "prereleases-1"] },
+      { patterns: ["!a-dep", "!no-deps", "!@types/*"], listed: ["prereleases-1"] },
+      // `!!` is a double negation, so the pattern is not negated.
+      { patterns: ["!!a-dep", "no-deps"], listed: ["a-dep", "no-deps"] },
+      // `*` selects scoped names too, so `!*` leaves none.
+      { patterns: ["!*"], listed: [] },
+      { patterns: ["@types/no-deps", "!**"], listed: [] },
+    ];
+    // `bun outdated` reads the lockfile and the manifest cache and writes nothing.
+    const listed = await Promise.all(cases.map(({ patterns }) => outdatedPackages(env, packageDir, ...patterns)));
+    expect(cases.map(({ patterns }, i) => ({ patterns, listed: listed[i] }))).toEqual(cases);
+  });
+
+  test("an aliased dependency prints both of its names and a pattern matches either", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+          "my-alias": "npm:no-deps@1.0.0",
+          // Two columns wide per character.
+          "別名": "npm:no-deps@1.0.0",
+        },
+        devDependencies: {
+          "dev-alias": "npm:no-deps@1.0.0",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    const rows = (...args: string[]) => outdatedPackages(env, packageDir, ...args);
+    const myAlias = "my-alias@npm:no-deps";
+    const wideAlias = "別名@npm:no-deps";
+    const devAlias = "dev-alias@npm:no-deps (dev)";
+    const all = await outdatedTable(env, packageDir);
+    expect({
+      all,
+      byPackageName: await rows("no-deps"),
+      byAlias: await rows("my-alias"),
+      byAliasGlob: await rows("*-alias"),
+      notPackageName: await rows("!no-deps"),
+      notAlias: await rows("!my-alias"),
+      // Several patterns: one of the two names is enough to select a dependency, and enough to remove it.
+      packageNameOrOther: await rows("no-deps", "a-dep"),
+      aliasOrOther: await rows("dev-alias", "a-dep"),
+      aliasButNotPackageName: await rows("!no-deps", "my-alias"),
+      packageNameButNotAliasGlob: await rows("!my-*", "no-deps"),
+    }).toEqual({
+      all: [
+        "|---------------------------------------------------------|",
+        "| Package                     | Current | Update | Latest |",
+        "|-----------------------------|---------|--------|--------|",
+        "| a-dep                       | 1.0.1   | 1.0.1  | 1.0.10 |",
+        "|-----------------------------|---------|--------|--------|",
+        "| my-alias@npm:no-deps        | 1.0.0   | 1.0.0  | 2.0.0  |",
+        "|-----------------------------|---------|--------|--------|",
+        "| 別名@npm:no-deps            | 1.0.0   | 1.0.0  | 2.0.0  |",
+        "|-----------------------------|---------|--------|--------|",
+        "| dev-alias@npm:no-deps (dev) | 1.0.0   | 1.0.0  | 2.0.0  |",
+        "|---------------------------------------------------------|",
+      ],
+      byPackageName: [myAlias, wideAlias, devAlias],
+      byAlias: [myAlias],
+      byAliasGlob: [myAlias, devAlias],
+      notPackageName: ["a-dep"],
+      notAlias: ["a-dep", wideAlias, devAlias],
+      packageNameOrOther: ["a-dep", myAlias, wideAlias, devAlias],
+      aliasOrOther: ["a-dep", devAlias],
+      aliasButNotPackageName: [],
+      packageNameButNotAliasGlob: [wideAlias, devAlias],
+    });
+    // The borders line up: every line takes the same number of terminal columns.
+    expect(all.map(line => Bun.stringWidth(line))).toEqual(all.map(() => 59));
+  });
+
+  test("escapes control characters in names and sizes the cells by the escaped text", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    // On a terminal ESC [ 2 K erases the line. Unescaped it takes no columns, escaped it takes 7.
+    const erase = "\x1b[2K";
+    const alias = `e${erase}vil-別名-\u009b1m`;
+    const root = {
+      name: `r${erase}oot`,
+      dependencies: { [alias]: "npm:no-deps@1.0.0" },
+    };
+    const member = {
+      name: "ws",
+      dependencies: { "a-dep": `catalog:c${erase}t`, "no-deps": "1.0.0" },
+    };
+    const catalogs = { [`c${erase}t`]: { "a-dep": "1.0.1" } };
+    // `bun install` refuses the alias, so only a bun.lock somebody else wrote has it.
+    await Promise.all([
+      write(packageJson, JSON.stringify({ ...root, workspaces: { packages: ["packages/*"], catalogs } })),
+      write(join(packageDir, "packages", "a", "package.json"), JSON.stringify(member)),
+      write(
+        join(packageDir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": root, "packages/a": member },
+          catalogs,
+          packages: {
+            [alias]: ["no-deps@1.0.0", "", {}, ""],
+            "a-dep": ["a-dep@1.0.1", "", {}, ""],
+            "no-deps": ["no-deps@1.0.0", "", {}, ""],
+          },
+        }),
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "outdated", "--recursive"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, NO_COLOR: "1" },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const table = tableLines(out);
+    expect(table).toEqual([
+      "|--------------------------------------------------------------------------------------------|",
+      "| Package                               | Current | Update | Latest | Workspace              |",
+      "|---------------------------------------|---------|--------|--------|------------------------|",
+      "| e\\x1b[2Kvil-別名-\\u009b1m@npm:no-deps | 1.0.0   | 1.0.0  | 2.0.0  | r\\x1b[2Koot            |",
+      "|---------------------------------------|---------|--------|--------|------------------------|",
+      "| no-deps                               | 1.0.0   | 1.0.0  | 2.0.0  | ws                     |",
+      "|---------------------------------------|---------|--------|--------|------------------------|",
+      "| a-dep                                 | 1.0.1   | 1.0.1  | 1.0.10 | catalog:c\\x1b[2Kt (ws) |",
+      "|--------------------------------------------------------------------------------------------|",
+    ]);
+    expect(table.map(line => Bun.stringWidth(line))).toEqual(table.map(() => 94));
+    expect(err).toContain('error: Invalid dependency name "e\\x1b[2Kvil-別名-\\u009b1m"');
+    expect(exitCode).toBe(1);
+  });
+
+  test("sizes and pads a cell by its display width, not by its byte length", async () => {
+    // The test registry has no package with a name that is not ASCII. A private registry can have one.
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        const name = decodeURIComponent(pathname.slice(1));
+        const versions = Object.fromEntries(
+          ["1.0.0", "2.0.0"].map(version => [
+            version,
+            { name, version, dist: { tarball: `${origin}/${version}.tgz` } },
+          ]),
+        );
+        return Response.json({ name, "dist-tags": { latest: "2.0.0" }, versions });
+      },
+    });
+    // 14 columns in 20 bytes: a CJK character or an emoji takes 2 columns.
+    const workspaceName = "工作区-文档-😀";
+    using dir = tempDir("outdated-display-width", {
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { dep: "1.0.0" } },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "plain", dependencies: { dep: "catalog:" } }),
+      "packages/b/package.json": JSON.stringify({
+        name: workspaceName,
+        dependencies: { dep: "catalog:", "日本語パッケージ": "1.0.0" },
+      }),
+    });
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+    // The registry has no tarballs. `bun outdated` reads the lockfile, the package.json files and the manifests.
+    await runBunInstall(env, String(dir), { packages: ["--lockfile-only"] });
+
+    // The widest Workspace cell is the list of the workspaces that use the catalog.
+    const withCatalog = await outdatedTable(env, String(dir), "--recursive");
+    expect(withCatalog).toEqual([
+      "|--------------------------------------------------------------------------------|",
+      "| Package          | Current | Update | Latest | Workspace                       |",
+      "|------------------|---------|--------|--------|---------------------------------|",
+      "| 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-文档-😀                  |",
+      "|------------------|---------|--------|--------|---------------------------------|",
+      "| dep              | 1.0.0   | 1.0.0  | 2.0.0  | catalog (plain, 工作区-文档-😀) |",
+      "|--------------------------------------------------------------------------------|",
+    ]);
+    expect(withCatalog.map(line => Bun.stringWidth(line))).toEqual(withCatalog.map(() => 82));
+    // Without the catalog row, the widest Workspace cell is a workspace name.
+    const withoutCatalog = await outdatedTable(env, String(dir), "--recursive", "!dep");
+    expect(withoutCatalog).toEqual([
+      "|---------------------------------------------------------------|",
+      "| Package          | Current | Update | Latest | Workspace      |",
+      "|------------------|---------|--------|--------|----------------|",
+      "| 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-文档-😀 |",
+      "|---------------------------------------------------------------|",
+    ]);
+    expect(withoutCatalog.map(line => Bun.stringWidth(line))).toEqual(withoutCatalog.map(() => 65));
+  });
+
+  test("reads dependency ranges from package.json, not the lockfile", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    const writeManifests = (root: object, pkg1: object, pkg2: object) =>
+      Promise.all([
+        write(packageJson, JSON.stringify(root)),
+        write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify(pkg1)),
+        write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify(pkg2)),
+      ]);
+
+    await writeManifests(
+      {
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } },
+        dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      },
+      { name: "pkg1", dependencies: { "a-dep": "1.0.1" } },
+      { name: "pkg2", dependencies: { "no-deps": "catalog:" } },
+    );
+    await runBunInstall(env, packageDir);
+    const lockfile = await file(join(packageDir, "bun.lockb")).bytes();
+
+    // Every range is edited without another `bun install`: bun.lockb still has the exact pins, and still
+    // lists the `a-dep` that the root package.json no longer has.
+    await writeManifests(
+      {
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } },
+        dependencies: { "no-deps": "~1.0.0" },
+      },
+      { name: "pkg1", devDependencies: { "a-dep": "^1.0.1" } },
+      { name: "pkg2", dependencies: { "no-deps": "catalog:" } },
+    );
+
+    expect(await outdatedTable(env, packageDir, "--filter", "*")).toEqual([
+      "|----------------------------------------------------------|",
+      "| Package     | Current | Update | Latest | Workspace      |",
+      "|-------------|---------|--------|--------|----------------|",
+      "| no-deps     | 1.0.0   | 1.0.1  | 2.0.0  | root           |",
+      "|-------------|---------|--------|--------|----------------|",
+      "| no-deps     | 1.0.0   | 1.1.0  | 2.0.0  | catalog (pkg2) |",
+      "|-------------|---------|--------|--------|----------------|",
+      "| a-dep (dev) | 1.0.1   | 1.0.10 | 1.0.10 | pkg1           |",
+      "|----------------------------------------------------------|",
+    ]);
+    expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockfile);
   });
 
   test("scoped workspace names", async () => {

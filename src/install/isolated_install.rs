@@ -48,6 +48,7 @@ use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_task as Task;
+use crate::prune::OldModules;
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
     invalid_dependency_id, invalid_package_id,
@@ -216,6 +217,49 @@ impl<'a, 'b> Wait<'a, 'b> {
 pub(crate) enum Timings {
     Print,
     Quiet,
+}
+
+/// Every `(peer edge, package)` pair the isolated store wires, one per peer context of the owner.
+pub fn served_peers(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+) -> Result<Vec<(DependencyID, PackageID)>, AllocError> {
+    let store = build_store(manager, lockfile, true, &[], None, Timings::Quiet)?;
+    let nodes = store.nodes.slice();
+    let node_pkg_ids = nodes.items_pkg_id();
+    let node_dependencies = nodes.items_dependencies();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let pkg_dependencies = lockfile.packages.items_dependencies();
+
+    let mut served: Vec<(DependencyID, PackageID)> = Vec::new();
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+    for node in 0..nodes.len() {
+        let wired = &node_dependencies[node];
+        let deps = pkg_dependencies[node_pkg_ids[node] as usize];
+        for dep_id in deps.begin()..deps.end() {
+            let dep = &dependencies[dep_id as usize];
+            if !dep.behavior.is_peer() {
+                continue;
+            }
+            // The edge itself when the store queued it, else the owner's own dependency of that name.
+            let target = wired
+                .iter()
+                .find(|ids| ids.dep_id == dep_id)
+                .or_else(|| {
+                    wired
+                        .iter()
+                        .find(|ids| dependencies[ids.dep_id as usize].name_hash == dep.name_hash)
+                })
+                .map(|ids| ids.pkg_id);
+            if let Some(target) = target
+                && target != invalid_package_id
+                && seen.insert((dep_id, target), ()).is_none()
+            {
+                served.push((dep_id, target));
+            }
+        }
+    }
+    Ok(served)
 }
 
 /// `dep` is a `file:` dependency whose path is relative to the package declaring it
@@ -1237,24 +1281,25 @@ pub(crate) fn build_store(
 }
 
 /// Entry by entry rather than renaming `node_modules` itself, which may be a mount point or a symlink.
-pub(crate) fn move_node_modules_aside(lockfile: &Lockfile) {
+pub(crate) fn move_node_modules_aside(lockfile: &Lockfile) -> Option<OldModules> {
     use bun_sys::FdExt as _;
 
     let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
     let rand = fast_random();
     old_modules
         .append_fmt(format_args!(
-            ".old_modules-{}",
+            "{}{}",
+            OldModules::PREFIX,
             bun_fmt::hex_lower(bun_core::bytes_of(&rand))
         ))
         .assume_ok();
     if sys::mkdirat(Fd::cwd(), old_modules.slice_z(), 0o755).is_err() {
-        return;
+        return None;
     }
     let old_modules_name = old_modules.basename().to_vec();
 
     let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") else {
-        return;
+        return Some(OldModules(old_modules_name.into_boxed_slice()));
     };
     let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
     let mut iter = sys::iterate_dir(node_modules);
@@ -1281,15 +1326,15 @@ pub(crate) fn move_node_modules_aside(lockfile: &Lockfile) {
     }
     node_modules.close();
 
-    for workspace_path in lockfile.workspace_paths.values() {
+    for (i, workspace_path) in lockfile.workspace_paths.values().iter().enumerate() {
         let mut workspace_node_modules =
             AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)).assume_ok();
-        let basename = workspace_node_modules.basename().to_vec();
         workspace_node_modules.append(b"node_modules").assume_ok();
 
+        // Not the folder's name: `apps/web` and `packages/web` would collide.
         let old_modules_len = old_modules.len();
         old_modules
-            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
+            .append_fmt(format_args!(".old_{i}_modules"))
             .assume_ok();
 
         let _ = sys::renameat(
@@ -1301,6 +1346,8 @@ pub(crate) fn move_node_modules_aside(lockfile: &Lockfile) {
 
         old_modules.set_length(old_modules_len);
     }
+
+    Some(OldModules(old_modules_name.into_boxed_slice()))
 }
 
 /// Fails unless `path`, links followed, is a directory.
@@ -1863,6 +1910,7 @@ pub(crate) fn install_isolated_packages(
     // (Drop frees global_store_path)
 
     // setup node_modules/.bun
+    let mut old_modules: Option<OldModules> = None;
     let is_new_bun_modules: bool = 'is_new_bun_modules: {
         // `sys::mkdirat` is `&ZStr`-only (it widens to NT path internally on
         // Windows), so use `path_literal!` here to keep the call-site
@@ -1878,7 +1926,7 @@ pub(crate) fn install_isolated_packages(
             }
 
             // 'node_modules' exists and 'node_modules/.bun' doesn't
-            move_node_modules_aside(lockfile);
+            old_modules = move_node_modules_aside(lockfile);
         }
 
         if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
@@ -2037,7 +2085,10 @@ pub(crate) fn install_isolated_packages(
                     bun_core::ZStr::from_slice_with_nul(b)
                 }),
             global_store_tmp_suffix: fast_random(),
-            summary: Default::default(),
+            summary: crate::package_install::Summary {
+                old_modules,
+                ..Default::default()
+            },
             task_queue: Default::default(),
             failed_optional_entries: Vec::new(),
         };
@@ -2484,8 +2535,8 @@ pub(crate) fn install_isolated_packages(
                         ResolutionTag::Git => {
                             if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
+                                pkg_id,
                                 dep.name.slice(string_buf),
-                                &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
                             ) == crate::package_manager::GitEnqueueResult::OfflineMiss

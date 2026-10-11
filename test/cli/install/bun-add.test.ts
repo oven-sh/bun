@@ -1138,6 +1138,54 @@ it("should add dependency with specified semver", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+// https://github.com/oven-sh/bun/issues/19065
+it.each([
+  // `2x` used to be the range `2.x`, which no version here satisfies.
+  { spec: "2x", resolves: "0.0.3", saved: "^0.0.3" },
+  // `0x` used to be `0.x`, which picked 0.0.5 and not the tagged version.
+  { spec: "0x", resolves: "0.0.3", saved: "^0.0.3" },
+  { spec: "v2x", resolves: "0.0.3", saved: "^0.0.3" },
+  // still ranges, which pick the highest match
+  { spec: "0.x", resolves: "0.0.5", saved: "0.x" },
+  { spec: "v0.x", resolves: "0.0.5", saved: "v0.x" },
+  // `||` is always range syntax, also when the first alternative looks like a dist-tag
+  { spec: "2x || 0", resolves: "0.0.5", saved: "2x || 0" },
+])("should add dependency with digit-prefixed specifier $spec", async ({ spec, resolves, saved }) => {
+  setHandler(async request => {
+    const url = request.url.replaceAll("%2f", "/");
+    if (url.endsWith(".tgz")) {
+      return new Response(file(join(import.meta.dir, url.slice(url.lastIndexOf("/") + 1))));
+    }
+    return Response.json({
+      name: "baz",
+      versions: {
+        "0.0.3": { name: "baz", version: "0.0.3", dist: { tarball: `${root_url}/baz-0.0.3.tgz` } },
+        "0.0.5": { name: "baz", version: "0.0.5", dist: { tarball: `${root_url}/baz-0.0.5.tgz` } },
+      },
+      "dist-tags": { latest: "0.0.5", "2x": "0.0.3", "0x": "0.0.3", "v2x": "0.0.3" },
+    });
+  });
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", `baz@${spec}`],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(out).toContain(`installed baz@${resolves}`);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: resolves,
+  });
+  expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ baz: saved });
+  expect(exitCode).toBe(0);
+});
+
 it("should add dependency (GitHub)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -1260,14 +1308,7 @@ it("should add dependency alongside workspaces", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
-    ".bin",
-    ".bun",
-    ".cache",
-    expect.stringContaining(".old_modules-"),
-    "bar",
-    "baz",
-  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".bun", ".cache", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "packages", "bar"));
@@ -2497,11 +2538,7 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
-    ".bun",
-    ".cache",
-    expect.stringContaining(".old_modules-"),
-  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bun", ".cache"]);
 });
 
 it("should redirect 'install --save X' to 'add'", async () => {

@@ -274,10 +274,16 @@ _bun_pm_completion() {
     args)
         case $line[2] in
         cache)
+            pmargs=(
+                "--max-age[remove cache entries older than this many days (prune, default 30)]:days"
+                "--dry-run[print what would be removed without deleting anything (rm, prune)]"
+            )
+
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
-                ':::(rm)' &&
+                ':::(rm prune pack unpack)' \
+                $pmargs &&
                 ret=0
 
             ;;
@@ -297,6 +303,7 @@ _bun_pm_completion() {
             pmargs=(
                 "--all[list the entire tree of installed dependencies]"
                 "--trusted[list only trusted dependencies]"
+                "-g[list the tree of globally installed dependencies]"
             )
 
             _arguments -s -C \

@@ -694,29 +694,35 @@ describe.each(linkers)("linker: %s", linker => {
     expect(await installedPackages(packageDir, linker)).toEqual(byLinker(linker, ["a-dep", "app"], ["a-dep@1.0.1"]));
   });
 
-  // The skipped workspace stays in bun.lock and is still listed, but its
-  // exclusive dependency was never installed so `bun pm ls` omits it.
-  test.concurrent(
-    "bun pm ls --all lists the skipped workspace but not its uninstalled exclusive dependency",
-    async () => {
-      const { packageDir, full } = await verbatimTree(linker);
-      await frozen(packageDir, linker, [prunedNote]);
+  // The skipped workspace stays in bun.lock, but neither it nor its exclusive
+  // dependency is on disk, and `bun pm ls` lists what is on disk.
+  test.concurrent("bun pm ls lists neither the skipped workspace nor its exclusive dependency", async () => {
+    const { packageDir, full } = await verbatimTree(linker);
+    await frozen(packageDir, linker, [prunedNote]);
 
-      const { stdout, stderr, exitCode } = await spawnBun(packageDir, ["pm", "ls", "--all"]);
+    const all = await spawnBun(packageDir, ["pm", "ls", "--all"]);
 
-      expect(stderr).toBe("");
-      expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`
-        "<dir> node_modules
-        ├── a-dep@1.0.1
-        ├── app@workspace:packages/app
-        ├── no-deps@1.0.0
-        ├── other@workspace:packages/other
-        └── shared@workspace:packages/shared"
-      `);
-      expect(await lockText(packageDir)).toBe(full);
-      expect(exitCode).toBe(0);
-    },
-  );
+    expect(all.stderr).toBe("");
+    expect(normalizeBunSnapshot(all.stdout, packageDir)).toMatchInlineSnapshot(`
+      "<dir> node_modules
+      ├── a-dep@1.0.1
+      ├── app@workspace:packages/app
+      ├── no-deps@1.0.0
+      └── shared@workspace:packages/shared"
+    `);
+    expect(all.exitCode).toBe(0);
+
+    const top = await spawnBun(packageDir, ["pm", "ls"]);
+
+    expect(top.stderr).toBe("");
+    expect(normalizeBunSnapshot(top.stdout, packageDir)).toMatchInlineSnapshot(`
+      "<dir> node_modules (4 installed)
+      ├── app@workspace:packages/app
+      └── shared@workspace:packages/shared"
+    `);
+    expect(top.exitCode).toBe(0);
+    expect(await lockText(packageDir)).toBe(full);
+  });
 
   test.concurrent("bun audit still submits the skipped workspace's exclusive dependency", async () => {
     const { packageDir, full } = await verbatimTree(linker);

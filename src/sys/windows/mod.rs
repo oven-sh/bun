@@ -1848,16 +1848,28 @@ pub fn move_opened_file_at(
             new_file_name.len(),
         );
     }
-    // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
-    let rc = unsafe {
-        ntdll::NtSetInformationFile(
-            src_fd.native(),
-            &mut io_status_block,
-            rename_info.cast::<c_void>(),
-            u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
-            win32::FileInformationClass::FileRenameInformationEx,
-        )
+    let mut rename_as = |class: win32::FileInformationClass, flags: ULONG| {
+        // SAFETY: src_fd valid; rename_info is aligned and has struct_len initialized bytes
+        unsafe {
+            ptr::addr_of_mut!((*rename_info).Flags).write(flags);
+            ntdll::NtSetInformationFile(
+                src_fd.native(),
+                &mut io_status_block,
+                rename_info.cast::<c_void>(),
+                u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
+                class,
+            )
+        }
     };
+    let mut rc = rename_as(win32::FileInformationClass::FileRenameInformationEx, flags);
+    // exFAT and FAT32 only implement the legacy class (same fallback as `DeleteFileBun`). The SDK
+    // declares the first field as `union { BOOLEAN ReplaceIfExists; ULONG Flags; }`.
+    if rc == win32::ntstatus::INVALID_PARAMETER {
+        rc = rename_as(
+            win32::FileInformationClass::FileRenameInformation,
+            ULONG::from(replace_if_exists),
+        );
+    }
     bun_sys::syslog!(
         "moveOpenedFileAt({} ->> {} '{}', {}) = {}",
         src_fd,

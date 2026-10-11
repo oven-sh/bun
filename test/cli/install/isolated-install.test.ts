@@ -1,13 +1,26 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { bunEnv, bunExe, githubTarball, isLinux, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
+import { chmodSync, existsSync, lstatSync, lutimesSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
+import { chmod, mkdir, readlink, rm, symlink } from "fs/promises";
+import {
+  bunEnv,
+  bunExe,
+  githubTarball,
+  isLinux,
+  isWindows,
+  readdirSorted,
+  runBunInstall,
+  tempDir,
+  toBeValidBin,
+  toHaveBins,
+} from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 import { SimpleRegistry } from "./simple-dummy-registry";
+
+expect.extend({ toBeValidBin, toHaveBins });
 
 const registry = new TestRegistry();
 
@@ -616,6 +629,199 @@ test("can install folder dependencies on root package", async () => {
     join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
     await file(packageJson).json(),
   ]);
+});
+
+// A bin target gets `0o777 & ~umask`, under both linkers. For a workspace dependency the target is
+// the source file in the repo. Windows links bins as shims and chmods nothing.
+describe.each(["isolated", "hoisted"] as const)("bin target modes with the %s linker", linker => {
+  describe.each([
+    ["022", 0o755],
+    ["077", 0o700],
+    ["002", 0o775],
+  ])("umask %s", (umask, expectedMode) => {
+    test.concurrent.skipIf(isWindows)(
+      "are 0o777 & ~umask, and an install that changes nothing writes nothing",
+      async () => {
+        const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+        const workspaceBin = join(packageDir, "packages", "tool", "cli.js");
+        const binDir = join(packageDir, "node_modules", ".bin");
+        const links = ["tool", "dep", "tb"].map(name => join(binDir, name));
+        // A cache that the tests share hardlinks one inode of the tarball's bin into each of them.
+        const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+
+        await Promise.all([
+          write(
+            packageJson,
+            JSON.stringify({
+              name: "umask-root",
+              workspaces: ["packages/*"],
+              dependencies: { tool: "workspace:*", dep: "file:./dep", tb: "file:./tb-1.0.0.tgz" },
+            }),
+          ),
+          write(
+            join(packageDir, "packages", "tool", "package.json"),
+            JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "./cli.js" } }),
+          ),
+          write(workspaceBin, "#!/usr/bin/env node\nconsole.log(1)\n"),
+          write(
+            join(packageDir, "dep", "package.json"),
+            JSON.stringify({ name: "dep", version: "1.0.0", bin: "d.js" }),
+          ),
+          write(join(packageDir, "dep", "d.js"), "#!/bin/sh\necho d\n"),
+          Bun.Archive.write(
+            join(packageDir, "tb-1.0.0.tgz"),
+            {
+              "package/package.json": JSON.stringify({ name: "tb", version: "1.0.0", bin: "t.js" }),
+              "package/t.js": "#!/bin/sh\necho t\n",
+            },
+            { compress: "gzip" },
+          ),
+        ]);
+        await Promise.all([chmod(workspaceBin, 0o644), chmod(join(packageDir, "dep", "d.js"), 0o644)]);
+
+        const want = expectedMode.toString(8);
+        async function installAndExpectModes() {
+          await using proc = spawn({
+            cmd: ["sh", "-c", `umask ${umask} && exec "$0" install`, bunExe()],
+            cwd: packageDir,
+            env,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).not.toContain("error:");
+          expect([workspaceBin, ...links].map(path => (statSync(path).mode & 0o777).toString(8))).toEqual([
+            want,
+            want,
+            want,
+            want,
+          ]);
+          expect(exitCode).toBe(0);
+        }
+
+        await installAndExpectModes();
+
+        // A link that is removed and made again loses its mtime. A chmod, even to the mode the file
+        // has, moves its ctime, which has the resolution of the kernel's clock tick: wait one out.
+        const unchanged = [workspaceBin, realpathSync(join(binDir, "tb"))];
+        const ctimes = () => unchanged.map(path => statSync(path, { bigint: true }).ctimeNs);
+        for (const link of links) lutimesSync(link, 1, 1);
+        const before = ctimes();
+        const probe = join(packageDir, "ctime-probe");
+        await write(probe, "");
+        do chmodSync(probe, 0o600);
+        while (before.some(ctime => statSync(probe, { bigint: true }).ctimeNs <= ctime));
+        await installAndExpectModes();
+        expect(links.map(link => lstatSync(link).mtimeMs)).toEqual([1000, 1000, 1000]);
+        expect(ctimes()).toEqual(before);
+
+        // Not executable, and what the isolated linker of older versions left behind.
+        for (const mode of [0o644, 0o777]) {
+          await Promise.all(links.map(link => chmod(realpathSync(link), mode)));
+          await installAndExpectModes();
+        }
+      },
+    );
+  });
+});
+
+test("a folder dependency shared by several folder dependencies is one package", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  const siblings = Array.from({ length: 6 }, (_, i) => `sib${i}`);
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-shared-folder-dep",
+        dependencies: {
+          shared: "file:./vend/shared",
+          ...Object.fromEntries(siblings.map(name => [name, `file:./vend/${name}`])),
+        },
+      }),
+    ),
+    write(join(packageDir, "vend", "shared", "package.json"), JSON.stringify({ name: "shared", version: "1.0.0" })),
+    write(join(packageDir, "vend", "shared", "index.js"), "module.exports = 'shared';"),
+    ...siblings.flatMap(name => [
+      write(
+        join(packageDir, "vend", name, "package.json"),
+        JSON.stringify({ name, version: "1.0.0", dependencies: { shared: "file:../shared" } }),
+      ),
+      write(join(packageDir, "vend", name, "index.js"), "module.exports = require('shared');"),
+    ]),
+  ]);
+
+  // A fresh resolve made one `shared` package per declarer. Each one linked
+  // into the same store entry at the same time: EEXIST from link().
+  const { out } = await runBunInstall(bunEnv, packageDir);
+  expect(out).toContain(`${siblings.length + 1} packages installed`);
+
+  const store = join(packageDir, "node_modules", ".bun");
+  expect(readlinkSync(join(packageDir, "node_modules", "shared"))).toBe(
+    join(".bun", "shared@file+vend+shared", "node_modules", "shared"),
+  );
+  expect(
+    await Promise.all(
+      siblings.map(name => readlink(join(store, `${name}@file+vend+${name}`, "node_modules", "shared"))),
+    ),
+  ).toEqual(siblings.map(() => join("..", "..", "shared@file+vend+shared", "node_modules", "shared")));
+  expect(await readdirSorted(join(store, "shared@file+vend+shared", "node_modules", "shared"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+
+  const requireFromRoot = createRequire(packageJson);
+  expect(siblings.map(name => requireFromRoot(name))).toEqual(siblings.map(() => "shared"));
+});
+
+test("a file: override that several registry packages depend on is one package", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // Each of these declares `no-deps`.
+  const dependents = {
+    "one-dep": "1.0.0",
+    "one-fixed-dep": "1.0.0",
+    "one-range-dep": "1.0.0",
+    "one-range-dep-too": "1.0.0",
+    "normal-dep-and-dev-dep": "1.0.2",
+  };
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-file-override",
+        dependencies: dependents,
+        overrides: { "no-deps": "file:./vendor/no-deps" },
+      }),
+    ),
+    write(join(packageDir, "vendor", "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+  ]);
+
+  // CI exports one BUN_INSTALL_CACHE_DIR for the whole file. Manifests cached here
+  // would change the order in which later tests resolve the same packages.
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+  const { out } = await runBunInstall(env, packageDir);
+  expect(out).toContain(`${Object.keys(dependents).length + 1} packages installed`);
+
+  // one entry for the override target, whatever path spelling its name carries
+  const store = join(packageDir, "node_modules", ".bun");
+  const entries = await readdirSorted(store);
+  expect(entries.filter(dir => dir.startsWith("no-deps@"))).toEqual([expect.stringMatching(/^no-deps@file\+/)]);
+  const overrideEntry = entries.find(dir => dir.startsWith("no-deps@"))!;
+
+  expect(
+    await Promise.all(
+      Object.entries(dependents).map(([name, version]) =>
+        readlink(join(store, `${name}@${version}`, "node_modules", "no-deps")),
+      ),
+    ),
+  ).toEqual(Object.keys(dependents).map(() => join("..", "..", overrideEntry, "node_modules", "no-deps")));
+  expect(await file(join(store, overrideEntry, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "9.9.9",
+  });
 });
 
 describe("link: dependencies", () => {
@@ -2278,7 +2484,7 @@ describe("existing node_modules, missing node_modules/.bun", () => {
         readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
         readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
       ]),
-    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "a-dep", "no-deps"], ["no-deps"], ["no-deps"]]);
+    ).toEqual([[".bun", "a-dep", "no-deps"], ["no-deps"], ["no-deps"]]);
   });
   test("some workspaces don't have node_modules", async () => {
     const { packageDir } = await registry.createTestDir({
@@ -2323,18 +2529,9 @@ describe("existing node_modules, missing node_modules/.bun", () => {
         readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
         readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
       ]),
-    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "no-deps"], ["no-deps"], ["a-dep"]]);
+    ).toEqual([[".bun", "no-deps"], ["no-deps"], ["a-dep"]]);
 
     // another install will not reset the node_modules
-
-    const entries = await readdirSorted(join(packageDir, "node_modules"));
-
-    for (const entry of entries) {
-      if (entry.startsWith(".old_modules-")) {
-        await rm(join(packageDir, "node_modules", entry), { recursive: true, force: true });
-      }
-    }
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps"]);
 
     // add things to workspace node_modules. these will go undetected
     await Promise.all([
@@ -2568,20 +2765,12 @@ describe("--linker flag", () => {
       "no-deps": "directory",
       "peer-deps": "directory",
     });
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      expect.stringContaining(".old_modules-"),
-      "no-deps",
-      "peer-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "peer-deps"]);
     expect(await resolvedNoDeps(packageDir)).toEqual({ root: "2.0.0", viaPeer: "2.0.0", sameCopy: true });
 
     // Only a tree built by the other linker gets replaced.
     expect(await installWithLinker(packageDir, "hoisted")).toContain("(no changes)");
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      expect.stringContaining(".old_modules-"),
-      "no-deps",
-      "peer-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "peer-deps"]);
 
     // Back to isolated: the real directory left behind by the hoisted install
     // must not shadow the store entry for the version the lockfile now has.
@@ -2595,21 +2784,11 @@ describe("--linker flag", () => {
     expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
       join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
     );
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".bun",
-      expect.stringContaining(".old_modules-"),
-      "no-deps",
-      "peer-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps", "peer-deps"]);
     expect(await resolvedNoDeps(packageDir)).toEqual({ root: "1.0.0", viaPeer: "1.0.0", sameCopy: true });
 
     expect(await installWithLinker(packageDir, "isolated")).toContain("(no changes)");
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".bun",
-      expect.stringContaining(".old_modules-"),
-      "no-deps",
-      "peer-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps", "peer-deps"]);
   });
 
   test("switching from isolated to hoisted also replaces workspace node_modules", async () => {
@@ -2652,6 +2831,80 @@ describe("--linker flag", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(join(packageDir, "node_modules", "no-deps", "package.json"));
     expect(exitCode).toBe(0);
+  });
+
+  test("switching linkers replaces the node_modules of two workspaces whose folders have the same name", async () => {
+    const member = (name: string) => JSON.stringify({ name, dependencies: { "no-deps": "2.0.0" } });
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "linker-switch-same-folder-name",
+          workspaces: ["apps/*", "packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "apps/web/package.json": member("web-app"),
+        "packages/web/package.json": member("web-package"),
+      },
+    });
+    const kinds = () =>
+      Object.fromEntries(
+        ["apps", "packages"].map(folder => [
+          folder,
+          lstatSync(join(packageDir, folder, "web", "node_modules", "no-deps")).isSymbolicLink()
+            ? "symlink"
+            : "directory",
+        ]),
+      );
+
+    await installWithLinker(packageDir, "hoisted");
+    expect(kinds()).toEqual({ apps: "directory", packages: "directory" });
+    await installWithLinker(packageDir, "isolated");
+    expect(kinds()).toEqual({ apps: "symlink", packages: "symlink" });
+    await installWithLinker(packageDir, "hoisted");
+    expect(kinds()).toEqual({ apps: "directory", packages: "directory" });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "web-app", "web-package"]);
+  });
+
+  // `--linker` on the command line is saved nowhere. Without workspaces the default is hoisted, so
+  // each of these commands used to move the whole tree aside and lay it out again.
+  test("a command that names no linker keeps the tree --linker=isolated laid out", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: { "package.json": JSON.stringify({ name: "linker-sticks", dependencies: { "no-deps": "1.0.0" } }) },
+    });
+    await installWithLinker(packageDir, "isolated");
+
+    for (const [args, entries] of [
+      [["install"], [".bun", "no-deps"]],
+      [
+        ["add", "a-dep@1.0.1"],
+        [".bun", "a-dep", "no-deps"],
+      ],
+      [
+        ["update", "no-deps"],
+        [".bun", "a-dep", "no-deps"],
+      ],
+      [
+        ["remove", "a-dep"],
+        [".bun", "no-deps"],
+      ],
+    ]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect({ args, entries: await readdirSorted(join(packageDir, "node_modules")) }).toEqual({ args, entries });
+      expect(rootEntryKinds(packageDir, ["no-deps"])).toEqual({ "no-deps": "symlink" });
+      expect(exitCode).toBe(0);
+    }
+
+    // Naming the other linker still switches.
+    await installWithLinker(packageDir, "hoisted");
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps"])).toEqual({ ".bun": "missing", "no-deps": "directory" });
   });
 
   // A security scanner that is not installed yet is installed on its own, with
@@ -2707,11 +2960,7 @@ describe("--linker flag", () => {
     await installWithScanner();
     const nodeModules = join(packageDir, "node_modules");
     const entriesAfterFirstInstall = await readdirSorted(nodeModules);
-    expect(entriesAfterFirstInstall).toEqual([
-      ".bun",
-      expect.stringContaining(".old_modules-"),
-      "test-security-scanner",
-    ]);
+    expect(entriesAfterFirstInstall).toEqual([".bun", "test-security-scanner"]);
 
     // Make the scanner need its own install step again, this time into a tree
     // that already has a store.
@@ -2996,6 +3245,188 @@ test.concurrent.each(ownPackageJsonCases)(
     expect(await file(join(cwd, "node_modules", "dep", "package.json")).json()).toEqual(packageJson);
   },
 );
+
+// One store entry serves every dependent of a package version, whatever name
+// each dependent uses for it. The entry is created for the first dependent.
+describe.concurrent("bins of a package that dependents reach under different names", () => {
+  const storeBin = (packageDir: string, entry: string, bin: string) =>
+    join(packageDir, "node_modules", ".bun", entry, "node_modules", ".bin", bin);
+  const memberBin = (packageDir: string, member: string, bin: string) =>
+    join(packageDir, "packages", member, "node_modules", ".bin", bin);
+
+  function workspace(members: Record<string, object>, files: Record<string, string> = {}) {
+    files["package.json"] = JSON.stringify({ name: "root", workspaces: ["packages/*"] });
+    for (const [name, manifest] of Object.entries(members)) {
+      files[`packages/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", ...manifest });
+    }
+    return registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files });
+  }
+
+  test.each([
+    ["the alias", { aliased: "npm:what-bin@1.0.0" }, { "what-bin": "1.0.0" }],
+    ["the package name", { "what-bin": "1.0.0" }, { aliased: "npm:what-bin@1.0.0" }],
+  ])("each workspace member links the bin through its own dependency name (%s first)", async (_, first, second) => {
+    const { packageDir } = await workspace({
+      "a-first": { dependencies: first },
+      "b-second": { dependencies: second },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(join("..", Object.keys(first)[0], "what-bin.js"));
+    expect(memberBin(packageDir, "b-second", "what-bin")).toBeValidBin(
+      join("..", Object.keys(second)[0], "what-bin.js"),
+    );
+    // The package's own bin, beside its own folder in the store.
+    expect(storeBin(packageDir, "what-bin@1.0.0", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("a string bin is named after the dependency for a dependent and after the package in the store", async () => {
+    const { packageDir } = await workspace({
+      "a-first": { dependencies: { al: "npm:dep-with-file-bin@1.0.0" } },
+      "b-second": { dependencies: { "dep-with-file-bin": "1.0.0" } },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(memberBin(packageDir, "a-first", "al")).toBeValidBin(join("..", "al", "file-bin"));
+    expect(memberBin(packageDir, "b-second", "dep-with-file-bin")).toBeValidBin(
+      join("..", "dep-with-file-bin", "file-bin"),
+    );
+    expect(storeBin(packageDir, "dep-with-file-bin@1.0.0", "dep-with-file-bin")).toBeValidBin(
+      join("..", "dep-with-file-bin", "file-bin"),
+    );
+  });
+
+  test("a registry package finds its dependency's command when the project aliases that dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: { aliased: "npm:what-bin@1.0.0", "uses-what-bin": "1.0.0" },
+          trustedDependencies: ["uses-what-bin"],
+        }),
+      },
+    });
+
+    // The install script of uses-what-bin runs `what-bin`.
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("a global store entry links its dependency's bin when the project aliases that dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: { aliased: "npm:what-bin@1.0.0", "uses-what-bin": "1.0.0" },
+        }),
+      },
+    });
+
+    // BUN_INSTALL_CACHE_DIR overrides bunfig's `cache`, and CI sets it. This test builds the entry in a store of its own.
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") }, packageDir);
+
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "uses-what-bin@1.0.0"))).toContain(
+      join(".bun-cache", "links", "uses-what-bin@1.0.0-"),
+    );
+    expect(storeBin(packageDir, "uses-what-bin@1.0.0", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("a workspace member named like its dependency does not link its own bin to the dependency's file", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/what-bin/package.json": JSON.stringify({
+          name: "what-bin",
+          version: "9.0.0",
+          bin: { wsonly: "what-bin.js" },
+          dependencies: { "what-bin": "1.0.0" },
+        }),
+        "packages/what-bin/what-bin.js": "#!/usr/bin/env node\n",
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bins = join(packageDir, "packages", "what-bin", "node_modules", ".bin");
+    expect(await readdirSorted(bins)).toHaveBins(["what-bin"]);
+    expect(join(bins, "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("a dependent with the alias and another version links each through its own folder", async () => {
+    const { packageDir } = await workspace({
+      "a-first": { dependencies: { "what-bin": "1.0.0" } },
+      "b-second": { dependencies: { aliased: "npm:what-bin@1.0.0", "what-bin": "1.5.0" } },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // Both dependencies of b-second have the command. `aliased` sorts first and keeps it.
+    expect(memberBin(packageDir, "b-second", "what-bin")).toBeValidBin(join("..", "aliased", "what-bin.js"));
+    expect(memberBin(packageDir, "a-first", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+
+  test("an alias, a workspace package with the same command and a bin that fails to link in one dependent", async () => {
+    // Too long for a file name, so making the link fails.
+    const longBinName = Buffer.alloc(300, "a").toString();
+    const { packageDir } = await workspace(
+      {
+        "a-first": { dependencies: { "what-bin": "1.0.0" } },
+        "b-second": {
+          dependencies: { "aa-local": "workspace:*", "ab-broken": "workspace:*", zz: "npm:what-bin@1.0.0" },
+        },
+        "aa-local": { bin: { "what-bin": "cli.js" } },
+        "ab-broken": { bin: { [longBinName]: "cli.js", "broken-ok": "cli.js" } },
+      },
+      {
+        "packages/aa-local/cli.js": "#!/usr/bin/env node\n",
+        "packages/ab-broken/cli.js": "#!/usr/bin/env node\n",
+      },
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("failed to link binaries of dependency ab-broken@");
+    // The registry package links first, under the name this dependent uses, whatever the names sort like.
+    expect(memberBin(packageDir, "b-second", "what-bin")).toBeValidBin(join("..", "zz", "what-bin.js"));
+    expect(memberBin(packageDir, "b-second", "broken-ok")).toBeValidBin(join("..", "ab-broken", "cli.js"));
+    expect(exitCode).toBe(1);
+  });
+
+  test("a tarball without a package name and with a string bin installs", async () => {
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ version: "1.0.0", bin: "cli.js" }),
+        "package/cli.js": "#!/usr/bin/env node\n",
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", dependencies: { nameless: "file:./nameless.tgz" } }),
+        "nameless.tgz": Buffer.from(tarball),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await file(join(packageDir, "node_modules", "nameless", "cli.js")).text()).toBe("#!/usr/bin/env node\n");
+  });
+});
 
 test("successfully removes and corrects symlinks", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
@@ -4771,12 +5202,10 @@ describe("global virtual store", () => {
     expect(existsSync(join(globalTarget, "node_modules", "two-range-deps", "package.json"))).toBe(true);
   });
 
-  test("preserves bun patch workspace when install runs before --commit", async () => {
-    // Regression: `bun patch <pkg>` detaches the project store entry from the
-    // global virtual store (symlink → real directory) so the user can edit it.
-    // A subsequent `bun install` (e.g. to add another dep) before `--commit`
-    // must not see that real directory as a stale pre-GVS layout and
-    // `deleteTree` the user's in-progress edits.
+  test("bun patch refuses a package whose folder is in the global store", async () => {
+    // `bun patch <pkg>` makes the copy to edit in the package's store entry, behind the project's
+    // link. Here that entry is shared with every other project, and an install puts the link to
+    // it back over anything else, so there is no folder to edit.
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
@@ -4799,25 +5228,10 @@ describe("global virtual store", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error");
-    expect(stdout).toContain("To patch");
-    expect(exitCode).toBe(0);
-
-    // `bun patch` detached the top-level dep symlink into a real directory
-    // for the user to edit. The `.bun/<storepath>` GVS symlink is untouched.
-    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
-    expect(lstatSync(workspace).isDirectory()).toBe(true);
-
-    const edited = join(workspace, "index.js");
-    await write(edited, "module.exports = 'USER_EDITS';\n");
-
-    await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
-
-    // The real-directory workspace is preserved across the install; before
-    // this fix `.expect_existing` would `deleteTree` it on readlink EINVAL
-    // and re-symlink, wiping the edits.
-    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
-    expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
+    expect(stderr).toContain("error: node_modules/no-deps resolves into the global store");
+    expect(stdout).not.toContain("To patch");
+    expect(lstatSync(workspace).isSymbolicLink()).toBe(true);
+    expect(exitCode).toBe(1);
   });
 });
 

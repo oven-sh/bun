@@ -235,46 +235,35 @@ impl PmPkgCommand {
             return Ok(());
         }
 
-        let mut results: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
-
+        let mut found: StringArrayHashMap<Expr> = StringArrayHashMap::new();
         for &key in args {
-            match Self::get_json_value(
-                pkg.root,
-                key,
-                if args.len() > 1 { Some(4) } else { Some(2) },
-            ) {
-                Ok(value) => {
-                    if args.len() > 1 {
-                        if let Some(last_index) = strings::last_index_of_char(&value, b'}') {
-                            let mut new_value = Vec::with_capacity(value.len() + 2);
-                            write!(
-                                &mut new_value,
-                                "{}  {}",
-                                bstr::BStr::new(&value[..last_index]),
-                                bstr::BStr::new(&value[last_index..])
-                            )
-                            .map_err(|_| crate::Error::WriteFailed)?;
-                            results.put(key, new_value.into_boxed_slice())?;
-                            continue;
-                        }
-                    }
-                    results.put(key, value)?;
+            if let Err(e) = Self::query(pkg.root, key, &mut found) {
+                if matches!(e, crate::Error::InvalidPath) && strings::index_of(key, b"[]").is_some()
+                {
+                    Output::err_generic(Self::EMPTY_BRACKETS, ());
+                    Global::exit(1);
                 }
-                Err(e) => {
-                    if matches!(e, crate::Error::InvalidPath) {
-                        if strings::index_of(key, b"[]").is_some() {
-                            Output::err_generic(
-                                "Empty brackets are not valid syntax for retrieving values.",
-                                (),
-                            );
-                            Global::exit(1);
-                        }
-                    }
-                    if !matches!(e, crate::Error::NotFound) {
-                        return Err(e);
-                    }
-                }
+                return Err(e);
             }
+        }
+
+        let nested = args.len() > 1 || found.count() > 1;
+        let mut results: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
+        for (key, expr) in found.keys().iter().zip(found.values()) {
+            let value = Self::format_json(*expr, Some(if nested { 4 } else { 2 }))?;
+            if nested && let Some(last_index) = strings::last_index_of_char(&value, b'}') {
+                let mut new_value = Vec::with_capacity(value.len() + 2);
+                write!(
+                    &mut new_value,
+                    "{}  {}",
+                    bstr::BStr::new(&value[..last_index]),
+                    bstr::BStr::new(&value[last_index..])
+                )
+                .map_err(|_| crate::Error::WriteFailed)?;
+                results.put(key, new_value.into_boxed_slice())?;
+                continue;
+            }
+            results.put(key, value)?;
         }
 
         if results.count() == 0 {
@@ -353,14 +342,14 @@ impl PmPkgCommand {
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
         }
         Ok(())
     }
 
     fn exec_delete(
         ctx: &Context,
-        _pm: &mut PackageManager,
+        pm: &mut PackageManager,
         args: &[&[u8]],
         cwd: &[u8],
     ) -> Result<(), Error> {
@@ -396,12 +385,12 @@ impl PmPkgCommand {
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
         }
         Ok(())
     }
 
-    fn exec_fix(ctx: &Context, _pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
+    fn exec_fix(ctx: &Context, pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
         let path = Self::find_package_json(cwd)?;
 
         let pkg = Self::load_package_json(ctx, &path)?;
@@ -453,7 +442,7 @@ impl PmPkgCommand {
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
         }
         Ok(())
     }
@@ -507,63 +496,100 @@ impl PmPkgCommand {
         }
     }
 
-    fn get_json_value(
+    pub(crate) const EMPTY_BRACKETS: &'static str =
+        "Empty brackets are not valid syntax for retrieving values.";
+
+    /// Adds what `key` names in `root`, like `npm view` and `npm pkg get`: nothing, one value under `key`, or,
+    /// where a name meets an array (`maintainers.name`), one per element under `maintainers[0].name`, ...
+    pub(crate) fn query(
         root: Expr,
         key: &[u8],
-        initial_indent: Option<usize>,
-    ) -> Result<Box<[u8]>, Error> {
-        let expr = Self::resolve_path(root, key)?;
-        Self::format_json(expr, initial_indent)
-    }
-
-    fn resolve_path(root: Expr, key: &[u8]) -> Result<Expr, Error> {
-        let mut current = root;
-        for Segment { name, .. } in Self::parse_key_path(key)? {
-            if name.is_empty() {
-                return Err(crate::Error::InvalidPath);
-            }
-            current = match &current.data {
-                ExprData::EArray(array) => array_index(name)
-                    .and_then(|index| array.items.slice().get(index).copied())
-                    .ok_or(crate::Error::NotFound)?,
-                ExprData::EObject(_) => current.get(name).ok_or(crate::Error::NotFound)?,
-                _ => return Err(crate::Error::NotFound),
-            };
+        out: &mut StringArrayHashMap<Expr>,
+    ) -> Result<(), Error> {
+        let path = Self::parse_key_path(key)?;
+        if path.iter().any(|segment| segment.is_append()) {
+            return Err(crate::Error::InvalidPath);
         }
-        Ok(current)
+        Self::query_in(root, &path, key, &mut Vec::new(), false, out)
     }
 
+    /// `label` spells the path walked so far; it names the value instead of `key` once an array was `expanded`.
+    fn query_in(
+        value: Expr,
+        path: &[Segment<'_>],
+        key: &[u8],
+        label: &mut Vec<u8>,
+        expanded: bool,
+        out: &mut StringArrayHashMap<Expr>,
+    ) -> Result<(), Error> {
+        let [segment, rest @ ..] = path else {
+            out.put(if expanded { label.as_slice() } else { key }, value)?;
+            return Ok(());
+        };
+        let label_len = label.len();
+        match &value.data {
+            ExprData::EArray(array) => match array_index(segment.name) {
+                Some(index) => {
+                    if let Some(item) = array.items.slice().get(index) {
+                        let _ = write!(label, "[{index}]");
+                        Self::query_in(*item, rest, key, label, expanded, out)?;
+                    }
+                }
+                None => {
+                    for (index, item) in array.items.slice().iter().enumerate() {
+                        let _ = write!(label, "[{index}]");
+                        Self::query_in(*item, path, key, label, true, out)?;
+                        label.truncate(label_len);
+                    }
+                }
+            },
+            ExprData::EObject(_) => {
+                if let Some(next) = value.get(segment.name) {
+                    if segment.bracketed {
+                        label.push(b'[');
+                    } else if label_len > 0 {
+                        label.push(b'.');
+                    }
+                    label.extend_from_slice(segment.name);
+                    if segment.bracketed {
+                        label.push(b']');
+                    }
+                    Self::query_in(next, rest, key, label, expanded, out)?;
+                }
+            }
+            _ => {}
+        }
+        label.truncate(label_len);
+        Ok(())
+    }
+
+    /// `[...]` holds one literal name, dots included (`exports[./package.json]`); the rest splits on `.`.
     /// Names are sub-slices of `key`; `E::Object::put` stores them by reference (#33186).
     fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
         let mut segments: Vec<Segment<'_>> = Vec::new();
 
-        let mut part_start = 0;
-        for part in strings::split(key, b".") {
-            let start = part_start;
-            part_start += part.len() + b".".len();
-
-            let name_len = strings::index_of(part, b"[").unwrap_or(part.len());
-            if name_len > 0 {
+        let mut start = 0;
+        while start < key.len() {
+            let end = strings::index_of_any(&key[start..], b".[").map_or(key.len(), |i| start + i);
+            if end > start {
                 segments.push(Segment {
-                    name: &part[..name_len],
+                    name: &key[start..end],
                     bracketed: false,
-                    end: start + name_len,
+                    end,
                 });
             }
-
-            let mut cursor = name_len;
-            while let Some(open) = strings::index_of(&part[cursor..], b"[") {
-                let open = cursor + open;
-                let Some(close) = strings::index_of(&part[open..], b"]") else {
+            start = end + 1;
+            if key.get(end) == Some(&b'[') {
+                let Some(close) = strings::index_of_char_usize(&key[start..], b']') else {
                     return Err(crate::Error::InvalidPath);
                 };
-                let close = open + close;
+                let close = start + close;
                 segments.push(Segment {
-                    name: &part[open + 1..close],
+                    name: &key[start..close],
                     bracketed: true,
-                    end: start + close + 1,
+                    end: close + 1,
                 });
-                cursor = close + 1;
+                start = close + 1;
             }
         }
 
@@ -580,7 +606,7 @@ impl PmPkgCommand {
             return Err(crate::Error::EmptyKey);
         }
 
-        let expr = Self::parse_value(value, parse_json)?;
+        let expr = Self::parse_value(key, value, parse_json);
         Self::set_in_container(root, b"package.json", key, &path, expr)
     }
 
@@ -675,37 +701,32 @@ impl PmPkgCommand {
         }
     }
 
-    fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
-        if parse_json {
-            if value == b"true" {
-                return Ok(Expr::init(E::Boolean { value: true }, Loc::EMPTY));
-            } else if value == b"false" {
-                return Ok(Expr::init(E::Boolean { value: false }, Loc::EMPTY));
-            } else if value == b"null" {
-                return Ok(Expr::init(E::Null {}, Loc::EMPTY));
-            }
+    /// With `--json` a value that is not JSON is an error, as in `npm pkg set --json`.
+    fn parse_value(key: &[u8], value: &[u8], parse_json: bool) -> Expr {
+        let data: &[u8] = dummy_bump().alloc_slice_copy(value);
+        if !parse_json {
+            return Expr::init(E::String::init(data), Loc::EMPTY);
+        }
 
-            if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
+        let source = Source::init_path_string(key, data);
+        let mut log = Log::init();
+        match json::parse_utf8_impl::<true>(&source, &mut log, dummy_bump()) {
+            Ok(expr) => expr,
+            Err(_) => {
+                let reason: &[u8] = log
+                    .msgs
+                    .iter()
+                    .find(|msg| msg.kind == bun_ast::Kind::Err)
+                    .map_or(b"Syntax Error", |msg| &msg.data.text);
+                Output::err_generic(
+                    "Invalid JSON value for <b>\"{s}\"<r>: {s}",
+                    (bstr::BStr::new(key), bstr::BStr::new(reason)),
+                );
+                bun_core::note!(
+                    "--json parses each value as JSON. To store the text as a string, drop --json."
+                );
+                Global::exit(1);
             }
-
-            if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
-            }
-
-            let temp_source = Source::init_path_string(b"package.json", value);
-            let mut temp_log = Log::init();
-            if let Ok(json_expr) =
-                json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
-            {
-                return Ok(json_expr);
-            } else {
-                let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-                return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
-            }
-        } else {
-            let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-            Ok(Expr::init(E::String::init(data), Loc::EMPTY))
         }
     }
 
@@ -797,7 +818,12 @@ impl PmPkgCommand {
         Ok(true)
     }
 
-    fn save_package_json(path: &[u8], root: Expr, pkg: &PackageJson) -> Result<(), Error> {
+    fn save_package_json(
+        path: &[u8],
+        root: Expr,
+        pkg: &PackageJson,
+        dry_run: bool,
+    ) -> Result<(), Error> {
         let preserve_newline =
             !pkg.contents.is_empty() && pkg.contents[pkg.contents.len() - 1] == b'\n';
 
@@ -825,6 +851,14 @@ impl PmPkgCommand {
         }
 
         let content = writer.ctx.written_without_trailing_zero();
+        if dry_run {
+            let _ = Output::writer().write_all(content);
+            if !preserve_newline {
+                let _ = Output::writer().write_all(b"\n");
+            }
+            Output::flush();
+            return Ok(());
+        }
         let path_z = bun_core::ZBox::from_bytes(path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(
@@ -836,7 +870,3 @@ impl PmPkgCommand {
         Ok(())
     }
 }
-
-// ───── helpers ────────────────────────────────────────────────────────────
-
-use bun_core::fmt::parse_f64;

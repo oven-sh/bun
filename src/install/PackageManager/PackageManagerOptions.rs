@@ -468,6 +468,43 @@ impl Options {
 
         Ok(())
     }
+
+    /// Everything [`Self::apply_publish_config`] may replace for `package_name`.
+    pub fn publish_target(&self, package_name: &[u8]) -> PublishTarget {
+        PublishTarget {
+            publish_config: self.publish_config,
+            default_scope: self.scope.clone(),
+            did_override_default_scope: self.did_override_default_scope,
+            package_scope: package_name.starts_with(b"@").then(|| {
+                let hash = Npm::registry::Scope::hash(Npm::registry::Scope::get_name(package_name));
+                (hash, self.registries.get(&hash).cloned())
+            }),
+        }
+    }
+
+    pub fn set_publish_target(&mut self, target: &PublishTarget) -> Result<(), AllocError> {
+        self.publish_config = target.publish_config;
+        self.scope = target.default_scope.clone();
+        self.did_override_default_scope = target.did_override_default_scope;
+        match &target.package_scope {
+            Some((hash, Some(scope))) => self.registries.put(*hash, scope.clone())?,
+            Some((hash, None)) => {
+                self.registries.remove(hash);
+            }
+            None => {}
+        }
+        Ok(())
+    }
+}
+
+/// Where and how one package is published. `bun publish --recursive` takes it before and after a package's
+/// `publishConfig` is applied, so that the tag, access, registry and credentials of one never reach the next.
+pub struct PublishTarget {
+    publish_config: PublishConfig,
+    default_scope: Npm::registry::Scope,
+    did_override_default_scope: bool,
+    /// The `registries` entry of the package's own scope, for a scoped name.
+    package_scope: Option<(u64, Option<Npm::registry::Scope>)>,
 }
 
 /// `publishConfig[key]` as an http(s) URL; anything else errors rather than publishing elsewhere.

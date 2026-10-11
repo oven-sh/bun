@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, copyFileSync, existsSync, linkSync } from "fs";
+import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
 const bunEnv: typeof bunEnv_ = {
@@ -1247,5 +1247,187 @@ describe.concurrent("bun run", () => {
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  // The node/bun shims live in one directory shared by every bun process of
+  // the same build (and, for debug builds, by all debug builds). A bun that is
+  // starting up may add the links but must never remove ones that already
+  // point at it: a script spawned by an earlier process can exec them at any
+  // moment and would fail with `node: not found` or fall through to a real
+  // node. (Debug builds used to wipe the whole directory on every start.)
+  it("concurrent --bun runs do not remove the node shim other scripts are using", async () => {
+    using dir = tempDir("bun-run-shim-race", {
+      "package.json": JSON.stringify({
+        name: "shim-race",
+        scripts: {
+          watch: "node watch.js",
+          probe: "node probe.js",
+        },
+      }),
+      // Runs as `node` through the shim, reports what `node` resolves to, then
+      // keeps re-resolving it (what a script's PATH lookup does) until the test
+      // writes `stop`. A busy loop on purpose: a process that removes and
+      // recreates the shim leaves it missing for only a few syscalls, so sample
+      // as fast as possible. Deliberately import-free: in debug builds, loading
+      // node:fs alone takes most of a second. (`await using` below kills this
+      // process if the test fails before writing `stop`.)
+      "watch.js": `
+        const shim = Bun.which("node");
+        console.log(shim);
+        while (Bun.file("stop").size === 0) {
+          if (Bun.which("node") !== shim) {
+            console.log("missing");
+            process.exit(1);
+          }
+        }
+        console.log("ok");
+      `,
+      "probe.js": `process.exit(typeof Bun === "object" ? 0 : 3);`,
+    });
+    const dirStr = String(dir);
+
+    await using watcher = Bun.spawn({
+      cmd: [bunExe(), "run", "--bun", "watch"],
+      cwd: dirStr,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const watcherLines = forEachLine(watcher.stdout);
+    const { value: shim } = await watcherLines.next();
+    expect(shim).toMatch(/[\\/]bun-node[^\\/]*[\\/]node(\.exe)?$/);
+
+    // Every sibling sets up the shim directory on startup and then runs
+    // `node` through it, all while the watcher's script is still using it.
+    const siblings = await Promise.all(
+      Array.from({ length: 4 }, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "--bun", "probe"],
+          cwd: dirStr,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      }),
+    );
+
+    await Bun.write(join(dirStr, "stop"), "stop");
+    const [stdout, stderr, exitCode] = await Promise.all([
+      Array.fromAsync(watcherLines),
+      watcher.stderr.text(),
+      watcher.exited,
+    ]);
+
+    expect(siblings.filter(({ exitCode }) => exitCode !== 0)).toEqual([]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: ["ok"], stderr: "$ node watch.js\n", exitCode: 0 });
+  });
+
+  // https://github.com/oven-sh/bun/issues/44033
+  // Without a node in PATH, scripts get a `node.exe` that is a hard link to bun. A hard link cannot
+  // cross volumes, so with %TEMP% on another drive it goes beside bun.exe.
+  it.if(isWindows)("scripts find node when %TEMP% is on another drive than bun.exe", async () => {
+    using dir = tempDir("bun-run-node-shim", {
+      "package.json": JSON.stringify({
+        name: "shim",
+        scripts: { v: `node -e "console.log(process.execPath)"` },
+      }),
+      "bin/.keep": "",
+      // Takes the name of the directory.
+      "blocked/bun-node": "not a directory",
+    });
+    // A bun.exe of its own, so that nothing is written beside the one under test.
+    const ownBun = (folder: string) => {
+      const exe = join(String(dir), folder, "bun.exe");
+      try {
+        linkSync(bunExe(), exe);
+      } catch {
+        copyFileSync(bunExe(), exe);
+      }
+      return exe;
+    };
+    // No node anywhere: Windows env keys are case-insensitive, and an outer `bun run` exports NODE.
+    const env = Object.fromEntries(
+      Object.entries(bunEnv).filter(
+        ([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH", "TEMP", "TMP"].includes(k.toUpperCase()),
+      ),
+    );
+    env.PATH = (process.env.PATH ?? "")
+      .split(";")
+      .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
+      .join(";");
+    // The drive need not exist: nothing is created there.
+    env.TEMP = env.TMP = `${String(dir)[0].toUpperCase() === "Q" ? "R" : "Q"}:\\Temp`;
+    const run = async (...cmd: string[]) => {
+      await using proc = Bun.spawn({ cmd, cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().toLowerCase(), stderr, exitCode };
+    };
+
+    const bun = ownBun("bin");
+    for (const flag of [[], ["--bun"]]) {
+      expect(await run(bun, ...flag, "run", "v")).toEqual({
+        stdout: join(String(dir), "bin", "bun-node", "node.exe").toLowerCase(),
+        stderr: '$ node -e "console.log(process.execPath)"\n',
+        exitCode: 0,
+      });
+    }
+
+    const blocked = await run(ownBun("blocked"), "run", "v");
+    expect(blocked.stderr).toContain("warn: could not create the node alias for bun in ");
+    expect(blocked.stderr).toContain("command not found: node");
+    expect(blocked).toMatchObject({ stdout: "", exitCode: 1 });
+  });
+
+  // Windows runs a .cmd or .bat file through cmd.exe, which reads the arguments a second time: it
+  // replaces `%NAME%` with the value of the environment variable, even inside quotes.
+  it.if(isWindows)("the node_modules/.bin launcher of a batch file refuses cmd.exe special characters", async () => {
+    const printFirstArgument = "@echo off\r\necho arg=%1\r\n";
+    using dir = tempDir("bun-run-bin-launcher-metachar", {
+      "package.json": JSON.stringify({
+        name: "consumer",
+        version: "0.0.0",
+        dependencies: { "cmd-tool-pkg": "file:./cmd-tool-pkg" },
+      }),
+      "cmd-tool-pkg": {
+        "package.json": JSON.stringify({
+          name: "cmd-tool-pkg",
+          version: "0.0.0",
+          bin: { "cmd-tool": "./tool.cmd", "bat-tool": "./tool.bat" },
+        }),
+        "tool.cmd": printFirstArgument,
+        "tool.bat": printFirstArgument,
+      },
+    });
+    const run = async (...cmd: string[]) => {
+      await using proc = Bun.spawn({
+        cmd,
+        cwd: String(dir),
+        env: { ...bunEnv, CMD_METACHAR_PROBE: "read-by-cmd" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const launcher = (name: string) => join(String(dir), "node_modules", ".bin", `${name}.exe`);
+    const refused = {
+      stdout: "",
+      stderr: expect.stringContaining(
+        "error: an argument with one of % & | < > ^ cannot be passed to a .cmd or .bat file",
+      ),
+      exitCode: 255,
+    };
+
+    expect(await run(bunExe(), "install")).toMatchObject({ exitCode: 0 });
+
+    expect(await run(launcher("cmd-tool"), "hello")).toEqual({ stdout: "arg=hello\r\n", stderr: "", exitCode: 0 });
+    for (const arg of ["%CMD_METACHAR_PROBE%", "a&b", "a|b", "a<b", "a>b", "a^b", 'x" & echo marker & "']) {
+      expect({ arg, ...(await run(launcher("cmd-tool"), arg)) }).toEqual({ arg, ...refused });
+    }
+    expect(await run(launcher("bat-tool"), "%CMD_METACHAR_PROBE%")).toEqual(refused);
+    // The same launcher runs inside bun.exe.
+    expect(await run(bunExe(), "run", "cmd-tool", "%CMD_METACHAR_PROBE%")).toEqual(refused);
   });
 });

@@ -57,6 +57,7 @@ impl ExprStr for Expr {
     }
 }
 
+#[derive(Clone)]
 enum JsonObjectStringRows<'a> {
     Classic(
         core::slice::Iter<'a, bun_ast::G::Property>,
@@ -2234,10 +2235,10 @@ impl Package<u64> {
             if let Some(bin) = json.as_property(b"bin") {
                 if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
                     for (k, v, _) in rows {
-                        string_builder.count(k);
                         let Some(v) = v else {
-                            break 'bin;
+                            continue;
                         };
+                        string_builder.count(k);
                         string_builder.count(v);
                     }
                     break 'bin;
@@ -2617,14 +2618,13 @@ impl Package<u64> {
 
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                if let Some(mut rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
-                    match rows.len() {
+                if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                    // npm (normalize-package-bin) skips an entry whose value is not a string.
+                    let mut entries = rows.filter_map(|(k, v, _)| Some((k, v?)));
+                    match entries.clone().count() {
                         0 => {}
                         1 => {
-                            let (bin_name, value, _) = rows.next().expect("checked: one property");
-                            let Some(value) = value else {
-                                break 'bin;
-                            };
+                            let (bin_name, value) = entries.next().expect("counted: one entry");
 
                             self.bin = Bin {
                                 tag: bin::Tag::NamedFile,
@@ -2645,24 +2645,19 @@ impl Package<u64> {
                             );
 
                             let mut i: usize = 0;
-                            for (k, v, _) in rows {
+                            for (k, v) in entries {
                                 extern_strings[i] = string_builder.append::<ExternalString>(k);
                                 i += 1;
-                                let Some(v) = v else {
-                                    break 'bin;
-                                };
                                 extern_strings[i] = string_builder.append::<ExternalString>(v);
                                 i += 1;
                             }
                             debug_assert!(i == extern_strings.len());
                             self.bin = Bin {
                                 tag: bin::Tag::Map,
-                                value: bin::Value {
-                                    map: ExternalStringList::new(
-                                        current_len as u32,
-                                        extern_strings.len() as u32,
-                                    ),
-                                },
+                                value: bin::Value::init_map(ExternalStringList::new(
+                                    current_len as u32,
+                                    extern_strings.len() as u32,
+                                )),
                                 ..Default::default()
                             };
                         }
@@ -2674,9 +2669,9 @@ impl Package<u64> {
                     if !stri.data.is_empty() {
                         self.bin = Bin {
                             tag: bin::Tag::File,
-                            value: bin::Value {
-                                file: string_builder.append::<String>(&stri.data),
-                            },
+                            value: bin::Value::init_file(
+                                string_builder.append::<String>(&stri.data),
+                            ),
                             ..Default::default()
                         };
                         break 'bin;
@@ -2697,9 +2692,7 @@ impl Package<u64> {
                         if !str_.is_empty() {
                             self.bin = Bin {
                                 tag: bin::Tag::Dir,
-                                value: bin::Value {
-                                    dir: string_builder.append::<String>(str_),
-                                },
+                                value: bin::Value::init_dir(string_builder.append::<String>(str_)),
                                 ..Default::default()
                             };
                             break 'bin;

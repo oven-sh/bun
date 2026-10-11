@@ -34,6 +34,8 @@ use bun_semver::{self as Semver, SlicedString, String as SemverString};
 
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
+    /// `dedupe_name()`, `\n`, version -> index in `entries`.
+    entry_by_name_version: StringHashMap<usize>,
 }
 
 #[derive(Default)]
@@ -257,6 +259,7 @@ impl<'a> YarnLock<'a> {
     fn init() -> YarnLock<'a> {
         YarnLock {
             entries: Vec::new(),
+            entry_by_name_version: StringHashMap::new(),
         }
     }
 
@@ -392,25 +395,14 @@ impl<'a> YarnLock<'a> {
         if new_entry.specs.is_empty() {
             return Ok(());
         }
-        let dedupe_name = new_entry.dedupe_name();
-
-        for existing_entry in self.entries.iter_mut() {
-            if dedupe_name == existing_entry.dedupe_name()
-                && new_entry.version == existing_entry.version
-            {
-                let old_len = existing_entry.specs.len();
-                let mut combined_specs: Vec<&'a [u8]> =
-                    Vec::with_capacity(old_len + new_entry.specs.len());
-                combined_specs.extend_from_slice(&existing_entry.specs);
-                combined_specs.extend_from_slice(&new_entry.specs);
-
-                existing_entry.specs = combined_specs;
-                // new_entry.specs dropped here
-                return Ok(());
-            }
+        let key = [new_entry.dedupe_name(), b"\n", new_entry.version].concat();
+        let index = *self
+            .entry_by_name_version
+            .get_or_put_value(&key, self.entries.len())?;
+        match self.entries.get_mut(index) {
+            Some(existing_entry) => existing_entry.specs.extend_from_slice(&new_entry.specs),
+            None => self.entries.push(new_entry),
         }
-
-        self.entries.push(new_entry);
         Ok(())
     }
 }
@@ -551,8 +543,19 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     log: &mut bun_ast::Log,
     data: &[u8],
 ) -> Result<LoadResult<'a>, Error> {
-    // yarn v2+ (berry) lockfiles are not supported; only the v1 format migrates.
-    if !strings::index_of(data, b"# yarn lockfile v1").is_some() {
+    // yarn 2+ (berry) lockfiles are YAML with a `__metadata` header. Yarn reads a file as v1 only when the marker is in
+    // the comment lines at its top, so a berry file that holds the marker further down is still a berry file.
+    let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
+    let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
+        Some(at) if is_berry => strings::split(&data[..at], b"\n")
+            .all(|line| line.is_empty() || line.starts_with(b"#") || line == b"\r"),
+        Some(_) => true,
+        None => false,
+    };
+    if !has_v1_marker {
+        if is_berry {
+            return crate::yarn_berry::migrate_yarn_berry_lockfile(this, manager, log, data);
+        }
         return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }
 
@@ -863,7 +866,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         return Err(crate::Error::LockfileResolveFailed);
     }
 
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true>(manager)?;
+    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true, false>(manager)?;
 
     if cfg!(debug_assertions) {
         this.verify_data()?;

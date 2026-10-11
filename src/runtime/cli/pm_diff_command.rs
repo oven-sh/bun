@@ -600,10 +600,9 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
                 let _ = dir.into_raw();
-                for (path, optional) in queue.into_paths() {
+                for path in queue.into_paths() {
                     let rel = path.as_bytes();
                     match bun_sys::File::read_from(root_fd, rel) {
-                        Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
                         Ok(bytes) => {
                             #[cfg(not(windows))]
                             if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
@@ -764,14 +763,10 @@ fn fetch_registry_tree(
         version
     };
     let found = 'found: {
-        if let Some(r) = manifest.find_by_dist_tag(version) {
-            break 'found r;
-        }
-        let sliced = Semver::SlicedString::init(version, version);
-        if let Ok(query) = Semver::query::parse(version, sliced) {
-            if let Some(r) = manifest.find_best_version(&query, version) {
-                break 'found r;
-            }
+        match manifest.find_by_spec(version) {
+            Ok(r) => break 'found r,
+            Err(bun_install::Error::DistTagNotFound | bun_install::Error::NoMatchingVersion) => {}
+            Err(err) => return Err(err.into()),
         }
         Status::clear();
         Output::err_generic(

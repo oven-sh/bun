@@ -1,9 +1,8 @@
 use core::fmt;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::Error;
 use bun_alloc::AllocError;
-use bun_collections::{StringHashMap, VecExt};
+use bun_collections::{DynamicBitSet, StringHashMap, VecExt};
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
@@ -19,8 +18,11 @@ use bun_sys::Mode;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::bun_json::{Expr, ExprData};
-use crate::dependency::{Dependency, DependencyExt as _};
+use crate::dependency::{Behavior, Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
+use crate::lockfile::Lockfile;
+use crate::lockfile::package::PackageColumns as _;
+use crate::resolution;
 #[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
@@ -39,19 +41,14 @@ pub struct Bin {
     pub tag: Tag,
     pub(crate) _padding_tag: [u8; 3],
 
-    // Largest member must be zero initialized
+    // Copied byte for byte into bun.lockb and the npm manifest cache: build it with
+    // `Value::init_*`, a `Value { .. }` literal of an 8-byte member leaves 8 bytes unset.
     pub(crate) value: Value,
 }
 
 impl Default for Bin {
     fn default() -> Self {
-        Bin {
-            tag: Tag::None,
-            _padding_tag: [0; 3],
-            value: Value {
-                map: ExternalStringList::default(),
-            },
-        }
+        Bin::init()
     }
 }
 
@@ -210,7 +207,6 @@ impl Bin {
             ExprData::EObject(o) => {
                 let props = o.properties.slice();
                 return Self::parse_append_object(
-                    props.len(),
                     props.iter().map(|prop| {
                         (
                             prop.key.as_ref().and_then(Expr::as_utf8_string_literal),
@@ -224,7 +220,6 @@ impl Bin {
             ExprData::EObjectJSON(o) => {
                 let rows = o.get().properties();
                 return Self::parse_append_object(
-                    rows.len(),
                     rows.iter()
                         .map(|row| (Some(row.key.slice()), row.value.as_str())),
                     buf,
@@ -238,9 +233,7 @@ impl Bin {
                 return Ok(Bin {
                     tag: Tag::File,
                     _padding_tag: [0; 3],
-                    value: Value {
-                        file: buf.append(str_)?,
-                    },
+                    value: Value::init_file(buf.append(str_)?),
                 });
             }
         }
@@ -248,51 +241,42 @@ impl Bin {
     }
 
     fn parse_append_object<'a>(
-        len: usize,
-        mut pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)>,
+        pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)> + Clone,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        match len {
+        // npm (normalize-package-bin) skips an entry whose value is not a string.
+        let mut entries = pairs.filter_map(|(key, value)| Some((key?, value?)));
+        match entries.clone().count() {
             0 => {}
             1 => {
-                let Some((Some(bin_name), Some(value))) = pairs.next() else {
-                    return Ok(Bin::default());
-                };
-                return Ok(Bin {
-                    tag: Tag::NamedFile,
-                    _padding_tag: [0; 3],
-                    value: Value {
-                        named_file: [buf.append(bin_name)?, buf.append(value)?],
-                    },
-                });
+                if let Some((bin_name, value)) = entries.next() {
+                    return Ok(Bin {
+                        tag: Tag::NamedFile,
+                        _padding_tag: [0; 3],
+                        value: Value::init_named_file([buf.append(bin_name)?, buf.append(value)?]),
+                    });
+                }
             }
-            _ => {
+            len => {
                 let current_len = extern_strings.len();
                 let num_props: usize = len * 2;
                 extern_strings
-                    .try_reserve_exact(
-                        (current_len + num_props).saturating_sub(extern_strings.len()),
-                    )
+                    .try_reserve_exact(num_props)
                     .map_err(|_| AllocError)?;
-                let mut i: usize = 0;
-                for (key_str, value_str) in pairs {
-                    let (Some(key_str), Some(value_str)) = (key_str, value_str) else {
-                        return Ok(Bin::default());
-                    };
+                for (key_str, value_str) in entries {
                     extern_strings.push(buf.append_external(key_str)?);
-                    i += 1;
                     extern_strings.push(buf.append_external(value_str)?);
-                    i += 1;
                 }
-                debug_assert!(i == num_props);
+                debug_assert!(extern_strings.len() == current_len + num_props);
                 let new = &extern_strings[current_len..current_len + num_props];
                 return Ok(Bin {
                     tag: Tag::Map,
                     _padding_tag: [0; 3],
-                    value: Value {
-                        map: ExternalStringList::init(extern_strings.as_slice(), new),
-                    },
+                    value: Value::init_map(ExternalStringList::init(
+                        extern_strings.as_slice(),
+                        new,
+                    )),
                 });
             }
         }
@@ -307,9 +291,7 @@ impl Bin {
             return Ok(Bin {
                 tag: Tag::Dir,
                 _padding_tag: [0; 3],
-                value: Value {
-                    dir: buf.append(bin_str)?,
-                },
+                value: Value::init_dir(buf.append(bin_str)?),
             });
         }
         Ok(Bin::default())
@@ -693,41 +675,106 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-// BACKREF — `PackageInstaller` holds a
-// `&mut Lockfile` alongside a `Box<[TreeContext]>` whose `binaries` queues
-// alias into `lockfile.buffers`; a `&'a Vec<_>` borrow here would force the
-// `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
-// installer outlives no concrete lifetime for its own self-borrowed buffers).
+/// The packages of one `node_modules` link their bins in this order (field by field), under both
+/// linkers. The first link for a bin name stays (`Linker::seen`).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct LinkOrder<'a> {
+    /// Neither the root package nor a workspace member declares the dependency.
+    transitive: bool,
+    /// A workspace, `file:` or `link:` directory, not a registry, tarball or git package.
+    local_directory: bool,
+    dependency_name: &'a [u8],
+}
+
+impl<'a> LinkOrder<'a> {
+    pub(crate) fn new(
+        direct: bool,
+        resolution: resolution::Tag,
+        dependency_name: &'a [u8],
+    ) -> LinkOrder<'a> {
+        LinkOrder {
+            transitive: !direct,
+            local_directory: matches!(
+                resolution,
+                resolution::Tag::Root
+                    | resolution::Tag::Workspace
+                    | resolution::Tag::Folder
+                    | resolution::Tag::Symlink
+            ),
+            dependency_name,
+        }
+    }
+
+    /// Whether a dependency of the root package or of a workspace member counts as direct.
+    pub(crate) fn declares(behavior: Behavior) -> bool {
+        behavior.is_prod() || behavior.is_dev() || behavior.is_optional() || behavior.is_workspace()
+    }
+
+    /// The packages that the root package or a workspace member depends on directly. By package,
+    /// not by dependency: a hoisted package keeps the id of the first dependency that reached it.
+    pub(crate) fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
+        let pkgs = lockfile.packages.slice();
+        let mut direct = DynamicBitSet::init_empty(pkgs.len())?;
+        for ((resolution, dependencies), resolutions) in pkgs
+            .items_resolution()
+            .iter()
+            .zip(pkgs.items_dependencies())
+            .zip(pkgs.items_resolutions())
+        {
+            if !matches!(
+                resolution.tag,
+                resolution::Tag::Root | resolution::Tag::Workspace
+            ) {
+                continue;
+            }
+            for (dependency, &package_id) in dependencies
+                .get(lockfile.buffers.dependencies.as_slice())
+                .iter()
+                .zip(resolutions.get(lockfile.buffers.resolutions.as_slice()))
+            {
+                if Self::declares(dependency.behavior) && (package_id as usize) < pkgs.len() {
+                    direct.set(package_id as usize);
+                }
+            }
+        }
+        Ok(direct)
+    }
+}
+
+// BACKREF — the `PackageInstaller` that owns these queues also borrows the
+// `Lockfile` mutably, so this cannot be a `&'a Lockfile`.
 pub struct PriorityQueueContext {
-    pub(crate) dependencies: bun_ptr::BackRef<Vec<Dependency>>,
-    pub(crate) string_buf: bun_ptr::BackRef<Vec<u8>>,
+    pub(crate) lockfile: bun_ptr::BackRef<Lockfile>,
+    /// `LinkOrder::direct_packages`
+    pub(crate) direct_packages: bun_ptr::BackRef<DynamicBitSet>,
 }
 
 impl PriorityQueueContext {
-    fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
-        // `dependencies` / `string_buf` point at
-        // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
-        // for the entire install (the `PackageInstaller` that owns this queue
-        // also borrows the same `Lockfile`). The Vecs may be reallocated by
-        // `fix_cached_lockfile_package_slices`, which is why we re-deref the
-        // `BackRef<Vec>` (header) on every compare instead of caching a slice.
-        let deps = self.dependencies.as_slice();
-        let buf = self.string_buf.as_slice();
-        let a_name = deps[a as usize].name.slice(buf);
-        let b_name = deps[b as usize].name.slice(buf);
-        strings::order(a_name, b_name)
+    fn link_order(&self, dependency_id: DependencyID) -> LinkOrder<'_> {
+        // Re-read the slices on every compare: the buffers and the package list
+        // can grow during the install (`fix_cached_lockfile_package_slices`).
+        let lockfile = self.lockfile.get();
+        let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize] as usize;
+        LinkOrder::new(
+            self.direct_packages
+                .is_set_allow_out_of_bound(package_id, false),
+            lockfile.packages.items_resolution()[package_id].tag,
+            lockfile.buffers.dependencies.as_slice()[dependency_id as usize]
+                .name
+                .slice(lockfile.buffers.string_bytes.as_slice()),
+        )
     }
 }
 
 impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
     #[inline]
     fn compare(&self, a: &DependencyID, b: &DependencyID) -> core::cmp::Ordering {
-        self.less_than(*a, *b)
+        self.link_order(*a).cmp(&self.link_order(*b))
     }
 }
 
 // Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
-// Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
+// Min-heap keyed by `LinkOrder`.
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
@@ -831,29 +878,39 @@ pub struct Linker<'a> {
     pub skipped_due_to_missing_bin: bool,
 }
 
-static UMASK: AtomicU32 = AtomicU32::new(0);
-static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
+#[cfg(not(windows))]
+static EXEC_MODE: bun_core::Once<Mode> = bun_core::Once::new();
+
+/// The mode of a bin target, `0o777 & !umask`.
+#[cfg(not(windows))]
+fn exec_mode() -> Mode {
+    EXEC_MODE.call(|| {
+        let prev = sys::umask(0);
+        sys::umask(prev);
+        0o777 & !prev
+    })
+}
 
 impl<'a> Linker<'a> {
+    /// libc reads the umask by setting it: call this while the process has one thread.
     pub fn ensure_umask() {
-        // Single-winner gate: only the thread that flips false->true performs
-        // the temporary umask(0)/umask(prev) probe. A bare load+store would let
-        // two threads interleave the probe and leave the process umask wrong.
-        if HAS_SET_UMASK
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            let prev = sys::umask(0);
-            sys::umask(prev);
-            UMASK.store(prev as u32, Ordering::Release);
-        }
+        #[cfg(not(windows))]
+        exec_mode();
     }
 
-    fn unlink_bin_or_shim(abs_dest: &ZStr) {
+    /// `global_owner`: the global bin dir also holds what bun did not put there. Only a link
+    /// into this directory is removed from it.
+    fn unlink_bin_or_shim(abs_dest: &ZStr, global_owner: Option<&[u8]>) {
         #[cfg(not(windows))]
         {
+            if let Some(owner) = global_owner {
+                let mut link_buf = path::path_buffer_pool::get();
+                match sys::readlink(abs_dest, link_buf.as_mut_slice()) {
+                    Ok(len) if Self::link_leads_into(abs_dest, &link_buf[..len], owner) => {}
+                    _ => return,
+                }
+            }
             let _ = sys::unlink(abs_dest);
-            return;
         }
 
         #[cfg(windows)]
@@ -870,7 +927,11 @@ impl<'a> Linker<'a> {
             // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
             let abs_bunx_file =
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
-            let _ = sys::unlink_w(abs_bunx_file);
+            let had_bunx_file = sys::unlink_w(abs_bunx_file).is_ok();
+            // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
+            if global_owner.is_some() && !had_bunx_file {
+                return;
+            }
             let exe_suffix = w!(".exe\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
             // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
@@ -878,6 +939,23 @@ impl<'a> Linker<'a> {
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
             let _ = sys::unlink_w(abs_exe_file);
         }
+    }
+
+    /// Whether the symlink at `abs_dest` with the text `link` leads into `abs_dir`. Lexical.
+    #[cfg(not(windows))]
+    fn link_leads_into(abs_dest: &ZStr, link: &[u8], abs_dir: &[u8]) -> bool {
+        let mut resolved_buf = path::path_buffer_pool::get();
+        resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
+            resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
+            resolved_buf.as_mut_slice(),
+            &[link],
+        )
+        .is_some_and(|resolved| {
+            matches!(
+                resolve_path::is_parent_or_equal(abs_dir, resolved),
+                resolve_path::ParentEqual::Parent
+            )
+        })
     }
 
     fn link_bin_or_create_shim(
@@ -902,6 +980,12 @@ impl<'a> Linker<'a> {
 
         // Skip if the target does not exist. This is important because placing a dangling
         // shim in path might break a postinstall
+        #[cfg(not(windows))]
+        let Ok(target_stat) = sys::stat(abs_target) else {
+            self.skipped_due_to_missing_bin = true;
+            return;
+        };
+        #[cfg(windows)]
         if !sys::exists(abs_target) {
             self.skipped_due_to_missing_bin = true;
             return;
@@ -921,31 +1005,23 @@ impl<'a> Linker<'a> {
 
         bun_core::analytics::Features::binlinks_inc();
 
-        // Only this bin's outcome decides whether the link just made is kept.
-        let prior_err = self.err.take();
         #[cfg(not(windows))]
-        {
-            self.create_symlink(abs_target, abs_dest, global);
-        }
+        let result = self.create_symlink(abs_target, abs_dest, global);
         #[cfg(windows)]
-        {
-            match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
-                Ok(target) => self.create_windows_shim(&target, abs_target, abs_dest, global),
-                Err(err) => {
-                    let err: crate::Error = err.into();
-                    // ignore directories, creating a shim for one won't do anything
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
-                        self.err = Some(err);
-                    }
-                }
-            }
-        }
-        let err = self.err;
-        self.err = prior_err.or(err);
+        let result = match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
+            Ok(target) => self.create_windows_shim(&target, abs_target, abs_dest, global),
+            Err(err) => match crate::Error::from(err) {
+                // ignore directories, creating a shim for one won't do anything
+                crate::Error::Sys(bun_errno::SystemErrno::EISDIR) => Ok(()),
+                err => Err(err),
+            },
+        };
 
-        if err.is_some() {
-            // cleanup on error just in case
-            Self::unlink_bin_or_shim(abs_dest);
+        // The other bins of the package are still linked; the first error is reported.
+        if let Err(err) = result {
+            self.err.get_or_insert(err);
+            #[cfg(windows)]
+            Self::unlink_bin_or_shim(abs_dest, global.then_some(&b""[..]));
             if let Some(seen) = self.seen.as_deref_mut() {
                 seen.remove(abs_dest.as_bytes());
             }
@@ -954,6 +1030,10 @@ impl<'a> Linker<'a> {
 
         #[cfg(not(windows))]
         {
+            let mode = exec_mode();
+            if (target_stat.st_mode as Mode) & 0o777 != mode {
+                let _ = sys::lchmod(abs_target, mode);
+            }
             Self::try_normalize_shebang(abs_target);
         }
     }
@@ -1048,12 +1128,15 @@ impl<'a> Linker<'a> {
         else {
             return;
         };
-        let mut needs_unlink = true;
-        let unlink_guard = scopeguard::guard(&mut needs_unlink, |needs_unlink| {
-            if *needs_unlink {
-                let _ = sys::unlinkat(Fd::cwd(), tmppath);
+        struct UnlinkUnlessRenamed<'p>(Option<&'p ZStr>);
+        impl Drop for UnlinkUnlessRenamed<'_> {
+            fn drop(&mut self) {
+                if let Some(tmppath) = self.0 {
+                    let _ = sys::unlinkat(Fd::cwd(), tmppath);
+                }
             }
-        });
+        }
+        let mut tmpfile_guard = UnlinkUnlessRenamed(Some(tmppath));
 
         // Write to temporary file with corrected content
         {
@@ -1097,11 +1180,8 @@ impl<'a> Linker<'a> {
         }
 
         // Atomic replace: rename temp file to original
-        match sys::renameat(Fd::cwd(), tmppath, Fd::cwd(), abs_target) {
-            sys::Result::Ok(()) => {
-                *scopeguard::ScopeGuard::into_inner(unlink_guard) = false;
-            }
-            sys::Result::Err(_) => {}
+        if sys::renameat(Fd::cwd(), tmppath, Fd::cwd(), abs_target).is_ok() {
+            tmpfile_guard.0 = None;
         }
     }
 
@@ -1112,7 +1192,7 @@ impl<'a> Linker<'a> {
         abs_target: &ZStr,
         abs_dest: &ZStr,
         global: bool,
-    ) {
+    ) -> Result<(), Error> {
         // `encode_into` reinterprets this byte buffer as `[u16]`.
         // Constructing a `&mut [u16]` from a pointer that is not 2-aligned is
         // *immediate language UB* — the reference validity invariant requires
@@ -1131,12 +1211,25 @@ impl<'a> Linker<'a> {
         let abs_dest_w =
             strings::convert_utf8_to_utf16_in_buffer(dest_buf.as_mut_slice(), abs_dest.as_bytes());
         let abs_dest_w_len = abs_dest_w.len();
+        let exe_suffix = w!(".exe\x00");
+        dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
+        let global_exe_exists = global
+            && sys::exists_os_path(
+                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len()),
+                false,
+            );
+
         let bunx_suffix = w!(".bunx\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
 
         // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
         let abs_bunx_file =
             bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+
+        // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
+        if global_exe_exists && !sys::exists_os_path(abs_bunx_file, false) {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::EEXIST));
+        }
 
         let bunx_file = 'bunx_file: {
             match sys::File::openat_os_path(
@@ -1149,8 +1242,7 @@ impl<'a> Linker<'a> {
                 Err(err) => {
                     let err: crate::Error = err.into();
                     if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
-                        self.err = Some(err);
-                        return;
+                        return Err(err);
                     }
 
                     // Snapshot the length and restore via `set_length` after.
@@ -1166,10 +1258,7 @@ impl<'a> Linker<'a> {
                         0o664,
                     ) {
                         Ok(f) => break 'bunx_file f,
-                        Err(real_err) => {
-                            self.err = Some(real_err.into());
-                            return;
-                        }
+                        Err(real_err) => return Err(real_err.into()),
                     }
                 }
             }
@@ -1208,10 +1297,7 @@ impl<'a> Linker<'a> {
             if let Some(chunk) = first_content_chunk {
                 match WinShimShebang::parse(chunk, bin_path_w) {
                     Ok(s) => break 'shebang s,
-                    Err(_) => {
-                        self.err = Some(crate::Error::InvalidBinCount);
-                        return;
-                    }
+                    Err(_) => return Err(crate::Error::InvalidBinCount),
                 }
             } else {
                 break 'shebang WinShimShebang::parse_from_bin_path(bin_path_w);
@@ -1226,22 +1312,16 @@ impl<'a> Linker<'a> {
 
         let len = shim.encoded_length();
         if len > shim_buf.len() {
-            self.err = Some(crate::Error::InvalidBinContent);
-            return;
+            return Err(crate::Error::InvalidBinContent);
         }
 
         let metadata = &mut shim_buf[0..len];
         if shim.encode_into(metadata).is_err() {
-            self.err = Some(crate::Error::InvalidBinContent);
-            return;
+            return Err(crate::Error::InvalidBinContent);
         }
 
-        if let Err(err) = bunx_file.write_all(metadata) {
-            self.err = Some(err.into());
-            return;
-        }
+        bunx_file.write_all(metadata)?;
 
-        let exe_suffix = w!(".exe\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
         let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
@@ -1252,22 +1332,22 @@ impl<'a> Linker<'a> {
             crate::windows_shim::embedded_executable_data(),
         ) {
             let err: crate::Error = err.into();
-            if err == crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
-                // exe is most likely running. bunx file has already been updated, ignore error
-                return;
+            // exe is most likely running. bunx file has already been updated, ignore error
+            if err != crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
+                return Err(err);
             }
-
-            self.err = Some(err);
-            return;
         }
+
+        Ok(())
     }
 
     #[cfg(not(windows))]
-    fn create_symlink(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: bool) {
-        // hoisted from `defer { if (this.err == null) chmod }` — scopeguard
-        // cannot capture `&mut self.err` without conflicting with the body's writes,
-        // so each return path calls `Self::chmod_on_ok` explicitly instead.
-
+    fn create_symlink(
+        &mut self,
+        abs_target: &ZStr,
+        abs_dest: &ZStr,
+        global: bool,
+    ) -> Result<(), Error> {
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
         // Need not start with `..` (a global install may nest the package inside the bin
         // directory), and one `..` per component of `abs_dest_dir` can outgrow `abs_target`.
@@ -1276,67 +1356,83 @@ impl<'a> Linker<'a> {
         let rel_buf = resolve_path::buf_or_spill(self.rel_buf, &mut rel_spill, rel_bound);
         let rel_target = resolve_path::relative_buf_z(rel_buf, abs_dest_dir, abs_target.as_bytes());
 
-        match sys::symlink_running_executable(rel_target, abs_dest) {
-            sys::Result::Err(err) => {
-                if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
-                    self.err = Some(err.into());
-                    Self::chmod_on_ok(self.err, abs_target);
-                    return;
+        let mut result = sys::symlink_running_executable(rel_target, abs_dest);
+
+        // `.bin` hasn't been created yet. The global bin dir is not created here.
+        if !global && matches!(&result, Err(err) if err.get_errno() == sys::Errno::ENOENT) {
+            // Capture `len()` and restore via `set_length()` so the path
+            // can be re-borrowed for `append`/`slice` in between.
+            let node_modules_path_save = self.node_modules_path.len();
+            let _ = self.node_modules_path.append(b".bin");
+            let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
+            self.node_modules_path.set_length(node_modules_path_save);
+
+            result = sys::symlink_running_executable(rel_target, abs_dest);
+        }
+
+        let Err(err) = result else {
+            return Ok(());
+        };
+        let errno = err.get_errno();
+        if !matches!(
+            errno,
+            sys::Errno::EEXIST | sys::Errno::EPERM | sys::Errno::EACCES | sys::Errno::EOPNOTSUPP
+        ) {
+            return Err(err.into());
+        }
+
+        // The name is taken or the directory is read-only: what is there decides.
+        let mut existing = path::path_buffer_pool::get();
+        match sys::readlink(abs_dest, existing.as_mut_slice()) {
+            Ok(len) if existing[..len] == *rel_target.as_bytes() => return Ok(()),
+            Ok(len) => {
+                // The global bin dir also holds what bun did not put there, `bun` itself for one.
+                if global
+                    && !Self::link_leads_into(
+                        abs_dest,
+                        &existing[..len],
+                        self.node_modules_path.slice(),
+                    )
+                {
+                    return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
                 }
-
-                // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
-                if err.get_errno() == sys::Errno::ENOENT {
-                    if global {
-                        self.err = Some(err.into());
-                        Self::chmod_on_ok(self.err, abs_target);
-                        return;
-                    }
-
-                    // Capture `len()` and restore via `set_length()` so the path
-                    // can be re-borrowed for `append`/`slice` in between.
-                    let node_modules_path_save = self.node_modules_path.len();
-                    let _ = self.node_modules_path.append(b".bin");
-                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
-                    self.node_modules_path.set_length(node_modules_path_save);
-
-                    match sys::symlink_running_executable(rel_target, abs_dest) {
-                        sys::Result::Err(real_error) => {
-                            // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.into());
-                            Self::chmod_on_ok(self.err, abs_target);
-                            return;
-                        }
-                        sys::Result::Ok(()) => {
-                            Self::chmod_on_ok(self.err, abs_target);
-                            return;
-                        }
-                    }
+                let _ = sys::unlink(abs_dest);
+            }
+            Err(readlink_err) => match readlink_err.get_errno() {
+                // A file or a directory.
+                sys::Errno::EINVAL if global => {
+                    return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
                 }
-
-                // beyond this error can only be `.EXIST`
-                debug_assert!(err.get_errno() == sys::Errno::EEXIST);
-            }
-            sys::Result::Ok(()) => {
-                Self::chmod_on_ok(self.err, abs_target);
-                return;
-            }
+                sys::Errno::EINVAL => {
+                    let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
+                }
+                // Removed in the meantime.
+                sys::Errno::ENOENT if errno == sys::Errno::EEXIST => {}
+                // The name is free and the directory is writable: the filesystem has no symlinks
+                // (Android's shared storage). A copy in `.bin` could not find its package.
+                sys::Errno::ENOENT
+                    if !global
+                        && sys::access(
+                            resolve_path::z(abs_dest_dir, &mut *existing),
+                            sys::posix::W_OK,
+                        )
+                        .is_ok() =>
+                {
+                    bun_core::run_once! {{
+                        bun_core::warn!(
+                            "{}: symlinks cannot be created in {}, skipping the links to package binaries",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(abs_dest_dir),
+                        );
+                        bun_core::Output::flush();
+                    }}
+                    return Ok(());
+                }
+                _ => return Err(err.into()),
+            },
         }
 
-        // delete and try again
-        let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
-        if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
-            self.err = Some(err.into());
-        }
-        Self::chmod_on_ok(self.err, abs_target);
-    }
-
-    #[cfg(not(windows))]
-    fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
-        // hoisted from `defer` block in create_symlink
-        if err.is_none() {
-            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
-            let _ = sys::lchmod(abs_target, mode);
-        }
+        Ok(sys::symlink_running_executable(rel_target, abs_dest)?)
     }
 
     #[cfg(not(windows))]
@@ -1767,7 +1863,7 @@ impl<'a> Linker<'a> {
                     };
 
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
-                        Ok(d) => d,
+                        Ok(d) => sys::Dir::from_fd(d),
                         Err(err) => {
                             if err.get_errno() == sys::Errno::ENOENT {
                                 // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
@@ -1778,13 +1874,10 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     };
-                    let _close = scopeguard::guard(target_dir, |fd| {
-                        let _ = sys::close(fd);
-                    });
 
                     let abs_dest_dir_end = dest_off;
 
-                    let mut iter = sys::iterate_dir(target_dir);
+                    let mut iter = sys::iterate_dir(target_dir.fd());
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
@@ -1844,6 +1937,12 @@ impl<'a> Linker<'a> {
 
         debug_assert!(self.bin.tag != Tag::None);
 
+        let global_owner: Option<&[u8]> = if global {
+            Some(&self.abs_target_buf[0..package_dir_len])
+        } else {
+            None
+        };
+
         // SAFETY: tag determines the active union field
         unsafe {
             match self.bin.tag {
@@ -1864,7 +1963,7 @@ impl<'a> Linker<'a> {
                     let abs_dest_len = dest_off;
                     let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                    Self::unlink_bin_or_shim(abs_dest);
+                    Self::unlink_bin_or_shim(abs_dest, global_owner);
                 }
                 Tag::NamedFile => {
                     let named = self.bin.value.named_file;
@@ -1885,7 +1984,7 @@ impl<'a> Linker<'a> {
                     let abs_dest_len = dest_off;
                     let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                    Self::unlink_bin_or_shim(abs_dest);
+                    Self::unlink_bin_or_shim(abs_dest, global_owner);
                 }
                 Tag::Map => {
                     let mut i = self.bin.value.map.begin();
@@ -1916,7 +2015,7 @@ impl<'a> Linker<'a> {
                         let abs_dest_len = dest_off;
                         let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                        Self::unlink_bin_or_shim(abs_dest);
+                        Self::unlink_bin_or_shim(abs_dest, global_owner);
 
                         i += 2;
                     }
@@ -1939,19 +2038,16 @@ impl<'a> Linker<'a> {
                     };
 
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
-                        Ok(d) => d,
+                        Ok(d) => sys::Dir::from_fd(d),
                         Err(err) => {
                             self.err = Some(err.into());
                             return;
                         }
                     };
-                    let _close = scopeguard::guard(target_dir, |fd| {
-                        let _ = sys::close(fd);
-                    });
 
                     let abs_dest_dir_end = dest_off;
 
-                    let mut iter = sys::iterate_dir(target_dir);
+                    let mut iter = sys::iterate_dir(target_dir.fd());
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
@@ -1972,7 +2068,7 @@ impl<'a> Linker<'a> {
                                 let abs_dest_len = dest_off;
                                 let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
-                                Self::unlink_bin_or_shim(abs_dest);
+                                Self::unlink_bin_or_shim(abs_dest, global_owner);
                             }
                             _ => {}
                         }

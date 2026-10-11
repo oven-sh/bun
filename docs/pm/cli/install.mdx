@@ -174,7 +174,7 @@ bun install --frozen-lockfile
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
-If the project has a `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` but no `bun.lock`, `--frozen-lockfile` migrates that lockfile in memory and installs from it. The install fails if the migrated lockfile does not match `package.json`. Bun writes nothing in this case: no `bun.lock`, and none of the `package.json` edits a [pnpm migration](#pnpm-migration) makes. It prints a `note:` instead. To finish the migration, run `bun install` without the flag and commit the files it writes. The `bun.lockb` to `bun.lock` conversion described in [lockfile](/pm/lockfile) is the one write `--frozen-lockfile` still performs.
+If the project has a `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` but no `bun.lock`, `--frozen-lockfile` migrates that lockfile in memory and installs from it. The install fails if the migrated lockfile does not match `package.json`. Bun writes nothing in this case: no `bun.lock`, and none of the `package.json` edits a [pnpm migration](#pnpm-migration) or a [Yarn migration](#yarn-migration) makes. It prints a `note:` instead. To finish the migration, run `bun install` without the flag and commit the files it writes. The `bun.lockb` to `bun.lock` conversion described in [lockfile](/pm/lockfile) is the one write `--frozen-lockfile` still performs.
 
 `--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.
 
@@ -486,6 +486,16 @@ Before Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an ol
 
 ## Cache
 
+Bun caches registry metadata (the manifest of each package) for 5 minutes. To fetch fresh metadata before that, for example after you publish a new version, use `--force`. It asks the registry again for every package and rewrites the cached manifests:
+
+```bash
+bun install --force
+# or, for one package
+bun add <pkg> --force
+```
+
+`bun install --no-cache` skips the manifest cache for one run. To turn the manifest cache off for a project, set `disableManifest = true` under `[install.cache]` in `bunfig.toml`. See [Global cache](/pm/global-cache).
+
 To delete the cache:
 
 ```bash
@@ -493,6 +503,14 @@ bun pm cache rm
 # or
 rm -rf ~/.bun/install/cache
 ```
+
+<Warning>
+  This also deletes the [global store](/pm/global-store) at `<cache>/links/`. Every project with `globalStore = true`
+  symlinks into that directory. Run `bun install` again in each of them afterwards. To refresh stale metadata, use
+  `--force` instead.
+</Warning>
+
+To delete only the packages that are older than 30 days, see [`bun pm cache prune`](/pm/cli/pm#cache).
 
 ## Platform-specific backends
 
@@ -645,6 +663,46 @@ Bun leaves the `pnpm` field of `package.json` as it is. pnpm reads its configura
 - If migration fails for any of these reasons, Bun prints why and resolves from scratch instead. The `pnpm-workspace.yaml` settings above are still migrated, so workspaces, catalogs and overrides are not lost
 
 Once nobody on the repository uses pnpm anymore, you can remove `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and the `pnpm` field of `package.json`.
+
+## Yarn migration
+
+Bun migrates a `yarn.lock` the same way when no `bun.lock` exists. Yarn v1 lockfiles and Yarn 2+ ("Berry") lockfiles, the YAML format with a `__metadata` header, are converted to `bun.lock` during `bun install` or `bun pm migrate`, and every locked version is kept. The original `yarn.lock` is left in place.
+
+A Yarn Berry lockfile is migrated only when Bun can keep everything it pins. If one package, patch, workspace or dependency cannot be carried over exactly, Bun prints the reason, does not migrate, and resolves from `package.json` instead (`bun pm migrate` exits with an error).
+
+For Yarn Berry lockfiles the migration handles:
+
+- npm packages, including `npm:` aliases, dist-tags, and per-package tarball URLs (`__archiveUrl`). Integrity hashes are taken from the registry, because Berry's `checksum` is a hash of Yarn's own cache archive
+- workspaces (from the `workspaces` globs of the root `package.json`) and `workspace:` ranges
+- `patch:` dependencies: patches in your project (for example `.yarn/patches`) are added to `patchedDependencies` in `package.json` for npm, git and tarball packages, and `patch:` ranges in `package.json` are rewritten to the plain range they patch. Yarn's builtin compatibility patches are dropped
+- `file:` folders and tarballs, tarball URLs, and git / `github:` dependencies (pinned to the locked commit)
+- `link:` dependencies, which stay links. `link:dir` is rewritten to `link:./dir`, because to Bun a bare name after `link:` is a package registered with [`bun link`](/pm/cli/link)
+- `portal:` dependencies, which are installed like `file:` dependencies. Bun does not have this protocol, so the ranges are rewritten to `file:` and a warning reports that the folder is now copied instead of linked
+- optional dependencies and peer dependencies (`dependenciesMeta` / `peerDependenciesMeta`), and `conditions` (`os` / `cpu` / `libc`)
+- `resolutions` in the root `package.json`, applied the way Yarn applies them: the first matching entry wins, and `parent@version/name` names the version the parent is locked to
+- `catalog:` ranges, read from `catalog` / `catalogs` in `.yarnrc.yml` and copied into the `workspaces` object of `package.json`
+- `packageExtensions` in `.yarnrc.yml`: the `dependencies` and `peerDependencies` they add become part of the extended packages in `bun.lock`, and the extensions are copied to `packageExtensions` in `package.json`
+- Yarn 2 and 3 lockfiles, which write ranges without quotes (`wrappy: 1`)
+
+Limitations:
+
+- the package extensions built into Yarn are not applied
+- Yarn settings such as `nodeLinker` and `supportedArchitectures` are not migrated
+- integrity hashes come from the registry manifest; Yarn's `checksum` is not checked
+
+The lockfile is not migrated when it has:
+
+- a dependency with no lockfile entry (`yarn.lock` is older than `package.json`), or a workspace that the `package.json` `workspaces` globs do not match
+- a registry for Yarn (`npmRegistryServer` or `npmScopes` in a `.yarnrc.yml` of the project, a parent folder or the home folder, or `YARN_NPM_REGISTRY_SERVER`) that is not the registry Bun is configured with for that package, or that is written with an environment variable (`${VAR}`). Configure the registry in `bunfig.toml` or `.npmrc` and run the migration again. Yarn fetches the `@jsr` scope from `npm.jsr.io` by default, so that scope needs the same configuration
+- a package whose integrity the registry manifest does not give, for example an `__archiveUrl` on another host
+- a patch that `patchedDependencies` cannot express: several patch files for one package, a patch on a `file:` / `portal:` / `link:` folder, or a patch file outside the project
+- a `file:`, `portal:` or `link:` path that a registry, git or tarball package declares
+- an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
+- a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else (`enableTransparentWorkspaces: false`); Bun links the workspace under that name
+- a name in both `dependencies` and `devDependencies` when the version Yarn installed for the `devDependencies` range is not in the `dependencies` range, which is the one Bun reads
+- a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
+
+The edits to `package.json` files (rewritten ranges, `patchedDependencies`, catalogs, `packageExtensions`) are written just before `bun.lock`, by the same commands that write them for a [pnpm migration](#pnpm-migration). Every other command migrates in memory and leaves the files untouched.
 
 ---
 

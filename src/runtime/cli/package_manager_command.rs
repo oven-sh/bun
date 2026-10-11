@@ -18,6 +18,7 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
+use crate::cli::pm_cache_prune_command::{DEFAULT_MAX_AGE_DAYS, PmCachePruneCommand};
 use crate::cli::pm_diff_command as PmDiffCommand;
 use crate::cli::pm_licenses_command::{BunStore, LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
@@ -67,15 +68,19 @@ impl InstalledFilter {
         let slice = lockfile.packages.slice();
         let name = slice.items_name()[package_id];
         let resolution = &slice.items_resolution()[package_id];
-        // Local sources always exist on disk, outside of node_modules.
-        if matches!(
-            resolution.tag,
-            ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Symlink
-        ) {
-            return true;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        // Local sources live outside of node_modules.
+        match resolution.tag {
+            ResolutionTag::Root | ResolutionTag::Symlink => return true,
+            // A pruned checkout (`turbo prune`, a Docker layer) lacks some of the lockfile's workspaces.
+            ResolutionTag::Workspace => {
+                self.path.set_length(self.top_len);
+                let _ = self.path.append(resolution.workspace().slice(buf));
+                return bun_sys::exists(self.path.slice());
+            }
+            _ => {}
         }
 
-        let buf = lockfile.buffers.string_bytes.as_slice();
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
             .name
             .slice(buf);
@@ -185,6 +190,48 @@ impl PackageManagerCommand {
         Global::exit(0);
     }
 
+    fn crash_getting_cache_directory(err: bun_sys::Error) -> ! {
+        bun_core::pretty_errorln!("{} getting cache directory", crate::Error::from(err).name(),);
+        Global::crash();
+    }
+
+    /// What `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it. The
+    /// setting says where the cache is, not that the directory holds only a cache.
+    fn protected_in(dir: &[u8], bun_install: Option<&[u8]>, cwd: &[u8]) -> Option<&'static str> {
+        let protected: [(&'static str, Option<&[u8]>); 5] = [
+            ("the home directory", env_var::HOME.get_not_empty()),
+            (
+                "the bun executable",
+                bun_core::self_exe_path().ok().map(|exe| exe.as_bytes()),
+            ),
+            ("$BUN_INSTALL", bun_install),
+            (
+                "the project directory",
+                Some(Fs::FileSystem::get().top_level_dir),
+            ),
+            ("the current directory", Some(cwd)),
+        ];
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for (what, path) in protected {
+            let Some(path) = path else { continue };
+            // Real paths on both sides: a symlink to `$HOME` has to compare as `$HOME`.
+            let real: &[u8] = match Dir::open(path) {
+                Ok(opened) => match opened.get_fd_path(&mut buf) {
+                    Ok(real) => &real[..],
+                    Err(_) => path,
+                },
+                Err(_) => path,
+            };
+            if !matches!(
+                Path::resolve_path::is_parent_or_equal(dir, real),
+                Path::resolve_path::ParentEqual::Unrelated
+            ) {
+                return Some(what);
+            }
+        }
+        None
+    }
+
     fn get_subcommand(args_ptr: &mut &'static [&'static [u8]]) -> &'static [u8] {
         // Mutates through `args_ptr`
         // directly so the reslice persists into `pm.options.positionals`.
@@ -203,78 +250,6 @@ impl PackageManagerCommand {
         }
 
         subcommand
-    }
-
-    pub(crate) fn print_help() {
-        // the output of --help uses the following syntax highlighting
-        // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
-        // use [foo] for multiple arguments or flags for foo.
-        // use <bar> to emphasize 'bar'
-
-        const INTRO_TEXT: &str = "\n\
-<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>\n\
-\n\
-  Run package manager utilities.";
-
-        const OUTRO_TEXT: &str = "\n\
-\n\
-<b>Commands:<r>\n\
-\n\
-  <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities\n\
-  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace\n\
-  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk\n\
-  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in\n\
-  <d>├<r> <cyan>--filename<r>                the name of the tarball\n\
-  <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts\n\
-  <d>├<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)\n\
-  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
-  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
-  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
-  <b><green>bun pm<r> <blue>ls<r>                   list the tree of installed dependencies\n\
-  <d>├<r> <cyan>--all<r>                     list the entire tree of installed dependencies\n\
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
-  <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
-  <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
-  <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
-  <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
-  <d>├<r> <d>bun pm diff axios@1.6.0:lib 1.6.1<r>  only files under lib/ <d>(also<r> <d>:file.js<r><d>, or paths after the two sides)<r>\n\
-  <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks\n\
-  <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
-  <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)\n\
-  <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
-  <d>├<r> <cyan>--json<r>                    output as JSON\n\
-  <d>├<r> <cyan>--prod<r>                    omit devDependencies\n\
-  <d>├<r> <cyan>--dev<r>                     list only what devDependencies pull in\n\
-  <d>├<r> <cyan>--long<r>                    also print author, description and homepage\n\
-  <d>└<r> <cyan>--filter<r> <d>\\<pattern\\><r>      list only the matching workspaces' dependencies\n\
-  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
-  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
-  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
-  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
-  <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json\n\
-  <d>├<r> <cyan>get<r> <d>[key ...]<r>\n\
-  <d>├<r> <cyan>set<r> <d>key=value ...<r>\n\
-  <d>├<r> <cyan>delete<r> <d>key ...<r>\n\
-  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors\n\
-  <b><green>bun pm<r> <blue>hash<r>                 generate & print the hash of the current lockfile\n\
-  <b><green>bun pm<r> <blue>hash-string<r>          print the string used to hash the lockfile\n\
-  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile\n\
-  <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder\n\
-  <b><green>bun pm<r> <blue>cache rm<r>             clear the cache\n\
-  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
-  <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
-  <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
-  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
-  <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
-\n\
-Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
-
-        #[allow(clippy::disallowed_methods)]
-        // help-text consts contain <tag> markup that must be tag-walked
-        Output::pretty(format_args!("{}", INTRO_TEXT));
-        #[allow(clippy::disallowed_methods)]
-        Output::pretty(format_args!("{}", OUTRO_TEXT));
-        Output::flush();
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
@@ -305,6 +280,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             context: cli.diff_context.unwrap_or(3),
         };
         let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
+        let cache_max_age_days = cli.cache_max_age_days.unwrap_or(DEFAULT_MAX_AGE_DAYS);
         let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
@@ -389,18 +365,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Output::println(format_args!("{}", bstr::BStr::new(&username)));
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"view") {
-            let property_path = if pm.options.positionals.len() > 2 {
-                Some(pm.options.positionals[2])
-            } else {
-                None
-            };
-            let spec = if pm.options.positionals.len() > 1 {
-                pm.options.positionals[1]
-            } else {
-                b"".as_slice()
-            };
+            let positionals: &'static [&'static [u8]] = pm.options.positionals;
+            let spec: &[u8] = positionals.get(1).copied().unwrap_or(b"");
+            let fields: &[&[u8]] = positionals.get(2..).unwrap_or(&[]);
             let json_output = pm.options.json_output;
-            PmViewCommand::view(pm, spec, property_path, json_output)?;
+            PmViewCommand::view(pm, spec, fields, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
             // SAFETY: `FileSystem::instance()` is initialised during
@@ -424,8 +393,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
+                            let bin_dir = strings::without_trailing_slash(output_path);
                             for entry in &mut path_iter {
-                                if strings::eql(entry, output_path) {
+                                let entry = strings::without_trailing_slash(entry);
+                                let same = if cfg!(windows) {
+                                    strings::eql_case_insensitive_ascii(entry, bin_dir, true)
+                                } else {
+                                    strings::eql(entry, bin_dir)
+                                };
+                                if same {
                                     break 'warner;
                                 }
                             }
@@ -477,46 +453,97 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
             if pm.options.positionals.len() > 1
-                && strings::eql_comptime(pm.options.positionals[1], b"rm")
+                && matches!(pm.options.positionals[1], b"pack" | b"unpack")
             {
+                if strings::eql_comptime(pm.options.positionals[1], b"pack") {
+                    let log_level = pm.options.log_level;
+                    let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+                    Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "pack");
+                }
+                bun_install::cache_pack::exec(pm, &cwd);
+            }
+
+            if pm.options.positionals.len() > 1
+                && matches!(pm.options.positionals[1], b"rm" | b"prune")
+            {
+                let prune = strings::eql_comptime(pm.options.positionals[1], b"prune");
                 let mut had_err = false;
+                let dry_run = pm.options.dry_run;
 
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
-                let opened =
-                    fetch_cache_directory_path(&mut process_env, None).and_then(|cache_dir| {
-                        Dir::cwd().make_open_path(&cache_dir.path, Default::default())
-                    });
+                let cache_dir = match fetch_cache_directory_path(&mut process_env, None) {
+                    Ok(cache_dir) => cache_dir,
+                    Err(err) => Self::crash_getting_cache_directory(err),
+                };
                 let mut rm_buf = bun_paths::path_buffer_pool::get();
-                let rm_dir = match opened {
-                    Ok(d) => d,
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
-                        );
-                        Global::crash();
+                // The real path and whether it holds the global store; `None` when there is no directory.
+                let found: Option<(&[u8], bool)> = match Dir::open(&cache_dir.path) {
+                    Ok(rm_dir) => {
+                        let has_global_store =
+                            bun_sys::directory_exists_at(rm_dir.fd(), bun_core::zstr!("links"))
+                                .unwrap_or(false);
+                        match rm_dir.get_fd_path(&mut rm_buf) {
+                            Ok(p) => Some((&p[..], has_global_store)),
+                            Err(err) => Self::crash_getting_cache_directory(err),
+                        }
                     }
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
+                    Err(err) => Self::crash_getting_cache_directory(err),
                 };
-                let rm_path = match rm_dir.get_fd_path(&mut rm_buf) {
-                    Ok(p) => &p[..],
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
-                        );
-                        Global::crash();
-                    }
+                let (rm_path, has_global_store) =
+                    found.unwrap_or((cache_dir.path.as_slice(), false));
+                let protected = found.and_then(|(real, _)| {
+                    Self::protected_in(real, process_env.get(b"BUN_INSTALL"), &cwd)
+                });
+                // What bunx installed is inside the install cache: counted before it goes with it.
+                let mut deleted: usize = match protected {
+                    None if !prune => crate::cli::bunx_command::count_cached_packages(rm_path),
+                    _ => 0,
                 };
-                rm_dir.close();
 
-                if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
-                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
+                if let Some(what) = protected {
+                    Output::err_generic(
+                        "refusing to {s} \"{s}\": it is or contains {s}",
+                        (
+                            if prune { "prune" } else { "clear" },
+                            bstr::BStr::new(rm_path),
+                            what,
+                        ),
+                    );
+                    bun_core::note!(
+                        "the cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r> or <b>$BUN_INSTALL<r>. Point it at a directory that holds nothing but the bun install cache."
+                    );
                     had_err = true;
+                } else if prune {
+                    had_err = PmCachePruneCommand::exec(rm_path, cache_max_age_days, dry_run);
+                } else {
+                    if dry_run {
+                        bun_core::prettyln!(
+                            "<r><d>dry run:<r> would delete 'bun install' cache at {}",
+                            bstr::BStr::new(rm_path),
+                        );
+                    } else {
+                        if found.is_some()
+                            && let Err(err) = bun_sys::delete_tree_absolute(rm_path)
+                        {
+                            Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
+                            had_err = true;
+                        }
+                        bun_core::prettyln!("Cleared 'bun install' cache");
+                    }
+                    if has_global_store {
+                        bun_core::note!(
+                            "the global store {} removed with it. Run 'bun install' again in each project that uses it.",
+                            if dry_run { "would be" } else { "was" },
+                        );
+                    }
                 }
-                bun_core::prettyln!("Cleared 'bun install' cache");
 
                 'bunx: {
+                    if prune {
+                        break 'bunx;
+                    }
                     let tmp = Fs::RealFS::platform_temp_dir();
                     let tmp_dir = match Dir::open(tmp) {
                         Ok(d) => d,
@@ -546,7 +573,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             .expect("unreachable");
                     }
 
-                    let mut deleted: usize = 0;
+                    let bunx_root_name = crate::cli::bunx_command::cache_root_name();
                     loop {
                         let entry = match iter.next() {
                             Ok(Some(e)) => e,
@@ -562,18 +589,36 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             }
                         };
                         let name = entry.name.slice_u8();
-                        if name.starts_with(prefix.as_slice()) {
-                            if let Err(err) = tmp_dir.delete_tree(name) {
+                        // One directory for all packages, or (Windows, older versions) one per package.
+                        let is_bunx_root = name == bunx_root_name.as_slice();
+                        if is_bunx_root || name.starts_with(prefix.as_slice()) {
+                            let packages = if is_bunx_root {
+                                crate::cli::bunx_command::count_cached_packages(tmp)
+                            } else {
+                                1
+                            };
+                            if dry_run {
+                                bun_core::prettyln!(
+                                    "<r><d>dry run:<r> would delete {}{}{}",
+                                    bstr::BStr::new(strings::without_trailing_slash(tmp)),
+                                    bun_paths::SEP_STR,
+                                    bun_fmt::escape_control_chars(name),
+                                );
+                            } else if let Err(err) = tmp_dir.delete_tree(name) {
                                 Output::err(err, "Could not delete {s}", (bstr::BStr::new(name),));
                                 had_err = true;
                                 continue;
                             }
 
-                            deleted += 1;
+                            deleted += packages;
                         }
                     }
 
-                    bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
+                    if dry_run {
+                        bun_core::prettyln!("Would clear {} cached 'bunx' packages", deleted);
+                    } else {
+                        bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
+                    }
                 }
 
                 Global::exit(if had_err { 1 } else { 0 });
@@ -583,13 +628,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let fd = get_cache_directory(pm);
             let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
-                Err(err) => {
-                    bun_core::pretty_errorln!(
-                        "{} getting cache directory",
-                        crate::Error::from(err).name(),
-                    );
-                    Global::crash();
-                }
+                Err(err) => Self::crash_getting_cache_directory(err),
             };
             let _ = Output::writer().write_all(outpath);
             Global::exit(0);
@@ -604,7 +643,23 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"ls") {
             let log_level = pm.options.log_level;
+            let global = pm.options.global;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+            // Before the first `bun add -g`, and after the last package was removed.
+            if global && matches!(load_lockfile, LoadResult::NotFound) {
+                Output::println(format_args!(
+                    "{} node_modules{}",
+                    bstr::BStr::new(strings::without_trailing_slash(
+                        Fs::FileSystem::get().top_level_dir
+                    )),
+                    if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
+                        ""
+                    } else {
+                        " (0 installed)"
+                    },
+                ));
+                Global::exit(0);
+            }
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
 
             Output::flush();
@@ -799,7 +854,19 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            package_json_write_back::write_migrated_root(pm);
+            if pm.options.dry_run {
+                if log_level != LogLevel::Silent {
+                    bun_core::prettyln!(
+                        "<r><d>dry run:<r> would write {}",
+                        bstr::BStr::new(
+                            load_lockfile.save_format(&pm.options).filename().as_bytes()
+                        ),
+                    );
+                }
+                Output::flush();
+                Global::exit(0);
+            }
+            package_json_write_back::write_migrated(pm);
             // Reshaped for borrowck — `save_to_disk` needs
             // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
             // `LoadResultOk.lockfile` already holds the only `&mut` into the
@@ -838,7 +905,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         }
 
-        Self::print_help();
+        CommandLineArguments::print_help(Subcommand::Pm);
 
         if !subcommand.is_empty() {
             bun_core::pretty_errorln!(

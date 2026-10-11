@@ -188,7 +188,8 @@ impl UntrustedCommand {
         bun_core::pretty!(
             "These dependencies had their lifecycle scripts blocked during install.\n\
              \n\
-             If you trust them and wish to run their scripts, use <d>`<r><blue>bun pm trust<r><d>`<r>.\n"
+             If you trust them and wish to run their scripts, use <d>`<r><blue>bun pm {}trust<r><d>`<r>.\n",
+            if pm.options.global { "-g " } else { "" },
         );
 
         let _ = ctx;
@@ -239,6 +240,47 @@ impl TrustCommand {
         }
     }
 
+    fn print_dry_run(
+        lockfile: &Lockfile,
+        scripts_at_depth: &ArrayHashMap<usize, Vec<ScriptInfo>>,
+        package_names_to_add: &StringArrayHashMap<()>,
+    ) {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let resolutions = lockfile.packages.items_resolution();
+        let mut total_scripts: usize = 0;
+        let mut total_packages: usize = 0;
+
+        Output::print(format_args!("\n"));
+        for entry in scripts_at_depth.values().iter().rev() {
+            for info in entry.iter() {
+                if info.skip {
+                    continue;
+                }
+                total_packages += 1;
+                total_scripts += info.scripts_list.total as usize;
+                info.scripts_list.print_scripts(
+                    &resolutions[info.package_id as usize],
+                    buf,
+                    PrintFormat::Untrusted,
+                );
+                Output::print(format_args!("\n"));
+            }
+        }
+
+        bun_core::prettyln!(
+            "<r><d>dry run:<r> would run <b>{}<r> script{} across <b>{}<r> package{}",
+            total_scripts,
+            if total_scripts != 1 { "s" } else { "" },
+            total_packages,
+            if total_packages != 1 { "s" } else { "" },
+        );
+        bun_core::prettyln!("<r><d>dry run:<r> would add to trustedDependencies:");
+        for name in package_names_to_add.keys() {
+            bun_core::pretty!(" <d>-<r> {}\n", bun_core::fmt::escape_control_chars(name));
+        }
+        Output::flush();
+    }
+
     pub(crate) fn exec(
         ctx: Command::Context,
         pm: &mut PackageManager,
@@ -259,6 +301,7 @@ impl TrustCommand {
         // `pm`/`pm.lockfile` access in between goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
+        let dry_run = pm.options.dry_run;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "trust");
         // `update_lockfile_if_needed` consumes `LoadResult` but we
@@ -440,6 +483,11 @@ impl TrustCommand {
             Global::crash();
         }
 
+        if dry_run {
+            Self::print_dry_run(lockfile, &scripts_at_depth, &package_names_to_add);
+            return Ok(());
+        }
+
         // Opened before any script runs: a script whose trust cannot be recorded must not run.
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
@@ -554,9 +602,9 @@ impl TrustCommand {
             }
         }
 
-        // A pnpm migration's package.json edits must hit disk before the re-read below.
+        // A migration's package.json edits must hit disk before the re-read below.
         // SAFETY: `pm_raw` singleton; `load_lockfile` only borrows the boxed lockfile.
-        unsafe { package_json_write_back::write_migrated_root(&mut *pm_raw) };
+        unsafe { package_json_write_back::write_migrated(&mut *pm_raw) };
 
         let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
 

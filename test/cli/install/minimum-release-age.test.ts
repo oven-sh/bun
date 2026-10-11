@@ -2356,7 +2356,7 @@ describe("minimum-release-age", () => {
         String(dir),
       );
       expect(stderr.split("\n").filter(line => line.includes("[minimum-release-age]"))).toEqual([
-        "[minimum-release-age] nightly-package@>=1.0.0-nightly.20240101 <2.0.0 selected 1.0.0-nightly.20240101 instead of 1.0.0-nightly.20240102 due to 432000-second filter",
+        "[minimum-release-age] nightly-package@>=1.0.0-nightly.20240101 <2.0.0-0 selected 1.0.0-nightly.20240101 instead of 1.0.0-nightly.20240102 due to 432000-second filter",
       ]);
       expect(exitCode).toBe(0);
     });

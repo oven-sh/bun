@@ -10,16 +10,16 @@ use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Dependency, Features, PackageID, PackageNameHash, invalid_package_id};
+use crate::{Features, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
-    WorkspaceTarget, fetch_entry, fetch_entry_root, root_package_json_path, store_entry,
-    write_target,
+    WorkspaceTarget, fetch_entry, fetch_entry_root, store_entry, write_target,
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
 use super::update_package_json_and_install::print_package_json_into_cache_entry;
+use super::workspace_manifests::same_row;
 use super::{PackageManager, Subcommand, UpdateRequest};
 
 /// A package.json whose cache entry was re-printed; `target.name_hash == None` is the root.
@@ -50,29 +50,55 @@ pub(crate) fn record(
     push(&mut manager.edited_package_jsons, target, received_requests);
 }
 
-fn root_target() -> WorkspaceTarget {
-    WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path(),
+/// A package.json whose cache entry a pnpm or yarn migration edited, and what is reported once it is written.
+pub(crate) struct MigratedPackageJson {
+    target: WorkspaceTarget,
+    edits: Vec<&'static str>,
+}
+
+/// Commands that load the lockfile twice (`bun update -r`, `bun audit fix`) migrate the already edited entries
+/// the second time, so an edit can be recorded again.
+pub(crate) fn record_migrated(
+    manager: &mut PackageManager,
+    target: WorkspaceTarget,
+    edits: Vec<&'static str>,
+) {
+    let migrated = &mut manager.migrated_package_json_moves;
+    let Some(existing) = migrated
+        .iter_mut()
+        .find(|m| m.target.name_hash == target.name_hash)
+    else {
+        migrated.push(MigratedPackageJson { target, edits });
+        return;
+    };
+    for edit in edits {
+        if !existing.edits.contains(&edit) {
+            existing.edits.push(edit);
+        }
     }
 }
 
-/// Writes the root package.json a pnpm migration edited in memory, just before the migrated lockfile is saved:
-/// a package.json that cannot take the moved fields fails the command before a lockfile that depends on them exists.
-/// Only the places that save the lockfile call this, so a load that is never saved leaves the file alone.
-pub fn write_migrated_root(manager: &mut PackageManager) {
+/// Writes the package.json files a migration edited in memory, just before the migrated lockfile is saved:
+/// a package.json that cannot take the edits fails the command before a lockfile that depends on them exists.
+/// Only the places that save the lockfile call this, so a load that is never saved leaves the files alone.
+pub fn write_migrated(manager: &mut PackageManager) {
     if manager.migrated_package_json_moves.is_empty() {
         return;
     }
-    let moved = core::mem::take(&mut manager.migrated_package_json_moves);
-    if !write_target(manager, &root_target()) {
-        Global::exit(1);
+    let migrated = core::mem::take(&mut manager.migrated_package_json_moves);
+    for file in &migrated {
+        if !write_target(manager, &file.target) {
+            Global::exit(1);
+        }
     }
-    if !manager.options.log_level.is_silent() {
+    if manager.options.log_level.is_silent() {
+        return;
+    }
+    for file in &migrated {
         bun_core::pretty_errorln!(
-            "<d>copied {} in <r><green>package.json<r>",
-            moved.join(", ")
+            "<d>{} in <r><green>{}<r>",
+            file.edits.join(", "),
+            bstr::BStr::new(FileSystem::instance().relative_to(&file.target.package_json_path)),
         );
     }
 }
@@ -198,7 +224,7 @@ fn edit_update_targets(
     }
 
     if !manager.updating_catalogs.is_empty() {
-        let root = root_target();
+        let root = WorkspaceTarget::root();
         let root_ast = fetch_entry_root(manager, &root);
         if PackageJSONEditor::edit_catalogs_after_update(manager, &root_ast)? {
             store_entry(manager, &root, root_ast);
@@ -244,7 +270,7 @@ fn edit_cwd(
         return Ok(());
     }
 
-    let root = root_target();
+    let root = WorkspaceTarget::root();
     let root_ast = fetch_entry_root(manager, &root);
     let mut changed = catalog_mode && !updates.is_empty();
     if !manager.updating_catalogs.is_empty() {
@@ -384,10 +410,6 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         builder.clamp();
     }
     Ok(())
-}
-
-fn same_row(scratch: &Dependency, row: &Dependency) -> bool {
-    row.name_hash == scratch.name_hash && row.behavior == scratch.behavior
 }
 
 /// Compared against the file, not `stale_contents`: the before-install print in `update_package_json_and_install` replaces the cwd entry's contents without recording them.

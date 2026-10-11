@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, existsSync, readdirSync, realpathSync, rmSyn
 import { bunEnv, bunExe, isWindows, nodeModulesPackages, tempDir, unprivilegedSpawnOptions } from "harness";
 import { dirname, join } from "path";
 import { TestRegistry } from "registry";
+import { yamlAliasChain } from "./migration-harness";
 
 const verdaccio = new TestRegistry();
 
@@ -1027,7 +1028,7 @@ snapshots:
       const update = await run(packageDir, "update");
 
       expect(update.stderr).toContain(
-        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies in package.json",
+        "copied pnpm.overrides to overrides, copied pnpm.patchedDependencies to patchedDependencies in package.json",
       );
       expect(update.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(update.stderr).not.toContain("error:");
@@ -3434,7 +3435,7 @@ importers:
 
       expect(stderr).not.toContain("warn:");
       expect(stderr).toContain(
-        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies, pnpm.onlyBuiltDependencies to trustedDependencies in package.json",
+        "copied pnpm.overrides to overrides, copied pnpm.patchedDependencies to patchedDependencies, copied pnpm.onlyBuiltDependencies to trustedDependencies in package.json",
       );
       expect(exitCode).toBe(0);
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
@@ -3473,7 +3474,7 @@ importers:
 
       expect(stderr).not.toContain("warn:");
       expect(stderr).toContain(
-        "copied pnpm.overrides to overrides, pnpm-workspace.yaml overrides to overrides in package.json",
+        "copied pnpm.overrides to overrides, copied pnpm-workspace.yaml overrides to overrides in package.json",
       );
       expect(exitCode).toBe(0);
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
@@ -3500,7 +3501,7 @@ catalog:
 
       expect(stderr).not.toContain("warn:");
       expect(stderr).toContain(
-        "copied pnpm-workspace.yaml to workspaces, pnpm-workspace.yaml overrides to overrides in package.json",
+        "copied pnpm-workspace.yaml to workspaces, copied pnpm-workspace.yaml overrides to overrides in package.json",
       );
       expect(exitCode).toBe(0);
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
@@ -3752,7 +3753,7 @@ snapshots:
   foo@file:vendor/foo: {}
 `,
     };
-    const movedLine = "copied pnpm.overrides to overrides, pnpm-workspace.yaml to workspaces in package.json";
+    const movedLine = "copied pnpm.overrides to overrides, copied pnpm-workspace.yaml to workspaces in package.json";
     const frozenNote =
       "note: the lockfile is frozen, so the migration from pnpm-lock.yaml was not written to bun.lock and package.json; run 'bun install' and commit the result";
 
@@ -3802,6 +3803,7 @@ snapshots:
       ["outdated", ["outdated"]],
       ["pm why a", ["pm", "why", "a"]],
       ["pm untrusted", ["pm", "untrusted"]],
+      ["pm migrate --dry-run", ["pm", "migrate", "--dry-run"]],
     ])("bun %s leaves package.json and bun.lock alone", async (_, args) => {
       using dir = tempDir("pnpm-v9-package-json-read-only", files);
 
@@ -3820,8 +3822,6 @@ snapshots:
       ["install", ["install"]],
       ["install --lockfile-only", ["install", "--lockfile-only"]],
       ["pm migrate", ["pm", "migrate"]],
-      // pm migrate saves bun.lock whatever install flags are passed, so package.json has to follow it.
-      ["pm migrate --dry-run", ["pm", "migrate", "--dry-run"]],
     ])("bun %s writes the edited package.json together with bun.lock", async (_, args) => {
       using dir = tempDir("pnpm-v9-package-json-written", files);
 
@@ -3922,6 +3922,172 @@ snapshots:
       expect(bunLock).toContain(`"packages/a": {`);
       expect(bunLock).toContain(`"trustedDependencies": [`);
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // A YAML key can be any node and a value any tree; package.json takes strings.
+  describe("pnpm-workspace.yaml fields copied into package.json", () => {
+    async function migrateWorkspaceYaml(workspaceYaml: string) {
+      using dir = tempDir("pnpm-v9-workspace-yaml-fields", {
+        "package.json": JSON.stringify({ name: "workspace-yaml-fields" }),
+        "pnpm-workspace.yaml": workspaceYaml,
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n",
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      return {
+        warnings: stderr.split("\n").filter(line => line.startsWith("warn: ")),
+        stderr,
+        exitCode,
+        packageJson: await Bun.file(join(String(dir), "package.json")).json(),
+      };
+    }
+
+    const skipped = (field: string, count: number) =>
+      `warn: "${field}" in pnpm-workspace.yaml has entries that are not strings (${count}); they were not copied to package.json`;
+
+    const stringFields: [string, (entries: object) => object][] = [
+      ["overrides", overrides => ({ overrides })],
+      ["catalog", catalog => ({ workspaces: { catalog } })],
+      ["patchedDependencies", patchedDependencies => ({ patchedDependencies })],
+    ];
+
+    test.concurrent.each(stringFields)(
+      "%s: scalars are copied as they are written, everything else is skipped",
+      async (field, copied) => {
+        const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`${field}:
+  number: 5
+  decimal: 3.10
+  boolean: true
+  empty:
+  sequence: [a, b]
+  mapping: {a: b}
+  1: number-key
+  ? [a, b]
+  : sequence-key
+  ok: &ok 1.0.0
+  alias: *ok
+`);
+
+        expect(warnings).toEqual([skipped(field, 4)]);
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(packageJson).toStrictEqual({
+          name: "workspace-yaml-fields",
+          ...copied({
+            number: "5",
+            decimal: "3.10",
+            boolean: "true",
+            "1": "number-key",
+            ok: "1.0.0",
+            alias: "1.0.0",
+          }),
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("catalogs: a catalog is a map of scalars under a scalar name", async () => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`catalogs:
+  string: 1.0.0
+  sequence: [a, b]
+  17:
+    react: 17.0.2
+  named:
+    number: 5
+    mapping: {a: b}
+    ok: 1.0.0
+`);
+
+      expect(warnings).toEqual([skipped("catalogs", 3)]);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(packageJson).toStrictEqual({
+        name: "workspace-yaml-fields",
+        workspaces: { catalogs: { "17": { react: "17.0.2" }, named: { number: "5", ok: "1.0.0" } } },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a field with nothing left to copy is not copied", async () => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`overrides:
+  sequence: [a, b]
+catalog:
+  ok: 1.0.0
+`);
+
+      expect(warnings).toEqual([skipped("overrides", 1)]);
+      expect(stderr).toContain("copied pnpm-workspace.yaml to workspaces in package.json");
+      expect(packageJson).toStrictEqual({
+        name: "workspace-yaml-fields",
+        workspaces: { catalog: { ok: "1.0.0" } },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("aliases and merge keys that resolve to strings are copied", async () => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`catalog: &base
+  pkg-a: &range ^1.0.0
+  pkg-b: *range
+catalogs:
+  same: *base
+  merged:
+    <<: *base
+    pkg-c: "\\u003e=2.0.0"
+overrides:
+  pkg-d: *range
+patchedDependencies:
+  pkg-e@1.0.0: &patch patches/pkg-e.patch
+  pkg-e@1.0.1: *patch
+`);
+
+      expect(warnings).toEqual([]);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(packageJson).toStrictEqual({
+        name: "workspace-yaml-fields",
+        workspaces: {
+          catalog: { "pkg-a": "^1.0.0", "pkg-b": "^1.0.0" },
+          catalogs: {
+            same: { "pkg-a": "^1.0.0", "pkg-b": "^1.0.0" },
+            merged: { "pkg-a": "^1.0.0", "pkg-b": "^1.0.0", "pkg-c": ">=2.0.0" },
+          },
+        },
+        overrides: { "pkg-d": "^1.0.0" },
+        patchedDependencies: { "pkg-e@1.0.0": "patches/pkg-e.patch", "pkg-e@1.0.1": "patches/pkg-e.patch" },
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // The YAML parser charges an alias the depth of what it names, so these are too deep like the same tree written out.
+  describe("a deep chain of YAML aliases", () => {
+    test.concurrent("in pnpm-lock.yaml is a parse error", async () => {
+      using dir = tempDir("pnpm-v9-alias-chain-lockfile", {
+        "package.json": JSON.stringify({ name: "alias-chain" }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\n${yamlAliasChain("unused")}`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).toContain("warn: Failed to parse pnpm-lock.yaml.");
+      expect(stderr).toContain("error: failed to migrate lockfile: InvalidLockfile");
+      expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("in pnpm-workspace.yaml fails the install", async () => {
+      const packageJson = JSON.stringify({ name: "alias-chain" });
+      using dir = tempDir("pnpm-v9-alias-chain-workspace", {
+        "package.json": packageJson,
+        "pnpm-workspace.yaml": `${yamlAliasChain("unused")}overrides:\n  deep: *a\n`,
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n",
+      });
+
+      const { stderr, exitCode } = await run(String(dir), "install");
+
+      expect(stderr).toContain("error: pnpm-workspace.yaml is nested too deeply");
+      expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
+      expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+      expect(exitCode).toBe(1);
     });
   });
 
@@ -4694,6 +4860,62 @@ snapshots:
       expect(stderr).toContain("pnpm-lock.yaml catalog 'default' missing entry for dependency 'no-deps'");
       expect(exitCode).toBe(1);
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    });
+
+    // The row stays `catalog:`, as a package.json parse gives it, and is bound to the member pnpm linked.
+    test.concurrent.each(
+      ["workspace:*", "^1.0.0"].flatMap(range => ["hoisted", "isolated"].map(linker => [range, linker] as const)),
+    )("a catalog: dependency (%s) that pnpm linked to a workspace member, %s linker", async (range, linker) => {
+      using dir = tempDir("pnpm-v9-catalog-workspace-link", {
+        "package.json": JSON.stringify({ name: "root", private: true }),
+        "packages/a/package.json": JSON.stringify({ name: "@w/a", version: "1.2.3" }),
+        "packages/b/package.json": JSON.stringify({
+          name: "@w/b",
+          version: "0.0.1",
+          dependencies: { "@w/a": "catalog:" },
+        }),
+        "pnpm-workspace.yaml": `packages:\n  - 'packages/*'\ncatalog:\n  '@w/a': '${range}'\n`,
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+catalogs:
+  default:
+    '@w/a':
+      specifier: ${range}
+      version: 1.2.3
+
+importers:
+
+  .: {}
+
+  packages/a: {}
+
+  packages/b:
+    dependencies:
+      '@w/a':
+        specifier: 'catalog:'
+        version: link:../a
+`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+      const bunLock = await bunLockOf(String(dir));
+      expect(Bun.JSONC.parse(bunLock)).toMatchObject({
+        workspaces: { "packages/b": { dependencies: { "@w/a": "catalog:" } } },
+        catalog: { "@w/a": range },
+        packages: { "@w/a": ["@w/a@workspace:packages/a"], "@w/b": ["@w/b@workspace:packages/b"] },
+      });
+
+      const frozen = await run(String(dir), "install", "--frozen-lockfile", "--linker", linker);
+      expect(frozen.stderr).not.toContain("error:");
+      expect(await installedPackageJson(String(dir), "packages/b", "@w/a")).toStrictEqual({
+        name: "@w/a",
+        version: "1.2.3",
+      });
+      expect(frozen.exitCode).toBe(0);
+      await expectInstallToLeaveUnchanged(String(dir), bunLock);
     });
   });
 

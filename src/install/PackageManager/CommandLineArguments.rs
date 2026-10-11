@@ -306,6 +306,9 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--depth <NUM>                          Maximum depth of the dependency tree to display"
         ),
+        clap::param!(
+            "--max-age <NUM>                        Remove cache entries older than this many days (bun pm cache prune, default 30)"
+        ),
         clap::param!("<POS> ...                         "),
     ]
 ];
@@ -484,6 +487,12 @@ static PUBLISH_PARAMS: &[ParamType] = concat_params![
         ),
         clap::param!(
             "--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number"
+        ),
+        clap::param!(
+            "-F, --filter <STR>...                  Publish each matching workspace package"
+        ),
+        clap::param!(
+            "-r, --recursive                        Publish every workspace package whose version is not on the registry"
         ),
     ]
 ];
@@ -680,6 +689,9 @@ pub struct CommandLineArguments {
     pub diff_stat: bool,
     pub diff_context: Option<usize>,
 
+    // `bun pm cache prune` options
+    pub cache_max_age_days: Option<u32>,
+
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
@@ -778,6 +790,8 @@ impl Default for CommandLineArguments {
             diff_ignore_space: false,
             diff_stat: false,
             diff_context: None,
+
+            cache_max_age_days: None,
 
             audit_level: None,
             audit_ignore_list: &[],
@@ -1159,6 +1173,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
   <d>Publish without failing when republishing over an existing version.<r>
   <b><green>bun publish<r> <cyan>--tolerate-republish<r>
 
+  <d>Publish every workspace package that is not on the registry yet, dependencies first.<r>
+  <b><green>bun publish<r> <cyan>--recursive<r>
+
+  <d>Publish only the matching workspace packages.<r>
+  <b><green>bun publish<r> <cyan>--filter '@scope/*'<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 ";
 
@@ -1204,7 +1224,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
             }
             Subcommand::Info => {
                 let intro_text = r"
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r>
+<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r> <d>[\<property\>...]<r>
 
   View package metadata from the registry.
 
@@ -1218,6 +1238,10 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
 
   <d>Display a specific version of a package<r>
   <b><green>bun info<r> <blue>react@18.0.0<r>
+
+  <d>Display properties (npm view path syntax)<r>
+  <b><green>bun info<r> <blue>react<r> version license
+  <b><green>bun info<r> <blue>react<r> maintainers.name dist-tags.latest
 
   <d>Display a specific property in JSON format<r>
   <b><green>bun info<r> <blue>react<r> version <cyan>--json<r>
@@ -1323,6 +1347,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {
         Output::set_is_verbose(Output::is_verbose());
+        crate::bin::Linker::ensure_umask();
 
         let params: &'static [ParamType] = match subcommand {
             Subcommand::Install => INSTALL_PARAMS,
@@ -1566,6 +1591,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
 
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
+            cli.recursive = args.flag(b"--recursive");
         }
 
         // link and unlink default to not saving, all others default to
@@ -1796,6 +1822,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.recursive = false;
         }
 
+        // Their registry is the global folder already. With `-g` they would run in it, on its own package.json.
+        if matches!(subcommand, Subcommand::Link | Subcommand::Unlink) {
+            cli.global = false;
+        }
+
         if cli.global && subcommand == Subcommand::Prune {
             Output::err_generic("--global cannot be used with bun prune\n", ());
             bun_core::note!(
@@ -1835,8 +1866,16 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.diff_args = args.options(b"--diff").to_vec();
             cli.diff_name_only = args.flag(b"--name-only");
             cli.diff_raw = args.flag(b"--raw") || args.flag(b"--unformatted");
-            cli.no_project_ok = cli.positionals.first().is_some_and(|p| *p == b"pm")
-                && cli.positionals.get(1).is_some_and(|p| *p == b"diff");
+            let pm_command: &[u8] = match cli.positionals {
+                [first, rest @ ..] if *first == b"pm" => rest.first().copied().unwrap_or(b""),
+                [first, ..] => *first,
+                [] => b"",
+            };
+            cli.no_project_ok = match pm_command {
+                b"" | b"diff" | b"view" | b"cache" | b"whoami" | b"default-trusted" => true,
+                b"bin" | b"ls" | b"list" => cli.global,
+                _ => false,
+            };
             cli.diff_unminify = args.flag(b"--unminify");
             cli.diff_minify = args.flag(b"--minify");
             cli.diff_ignore_space = args.flag(b"--ignore-space");
@@ -1853,6 +1892,20 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     }
                 }
             }
+            if let Some(n) = args.option(b"--max-age") {
+                match strings::parse_int::<u32>(n, 10) {
+                    Ok(v) => cli.cache_max_age_days = Some(v),
+                    Err(_) => {
+                        Output::err_generic(
+                            "invalid --max-age value: {}, expected a number of days",
+                            (bstr::BStr::new(n),),
+                        );
+                        Global::exit(1);
+                    }
+                }
+            }
+        } else if subcommand == Subcommand::Info {
+            cli.no_project_ok = true;
         }
 
         // `bun pm why` and `bun why` options

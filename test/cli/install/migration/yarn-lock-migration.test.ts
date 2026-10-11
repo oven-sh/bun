@@ -3046,3 +3046,71 @@ saveTextLockfile = true
   expect(lock).toContain(`"@z/bad": ["@z/bad@1.0.0"`);
   expect(exitCode).toBe(0);
 });
+
+describe.concurrent("yarn.lock blocks that lock one package", () => {
+  // yarn writes one "a@^1.0.0, a@~1.0.0:" block, a merge by hand can leave two
+  test("blocks with the same name and version are one package, and every spec of theirs resolves", async () => {
+    const block = (spec: string) => `${spec}:
+  version "1.0.3"
+  resolved "https://registry.yarnpkg.com/dup-pkg/-/dup-pkg-1.0.3.tgz#aaa"
+`;
+    using dir = tempDir("yarn-migration-consolidate", {
+      "package.json": JSON.stringify({
+        name: "consolidate-test",
+        version: "1.0.0",
+        dependencies: { "dup-pkg": "^1.0.0", "consumer-pkg": "^2.0.0", other: "npm:dup-pkg@1.0.4" },
+      }),
+      "yarn.lock": `# yarn lockfile v1
+
+
+${block("dup-pkg@^1.0.0")}
+consumer-pkg@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/consumer-pkg/-/consumer-pkg-2.0.0.tgz#bbb"
+  dependencies:
+    "dup-pkg" "~1.0.2"
+
+${block("dup-pkg@~1.0.2")}
+"other@npm:dup-pkg@1.0.4":
+  version "1.0.4"
+  resolved "https://registry.yarnpkg.com/dup-pkg/-/dup-pkg-1.0.4.tgz#ccc"
+`,
+    });
+
+    const { packages } = await migrateYarnLock(String(dir));
+
+    expect(packages).toEqual({
+      "consumer-pkg": ["consumer-pkg@2.0.0", "", { dependencies: { "dup-pkg": "~1.0.2" } }, ""],
+      "dup-pkg": ["dup-pkg@1.0.3", "", {}, ""],
+      other: ["dup-pkg@1.0.4", "", {}, ""],
+    });
+  });
+});
+
+// The root's and the members' lists are read while their package.json is parsed and once more when the migration ends.
+test.concurrent("yarn.lock migration records the trustedDependencies of the root and of workspaces once", async () => {
+  const entry = (name: string) => `${name}@1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/${name}/-/${name}-1.0.0.tgz#aaa"
+`;
+  using dir = tempDir("yarn-migration-trusted", {
+    "package.json": JSON.stringify({
+      name: "trusted-test",
+      workspaces: ["packages/*"],
+      dependencies: { "from-root": "1.0.0", "from-both": "1.0.0", "from-nobody": "1.0.0" },
+      trustedDependencies: ["from-root", "from-both"],
+    }),
+    "packages/a/package.json": JSON.stringify({
+      name: "a",
+      version: "1.0.0",
+      dependencies: { "from-member": "1.0.0" },
+      trustedDependencies: ["from-member", "from-both"],
+    }),
+    "yarn.lock": `# yarn lockfile v1\n\n\n${["from-both", "from-member", "from-nobody", "from-root"].map(entry).join("\n")}`,
+  });
+
+  await migrateYarnLock(String(dir));
+
+  const lock = Bun.JSONC.parse(await Bun.file(join(String(dir), "bun.lock")).text()) as any;
+  expect(lock.trustedDependencies.toSorted()).toEqual(["from-both", "from-member", "from-root"]);
+});

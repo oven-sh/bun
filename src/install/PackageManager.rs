@@ -125,7 +125,6 @@ impl PackageManagerCommand {
   Run package manager utilities.
 ";
         let outro_text = r"
-
 <b>Commands:<r>
 
   <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities
@@ -140,8 +139,16 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
   <b><green>bun pm<r> <blue>ls<r>                   list the tree of installed dependencies
   <d>├<r> <cyan>--all<r>                     list the entire tree of installed dependencies
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <d>└<r> <cyan>-g<r>                        list the tree of <b>globally<r> installed dependencies
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
+  <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>         show what changed between two versions of a package (or vs a folder/tarball)
+  <d>├<r> <d>bun pm diff react<r>            installed version → latest
+  <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>
+  <d>├<r> <d>bun pm diff axios@1.6.0:lib 1.6.1<r>  only files under lib/ <d>(also<r> <d>:file.js<r><d>, or paths after the two sides)<r>
+  <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks
+  <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)
+  <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
   <d>├<r> <cyan>--json<r>                    output as JSON
   <d>├<r> <cyan>--prod<r>                    omit devDependencies
@@ -149,7 +156,7 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--long<r>                    also print author, description and homepage
   <d>└<r> <cyan>--filter<r> <d>\<pattern\><r>        list only the matching workspaces' dependencies
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
-  <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
+  <b><green>bun pm<r> <blue>view<r> <d>name[@version] [property ...]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
   <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
   <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json
@@ -162,10 +169,16 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile
   <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder
   <b><green>bun pm<r> <blue>cache rm<r>             clear the cache
+  <d>└<r> <cyan>--dry-run<r>                 print what would be deleted without deleting anything
+  <b><green>bun pm<r> <blue>cache prune<r>          remove the packages that are older than 30 days
+  <d>├<r> <cyan>--max-age<r> <d>\<days\><r>          age threshold in days (default 30)
+  <d>└<r> <cyan>--dry-run<r>                 print what would be removed without deleting anything
+  <b><green>bun pm<r> <blue>cache pack<r><d>|<r><blue>unpack<r> <d>file<r>  save / restore the cache entries this lockfile needs as one file (for CI caches)
   <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`
-  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies
+  <d>├<r>  <cyan>--all<r>                    trust all untrusted dependencies
+  <d>└<r>  <cyan>--dry-run<r>                print the scripts that would run, without running them or saving
   <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list
 
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
@@ -457,9 +470,9 @@ pub struct PackageManager {
     // Set by package_json_write_back::flush when it rewrites a file; read by the install summary.
     pub(crate) wrote_package_json: bool,
 
-    // pnpm migration: what it moved into the cached root package.json. The file is only written along with the
-    // migrated lockfile (package_json_write_back::write_migrated_root); loads that are never saved leave it alone.
-    pub(crate) migrated_package_json_moves: Vec<&'static str>,
+    // pnpm / yarn migration: what it edited in cached package.json entries. The files are only written along with the
+    // migrated lockfile (package_json_write_back::write_migrated); loads that are never saved leave them alone.
+    pub(crate) migrated_package_json_moves: Vec<package_json_write_back::MigratedPackageJson>,
 
     // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs
     pub(crate) catalog_add: add_catalog::State,
@@ -542,6 +555,7 @@ impl Subcommand {
                 | Self::Remove
                 | Self::Prune
                 | Self::Pm
+                | Self::Publish
         )
     }
 
@@ -1476,6 +1490,72 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// The one upward walk of [`init`], from the cwd to the filesystem root. Step 1 takes the first
+/// `package.json` it opens; step 2 goes on from there, looking for the workspace root.
+struct PackageJsonWalk<'a> {
+    cwd: &'a [u8],
+    next_dir: Option<&'a [u8]>,
+    /// `<dir>/package.json` of the directory [`next`](Self::next) returned last. Not a path
+    /// buffer: the cwd alone can fill one, and `File::openat` answers ENAMETOOLONG.
+    path: Vec<u8>,
+}
+
+impl<'a> PackageJsonWalk<'a> {
+    fn new(cwd: &'a [u8]) -> Self {
+        Self {
+            cwd,
+            next_dir: Some(cwd),
+            path: Vec::with_capacity(cwd.len() + b"/package.json".len()),
+        }
+    }
+
+    /// The next directory and what opening its `package.json` returned.
+    fn next(&mut self, flags: i32) -> Option<(&'a [u8], bun_sys::Maybe<bun_sys::File>)> {
+        loop {
+            let dir = self.next_dir?;
+            self.next_dir = bun_core::dirname(dir);
+            self.path.clear();
+            self.path
+                .extend_from_slice(strings::without_trailing_slash(dir));
+            self.path.extend_from_slice(b"/package.json");
+            let opened = bun_sys::File::openat(
+                bun_sys::Fd::cwd(),
+                &self.path,
+                flags | bun_sys::O::CLOEXEC,
+                0,
+            );
+            if !matches!(&opened, Err(e) if e.get_errno() == bun_sys::E::ENOENT)
+                && dir.len() != self.cwd.len()
+                && is_shared_directory(dir)
+            {
+                bun_core::warn!(
+                    "other local users can add files to <b>{}<r>, so bun ignored the package.json in it",
+                    bstr::BStr::new(dir),
+                );
+                continue;
+            }
+            return Some((dir, opened));
+        }
+    }
+}
+
+/// Sticky and writable by the group or by everyone, like `/tmp`: any local user can put a
+/// `package.json` (`trustedDependencies`, `.npmrc`, `bunfig.toml`) above a project that is not
+/// theirs. A directory that cannot be read counts as shared.
+#[cfg(unix)]
+fn is_shared_directory(dir: &[u8]) -> bool {
+    use bun_sys::S;
+    !bun_sys::stat(&ZBox::from_bytes(dir)).is_ok_and(|st| {
+        let mode = st.st_mode as bun_sys::Mode;
+        mode & S::ISVTX == 0 || mode & (S::IWGRP | S::IWOTH) == 0
+    })
+}
+
+#[cfg(not(unix))]
+fn is_shared_directory(_: &[u8]) -> bool {
+    false
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1574,50 +1654,31 @@ pub fn init(
     // We will walk up from the cwd, trying to find the nearest package.json file.
     let mut no_project = false;
     let root_package_json_file = 'root_package_json_file: {
-        let mut this_cwd: &[u8] = original_cwd;
+        let this_cwd: &[u8];
         let mut created_package_json = false;
+        let mut walk = PackageJsonWalk::new(original_cwd);
         let child_json: bun_sys::File = 'child: {
             // --dry-run and --no-save clear `Do::WRITE_PACKAGE_JSON` once the options load.
             let need_write = subcommand.writes_package_json(cli.positionals.len() > 1)
                 && !cli.dry_run
                 && !cli.no_save;
 
-            loop {
-                let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
-                package_json_path_buf[..this_cwd.len()].copy_from_slice(this_cwd);
-                package_json_path_buf[this_cwd.len()..this_cwd.len() + b"/package.json".len()]
-                    .copy_from_slice(b"/package.json");
-                package_json_path_buf[this_cwd.len() + b"/package.json".len()] = 0;
-                // SAFETY: NUL written above
-                let package_json_path = ZStr::from_buf(
-                    &package_json_path_buf[..],
-                    this_cwd.len() + b"/package.json".len(),
-                );
-
-                match bun_sys::File::openat(
-                    bun_sys::Fd::cwd(),
-                    package_json_path.as_bytes(),
-                    if need_write {
-                        bun_sys::O::RDWR
-                    } else {
-                        bun_sys::O::RDONLY
-                    } | bun_sys::O::CLOEXEC,
-                    0,
-                ) {
-                    Ok(f) => break 'child f,
-                    Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
-                        if let Some(parent) = bun_core::dirname(this_cwd) {
-                            this_cwd = strings::without_trailing_slash(parent);
-                            continue;
-                        } else {
-                            break;
-                        }
+            while let Some((dir, opened)) = walk.next(if need_write {
+                bun_sys::O::RDWR
+            } else {
+                bun_sys::O::RDONLY
+            }) {
+                match opened {
+                    Ok(f) => {
+                        this_cwd = strings::without_trailing_slash(dir);
+                        break 'child f;
                     }
+                    Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
                     Err(e) if e.get_errno() == bun_sys::E::EACCES => {
                         Output::err(
                             "EACCES",
                             "Permission denied while opening \"{s}\"",
-                            &[&bstr::BStr::new(package_json_path.as_bytes())],
+                            &[&bstr::BStr::new(&walk.path)],
                         );
                         if need_write {
                             bun_core::note!("package.json must be writable to add packages");
@@ -1633,7 +1694,7 @@ pub fn init(
                         Output::err(
                             &e,
                             "could not open \"{s}\"",
-                            &[&bstr::BStr::new(package_json_path.as_bytes())],
+                            &[&bstr::BStr::new(&walk.path)],
                         );
                         return Err(e.into());
                     }
@@ -1678,46 +1739,28 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            if !created_package_json && !no_project {
-                while let Some(parent) = bun_core::dirname(this_cwd) {
-                    let parent_without_trailing_slash = strings::without_trailing_slash(parent);
-                    let mut parent_path_buf = bun_paths::path_buffer_pool::get();
-                    parent_path_buf[..parent_without_trailing_slash.len()]
-                        .copy_from_slice(parent_without_trailing_slash);
-                    parent_path_buf[parent_without_trailing_slash.len()
-                        ..parent_without_trailing_slash.len() + b"/package.json".len()]
-                        .copy_from_slice(b"/package.json");
-                    parent_path_buf[parent_without_trailing_slash.len() + b"/package.json".len()] =
-                        0;
-
-                    // Finding the workspace root must not depend on its package.json being writable.
-                    let json_file = match bun_sys::File::openat(
-                        bun_sys::Fd::cwd(),
-                        &parent_path_buf
-                            [..parent_without_trailing_slash.len() + b"/package.json".len()],
-                        bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
-                        0,
-                    ) {
-                        Ok(f) => f,
-                        Err(_) => {
-                            this_cwd = parent;
-                            continue;
-                        }
+            // Above the tree `bunx` installs into are the user's cache and home: no workspace of it.
+            let is_bunx_install =
+                bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
+            if !created_package_json && !no_project && !is_bunx_install {
+                // Finding the workspace root must not depend on its package.json being writable.
+                while let Some((parent, opened)) = walk.next(bun_sys::O::RDONLY) {
+                    let Ok(json_file) = opened else {
+                        continue;
                     };
+                    #[cfg(windows)]
+                    let mut parent_path_buf = bun_paths::path_buffer_pool::get();
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
                     // The path as opened, not the fd's realpath, which may be on another drive
                     // (subst, junction) or outside the project (symlink) (#39357).
-                    let json_path_len =
-                        parent_without_trailing_slash.len() + b"/package.json".len();
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
                     // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
                     let json_path: &[u8] = unsafe {
                         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-                        root_buf[..json_path_len]
-                            .copy_from_slice(&parent_path_buf[..json_path_len]);
-                        &root_buf[..json_path_len]
+                        root_buf[..walk.path.len()].copy_from_slice(&walk.path);
+                        &root_buf[..walk.path.len()]
                     };
                     let json_source =
                         bun_ast::Source::init_path_string(json_path, &json_buf[..json_len]);
@@ -1831,8 +1874,6 @@ pub fn init(
 
                         break;
                     }
-
-                    this_cwd = parent;
                 }
             }
         }

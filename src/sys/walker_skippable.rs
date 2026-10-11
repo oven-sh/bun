@@ -89,8 +89,7 @@ impl Walker {
                             && matches!(
                                 base.kind,
                                 sys::EntryKind::Unknown | sys::EntryKind::SymLink
-                            )
-                        {
+                            ) {
                             let dir_fd = self.stack[top_idx].iter.dir();
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
                                 Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),

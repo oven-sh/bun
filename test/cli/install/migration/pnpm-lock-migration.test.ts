@@ -401,6 +401,56 @@ snapshots:
     expect(stderr).toContain("could not find any other lockfile");
     expect(stderr).not.toContain("migrated lockfile from pnpm-lock.yaml");
   });
+
+  test("workspace bin entries whose value is not a string are skipped, the others are kept", async () => {
+    // npm (normalize-package-bin) drops an entry whose value is not a string and keeps the rest.
+    await using tmpDir = tempDir("pnpm-migrate-mixed-bin", {
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+      "packages/tool/package.json": JSON.stringify({
+        name: "tool",
+        version: "1.0.0",
+        bin: { "tool-a": "a.js", "tool-b": 5, "tool-c": "c.js" },
+      }),
+      "packages/tool/a.js": "",
+      "packages/tool/c.js": "",
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies: {}
+
+  packages/tool:
+    dependencies: {}
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate"],
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+
+    const bunLock = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    expect(bunLock).toContain(`"bin": {
+        "tool-a": "a.js",
+        "tool-c": "c.js",
+      },`);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Everything below resolves only workspace packages, so it never touches a registry.
@@ -466,7 +516,7 @@ overrides:
     }),
   };
   const catalogFixtureMoved =
-    "copied pnpm.overrides to overrides, pnpm-workspace.yaml to workspaces, pnpm-workspace.yaml overrides to overrides in package.json";
+    "copied pnpm.overrides to overrides, copied pnpm-workspace.yaml to workspaces, copied pnpm-workspace.yaml overrides to overrides in package.json";
   // The `pnpm` block stays: pnpm itself keeps reading it.
   const catalogFixtureImported = {
     ...rootPackageJson,

@@ -3051,18 +3051,22 @@ pub mod default_trusted_dependencies {
         DEFAULT_TRUSTED_DEPENDENCIES_LIST, MAX_DEFAULT_TRUSTED_DEPENDENCIES, SemverStringBuilder,
     };
     use bun_collections::static_hash_map::{
-        Entry, HashContext, HashMapMixin, StaticHashMap, static_slots,
+        HashContext, HashMapMixin, StaticHashMap, static_slots,
     };
     use std::sync::LazyLock;
 
     const SLOTS: usize = static_slots(MAX_DEFAULT_TRUSTED_DEPENDENCIES);
 
+    /// `Lockfile.trusted_dependencies` has the low 32 bits of the string hash; the map takes a slot from the top bits.
+    fn slot_hash(hash: u32) -> u64 {
+        u64::from(hash) << 32
+    }
+
     struct TrustedDepHashCtx;
     impl HashContext<&'static [u8]> for TrustedDepHashCtx {
         #[inline]
         fn ctx_hash(s: &&'static [u8]) -> u64 {
-            // truncate to u32 because Lockfile.trustedDependencies uses the same u32 string hash
-            (SemverStringBuilder::string_hash(s) as u32) as u64
+            slot_hash(SemverStringBuilder::string_hash(s) as u32)
         }
         #[inline]
         fn ctx_eql(a: &&'static [u8], b: &&'static [u8]) -> bool {
@@ -3089,20 +3093,19 @@ pub mod default_trusted_dependencies {
         map
     });
 
-    /// Iterate populated entries.
-    pub(crate) fn entries() -> impl Iterator<Item = &'static Entry<&'static [u8], ()>> {
-        MAP.entries.iter().filter(|e| !e.is_empty())
+    pub(crate) fn entries() -> impl Iterator<Item = (u32, &'static [u8])> {
+        (MAP.entries.iter().filter(|e| !e.is_empty())).map(|e| ((e.hash >> 32) as u32, e.key))
     }
 
     #[inline]
-    pub(crate) fn has_with_hash(hash: u64) -> bool {
-        MAP.has_with_hash(hash)
+    pub(crate) fn has_with_hash(hash: u32) -> bool {
+        MAP.has_with_hash(slot_hash(hash))
     }
 
     /// Open-coded `hasContext` so the lookup key can borrow with any lifetime,
     /// not just `'static`.
     pub(crate) fn has(name: &[u8]) -> bool {
-        let hash = (SemverStringBuilder::string_hash(name) as u32) as u64;
+        let hash = slot_hash(SemverStringBuilder::string_hash(name) as u32);
         for entry in &MAP.entries[(hash >> MAP.shift) as usize..] {
             if entry.hash >= hash {
                 return entry.hash == hash && entry.key == name;
@@ -3125,14 +3128,13 @@ impl Lockfile {
         recorded: &TrustedDependenciesSet,
     ) -> Result<TrustedDependenciesSet, AllocError> {
         let mut trusted = TrustedDependenciesSet::default();
-        for entry in default_trusted_dependencies::entries() {
-            let hash = entry.hash as TruncatedPackageNameHash;
+        for (hash, key) in default_trusted_dependencies::entries() {
             // bun.lockb records the hash alone.
             if recorded
                 .get(&hash)
-                .is_some_and(|name| name.is_empty() || **name == *entry.key)
+                .is_some_and(|name| name.is_empty() || **name == *key)
             {
-                trusted.put(hash, Box::from(entry.key))?;
+                trusted.put(hash, Box::from(key))?;
             }
         }
         Ok(trusted)

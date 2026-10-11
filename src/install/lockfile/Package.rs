@@ -1535,16 +1535,15 @@ impl Diff {
                     .any(|(hash, name)| !to.get(hash).is_some_and(|to_name| same(name, to_name)));
             }
             (Some(from), None) => {
-                for entry in default_trusted_dependencies::entries() {
-                    let hash = entry.hash as TruncatedPackageNameHash;
+                for (hash, key) in default_trusted_dependencies::entries() {
                     if !from.contains(&hash) {
-                        added.put(hash, Box::from(entry.key))?;
+                        added.put(hash, Box::from(key))?;
                     }
                 }
                 summary.removed_trusted_dependencies = from
                     .keys()
                     .iter()
-                    .any(|&hash| !default_trusted_dependencies::has_with_hash(u64::from(hash)));
+                    .any(|&hash| !default_trusted_dependencies::has_with_hash(hash));
             }
             // Also an entry that is on the default list: the lockfile did not have it.
             (None, Some(to)) => {

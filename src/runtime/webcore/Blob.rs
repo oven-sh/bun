@@ -242,6 +242,7 @@ pub(crate) trait BlobExt {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue;
     fn get_size_for_bindings(&self) -> u64;
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
+    fn file_has_no_stat(&self) -> bool;
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
@@ -2079,6 +2080,14 @@ impl BlobExt for Blob {
         }
     }
 
+    /// A file store that no stat has described. Right after `resolve_size()`, the stat failed.
+    fn file_has_no_stat(&self) -> bool {
+        matches!(
+            self.store.get().as_deref().map(|store| &store.data),
+            Some(store::Data::File(file)) if file.seekable.is_none()
+        )
+    }
+
     fn get_size(&self, _: &JSGlobalObject) -> JSValue {
         if self.size.get() == MAX_SIZE {
             if self.is_s3() {
@@ -2086,15 +2095,12 @@ impl BlobExt for Blob {
             }
             self.resolve_size();
             if self.size.get() == MAX_SIZE {
-                if let Some(store) = self.store.get() {
-                    // A file that could not be stat'd reads as empty.
-                    return match &store.data {
-                        store::Data::File(file) if file.seekable.is_none() => {
-                            JSValue::js_number(0.0)
-                        }
-                        _ => JSValue::js_number(f64::INFINITY),
-                    };
-                }
+                // A file that could not be stat'd reads as empty. A pipe has no size.
+                return if self.file_has_no_stat() {
+                    JSValue::js_number_from_int32(0)
+                } else {
+                    JSValue::js_number(f64::INFINITY)
+                };
             }
         }
         JSValue::js_number(self.size.get() as f64)

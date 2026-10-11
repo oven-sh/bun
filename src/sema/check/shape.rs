@@ -716,6 +716,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn keep_shape(&mut self, key: TypeId, mut shape: Shape<'s>, stored: Stored) -> Built<'p> {
+        shape.props.shrink_to_fit();
+        shape.call.shrink_to_fit();
+        shape.construct.shrink_to_fit();
+        shape.index.shrink_to_fit();
+        let resolved = Resolved::new(shape);
+        let (kept, resolved) = (self.p.shapes).insert_ref(&self.task, key, resolved, stored);
+        Built {
+            resolved,
+            kept: Some(kept),
+        }
+    }
+
     /// What `cache_shape_provisionally` has kept for `q`.
     fn provisionally_cached_shape(&mut self, q: Query) -> Option<Built<'p>> {
         let raw = self.provisional(q)?;
@@ -854,7 +867,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.provisional_shape(shape);
         }
         let in_place = self.members_in_place_hits;
-        let mut shape = build(self);
+        let shape = build(self);
         // `getReducedType` is listing the properties of this intersection, and sets
         // `resolvedProperties` when it has them all. What is listed in the meantime, of members
         // that are in place, lasts until then.
@@ -862,19 +875,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.members_in_place_hits != in_place && self.never_in_progress.contains(&key);
         match self.leave(Query::Shape(key)) {
             Ok(_) if is_listed_again => self.provisional_shape(shape),
-            Ok(stored) => {
-                shape.props.shrink_to_fit();
-                shape.call.shrink_to_fit();
-                shape.construct.shrink_to_fit();
-                shape.index.shrink_to_fit();
-                let resolved = Resolved::new(shape);
-                let (kept, resolved) =
-                    (self.p.shapes).insert_ref(&self.task, key, resolved, stored);
-                Built {
-                    resolved,
-                    kept: Some(kept),
-                }
-            }
+            Ok(stored) => self.keep_shape(key, shape, stored),
             Err(open) => {
                 let built = self.cache_shape_provisionally(Query::Shape(key), shape, open);
                 if let TypeData::Ref { target, .. } = *self.data(key)
@@ -4252,18 +4253,41 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return self.members(ty);
         };
-        let built = self.shape_memo(ty, |c| c.resolve_intersection_type_members(ty, parts));
+        // They are kept as the members of an object type: the shape with the key `ty` has the
+        // properties, which are many more.
+        if let Some(known) = self.p.intersection_objects.get(&self.task, &ty) {
+            return self.members(known);
+        }
+        let q = Query::Shape(ty);
+        let built = if let Some(built) = self.provisionally_cached_shape(q) {
+            built
+        } else if !self.enter(q) {
+            self.provisional_shape(Shape::new_in(self.arena))
+        } else {
+            let shape = self.resolve_intersection_type_members(ty, parts);
+            match self.leave(q) {
+                Ok(stored) => {
+                    let object = self.synth(shape);
+                    let kept = &self.p.intersection_objects;
+                    let object = kept.insert(&self.task, ty, object, stored);
+                    return self.members(object);
+                }
+                Err(open) => self.cache_shape_provisionally(q, shape, open),
+            }
+        };
         Some(Members {
             resolved: built.resolved,
             mapper: MapperId::IDENTITY,
         })
     }
 
-    /// The properties of the intersection `ty`. They are kept as the members of an object type:
-    /// the shape with the key `ty` has its signatures.
+    /// The properties of the intersection `ty`.
     fn properties_of_intersection(&mut self, ty: TypeId, parts: &[TypeId]) -> Built<'p> {
-        if let Some(known) = self.p.intersection_objects.get(&self.task, &ty) {
-            return self.shape_of_synth(known);
+        if let Some(kept) = self.p.shapes.handle(&self.task, &ty) {
+            return Built {
+                resolved: self.p.shapes.at(&self.task, kept),
+                kept: Some(kept),
+            };
         }
         let q = Query::Properties(ty);
         if let Some(built) = self.provisionally_cached_shape(q) {
@@ -4282,11 +4306,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_in_place = self.non_cacheable_mark() != counters;
         match self.leave(q) {
             Ok(_) if is_in_place => self.provisional_shape(shape),
-            Ok(stored) => {
-                let object = self.synth(shape);
-                let object = (self.p.intersection_objects).insert(&self.task, ty, object, stored);
-                self.shape_of_synth(object)
-            }
+            Ok(stored) => self.keep_shape(ty, shape, stored),
             Err(open) => self.cache_shape_provisionally(q, shape, open),
         }
     }

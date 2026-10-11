@@ -352,7 +352,8 @@ pub struct Program<'s> {
     union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
     /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
     union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
-    /// The same of an intersection: `properties_of_intersection`.
+    /// An object type with the signatures and the index signatures of an intersection:
+    /// `structured_members`.
     intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.

@@ -91,8 +91,9 @@ fn place_of_member(member: Member<'_>, is_value: bool) -> Place<'_> {
     }
 }
 
-fn place_of_expr(full: Expr<'_>) -> Place<'_> {
-    let parent = match full.parent() {
+/// `parent` is that of `full`.
+fn place_of_expr<'a>(full: Expr<'a>, parent: Node<'a>) -> Place<'a> {
+    let parent = match parent {
         Node::Expr(parent) => parent,
         Node::VarDecl(declarator) => return Place::Declarator(declarator),
         Node::Param(_) | Node::PatElem(_) => return Place::DefaultValue,
@@ -104,18 +105,22 @@ fn place_of_expr(full: Expr<'_>) -> Place<'_> {
         Node::Prop(property) if property.kind() != PropKind::Spread => return Place::Property,
         _ => return Place::Other,
     };
-    match parent.kind() {
-        ExprKind::Jsx(_) => Place::Jsx,
-        ExprKind::Spread(_) if is_jsx(parent.parent()) => Place::Jsx,
-        ExprKind::Assign { op: None, .. } if utils::is_assignment_target(parent) => Place::DefaultValue,
-        ExprKind::Assign { target, .. } => Place::Assignment {
-            is_to_identifier: target.tag() == ExprTag::Ident,
+    match parent.tag() {
+        ExprTag::Jsx => Place::Jsx,
+        ExprTag::Spread if is_jsx(parent.parent()) => Place::Jsx,
+        ExprTag::Assign if parent.assign_op() == Some(None) && utils::is_assignment_target(parent) => {
+            Place::DefaultValue
+        }
+        ExprTag::Assign => Place::Assignment {
+            is_to_identifier: parent.left().is_some_and(|target| target.tag() == ExprTag::Ident),
         },
-        ExprKind::Index { index, .. } if index == full => Place::Index,
-        ExprKind::Call(call)
-            if call.args().get(1) == Some(full)
-                && (ast_utils::is_specific_id(call.callee(), "parseInt")
-                    || ast_utils::is_specific_member_access(call.callee(), Some("Number"), Some("parseInt"))) =>
+        ExprTag::Index if parent.index() == Some(full) => Place::Index,
+        ExprTag::Call
+            if parent.as_call().is_some_and(|call| {
+                call.args().get(1) == Some(full)
+                    && (ast_utils::is_specific_id(call.callee(), "parseInt")
+                        || ast_utils::is_specific_member_access(call.callee(), Some("Number"), Some("parseInt")))
+            }) =>
         {
             Place::ParseIntRadix
         }
@@ -282,14 +287,11 @@ impl Checker {
             },
             _ => return,
         };
-        let signed = e.parent().as_expr().and_then(|parent| match parent.kind() {
-            ExprKind::Unary { op: UnOp::Minus, .. } => Some((parent, b'-', value.negated())),
-            ExprKind::Unary { op: UnOp::Plus, .. } => Some((parent, b'+', value)),
-            _ => None,
-        });
-        let (full, sign, value) = match signed {
-            Some((full, sign, value)) => (full, Some(sign), value),
-            None => (e, None, value),
+        let parent = e.parent();
+        let (full, sign, value, parent) = match parent.as_expr().map(|it| (it, it.unary_op())) {
+            Some((full, Some(UnOp::Minus))) => (full, Some(b'-'), value.negated(), full.parent()),
+            Some((full, Some(UnOp::Plus))) => (full, Some(b'+'), value, full.parent()),
+            _ => (e, None, value, parent),
         };
         if self.is_ignored_value(value) {
             return;
@@ -300,7 +302,7 @@ impl Checker {
             sign,
             value,
         };
-        self.check(literal, place_of_expr(full), cx);
+        self.check(literal, place_of_expr(full, parent), cx);
     }
 
     fn check_type<'a, R: Rule>(&self, ty: TypeNode<'a>, cx: &Cx<'a, R>) {
@@ -413,6 +415,9 @@ impl Checker {
 fn report_magic<R: Rule>(at: Span, sign: Option<u8>, unsigned: Span, cx: &Cx<'_, R>) {
     let raw = cx.slice(unsigned);
     match sign {
+        Some(_) if at.start + 1 == unsigned.start && at.end == unsigned.end => {
+            cx.report(at, NO_MAGIC).data("raw", cx.slice(at))
+        }
         Some(sign) => cx.report(at, NO_MAGIC).data("raw", [&[sign][..], raw].concat()),
         None => cx.report(at, NO_MAGIC).data("raw", raw),
     };

@@ -1658,14 +1658,6 @@ impl Run<'_> {
             self.out.stdout = [environment.version, b"\n"].concat();
             return self.out;
         }
-        let configs = Configs::new(options, environment);
-        // Both say it before they look at anything else. `--init` is a flag of oxfmt.
-        let is_oxfmt = configs.flavor == Flavor::Oxfmt || options.init;
-        if let Some(refusal) = options.refusal_of_modes(is_oxfmt) {
-            let mut out = self.fail(&refusal);
-            out.exit_code = 1;
-            return out;
-        }
         if let Some(name) = (options.plugins.iter()).find(|it| config::is_missing_plugin(it))
             && !options.allow_unsupported
         {
@@ -1681,13 +1673,21 @@ impl Run<'_> {
         if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
             self.warn(b"Plugins are not supported: --plugin has no effect.");
         }
-        if options.init {
-            return self.init();
-        }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");
             out.exit_code = 1;
             return out;
+        }
+        let configs = Configs::new(options, environment);
+        // Both say it before they look at the files, the patterns or the configuration. `--init` is a flag of oxfmt.
+        let is_oxfmt = configs.flavor == Flavor::Oxfmt || options.init;
+        if let Some(refusal) = options.refusal_of_modes(is_oxfmt) {
+            let mut out = self.fail(&refusal);
+            out.exit_code = 1;
+            return out;
+        }
+        if options.init {
+            return self.init();
         }
         if let Some(file) = &options.find_config_path {
             let path = paths::resolve(&environment.cwd, &paths::from_native(file));

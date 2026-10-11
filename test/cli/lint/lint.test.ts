@@ -3054,6 +3054,100 @@ describe.concurrent("bun lint", () => {
       expect(names.map(name => fixed.files[name])).toEqual(rows.map(row => row[3]));
     });
 
+    // As ESLint 10.12.0 and 9.39.5 with eslint-plugin-react-hooks 7.1.1, whose rules of the React Compiler have no listeners: they
+    // report from `create`, which ESLint calls for every rule, in the order of the configuration, before it visits a node.
+    test("rules of the React Compiler and others that report at one place", async () => {
+      const code =
+        'import React from "react";\nexport function C(props) {\n  const m = React.useMemo(() => [props.a()], [props.a()]);\n  return <p>{m}</p>;\n}\n';
+      const rows: [rules: Record<string, unknown>, reports: string[]][] = [
+        [
+          { "react-hooks/memo-dependencies": "error", "react-hooks/use-memo": "error" },
+          ["3:47 react-hooks/memo-dependencies", "3:47 react-hooks/use-memo"],
+        ],
+        [
+          { "react-hooks/use-memo": "error", "react-hooks/memo-dependencies": "error" },
+          ["3:47 react-hooks/use-memo", "3:47 react-hooks/memo-dependencies"],
+        ],
+        [
+          {
+            "react-hooks/exhaustive-deps": "error",
+            "react-hooks/memo-dependencies": "error",
+            "react-hooks/use-memo": "error",
+          },
+          [
+            "3:46 react-hooks/exhaustive-deps",
+            "3:47 react-hooks/memo-dependencies",
+            "3:47 react-hooks/use-memo",
+            "3:47 react-hooks/exhaustive-deps",
+          ],
+        ],
+        [
+          {
+            "react-hooks/use-memo": "error",
+            "react-hooks/memo-dependencies": "error",
+            "react-hooks/exhaustive-deps": "error",
+          },
+          [
+            "3:46 react-hooks/exhaustive-deps",
+            "3:47 react-hooks/use-memo",
+            "3:47 react-hooks/memo-dependencies",
+            "3:47 react-hooks/exhaustive-deps",
+          ],
+        ],
+        [
+          {
+            "no-restricted-syntax": ["error", "CallExpression", "MemberExpression"],
+            "react-hooks/memo-dependencies": "error",
+            "react-hooks/use-memo": "error",
+          },
+          [
+            "3:13 no-restricted-syntax",
+            "3:13 no-restricted-syntax",
+            "3:34 no-restricted-syntax",
+            "3:34 no-restricted-syntax",
+            "3:47 react-hooks/memo-dependencies",
+            "3:47 react-hooks/use-memo",
+            "3:47 no-restricted-syntax",
+            "3:47 no-restricted-syntax",
+          ],
+        ],
+        [
+          {
+            "react-hooks/memo-dependencies": "error",
+            "no-restricted-syntax": ["error", "CallExpression", "MemberExpression"],
+            "react-hooks/use-memo": "error",
+          },
+          [
+            "3:13 no-restricted-syntax",
+            "3:13 no-restricted-syntax",
+            "3:34 no-restricted-syntax",
+            "3:34 no-restricted-syntax",
+            "3:47 react-hooks/memo-dependencies",
+            "3:47 react-hooks/use-memo",
+            "3:47 no-restricted-syntax",
+            "3:47 no-restricted-syntax",
+          ],
+        ],
+      ];
+      const names = rows.map((_, at) => `r${at}.jsx`);
+      const files = {
+        "eslint.config.mjs": `export default [
+          {
+            files: ["**/*.jsx"],
+            languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+            plugins: { "react-hooks": { meta: { name: "eslint-plugin-react-hooks" } } },
+          },
+          ...${JSON.stringify(rows.map(([rules], at) => ({ files: [names[at]], rules })))},
+        ];`,
+        ...Object.fromEntries(names.map(name => [name, code])),
+      };
+      type Result = { filePath: string; messages: { line: number; column: number; ruleId: string }[] };
+      const results: Result[] = JSON.parse((await lint(files, ["-f", "json", ...names])).raw);
+      const reports = (name: string) => results.find(it => basename(it.filePath) === name)?.messages;
+      const places = names.map(name => reports(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
+      expect(places).toEqual(rows.map(row => row[1]));
+    });
+
     describe("fixes after which the text cannot be parsed are not written", () => {
       const warning = (rules: string, file: string) =>
         `warn: Fixes of ${rules} would leave ${file} with a syntax error. They are not applied.`;

@@ -45,6 +45,8 @@ struct ScriptConfig {
     cwd: Box<[u8]>,
     /// PATH env var value for this script
     path: Box<[u8]>,
+    /// `command` runs a file with bun: no script and no bin, so no `INIT_CWD` is set for it.
+    is_file: bool,
 }
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
@@ -172,7 +174,12 @@ impl<'a> ProcessHandle<'a> {
                 unsafe { &mut *env_ptr },
                 &self.config.name,
                 &self.config.cwd,
-                |env| env.map.create_null_delimited_env_map(),
+                |env| {
+                    if self.config.is_file {
+                        return env.map.create_null_delimited_env_map();
+                    }
+                    env.with_init_cwd(|env| env.map.create_null_delimited_env_map())
+                },
             )?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
@@ -774,6 +781,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                is_file: false,
             });
         }
 
@@ -788,6 +796,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                is_file: false,
             });
         }
 
@@ -801,6 +810,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
+                is_file: false,
             });
         }
     } else {
@@ -835,6 +845,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),
+            is_file,
         });
     }
 

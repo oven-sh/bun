@@ -545,6 +545,11 @@ impl Subcommand {
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
     }
+
+    /// Its pack, version or publish scripts get the directory bun was started in as `INIT_CWD`.
+    pub(crate) fn records_launch_dir(self) -> bool {
+        matches!(self, Self::Pack | Self::Pm | Self::Publish)
+    }
 }
 
 /// The resolved outcome of `--filter` for one install: the importer ids whose dependencies get installed.
@@ -1083,14 +1088,9 @@ fn configure_env_for_scripts_run(
     // `Ok` — same contract as the runtime impl (run_command.rs:628).
     let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
-    let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
-    if !init_cwd_entry.found_existing {
-        *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(strings::without_trailing_slash(
-                FileSystem::instance().top_level_dir(),
-            )),
-        };
-    }
+    // The project root on purpose: postinstalls such as msw's read `$INIT_CWD/package.json`.
+    this.env_mut()
+        .set_init_cwd_to(FileSystem::instance().top_level_dir())?;
 
     // The resolver-tier
     // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
@@ -1500,6 +1500,10 @@ pub fn init(
     // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::instance();
+    if subcommand.records_launch_dir() {
+        // The walk to the project root below changes the top-level directory.
+        bun_core::set_launch_dir(fs.top_level_dir());
+    }
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
     // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.

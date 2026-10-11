@@ -281,6 +281,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env.map
             .put(b"npm_lifecycle_script", original_script)
             .expect("unreachable");
+        env.set_init_cwd()?;
         crate::cli::check_command::note_package_script(env, name, cwd);
 
         let mut copy_script_capacity: usize = original_script.len();
@@ -2651,6 +2652,9 @@ impl RunCommand {
                 }
             }
         }
+
+        // Not a script and not a file of the user: what is left is a bin.
+        env_loader.set_init_cwd()?;
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────
         // With `--check` the way below is taken, on which the project is checked.

@@ -1402,6 +1402,7 @@ fn allocate_package_manager(
     // Uninitialized memory, abort-on-OOM.
     let p = bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(p, core::sync::atomic::Ordering::Release);
+    bun_core::add_exit_callback(crate::npm::package_manifest::Serializer::finish_saves_at_exit);
     #[cfg(bun_asan)]
     bun_core::add_exit_callback(deinit_caches_at_exit);
 
@@ -1615,6 +1616,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         save_text_lockfile,
         ca,
         ignore_scripts,
+        provenance,
         link_workspace_packages,
         node_linker,
         global_store,
@@ -1676,6 +1678,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         concurrent_scripts,
         save_text_lockfile,
         ignore_scripts,
+        provenance,
         link_workspace_packages,
         node_linker,
         global_store,

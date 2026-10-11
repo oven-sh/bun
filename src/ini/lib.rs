@@ -1477,6 +1477,7 @@ mod draft {
                 &mut install.link_workspace_packages,
             ),
             (b"save-exact".as_slice(), &mut install.exact),
+            (b"provenance".as_slice(), &mut install.provenance),
             (b"hoist".as_slice(), &mut install.hoist),
         ] {
             if let Some(value) = out.get(key).and_then(|expr| npmrc_bool(&expr)) {

@@ -927,9 +927,6 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
         if directories::is_package_in_cache_at(cache_dir, name, tag) {
             summary.already_cached += 1;
             r.skip(header.size);
-        } else if sys::lstatat(cache_dir, name).is_ok() {
-            summary.incomplete += 1;
-            r.skip(header.size);
         } else {
             unpack_package(
                 &mut r,
@@ -958,7 +955,12 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
             result => result,
         }?;
         if !created {
-            summary.already_cached += 1;
+            // Judged only now: what another process publishes meanwhile is there, and whole.
+            if directories::is_package_in_cache_at(cache_dir, name, *tag) {
+                summary.already_cached += 1;
+            } else {
+                summary.incomplete += 1;
+            }
             continue;
         }
         summary.created += 1;

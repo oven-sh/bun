@@ -359,6 +359,9 @@ impl PublishCommand {
         }) {
             Self::refuse_provenance("NPM_CONFIG_PROVENANCE");
         }
+        if manager.options.publish_config.provenance {
+            Self::refuse_provenance("\"provenance\" in .npmrc");
+        }
 
         if cli.positionals.len() > 1 {
             if Self::is_workspace_publish(manager) {

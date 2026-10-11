@@ -1109,6 +1109,9 @@ pub mod package_manifest {
 
     pub struct Serializer;
 
+    /// The `save_async` tasks that have not finished.
+    static SAVES: bun_threading::WaitGroup = bun_threading::WaitGroup::init();
+
     impl Serializer {
         // - v0.0.3: added serialization of registry url. it's used to invalidate when it changes
         // - v0.0.4: fixed bug with cpu & os tag not being added correctly
@@ -1418,12 +1421,14 @@ pub mod package_manifest {
             Ok(())
         }
 
-        /// We save into a temporary directory and then move the file to the cache directory.
-        /// Saving the files to the manifest cache doesn't need to prevent application exit.
-        /// It's an optional cache.
-        /// Therefore, we choose to not increment the pending task count or wake up the main thread.
-        ///
-        /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
+        /// The next run, `--offline` above all, reads what this one fetched. A pool thread must not wait for its own pool.
+        pub(crate) extern "C" fn finish_saves_at_exit() {
+            if bun_crash_handler::cli_state::is_main_thread() {
+                SAVES.wait();
+            }
+        }
+
+        /// No install waits for the file; the process does, in `finish_saves_at_exit`.
         pub(crate) fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
@@ -1483,9 +1488,12 @@ pub mod package_manifest {
                             Output::flush();
                         }
                     }
+                    drop(save_task);
+                    SAVES.finish();
                 }
             }
 
+            SAVES.add_one();
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
                 manifest: this.clone(),
                 scope: scope.clone(),

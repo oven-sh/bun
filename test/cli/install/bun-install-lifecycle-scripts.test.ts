@@ -15,7 +15,7 @@ import {
   statSync,
   writeSync,
 } from "fs";
-import { appendFile, exists, mkdir, rm, writeFile } from "fs/promises";
+import { appendFile, exists, mkdir, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
@@ -2432,20 +2432,16 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     expect({ ...second, ran: second.ran.sort() }).toEqual({ errors: [], ran: names, exitCode: 0 });
   });
 
-  // Each script removes the folder of the next package in the ring, so sooner or later one of
-  // those that wait has no directory to start in.
+  // bun looks for the shell once. The first script removes it, whichever script that is and
+  // however far the other packages are, so the second one has nothing to start with.
   test.skipIf(isWindows)("a script that cannot be started", async () => {
     const waiting = ["v", "w", "x", "y", "z"];
     using ctx = await setupScriptPackages(
       linker,
       Object.fromEntries(
-        waiting.map((name, i) => [
+        waiting.map(name => [
           name,
-          {
-            scripts: {
-              postinstall: `echo ${name} >> "$RUNS" && { test -z "$SABOTAGE" || rm -rf "$(cd "$PROJECT/node_modules/${waiting[(i + 1) % waiting.length]}" && pwd -P)"; }`,
-            },
-          },
+          { scripts: { postinstall: `echo ${name} >> "$RUNS" && { test -z "$SABOTAGE" || rm "$SABOTAGE"; }` } },
         ]),
       ),
     );
@@ -2458,14 +2454,24 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
       }),
     );
     const ran = (run: string) => readFileSync(join(ctx.packageDir, run), "utf8").split("\n").filter(Boolean);
-    Object.assign(ctx.env, { PROJECT: ctx.packageDir, RUNS: join(ctx.packageDir, "first.txt"), SABOTAGE: "1" });
+    // A link to the shell that bun would find, under its own name, in front of it in $PATH.
+    const shell = ["bash", "sh", "zsh"].find(name => Bun.which(name, { PATH: ctx.env.PATH }))!;
+    const link = join(ctx.packageDir, "shell", shell);
+    await mkdir(join(ctx.packageDir, "shell"));
+    await symlink(Bun.which(shell, { PATH: ctx.env.PATH })!, link);
+    Object.assign(ctx.env, {
+      PATH: `${join(ctx.packageDir, "shell")}:${ctx.env.PATH}`,
+      RUNS: join(ctx.packageDir, "first.txt"),
+      SABOTAGE: link,
+    });
 
     const first = await ctx.bun("install", "--concurrent-scripts=1");
     expect(splitErrLines(first.err).filter(line => line.startsWith("error:"))).toEqual([
       "error: Failed to run script postinstall due to error ENOENT",
     ]);
+    expect(ran("first.txt")).toHaveLength(1);
     expect(first.exitCode).toBe(1);
-    // Whatever did not run is not in place either, be it removed by a script or by bun.
+    // Whatever did not run is not in place either.
     const inPlace = waiting.filter(name => existsSync(ctx.installed(name, "package.json")));
     expect(inPlace.filter(name => !ran("first.txt").includes(name))).toEqual([]);
 

@@ -209,6 +209,7 @@ pub struct PublishConfig {
     pub otp: &'static [u8],
     pub auth_type: Option<AuthType>,
     pub tolerate_republish: bool,
+    pub provenance: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -836,6 +837,8 @@ impl Options {
                     self.do_.set(Do::RUN_SCRIPTS, false);
                 }
             }
+
+            self.publish_config.provenance = config.provenance == Some(true);
 
             if let Some(min_age_ms) = config.minimum_release_age_ms {
                 self.minimum_release_age_ms = Some(min_age_ms);

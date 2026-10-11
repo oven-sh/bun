@@ -1979,6 +1979,7 @@ describe.concurrent("provenance", () => {
     args: string[],
     fromTarball = false,
     extraEnv = {},
+    npmrc = "",
   ) {
     let requests = 0;
     using mock = Bun.serve({
@@ -1989,6 +1990,7 @@ describe.concurrent("provenance", () => {
       },
     });
     using dir = tempDir("publish-provenance", {
+      ".npmrc": npmrc,
       "bunfig.toml": Bun.TOML.stringify({
         install: { cache: false, registry: { url: `http://localhost:${mock.port}`, token: "unused" } },
       }),
@@ -2052,6 +2054,26 @@ describe.concurrent("provenance", () => {
       expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
     },
   );
+
+  test.each([false, true])("provenance=true in .npmrc is refused, from a tarball: %p", async fromTarball => {
+    const { out, err, exitCode, requests } = await publishProvenancePkg(
+      undefined,
+      [],
+      fromTarball,
+      {},
+      "provenance=true",
+    );
+    expect(err).toBe(`error: "provenance" in .npmrc ${NOT_SUPPORTED}`);
+    expect(out).not.toContain("provenance-pkg@1.0.0");
+    expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
+  });
+
+  test("provenance=false in .npmrc publishes", async () => {
+    const { out, err, exitCode, requests } = await publishProvenancePkg(undefined, [], false, {}, "provenance=false");
+    expect(err).toBe("$ echo prepublishOnly\n");
+    expect(out).toContain(" + provenance-pkg@1.0.0");
+    expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 0 });
+  });
 
   test.each(["false", ""])("NPM_CONFIG_PROVENANCE=%j publishes", async NPM_CONFIG_PROVENANCE => {
     const { out, err, exitCode, requests } = await publishProvenancePkg(undefined, [], false, {

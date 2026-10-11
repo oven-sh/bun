@@ -315,6 +315,8 @@ describe("a workspace member keeps the versions its lockfile pins", () => {
       expect(project.registry.manifests).toEqual(["new-dep"]);
       expect(frozen.exitCode).toBe(1);
 
+      // Without the manifest that `bun ci` cached, so that what `bun install` asks for is counted too.
+      await project.freshCheckout();
       const { err, exitCode } = await project.bun(["install"]);
 
       expect(err).not.toContain("error:");

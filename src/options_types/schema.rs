@@ -293,6 +293,7 @@ pub mod api {
         pub save_text_lockfile: Option<bool>,
         pub ca: Option<Ca>,
         pub ignore_scripts: Option<bool>,
+        pub provenance: Option<bool>,
         pub link_workspace_packages: Option<bool>,
         pub node_linker: Option<NodeLinker>,
         pub global_store: Option<bool>,

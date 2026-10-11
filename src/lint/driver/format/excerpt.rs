@@ -150,10 +150,12 @@ fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
         }
         text.extend_from_slice(line);
     }
+    // Every byte is written, so that many are at a time.
     for byte in &mut text {
-        if *byte == b'\t' {
-            *byte = b' ';
-        }
+        *byte = match *byte {
+            b'\t' => b' ',
+            other => other,
+        };
     }
     text
 }

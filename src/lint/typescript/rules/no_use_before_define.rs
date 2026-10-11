@@ -2,8 +2,8 @@ use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKind;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint_eslint::rules::no_use_before_define::{
-    Config, Initializers, definition_name_end, end_of_definition, is_class_ref_in_class_decorator, is_named_export,
-    is_referred_to_after_initializers, starts_after,
+    Config, Initializers, definition_name_end, end_of_definition, first_use, is_class_ref_in_class_decorator,
+    is_named_export, starts_after,
 };
 
 /// Disallow the use of variables before they are defined.
@@ -105,10 +105,7 @@ impl NoUseBeforeDefine {
     }
 
     fn check<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        if is_referred_to_after_initializers(variable) {
-            return;
-        }
-        let Some(definition) = variable.declarations().next() else {
+        let (Some(first), Some(definition)) = (first_use(variable), variable.declarations().next()) else {
             return;
         };
         // Only of a value is it asked whether it is in an initializer.
@@ -119,7 +116,7 @@ impl NoUseBeforeDefine {
         let is_defined = |it: Reference<'a>| {
             starts_after(it, end) && !(is_type && it.is_value()) || it.is_init() || it.is_jsx_pragma()
         };
-        if !variable.references().all(is_defined) {
+        if end.is_none_or(|end| first <= end) || is_type && !variable.references().all(is_defined) {
             self.check_references(variable, definition, &is_defined, cx);
         }
     }

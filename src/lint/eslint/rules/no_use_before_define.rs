@@ -89,21 +89,28 @@ pub fn end_of_definition(definition: Declaration) -> Option<u32> {
     }
 }
 
-/// Whether the references alone tell that none of them is before the definition of `variable` or in what initializes it:
-/// there is none to ask about, or what only `var`, `let`, `const` or `using` declare is referred to after the last of
-/// its initializers, which end its declarators, and of what its loops iterate over.
+/// Where the first of the references to `variable` starts that are to be asked about, if there is one. `None` too if the
+/// references alone tell that none is before the definition or in what initializes it: what only `var`, `let`, `const` or
+/// `using` declare is referred to after the last of its initializers, which end its declarators, and of what its loops
+/// iterate over.
 #[inline]
-pub fn is_referred_to_after_initializers(variable: Symbol) -> bool {
+pub fn first_use(variable: Symbol) -> Option<u32> {
     let (mut first, mut initialized) = (u32::MAX, 0);
     for reference in variable.references() {
         if reference.is_init() {
             initialized = initialized.max(reference.write_expr().map_or(0, |it| it.span().end));
         } else if !reference.is_jsx_pragma() {
+            let is_first = first == u32::MAX;
             first = first.min(reference.ident().start());
+            // They are in the order of the source, but for the names in a pattern, which are written to.
+            if is_first && !reference.is_write() {
+                break;
+            }
         }
     }
-    first == u32::MAX
-        || initialized != 0 && first > initialized && variable.declaration_kinds() == DeclarationKinds::VARIABLE
+    let is_settled = first == u32::MAX
+        || initialized != 0 && first > initialized && variable.declaration_kinds() == DeclarationKinds::VARIABLE;
+    (!is_settled).then_some(first)
 }
 
 /// Whether the name of `reference` starts after `end`, if that is given.
@@ -316,18 +323,15 @@ fn parent_of_identifier(reference: Reference, is_in_type_query: bool) -> Parent 
 
 impl NoUseBeforeDefine {
     fn check<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        if is_referred_to_after_initializers(variable) {
-            return;
-        }
-        let Some(definition) = variable.declarations().next() else {
+        let (Some(first), Some(definition)) = (first_use(variable), variable.declarations().next()) else {
             return;
         };
         let end = match definition {
             Declaration::Class(class) => Some(class.span().end),
             _ => end_of_definition(definition),
         };
-        let is_defined = |it: Reference<'a>| starts_after(it, end) || it.is_init() || it.is_jsx_pragma();
-        if !variable.references().all(is_defined) {
+        if end.is_none_or(|end| first <= end) {
+            let is_defined = |it: Reference<'a>| starts_after(it, end) || it.is_init() || it.is_jsx_pragma();
             self.check_references(variable, definition, &is_defined, cx);
         }
     }

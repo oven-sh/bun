@@ -2669,6 +2669,45 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // The decorators of a parameter are evaluated in the scope around the function. So a function in one is in that scope, though
+  // it is written between the parentheses, and what is written after it is in the scope of the function all the same.
+  describe("the scope of what follows a function in the decorator of a parameter", () => {
+    const code = (decorator: string) =>
+      `class S {\n  constructor(${decorator}private d: D, private readonly repo: Repo) {\n    this.repo = repo;\n  }\n}\n`;
+    const sources = {
+      "arrow.ts": code("@Inject(forwardRef(() => D)) "),
+      "function.ts": code("@Inject(function () { return D; }) "),
+      "no-function.ts": code("@Inject(D) "),
+      "no-decorator.ts": code(""),
+    };
+    test.each([
+      [
+        "oxlint",
+        ".oxlintrc.json",
+        JSON.stringify({
+          plugins: ["typescript"],
+          categories: { correctness: "off" },
+          rules: { "typescript/no-unnecessary-parameter-property-assignment": "error" },
+        }),
+      ],
+      [
+        "ESLint",
+        "eslint.config.mjs",
+        `export default [{
+          files: ["**/*.ts"],
+          plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+          rules: { "@typescript-eslint/no-unnecessary-parameter-property-assignment": "error" },
+        }];`,
+      ],
+    ])("as %s", async (_, name, configuration) => {
+      const { stdout, exitCode } = await lint({ [name]: configuration, ...sources }, ["-f", "unix", ...Object.keys(sources)]);
+      const places = [...stdout.matchAll(/([\w-]+\.ts):(\d+):(\d+): /g)].map(it => `${it[1]}:${it[2]}:${it[3]}`);
+      expect(places.sort()).toEqual(["arrow.ts:3:5", "function.ts:3:5", "no-decorator.ts:3:5", "no-function.ts:3:5"]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   describe("--fix", () => {
     // The file is fixed, and linted again when all files are known, for the rule about several files. There the fix that breaks it
     // is tried once more and taken back.

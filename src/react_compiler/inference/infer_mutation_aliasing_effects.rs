@@ -26,6 +26,7 @@ use crate::hir::AliasingEffect;
 use crate::hir::AliasingSignature;
 use crate::hir::ApplyEffect;
 use crate::hir::AstAlloc;
+use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::DeclarationId;
 use crate::hir::Effect;
@@ -33,6 +34,7 @@ use crate::hir::FunctionId;
 use crate::hir::HirFunction;
 use crate::hir::HirVec;
 use crate::hir::IdentifierId;
+use crate::hir::Instruction;
 use crate::hir::InstructionKind;
 use crate::hir::InstructionValue;
 use crate::hir::MutationReason;
@@ -42,6 +44,7 @@ use crate::hir::PlaceOrSpread;
 use crate::hir::PlaceOrSpreadOrHole;
 use crate::hir::ReactFunctionType;
 use crate::hir::SourceLocation;
+use crate::hir::Terminal;
 use crate::hir::Type;
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::BUILT_IN_ARRAY_ID;
@@ -188,8 +191,6 @@ pub(crate) fn infer_mutation_aliasing_effects(
         fallback_value_ids: HashMap::default(),
     };
 
-    let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
-
     let mut iteration_count = 0;
 
     while !queued_states.is_empty() {
@@ -203,7 +204,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
             ));
         }
 
-        for &block_id in &block_ids {
+        for (&block_id, block) in func.body.blocks.iter_mut() {
             let incoming_state = match queued_states.swap_remove(block_id) {
                 Some(s) => s,
                 None => continue,
@@ -221,9 +222,9 @@ pub(crate) fn infer_mutation_aliasing_effects(
             infer_block(
                 &mut context,
                 &mut state,
-                block_id,
+                block,
                 is_revisitable,
-                func,
+                &mut func.instructions,
                 env,
             )?;
 
@@ -259,8 +260,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
             }
 
             // Queue successors
-            let mut successors =
-                visitors::each_terminal_successor(&func.body.blocks[&block_id].terminal);
+            let mut successors = visitors::each_terminal_successor(&block.terminal);
             let last = successors.pop();
             for next_block_id in successors {
                 let state = Cow::Borrowed(&state);
@@ -846,13 +846,15 @@ impl Context {
 
     /// Get or create a stable ValueId for a given effect, ensuring fixpoint convergence.
     fn get_or_create_value_id(&mut self, effect: &AliasingEffect) -> ValueId {
-        let hash = hash_effect(effect);
-        if let Some(v) = self.effect_value_id_cache.get(&hash) {
-            return *v;
-        }
-        let v = self.new_value_id();
-        self.effect_value_id_cache.insert(hash, v);
-        v
+        self.value_id_of_key(hash_effect(effect))
+    }
+
+    fn value_id_of_key(&mut self, key: u64) -> ValueId {
+        *self.effect_value_id_cache.entry(key).or_insert_with(|| {
+            let id = ValueId(self.next_value_id);
+            self.next_value_id += 1;
+            id
+        })
     }
 }
 
@@ -1052,8 +1054,8 @@ fn find_hoisted_context_declarations(
         env: &Environment,
     ) {
         let decl_id = env.identifiers[place.identifier.0 as usize].declaration_id;
-        if hoisted.contains_key(&decl_id) && hoisted.get(&decl_id).unwrap().is_none() {
-            hoisted.insert(decl_id, Some(place.clone()));
+        if let Some(first_access @ None) = hoisted.get_mut(&decl_id) {
+            *first_access = Some(place.clone());
         }
     }
 
@@ -1074,8 +1076,8 @@ fn find_hoisted_context_declarations(
                 }
                 _ if hoisted.is_empty() => {}
                 _ => {
-                    for operand in visitors::each_instruction_value_operand(&instr.value, env) {
-                        visit(&mut hoisted, &operand, env);
+                    for operand in visitors::operands(&instr.value, &env.functions) {
+                        visit(&mut hoisted, operand, env);
                     }
                 }
             }
@@ -1083,8 +1085,8 @@ fn find_hoisted_context_declarations(
         if hoisted.is_empty() {
             continue;
         }
-        for operand in visitors::each_terminal_operand(&block.terminal) {
-            visit(&mut hoisted, &operand, env);
+        for operand in visitors::terminal_operands(&block.terminal) {
+            visit(&mut hoisted, operand, env);
         }
     }
     hoisted
@@ -1190,7 +1192,7 @@ fn find_non_mutated_destructure_spreads(
                             known_frozen.insert(lvalue_id);
                         }
                     } else if !candidate_non_mutating_spreads.is_empty() {
-                        for operand in visitors::each_instruction_value_operand(&instr.value, env) {
+                        for operand in visitors::operands(&instr.value, &env.functions) {
                             if let Some(spread) = candidate_non_mutating_spreads
                                 .get(&operand.identifier)
                                 .copied()
@@ -1202,7 +1204,7 @@ fn find_non_mutated_destructure_spreads(
                 }
                 _ => {
                     if !candidate_non_mutating_spreads.is_empty() {
-                        for operand in visitors::each_instruction_value_operand(&instr.value, env) {
+                        for operand in visitors::operands(&instr.value, &env.functions) {
                             if let Some(spread) = candidate_non_mutating_spreads
                                 .get(&operand.identifier)
                                 .copied()
@@ -1249,13 +1251,11 @@ fn infer_param(
 fn infer_block(
     context: &mut Context,
     state: &mut InferenceState,
-    block_id: BlockId,
+    block: &mut BasicBlock,
     is_revisitable: bool,
-    func: &mut HirFunction,
+    instructions: &mut [Instruction],
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
-    let block = &func.body.blocks[&block_id];
-
     // Process phis
     for phi in &block.phis {
         state.infer_phi(phi.place.identifier, &phi.operands);
@@ -1266,7 +1266,7 @@ fn infer_block(
     let mut effects = std::mem::take(&mut context.effects);
     for instr_id in &block.instructions {
         let instr_index = instr_id.0 as usize;
-        let instr = &func.instructions[instr_index];
+        let instr = &instructions[instr_index];
 
         if is_revisitable {
             let cached = match context.instruction_signature_cache[instr_index].take() {
@@ -1284,7 +1284,7 @@ fn infer_block(
             compute_signature_for_instruction(context, env, instr, &mut signature);
             apply_signature(context, state, &signature, instr, env, &mut effects)?;
         }
-        func.instructions[instr_index].effects = if effects.is_empty() {
+        instructions[instr_index].effects = if effects.is_empty() {
             None
         } else {
             Some(AstAlloc::vec_from_iter(effects.drain(..)))
@@ -1294,45 +1294,24 @@ fn infer_block(
     context.effects = effects;
 
     // Process terminal
-    // Determine what terminal action to take without holding borrows
-    enum TerminalAction {
-        Try { handler: BlockId, binding: Place },
-        MaybeThrow { handler_id: BlockId },
-        Return,
-        None,
-    }
-    let action = {
-        let block = &func.body.blocks[&block_id];
-        match &block.terminal {
-            crate::hir::Terminal::Try {
-                handler,
-                handler_binding: Some(binding),
-                ..
-            } => TerminalAction::Try {
-                handler: *handler,
-                binding: binding.clone(),
-            },
-            crate::hir::Terminal::MaybeThrow {
-                handler: Some(handler_id),
-                ..
-            } => TerminalAction::MaybeThrow {
-                handler_id: *handler_id,
-            },
-            crate::hir::Terminal::Return { .. } => TerminalAction::Return,
-            _ => TerminalAction::None,
+    match &mut block.terminal {
+        Terminal::Try {
+            handler,
+            handler_binding: Some(binding),
+            ..
+        } => {
+            context.catch_handlers.insert(*handler, binding.clone());
         }
-    };
-
-    match action {
-        TerminalAction::Try { handler, binding } => {
-            context.catch_handlers.insert(handler, binding);
-        }
-        TerminalAction::MaybeThrow { handler_id } => {
-            if let Some(handler_param) = context.catch_handlers.get(&handler_id).cloned() {
+        Terminal::MaybeThrow {
+            handler: Some(handler_id),
+            effects: term_effects,
+            ..
+        } => {
+            if let Some(handler_param) = context.catch_handlers.get(handler_id).cloned() {
                 if state.is_defined(handler_param.identifier) {
                     let mut terminal_effects: HirVec<AliasingEffect> = AstAlloc::vec();
-                    for instr_id in &func.body.blocks[&block_id].instructions {
-                        let instr = &func.instructions[instr_id.0 as usize];
+                    for instr_id in &block.instructions {
+                        let instr = &instructions[instr_id.0 as usize];
                         match &instr.value {
                             InstructionValue::CallExpression { .. }
                             | InstructionValue::MethodCall { .. } => {
@@ -1353,40 +1332,29 @@ fn infer_block(
                             _ => {}
                         }
                     }
-                    let block_mut = func.body.blocks.get_mut(&block_id).unwrap();
-                    if let crate::hir::Terminal::MaybeThrow {
-                        effects: ref mut term_effects,
-                        ..
-                    } = block_mut.terminal
-                    {
-                        *term_effects = if terminal_effects.is_empty() {
-                            None
-                        } else {
-                            Some(terminal_effects)
-                        };
-                    }
+                    *term_effects = if terminal_effects.is_empty() {
+                        None
+                    } else {
+                        Some(terminal_effects)
+                    };
                 }
             }
         }
-        TerminalAction::Return => {
+        Terminal::Return {
+            value,
+            effects: term_effects,
+            ..
+        } => {
             if !context.is_function_expression {
-                let block_mut = func.body.blocks.get_mut(&block_id).unwrap();
-                if let crate::hir::Terminal::Return {
-                    ref value,
-                    effects: ref mut term_effects,
-                    ..
-                } = block_mut.terminal
-                {
-                    *term_effects = Some(crate::hir_vec![context.intern_effect(
-                        AliasingEffect::Freeze {
-                            value: value.clone(),
-                            reason: ValueReason::JsxCaptured,
-                        }
-                    )]);
-                }
+                *term_effects = Some(crate::hir_vec![context.intern_effect(
+                    AliasingEffect::Freeze {
+                        value: value.clone(),
+                        reason: ValueReason::JsxCaptured,
+                    }
+                )]);
             }
         }
-        TerminalAction::None => {}
+        _ => {}
     }
     Ok(())
 }
@@ -1399,7 +1367,7 @@ fn apply_signature(
     context: &mut Context,
     state: &mut InferenceState,
     signature: &[AliasingEffect],
-    instr: &crate::hir::Instruction,
+    instr: &Instruction,
     env: &mut Environment,
     effects: &mut Vec<AliasingEffect>,
 ) -> Result<(), CompilerDiagnostic> {
@@ -1409,14 +1377,16 @@ fn apply_signature(
         | InstructionValue::ObjectMethod { lowered_func, .. } => {
             let inner_func = &env.functions[lowered_func.func.0 as usize];
             if let Some(ref aliasing_effects) = inner_func.aliasing_effects {
-                let context_ids: HashSet<IdentifierId> =
-                    inner_func.context.iter().map(|p| p.identifier).collect();
+                let mut context_ids: Option<HashSet<IdentifierId>> = None;
                 for effect in aliasing_effects {
                     let (mutate_value, is_mutate) = match effect {
                         AliasingEffect::Mutate { value, .. } => (value, true),
                         AliasingEffect::MutateTransitive { value } => (value, false),
                         _ => continue,
                     };
+                    let context_ids = context_ids.get_or_insert_with(|| {
+                        inner_func.context.iter().map(|p| p.identifier).collect()
+                    });
                     if !context_ids.contains(&mutate_value.identifier) {
                         continue;
                     }
@@ -1836,14 +1806,7 @@ fn apply_effect(
                         h.write_u32(into.identifier.0);
                         h.finish()
                     };
-                    let value_id = match context.effect_value_id_cache.get(&cache_key) {
-                        Some(v) => *v,
-                        None => {
-                            let v = context.new_value_id();
-                            context.effect_value_id_cache.insert(cache_key, v);
-                            v
-                        }
-                    };
+                    let value_id = context.value_id_of_key(cache_key);
                     state.initialize(
                         value_id,
                         AbstractValue {
@@ -1862,14 +1825,7 @@ fn apply_effect(
                         h.write_u32(into.identifier.0);
                         h.finish()
                     };
-                    let value_id = match context.effect_value_id_cache.get(&cache_key) {
-                        Some(v) => *v,
-                        None => {
-                            let v = context.new_value_id();
-                            context.effect_value_id_cache.insert(cache_key, v);
-                            v
-                        }
-                    };
+                    let value_id = context.value_id_of_key(cache_key);
                     state.initialize(
                         value_id,
                         AbstractValue {
@@ -2240,7 +2196,7 @@ fn apply_effect(
 fn compute_signature_for_instruction(
     context: &Context,
     env: &Environment,
-    instr: &crate::hir::Instruction,
+    instr: &Instruction,
     effects: &mut Vec<AliasingEffect>,
 ) {
     let lvalue = &instr.lvalue;
@@ -2511,7 +2467,7 @@ fn compute_signature_for_instruction(
                 value: ValueKind::Frozen,
                 reason: ValueReason::JsxCaptured,
             });
-            for operand in visitors::each_instruction_value_operand(value, env) {
+            for operand in visitors::operands(value, &env.functions) {
                 effects.push(AliasingEffect::Freeze {
                     value: operand.clone(),
                     reason: ValueReason::JsxCaptured,
@@ -2556,7 +2512,7 @@ fn compute_signature_for_instruction(
                 value: ValueKind::Frozen,
                 reason: ValueReason::JsxCaptured,
             });
-            for operand in visitors::each_instruction_value_operand(value, env) {
+            for operand in visitors::operands(value, &env.functions) {
                 effects.push(AliasingEffect::Freeze {
                     value: operand.clone(),
                     reason: ValueReason::JsxCaptured,
@@ -2771,7 +2727,7 @@ fn compute_signature_for_instruction(
         }
         InstructionValue::StartMemoize { .. } | InstructionValue::FinishMemoize { .. } => {
             if env.config.enable_preserve_existing_memoization_guarantees {
-                for operand in visitors::each_instruction_value_operand(value, env) {
+                for operand in visitors::operands(value, &env.functions) {
                     effects.push(AliasingEffect::Freeze {
                         value: operand.clone(),
                         reason: ValueReason::HookCaptured,

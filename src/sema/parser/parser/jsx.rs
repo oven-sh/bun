@@ -535,13 +535,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseJsxTagName`, `parseJsxAttributeName`: the text of the name, which may have a
     /// namespace, its start and whether it is anything but an identifier.
+    #[inline(never)]
     fn jsx_name(&mut self) -> (Atom, u32, bool) {
+        let end = self.lx.end;
         self.scan_jsx_identifier();
         if self.token() != T::Identifier {
             return self.jsx_name_at_another_token();
         }
         let (name, start) = (self.lx.atom, self.pos());
+        // It is a name of JavaScript then, which has neither a `-` nor a `:`.
+        let is_as_scanned = self.lx.end == end;
         self.next();
+        if is_as_scanned && self.token() != T::Colon {
+            debug_assert!(bun_core::strings::index_of_any(self.lx.text_of(name), b"-:").is_none());
+            return (name, start, false);
+        }
         self.rest_of_jsx_name(name, start)
     }
 

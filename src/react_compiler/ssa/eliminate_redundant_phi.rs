@@ -1,6 +1,4 @@
-use crate::collections::FxHashSet as HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::*;
@@ -30,20 +28,16 @@ fn eliminate_redundant_phi_impl(
     let ir = &mut func.body;
 
     let mut has_back_edge = false;
-    let mut visited: HashSet<BlockId> = HashSet::default();
+    let mut visited: IdBitSet<BlockId> = IdBitSet::new();
 
     let mut size;
     loop {
         size = rewrites.len();
 
-        let block_ids: Vec<BlockId> = ir.blocks.keys().copied().collect();
-        for block_id in &block_ids {
-            let block_id = *block_id;
-
+        for (&block_id, block) in ir.blocks.iter_mut() {
             if !has_back_edge {
-                let block = ir.blocks.get(&block_id).unwrap();
                 for pred_id in &block.preds {
-                    if !visited.contains(pred_id) {
+                    if !visited.contains(*pred_id) {
                         has_back_edge = true;
                     }
                 }
@@ -53,7 +47,6 @@ fn eliminate_redundant_phi_impl(
             // Find any redundant phis: rewrite operands, identify redundant phis, remove them.
             // Matches TS behavior: each phi's operands are rewritten before checking redundancy,
             // so that rewrites from earlier phis in the same block are visible to later phis.
-            let block = ir.blocks.get_mut(&block_id).unwrap();
             let mut has_empty_phi = false;
             block.phis.retain_mut(|phi| {
                 // Remap phis in case operands are from eliminated phis
@@ -91,29 +84,29 @@ fn eliminate_redundant_phi_impl(
             }
 
             // Rewrite instructions
-            let instruction_ids: HirVec<InstructionId> =
-                ir.blocks.get(&block_id).unwrap().instructions.clone();
+            for instr_id in &block.instructions {
+                let instr = &mut func.instructions[instr_id.0 as usize];
 
-            for instr_id in &instruction_ids {
-                let instr_idx = instr_id.0 as usize;
-                let instr = &mut func.instructions[instr_idx];
+                if !rewrites.is_empty() {
+                    // Rewrite all lvalues (matches TS eachInstructionLValue)
+                    rewrite_place(&mut instr.lvalue, rewrites);
+                    visitors::for_each_instruction_value_lvalue_mut(
+                        &mut instr.value,
+                        &mut |place| {
+                            rewrite_place(place, rewrites);
+                        },
+                    );
 
-                // Rewrite all lvalues (matches TS eachInstructionLValue)
-                rewrite_place(&mut instr.lvalue, rewrites);
-                visitors::for_each_instruction_value_lvalue_mut(&mut instr.value, &mut |place| {
-                    rewrite_place(place, rewrites);
-                });
-
-                // Rewrite operands using canonical visitor
-                visitors::for_each_instruction_value_operand_mut(
-                    &mut func.instructions[instr_idx].value,
-                    &mut |place| {
-                        rewrite_place(place, rewrites);
-                    },
-                );
+                    // Rewrite operands using canonical visitor
+                    visitors::for_each_instruction_value_operand_mut(
+                        &mut instr.value,
+                        &mut |place| {
+                            rewrite_place(place, rewrites);
+                        },
+                    );
+                }
 
                 // Handle FunctionExpression/ObjectMethod context and recursion
-                let instr = &func.instructions[instr_idx];
                 let func_expr_id = match &instr.value {
                     InstructionValue::FunctionExpression { lowered_func, .. }
                     | InstructionValue::ObjectMethod { lowered_func, .. } => {
@@ -142,8 +135,7 @@ fn eliminate_redundant_phi_impl(
             }
 
             // Rewrite terminal operands using canonical visitor
-            let terminal = &mut ir.blocks.get_mut(&block_id).unwrap().terminal;
-            visitors::for_each_terminal_operand_mut(terminal, &mut |place| {
+            visitors::for_each_terminal_operand_mut(&mut block.terminal, &mut |place| {
                 rewrite_place(place, rewrites);
             });
         }

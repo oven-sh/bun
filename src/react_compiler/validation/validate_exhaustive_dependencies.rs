@@ -7,7 +7,7 @@ use crate::hir::environment::Environment;
 use crate::hir::environment_config::ExhaustiveEffectDepsMode;
 use crate::hir::visitors::{each_lvalue, lvalues, operands, terminal_operands};
 use crate::hir::{
-    ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
+    AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
     IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
     ManualMemoDependencyRoot, NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr,
     Terminal, Type, hir_vec,
@@ -901,31 +901,19 @@ fn collect_dependencies(
                         }
                     }
                 }
-                InstructionValue::ArrayExpression { elements, loc, .. } => {
+                InstructionValue::ArrayExpression { loc, .. } => {
                     let mut array_deps: Vec<InferredDependency> = Vec::new();
                     let empty_locals = IdBitSet::default();
-                    for elem in elements {
-                        let place = match elem {
-                            ArrayElement::Place(p) => Some(p),
-                            ArrayElement::Spread(s) => Some(&s.place),
-                            ArrayElement::Hole => None,
-                        };
-                        if let Some(place) = place {
-                            // Visit with empty locals for manual deps
-                            visit_candidate_dependency(
-                                place,
-                                temporaries,
-                                &mut array_deps,
-                                &empty_locals,
-                            );
-                            // Visit normally
-                            visit_candidate_dependency(
-                                place,
-                                temporaries,
-                                &mut dependencies,
-                                &locals,
-                            );
-                        }
+                    for place in operands(&instr.value, functions) {
+                        // Visit with empty locals for manual deps
+                        visit_candidate_dependency(
+                            place,
+                            temporaries,
+                            &mut array_deps,
+                            &empty_locals,
+                        );
+                        // Visit normally
+                        visit_candidate_dependency(place, temporaries, &mut dependencies, &locals);
                     }
                     temporaries.insert(
                         lvalue_id,

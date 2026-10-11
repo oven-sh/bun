@@ -1478,18 +1478,15 @@ impl Run<'_> {
             None => {}
         }
         if let (count @ 1.., names) = &left_for_plugins {
-            let noun = if *count == 1 { "file is" } else { "files are" };
+            let (noun, it_is, it) = match *count {
+                1 => ("file is", "it is", "it"),
+                _ => ("files are", "they are", "them"),
+            };
             let text = format!(
-                "{count} {noun} left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: "
+                "{count} {noun} left as {it_is}: the configuration names plugins that bun format does not have, and that may print {it} in another way: "
             );
-            self.error(
-                &[
-                    text.as_bytes(),
-                    &names.join(&b", "[..]),
-                    b". With --allow-unsupported they are formatted without.",
-                ]
-                .concat(),
-            );
+            let end = format!(". With --allow-unsupported {it_is} formatted without.");
+            self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
         }
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
@@ -1497,13 +1494,16 @@ impl Run<'_> {
                 b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0))
             });
             let count: usize = others.iter().map(|it| it.1).sum();
-            let noun = if count == 1 { "file is" } else { "files are" };
+            let (noun, it_is) = match count {
+                1 => ("file is", "it is"),
+                _ => ("files are", "they are"),
+            };
             let kinds: Vec<Vec<u8>> = others
                 .iter()
                 .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
                 .collect();
             let text = format!(
-                "{count} {noun} in a language that bun format does not support yet, and left as they are: "
+                "{count} {noun} in a language that bun format does not support yet, and left as {it_is}: "
             );
             let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
             if !not_installed.is_empty() {

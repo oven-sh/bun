@@ -1338,7 +1338,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         expect(result.stderr).toContain(
           "[warn] Not installed: prettier-plugin-svelte. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
         );
-        expect(result.stderr).toContain("and left as they are: 1 .svelte.");
+        expect(result.stderr).toContain("and left as it is: 1 .svelte.");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -1357,7 +1357,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const reads = Object.keys(files);
     const result = await format({ ...files, ".oxfmtrc.json": '{ "svelte": {} }\n' }, [], { reads });
     expect(result.files).toEqual(after);
-    expect(result.stderr).toContain("does not support yet, and left as they are: 1 .svelte.");
+    expect(result.stderr).toContain("does not support yet, and left as it is: 1 .svelte.");
     expect(result.exitCode).toBe(2);
     const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
     expect(without.files).toEqual(after);
@@ -1561,7 +1561,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format(files, [], { reads: ["a.js", "legacy/b.js"] });
     expect(result.files).toEqual({ "a.js": formatted, "legacy/b.js": ugly });
     expect(result.stderr).toContain(
-      "[error] 1 file is left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: prettier-plugin-brace-style.",
+      "[error] 1 file is left as it is: the configuration names plugins that bun format does not have, and that may print it in another way: prettier-plugin-brace-style.",
     );
     expect(result.exitCode).toBe(2);
     // An override that empties the list takes its files out.
@@ -1585,7 +1585,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     };
     const result = await format(files, [], { reads: ["a.js", "b.astro", "c.svelte"] });
     expect(result.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "c.svelte": files["c.svelte"] });
-    expect(result.stderr).toContain("and left as they are: 1 .astro.");
+    expect(result.stderr).toContain("and left as it is: 1 .astro.");
     expect(result.exitCode).toBe(2);
   });
 

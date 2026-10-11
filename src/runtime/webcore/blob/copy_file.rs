@@ -503,6 +503,16 @@ impl CopyFile {
         Ok(())
     }
 
+    /// Whether Bun opened the destination as a new open file. A descriptor of
+    /// the caller keeps its length, and so does a path that opens as a dup of one.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn opened_new_destination(&self) -> bool {
+        matches!(
+            &self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Path(path) if !bun_sys::path_opens_as_dup(path.slice())
+        )
+    }
+
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
         let mut total: u64 = 0;
@@ -862,10 +872,7 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            if self.opened_new_destination() {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),
                 ) {
@@ -897,10 +904,7 @@ impl CopyFile {
 
         #[cfg(target_os = "freebsd")]
         {
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            if self.opened_new_destination() {
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,

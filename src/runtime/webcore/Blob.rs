@@ -5158,6 +5158,9 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     str: &BunString,
     needs_async: &mut bool,
 ) -> JSValue {
+    // A dup of a descriptor keeps O_TRUNC in the open, where the kernel applies it to a
+    // new file only, and is not resized after the write.
+    let dest_is_dup = NEEDS_OPEN && bun_sys::path_opens_as_dup(pathlike.path().slice());
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
@@ -5166,7 +5169,10 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             pathlike.path().slice_z(&mut file_path),
             // we deliberately don't use O_TRUNC here
             // it's a perf optimization
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+            bun_sys::O::WRONLY
+                | bun_sys::O::CREAT
+                | bun_sys::O::NONBLOCK
+                | if dest_is_dup { bun_sys::O::TRUNC } else { 0 },
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => result,
@@ -5190,7 +5196,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
+    let truncate = core::cell::Cell::new((NEEDS_OPEN || str.is_empty()) && !dest_is_dup);
     let written = core::cell::Cell::new(0usize);
 
     // we only truncate if it's a path
@@ -5240,6 +5246,9 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     bytes: &[u8],
     needs_async: &mut bool,
 ) -> JSValue {
+    // A dup of a descriptor keeps O_TRUNC in the open, where the kernel applies it to a
+    // new file only, and is not resized after the write.
+    let dest_is_dup = NEEDS_OPEN && bun_sys::path_opens_as_dup(pathlike.path().slice());
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
@@ -5251,7 +5260,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         };
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
-            flags,
+            flags | if dest_is_dup { bun_sys::O::TRUNC } else { 0 },
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => result,
@@ -5271,7 +5280,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     // TODO: on windows this is always synchronous
 
-    let truncate = NEEDS_OPEN || bytes.is_empty();
+    let truncate = (NEEDS_OPEN || bytes.is_empty()) && !dest_is_dup;
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 

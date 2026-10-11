@@ -7222,6 +7222,17 @@ pub fn set_file_offset(fd: Fd, offset: u64) -> Maybe<()> {
     lseek(fd, offset as i64, libc::SEEK_SET).map(|_| ())
 }
 
+/// Whether `open()` of `path` gives a dup of an open descriptor, as macOS and
+/// FreeBSD do for these exact names. The dup keeps the offset and `O_APPEND`
+/// of that descriptor and ignores `O_TRUNC`: its file is not ours to resize.
+pub fn path_opens_as_dup(path: &[u8]) -> bool {
+    cfg!(any(target_os = "macos", target_os = "freebsd"))
+        && (matches!(path, b"/dev/stdin" | b"/dev/stdout" | b"/dev/stderr")
+            || path
+                .strip_prefix(b"/dev/fd/")
+                .is_some_and(|fd| !fd.is_empty() && fd.iter().all(u8::is_ascii_digit)))
+}
+
 // ── nonblocking read/write (preadv2/pwritev2 RWF_NOWAIT on Linux) ──
 
 #[cfg(any(target_os = "linux", target_os = "android"))]

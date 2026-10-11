@@ -3247,27 +3247,24 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `bindInitializedVariableFlow`
     fn initialized(&mut self, pat: PatId, decl: Option<VarDeclId>) {
-        match self.f[pat].kind {
-            // Whatever is not a pattern, like the element without a name in `[,]`.
-            PatKind::Ident(_) | PatKind::Missing => {
-                let target = match decl {
-                    Some(d) => FlowTarget::Var(d),
-                    None => FlowTarget::Pat(pat),
-                };
-                self.flow_mutation(Flow::Assign {
-                    before: self.flow,
-                    target,
-                });
-            }
-            PatKind::Object(props) => {
-                for p in props.iter() {
-                    self.initialized(self.f[p].value, None);
+        // What is still to come, the next last. Not by recursion, which would have to ask the stack.
+        let mut open: SmallVec<[PatId; 8]> = SmallVec::new();
+        open.push(pat);
+        while let Some(at) = open.pop() {
+            match self.f[at].kind {
+                // Whatever is not a pattern, like the element without a name in `[,]`.
+                PatKind::Ident(_) | PatKind::Missing => {
+                    let target = match decl.filter(|_| at == pat) {
+                        Some(d) => FlowTarget::Var(d),
+                        None => FlowTarget::Pat(at),
+                    };
+                    self.flow_mutation(Flow::Assign {
+                        before: self.flow,
+                        target,
+                    });
                 }
-            }
-            PatKind::Array(elems) => {
-                for e in elems.iter() {
-                    self.initialized(self.f[e].pat, None);
-                }
+                PatKind::Object(props) => open.extend(props.iter().rev().map(|p| self.f[p].value)),
+                PatKind::Array(elems) => open.extend(elems.iter().rev().map(|e| self.f[e].pat)),
             }
         }
     }

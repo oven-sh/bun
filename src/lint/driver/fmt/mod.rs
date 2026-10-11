@@ -17,7 +17,7 @@ use crate::{fs, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
-use bun_format::options::{Code, Goal, Parsed};
+use bun_format::options::{Code, Then};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
@@ -356,7 +356,7 @@ fn format_block_in(
 }
 
 /// For the scripts and expressions in HTML.
-pub fn parse_javascript(code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)) {
+pub fn parse_javascript(code: Code<'_>, then: Then<'_>) {
     let names = Session::new();
     let names = (&Interner::new_in(&names) as &dyn Intern, &names);
     parse_code(code, &Resolved::default(), names, then);
@@ -366,7 +366,7 @@ fn parse_code(
     code: Code<'_>,
     resolved: &Resolved,
     (atoms, memory): (&dyn Intern, &Session),
-    then: &mut dyn for<'b> FnMut(&Parsed<'b>),
+    then: Then<'_>,
 ) {
     let how = How {
         path: code.path,
@@ -377,53 +377,7 @@ fn parse_code(
         atoms,
         memory,
     };
-    // `error`: in the place of the first error in `text`.
-    let whole = |text: &[u8], error: Option<u32>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)| {
-        with_file(&how, text, |file, _, Refused { first_error, .. }| {
-            then(&Parsed {
-                file,
-                end: text.len() as u32,
-                first_error: error.or_else(|| first_error.map(|it| it.start)),
-            })
-        })
-    };
-    let goal = match code.goal {
-        Goal::Program => return whole(code.text, None, then),
-        Goal::Expression => bun_sema_parser::Goal::Expression,
-        Goal::Declaration => bun_sema_parser::Goal::Declaration,
-        Goal::Type => bun_sema_parser::Goal::Type,
-    };
-    let (language, dialect, _) = how.language_and_dialect();
-    let is_javascript = language.parser != Parser::TypeScript;
-    let mut then = Some(then);
-    let parsed = bun_sema_parser::with_part_in_place(
-        dialect,
-        is_javascript,
-        code.text,
-        goal,
-        |summary, atoms, end| {
-            let (Summary::InPlace(hir), Some(then)) = (summary, then.take()) else {
-                return;
-            };
-            let mut recycled = Recycled::of_this_thread();
-            let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
-                return;
-            };
-            // Not what follows the part: what a file finds out about its text once would be found out about the rest of a
-            // component for each expression in it.
-            let text = code.text.get(..end as usize).unwrap_or(code.text);
-            let file = File::new(code.path, &*hir, bound, atoms, &language, None).with_text(text);
-            then(&Parsed {
-                file: &file,
-                end,
-                first_error: None,
-            });
-        },
-    );
-    // There is no file to show. An empty one says where the error is.
-    if let (Err(at), Some(then)) = (parsed, then) {
-        whole(b"", Some(at), then);
-    }
+    with_file(&how, code.text, |file, _, _| then(file));
 }
 
 /// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
@@ -574,7 +528,7 @@ fn format(
         }
         Some(Kind::Html(parser)) => {
             let plain = Resolved::default();
-            let parse = |code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)| {
+            let parse = |code: Code<'_>, then: Then<'_>| {
                 parse_code(code, &plain, (atoms, memory), then);
             };
             let done = bun_format::html::format_with(

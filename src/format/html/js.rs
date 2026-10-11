@@ -5,13 +5,11 @@
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
-use crate::js::comments::{ParsedBy, collect};
+use crate::js::comments::collect;
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
-use crate::options::{
-    Code, Flavor, Goal, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Parsed,
-};
+use crate::options::{Code, Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Then};
 use crate::prelude::*;
 use crate::tailwind::{Ends, Tailwind, plugin};
 use crate::{format_args, text, write};
@@ -77,7 +75,7 @@ fn is_probably_jsx(text: &[u8]) -> bool {
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
     FormatOptions {
         // In an attribute, double quotes would have to be written as entities.
-        quote_style: if in_html.is_in_attribute || in_html.has_single_quotes {
+        quote_style: if in_html.is_in_attribute {
             QuoteStyle::Single
         } else {
             options.quote_style
@@ -128,26 +126,12 @@ impl<'p> Parse<'p> {
     }
 
     /// A program.
-    pub(crate) fn call(
-        self,
-        path: &[u8],
-        text: &[u8],
-        is_script: bool,
-        then: &mut dyn for<'b> FnMut(&'b File<'b>),
-    ) {
-        let goal = Goal::Program;
-        self.call_for(
-            Code {
-                path,
-                text,
-                is_script,
-                goal,
-            },
-            &mut |parsed| then(parsed.file),
-        );
-    }
-
-    pub(crate) fn call_for(self, code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)) {
+    pub(crate) fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
+        let code = Code {
+            path,
+            text,
+            is_script,
+        };
         match self {
             Parse::Function(parse) => parse(code, then),
             Parse::Closure(parse) => parse(code, then),
@@ -246,11 +230,7 @@ pub(crate) fn with_file(
                     }
                     let comments = file.extension(|| {
                         let mut comments = Vec::new();
-                        let parsed_by = match options.in_html.has_tree_of_babel {
-                            true => ParsedBy::Babel,
-                            false => ParsedBy::WhatItsNameSays,
-                        };
-                        collect(file, options.flavor, parsed_by, &mut comments);
+                        collect(file, options.flavor, &mut comments);
                         comments
                     });
                     let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);

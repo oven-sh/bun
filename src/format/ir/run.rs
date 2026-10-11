@@ -3,7 +3,7 @@
 use super::element::Interned;
 use super::formatter::Formatter;
 use crate::cursor::CursorRegion;
-use crate::js::comments::{ParsedBy, collect};
+use crate::js::comments::collect;
 use crate::js::context::JsFormatContext;
 use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
@@ -110,12 +110,7 @@ fn write_document<'a>(
     // The file keeps them, so that they live as long as the handles.
     let comments = file.extension(|| {
         let mut comments = Vec::new();
-        collect(
-            file,
-            options.flavor,
-            ParsedBy::WhatItsNameSays,
-            &mut comments,
-        );
+        collect(file, options.flavor, &mut comments);
         comments
     });
     let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| {

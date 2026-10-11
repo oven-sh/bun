@@ -1,20 +1,10 @@
-// Generates the Unicode tables of src/lint/utils/{unicode,string_utils}.rs from the ICU of the runtime that runs it:
+// Generates the Unicode table of src/lint/utils/string_utils.rs from the ICU of the runtime that runs it:
 //   bun generate-unicode-tables.ts
-// General categories come from `\p{..}`. The classes of grapheme segmentation (Grapheme_Cluster_Break, Extended_Pictographic,
+// The classes of grapheme segmentation (Grapheme_Cluster_Break, Extended_Pictographic,
 // Indic_Conjunct_Break) are not reachable from JavaScript, so each code point is classified by where `Intl.Segmenter` breaks
 // around it in a few contexts.
 const segmenter = new Intl.Segmenter("en-US");
 const MAX = 0x10ffff;
-
-function boundaries(pattern: RegExp): number[] {
-  const out: number[] = [];
-  let inside = false;
-  for (let c = 0; c <= MAX + 1; c++) {
-    const is = c <= MAX && !(c >= 0xd800 && c <= 0xdfff) && pattern.test(String.fromCodePoint(c));
-    if (is !== inside) out.push(c), (inside = is);
-  }
-  return out;
-}
 
 const [A, EXT, ZWJ, PICT, L, V, T, RI, KA, VIRAMA] = ["a", "̀", "‍", "\u{1f600}", "ᄀ", "ᅡ", "ᆨ", "\u{1f1e6}", "क", "्"];
 // Each probe: what is before the code point, what is after, and whether the break in question is the one before the last
@@ -114,10 +104,6 @@ if (import.meta.main) {
   for (let c = 0xac00; c <= 0xd7a3; c++) {
     if (CLASSES[classes[c]] !== ((c - 0xac00) % 28 === 0 ? "LV" : "LVT")) throw new Error("Hangul");
   }
-  const mark = boundaries(/^\p{M}$/u);
-  const letter = boundaries(/^\p{L}$/u);
   console.log(`// Unicode ${process.versions.unicode}`);
-  console.log(`static COMBINING: [u32; ${mark.length}] = [\n${rows(mark, hex)}];\n`);
-  console.log(`static LETTERS: [u32; ${letter.length}] = [\n${rows(letter, hex)}];\n`);
   console.log(`static GRAPHEME_CLASSES: [u32; ${runs.length}] = [\n${rows(runs, hex)}];`);
 }

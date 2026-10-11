@@ -49,7 +49,6 @@ impl<'a> JsFormatContext<'a> {
         Self {
             file: Some(file),
             has_tree_of_babel: file.is_javascript()
-                || options.in_html.has_tree_of_babel
                 || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program),
             ..Self::without_file(file.text(), options, comments)
         }

@@ -100,20 +100,6 @@ pub struct FormatOptions {
 /// code could be formatted.
 pub type FormatJavaScript = fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool;
 
-/// How much of a text is parsed.
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-pub enum Goal {
-    /// All of it.
-    #[default]
-    Program,
-    /// The expression that it starts with, commas included. More can follow, in any language.
-    Expression,
-    /// The same for a `let`, `const` or `var`.
-    Declaration,
-    /// The same for a type.
-    Type,
-}
-
 /// Code to parse.
 #[derive(Copy, Clone)]
 pub struct Code<'c> {
@@ -121,24 +107,16 @@ pub struct Code<'c> {
     pub path: &'c [u8],
     pub text: &'c [u8],
     pub is_script: bool,
-    pub goal: Goal,
 }
 
-/// What has become of [`Code`].
-pub struct Parsed<'b> {
-    /// Errors or not. If less than a program has been asked for, that is its only statement: a type is the type of an alias.
-    pub file: &'b bun_lint::ast::File<'b>,
-    /// Where what has been parsed ends in the text, with the parentheses around it.
-    pub end: u32,
-    /// Where in the text.
-    pub first_error: Option<u32>,
-}
+/// What is called with the file that has become of [`Code`], errors or not.
+pub type Then<'t> = &'t mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>);
 
 /// Parses JavaScript or TypeScript, which this crate cannot do by itself, and calls what it is given with the result.
-pub type ParseJavaScript = fn(Code<'_>, &mut dyn for<'b> FnMut(&Parsed<'b>));
+pub type ParseJavaScript = fn(Code<'_>, Then<'_>);
 
 /// The same for a caller that keeps what it parses with: a text can have many pieces of code in it.
-pub type JavaScriptParser<'p> = &'p dyn Fn(Code<'_>, &mut dyn for<'b> FnMut(&Parsed<'b>));
+pub type JavaScriptParser<'p> = &'p dyn Fn(Code<'_>, Then<'_>);
 
 /// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
 /// what is less than a program.
@@ -155,10 +133,6 @@ pub struct InHtml {
     pub is_style_attribute: bool,
     /// `singleQuote`, which `quote_style` does not say in an attribute.
     pub quote_style: QuoteStyle,
-    /// `singleQuote: true`, whatever the options say: what `prettier-plugin-svelte` asks for between double quotes.
-    pub has_single_quotes: bool,
-    /// The parser is `babel-ts`: TypeScript, in a tree of Babel.
-    pub has_tree_of_babel: bool,
 }
 
 /// What the code is.

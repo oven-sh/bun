@@ -3,7 +3,7 @@
 //! The plugin changes the strings and the templates of the tree before Prettier prints it. Here the text is changed and
 //! parsed again, as for the plugins that sort imports. oxfmt has rules of its own: `js/utils/tailwindcss.rs`.
 
-use super::{Ends, Tailwind, Tidies};
+use super::{Ends, Tailwind};
 use crate::text;
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
@@ -47,7 +47,6 @@ struct Sorter<'a, 't> {
     roots: usize,
     /// What is written in the place of what.
     changes: Vec<(Span, Vec<u8>)>,
-    tidies: Tidies,
 }
 
 /// To Babel what is in an optional chain is no `CallExpression` and no `MemberExpression`.
@@ -166,7 +165,7 @@ impl<'a> Sorter<'a, '_> {
             collapses_start: !kept.start && index == 0,
             collapses_end: !kept.end && index + 1 == count,
         };
-        let sorted = self.tailwind.sorted_with(text, ends, self.tidies);
+        let sorted = self.tailwind.sorted_between(text, ends);
         if *sorted == *text {
             return;
         }
@@ -318,7 +317,6 @@ pub fn sorted_text<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Option<Vec<u8
         around: Vec::new(),
         roots: 0,
         changes: Vec::new(),
-        tidies: tailwind.tidies(),
     };
     walk(file, &mut sorter);
     let mut changes = sorter.changes;

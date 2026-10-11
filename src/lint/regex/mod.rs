@@ -60,9 +60,6 @@
 //! It refuses a pattern of more than 2^20 characters or 2^15 groups, and `\p{Script=Hrkt}`. Its
 //! strings have less than 2^31 characters: in a longer text nothing is found.
 //!
-//! Groups and classes nest at most 250 deep: beyond that a pattern is a [`SyntaxError`], for the
-//! parser as well.
-//!
 //! The scripts in test/cli/lint/oracle/regex compare all of this with regexpp, JavaScriptCore and V8.
 
 pub mod ast;

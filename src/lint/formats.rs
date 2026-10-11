@@ -60,6 +60,8 @@ pub enum Reason {
     SyntaxError,
     /// `bun format` does not stand by what it has printed.
     Refused,
+    /// `sortTailwindcss`, and a class that Tailwind CSS has not been asked about.
+    Classes,
     /// [`File::formatter`] is `None`.
     NoFormatter,
 }
@@ -81,6 +83,7 @@ impl Reason {
             Reason::Configuration => "the configuration of Prettier cannot be read",
             Reason::SyntaxError => "bun format finds a syntax error in them",
             Reason::Refused => "bun format does not stand by what it has printed",
+            Reason::Classes => "only bun format asks Tailwind CSS where their classes go",
             Reason::NoFormatter => "there is no formatter",
         }
     }

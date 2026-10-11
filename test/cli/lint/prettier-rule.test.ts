@@ -307,6 +307,26 @@ describe.concurrent("prettier/prettier", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Nobody else looks at them.
+  test("bun/format reports the files that it cannot check, and why", async () => {
+    const rule = { "eslint.config.mjs": `export default [{ rules: { "bun/format": "error" } }];` };
+    const unchecked = (why: string) => [`Files like this are not checked: ${why}.`];
+    const plugin = await lint({ ...rule, ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style"] }', "a.js": "a  ;\n" });
+    expect(plugin.reports["a.js"]).toEqual(
+      unchecked("a plugin of Prettier that bun format does not have may print them"),
+    );
+    expect(plugin.exitCode).toBe(1);
+    const classes = await lint({
+      ...rule,
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      "a.js": 'a  (`<a class="p-4 flex">`);\nhtml`<a class="p-4 flex"></a>`;\n',
+      "b.js": "b  ;\n",
+    });
+    expect(classes.reports["a.js"]).toEqual(unchecked("only bun format asks Tailwind CSS where their classes go"));
+    expect(classes.reports["b.js"]).toEqual(['1:2-1:4 delete [1,3] "" Delete `··`']);
+    expect(classes.exitCode).toBe(1);
+  });
+
   test("the rule of the package is asked: an option that is not Prettier's", async () => {
     const blocks = [{ rules: { "prettier/prettier": ["error", { optionOfTheirs: true }] } }];
     const files = { "a.js": "const a = {b:1}\n", ...installed(), "eslint.config.mjs": config(blocks) };

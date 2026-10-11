@@ -267,13 +267,13 @@ impl<'e> ForRules<'e> {
         let verifies = true;
         let names = Session::new();
         let names = (&Interner::new_in(&names) as &dyn Intern, &names);
-        let mut formatted = format(path, request.text, &resolved, names, &mut scratch, verifies);
+        let formatted = format(path, request.text, &resolved, names, &mut scratch, verifies);
+        self.scratches.lock().push(scratch);
         // Tailwind is asked in a process of its own, which takes about a second. `bun format` asks once, about all
         // files. Here it would be once for each file that has a class that no file before it has.
         if (resolved.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
-            formatted = Err(Failure::Bug("the order of the classes is not known"));
+            return Err(Reason::Classes);
         }
-        self.scratches.lock().push(scratch);
         match formatted {
             Ok((text, _)) if text == request.text => Ok(Formatted::Same),
             Ok((text, _)) => Ok(Formatted::Text(text)),

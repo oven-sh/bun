@@ -14,6 +14,7 @@ const REPLACE: Message = Message::new(
     "replace",
     "Replace `{{ deleteText }}` with `{{ insertText }}`",
 );
+const UNCHECKED: Message = Message::new("unchecked", "Files like this are not checked: {{ reason }}.");
 
 fn show_invisibles(shown: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(shown.len() * 2);
@@ -97,8 +98,13 @@ impl Settings {
         }
     }
 
-    /// The formatted text of `source`, which is all of `file`, and where the two differ.
-    fn compare(&self, like: Like, file: &File, source: &[u8]) -> Option<(Vec<u8>, Vec<Hunk>)> {
+    /// The formatted text of `source`, which is all of `file`, and where the two differ. `None`: nowhere.
+    fn compare(
+        &self,
+        like: Like,
+        file: &File,
+        source: &[u8],
+    ) -> Result<Option<(Vec<u8>, Vec<Hunk>)>, Reason> {
         let formatted = match file.formatter() {
             Some(formatter) => formatter.formats.formatted(&Request {
                 like,
@@ -115,16 +121,10 @@ impl Settings {
         match formatted {
             Formatted::Text(formatted) => {
                 let hunks = differences(source, &formatted);
-                Some((formatted, hunks))
+                Ok(Some((formatted, hunks)))
             }
-            Formatted::NotNative(reason) => {
-                // `bun/format` stands in for nothing.
-                if like == Like::InstalledPrettier {
-                    file.hand_back(reason);
-                }
-                None
-            }
-            Formatted::Same | Formatted::Skipped => None,
+            Formatted::NotNative(reason) => Err(reason),
+            Formatted::Same | Formatted::Skipped => Ok(None),
         }
     }
 
@@ -133,8 +133,16 @@ impl Settings {
         // ESLint's text is without the byte order mark.
         let skipped = if file.has_bom() { 3 } else { 0 };
         let source = file.text().get(skipped..).unwrap_or_default();
-        let Some((formatted, hunks)) = self.compare(like, file, source) else {
-            return;
+        let (formatted, hunks) = match self.compare(like, file, source) {
+            Ok(Some(it)) => it,
+            Ok(None) | Err(Reason::NoFormatter) => return,
+            Err(reason) if like == Like::InstalledPrettier => return file.hand_back(reason),
+            // `bun/format` stands in for nothing, so nobody else looks at the file.
+            Err(reason) => {
+                cx.report(Span::new(0, 0), UNCHECKED)
+                    .data("reason", reason.text());
+                return;
+            }
         };
         for it in hunks {
             let deleted = source.get(it.a_lo..it.a_hi).unwrap_or_default();

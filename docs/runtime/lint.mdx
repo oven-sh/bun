@@ -766,6 +766,8 @@ The type is found in arrays, tuples and unions, under another name, through `imp
 
 The same rule for a project without Prettier: it reports where a file differs from what `bun format` prints, whatever is installed. The `[format]` section of [`bunfig.toml`](/runtime/bunfig#formatter) counts, as for `bun format`.
 
+A file that it cannot check gets one report, which says why: the configuration names a plugin of Prettier that is not built in, or the file has classes that `sortTailwindcss` sorts. Only `bun format --check` asks Tailwind CSS for their order.
+
 ```json .oxlintrc.json icon="file-json"
 { "rules": { "bun/format": "error" } }
 ```

@@ -19,7 +19,7 @@ use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
-use crate::hir::visitors::each_pattern_operand;
+use crate::hir::visitors::pattern_operands;
 use crate::hir::{
     BlockKind, DeclarationId, HirFunction, InstructionId, InstructionKind, InstructionValue, Place,
 };
@@ -203,7 +203,7 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                 }
                 InstructionValue::Destructure { lvalue, .. } => {
                     let mut kind: Option<InstructionKind> = None;
-                    for place in each_pattern_operand(&lvalue.pattern) {
+                    for place in pattern_operands(&lvalue.pattern) {
                         let ident = &env.identifiers[place.identifier.0 as usize];
                         if ident.name.is_none() {
                             if !(kind.is_none() || kind == Some(InstructionKind::Const)) {
@@ -212,7 +212,7 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                                     Some(format!(
                                         "other places were `{}` but '{}' is const",
                                         format_kind(kind),
-                                        format_place(&place, env),
+                                        format_place(place, env),
                                     )),
                                     place.loc,
                                 ));
@@ -228,7 +228,7 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                                         Some(format!(
                                             "Other places were `{}` but '{}' is reassigned",
                                             format_kind(kind),
-                                            format_place(&place, env),
+                                            format_place(place, env),
                                         )),
                                         place.loc,
                                     ));
@@ -254,7 +254,7 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
                                         Some(format!(
                                             "Other places were `{}` but '{}' is const",
                                             format_kind(kind),
-                                            format_place(&place, env),
+                                            format_place(place, env),
                                         )),
                                         place.loc,
                                     ));

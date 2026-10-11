@@ -538,7 +538,7 @@ impl<'a> Checks<'a, '_> {
             }
         }
         for it in file.stmts_of_kind(StmtTag::Var) {
-            let StmtKind::Var(list) = it.kind() else {
+            let Some(list) = it.as_var() else {
                 continue;
             };
             if list.is_empty() {

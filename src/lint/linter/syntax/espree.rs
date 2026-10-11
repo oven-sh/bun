@@ -424,11 +424,9 @@ pub(super) fn first_error<'a>(
 
 /// `using a = b;` at the top level of a script, in the words of OXC. What CommonJS has is in a function.
 pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let is_using = |it: &Stmt| match it.kind() {
-        StmtKind::Var(list) => {
-            (list.iter().next()).is_some_and(|it| it.var_kind() == VarKind::Using)
-        }
-        _ => false,
+    let is_using = |it: &Stmt| {
+        let first = it.as_var().and_then(|list| list.first());
+        first.is_some_and(|it| it.var_kind() == VarKind::Using)
     };
     let first = file.body().iter().find(is_using)?;
     (is_script(file) && !file.is_declaration_file()).then(|| SyntaxError {

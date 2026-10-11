@@ -13,9 +13,7 @@
 //! Analogous to TS `Inference/DropManualMemoization.ts`.
 
 use crate::collections::FxHashMap as HashMap;
-use crate::collections::FxHashSet as HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
@@ -62,17 +60,17 @@ struct ManualMemoCallee {
 
 struct IdentifierSidemap {
     /// Maps identifier id -> InstructionId of FunctionExpression instructions
-    functions: HashSet<IdentifierId>,
+    functions: IdBitSet<IdentifierId>,
     /// Maps identifier id -> ManualMemoCallee for useMemo/useCallback callees
     manual_memos: IdMap<IdentifierId, ManualMemoCallee>,
     /// Set of identifier ids that loaded 'React' global
-    react: HashSet<IdentifierId>,
+    react: IdBitSet<IdentifierId>,
     /// Maps identifier id -> deps list info for array expressions
     maybe_deps_lists: IdMap<IdentifierId, MaybeDepsListInfo>,
     /// Maps identifier id -> ManualMemoDependency for dependency tracking
     maybe_deps: HashMap<IdentifierId, ManualMemoDependency>,
     /// Set of identifier ids that are results of optional chains
-    optionals: HashSet<IdentifierId>,
+    optionals: IdBitSet<IdentifierId>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,10 +100,14 @@ pub(crate) fn drop_manual_memoization(
         || env.enable_preserve_existing_memoization_guarantees;
 
     let optionals = find_optional_places(func)?;
+    let may_have_manual_memo = may_have_manual_memo(func);
+    if !may_have_manual_memo && !cfg!(debug_assertions) {
+        return Ok(());
+    }
     let mut sidemap = IdentifierSidemap {
-        functions: HashSet::default(),
+        functions: IdBitSet::default(),
         manual_memos: IdMap::new(),
-        react: HashSet::default(),
+        react: IdBitSet::default(),
         maybe_deps: HashMap::default(),
         maybe_deps_lists: IdMap::new(),
         optionals,
@@ -119,18 +121,10 @@ pub(crate) fn drop_manual_memoization(
     // queued_inserts maps InstructionId -> new Instruction to insert after that instruction
     let mut queued_inserts: IdMap<InstructionId, Instruction> = IdMap::new();
 
-    // Collect all block instruction lists up front to avoid borrowing func immutably
-    // while needing to mutate it
-    let all_block_instructions: Vec<HirVec<InstructionId>> = func
-        .body
-        .blocks
-        .values()
-        .map(|block| block.instructions.clone())
-        .collect();
-
-    for block_instructions in &all_block_instructions {
-        for &instr_id in block_instructions {
-            let instr = &func.instructions[instr_id.0 as usize];
+    let instructions = &mut func.instructions;
+    for block in func.body.blocks.values() {
+        for &instr_id in &block.instructions {
+            let instr = &instructions[instr_id.0 as usize];
 
             // Extract the identifier we need to look up, and whether it's a call/method
             let lookup_id = match &instr.value {
@@ -143,7 +137,7 @@ pub(crate) fn drop_manual_memoization(
 
             if let Some(manual_memo) = manual_memo {
                 process_manual_memo_call(
-                    func,
+                    instructions,
                     env,
                     instr_id,
                     &manual_memo,
@@ -153,10 +147,11 @@ pub(crate) fn drop_manual_memoization(
                     &mut queued_inserts,
                 );
             } else {
-                collect_temporaries(func, env, instr_id, &mut sidemap);
+                collect_temporaries(instr, env, instr_id, &mut sidemap);
             }
         }
     }
+    debug_assert!(may_have_manual_memo || sidemap.manual_memos.is_empty());
 
     // Phase 2: Insert manual memoization markers as needed
     if !queued_inserts.is_empty() {
@@ -200,7 +195,7 @@ pub(crate) fn drop_manual_memoization(
 
 #[allow(clippy::too_many_arguments)]
 fn process_manual_memo_call(
-    func: &mut HirFunction,
+    instructions: &mut [Instruction],
     env: &mut Environment,
     instr_id: InstructionId,
     manual_memo: &ManualMemoCallee,
@@ -209,7 +204,7 @@ fn process_manual_memo_call(
     next_manual_memo_id: &mut u32,
     queued_inserts: &mut IdMap<InstructionId, Instruction>,
 ) {
-    let instr = &func.instructions[instr_id.0 as usize];
+    let instr = &instructions[instr_id.0 as usize];
 
     let memo_details = extract_manual_memoization_args(instr, manual_memo.kind, sidemap, env);
 
@@ -223,15 +218,15 @@ fn process_manual_memo_call(
         deps_loc,
     } = memo_details;
 
-    let loc = func.instructions[instr_id.0 as usize].value.loc().cloned();
+    let loc = instructions[instr_id.0 as usize].value.loc().cloned();
 
     // Replace the instruction value with the memoization replacement
     let replacement = get_manual_memoization_replacement(&fn_place, loc.clone(), manual_memo.kind);
-    func.instructions[instr_id.0 as usize].value = replacement;
+    instructions[instr_id.0 as usize].value = replacement;
 
     if is_validation_enabled {
         // Bail out when we encounter manual memoization without inline function expressions
-        if !sidemap.functions.contains(&fn_place.identifier) {
+        if !sidemap.functions.contains(fn_place.identifier) {
             let mut diag = CompilerDiagnostic::new(
                 ErrorCategory::UseMemo,
                 "Expected the first argument to be an inline function expression",
@@ -251,7 +246,7 @@ fn process_manual_memo_call(
         }
 
         let memo_decl: Place = if manual_memo.kind == ManualMemoKind::UseMemo {
-            func.instructions[instr_id.0 as usize].lvalue.clone()
+            instructions[instr_id.0 as usize].lvalue.clone()
         } else {
             Place {
                 identifier: fn_place.identifier,
@@ -278,13 +273,32 @@ fn process_manual_memo_call(
     }
 }
 
+/// Whether anything in the function can be taken for `useMemo` or `useCallback` by `collect_temporaries`.
+/// All else that it collects is read only at a call of one of them.
+fn may_have_manual_memo(func: &HirFunction) -> bool {
+    let is_manual_memo = |name: &[u8]| name == b"useMemo" || name == b"useCallback";
+    func.body.blocks.values().any(|block| {
+        block.instructions.iter().any(|instr_id| {
+            match &func.instructions[instr_id.0 as usize].value {
+                InstructionValue::LoadGlobal { binding, .. } => {
+                    get_hook_detection_name(binding).is_some_and(is_manual_memo)
+                }
+                InstructionValue::PropertyLoad {
+                    property: PropertyLiteral::String(name),
+                    ..
+                } => is_manual_memo(name.slice()),
+                _ => false,
+            }
+        })
+    })
+}
+
 fn collect_temporaries(
-    func: &HirFunction,
+    instr: &Instruction,
     env: &Environment,
     instr_id: InstructionId,
     sidemap: &mut IdentifierSidemap,
 ) {
-    let instr = &func.instructions[instr_id.0 as usize];
     let lvalue_id = instr.lvalue.identifier;
 
     match &instr.value {
@@ -322,7 +336,7 @@ fn collect_temporaries(
         InstructionValue::PropertyLoad {
             object, property, ..
         } => {
-            if sidemap.react.contains(&object.identifier) {
+            if sidemap.react.contains(object.identifier) {
                 if let PropertyLiteral::String(prop_name) = property {
                     if prop_name == b"useMemo" {
                         sidemap.manual_memos.insert(
@@ -367,7 +381,7 @@ fn collect_temporaries(
         _ => {}
     }
 
-    let is_optional = sidemap.optionals.contains(&lvalue_id);
+    let is_optional = sidemap.optionals.contains(lvalue_id);
     let maybe_dep =
         collect_maybe_memo_dependencies(&instr.value, &sidemap.maybe_deps, is_optional, env);
     if let Some(dep) = maybe_dep {
@@ -654,10 +668,10 @@ fn extract_manual_memoization_args(
 // findOptionalPlaces
 // =============================================================================
 
-fn find_optional_places(func: &HirFunction) -> Result<HashSet<IdentifierId>, CompilerDiagnostic> {
+fn find_optional_places(func: &HirFunction) -> Result<IdBitSet<IdentifierId>, CompilerDiagnostic> {
     use crate::hir::Terminal;
 
-    let mut optionals = HashSet::default();
+    let mut optionals = IdBitSet::default();
     for block in func.body.blocks.values() {
         if let Terminal::Optional {
             optional: true,

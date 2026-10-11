@@ -185,7 +185,9 @@ function portablePath(path, system) {
 // a class is an object with its properties.
 function serializeRule(setting) {
   if (!Array.isArray(setting)) return serialize(setting);
-  return setting.map((item, index) => (index === 0 ? serialize(item) : serializeOption(item, [setting])) ?? null);
+  // `deepMergeArrays` takes the default for an option that is `undefined`.
+  const given = setting.slice(0, Math.max(1, setting.findLastIndex(item => item !== undefined) + 1));
+  return given.map((item, index) => (index === 0 ? serialize(item) : serializeOption(item, [setting])) ?? null);
 }
 
 function serializeOption(value, ancestors) {

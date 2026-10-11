@@ -285,12 +285,17 @@ impl ResolvedConfig {
         // and other shapes (`"import/max-dependencies": ["error", 2]`, `"sort-keys": ["asc", { "minKeys": 1 }]`) and pass over
         // what they do not know. To refuse what it takes ends a run that works with it: beside its configuration they refuse
         // nothing, and the rule gets the options.
-        if severity != Severity::Off
-            && self.error.is_none()
-            && !entry.meta.follows_oxlint
-            && !self.prefers_typescript_rules
-            && let Err(lines) = super::schema::validate(entry.meta, options)
+        if severity == Severity::Off
+            || self.error.is_some()
+            || entry.meta.follows_oxlint
+            || self.prefers_typescript_rules
         {
+            return;
+        }
+        // No schema allows one, and `JSON.stringify` throws at it while ESLint makes the message.
+        if options.iter().find_map(super::schema::placeholder) == Some(b"bigint") {
+            self.error = Some(b"TypeError: Do not know how to serialize a BigInt".to_vec());
+        } else if let Err(lines) = super::schema::validate(entry.meta, options) {
             let id = name.map_or_else(|| super::RuleId::Known(entry.meta).to_vec(), <[u8]>::to_vec);
             self.error = Some([b"Key \"rules\": Key \"", &id[..], b"\":\n", &lines].concat());
         }

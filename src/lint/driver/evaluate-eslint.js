@@ -158,8 +158,10 @@ function serializeConfigObject(given, index) {
   const config = withoutMatchers(given);
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
   const out = serialize(rest);
-  if (!isOfOxlint && rest.rules != null && Object.getPrototypeOf(rest.rules) === Object.prototype) {
-    for (const id of Object.keys(out.rules)) out.rules[id] = serializeRule(rest.rules[id]);
+  // Of whatever class: ESLint reads its properties.
+  if (!isOfOxlint && typeof rest.rules === "object" && rest.rules !== null && !Array.isArray(rest.rules)) {
+    const settings = Object.entries(rest.rules).map(([id, setting]) => [id, serializeRule(setting)]);
+    out.rules = Object.fromEntries(settings.filter(([, setting]) => setting !== undefined));
   }
   if (typeof out.basePath === "string") out.basePath = portablePath(out.basePath, require("node:path"));
   // Which object this is of what the file exports: a worker takes from there what JSON cannot say.

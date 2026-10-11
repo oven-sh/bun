@@ -366,8 +366,7 @@ pub(crate) fn install_hoisted_packages(
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
                 tree_dir: None,
-                // On Windows the hardlink backend has one queue of its own, a task for each file.
-                // A batch keeps up to 64 directories open, and each thread a few more.
+                // Windows: the hardlink backend has one queue of its own. A batch keeps up to 64 directories open.
                 linked_ahead: (cfg!(not(windows))
                     && skip_delete
                     && !FileSystem::instance().fs.need_to_close_files())

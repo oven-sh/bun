@@ -1065,7 +1065,7 @@ describe("hoisted linker: packages linked by the thread pool", () => {
       Object.fromEntries(
         hosts.map(name => [
           name,
-          readdirSync(join(root, "node_modules", name, "node_modules", "nested", "node_modules")),
+          readdirSync(join(root, "node_modules", name, "node_modules", "nested", "node_modules")).sort(),
         ]),
       ),
     ).toEqual(Object.fromEntries(hosts.map(name => [name, leaves])));

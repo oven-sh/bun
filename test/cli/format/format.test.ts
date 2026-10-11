@@ -2200,13 +2200,14 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     );
   });
 
+  // How deep is too deep is up to the stack, and a thread has four times as much of it on Windows: there `keyof ` is formatted.
   test.each(["@", "keyof ", "renders ", "infer A extends ", "component() renders "])(
-    "code that is nested too deeply is refused, and does not overflow the stack: 100,000 times `%s`",
+    "code that is nested very deeply is refused or formatted, and does not overflow the stack: 100,000 times `%s`",
     async word => {
       const text = word === "@" ? word.repeat(100_000) : `// @flow\ntype A = ${word.repeat(100_000)}x;`;
       const result = await format({ "deep.js": text + "\n" }, ["--check", "deep.js"]);
-      expect(result.stderr).toContain("[error] deep.js:");
-      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(/^\[(?:error\] deep\.js:|warn\] deep\.js$)/m);
+      expect(result.exitCode).toBe(result.stderr.includes("[error]") ? 2 : 1);
     },
   );
 
@@ -2820,7 +2821,8 @@ try {
     const run = (text: (index: number) => string) =>
       format(Object.fromEntries(shapes.map((_, index) => [`${index}.scss`, text(index)])), ["--check"]);
     const [odd, plain] = [await run(index => texts[index]), await run(() => ordinary.repeat(length / ordinary.length))];
-    expect(odd.cpu / plain.cpu).toBeLessThan(6);
+    // 3 when all is well, 1,189 without the fix. Windows counts the time of the processor in steps of 15.6 ms.
+    expect(odd.cpu / plain.cpu).toBeLessThan(60);
   }, 120_000);
 
   // What some part of reading or printing Markdown once walked again for each repetition, or took a thousand times too

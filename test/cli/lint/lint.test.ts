@@ -2447,6 +2447,23 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Whether a function is sensitive to its context was asked of each from every one around it, each time down to the last: the
+  // cube of their number: 25 s.
+  test.skipIf(isDebug || isASAN).each([
+    ["arrows", "(a: number) => ", ""],
+    ["functions", "function (a: number) { return ", " }"],
+  ])("2,000 %s in each other, with types", async (_, open, close) => {
+    const rules = { "typescript/no-floating-promises": "error" };
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+      "a.ts": `export const g = ${open.repeat(2_000)}0${close.repeat(2_000)};\nasync function f() {}\nf();\n`,
+    };
+    const { raw, exitCode } = await lint(files, ["--type-aware", "-f", "unix", "a.ts"]);
+    expect(raw).toContain("a.ts:3:1: ");
+    expect(exitCode).toBe(1);
+  });
+
   // What reads a tsconfig.json called itself for each file that is extended, on the main thread.
   test("a tsconfig.json at the end of a chain of 5,000 that extend each other", async () => {
     const rules = { "typescript/no-floating-promises": "error" };

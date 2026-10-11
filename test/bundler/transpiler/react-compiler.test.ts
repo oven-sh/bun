@@ -3801,8 +3801,8 @@ test("react-compiler time does not grow with the cube of a chain of functions", 
     return Number(proc.resourceUsage()!.cpuTime.total);
   };
 
-  // Without the fix: 5.5 in a debug build, 14 in a release build.
-  expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(4);
+  // A debug build: 2 to 2.6, and 5.5 without the fix. A release build: 2.9 to 4.2, which is a square's, and 14.5 to 16.6.
+  expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
 });
 
 // ValidateExhaustiveDependencies gives each phi the dependencies of its

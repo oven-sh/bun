@@ -1765,6 +1765,20 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     },
   );
 
+  // As Prettier 3.9.9 and oxfmt 0.72, which read a configuration in Node.
+  test.each(["prettier.config.mjs", "oxfmt.config.ts"])(
+    "the .env of the project is not in `process.env` of %s, and what is inherited is",
+    async name => {
+      const files = {
+        ".env": "FROM_FILE=1\n",
+        [name]: "export default { semi: !process.env.FROM_FILE, singleQuote: !!process.env.INHERITED };\n",
+        "a.js": 'a\nb("c")\n',
+      };
+      const result = await format(files, ["a.js"], { reads: ["a.js"], env: { INHERITED: "1" } });
+      expect(result.files["a.js"]).toBe("a;\nb('c');\n");
+    },
+  );
+
   test("an oxfmt.config.ts that imports defineConfig from oxfmt works without the package", async () => {
     const files = {
       "oxfmt.config.ts": 'import { defineConfig } from "oxfmt";\nexport default defineConfig({ semi: false });\n',

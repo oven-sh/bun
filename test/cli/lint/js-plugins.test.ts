@@ -52,6 +52,25 @@ const oxlintrc = (config: object) =>
 // Each thread that lints a file starts a VM, which takes seconds in a debug build.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
+// As under ESLint 10.12.0.
+test.concurrent(
+  "the .env of the project is not in `process.env` of a plugin, and what is inherited is",
+  async () => {
+    const files = {
+      ".env": "FROM_FILE=1\n",
+      "plugin.mjs": `const message = () => process.env.FROM_FILE + " " + process.env.INHERITED;
+        export default { rules: { show: { create: context => ({ Program: node => context.report({ node, message: message() }) }) } } };`,
+      "eslint.config.mjs": `import demo from "./plugin.mjs";
+        export default [{ plugins: { demo }, rules: { "demo/show": "error" } }];`,
+      "a.js": "a;\n",
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"], [], { INHERITED: "1" });
+    expect(JSON.parse(raw)[0].messages.map((it: { message: string }) => it.message)).toEqual(["undefined 1"]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
 // Reports every identifier called `foo`, with what the API has to say about it.
 const noFoo = `
 export default {

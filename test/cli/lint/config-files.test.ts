@@ -1196,6 +1196,18 @@ describe.concurrent("every run evaluates an eslint.config.js", () => {
   );
 });
 
+// As ESLint 10.12.0 and oxlint 1.87.0, which read a configuration in Node. `bun run` does not hand it to a script either.
+test.concurrent.each([
+  ["eslint.config.mjs", (rules: string) => `export default [{ rules: ${rules} }];`],
+  ["oxlint.config.ts", (rules: string) => `export default { categories: { correctness: "off" }, rules: ${rules} };`],
+])("the .env of the project is not in `process.env` of %s, and what is inherited is", async (name, config) => {
+  const rules = `{ "no-var": process.env.FROM_FILE ? "error" : "off", eqeqeq: process.env.INHERITED ? "error" : "off" }`;
+  const files = { ".env": "FROM_FILE=1\n", [name]: config(rules), "a.js": code };
+  const result = await lint(files, ["a.js"], { env: { INHERITED: "1" } });
+  expect(result.problems).toEqual(["a.js:2:7 eqeqeq"]);
+  expect(result.exitCode).toBe(1);
+});
+
 describe.concurrent("what is built in is not loaded to evaluate an eslint.config.js", () => {
   const timeout = isDebug || isASAN ? 120_000 : 30_000;
   // The parts of typescript-eslint that count, in the shape that TypeScript gives them. Each large module notes that it is loaded.

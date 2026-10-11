@@ -173,6 +173,7 @@
    "as-needed"
   ]
  ],
+ "block-scoped-var": [],
  "capitalized-comments": [
   [
    "always"
@@ -627,6 +628,7 @@
    }
   ]
  ],
+ "constructor-super": [],
  "curly": [
   [
    "multi"
@@ -686,6 +688,8 @@
    }
   ]
  ],
+ "default-case-last": [],
+ "default-param-last": [],
  "eqeqeq": [
   [
    "always"
@@ -718,6 +722,7 @@
    }
   ]
  ],
+ "for-direction": [],
  "func-name-matching": [
   [
    "always"
@@ -989,6 +994,7 @@
    }
   ]
  ],
+ "guard-for-in": [],
  "id-denylist": [
   [
    "bar"
@@ -2289,6 +2295,10 @@
    }
   ]
  ],
+ "no-alert": [],
+ "no-array-constructor": [],
+ "no-async-promise-executor": [],
+ "no-await-in-loop": [],
  "no-bitwise": [
   [
    {
@@ -2327,6 +2337,10 @@
    }
   ]
  ],
+ "no-caller": [],
+ "no-case-declarations": [],
+ "no-class-assign": [],
+ "no-compare-neg-zero": [],
  "no-cond-assign": [
   [
    "always"
@@ -2453,6 +2467,7 @@
    }
   ]
  ],
+ "no-const-assign": [],
  "no-constant-binary-expression": [
   [
    {
@@ -2492,6 +2507,16 @@
    }
   ]
  ],
+ "no-constructor-return": [],
+ "no-continue": [],
+ "no-control-regex": [],
+ "no-debugger": [],
+ "no-delete-var": [],
+ "no-div-regex": [],
+ "no-dupe-class-members": [],
+ "no-dupe-else-if": [],
+ "no-dupe-keys": [],
+ "no-duplicate-case": [],
  "no-duplicate-imports": [
   [
    {
@@ -2529,6 +2554,7 @@
    }
   ]
  ],
+ "no-empty-character-class": [],
  "no-empty-function": [
   [
    {
@@ -2921,6 +2947,8 @@
    {}
   ]
  ],
+ "no-empty-static-block": [],
+ "no-eq-null": [],
  "no-eval": [
   [
    {
@@ -2933,6 +2961,7 @@
    }
   ]
  ],
+ "no-ex-assign": [],
  "no-extend-native": [
   [
    {
@@ -2942,6 +2971,7 @@
    }
   ]
  ],
+ "no-extra-bind": [],
  "no-extra-boolean-cast": [
   [
    {
@@ -2967,6 +2997,7 @@
    }
   ]
  ],
+ "no-extra-label": [],
  "no-fallthrough": [
   [
    {
@@ -3017,6 +3048,7 @@
    }
   ]
  ],
+ "no-func-assign": [],
  "no-global-assign": [
   [
    {
@@ -3130,6 +3162,8 @@
    }
   ]
  ],
+ "no-implied-eval": [],
+ "no-import-assign": [],
  "no-inline-comments": [
   [
    {
@@ -3306,6 +3340,8 @@
    }
   ]
  ],
+ "no-iterator": [],
+ "no-label-var": [],
  "no-labels": [
   [
    {
@@ -3318,6 +3354,10 @@
    }
   ]
  ],
+ "no-lone-blocks": [],
+ "no-lonely-if": [],
+ "no-loop-func": [],
+ "no-loss-of-precision": [],
  "no-magic-numbers": [
   [
    {
@@ -3811,6 +3851,16 @@
    }
   ]
  ],
+ "no-multi-str": [],
+ "no-negated-condition": [],
+ "no-nested-ternary": [],
+ "no-new": [],
+ "no-new-func": [],
+ "no-new-native-nonconstructor": [],
+ "no-new-wrappers": [],
+ "no-nonoctal-decimal-escape": [],
+ "no-obj-calls": [],
+ "no-object-constructor": [],
  "no-param-reassign": [
   [
    {
@@ -3935,6 +3985,8 @@
    }
   ]
  ],
+ "no-proto": [],
+ "no-prototype-builtins": [],
  "no-redeclare": [
   [
    {
@@ -3947,6 +3999,7 @@
    }
   ]
  ],
+ "no-regex-spaces": [],
  "no-restricted-exports": [
   [
    {}
@@ -10987,6 +11040,7 @@
    "always"
   ]
  ],
+ "no-script-url": [],
  "no-self-assign": [
   [
    {
@@ -10999,6 +11053,7 @@
    }
   ]
  ],
+ "no-self-compare": [],
  "no-sequences": [
   [
    {}
@@ -11014,6 +11069,7 @@
    }
   ]
  ],
+ "no-setter-return": [],
  "no-shadow": [
   [
    {
@@ -11194,6 +11250,12 @@
    {}
   ]
  ],
+ "no-sparse-arrays": [],
+ "no-template-curly-in-string": [],
+ "no-ternary": [],
+ "no-this-before-super": [],
+ "no-throw-literal": [],
+ "no-unassigned-vars": [],
  "no-undef": [
   [
    {
@@ -11206,6 +11268,7 @@
    }
   ]
  ],
+ "no-undefined": [],
  "no-underscore-dangle": [
   [
    {}
@@ -11346,6 +11409,7 @@
    }
   ]
  ],
+ "no-unexpected-multiline": [],
  "no-unmodified-loop-condition": [
   [
    {
@@ -11360,6 +11424,7 @@
    }
   ]
  ],
+ "no-unreachable": [],
  "no-unreachable-loop": [
   [
    {
@@ -11421,6 +11486,7 @@
    }
   ]
  ],
+ "no-unsafe-finally": [],
  "no-unsafe-negation": [
   [
    {}
@@ -11496,6 +11562,8 @@
    }
   ]
  ],
+ "no-unused-labels": [],
+ "no-unused-private-class-members": [],
  "no-unused-vars": [
   [
    "all"
@@ -12180,6 +12248,10 @@
    }
   ]
  ],
+ "no-useless-assignment": [],
+ "no-useless-backreference": [],
+ "no-useless-call": [],
+ "no-useless-catch": [],
  "no-useless-computed-key": [
   [
    {
@@ -12195,6 +12267,8 @@
    {}
   ]
  ],
+ "no-useless-concat": [],
+ "no-useless-constructor": [],
  "no-useless-escape": [
   [
    {
@@ -12437,6 +12511,8 @@
    }
   ]
  ],
+ "no-useless-return": [],
+ "no-var": [],
  "no-void": [
   [
    {
@@ -12644,6 +12720,7 @@
    }
   ]
  ],
+ "no-with": [],
  "object-shorthand": [
   [
    "properties"
@@ -13283,6 +13360,11 @@
    }
   ]
  ],
+ "prefer-exponentiation-operator": [],
+ "prefer-named-capture-group": [],
+ "prefer-numeric-literals": [],
+ "prefer-object-has-own": [],
+ "prefer-object-spread": [],
  "prefer-promise-reject-errors": [
   [
    {
@@ -13313,6 +13395,9 @@
    }
   ]
  ],
+ "prefer-rest-params": [],
+ "prefer-spread": [],
+ "prefer-template": [],
  "preserve-caught-error": [
   [
    {
@@ -13336,6 +13421,7 @@
    "as-needed"
   ]
  ],
+ "require-await": [],
  "require-unicode-regexp": [
   [
    {
@@ -13348,6 +13434,7 @@
    }
   ]
  ],
+ "require-yield": [],
  "sort-imports": [
   [
    {
@@ -13575,6 +13662,7 @@
    }
   ]
  ],
+ "symbol-description": [],
  "unicode-bom": [
   [
    "always"
@@ -13615,6 +13703,7 @@
    }
   ]
  ],
+ "vars-on-top": [],
  "yoda": [
   [
    "never"
@@ -13653,6 +13742,7 @@
    }
   ]
  ],
+ "typescript/adjacent-overload-signatures": [],
  "typescript/array-type": [
   [
    {
@@ -14043,6 +14133,7 @@
    }
   ]
  ],
+ "typescript/ban-tslint-comment": [],
  "typescript/class-literal-property-style": [
   [
    "fields"
@@ -14610,6 +14701,9 @@
    "method"
   ]
  ],
+ "typescript/no-confusing-non-null-assertion": [],
+ "typescript/no-duplicate-enum-values": [],
+ "typescript/no-dynamic-delete": [],
  "typescript/no-empty-interface": [
   [
    {
@@ -14713,6 +14807,7 @@
    }
   ]
  ],
+ "typescript/no-extra-non-null-assertion": [],
  "typescript/no-extraneous-class": [
   [
    {
@@ -14750,6 +14845,7 @@
    {}
   ]
  ],
+ "typescript/no-import-type-side-effects": [],
  "typescript/no-inferrable-types": [
   [
    {
@@ -14942,6 +15038,7 @@
    }
   ]
  ],
+ "typescript/no-misused-new": [],
  "typescript/no-namespace": [
   [
    {
@@ -14970,6 +15067,9 @@
    }
   ]
  ],
+ "typescript/no-non-null-asserted-nullish-coalescing": [],
+ "typescript/no-non-null-asserted-optional-chain": [],
+ "typescript/no-non-null-assertion": [],
  "typescript/no-require-imports": [
   [
    {
@@ -15258,6 +15358,13 @@
    }
   ]
  ],
+ "typescript/no-unnecessary-parameter-property-assignment": [],
+ "typescript/no-unnecessary-type-constraint": [],
+ "typescript/no-unsafe-declaration-merging": [],
+ "typescript/no-unsafe-function-type": [],
+ "typescript/no-useless-empty-export": [],
+ "typescript/no-var-requires": [],
+ "typescript/no-wrapper-object-types": [],
  "typescript/parameter-properties": [
   [
    {
@@ -15424,6 +15531,10 @@
    }
   ]
  ],
+ "typescript/prefer-as-const": [],
+ "typescript/prefer-enum-initializers": [],
+ "typescript/prefer-for-of": [],
+ "typescript/prefer-function-type": [],
  "typescript/prefer-literal-enum-member": [
   [
    {
@@ -15436,6 +15547,8 @@
    }
   ]
  ],
+ "typescript/prefer-namespace-keyword": [],
+ "typescript/prefer-ts-expect-error": [],
  "typescript/triple-slash-reference": [
   [
    {

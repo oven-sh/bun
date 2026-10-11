@@ -1,4 +1,5 @@
 use crate::react::is_react_function_call;
+use crate::util_prop_types::is_in_object_prototype;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
@@ -21,22 +22,6 @@ const SUGGEST_MEMO: Message = Message::new("suggestMemo", "Replace useState call
 const REQUIRE_TO_DESTRUCT: Message = Message::new("", "useState call is not destructured into value + setter pair");
 const FOLLOW_NAMING_CONVENTION: Message =
     Message::new("", "useState call does not follow the [thing, setThing] naming convention");
-
-/// What every object has: upstream looks the names of references up in a plain object.
-const OBJECT_PROTOTYPE: [&str; 12] = [
-    "__defineGetter__",
-    "__defineSetter__",
-    "__lookupGetter__",
-    "__lookupSetter__",
-    "__proto__",
-    "constructor",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toLocaleString",
-    "toString",
-    "valueOf",
-];
 
 /// What `Components.detect` collects of the `import .. from "react"`. It has what is above the node that it is at.
 #[derive(Default)]
@@ -220,7 +205,7 @@ impl<'a> ReactImports<'a> {
         let scope = Node::Expr(e).scope();
         let is_asked_for = |it: &Reference<'a>| match react {
             Some(react) => it.name() == react,
-            None => imported_hook(it.name()).is_some() || it.name().is_any(&OBJECT_PROTOTYPE),
+            None => imported_hook(it.name()).is_some() || is_in_object_prototype(it.name().bytes()),
         };
         let asked = Asked { scope, imports: starts.partition_point(|it| *it < at), react };
         let first = first_references.entry(asked).or_insert_with(|| scope.references().find(is_asked_for));

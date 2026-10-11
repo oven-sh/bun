@@ -1,6 +1,6 @@
 use crate::import_export_map::ExportMaps;
 use crate::import_export_record::{ImportedSpecifier, recursive_pattern_capture};
-use crate::import_package_path::{is_truthy, read_pkg_up};
+use crate::import_package_path::read_pkg_up;
 use crate::import_resolve::Resolvers;
 use crate::import_settings::Settings;
 use bun_core::strings;
@@ -121,7 +121,7 @@ fn key_of(name: &[u8]) -> &[u8] {
 
 /// `pkg[name]`, if it is truthy.
 fn field_of<'p>(pkg: &'p Json, name: &[u8]) -> Option<&'p Json> {
-    pkg.get(name).filter(|it| is_truthy(it))
+    pkg.get(name).filter(|it| it.is_truthy())
 }
 
 /// `fileIsInPkg`. Where upstream throws, for lack of a `package.json` or at a value that is no string: no.

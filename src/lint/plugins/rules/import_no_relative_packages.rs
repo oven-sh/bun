@@ -1,9 +1,8 @@
-use crate::import_package_path::{pkg_up, read_pkg_up};
+use crate::import_package_path::{find_named_package, pkg_up};
 use crate::import_type::{ImportType, ImportTypes};
 use crate::module_visitor::Visitor;
 use bun_core::printer::json_stringify_alloc;
 use bun_core::strings;
-use bun_lint::modules::Modules;
 use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -18,34 +17,6 @@ const RELATIVE_PACKAGE: Message = Message::new(
     "",
     "Relative import from another package is not allowed. Use `{{properImport}}` instead of `{{importPath}}`",
 );
-
-/// What `findNamedPackage` returns, if its `pkg` is truthy.
-struct NamedPackage {
-    /// `pkg.name`. `None`: it is no string.
-    name: Option<Vec<u8>>,
-    /// Where its `package.json` is.
-    path: Vec<u8>,
-}
-
-/// upstream's `findNamedPackage`. `None` also where that never ends: the `package.json` in the root has no name.
-fn find_named_package(modules: &dyn Modules, file_path: &[u8]) -> Option<NamedPackage> {
-    let mut from = file_path.to_vec();
-    loop {
-        let (pkg, path) = read_pkg_up(modules, &from)?;
-        if !pkg.is_truthy() {
-            return None;
-        }
-        if let Some(name) = pkg.get(b"name").filter(|it| it.is_truthy()) {
-            return Some(NamedPackage { name: name.as_str().map(<[u8]>::to_vec), path });
-        }
-        let directory = paths::dirname(&path);
-        let above = paths::dirname(directory);
-        if above.len() == directory.len() {
-            return None;
-        }
-        from = above.to_vec();
-    }
-}
 
 impl Rule for NoRelativePackages {
     const META: Meta = Meta::plugin(Plugin::Import, "no-relative-packages", Kind::Suggestion)

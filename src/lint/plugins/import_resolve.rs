@@ -46,17 +46,6 @@ impl Resolved {
     }
 }
 
-/// `Boolean(value)`
-fn is_truthy(value: &Json) -> bool {
-    match value {
-        Json::Null => false,
-        Json::Bool(value) => *value,
-        Json::Number(value) => *value != 0.0 && !value.is_nan(),
-        Json::String(value) => !value.is_empty(),
-        Json::Array(_) | Json::Object(_) => true,
-    }
-}
-
 /// `[].concat(value)`. `None` for what is no string.
 fn concat(value: &Json) -> impl Iterator<Item = Option<&[u8]>> {
     let items = match value {
@@ -74,12 +63,12 @@ fn opts(config: Option<&Json>) -> Lookup<'_> {
         Some(Json::Array(extensions)) => extensions.iter().filter_map(Json::as_str).collect(),
         // `extensions[i]`
         Some(Json::String(units)) if !units.is_empty() => units.chunks(1).collect(),
-        Some(it) if is_truthy(it) => SmallVec::new(),
+        Some(it) if it.is_truthy() => SmallVec::new(),
         // `opts.extensions || ['.js']`
         Some(_) => SmallVec::from_slice(&[&b".js"[..]]),
     };
-    let roots = option(b"paths").filter(|it| is_truthy(it));
-    let directories = option(b"moduleDirectory").filter(|it| is_truthy(it));
+    let roots = option(b"paths").filter(|it| it.is_truthy());
+    let directories = option(b"moduleDirectory").filter(|it| it.is_truthy());
     if roots.or(directories).is_none() {
         return Lookup::Node(extensions);
     }
@@ -110,7 +99,7 @@ fn require_resolver<'s>(name: &[u8], config: Option<&'s Json>) -> Option<Lookup<
         let file = option(b"tsconfig").and_then(|it| it.get(b"configFile"));
         let projects = file
             .or_else(|| option(b"project"))
-            .filter(|it| is_truthy(it));
+            .filter(|it| it.is_truthy());
         Some(Lookup::TypeScript(
             projects.into_iter().flat_map(concat).flatten().collect(),
         ))
@@ -167,7 +156,7 @@ impl<'s> Resolvers<'s> {
             map: SmallVec::new(),
             core_modules,
         };
-        match (settings.get(b"import/resolver")).filter(|it| is_truthy(it)) {
+        match (settings.get(b"import/resolver")).filter(|it| it.is_truthy()) {
             Some(written) => resolvers.resolver_reducer(written)?,
             // "backward compatibility"
             None => resolvers.set(b"node", settings.get(b"import/resolve"))?,

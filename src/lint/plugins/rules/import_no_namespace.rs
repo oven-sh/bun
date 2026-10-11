@@ -1,4 +1,5 @@
 use crate::import_minimatch::Glob;
+use crate::rules::import_no_extraneous_dependencies::INHERITED;
 use bun_lint_oxlint::text::{file_name, glob_match};
 use bun_core::fmt::parse_decimal;
 use bun_core::strings;
@@ -15,22 +16,6 @@ pub struct NoNamespace {
 
 const NO_NAMESPACE: Message = Message::new("", "Unexpected namespace import.");
 const OXLINT: Message = Message::new("", "Usage of namespaced aka wildcard \"*\" imports prohibited");
-
-/// What every object of JavaScript has. Upstream keeps the names in one, and throws at these.
-const OF_EVERY_OBJECT: [&[u8]; 12] = [
-    b"__defineGetter__",
-    b"__defineSetter__",
-    b"__lookupGetter__",
-    b"__lookupSetter__",
-    b"__proto__",
-    b"constructor",
-    b"hasOwnProperty",
-    b"isPrototypeOf",
-    b"propertyIsEnumerable",
-    b"toLocaleString",
-    b"toString",
-    b"valueOf",
-];
 
 impl Rule for NoNamespace {
     const META: Meta = Meta::plugin(Plugin::Import, "no-namespace", Kind::Suggestion).fixable(Fixable::Code);
@@ -174,7 +159,8 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
     let mut import_names: Vec<&[u8]> = Vec::new();
     for member in &members {
         let import_name = &*member.property;
-        if OF_EVERY_OBJECT.contains(&import_name) {
+        // Upstream keeps the names in an object, and throws at these.
+        if INHERITED.contains(&import_name) {
             return None;
         }
         let scope = member.node.scope();

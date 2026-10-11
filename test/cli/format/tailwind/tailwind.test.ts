@@ -1,6 +1,6 @@
 // oxfmt's `sortTailwindcss`, and `prettier-plugin-tailwindcss`. cases.json: the inputs of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT: see LICENSE) and
 // some more, with what oxfmt 0.72 prints for them with tailwindcss 4.3.3. order.json: the classes in them that Tailwind knows, in
-// its order. Both are made by test/cli/format/oracle/tailwind/make-fixtures.ts.
+// its order.
 //
 // The order comes from the package `tailwindcss` of the project. Here that is a stand-in, which knows what is in order.json.
 import { afterAll, describe, expect, test } from "bun:test";

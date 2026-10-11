@@ -1,7 +1,6 @@
 //! `settings["import/.."]` of eslint-plugin-import, as `ignore.js`, `getParserPath`, `importType.js`
 //! and the `ExportMap` read them. A value of a type that they throw on says nothing here.
 
-use crate::import_package_path::is_truthy;
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::paths;
@@ -42,7 +41,7 @@ impl DocStyle {
 
 /// `value || ..`: `None` for what is falsy.
 fn truthy(value: Option<&Json>) -> Option<&Json> {
-    value.filter(|it| is_truthy(it))
+    value.filter(|it| it.is_truthy())
 }
 
 fn strings_in(json: Option<&Json>) -> impl Iterator<Item = &[u8]> {

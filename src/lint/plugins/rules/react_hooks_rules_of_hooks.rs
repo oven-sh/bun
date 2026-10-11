@@ -12,8 +12,8 @@ use std::collections::BinaryHeap;
 /// Enforces the Rules of Hooks.
 pub struct RulesOfHooks;
 
-const TRY_CATCH: Message = Message::new("", "React Hook \"{{hook}}\" cannot be called in a try/catch block.");
-const LOOP: Message = Message::new(
+pub(crate) const TRY_CATCH: Message = Message::new("", "React Hook \"{{hook}}\" cannot be called in a try/catch block.");
+pub(crate) const LOOP: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" may be executed more than once. Possibly because it is called in a loop. React Hooks must be called in the exact same order in every component render.",
 );
@@ -22,27 +22,27 @@ const CONDITIONAL: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" is called conditionally. React Hooks must be called in the exact same order in every component render.{{hint}}",
 );
-const CLASS: Message = Message::new(
+pub(crate) const CLASS: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called in a class component. React Hooks must be called in a React function component or a custom React Hook function.",
 );
-const FUNCTION: Message = Message::new(
+pub(crate) const FUNCTION: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" is called in function \"{{function}}\" that is neither a React function component nor a custom React Hook function. React component names must start with an uppercase letter. React Hook names must start with the word \"use\".",
 );
-const TOP_LEVEL: Message = Message::new(
+pub(crate) const TOP_LEVEL: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called at the top level. React Hooks must be called in a React function component or a custom React Hook function.",
 );
-const CALLBACK: Message = Message::new(
+pub(crate) const CALLBACK: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called inside a callback. React Hooks must be called in a React function component or a custom React Hook function.",
 );
-const EFFECT_EVENT_PASSED_DOWN: Message = Message::new(
+pub(crate) const EFFECT_EVENT_PASSED_DOWN: Message = Message::new(
     "",
     "React Hook \"useEffectEvent\" can only be called at the top level of your component. It cannot be passed down.",
 );
-const EFFECT_EVENT_FUNCTION: Message = Message::new(
+pub(crate) const EFFECT_EVENT_FUNCTION: Message = Message::new(
     "",
     "`{{function}}` is a function created with React Hook \"useEffectEvent\", and can only be called from Effects and Effect Events in the same component.{{hint}}",
 );

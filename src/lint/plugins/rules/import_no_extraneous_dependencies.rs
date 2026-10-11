@@ -54,7 +54,7 @@ const OBJECTS: [(&[u8], u8); 4] = [
 ];
 
 /// What `object[name] !== undefined` finds in every object.
-const INHERITED: [&[u8]; 12] = [
+pub(crate) const INHERITED: [&[u8]; 12] = [
     b"__defineGetter__",
     b"__defineSetter__",
     b"__lookupGetter__",

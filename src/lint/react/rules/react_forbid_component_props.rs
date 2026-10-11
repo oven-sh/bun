@@ -216,7 +216,7 @@ fn tag_of(jsx: Jsx<'_>, is_oxlint: bool) -> Option<Cow<'_, [u8]>> {
 
 /// ESLint puts `data` into a text of the options as well.
 #[cold]
-fn custom_message(message: &[u8], prop: &[u8]) -> Vec<u8> {
+pub(crate) fn custom_message(message: &[u8], prop: &[u8]) -> Vec<u8> {
     match std::str::from_utf8(message) {
         Ok(message) => interpolate_text(message, |name| (name == "prop").then_some(prop)),
         Err(_) => message.to_vec(),

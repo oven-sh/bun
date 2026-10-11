@@ -1,8 +1,8 @@
 use bun_lint_oxlint::ast_util::{get_identifier_name, is_react_component_name};
 use crate::jsx::{AttributeValue, get_prop_value};
 use crate::react::is_jsx;
+use crate::rules::react_forbid_component_props::custom_message;
 use bun_core::strings;
-use bun_lint::context::interpolate_text;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -114,15 +114,6 @@ fn dom_tag_name(jsx: Jsx<'_>, is_oxlint: bool) -> Option<&[u8]> {
     // `tag[0] !== tag[0].toUpperCase()`. Half of a surrogate pair has no case.
     let (first, size) = strings::wtf8_codepoint_at(name, 0);
     (first <= 0xFFFF && !text::is_upper_case(name.get(..size)?)).then_some(name)
-}
-
-/// ESLint puts `data` into a text of the options as well.
-#[cold]
-fn custom_message(message: &[u8], prop: &[u8]) -> Vec<u8> {
-    match std::str::from_utf8(message) {
-        Ok(message) => interpolate_text(message, |name| (name == "prop").then_some(prop)),
-        Err(_) => message.to_vec(),
-    }
 }
 
 fn static_jsx_string_value(value: AttributeValue<'_>) -> Option<&[u8]> {

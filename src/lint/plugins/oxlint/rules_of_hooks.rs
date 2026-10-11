@@ -1,51 +1,22 @@
 //! `react/rules-of-hooks` of oxlint 1.80. It reports a call once, for the first of its reasons, and decides from what is around the
 //! function whether it looks at the flow of control at all.
 
-use crate::rules::react_hooks_rules_of_hooks::{Memo, Ranges};
+use crate::rules::react_hooks_rules_of_hooks::{
+    CALLBACK, CLASS, EFFECT_EVENT_FUNCTION, EFFECT_EVENT_PASSED_DOWN, FUNCTION, LOOP, Memo, Ranges,
+    TOP_LEVEL, TRY_CATCH,
+};
 use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::static_property_name;
 
 const CALLED_HERE: &str = "Hook is called here";
 
-const FUNCTION: Message = Message::new(
-    "",
-    "React Hook \"{{hook}}\" is called in function \"{{function}}\" that is neither a React function component nor a custom React Hook function. React component names must start with an uppercase letter. React Hook names must start with the word \"use\".",
-);
 const CONDITIONAL: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" is called conditionally. React Hooks must be called in the exact same order in every component render.",
 );
-const LOOP: Message = Message::new(
-    "",
-    "React Hook \"{{hook}}\" may be executed more than once. Possibly because it is called in a loop. React Hooks must be called in the exact same order in every component render.",
-);
-const TOP_LEVEL: Message = Message::new(
-    "",
-    "React Hook \"{{hook}}\" cannot be called at the top level. React Hooks must be called in a React function component or a custom React Hook function.",
-);
 const ASYNC: Message = Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called in an async function. ",
-);
-const TRY_CATCH: Message = Message::new(
-    "",
-    "React Hook \"{{hook}}\" cannot be called in a try/catch block.",
-);
-const CLASS: Message = Message::new(
-    "",
-    "React Hook \"{{hook}}\" cannot be called in a class component. React Hooks must be called in a React function component or a custom React Hook function.",
-);
-const CALLBACK: Message = Message::new(
-    "",
-    "React Hook \"{{hook}}\" cannot be called inside a callback. React Hooks must be called in a React function component or a custom React Hook function.",
-);
-const EFFECT_EVENT_REFERENCE: Message = Message::new(
-    "",
-    "`{{function}}` is a function created with React Hook \"useEffectEvent\", and can only be called from Effects and Effect Events in the same component.{{hint}}",
-);
-const EFFECT_EVENT_INLINE: Message = Message::new(
-    "",
-    "React Hook \"useEffectEvent\" can only be called at the top level of your component. It cannot be passed down.",
 );
 
 /// What the code path says about a call.
@@ -222,7 +193,7 @@ fn check_use_effect_event_usage<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, mem
             return;
         }
         _ => {
-            cx.report(node, EFFECT_EVENT_INLINE)
+            cx.report(node, EFFECT_EVENT_PASSED_DOWN)
                 .first_label("Effect Event is passed directly instead of being assigned locally.");
             return;
         }
@@ -265,7 +236,7 @@ fn check_use_effect_event_usage<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, mem
         } else {
             " It cannot be assigned to a variable or passed down."
         };
-        cx.report(e, EFFECT_EVENT_REFERENCE)
+        cx.report(e, EFFECT_EVENT_FUNCTION)
             .data("function", e.text())
             .data("hint", hint)
             .first_label("Effect Event escapes its component or custom Hook.");

@@ -27,6 +27,7 @@ use bun_lint::ast::{
 };
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::ErrorCategory;
+use bun_react_compiler::environment::is_hook_name;
 use bun_react_compiler::hir::ReactFunctionType;
 
 /// oxlint's `eslint_suppression_rules`: the defaults of the compiler, and how oxlint spells the same rules.
@@ -82,11 +83,6 @@ fn find_directive_disabling_memoization(func: Func<'_>, flavor: Flavor) -> bool 
 }
 
 // ───────────────────────────── names ─────────────────────────────
-
-/// Check if a string follows the React hook naming convention (use[A-Z0-9]...).
-fn is_hook_name(s: &[u8]) -> bool {
-    matches!(s, [b'u', b's', b'e', c, ..] if c.is_ascii_uppercase() || c.is_ascii_digit())
-}
 
 /// Check if a name looks like a React component (starts with uppercase letter).
 fn is_component_name(name: &[u8]) -> bool {

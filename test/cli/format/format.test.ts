@@ -2500,8 +2500,7 @@ try {
     },
   );
 
-  // linguist has them under JSON. Prettier 3.9.9 leaves them out of its language: `prettier.getSupportInfo()`, and
-  // test/cli/format/oracle/support-info.mjs for all the names of all the languages.
+  // linguist has them under JSON. Prettier 3.9.9 leaves them out of its language: `prettier.getSupportInfo()`.
   test("what a tool has written and Prettier does not read", async () => {
     const names = ["composer.lock", "Pipfile.lock", "flake.lock", "deno.lock", "mcmod.info", "MODULE.bazel.lock"];
     const files = Object.fromEntries(names.map(name => [name, '{"a":   1}\n']));

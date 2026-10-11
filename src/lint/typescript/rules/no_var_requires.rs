@@ -11,7 +11,7 @@ const NO_VAR_REQS: Message =
 
 impl NoVarRequires {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let callee = call.callee();

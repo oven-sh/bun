@@ -267,10 +267,12 @@ fn analyze_property_chain(e: Expr) -> Result<Option<Dependency>, ()> {
 
 /// `useEffect` for `useEffect` and `React.useEffect`.
 fn name_without_react_namespace(callee: Expr) -> Option<Name> {
-    match callee.kind() {
-        ExprKind::Ident(name) => Some(name),
-        _ => as_static_member(callee)
-            .filter(|it| inner(it.0).is_ident("React"))
+    match callee.as_ident() {
+        Some(name) => Some(name),
+        None => callee
+            .object()
+            .filter(|it| inner(*it).is_ident("React"))
+            .and_then(|_| as_static_member(callee))
             .map(|it| it.1.name()),
     }
 }
@@ -1024,7 +1026,7 @@ pub(crate) fn run<'a, R: Rule>(
     additional_hooks: Option<&Regex>,
     memo: &mut Memo<'a>,
 ) {
-    let ExprKind::Call(call) = node.kind() else {
+    let Some(call) = node.as_call() else {
         return;
     };
     let callee = call.callee();

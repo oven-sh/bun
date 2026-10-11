@@ -35,10 +35,7 @@ struct Memo<'a> {
 }
 
 fn is_this_member_expression(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj.tag() == ExprTag::This,
-        _ => false,
-    }
+    e.object().is_some_and(|obj| obj.tag() == ExprTag::This)
 }
 
 /// The `x` of `this.x` and `this["x"]`. Never empty.
@@ -128,12 +125,12 @@ fn enclosing_class_body<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Option<Class<'a
 
 /// The assignment `e` is in `constructor`, at most in an arrow function that is called at once.
 fn check_in_constructor<'a>(e: Expr<'a>, constructor: Func<'a>, info: &mut ReportInfo<'a>, memo: &mut Memo<'a>) {
-    let ExprKind::Assign { op, target, value } = e.kind() else {
+    let Some((op, target, value)) = e.as_assign() else {
         return;
     };
     // After a write to the parameter, `this.x = x` may copy another value than the parameter
     // property got.
-    if let ExprKind::Ident(name) = target.kind() {
+    if let Some(name) = target.as_ident() {
         if memo.is_reference_from_parameter(target, name) {
             info.assigned_before_unnecessary.insert(Cow::Borrowed(name.bytes()));
         }
@@ -185,7 +182,7 @@ impl NoUnnecessaryParameterPropertyAssignment {
     /// Notes whether `e` is a `this.x = x`. Without one there is nothing to report.
     fn look_for_copy<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !cx.state.has_copy
-            && let ExprKind::Assign { target, value, .. } = e.kind()
+            && let Some((_, target, value)) = e.as_assign()
             && let Some((_, right_name)) = get_identifier(value)
             && get_property_name(target).is_some_and(|left_name| right_name.bytes() == &*left_name)
         {
@@ -224,7 +221,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
         }
         // The assignments to a variable or to a property of `this`.
         let is_relevant = |e: &Expr<'a>| {
-            matches!(e.kind(), ExprKind::Assign { target, .. }
+            matches!(e.as_assign(), Some((_, target, _))
                 if target.tag() == ExprTag::Ident || is_this_member_expression(target))
                 && !utils::is_assignment_target(*e)
         };
@@ -248,7 +245,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
                 check_in_constructor(e, constructor, info, &mut memo);
             }
 
-            if let ExprKind::Assign { target, .. } = e.kind()
+            if let Some((_, target, _)) = e.as_assign()
                 && let Some(name) = get_property_name(target)
                 && is_in_field_initializer(e, function, &mut memo)
             {

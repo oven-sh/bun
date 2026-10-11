@@ -12,23 +12,29 @@ const UNKNOWN_METHOD: Message = Message::new("", "Prefer using method from `{{ob
 impl Rule for PreferPrototypeMethods {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-prototype-methods", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `apply`, `bind`, `call`
+    type State<'a> = [Name<'a>; 3];
 
     fn new(_: &Options) -> Self {
         PreferPrototypeMethods
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["apply", "bind", "call"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        const METHODS: [&str; 3] = ["apply", "bind", "call"];
+        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call_expr) = e.as_call().filter(|it| !it.is_optional()) else {
+        let Some(call_expr) = e.as_call() else {
             return;
         };
         // `a.b`, `a.#b`. The whole of an optional chain, which here is in parentheses, is something else for oxlint.
         let callee = call_expr.callee();
-        if callee.tag() != ExprTag::Dot || callee.is_optional() || callee.is_chain_root() {
+        if !callee.member_name().is_some_and(|it| cx.state.contains(&it.name()))
+            || call_expr.is_optional()
+            || callee.is_optional()
+            || callee.is_chain_root()
+        {
             return;
         }
         let method_expr = if is_method_call(call_expr, Some(&["Reflect"]), Some(&["apply"]), Some(1), None) {

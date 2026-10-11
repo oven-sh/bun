@@ -34,10 +34,10 @@ impl Rule for NoDynamicDelete {
     }
 
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Unary { op: UnOp::Delete, operand } = expr.kind() else {
+        let Some((UnOp::Delete, operand)) = expr.as_unary() else {
             return;
         };
-        let ExprKind::Index { index, .. } = operand.kind() else {
+        let Some(index) = operand.index() else {
             return;
         };
         // ESLint has a `ChainExpression` around `a?.[b]`.

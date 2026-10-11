@@ -21,12 +21,11 @@ impl Rule for ThrowNewError {
         let Some(callee) = e.callee() else {
             return;
         };
-        let name = match callee.kind() {
-            ExprKind::Ident(name) => name,
-            ExprKind::Dot { name, .. } if !callee.is_private_member() && !callee.is_chain_root() => name.name(),
-            _ => return,
+        let Some(name) = callee.as_ident().or_else(|| callee.member_name().map(Ident::name)) else {
+            return;
         };
         if !matches!(name.bytes(), [b'A'..=b'Z', .., b'E', b'r', b'r', b'o', b'r'] | b"Error")
+            || callee.tag() == ExprTag::Dot && (callee.is_private_member() || callee.is_chain_root())
             || is_data_tagged_error(callee)
             || is_decorator(e)
         {

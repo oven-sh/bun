@@ -127,16 +127,7 @@ impl Rule for RequireAwait {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        let is_candidate = |func: &Func| {
-            func.is_async()
-                && ast_utils::is_function_with_body(*func)
-                && !ast_utils::is_empty_function(*func)
-        };
-        let candidates: Vec<Func<'a>> = file.funcs().filter(is_candidate).collect();
-        if candidates.is_empty() {
-            return None;
-        }
-        Some(State { candidates, ..State::default() })
+        State::new(file, true)
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -156,8 +147,9 @@ impl Rule for RequireAwait {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for func in std::mem::take(&mut cx.state.candidates) {
-            if cx.state.with_await.contains(&func)
+        let has_await = std::mem::take(&mut cx.state.has_await);
+        for (func, has_await) in std::mem::take(&mut cx.state.candidates).into_iter().zip(has_await) {
+            if has_await
                 || returns_thenable(func)
                 || func.is_generator() && is_async_yield(func)
             {

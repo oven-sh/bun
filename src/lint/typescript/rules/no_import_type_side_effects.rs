@@ -26,7 +26,7 @@ impl Rule for NoImportTypeSideEffects {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Import(import) = statement.kind() else {
+        let Some(import) = statement.as_import() else {
             return;
         };
         let named = import.named();

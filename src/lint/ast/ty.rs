@@ -283,7 +283,30 @@ impl<'a> TypeNode<'a> {
 
     #[inline]
     pub fn is_keyword(self, keyword: Keyword) -> bool {
-        matches!(self.kind(), TypeKind::Keyword(it) if it == keyword)
+        self.as_keyword() == Some(keyword)
+    }
+
+    #[inline]
+    pub fn as_keyword(self) -> Option<Keyword> {
+        match self.try_raw()?.kind {
+            hir::TypeNodeKind::Keyword(keyword) => Some(keyword),
+            _ => None,
+        }
+    }
+
+    /// The `name` and the `args` of a `Ref`.
+    #[inline]
+    pub fn as_ref(self) -> Option<(EntityName<'a>, List<'a, TypeNode<'a>>)> {
+        match self.try_raw()?.kind {
+            hir::TypeNodeKind::Ref { name, args } => Some((
+                EntityName {
+                    file: self.file,
+                    names: name,
+                },
+                List::ids(self.file, args),
+            )),
+            _ => None,
+        }
     }
 
     /// The pieces of a `Template`.

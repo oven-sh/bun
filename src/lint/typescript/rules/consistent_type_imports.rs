@@ -581,7 +581,7 @@ impl Rule for ConsistentTypeImports {
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if !self.prefers_type_imports {
-            if let StmtKind::Import(import) = statement.kind()
+            if let Some(import) = statement.as_import()
                 && import.is_type_only()
             {
                 cx.report(statement, AVOID_IMPORT_TYPE)
@@ -589,7 +589,7 @@ impl Rule for ConsistentTypeImports {
             }
             return;
         }
-        if let StmtKind::Import(import) = statement.kind() {
+        if let Some(import) = statement.as_import() {
             cx.state.imports.push(import);
         }
     }

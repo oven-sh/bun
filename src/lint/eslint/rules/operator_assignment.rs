@@ -72,15 +72,10 @@ fn is_same_reference_for_oxlint<'a>(target: Expr<'a>, e: Expr<'a>) -> bool {
 impl OperatorAssignment {
     /// `"always"`: an assignment uses the shorthand where it can.
     fn verify<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Assign {
-            op: None,
-            target,
-            value,
-        } = e.kind()
-        else {
+        let Some((None, target, value)) = e.as_assign() else {
             return;
         };
-        let ExprKind::Binary { op, left, right } = value.kind() else {
+        let Some((op, left, right)) = value.as_binary() else {
             return;
         };
         let is_commutative = is_commutative_operator_with_shorthand(op);
@@ -122,12 +117,7 @@ impl OperatorAssignment {
 
     /// `"never"`: no assignment uses the shorthand.
     fn prohibit<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Assign {
-            op: Some(op),
-            target,
-            value,
-        } = e.kind()
-        else {
+        let Some((Some(op), target, value)) = e.as_assign() else {
             return;
         };
         if is_logical_assignment_operator(Some(op)) {

@@ -45,22 +45,32 @@ impl<'a> Func<'a> {
     #[inline]
     pub fn flags(self) -> Flags {
         match self.file.has_synthetic_nodes() {
-            true => match self.owner() {
-                Node::Member(member) => self
-                    .file
-                    .written_flags(self.raw().flags, member.modifiers()),
-                _ => self.raw().flags,
-            },
+            true => self.written_flags(),
             false => self.raw().flags,
         }
     }
 
+    #[inline(never)]
+    fn written_flags(self) -> Flags {
+        match self.owner() {
+            Node::Member(member) => self
+                .file
+                .written_flags(self.raw().flags, member.modifiers()),
+            _ => self.raw().flags,
+        }
+    }
+
+    #[inline]
     pub fn is_async(self) -> bool {
         self.flags().contains(Flags::ASYNC)
-            // The HIR has no flag for the `async` of `static async constructor() {}`.
-            || self.kind() == FnKind::Constructor
-                && matches!(self.owner(), Node::Member(member)
-                    if member.modifiers().iter().any(|it| it.flag() == Flags::ASYNC))
+            || self.kind() == FnKind::Constructor && self.is_async_constructor()
+    }
+
+    /// The HIR has no flag for the `async` of `static async constructor() {}`.
+    #[inline(never)]
+    fn is_async_constructor(self) -> bool {
+        matches!(self.owner(), Node::Member(member)
+            if member.modifiers().iter().any(|it| it.flag() == Flags::ASYNC))
     }
 
     #[inline]
@@ -183,6 +193,9 @@ impl<'a> Func<'a> {
     pub fn span(self) -> Span {
         let end = match self.owner() {
             Node::File(_) => self.raw().start,
+            Node::Expr(e) => e.span().end,
+            Node::Stmt(statement) => statement.span().end,
+            Node::Member(member) => member.span().end,
             owner => owner.span().end,
         };
         Span::new(self.raw().start, end)
@@ -223,6 +236,7 @@ impl<'a> Func<'a> {
             (Node::Expr(_), FnKind::Method | FnKind::Getter | FnKind::Setter) => {
                 self.span_from_params()
             }
+            (Node::Expr(e), _) => e.span(),
             (owner, _) => owner.span(),
         }
     }
@@ -509,7 +523,28 @@ impl<'a> KeyKind<'a> {
 }
 
 impl<'a> Key<'a> {
+    #[inline]
     pub(crate) fn new(
+        file: &'a File<'a>,
+        key: hir::PropKey,
+        name_kind: NameKind,
+        start: u32,
+    ) -> Option<Key<'a>> {
+        match (key, name_kind, file.text().get(start as usize)) {
+            (_, _, None | Some(b'"' | b'\'' | b'0'..=b'9')) => {
+                Key::new_in_general(file, key, name_kind, start)
+            }
+            (hir::PropKey::Name(name), NameKind::Identifier, _) => Some(Key {
+                kind: KeyKind::Ident(file.name(name)),
+                start,
+                is_jsx: false,
+            }),
+            _ => Key::new_in_general(file, key, name_kind, start),
+        }
+    }
+
+    #[inline(never)]
+    fn new_in_general(
         file: &'a File<'a>,
         key: hir::PropKey,
         name_kind: NameKind,
@@ -665,6 +700,21 @@ impl<'a> Key<'a> {
             }
         };
         Span::new(self.start, end)
+    }
+}
+
+/// [`Key::is_computed`] of the key that the HIR has as `key` and `name_kind`.
+#[inline]
+pub(super) fn is_computed(key: hir::PropKey, name_kind: NameKind) -> bool {
+    match key {
+        hir::PropKey::Computed(_) => true,
+        hir::PropKey::Name(_) => {
+            matches!(
+                name_kind,
+                NameKind::ComputedString | NameKind::ComputedNumber
+            )
+        }
+        hir::PropKey::None | hir::PropKey::Private(_) => false,
     }
 }
 
@@ -935,11 +985,28 @@ impl<'a> Member<'a> {
         Key::new(self.file, raw.key, name_kind, raw.name_pos)
     }
 
+    /// The `e` of a key that is a [`KeyKind::Computed`].
+    #[inline]
+    pub fn computed_key(self) -> Option<Expr<'a>> {
+        match self.raw() {
+            &hir::Member {
+                kind:
+                    MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter,
+                key: hir::PropKey::Computed(e),
+                ..
+            } => Some(Expr::new(self.file, e)),
+            _ => None,
+        }
+    }
+
     /// `STATIC`, `READONLY`, `OPTIONAL`, `DEFINITE`, `ABSTRACT`, `OVERRIDE`, `ACCESSOR`,
     /// `AMBIENT`, `PUBLIC`, `PROTECTED`, `PRIVATE`
     #[inline]
     pub fn flags(self) -> Flags {
-        self.file.written_flags(self.raw().flags, self.modifiers())
+        match self.file.has_synthetic_nodes() {
+            true => self.file.written_flags(self.raw().flags, self.modifiers()),
+            false => self.raw().flags,
+        }
     }
 
     #[inline]
@@ -1082,6 +1149,29 @@ impl<'a> Prop<'a> {
             return None;
         }
         Key::new(self.file, raw.key, raw.name_kind, raw.pos)
+    }
+
+    /// The key is written in brackets: [`Key::is_computed`].
+    #[inline]
+    pub fn has_computed_key(self) -> bool {
+        let raw = self.raw();
+        raw.kind != PropKind::Spread && is_computed(raw.key, raw.name_kind)
+    }
+
+    /// The `e` of a key that is a [`KeyKind::Computed`].
+    #[inline]
+    pub fn computed_key(self) -> Option<Expr<'a>> {
+        match self.raw() {
+            hir::Prop {
+                kind: PropKind::Spread,
+                ..
+            } => None,
+            &hir::Prop {
+                key: hir::PropKey::Computed(e),
+                ..
+            } => Some(Expr::new(self.file, e)),
+            _ => None,
+        }
     }
 
     /// - `Init`: the value. `None` for a JSX attribute without one.
@@ -1316,6 +1406,13 @@ impl<'a> EnumMember<'a> {
             false => hir::PropKey::Name(raw.name),
         };
         Key::new(self.file, key, raw.name_kind, raw.pos)
+    }
+
+    /// The `e` of a key that is a [`KeyKind::Computed`].
+    #[inline]
+    pub fn computed_key(self) -> Option<Expr<'a>> {
+        let name = self.raw().computed_name;
+        name.is_some().then(|| Expr::new(self.file, name))
     }
 
     #[inline]

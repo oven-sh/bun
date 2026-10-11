@@ -137,6 +137,8 @@ struct PerFile {
     /// `ctx.frameworks().is_jest()`: the file is named like a test, or imports something from `@jest/globals`.
     is_jest: bool,
     is_vitest: bool,
+    /// The numbers of the identifiers that are named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
+    named_like_jest: OnceCell<Vec<u32>>,
     possible_jest_nodes: OnceCell<PossibleJestNodes>,
 }
 
@@ -204,6 +206,7 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
         PerFile {
             is_jest: is_jestlike_file(file.path()) || imports(|source| source == b"@jest/globals"),
             is_vitest: imports(is_vitest_import_source),
+            named_like_jest: OnceCell::new(),
             possible_jest_nodes: OnceCell::new(),
         }
     })
@@ -319,27 +322,71 @@ fn collect_possible_jest_call_node<'a>(
         let references = symbol.references().filter_map(Reference::expr);
         references.for_each(|it| found.add_calls_of(it, original, import_index as u32, frameworks));
     }
-    // What the names resolve to is asked only where one of them starts a chain: `test` is also the name of a method.
-    let globals: SmallVec<[Name; 19]> = (JEST_METHOD_NAMES.iter().zip(JEST_METHOD_BITS))
-        .filter(|it| file.mentions_bit(it.1))
-        .map(|it| file.name_of(it.0))
-        .collect();
-    if !globals.is_empty() {
-        let is_global = |e: &Expr<'a>| {
-            e.as_ident().is_some_and(|name| globals.contains(&name))
-                && parent_expression(*e).is_some_and(|it| {
-                    matches!(it.tag(), ExprTag::Call | ExprTag::TaggedTemplate) || is_member(it)
-                })
-                && e.symbol().is_none()
-        };
-        file.exprs_of_kind(ExprTag::Ident)
-            .filter(is_global)
-            .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX, frameworks));
-    }
+    // What the names resolve to is asked only where one of them starts a chain.
+    let is_global = |e: &Expr<'a>| {
+        parent_expression(*e).is_some_and(|it| {
+            matches!(it.tag(), ExprTag::Call | ExprTag::TaggedTemplate) || is_member(it)
+        }) && e.symbol().is_none()
+    };
+    (frameworks.named_like_jest(file).iter())
+        .map(|id| Expr::from_raw(file, *id))
+        .filter(is_global)
+        .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX, frameworks));
     utils::sort::sort_unstable_by_key(&mut found.calls, |it| {
         (it.span.start, std::cmp::Reverse(it.span.end))
     });
     found
+}
+
+impl PerFile {
+    fn named_like_jest<'a>(&self, file: &'a File<'a>) -> &[u32] {
+        self.named_like_jest.get_or_init(|| {
+            // `test` is also the name of a method.
+            let names: SmallVec<[Name; 19]> = (JEST_METHOD_NAMES.iter().zip(JEST_METHOD_BITS))
+                .filter(|it| file.mentions_bit(it.1))
+                .map(|it| file.name_of(it.0))
+                .collect();
+            let identifiers = file
+                .exprs_of_kind(ExprTag::Ident)
+                .take_while(|_| !names.is_empty());
+            identifiers
+                .filter(|it| it.as_ident().is_some_and(|name| names.contains(&name)))
+                .map(|it| it.id().0)
+                .collect()
+        })
+    }
+}
+
+/// Calls `visit` with every call that is written like one of `kinds`: [`first_identifier_of_chain`] of what is called is such a
+/// name, whatever it refers to.
+pub(crate) fn for_each_call_named_like<'a>(
+    file: &'a File<'a>,
+    kinds: &[JestGeneralFnKind],
+    visit: &mut dyn FnMut(Expr<'a>),
+) {
+    let identifiers = per_file(file).map_or(&[][..], |it| it.named_like_jest(file));
+    for identifier in identifiers.iter().map(|id| Expr::from_raw(file, *id)) {
+        let kind = identifier.as_ident().map(|it| JestFnKind::from(it.bytes()));
+        if !matches!(kind, Some(JestFnKind::General(kind)) if kinds.contains(&kind)) {
+            continue;
+        }
+        let mut at = identifier;
+        while !at.is_parenthesized()
+            && let Node::Expr(parent) = at.parent()
+            && match parent.tag() {
+                ExprTag::Dot | ExprTag::Index => parent.object() == Some(at),
+                ExprTag::Call | ExprTag::TaggedTemplate => {
+                    parent.as_call_like().is_some_and(|it| it.callee() == at)
+                }
+                _ => false,
+            }
+        {
+            if parent.tag() == ExprTag::Call {
+                visit(parent);
+            }
+            at = parent;
+        }
+    }
 }
 
 impl PossibleJestNodes {
@@ -1046,7 +1093,12 @@ pub(crate) fn run_on_jest_nodes<'a>(
 
 /// Whether [`iter_possible_jest_call_node`] can have anything, by what the file mentions. It computes nothing.
 pub(crate) fn may_have_possible_jest_call_node(file: &File) -> bool {
-    mentions_any(file, &JEST_METHOD_BITS) || mentions_any(file, &SOURCE_BITS)
+    mentions_jest_method(file) || mentions_any(file, &SOURCE_BITS)
+}
+
+/// Whether the file mentions one of [`JEST_METHOD_NAMES`].
+pub(crate) fn mentions_jest_method(file: &File) -> bool {
+    mentions_any(file, &JEST_METHOD_BITS)
 }
 
 /// `node.enclosing_function()`, asked of many nodes. A static block is not a function.

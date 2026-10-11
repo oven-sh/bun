@@ -19,7 +19,7 @@ impl Rule for NoNewRequire {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::New(call) = e.kind()
+        if let Some(call) = e.as_new()
             && call.callee().is_ident("require")
         {
             cx.report(e, NO_NEW_REQUIRE);

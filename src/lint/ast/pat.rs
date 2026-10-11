@@ -98,6 +98,9 @@ impl<'a> Pat<'a> {
 
     /// Calls `visit` with every identifier that the pattern binds, in source order.
     pub fn for_each_binding(self, visit: &mut dyn FnMut(Pat<'a>)) {
+        if self.tag() == PatTag::Ident {
+            return visit(self);
+        }
         // The next is the last. Not by recursion, which a pattern can be too deep for.
         let mut pending: SmallVec<[Pat<'a>; 8]> = smallvec![self];
         while let Some(pat) = pending.pop() {
@@ -131,6 +134,26 @@ impl<'a> PatProp<'a> {
             return None;
         }
         Key::new(self.file, raw.key, raw.name_kind, raw.key_pos)
+    }
+
+    /// The key is written in brackets: [`Key::is_computed`].
+    #[inline]
+    pub fn has_computed_key(self) -> bool {
+        let raw = self.raw();
+        !raw.is_rest && super::decl::is_computed(raw.key, raw.name_kind)
+    }
+
+    /// The `e` of a key that is a [`KeyKind::Computed`](super::KeyKind::Computed).
+    #[inline]
+    pub fn computed_key(self) -> Option<Expr<'a>> {
+        match self.raw() {
+            &hir::PatProp {
+                key: hir::PropKey::Computed(e),
+                is_rest: false,
+                ..
+            } => Some(Expr::new(self.file, e)),
+            _ => None,
+        }
     }
 
     /// `{ a }`, `{ a = 1 }`: the name is both the key and what is bound.

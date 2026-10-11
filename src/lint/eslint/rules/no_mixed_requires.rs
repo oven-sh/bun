@@ -100,7 +100,7 @@ impl NoMixedRequires {
 impl Rule for NoMixedRequires {
     const META: Meta = Meta::eslint("no-mixed-requires", Kind::Suggestion).deprecated();
     const ON: On = On::new().stmts(&[StmtTag::Var]);
-    no_state!();
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -110,8 +110,13 @@ impl Rule for NoMixedRequires {
         }
     }
 
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("require").then_some(())
+    }
+
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Var(declarations) = stmt.kind() else {
+        // One declaration is mixed with nothing.
+        let Some(declarations) = stmt.as_var().filter(|it| it.len() > 1) else {
             return;
         };
         let mut contains = 0;

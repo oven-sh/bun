@@ -47,11 +47,17 @@ fn is_cased(grapheme: &str) -> bool {
 }
 
 fn is_uppercase(grapheme: &str) -> bool {
-    grapheme.chars().flat_map(char::to_uppercase).eq(grapheme.chars()) && is_cased(grapheme)
+    match grapheme.as_bytes() {
+        [ascii] => ascii.is_ascii_uppercase(),
+        _ => grapheme.chars().flat_map(char::to_uppercase).eq(grapheme.chars()) && is_cased(grapheme),
+    }
 }
 
 fn is_lowercase(grapheme: &str) -> bool {
-    grapheme.chars().flat_map(char::to_lowercase).eq(grapheme.chars()) && is_cased(grapheme)
+    match grapheme.as_bytes() {
+        [ascii] => ascii.is_ascii_lowercase(),
+        _ => grapheme.chars().flat_map(char::to_lowercase).eq(grapheme.chars()) && is_cased(grapheme),
+    }
 }
 
 fn is_digit(grapheme: &str) -> bool {
@@ -59,6 +65,12 @@ fn is_digit(grapheme: &str) -> bool {
 }
 
 impl Case {
+    /// Whether `name` is in this case.
+    fn is_that_of(self, name: &str) -> bool {
+        let has_no_capitals = matches!(self, Case::Kebab | Case::Snake | Case::Lowercase);
+        !(has_no_capitals && name.bytes().any(|it| it.is_ascii_uppercase())) && self.convert(name) == name
+    }
+
     /// `name` in this case, as the crate `convert_case` makes it: words end at `_`, `-`, a blank, between `a` and `B`,
     /// between `A` and `Bc`, and between a capital letter and a digit. A word can be empty.
     fn convert(self, name: &str) -> String {
@@ -149,7 +161,7 @@ impl FilenameCase {
     /// The cases that the name of the file should be in, as the message lists them. `None` if it is in one.
     fn expected_cases(&self, path: &[u8]) -> Option<String> {
         let (_, trimmed_filename) = self.checked_part(path)?;
-        if self.cases.iter().any(|it| it.convert(trimmed_filename) == trimmed_filename) {
+        if self.cases.iter().any(|it| it.is_that_of(trimmed_filename)) {
             return None;
         }
         let mut expected = String::new();

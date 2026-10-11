@@ -64,7 +64,7 @@ impl Rule for PreferArraySome {
     // Each finds nothing in a file that does not mention what it is about.
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         check_find_index(self, e, cx);
-        if matches!(e.kind(), ExprKind::Binary { op: BinOp::Gt | BinOp::NotEqEq, .. }) {
+        if matches!(e.binary_op(), Some(BinOp::Gt | BinOp::NotEqEq)) {
             check_filter_length(self, e, cx);
         }
     }
@@ -134,7 +134,7 @@ fn find_nullish_comparison_parent(e: Expr<'_>) -> Option<(Expr<'_>, bool)> {
 
 /// `.findIndex(…) !== -1`, `.findIndex(…) >= 0`
 fn check_find_index<'a>(_: &PreferArraySome, e: Expr<'a>, cx: &mut Cx<'a, PreferArraySome>) {
-    let ExprKind::Binary { op, left, right } = e.kind() else {
+    let Some((op, left, right)) = e.as_binary() else {
         return;
     };
     let Some(call) = as_call_expression(left) else {
@@ -159,7 +159,7 @@ fn check_find_index<'a>(_: &PreferArraySome, e: Expr<'a>, cx: &mut Cx<'a, Prefer
 
 /// `.filter(…).length > 0`, `.filter(…).length !== 0`
 fn check_filter_length<'a>(_: &PreferArraySome, e: Expr<'a>, cx: &mut Cx<'a, PreferArraySome>) {
-    let ExprKind::Binary { left, right, .. } = e.kind() else {
+    let Some((_, left, right)) = e.as_binary() else {
         return;
     };
     if !is_raw_zero(right) || left.is_chain_root() || !static_property_name(left).is_some_and(|it| it.is("length")) {

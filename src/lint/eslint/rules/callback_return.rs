@@ -69,11 +69,15 @@ impl Rule for CallbackReturn {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let callee = call.callee();
-        if !contains_only_identifiers(callee) || !self.callbacks.iter().any(|it| **it == *callee.text()) {
+        if !matches!(callee.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index) {
+            return;
+        }
+        let text = callee.text();
+        if !self.callbacks.iter().any(|it| **it == *text) || !contains_only_identifiers(callee) {
             return;
         }
 

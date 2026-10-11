@@ -8,26 +8,22 @@ const UNEXPECTED_CONCAT: Message =
 
 /// The operands, if `e` is a `+`.
 fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
-    match e.kind() {
-        ExprKind::Binary {
-            op: BinOp::Add,
-            left,
-            right,
-        } => Some((left, right)),
+    match e.as_binary() {
+        Some((BinOp::Add, left, right)) => Some((left, right)),
         _ => None,
     }
 }
 
 impl Rule for NoUselessConcat {
     const META: Meta = Meta::eslint("no-useless-concat", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().binaries(&[BinOp::Add]);
     no_state!();
 
     fn new(_: &Options) -> Self {
         NoUselessConcat
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some((mut left, mut right)) = as_concatenation(e) else {
             return;
         };

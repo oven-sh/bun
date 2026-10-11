@@ -2,9 +2,10 @@
 //! module is a file of oxlint's `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
-    Ctx, JEST_METHOD_NAMES, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
-    ParsedGeneralJestFnCall, PossibleJestNode, Scopes, is_in_call_or_member,
-    is_type_of_jest_fn_call, is_vitest, iter_possible_jest_call_node, parent_expression,
+    Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
+    ParsedGeneralJestFnCall, PossibleJestNode, Scopes, for_each_call_named_like,
+    is_in_call_or_member, is_type_of_jest_fn_call, is_vitest, iter_possible_jest_call_node,
+    mention_bits, mentions_any, mentions_jest_method, parent_expression,
     parse_general_jest_fn_call, parse_jest_fn_call,
 };
 use bun_core::strings;
@@ -15,7 +16,7 @@ use bun_lint_oxlint::ast_util::{
 };
 use bun_lint_oxlint::module_record::debug;
 use bun_lint_oxlint::regex_flags::rust_regex;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 pub(crate) mod no_focused_tests {
@@ -739,21 +740,41 @@ pub(crate) mod no_conditional_in_test {
 
     const NO_CONDITIONAL_IN_TEST: Message = Message::new("", "Avoid having conditionals in tests.");
 
+    pub(crate) fn should_run(file: &File) -> bool {
+        mentions_any(
+            file,
+            &const { mention_bits(["fit", "it", "test", "xit", "xtest"]) },
+        )
+    }
+
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
-        let mut tests = AncestorMemo::default();
-        let mut check = |node: Node<'a>| {
-            let is_test = |_, parent: Node<'a>| {
-                let call_expr = parent.as_expr().filter(|it| it.tag() == ExprTag::Call)?;
-                is_type_of_jest_fn_call(
-                    file,
-                    PossibleJestNode::new(call_expr),
-                    &[JestFnKind::General(JestGeneralFnKind::Test)],
-                )
-                .then_some(())
-            };
-            if tests.find(node, is_test).is_some() {
-                ctx.report(node.span(), NO_CONDITIONAL_IN_TEST);
+        let mut tests: Vec<Span> = Vec::new();
+        for_each_call_named_like(file, &[JestGeneralFnKind::Test], &mut |call_expr| {
+            if is_type_of_jest_fn_call(
+                file,
+                PossibleJestNode::new(call_expr),
+                &[JestFnKind::General(JestGeneralFnKind::Test)],
+            ) {
+                tests.push(call_expr.span());
+            }
+        });
+        if tests.is_empty() {
+            return;
+        }
+        // Those that are in no other, in the order of the source.
+        utils::sort::sort_unstable_by_key(&mut tests, |it| (it.start, std::cmp::Reverse(it.end)));
+        let mut end = 0;
+        tests.retain(|it| {
+            let is_in_no_other = it.end > end;
+            end = end.max(it.end);
+            is_in_no_other
+        });
+        let check = |node: Node<'a>| {
+            let span = node.span();
+            let before = tests.partition_point(|it| it.start <= span.start);
+            if (tests.get(before.wrapping_sub(1))).is_some_and(|it| it.contains(span)) {
+                ctx.report(span, NO_CONDITIONAL_IN_TEST);
             }
         };
         file.stmts_of_kind(StmtTag::If)
@@ -1045,16 +1066,21 @@ pub(crate) mod prefer_each {
         Message::new("", "Enforce using `each` rather than manual loops");
 
     pub(crate) fn should_run(file: &File) -> bool {
-        file.has_stmts([StmtTag::For, StmtTag::ForIn, StmtTag::ForOf])
-            && file.mentions_any(&JEST_METHOD_NAMES)
+        mentions_jest_method(file) && file.has_stmts([StmtTag::For, StmtTag::ForIn, StmtTag::ForOf])
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
         // The loop that something is in, if no call is between, and whether something is in a call of `it.each` or the like.
         let (mut loops, mut tests) = (AncestorMemo::default(), AncestorMemo::default());
-        let mut skip = FxHashSet::default();
-        for node in file.exprs_of_kind(ExprTag::Call) {
+        // The calls that are reported, each with its loop.
+        let mut found: Vec<(Stmt<'a>, Expr<'a>, &'static str)> = Vec::new();
+        let kinds = [
+            JestGeneralFnKind::Test,
+            JestGeneralFnKind::Describe,
+            JestGeneralFnKind::Hook,
+        ];
+        for_each_call_named_like(file, &kinds, &mut |node| {
             let enclosing_loop = loops.find(Node::Expr(node), |_, parent| match parent {
                 Node::Expr(e) => (e.tag() == ExprTag::Call).then_some(None),
                 Node::Stmt(it) => {
@@ -1064,19 +1090,30 @@ pub(crate) mod prefer_each {
                 _ => None,
             });
             let Some(Some(loop_node)) = enclosing_loop else {
+                return;
+            };
+            match parse_jest_fn_call(file, PossibleJestNode::new(node)).map(|it| it.kind()) {
+                Some(JestFnKind::General(JestGeneralFnKind::Test)) => {
+                    found.push((loop_node, node, "it"));
+                }
+                Some(JestFnKind::General(
+                    JestGeneralFnKind::Describe | JestGeneralFnKind::Hook,
+                )) => found.push((loop_node, node, "describe")),
+                _ => {}
+            }
+        });
+        utils::sort::sort_unstable_by_key(&mut found, |it| it.0.span().start);
+        // A loop is reported once, for the first of its calls.
+        for calls in found.chunk_by(|a, b| a.0 == b.0) {
+            let Some(&(loop_node, _, mut fn_name)) = calls.first() else {
                 continue;
             };
-            if skip.contains(&loop_node) {
-                continue;
+            if calls.iter().any(|it| it.2 != fn_name)
+                && let Some(first) = (file.exprs_of_kind(ExprTag::Call))
+                    .find_map(|node| calls.iter().find(|it| it.1 == node))
+            {
+                fn_name = first.2;
             }
-            let fn_name =
-                match parse_jest_fn_call(file, PossibleJestNode::new(node)).map(|it| it.kind()) {
-                    Some(JestFnKind::General(JestGeneralFnKind::Test)) => "it",
-                    Some(JestFnKind::General(
-                        JestGeneralFnKind::Describe | JestGeneralFnKind::Hook,
-                    )) => "describe",
-                    _ => continue,
-                };
             if tests
                 .find(Node::Stmt(loop_node), |_, parent| {
                     is_member_of_test_called(parent).then_some(())
@@ -1091,7 +1128,6 @@ pub(crate) mod prefer_each {
             else {
                 continue;
             };
-            skip.insert(loop_node);
             ctx.report(
                 Span::new(loop_node.span().start, body.span().start),
                 USE_PREFER_EACH,

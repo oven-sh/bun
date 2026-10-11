@@ -454,6 +454,31 @@ impl<'a> Expr<'a> {
         self.tag() == ExprTag::Missing
     }
 
+    /// It is of a kind that has no children.
+    #[inline]
+    pub(super) fn is_name_or_literal(self) -> bool {
+        const fn kind(tag: ExprTag) -> u64 {
+            1 << tag as u8
+        }
+        // What the HIR has as a string can be a template, which then has no substitutions.
+        const KINDS: u64 = kind(ExprTag::Missing)
+            | kind(ExprTag::Ident)
+            | kind(ExprTag::PrivateIdentifier)
+            | kind(ExprTag::This)
+            | kind(ExprTag::Super)
+            | kind(ExprTag::Null)
+            | kind(ExprTag::True)
+            | kind(ExprTag::False)
+            | kind(ExprTag::Number)
+            | kind(ExprTag::String)
+            | kind(ExprTag::BigInt)
+            | kind(ExprTag::Regex)
+            | kind(ExprTag::ImportMeta)
+            | kind(ExprTag::NewTarget);
+        self.try_raw()
+            .is_none_or(|raw| KINDS & kind(raw.kind.tag()) != 0)
+    }
+
     /// The name, if it is an identifier.
     #[inline]
     pub fn as_ident(self) -> Option<Name<'a>> {

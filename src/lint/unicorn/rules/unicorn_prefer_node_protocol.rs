@@ -10,10 +10,11 @@ const PREFER_NODE_PROTOCOL: Message =
     Message::new("", "Prefer using the `node:` protocol when importing Node.js built-in modules.");
 
 /// `span`: the string with its quotes.
-fn check<'a>(module_name: Option<Name<'a>>, span: Option<Span>, cx: &Cx<'a, PreferNodeProtocol>) {
-    if let (Some(module_name), Some(span)) = (module_name, span)
-        && !module_name.bytes().starts_with(b"node:")
+fn check<'a>(module_name: Option<Name<'a>>, span: impl FnOnce() -> Option<Span>, cx: &Cx<'a, PreferNodeProtocol>) {
+    if let Some(module_name) = module_name
+        && !matches!(module_name.bytes(), [b'.' | b'/' | b'@', ..] | [b'n', b'o', b'd', b'e', b':', ..])
         && is_nodejs_builtin_module(module_name.bytes())
+        && let Some(span) = span()
     {
         cx.report(span, PREFER_NODE_PROTOCOL)
             .data("module_name", module_name)
@@ -24,7 +25,7 @@ fn check<'a>(module_name: Option<Name<'a>>, span: Option<Span>, cx: &Cx<'a, Pref
 /// `e`: the only argument of `require(..)`, the first of `import(..)`.
 fn check_argument<'a>(e: Option<Expr<'a>>, cx: &Cx<'a, PreferNodeProtocol>) {
     if let Some(e) = e.filter(|it| !it.is_parenthesized()) {
-        check(e.as_string(), Some(e.span()), cx);
+        check(e.as_string(), || Some(e.span()), cx);
     }
 }
 
@@ -56,15 +57,13 @@ impl Rule for PreferNodeProtocol {
             },
             _ => None,
         };
-        if module_name.is_some() {
-            check(module_name, stmt.module_specifier_span(), cx);
-        }
+        check(module_name, || stmt.module_specifier_span(), cx);
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::ImportCall => {
-                if let ExprKind::ImportCall { args } = e.kind() {
+                if let Some(args) = e.as_import_call() {
                     check_argument(args.first(), cx);
                 }
             }

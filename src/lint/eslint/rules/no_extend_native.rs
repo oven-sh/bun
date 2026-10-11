@@ -34,7 +34,7 @@ impl NoExtendNative {
 
     /// `Builtin.prototype.p = 0`
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Assign { target, .. } = e.kind()
+        if let Some((_, target, _)) = e.as_assign()
             && let Some(prototype) = ast_utils::member_object(target)
             && let Some(builtin) = self.builtin_of_prototype(prototype)
             && !utils::is_assignment_target(e)
@@ -45,7 +45,7 @@ impl NoExtendNative {
 
     /// `Object.defineProperty(Builtin.prototype, ..)`
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Call(call) = e.kind()
+        if let Some(call) = e.as_call()
             && ast_utils::member_object(call.callee()).is_some_and(|object| object.is_ident("Object"))
             && ast_utils::is_member_access_of_any(call.callee(), &["defineProperty", "defineProperties"])
             && let Some(builtin) = call.args().first().and_then(|first| self.builtin_of_prototype(first))

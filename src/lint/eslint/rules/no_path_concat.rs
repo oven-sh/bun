@@ -14,15 +14,19 @@ fn is_path_variable(e: Expr) -> bool {
 
 impl Rule for NoPathConcat {
     const META: Meta = Meta::eslint("no-path-concat", Kind::Suggestion).deprecated();
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
-    no_state!();
+    const ON: On = On::new().binaries(&[BinOp::Add]);
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoPathConcat
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Binary { op: BinOp::Add, left, right } = e.kind()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&["__dirname", "__filename"]).then_some(())
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some((_, left, right)) = e.as_binary()
             && (is_path_variable(left) || is_path_variable(right))
         {
             cx.report(e, USE_PATH_FUNCTIONS);

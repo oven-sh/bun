@@ -151,9 +151,7 @@ fn overload_of_member(member: Member<'_>) -> Option<Overload<'_>> {
 
 /// A function declaration without a body: ESLint's `TSDeclareFunction`.
 fn overload_of_statement(statement: Stmt<'_>) -> Option<Overload<'_>> {
-    let StmtKind::Fn(signature) = statement.kind() else {
-        return None;
-    };
+    let signature = statement.as_fn()?;
     if signature.has_body() {
         return None;
     }

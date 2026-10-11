@@ -20,7 +20,7 @@ impl Rule for NoProcessEnv {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Dot { obj, name, .. } = e.kind() else {
+        let Some((obj, name, _)) = e.as_dot() else {
             return;
         };
         // The `name` of ESLint's `PrivateIdentifier` is without the `#`.

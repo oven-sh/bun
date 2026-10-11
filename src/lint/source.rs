@@ -108,6 +108,8 @@ pub(crate) struct NearbyLine {
     known: Cell<(u32, u32)>,
     /// How many bytes have been looked at.
     looked_at: Cell<usize>,
+    /// How many lines there are.
+    count: OnceCell<u32>,
 }
 
 /// Whether only `\n` ends a line of `text`.
@@ -119,15 +121,18 @@ fn is_plain(text: &[u8]) -> bool {
 }
 
 impl<'a> File<'a> {
+    /// Whether only `\n` ends a line.
+    fn is_plain(&self) -> bool {
+        let nearby = &self.by_kind().nearby_line;
+        *nearby.is_plain.get_or_init(|| is_plain(self.text()))
+    }
+
     /// The line that `offset` is in, counted from 1, and where it starts, if that takes less than to find all lines.
     fn nearby_line(&self, offset: u32) -> Option<(u32, u32)> {
-        if self.lazy.lines.get().is_some() {
+        if self.lazy.lines.get().is_some() || !self.is_plain() {
             return None;
         }
         let (text, nearby) = (self.text(), &self.by_kind().nearby_line);
-        if !*nearby.is_plain.get_or_init(|| is_plain(text)) {
-            return None;
-        }
         let (known, lines_before) = nearby.known.get();
         let between = text.get(known.min(offset) as usize..known.max(offset) as usize)?;
         // To count is many times faster than to note where each line starts.
@@ -154,7 +159,7 @@ impl<'a> File<'a> {
 
     fn lines_index(&self) -> &Lines {
         self.lazy.lines.get_or_init(|| Lines {
-            starts: line_starts(self.text()),
+            starts: line_starts(self.text(), self.is_plain()),
             is_ascii: bun_core::strings::first_non_ascii(self.text()).is_none(),
             units: OnceCell::new(),
             last: Cell::new(0),
@@ -207,7 +212,11 @@ impl<'a> File<'a> {
 
     /// ESLint's `sourceCode.lines.length`.
     pub fn line_count(&self) -> u32 {
-        self.lines_index().starts.len() as u32
+        if self.lazy.lines.get().is_some() || !self.is_plain() {
+            return self.lines_index().starts.len() as u32;
+        }
+        let count = || bun_core::strings::count_char(self.text(), b'\n') as u32 + 1;
+        *self.by_kind().nearby_line.count.get_or_init(count)
     }
 
     /// The line that `offset` is in, counted from 1.
@@ -221,6 +230,13 @@ impl<'a> File<'a> {
     /// Where the line `line`, counted from 1, starts and where it ends, before its line break. The first starts after a byte
     /// order mark.
     pub fn line_span(&self, line: u32) -> Span {
+        // The last is found without the others.
+        let is_counted = self.lazy.lines.get().is_none() && self.is_plain();
+        if line > 1 && is_counted && line == self.line_count() {
+            let text = self.text();
+            let start = bun_core::strings::last_index_of_char(text, b'\n').map_or(0, |at| at + 1);
+            return Span::new(start as u32, text.len() as u32);
+        }
         let (starts, text) = (&self.lines_index().starts, self.text());
         let Some(&start) = starts.get((line as usize).wrapping_sub(1)) else {
             return Span::empty(text.len() as u32);
@@ -384,8 +400,8 @@ impl<'a> File<'a> {
 }
 
 /// Where the lines of `text` start.
-fn line_starts(text: &[u8]) -> Vec<u32> {
-    if !is_plain(text) {
+fn line_starts(text: &[u8], is_plain: bool) -> Vec<u32> {
+    if !is_plain {
         return bun_sema::check::compute_ecma_line_starts(text);
     }
     // Only `\n` ends a line, as in nearly every file: 8 bytes are tested at a time.
@@ -396,6 +412,10 @@ fn line_starts(text: &[u8]) -> Vec<u32> {
     let rest = text.len() - tail.len();
     for (i, word) in words.iter().enumerate() {
         let others = u64::from_le_bytes(*word) ^ (ONES * b'\n' as u64);
+        // None of the bytes is 0.
+        if others.wrapping_sub(ONES) & !others & (ONES * 0x80) == 0 {
+            continue;
+        }
         // The high bit of each byte that is a `\n`.
         let mut found = !(((others & (ONES * 0x7F)) + ONES * 0x7F) | others) & (ONES * 0x80);
         while found != 0 {

@@ -1,6 +1,5 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashSet;
 
 /// Disallow async functions which have no `await` expression.
 pub struct RequireAwait;
@@ -8,13 +7,31 @@ pub struct RequireAwait;
 pub const MISSING_AWAIT: Message = Message::new("missingAwait", "{{name}} has no 'await' expression.");
 pub const REMOVE_ASYNC: Message = Message::new("removeAsync", "Remove 'async'.");
 
-#[derive(Default)]
 pub struct State<'a> {
-    /// The async functions that can be reported.
+    /// The async functions that can be reported, in the order of [`File::funcs`].
     pub candidates: Vec<Func<'a>>,
-    pub with_await: FxHashSet<Func<'a>>,
+    /// For each of them, whether something is awaited directly in it.
+    pub has_await: Vec<bool>,
     /// The function that a node is directly in.
-    pub functions: AncestorMemo<'a, Func<'a>>,
+    functions: AncestorMemo<'a, Func<'a>>,
+}
+
+impl<'a> State<'a> {
+    /// `None`: the file has no async function with something in it.
+    pub fn new(file: &'a File<'a>, with_generators: bool) -> Option<State<'a>> {
+        let is_candidate = |func: &Func| {
+            (func.flags().contains(Flags::ASYNC) || func.kind() == FnKind::Constructor && func.is_async())
+                && (with_generators || !func.is_generator())
+                && ast_utils::is_function_with_body(*func)
+                && !ast_utils::is_empty_function(*func)
+        };
+        let candidates: Vec<Func<'a>> = file.funcs().filter(is_candidate).collect();
+        (!candidates.is_empty()).then(|| State {
+            has_await: vec![false; candidates.len()],
+            candidates,
+            functions: AncestorMemo::default(),
+        })
+    }
 }
 
 /// `node` awaits something: so does the function that it is directly in.
@@ -23,9 +40,10 @@ pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(node: Node<'a>, 
         parent.as_func().filter(|func| func.kind() != FnKind::StaticBlock)
     });
     if let Some(func) = function
-        && func.is_async()
+        && let Ok(at) = cx.state.candidates.binary_search_by_key(&func.id().idx(), |it| it.id().idx())
+        && let Some(has_await) = cx.state.has_await.get_mut(at)
     {
-        cx.state.with_await.insert(func);
+        *has_await = true;
     }
 }
 
@@ -98,7 +116,6 @@ impl Rule for RequireAwait {
         .has_suggestions()
         .reports_on_exit();
     const ON: On = On::new()
-        .funcs()
         .exprs(&[ExprTag::Await])
         .stmts(&[StmtTag::ForOf])
         .var_decls()
@@ -109,18 +126,8 @@ impl Rule for RequireAwait {
         RequireAwait
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
-    }
-
-    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.is_async()
-            && !func.is_generator()
-            && ast_utils::is_function_with_body(func)
-            && !ast_utils::is_empty_function(func)
-        {
-            cx.state.candidates.push(func);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        State::new(file, false)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -140,8 +147,9 @@ impl Rule for RequireAwait {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for func in std::mem::take(&mut cx.state.candidates) {
-            if !cx.state.with_await.contains(&func) {
+        let has_await = std::mem::take(&mut cx.state.has_await);
+        for (func, has_await) in std::mem::take(&mut cx.state.candidates).into_iter().zip(has_await) {
+            if !has_await {
                 report(func, cx);
             }
         }

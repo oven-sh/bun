@@ -205,13 +205,6 @@ macro_rules! rules_as_a_set {
             type Run<'r, 'a: 'r> = Runs<'r, 'a>;
 
             #[inline]
-            fn meta(&self) -> &'static $crate::rule::Meta {
-                match self {
-                    $(Rules::$module(_) => &<rules::$module::$rule as $crate::rule::Rule>::META,)*
-                }
-            }
-
-            #[inline]
             fn start<'r, 'a: 'r>(
                 &'r self,
                 start: $crate::runner::Start<'a>,
@@ -335,13 +328,6 @@ macro_rules! rule_sets {
 
         impl $crate::runner::Starts for $rules {
             type Run<'r, 'a: 'r> = $runs<'r, 'a>;
-
-            #[inline]
-            fn meta(&self) -> &'static $crate::rule::Meta {
-                match self {
-                    $($rules::$name(rule) => $crate::runner::Starts::meta(rule),)*
-                }
-            }
 
             #[inline]
             fn start<'r, 'a: 'r>(

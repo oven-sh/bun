@@ -54,7 +54,7 @@ impl Rule for NoLonelyIf {
         if let Node::Stmt(block) = node.parent()
             && block.as_block().is_some_and(|body| body.iter().nth(1).is_none())
             && let Node::Stmt(outer) = block.parent()
-            && matches!(outer.kind(), StmtKind::If { no: Some(no), .. } if no == block)
+            && matches!(outer.as_if(), Some((_, _, Some(no))) if no == block)
             && !ast_utils::are_braces_necessary(block)
             // oxlint says nothing after an `else if`.
             && !(cx.language().is_oxlint && is_else_if(outer))

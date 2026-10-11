@@ -1,6 +1,6 @@
 //! The way down: the children of a node, and a walk over a whole file in source order.
 
-use super::{ExprKind, File, FnBody, Key, KeyKind, Modifier, Node, PatKind, StmtKind, TypeKind};
+use super::{ExprKind, File, FnBody, Modifier, Node, PatKind, StmtKind, TypeKind};
 
 impl<'a> Node<'a> {
     /// Calls `visit` with each child, in source order.
@@ -26,7 +26,19 @@ impl<'a> Node<'a> {
         children
     }
 
+    #[inline]
     fn children_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
+        match self {
+            Node::Expr(e) if e.is_name_or_literal() => {}
+            _ => self.children_of_what_can_have_some_into(near, visit),
+        }
+    }
+
+    fn children_of_what_can_have_some_into(
+        self,
+        near: Option<u32>,
+        visit: &mut dyn FnMut(Node<'a>),
+    ) {
         macro_rules! one {
             ($it:expr) => {
                 visit($it.into())
@@ -52,12 +64,6 @@ impl<'a> Node<'a> {
                     visit(it.into());
                 }
             };
-        }
-        fn computed<'a>(key: Option<Key<'a>>) -> Option<super::Expr<'a>> {
-            match key?.kind() {
-                KeyKind::Computed(e) => Some(e),
-                _ => None,
-            }
         }
         /// The strings in `with { key: "value" }`.
         fn attribute_values<'a>(
@@ -270,7 +276,7 @@ impl<'a> Node<'a> {
                 }
             },
             Node::PatProp(prop) => {
-                opt!(computed(prop.key()));
+                opt!(prop.computed_key());
                 one!(prop.value());
                 opt!(prop.default());
             }
@@ -288,13 +294,13 @@ impl<'a> Node<'a> {
             }
             Node::Member(member) => {
                 all!(member.decorators());
-                opt!(computed(member.key()));
+                opt!(member.computed_key());
                 opt!(member.func());
                 opt!(member.ty());
                 opt!(member.init());
             }
             Node::Prop(prop) => {
-                opt!(computed(prop.key()));
+                opt!(prop.computed_key());
                 opt!(prop.value());
             }
             Node::VarDecl(declaration) => {
@@ -307,7 +313,7 @@ impl<'a> Node<'a> {
                 list!(case.body());
             }
             Node::EnumMember(member) => {
-                opt!(computed(member.key()));
+                opt!(member.computed_key());
                 opt!(member.init());
             }
             Node::ImportSpec(_) | Node::ExportSpec(_) => {}

@@ -59,7 +59,7 @@ impl Config {
         }
         // Whether it is in the head of the `for` statement that is its parent.
         let in_for_loop = match declaration.parent() {
-            Node::Stmt(block) => match block.kind() {
+            Node::Stmt(block) if block.is_loop() => match block.kind() {
                 StmtKind::For { init, .. } => Some(init == Some(declaration)),
                 StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some(left == declaration),
                 _ => None,

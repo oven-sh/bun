@@ -58,12 +58,7 @@ pub(crate) fn identifier_key<'a>(member: Member<'a>) -> Option<Name<'a>> {
 
 /// The `name` of the statement `this.property = name`.
 fn assigned_name<'a>(statement: Stmt<'a>) -> Option<Name<'a>> {
-    let StmtKind::Expr(e) = statement.kind() else {
-        return None;
-    };
-    let ExprKind::Assign { target, value, .. } = e.kind() else {
-        return None;
-    };
+    let (_, target, value) = statement.as_expr()?.as_assign()?;
     let is_property_of_this = match target.kind() {
         ExprKind::Dot { obj, name, .. } => obj.tag() == ExprTag::This && !name.bytes().starts_with(b"#"),
         ExprKind::Index { obj, index, .. } => obj.tag() == ExprTag::This && index.tag() == ExprTag::Ident,

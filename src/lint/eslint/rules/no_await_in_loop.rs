@@ -8,19 +8,16 @@ const UNEXPECTED_AWAIT: Message =
     Message::new("unexpectedAwait", "Unexpected `await` inside a loop.");
 
 fn is_await_using(stmt: Stmt) -> bool {
-    match stmt.kind() {
-        StmtKind::Var(declarations) => {
-            declarations.first().is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
-        }
-        _ => false,
-    }
+    (stmt.as_var().and_then(|declarations| declarations.first())).is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)
 }
 
 /// ESLint's `isBoundary`. A `for await` iterates asynchronously on purpose.
 fn is_boundary(node: Node) -> bool {
     match node {
         Node::Func(func) => func.kind() != FnKind::StaticBlock,
-        Node::Stmt(stmt) => matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }),
+        Node::Stmt(stmt) => {
+            stmt.tag() == StmtTag::ForOf && matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. })
+        }
         _ => false,
     }
 }
@@ -30,6 +27,9 @@ fn is_looped<'a>(node: Node<'a>, parent: Node<'a>) -> bool {
     let Node::Stmt(parent) = parent else {
         return false;
     };
+    if !parent.is_loop() {
+        return false;
+    }
     let is = |e: Option<Expr<'a>>| e.is_some_and(|e| Node::Expr(e) == node);
     match parent.kind() {
         StmtKind::For {
@@ -66,7 +66,7 @@ impl NoAwaitInLoop {
 
 impl Rule for NoAwaitInLoop {
     const META: Meta = Meta::eslint("no-await-in-loop", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Await]).stmts(&[StmtTag::ForOf, StmtTag::Var]);
+    const ON: On = On::new().exprs(&[ExprTag::Await]).stmts(&[StmtTag::ForOf]).var_decls();
     /// Whether a node is in a loop.
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -74,8 +74,9 @@ impl Rule for NoAwaitInLoop {
         NoAwaitInLoop
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let loops = [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::While, StmtTag::DoWhile];
+        file.has_stmts(loops).then(AncestorMemo::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -83,18 +84,18 @@ impl Rule for NoAwaitInLoop {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        match stmt.tag() {
-            StmtTag::ForOf => {
-                if matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }) {
-                    self.validate(stmt.into(), cx);
-                }
-            }
-            StmtTag::Var => {
-                if is_await_using(stmt) {
-                    self.validate(stmt.into(), cx);
-                }
-            }
-            _ => {}
+        if matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }) {
+            self.validate(stmt.into(), cx);
+        }
+    }
+
+    /// The statement is validated with the first that it declares.
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if declaration.var_kind() == VarKind::AwaitUsing
+            && let Node::Stmt(stmt) = declaration.parent()
+            && stmt.as_var().and_then(|all| all.first()) == Some(declaration)
+        {
+            self.validate(stmt.into(), cx);
         }
     }
 }

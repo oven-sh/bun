@@ -5,6 +5,7 @@ use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::cell::RefCell;
 
 /// Verifies the list of dependencies for Hooks like useEffect and similar.
 pub struct ExhaustiveDeps {
@@ -40,7 +41,7 @@ pub struct State<'a> {
     function_without_captured_value_cache: FxHashMap<usize, bool>,
     /// The innermost call of a name, or function, around something.
     call_or_function_around: AncestorMemo<'a, Node<'a>>,
-    oxlint: oxlint::exhaustive_deps::Memo<'a>,
+    oxlint: RefCell<oxlint::exhaustive_deps::Memo<'a>>,
 }
 
 struct Dependency<'a> {
@@ -266,7 +267,7 @@ fn analyze_property_chain<'a>(node: Expr<'a>, optional_chains: Option<&mut Optio
 fn may_be_hook(callee: Expr) -> bool {
     match callee.tag() {
         ExprTag::Ident => true,
-        ExprTag::Dot => matches!(callee.kind(), ExprKind::Dot { obj, .. } if obj.tag() == ExprTag::Ident),
+        ExprTag::Dot => callee.object().is_some_and(|obj| obj.tag() == ExprTag::Ident),
         _ => false,
     }
 }
@@ -520,9 +521,7 @@ impl Rule for ExhaustiveDeps {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if oxlint::is_followed(cx.file()) {
             if e.as_call().is_some_and(|it| may_be_hook(it.callee())) {
-                let mut memo = std::mem::take(&mut cx.state.oxlint);
-                oxlint::exhaustive_deps::run(cx, e, self.additional_hooks.as_ref(), &mut memo);
-                cx.state.oxlint = memo;
+                oxlint::exhaustive_deps::run(cx, e, self.additional_hooks.as_ref(), &mut cx.state.oxlint.borrow_mut());
             }
             return;
         }

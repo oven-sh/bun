@@ -14,20 +14,27 @@ impl Rule for RequireArrayJoinSeparator {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "require-array-join-separator", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `join`, `call`
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         RequireArrayJoinSeparator
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("join").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("join").then(|| ["join", "call"].map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|it| it.args().len() <= 1 && !it.is_optional()) else {
+        let Some(call) = e.as_call() else {
             return;
         };
+        if call.callee().member_name().is_some_and(|it| !cx.state.contains(&it.name()))
+            || call.args().len() > 1
+            || call.is_optional()
+        {
+            return;
+        }
         let Some(member) = get_member_expr(call.callee()) else {
             return;
         };

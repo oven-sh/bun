@@ -12,42 +12,61 @@ const USE_DEFAULT_PARAMETER: Message = Message::new("", "Prefer default paramete
 
 impl Rule for PreferDefaultParameters {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-default-parameters", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().stmts(&[StmtTag::Expr, StmtTag::Var]);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]).binaries(&[BinOp::Or, BinOp::Nullish]);
     no_state!();
 
     fn new(_: &Options) -> Self {
         PreferDefaultParameters
     }
 
-    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        // Only a statement directly in the body of a function is ever reported.
-        match statement.tag() {
-            StmtTag::Expr => {
-                if let StmtKind::Expr(e) = statement.kind()
-                    && let ExprKind::Assign { op, target, value } = e.kind()
+    /// `param ||= literal;`
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some((Some(BinOp::Or | BinOp::Nullish), target, value)) = e.as_assign()
+            && let Some(left_name) = target.as_ident()
+            && is_literal(value)
+            && let Some(statement) = statement_of(e)
+        {
+            check_parameter_default(statement, left_name, left_name, value, target, Reassignment::Logical(e), cx);
+        }
+    }
+
+    /// `param = param || literal;`, `const left_name = param || literal;`
+    fn binary<'a>(&self, right: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some((_, param_ident, default_value)) = right.as_binary() else {
+            return;
+        };
+        if param_ident.tag() != ExprTag::Ident || !is_literal(default_value) {
+            return;
+        }
+        match right.parent() {
+            Node::Expr(e) => {
+                if let Some((None, target, value)) = e.as_assign()
+                    && value == right
                     && let Some(left_name) = target.as_ident()
-                    && !e.is_parenthesized()
+                    && let Some(statement) = statement_of(e)
                 {
-                    match op {
-                        None => check_expression(statement, left_name, value, Some(e), cx),
-                        Some(BinOp::Or | BinOp::Nullish) if is_literal(value) => {
-                            check_parameter_default(statement, left_name, left_name, value, target, Reassignment::Logical(e), cx);
-                        }
-                        Some(_) => {}
-                    }
+                    check_expression(statement, left_name, right, Some(e), cx);
                 }
             }
-            StmtTag::Var => {
-                if let StmtKind::Var(declarations) = statement.kind()
-                    && declarations.len() == 1
-                    && let Some(declarator) = declarations.first()
-                    && let (Some(left_name), Some(init)) = (declarator.pat().as_ident(), declarator.init())
+            Node::VarDecl(declarator) => {
+                if let Node::Stmt(statement) = declarator.parent()
+                    && statement.as_var().is_some_and(|it| it.len() == 1)
+                    && declarator.init() == Some(right)
+                    && let Some(left_name) = declarator.pat().as_ident()
                 {
-                    check_expression(statement, left_name, init, None, cx);
+                    check_expression(statement, left_name, right, None, cx);
                 }
             }
             _ => {}
         }
+    }
+}
+
+/// The statement that is `e;`.
+fn statement_of(e: Expr<'_>) -> Option<Stmt<'_>> {
+    match e.parent() {
+        Node::Stmt(statement) if statement.tag() == StmtTag::Expr && !e.is_parenthesized() => Some(statement),
+        _ => None,
     }
 }
 

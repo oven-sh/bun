@@ -107,6 +107,16 @@ struct Exprs {
     chained: u64,
 }
 
+/// The expression `id` of a group. None of them is a cast that is synthesized from a JSDoc comment, for which a handle stands
+/// for the operand.
+#[inline(always)]
+fn grouped_expr<'a>(file: &'a File<'a>, id: u32) -> Expr<'a> {
+    Expr {
+        file,
+        id: hir::ExprId(id),
+    }
+}
+
 impl Exprs {
     fn new(file: &File) -> Exprs {
         let mut exprs = Exprs::from_binder(file).unwrap_or_else(|| Exprs::from_hir(file));
@@ -422,9 +432,7 @@ every! {
 impl<'a> File<'a> {
     /// The expressions of a kind, in no particular order. For [`Rule::start`] to look closer than [`File::has_exprs`].
     pub fn exprs_of_kind(&'a self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> {
-        self.exprs_of(tag)
-            .iter()
-            .map(|&id| Expr::from_raw(self, id))
+        self.exprs_of(tag).iter().map(|&id| grouped_expr(self, id))
     }
 
     /// The same for statements.
@@ -452,7 +460,7 @@ impl<'a> File<'a> {
         for &tag in tags {
             self.exprs_of(tag)
                 .iter()
-                .for_each(|&id| visit(Expr::from_raw(self, id)));
+                .for_each(|&id| visit(grouped_expr(self, id)));
         }
     }
 
@@ -478,7 +486,7 @@ impl<'a> File<'a> {
             if tags.intersects(tag.into()) {
                 self.exprs_of(tag)
                     .iter()
-                    .for_each(|&id| visit(Node::Expr(Expr::from_raw(self, id))));
+                    .for_each(|&id| visit(Node::Expr(grouped_expr(self, id))));
             }
         }
         for tag in StmtTag::ALL {
@@ -568,23 +576,8 @@ impl<'a> File<'a> {
 #[derive(Copy, Clone)]
 pub struct Start<'a> {
     file: &'a File<'a>,
-    /// Of the rule.
-    meta: &'static Meta,
     rule: u16,
     severity: Severity,
-}
-
-impl<'a> Start<'a> {
-    #[inline]
-    fn base(self) -> CxBase<'a> {
-        CxBase {
-            file: self.file,
-            meta: self.meta,
-            rule: self.rule,
-            severity: self.severity,
-            said_by_oxlint: OnceCell::new(),
-        }
-    }
 }
 
 /// What can be started on a file: a rule, or one of several.
@@ -593,8 +586,6 @@ pub trait Starts: Send + Sync {
     type Run<'r, 'a: 'r>: Running<'a>
     where
         Self: 'r;
-
-    fn meta(&self) -> &'static Meta;
 
     /// Calls what takes the nodes in no particular order. `None`: nothing is left to call.
     #[doc(hidden)]
@@ -607,13 +598,22 @@ pub trait Starts: Send + Sync {
 #[inline(never)]
 pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
     let file = start.file;
+    if R::META.requires_types && file.types.is_none() {
+        return None;
+    }
     let on = R::ON.and(&rule.narrow(file));
     if !has_any_of(file, on) {
         return None;
     }
     let mut cx = Cx {
         state: Rule::start(rule, file)?,
-        base: start.base(),
+        base: CxBase {
+            file,
+            meta: &R::META,
+            rule: start.rule,
+            severity: start.severity,
+            said_by_oxlint: OnceCell::new(),
+        },
     };
     call_unordered(rule, file, &on, &mut cx);
     on.has_later().then(|| Box::new(Later { rule, on, cx }))
@@ -676,24 +676,24 @@ const CHAINED: [ExprTag; 3] = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
 fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut Cx<'a, R>) {
     each_bit(on.exprs, |kind| {
         for &id in file.exprs_of(EXPR_TAGS[kind]) {
-            rule.expr(Expr::from_raw(file, id), cx);
+            rule.expr(grouped_expr(file, id), cx);
         }
     });
     if on.has(On::OPTIONAL_CHAINS) {
         for kind in CHAINED {
             for &id in file.chained_exprs_of(kind) {
-                rule.optional_chain(Expr::from_raw(file, id), cx);
+                rule.optional_chain(grouped_expr(file, id), cx);
             }
         }
     }
     each_bit(on.binaries, |op| {
         for &id in file.binaries_at(op) {
-            rule.binary(Expr::from_raw(file, id), cx);
+            rule.binary(grouped_expr(file, id), cx);
         }
     });
     each_bit(on.unaries, |op| {
         for &id in file.unaries_at(op) {
-            rule.unary(Expr::from_raw(file, id), cx);
+            rule.unary(grouped_expr(file, id), cx);
         }
     });
     each_bit(on.stmts, |kind| {
@@ -1142,16 +1142,13 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
 }
 
 fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {
-    let has_types = file.types.is_some();
     let mut running: Vec<S::Run<'r, 'a>> = Vec::with_capacity(rules.len());
     for (i, enabled) in rules.iter().enumerate() {
-        let meta = enabled.rule.meta();
-        if enabled.severity == Severity::Off || meta.requires_types && !has_types {
+        if enabled.severity == Severity::Off {
             continue;
         }
         running.extend(enabled.rule.start(Start {
             file,
-            meta,
             rule: i as u16,
             severity: enabled.severity,
         }));

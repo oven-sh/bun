@@ -20,18 +20,10 @@ const SUGGEST_PARENTHESISED_NEGATION: Message = Message::new(
 
 impl NoUnsafeNegation {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
-        let applies = match op {
-            BinOp::In | BinOp::Instanceof => true,
-            BinOp::Lt | BinOp::Gt | BinOp::Ge | BinOp::Le => self.enforce_for_ordering_relations,
-            _ => false,
-        };
-        if !applies
-            || !matches!(left.kind(), ExprKind::Unary { op: UnOp::Not, .. })
-            || left.is_parenthesized()
-        {
+        if left.unary_op() != Some(UnOp::Not) || left.is_parenthesized() {
             return;
         }
         let operator = bin_op_text(op);
@@ -65,7 +57,8 @@ impl Rule for NoUnsafeNegation {
     const META: Meta = Meta::eslint("no-unsafe-negation", Kind::Problem)
         .has_suggestions()
         .recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On =
+        On::new().binaries(&[BinOp::In, BinOp::Instanceof, BinOp::Lt, BinOp::Gt, BinOp::Ge, BinOp::Le]);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -76,7 +69,15 @@ impl Rule for NoUnsafeNegation {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let on = On::new().binaries(&[BinOp::In, BinOp::Instanceof]);
+        match self.enforce_for_ordering_relations {
+            true => on.binaries(&[BinOp::Lt, BinOp::Gt, BinOp::Ge, BinOp::Le]),
+            false => on,
+        }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         self.check(e, cx);
     }
 }

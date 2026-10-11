@@ -153,24 +153,31 @@ impl Rule for PreferArrayFlatMap {
         .fixable(Fixable::Code)
         .has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `flat`, `flatMap`
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         PreferArrayFlatMap
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let has_map_and_flat = file.mentions("flat") && file.mentions("map");
         if !has_map_and_flat && !(file.mentions("filter") && file.mentions("flatMap")) {
             return None;
         }
-        Some(())
+        Some(["flat", "flatMap"].map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(flat_call) = e.as_call().filter(|it| it.args().len() <= 1 && !it.is_optional()) else {
+        let Some(flat_call) = e.as_call() else {
             return;
         };
+        if flat_call.callee().member_name().is_some_and(|it| !cx.state.contains(&it.name()))
+            || flat_call.args().len() > 1
+            || flat_call.is_optional()
+        {
+            return;
+        }
         check_filter_flat_map(e, flat_call, cx);
         let callee = flat_call.callee();
         if !is_method_call(flat_call, None, Some(&["flat"]), None, None)

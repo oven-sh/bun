@@ -161,7 +161,12 @@ impl<'a> Scopes<'a> {
     /// What has been declared in the scope of `statement`, by [`index`]. The statements come as they end: after what is in them.
     fn seen(&mut self, statement: Stmt<'a>) -> Option<&mut [Seen; 5]> {
         let (of_blocks, is_oxlint) = (self.of_blocks, self.is_oxlint);
-        let scope = self.around.find(statement.into(), |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?;
+        // Nearly always it is what the statement is directly in.
+        let parent = statement.parent();
+        let scope = match is_scope(parent, of_blocks, is_oxlint) {
+            true => parent,
+            false => self.around.find(parent, |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?,
+        };
         let number = number_of(scope);
         if self.open.last().is_none_or(|it| it.0 != number) {
             // What ends before the statement, and what is in it.

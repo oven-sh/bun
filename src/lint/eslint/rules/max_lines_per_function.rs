@@ -57,9 +57,17 @@ pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32,
     counts.collect()
 }
 
-/// Whether a line of `text` can end with something else than a `\n`.
-fn may_have_other_line_breaks(text: &[u8]) -> bool {
-    strings::index_of_any(text, b"\r\xE2").is_some()
+/// Whether a line of `text` ends with something else than a `\n`.
+fn has_other_line_breaks(text: &[u8]) -> bool {
+    let mut rest = text;
+    while let Some(at) = strings::index_of_any(rest, b"\r\xE2") {
+        rest = rest.get(at..).unwrap_or_default();
+        if strings::js_line_break_len(rest) > 0 {
+            return true;
+        }
+        rest = rest.get(1..).unwrap_or_default();
+    }
+    false
 }
 
 /// What is counted once in a file, when it is needed.
@@ -67,8 +75,8 @@ fn may_have_other_line_breaks(text: &[u8]) -> bool {
 pub struct Counts<'a> {
     /// The functions that are long enough to have too many lines, with what of each is counted.
     candidates: Vec<(Func<'a>, Span)>,
-    /// [`may_have_other_line_breaks`] for the file.
-    may_have_other_line_breaks: Option<bool>,
+    /// [`has_other_line_breaks`] for the file.
+    has_other_line_breaks: Option<bool>,
     /// What [`MaxLinesPerFunction::count_lines`] returns.
     lines: Option<Vec<u32>>,
     /// What [`count_comment_lines_as_oxlint`] returns.
@@ -92,13 +100,12 @@ impl MaxLinesPerFunction {
         std::iter::once(0).chain(counts).collect()
     }
 
-    /// How many line breaks there are in `span`, if they are plainly all `\n`. If not, the lines tell.
+    /// How many line breaks there are in `span`, if they are all `\n`. If not, the lines tell.
     fn count_line_breaks<'a>(span: Span, cx: &mut Cx<'a, Self>) -> Option<u32> {
         let (file, text) = (cx.file(), cx.slice(span));
-        let in_file = &mut cx.state.may_have_other_line_breaks;
-        let may_have_others = *in_file.get_or_insert_with(|| may_have_other_line_breaks(file.text()))
-            && may_have_other_line_breaks(text);
-        (!may_have_others).then(|| strings::count_char(text, b'\n') as u32)
+        let in_file = &mut cx.state.has_other_line_breaks;
+        let has_others = *in_file.get_or_insert_with(|| has_other_line_breaks(file.text())) && has_other_line_breaks(text);
+        (!has_others).then(|| strings::count_char(text, b'\n') as u32)
     }
 }
 
@@ -162,11 +169,17 @@ impl MaxLinesPerFunction {
         let span = match (func.owner(), func.kind()) {
             (Node::Member(member), _) if !is_oxlint => member.span(),
             (Node::Expr(e), FnKind::Method | FnKind::Getter | FnKind::Setter) if !is_oxlint => e.parent().span(),
-            (Node::Expr(_), FnKind::Method | FnKind::Getter | FnKind::Setter) => func.estree_span(),
-            (Node::Expr(e), _) if !self.counts_iifes && ast_utils::is_callee(e) => return,
             _ => func.estree_span(),
         };
-        if span.len() >= self.max {
+        if span.len() < self.max {
+            return;
+        }
+        let is_iife = || match (func.owner(), func.kind()) {
+            (_, FnKind::Method | FnKind::Getter | FnKind::Setter) => false,
+            (Node::Expr(e), _) => e.parent().as_expr().and_then(Expr::as_call).is_some_and(|call| call.callee() == e),
+            _ => false,
+        };
+        if self.counts_iifes || !is_iife() {
             cx.state.candidates.push((func, span));
         }
     }

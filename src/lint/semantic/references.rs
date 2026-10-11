@@ -113,6 +113,24 @@ fn sort_by_pos(found: &mut [RawReference]) {
     found.copy_from_slice(&sorted);
 }
 
+/// Sorts numbers of which each is near its place: it is moved there past the few that are greater. Where that turns out to be
+/// many, the rest is left to the standard library.
+fn sort_what_is_nearly_in_order(numbers: &mut [u64]) {
+    let mut moves = 0;
+    for at in 1..numbers.len() {
+        let (number, mut to) = (numbers[at], at);
+        while to > 0 && numbers[to - 1] > number {
+            numbers[to] = numbers[to - 1];
+            to -= 1;
+        }
+        numbers[to] = number;
+        moves += at - to;
+        if moves > 8 * numbers.len() {
+            return numbers.sort();
+        }
+    }
+}
+
 struct Collector<'f, 'a> {
     file: &'f File<'a>,
     is_javascript: bool,
@@ -1132,7 +1150,7 @@ impl<'f> Collector<'f, '_> {
         }
         // A type is stored after its parts.
         sort_by_pos(&mut self.found[start..]);
-        self.type_names.sort();
+        sort_what_is_nearly_in_order(&mut self.type_names);
         for &id in &tree.namespace_exports {
             if let Some(stmt) = hir.stmts.get(id.idx())
                 && let StmtKind::ExportAsNamespace(name) = stmt.kind

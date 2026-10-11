@@ -48,10 +48,24 @@ const OXLINT_GLOBAL_OBJECTS: [&str; 5] = ["Atomics", "Intl", "JSON", "Math", "Re
 pub struct Oxlint<'a> {
     /// `OXLINT_GLOBAL_OBJECTS`
     objects: [Name<'a>; 5],
+    /// A bit for the last bits of the number of each of them.
+    numbers: u64,
     mentions_global_this: bool,
 }
 
 impl<'a> Oxlint<'a> {
+    /// Whether a call of `callee` can be one of an object. Under another name only a variable stands for one of them.
+    #[inline]
+    fn may_be_object(&self, callee: Expr<'a>) -> bool {
+        match callee.as_ident() {
+            Some(name) => {
+                self.numbers >> (name.atom().0 % 64) & 1 != 0
+                    || callee.symbol().is_some_and(|it| it.declaration_kinds().contains(DeclarationKinds::VARIABLE))
+            }
+            None => self.mentions_global_this,
+        }
+    }
+
     /// oxlint's `global_this_member`: the `a` of `globalThis.a`.
     fn global_this_member(&self, member: Expr<'a>) -> Option<Name<'a>> {
         if !self.mentions_global_this || !is_specific_id(member.object()?, "globalThis") {
@@ -96,19 +110,13 @@ impl<'a> Oxlint<'a> {
 }
 
 impl NoObjCalls {
-    fn check_as_oxlint<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (Some(callee), Some(oxlint)) = (e.as_call_like().map(|it| it.callee()), &cx.state) else {
+    #[inline(never)]
+    fn check_as_oxlint<'a>(&self, (e, callee): (Expr<'a>, Expr<'a>), cx: &mut Cx<'a, Self>) {
+        let Some(oxlint) = &cx.state else {
             return;
         };
-        // Under another name only a variable stands for one of them.
-        let may_be_one = |name: Name<'a>| {
-            oxlint.objects.contains(&name)
-                || callee.symbol().is_some_and(|it| it.declaration_kinds().contains(DeclarationKinds::VARIABLE))
-        };
         let found = match callee.as_ident() {
-            Some(name) if may_be_one(name) && !callee.is_parenthesized() => {
-                oxlint.resolve_global_binding(callee).map(|global| (name, global))
-            }
+            Some(name) if !callee.is_parenthesized() => oxlint.resolve_global_binding(callee).map(|global| (name, global)),
             Some(_) => None,
             None => oxlint.global_this_member(callee).filter(|_| !callee.is_parenthesized()).map(|name| (name, name)),
         };
@@ -153,6 +161,8 @@ impl Rule for NoObjCalls {
             return file.mentions_any(&OXLINT_GLOBAL_OBJECTS).then(|| {
                 Some(Oxlint {
                     objects: OXLINT_GLOBAL_OBJECTS.map(|it| file.name_of(it)),
+                    numbers: (OXLINT_GLOBAL_OBJECTS.iter())
+                        .fold(0, |numbers, it| numbers | 1 << (file.name_of(it).atom().0 % 64)),
                     mentions_global_this: file.mentions("globalThis"),
                 })
             });
@@ -161,7 +171,11 @@ impl Rule for NoObjCalls {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_as_oxlint(e, cx);
+        if let (Some(call), Some(oxlint)) = (e.as_call_like(), &cx.state)
+            && oxlint.may_be_object(call.callee())
+        {
+            self.check_as_oxlint((e, call.callee()), cx);
+        }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

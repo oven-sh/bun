@@ -157,7 +157,7 @@ impl<'a> Binding<'a> {
 
     /// Whether `reference`, which is one to `symbol`, is one to this. For oxlint `typeof a` in a type is none, which writes
     /// nothing.
-    #[inline]
+    #[inline(always)]
     fn has(self, reference: Reference<'a>) -> bool {
         let symbol = self.symbol;
         (reference.is_write()
@@ -482,10 +482,17 @@ fn is_read_after_declaration<'a>(
     if written.expr().is_some() || variable.symbol.declaration_count() != 1 {
         return false;
     }
-    let Some(Node::VarDecl(declarator)) = written_by(written, writers).map(|it| it.node) else {
+    let Node::Pat(name) = written.node() else {
         return false;
     };
-    if declarator.var_kind() == VarKind::Var {
+    let declarator = match name.parent() {
+        Node::VarDecl(declarator) => declarator,
+        _ => match written_by(written, writers).map(|it| it.node) {
+            Some(Node::VarDecl(declarator)) => declarator,
+            _ => return false,
+        },
+    };
+    if declarator.var_kind() == VarKind::Var || declarator.init().is_none() {
         return false;
     }
     let Node::Stmt(declaration) = declarator.parent() else {
@@ -503,10 +510,17 @@ fn is_read_after_declaration<'a>(
     let read = variable.symbol.references().find(|&it| {
         it.is_read() && start_of(&it) >= end && it.scope().variable_scope() == home && variable.has(it)
     });
-    let Some(identifier) = read.and_then(Reference::expr) else {
+    let Some(mut e) = read.and_then(Reference::expr) else {
         return false;
     };
-    let statement = evaluated_in.find(Node::Expr(identifier), |_, parent| match parent {
+    // Mostly the statement is near.
+    for _ in 0..4 {
+        match e.parent() {
+            Node::Expr(parent) => e = parent,
+            _ => break,
+        }
+    }
+    let statement = evaluated_in.find(Node::Expr(e), |_, parent| match parent {
         Node::Expr(_) | Node::Prop(_) | Node::VarDecl(_) => None,
         Node::Stmt(statement) => Some(Some(statement)),
         _ => Some(None),

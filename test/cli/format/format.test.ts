@@ -1820,6 +1820,13 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         "a13e62998f4f687539a1e91c7cfc73031a3d1d2a",
       ],
       [
+        "HTML in a template that more than 1,024 bytes of its line are before",
+        "a.js",
+        {},
+        `function f() {\n  const ${"a".repeat(1_100)} = /* HTML */ \`<script type="application/json">\n      ["${"a".repeat(70)}", 1]\n    </script>\`;\n}\n`,
+        "66b03f2c6730c8595e07fdd3c41ac874dfc3c786",
+      ],
+      [
         "printWidth 1,000,000: an array of 90,000 columns",
         "a.js",
         wide,

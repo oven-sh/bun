@@ -1221,6 +1221,8 @@ struct Projects {
     /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
     /// have it under `allowJs`.
     counts_javascript: bool,
+    /// Under `counts_javascript`: `Project::files` as `allowJs` would make it.
+    with_javascript: FxHashMap<Vec<u8>, Vec<Vec<u8>>>,
 }
 
 impl Projects {
@@ -1259,6 +1261,25 @@ impl Projects {
         })
     }
 
+    /// `Project::files` of `config`, or under `counts_javascript` what `allowJs` makes of them.
+    fn listed(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &[Vec<u8>] {
+        if !self.counts_javascript {
+            return match self.load(disk, request, config) {
+                Some(project) => &project.files,
+                None => &[],
+            };
+        }
+        (self.with_javascript.entry(config.to_vec())).or_insert_with(|| {
+            let with_javascript = |has_references: bool| {
+                let mut options = overriding_options(request, has_references);
+                options.push((b"allowJs".to_vec(), Json::Bool(true)));
+                options
+            };
+            let project = config::load_overriding(disk, &Session::new(), config, &with_javascript);
+            project.map(|it| it.files).unwrap_or_default()
+        })
+    }
+
     /// `config`, or else the first of the projects that it references, directly or not, that has
     /// `file` among its files.
     fn find_project_with(
@@ -1275,26 +1296,12 @@ impl Projects {
             return None;
         }
         seen.push(config.to_vec());
-        let is_new = !self.files.contains_key(config);
-        let counts_javascript = self.counts_javascript;
         let project = self.load(disk, request, config)?;
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
             .collect();
-        if is_new {
-            let files = match counts_javascript {
-                false => project.files.clone(),
-                true => {
-                    let with_javascript = |has_references: bool| {
-                        let mut options = overriding_options(request, has_references);
-                        options.push((b"allowJs".to_vec(), Json::Bool(true)));
-                        options
-                    };
-                    config::load_overriding(disk, &Session::new(), config, &with_javascript)
-                        .map(|it| it.files)
-                        .unwrap_or_default()
-                }
-            };
+        if !self.files.contains_key(config) {
+            let files = self.listed(disk, request, config);
             let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
             let paths = paths.map(Cow::into_owned).collect();
             (self.files).insert(config.to_vec(), paths);
@@ -1375,6 +1382,33 @@ fn project_without_config(
     config::without_config(disk, cwd, options, files.to_vec())
 }
 
+/// A directory by this name has what no project includes unless it says so.
+fn is_skipped_directory(name: &[u8]) -> bool {
+    name.starts_with(b".")
+        || matches!(
+            name,
+            b"node_modules" | b"bower_components" | b"jspm_packages"
+        )
+}
+
+/// The outermost such directory above the file at `path`, of those that `is_below` holds for.
+fn skipped_directory<'a>(path: &'a [u8], is_below: impl Fn(&&'a [u8]) -> bool) -> Option<&'a [u8]> {
+    let dirs = ancestors(dirname::<Posix>(path)).take_while(is_below);
+    dirs.filter(|dir| is_skipped_directory(bun_paths::basename_posix(dir)))
+        .last()
+}
+
+/// Whether a link leads to the directory `dir`, by a name of it that is `top` or below that.
+fn is_linked(disk: &host::Disk, dir: &[u8], top: &[u8]) -> bool {
+    let is_case_sensitive = disk.is_case_sensitive();
+    let mut dirs = ancestors(dir).take_while(|it| contains_path(top, it, is_case_sensitive));
+    dirs.any(|it| {
+        let parent = disk.realpath(dirname::<Posix>(it));
+        let real = inside(&parent, bun_paths::basename_posix(it));
+        !is_same_path(&disk.realpath(it), &real, is_case_sensitive)
+    })
+}
+
 /// The directories below `top` with a configuration file of their own, as the paths of those files.
 fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
     let (mut found, mut pending) = (Vec::new(), vec![top.to_vec()]);
@@ -1389,13 +1423,7 @@ fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
             found.extend(configs.into_iter().find(|config| disk.is_file(config)));
         }
         for name in disk.entries(&dir).1 {
-            // What no project includes unless it says so.
-            let is_skipped = name.starts_with(b".")
-                || matches!(
-                    &name[..],
-                    b"node_modules" | b"bower_components" | b"jspm_packages"
-                );
-            if !is_skipped {
+            if !is_skipped_directory(&name) {
                 pending.push(inside(&dir, &name));
             }
         }
@@ -1605,13 +1633,78 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         }
         // It has nothing there, as in `bun check scripts`, or there is none. Each configuration
         // file at, above or below the directory has a say about the files that are nearest to it.
-        let below = match explicit {
+        let at = config_in(path);
+        let mut below = match explicit {
             Some(_) => Vec::new(),
             None => nested_configs(disk, path),
         };
-        for config in std::iter::once(config_in(path)).chain(below.into_iter().map(Some)) {
-            let is_below =
-                |dir: &&[u8]| !is_same(dir, path) && contains_path(path, dir, is_case_sensitive);
+        // Not `at` again: the one nearest to the working directory can be below the directory.
+        below.retain(|it| !at.as_ref().is_some_and(|at| is_same(at, it)));
+        let with_a_say: Vec<Option<Vec<u8>>> =
+            (std::iter::once(at).chain(below.into_iter().map(Some))).collect();
+        let is_below =
+            |dir: &&[u8]| !is_same(dir, path) && contains_path(path, dir, is_case_sensitive);
+        // What `nested_configs` skips has no say: the nearest one is looked for outside it.
+        let nearest = |file: &[u8]| {
+            config_in(dirname::<Posix>(
+                skipped_directory(file, is_below).unwrap_or(file),
+            ))
+        };
+        // The projects know their files: each adds those in the directory that it owns.
+        let mut included: FxHashMap<Cow<[u8]>, (&Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)> =
+            (with_a_say.iter().flatten())
+                .map(|it| (to_path(it, is_case_sensitive), (it, Vec::new())))
+                .collect();
+        // Those with a say come first, as they are spelled here, and then what they reference.
+        let mut graph: Vec<Vec<u8>> = with_a_say.iter().flatten().cloned().collect();
+        let mut next = 0;
+        while next < graph.len() {
+            let project = projects.load(disk, request, &graph[next]);
+            let references: Vec<Vec<u8>> = (project.into_iter().flat_map(|it| &it.references))
+                .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
+                .collect();
+            for it in references {
+                if !graph.iter().any(|seen| is_same(seen, &it)) && disk.is_file(&it) {
+                    graph.push(it);
+                }
+            }
+            let project = &graph[next];
+            next += 1;
+            // One that a link leads to, in what `nested_configs` skips, adds nothing that is beside it.
+            let skipped = skipped_directory(project, is_below)
+                .filter(|top| is_linked(disk, dirname::<Posix>(project), top));
+            let is_beside = |file: &[u8]| {
+                skipped.is_some_and(|dir| contains_path(dir, file, is_case_sensitive))
+            };
+            let files = projects.listed(disk, request, project);
+            let files = files
+                .iter()
+                .filter(|it| is_in_directory(it) && !is_beside(it));
+            let files: Vec<Vec<u8>> = files.cloned().collect();
+            for file in files {
+                let Some(config) = nearest(&file) else {
+                    continue;
+                };
+                let config = included.get_mut(&*to_path(&config, is_case_sensitive));
+                let Some((config, included)) = config else {
+                    continue;
+                };
+                let seen = &mut Vec::new();
+                let owner = projects.find_project_with(disk, request, config, &file, seen);
+                if let Some(owner) = owner.filter(|it| is_same(it, project)) {
+                    included.push((owner, file));
+                }
+            }
+        }
+        for config in &with_a_say {
+            let config_path = config.as_ref().map(|it| to_path(it, is_case_sensitive));
+            let included = config_path.and_then(|it| included.remove(&*it));
+            if let Some((_, included)) = included.filter(|it| !it.1.is_empty()) {
+                (included.into_iter())
+                    .for_each(|(owner, file)| add(Some(owner), Extent::Project, file));
+                continue;
+            }
+            // If it has none there, as in `bun check scripts`, for all that it does not exclude.
             let top = (config.as_deref().map(dirname::<Posix>))
                 .filter(is_below)
                 .unwrap_or(path);
@@ -1621,23 +1714,12 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 Some(project) => project.files_under(disk, top),
                 None => project_without_config(disk, request, &cwd, &[]).files_under(disk, top),
             };
-            let (mut included, mut others) = (Vec::new(), Vec::new());
             for file in files {
-                if config_in(dirname::<Posix>(&file)) == config {
-                    match projects.owner_of(disk, request, config.clone(), &file) {
-                        Ok(owner) => included.push((owner, file)),
-                        Err(nearest) => others.push((nearest, file)),
-                    }
+                if nearest(&file) == *config {
+                    let owner = projects.owner_of(disk, request, config.clone(), &file);
+                    add(owner.unwrap_or_else(|it| it), Extent::Project, file);
                 }
             }
-            // The directory stands for the files that the project has in it. If it has none there,
-            // as in `bun check scripts`, for all that it does not exclude.
-            let files = if included.is_empty() {
-                others
-            } else {
-                included
-            };
-            (files.into_iter()).for_each(|(owner, file)| add(owner, Extent::Project, file));
         }
     }
     // A file that is named besides a directory that has it.

@@ -318,6 +318,8 @@ To check everything below this directory: bun check .
 
 `bun check .` checks every TypeScript file below the current directory. Bun checks each file once, with the nearest `tsconfig.json`. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
 
+In this run, Bun does not look for a `tsconfig.json` in `node_modules` or in a directory whose name starts with a dot. For a file in such a directory, such as `.next/types/routes.ts` in a Next.js app, the nearest `tsconfig.json` is the nearest one outside that directory.
+
 To run the `typecheck` script of every workspace package, use [`--filter`](/pm/filter):
 
 ```bash terminal icon="terminal"

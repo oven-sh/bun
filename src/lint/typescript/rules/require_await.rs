@@ -1,39 +1,18 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{get_well_known_symbol_property_of_type, is_thenable_type};
 use bun_lint::types::{Locate, Type};
-use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::get_function_name_with_kind;
 use bun_lint::utils::oxlint::tsgolint_function_head_loc;
 use bun_lint::utils::ts_utils::{
     get_function_head_loc, is_start_of_expression_statement, needs_preceding_semicolon,
     upper_case_first,
 };
-use rustc_hash::FxHashSet;
+use bun_lint_eslint::rules::require_await::{
+    MISSING_AWAIT, REMOVE_ASYNC, State, mark_function_around, node_with_async_keyword,
+};
 
 /// Disallow async functions which do not return promises and have no `await` expression.
 pub struct RequireAwait;
-
-const MISSING_AWAIT: Message = Message::new("missingAwait", "{{name}} has no 'await' expression.");
-const REMOVE_ASYNC: Message = Message::new("removeAsync", "Remove 'async'.");
-
-#[derive(Default)]
-pub struct State<'a> {
-    /// The async functions that are not empty.
-    candidates: Vec<Func<'a>>,
-    with_await: FxHashSet<Func<'a>>,
-    /// The function that something is directly in.
-    functions: AncestorMemo<'a, Func<'a>>,
-}
-
-/// `node` awaits something: so does the function that it is directly in.
-fn mark_as_has_await<'a>(node: Node<'a>, cx: &mut Cx<'a, RequireAwait>) {
-    let as_function = |_, parent: Node<'a>| parent.as_func().filter(|func| func.kind() != FnKind::StaticBlock);
-    if let Some(func) = cx.state.functions.find(node, as_function)
-        && func.is_async()
-    {
-        cx.state.with_await.insert(func);
-    }
-}
 
 fn is_thenable<'a>(node: impl Locate<'a>, ty: Type<'a>) -> bool {
     ty.is_unresolved() || is_thenable_type(node, ty)
@@ -93,19 +72,6 @@ fn is_async_yield(func: Func) -> bool {
             _ => is_thenable_expression(argument),
         }
     })
-}
-
-/// The method that `func` is the value of, which is where its `async` is, or else the function.
-fn node_with_async_keyword(func: Func<'_>) -> Node<'_> {
-    match func.owner() {
-        Node::Expr(e) => match e.parent() {
-            Node::Prop(prop) if prop.kind() == PropKind::Method && prop.value() == Some(e) => {
-                Node::Prop(prop)
-            }
-            _ => Node::Expr(e),
-        },
-        owner => owner,
-    }
 }
 
 fn remove_async<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
@@ -170,26 +136,22 @@ impl Rule for RequireAwait {
         if candidates.is_empty() {
             return None;
         }
-        Some(State {
-            candidates,
-            with_await: FxHashSet::default(),
-            functions: AncestorMemo::default(),
-        })
+        Some(State { candidates, ..State::default() })
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        mark_as_has_await(node.into(), cx);
+        mark_function_around(node.into(), cx);
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if matches!(node.kind(), StmtKind::ForOf { is_await: true, .. }) {
-            mark_as_has_await(node.into(), cx);
+            mark_function_around(node.into(), cx);
         }
     }
 
     fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if node.var_kind() == VarKind::AwaitUsing {
-            mark_as_has_await(node.into(), cx);
+            mark_function_around(node.into(), cx);
         }
     }
 

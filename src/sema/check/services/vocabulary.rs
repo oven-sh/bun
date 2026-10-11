@@ -56,7 +56,6 @@ bitflags::bitflags! {
         const UNIT = tf::UNIT;
         const FRESHABLE = tf::ENUM | tf::LITERAL;
         const STRING_OR_NUMBER_LITERAL = tf::STRING_LITERAL | tf::NUMBER_LITERAL;
-        const STRING_OR_NUMBER_LITERAL_OR_UNIQUE = tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::UNIQUE_ES_SYMBOL;
         const DEFINITELY_FALSY = tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::BIGINT_LITERAL | tf::BOOLEAN_LITERAL
             | tf::VOID | tf::UNDEFINED | tf::NULL;
         const POSSIBLY_FALSY = Self::DEFINITELY_FALSY.bits() | tf::STRING | tf::NUMBER | tf::BIGINT | tf::BOOLEAN;
@@ -73,17 +72,13 @@ bitflags::bitflags! {
         const DEFINITELY_NON_NULLABLE = tf::DEFINITELY_NON_NULLABLE;
         const DISJOINT_DOMAINS = tf::DISJOINT_DOMAINS;
         const UNION_OR_INTERSECTION = tf::UNION_OR_INTERSECTION;
-        const STRUCTURED_TYPE = tf::OBJECT | tf::UNION | tf::INTERSECTION;
         const TYPE_VARIABLE = tf::TYPE_VARIABLE;
         const INSTANTIABLE_NON_PRIMITIVE = tf::INSTANTIABLE_NON_PRIMITIVE;
         const INSTANTIABLE_PRIMITIVE = tf::INDEX | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING;
         const INSTANTIABLE = Self::INSTANTIABLE_NON_PRIMITIVE.bits() | Self::INSTANTIABLE_PRIMITIVE.bits();
         const STRUCTURED_OR_INSTANTIABLE = tf::STRUCTURED_OR_INSTANTIABLE;
         const OBJECT_FLAGS_TYPE = tf::ANY | tf::NULLABLE | tf::NEVER | tf::OBJECT | tf::UNION | tf::INTERSECTION;
-        const SIMPLIFIABLE = tf::INDEXED_ACCESS | tf::CONDITIONAL;
         const SINGLETON = tf::SINGLETON;
-        const NARROWABLE = tf::ANY | tf::UNKNOWN | tf::STRUCTURED_OR_INSTANTIABLE | tf::STRING_LIKE | tf::NUMBER_LIKE
-            | tf::BIGINT_LIKE | tf::BOOLEAN_LIKE | tf::ES_SYMBOL | tf::UNIQUE_ES_SYMBOL | tf::NON_PRIMITIVE;
     }
 }
 
@@ -107,7 +102,6 @@ bitflags::bitflags! {
         const OBJECT_LITERAL = 1 << 7;
         const EVOLVING_ARRAY = 1 << 8;
         const REVERSE_MAPPED = 1 << 10;
-        const JSX_ATTRIBUTES = 1 << 11;
         const JS_LITERAL = 1 << 12;
         const FRESH_LITERAL = 1 << 13;
         const ARRAY_LITERAL = 1 << 14;
@@ -116,7 +110,6 @@ bitflags::bitflags! {
         const INSTANTIATION_EXPRESSION_TYPE = 1 << 23;
         const SINGLE_SIGNATURE_TYPE = 1 << 27;
 
-        const CLASS_OR_INTERFACE = Self::CLASS.bits() | Self::INTERFACE.bits();
     }
 }
 
@@ -163,7 +156,6 @@ bitflags::bitflags! {
         const NAMESPACE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits() | Self::ENUM.bits();
         const MODULE = Self::VALUE_MODULE.bits() | Self::NAMESPACE_MODULE.bits();
         const ACCESSOR = Self::GET_ACCESSOR.bits() | Self::SET_ACCESSOR.bits();
-        const PROPERTY_OR_ACCESSOR = Self::PROPERTY.bits() | Self::ACCESSOR.bits();
         const CLASS_MEMBER = Self::METHOD.bits() | Self::ACCESSOR.bits() | Self::PROPERTY.bits();
         const MODULE_MEMBER = Self::VARIABLE.bits() | Self::FUNCTION.bits() | Self::CLASS.bits() | Self::INTERFACE.bits()
             | Self::ENUM.bits() | Self::MODULE.bits() | Self::TYPE_ALIAS.bits() | Self::ALIAS.bits();
@@ -237,17 +229,14 @@ bitflags::bitflags! {
         const WRITE_PARTIAL = 1 << 5;
         const HAS_NON_UNIFORM_TYPE = 1 << 6;
         const HAS_LITERAL_TYPE = 1 << 7;
-        const CONTAINS_PUBLIC = 1 << 8;
         const CONTAINS_PROTECTED = 1 << 9;
         const CONTAINS_PRIVATE = 1 << 10;
-        const CONTAINS_STATIC = 1 << 11;
         /// A property of a mapped type.
         const MAPPED = 1 << 18;
         const STRIP_OPTIONAL = 1 << 19;
         const REVERSE_MAPPED = 1 << 13;
 
         const SYNTHETIC = Self::SYNTHETIC_PROPERTY.bits() | Self::SYNTHETIC_METHOD.bits();
-        const PARTIAL = Self::READ_PARTIAL.bits() | Self::WRITE_PARTIAL.bits();
     }
 }
 
@@ -274,8 +263,6 @@ bitflags::bitflags! {
         const DEPRECATED = 1 << 16;
 
         const ACCESSIBILITY_MODIFIER = Self::PUBLIC.bits() | Self::PRIVATE.bits() | Self::PROTECTED.bits();
-        const PARAMETER_PROPERTY_MODIFIER = Self::ACCESSIBILITY_MODIFIER.bits() | Self::READONLY.bits() | Self::OVERRIDE.bits();
-        const NON_PUBLIC_ACCESSIBILITY_MODIFIER = Self::PRIVATE.bits() | Self::PROTECTED.bits();
         const EXPORT_DEFAULT = Self::EXPORT.bits() | Self::DEFAULT.bits();
     }
 }
@@ -320,7 +307,6 @@ bitflags::bitflags! {
         const GLOBAL_AUGMENTATION = 1 << 11;
         const AMBIENT = 1 << 25;
         const IN_WITH_STATEMENT = 1 << 26;
-        const BLOCK_SCOPED = Self::LET.bits() | Self::CONST.bits() | Self::USING.bits();
     }
 }
 
@@ -338,8 +324,6 @@ bitflags::bitflags! {
         const VARIADIC = 1 << 3;
         const FIXED = Self::REQUIRED.bits() | Self::OPTIONAL.bits();
         const VARIABLE = Self::REST.bits() | Self::VARIADIC.bits();
-        const NON_REQUIRED = Self::OPTIONAL.bits() | Self::REST.bits() | Self::VARIADIC.bits();
-        const NON_REST = Self::REQUIRED.bits() | Self::OPTIONAL.bits() | Self::VARIADIC.bits();
     }
 }
 
@@ -351,18 +335,13 @@ bitflags::bitflags! {
         /// `Array<T>` for `T[]`.
         const WRITE_ARRAY_AS_GENERIC_TYPE = 1 << 1;
         const USE_STRUCTURAL_FALLBACK = 1 << 3;
-        const WRITE_TYPE_ARGUMENTS_OF_SIGNATURE = 1 << 5;
         const USE_FULLY_QUALIFIED_TYPE = 1 << 6;
-        const SUPPRESS_ANY_RETURN_TYPE = 1 << 8;
         const MULTILINE_OBJECT_LITERALS = 1 << 10;
         const WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL = 1 << 11;
         const USE_TYPE_OF_FUNCTION = 1 << 12;
-        const OMIT_PARAMETER_MODIFIERS = 1 << 13;
         const USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE = 1 << 14;
-        const USE_SINGLE_QUOTES_FOR_STRING_LITERAL_TYPE = 1 << 28;
         const NO_TYPE_REDUCTION = 1 << 29;
         const ALLOW_UNIQUE_ES_SYMBOL_TYPE = 1 << 20;
-        const IN_TYPE_ALIAS = 1 << 23;
     }
 }
 
@@ -370,20 +349,6 @@ impl TypeFormatFlags {
     /// What `typeToString(type)` uses when it is given no flags.
     pub const DEFAULT: TypeFormatFlags = TypeFormatFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE
         .union(TypeFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE);
-}
-
-bitflags::bitflags! {
-    /// `TypeFacts`, those that are asked for from outside the checker.
-    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct TypeFacts: u8 {
-        const TRUTHY = 1 << 0;
-        const FALSY = 1 << 1;
-        /// `x == undefined`, `x == null` can be true.
-        const EQ_UNDEFINED_OR_NULL = 1 << 2;
-        const IS_UNDEFINED = 1 << 3;
-        const IS_NULL = 1 << 4;
-        const IS_UNDEFINED_OR_NULL = Self::IS_UNDEFINED.bits() | Self::IS_NULL.bits();
-    }
 }
 
 /// `ts.SignatureKind`
@@ -413,14 +378,6 @@ pub enum TypePredicateKind {
     AssertsIdentifier,
 }
 
-/// `ts.UnionReduction`
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum UnionReduction {
-    None,
-    Literal,
-    Subtype,
-}
-
 /// A node of a file of the program, as TypeScript's syntax tree has it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct NodeRef {
@@ -432,7 +389,6 @@ pub struct NodeRef {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Row {
     File,
-    Node(Node),
     Expr(hir::ExprId),
     /// The expression with the parentheses around it.
     Parenthesized(hir::ExprId),
@@ -500,8 +456,6 @@ pub enum Child {
     Initializer,
     /// `node.type`
     Type,
-    /// `node.body`
-    Body,
     /// `node.constraint` of a type parameter
     Constraint,
     /// `node.default` of a type parameter
@@ -515,46 +469,18 @@ pub enum TypeOp {
     Apparent,
     /// `getBaseConstraintOfType`
     BaseConstraint,
-    /// `getConstraintOfTypeParameter`
-    ConstraintOfTypeParameter,
-    /// `getDefaultFromTypeParameter`
-    DefaultOfTypeParameter,
     /// `getAwaitedType`
     Awaited,
-    /// `getPromisedTypeOfPromise`
-    PromisedTypeOfPromise,
     /// `getWidenedType`
     Widened,
-    /// `getWidenedLiteralType`
-    WidenedLiteral,
     /// `getBaseTypeOfLiteralType`
     BaseTypeOfLiteral,
-    /// `getRegularTypeOfLiteralType`
-    Regular,
-    /// `getFreshTypeOfLiteralType`
-    Fresh,
     /// `getNonNullableType`
     NonNullable,
-    /// `getReducedType`
-    Reduced,
-    /// `getReducedApparentType`
-    ReducedApparent,
-    /// `getIndexType`: `keyof T`
-    Keyof,
-    /// `removeDefinitelyFalsyTypes`
-    RemoveDefinitelyFalsy,
-    /// `extractDefinitelyFalsyTypes`
-    ExtractDefinitelyFalsy,
     /// `reference.target`
     Target,
     /// `InterfaceType.thisType`
     ThisType,
-    /// The element type of what `for (.. of ..)` iterates over.
-    Iterated,
-    /// The same for `for await`.
-    AsyncIterated,
-    /// `getNonOptionalType`, `removeMissingType`: without the `undefined` of a `?`.
-    NonOptional,
     /// `getModifiersTypeFromMappedType`
     ModifiersTypeOfMapped,
 }
@@ -564,8 +490,6 @@ pub enum TypeOp {
 pub enum TypeTest {
     /// `isArrayType`: `T[]`, `readonly T[]`
     Array,
-    /// `isReadonlyArrayType`
-    ReadonlyArray,
     /// `isTupleType`
     Tuple,
     /// `isArrayLikeType`
@@ -575,30 +499,14 @@ pub enum TypeTest {
     /// The checker gave up: a cycle or a limit. It has `TypeFlags::ANY`, and nothing should be
     /// reported for it.
     Unresolved,
-    /// `isThisTypeParameter`
-    ThisTypeParameter,
-    /// `isFreshLiteralType`
-    FreshLiteral,
-    /// `isThenableType` of the checker
-    Thenable,
-    /// `type.isClassOrInterface()`
-    ClassOrInterface,
     /// `isNonDeferredTypeReference`
     NonDeferredTypeReference,
-    /// `isEmptyAnonymousObjectType`: `{}`
-    EmptyAnonymousObject,
-    /// `isGenericType`
-    Generic,
 }
 
 /// A relation between two types.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Relation {
     Assignable,
-    Identical,
-    Subtype,
-    StrictSubtype,
-    Comparable,
     /// `a.target === b.target`, for two tuple types: TypeScript has one target for all the tuple
     /// types with the same kinds of elements and the same labels.
     SameTupleTarget,
@@ -613,8 +521,6 @@ pub enum SymbolOp {
     ImmediateAliased,
     /// `getExportSymbolOfSymbol`
     ExportSymbol,
-    /// `symbol.parent`
-    Parent,
     /// `getMergedSymbol`
     Merged,
 }
@@ -624,8 +530,6 @@ pub enum SymbolOp {
 pub enum SymbolTable {
     /// `getExportsOfModule`
     ExportsOfModule,
-    /// `symbol.exports`
-    Exports,
     /// `symbol.members`
     Members,
 }
@@ -682,10 +586,6 @@ pub enum Structure<'a> {
     /// `Uppercase<ty>`
     StringMapping {
         ty: TypeId,
-    },
-    Substitution {
-        base: TypeId,
-        constraint: TypeId,
     },
     Other,
 }
@@ -769,7 +669,6 @@ pub struct CompilerOptions {
     pub strict_function_types: bool,
     pub strict_bind_call_apply: bool,
     pub strict_property_initialization: bool,
-    pub strict_builtin_iterator_return: bool,
     pub no_implicit_any: bool,
     pub no_implicit_this: bool,
     pub no_implicit_returns: bool,
@@ -782,16 +681,12 @@ pub struct CompilerOptions {
     pub isolated_modules: bool,
     pub isolated_declarations: bool,
     pub verbatim_module_syntax: bool,
-    pub erasable_syntax_only: bool,
     pub experimental_decorators: bool,
     pub emit_decorator_metadata: bool,
     pub allow_synthetic_default_imports: bool,
     pub es_module_interop: bool,
-    pub use_define_for_class_fields: bool,
     pub allow_js: bool,
     pub check_js: bool,
-    pub resolve_json_module: bool,
-    pub preserve_const_enums: bool,
     /// `ts.sys.useCaseSensitiveFileNames`
     pub use_case_sensitive_file_names: bool,
     pub target: crate::resolve::ScriptTarget,

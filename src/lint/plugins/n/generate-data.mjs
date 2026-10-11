@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 
 const root = resolve(process.env.ESLINT_PLUGIN_N_DIR);
 const require = createRequire(join(root, "package.json"));
-const { Table, check, place } = createRequire(import.meta.url)("./generate-table.cjs");
+const { Table, check, pack, place } = createRequire(import.meta.url)("./generate-table.cjs");
 const load = file => import(pathToFileURL(join(root, file)).href);
 // The same module that the plugin imports: its symbols are the keys.
 const { READ, CALL, CONSTRUCT } = await import(
@@ -136,12 +136,12 @@ ${otherwise.map(([info, text]) => `    (${info}, ${JSON.stringify(text)}),`).joi
 /// The versions that the [\`INFOS\`] have, those of one after each other, the latest first.
 #[rustfmt::skip]
 pub(crate) static VERSIONS: [[u8; 3]; ${versionPool.length}] = [
-${versionPool.map(it => `    ${it},`).join("\n")}
+${pack(versionPool)}
 ];
 
 #[rustfmt::skip]
 pub(crate) static INFOS: [Info; ${infoRows.length}] = [
-${infoRows.map(it => `    ${it},`).join("\n")}
+${pack(infoRows)}
 ];
 
 ${table.statics("Builtin", "The global variables and the modules, with indices into [`INFOS`].")}

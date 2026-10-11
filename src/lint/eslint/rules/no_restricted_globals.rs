@@ -17,25 +17,9 @@ const CUSTOM_MESSAGE: Message = Message::new(
     "Unexpected use of '{{name}}'. {{customMessage}}",
 );
 
-/// Whether `e` is the operand of a `typeof` type, or the start of it. ESLint has a `TSTypeQuery` or
-/// a `TSQualifiedName` around it.
-fn is_in_type_query(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == at) => {
-                at = parent;
-            }
-            Node::Type(ty) => return matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return false,
-        }
-    }
-}
-
 /// `node.type === "MemberExpression"`
-// TODO(api): replace by utils::ast_utils::is_member_expression, once it leaves out JSX and types
 fn is_member_expression(e: Expr<'_>) -> bool {
-    matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && !e.is_jsx_tag_name() && !is_in_type_query(e)
+    matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && !e.is_jsx_tag_name() && !e.is_in_type_query()
 }
 
 /// Whether the parent of the identifier is a `TSTypeReference`, a `TSInterfaceHeritage`, a
@@ -50,7 +34,7 @@ fn is_in_type_context(reference: Reference<'_>, is_oxlint: bool) -> bool {
         };
     }
     match reference.node() {
-        Node::Expr(e) => is_in_type_query(e),
+        Node::Expr(e) => e.is_in_type_query(),
         Node::Type(ty) => match ty.kind() {
             // The `a.b` of `extends a.b` and `implements a.b` is a `MemberExpression`.
             TypeKind::Ref { name, .. } => {

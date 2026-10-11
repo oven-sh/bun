@@ -239,7 +239,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             strict_function_types: options.strict_function_types,
             strict_bind_call_apply: options.strict_bind_call_apply,
             strict_property_initialization: options.strict_property_initialization,
-            strict_builtin_iterator_return: options.strict_builtin_iterator_return,
             no_implicit_any: options.no_implicit_any,
             no_implicit_this: options.no_implicit_this,
             no_implicit_returns: options.no_implicit_returns,
@@ -253,17 +252,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             isolated_modules: options.isolated_modules,
             isolated_declarations: options.isolated_declarations,
             verbatim_module_syntax: options.verbatim_module_syntax,
-            erasable_syntax_only: options.erasable_syntax_only,
             experimental_decorators: options.experimental_decorators,
             emit_decorator_metadata: options.emit_decorator_metadata,
             // TypeScript 7 has neither as an option: both are always on.
             allow_synthetic_default_imports: true,
             es_module_interop: true,
-            use_define_for_class_fields: options.use_define_for_class_fields,
             allow_js: options.allow_js,
             check_js: options.check_js == Some(true),
-            resolve_json_module: options.resolve_json_module,
-            preserve_const_enums: options.preserve_const_enums,
             use_case_sensitive_file_names: options.use_case_sensitive_file_names,
             target: options.target,
             module: options.module,
@@ -380,7 +375,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let hir = self.c.hir(self.file);
         let row = match location.row {
             Row::File => Node::FILE,
-            Row::Node(node) => node,
             Row::Expr(id) => hir.node(id),
             Row::Parenthesized(id) => hir.child(id),
             Row::Stmt(id) => hir.node(id),
@@ -510,7 +504,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Child::Expression => hir.expression(node),
             Child::Initializer => hir.initializer(node),
             Child::Type => hir.type_node(node),
-            Child::Body => hir.body(node),
             Child::Constraint | Child::Default => match hir.data(node) {
                 NodeData::TypeParam(parameter) if child == Child::Constraint => {
                     hir.node(hir[parameter].constraint)
@@ -904,47 +897,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
         let function = hir.function_of(at).some()?;
         Some(self.c.sig_of_fn(node.file, function))
-    }
-
-    pub fn constant_value(&mut self, node: NodeRef) -> Option<LiteralValue<'p>> {
-        let (hir, at) = self.valid(node)?;
-        let value = match hir.data(at) {
-            NodeData::EnumMember(member) => self.c.enum_member_value(node.file, member)?,
-            // `getConstantValue`: an access to a member of an enum.
-            NodeData::Expr(e)
-                if matches!(hir[e].kind, ExprKind::Dot { .. } | ExprKind::Index { .. }) =>
-            {
-                let ty = self.c.type_of_expr(node.file, e);
-                match *self.c.data(ty) {
-                    TypeData::EnumLit { value, .. } => value,
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        };
-        Some(match value {
-            EnumValue::String(text) => LiteralValue::String(self.c.atoms().bytes(text)),
-            EnumValue::Number(bits) => LiteralValue::Number(f64::from_bits(bits)),
-        })
-    }
-
-    pub fn is_const_context(&mut self, node: NodeRef) -> bool {
-        self.expr_of(node)
-            .is_some_and(|e| self.c.is_const_context(node.file, e))
-    }
-
-    pub fn flow_type_of_reference(&mut self, node: NodeRef, declared: TypeId) -> TypeId {
-        match self.expr_of(node) {
-            Some(e) => self.c.flow_type_of_reference(node.file, e, declared),
-            None => declared,
-        }
-    }
-
-    pub fn context_free_type_of_expression(&mut self, node: NodeRef) -> TypeId {
-        match self.expr_of(node) {
-            Some(e) => self.c.context_free_type_of_expression(node.file, e),
-            None => TypeId::ERROR,
-        }
     }
 
     /// `context_free_type_of_expression` as a tool gets it that asks before anything has resolved the call `node`: the

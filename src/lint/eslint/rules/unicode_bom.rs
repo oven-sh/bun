@@ -22,8 +22,7 @@ impl Rule for UnicodeBom {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // TODO(api): replace by ast::File::has_bom
-        let has_bom = cx.text().starts_with(BOM.as_bytes());
+        let has_bom = cx.file().has_bom();
         if !has_bom && self.is_required {
             cx.report_at(0, EXPECTED)
                 .fix(|fixer| fixer.insert_before(Span::empty(0), BOM));

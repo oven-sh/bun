@@ -233,11 +233,6 @@ pub enum TypeStructure<'a> {
     StringMapping {
         ty: Type<'a>,
     },
-    /// `ts.SubstitutionType`
-    Substitution {
-        base_type: Type<'a>,
-        constraint: Type<'a>,
-    },
     Other,
 }
 
@@ -447,10 +442,6 @@ impl<'a> Type<'a> {
                 types: self.list(types),
             },
             Structure::StringMapping { ty: of } => TypeStructure::StringMapping { ty: ty(of) },
-            Structure::Substitution { base, constraint } => TypeStructure::Substitution {
-                base_type: ty(base),
-                constraint: ty(constraint),
-            },
             Structure::Other => TypeStructure::Other,
         }
     }
@@ -482,8 +473,6 @@ impl<'a> Type<'a> {
     type_tests! {
         /// `checker.isArrayType(type)`: `T[]` or `readonly T[]`.
         is_array_type Array;
-        /// `readonly T[]`, `ReadonlyArray<T>`
-        is_readonly_array_type ReadonlyArray;
         /// `checker.isTupleType(type)`
         is_tuple_type Tuple;
         /// `checker.isArrayLikeType(type)`
@@ -494,14 +483,8 @@ impl<'a> Type<'a> {
         /// The checker gave up on it: a cycle or a limit. It has [`TypeFlags::ANY`]. TypeScript
         /// has no such type, so there is nothing to report for it.
         is_unresolved Unresolved;
-        /// `isThisTypeParameter(type)`: the `this` type of a class or an interface.
-        is_this_type_parameter ThisTypeParameter;
-        /// `isFreshLiteralType(type)`
-        is_fresh_literal FreshLiteral;
         /// `isNonDeferredTypeReference(type)`
         is_non_deferred_type_reference NonDeferredTypeReference;
-        /// `isEmptyAnonymousObjectType(type)`: `{}`
-        is_empty_anonymous_object_type EmptyAnonymousObject;
     }
 
     /// `isArrayOrTupleType(type)`
@@ -525,28 +508,10 @@ impl<'a> Type<'a> {
         get_apparent_type Apparent;
         /// `checker.getWidenedType(type)`
         get_widened_type Widened;
-        /// `getWidenedLiteralType(type)`: `string` for `"a"`, also in a union.
-        get_widened_literal_type WidenedLiteral;
         /// `checker.getBaseTypeOfLiteralType(type)`
         get_base_type_of_literal_type BaseTypeOfLiteral;
-        /// `getRegularTypeOfLiteralType(type)`
-        get_regular_type_of_literal_type Regular;
-        /// `getFreshTypeOfLiteralType(type)`
-        get_fresh_type_of_literal_type Fresh;
         /// `checker.getNonNullableType(type)`, `type.getNonNullableType()`
         get_non_nullable_type NonNullable;
-        /// `getReducedType(type)`
-        get_reduced_type Reduced;
-        /// `getReducedApparentType(type)`
-        get_reduced_apparent_type ReducedApparent;
-        /// `getIndexType(type)`: `keyof type`
-        get_index_type Keyof;
-        /// `removeDefinitelyFalsyTypes(type)`
-        remove_definitely_falsy_types RemoveDefinitelyFalsy;
-        /// `extractDefinitelyFalsyTypes(type)`
-        extract_definitely_falsy_types ExtractDefinitelyFalsy;
-        /// `removeMissingType(type, true)`: without the `undefined` that a `?` adds.
-        get_non_optional_type NonOptional;
     }
 
     optional_type_ops! {
@@ -555,23 +520,13 @@ impl<'a> Type<'a> {
         get_base_constraint_of_type BaseConstraint;
         /// `type.getConstraint()`, which is `checker.getBaseConstraintOfType(type)`.
         get_constraint BaseConstraint;
-        /// `getConstraintOfTypeParameter(type)`: the constraint as it is declared.
-        get_constraint_of_type_parameter ConstraintOfTypeParameter;
-        /// `type.getDefault()`
-        get_default DefaultOfTypeParameter;
         /// `checker.getAwaitedType(type)`
         get_awaited_type Awaited;
-        /// `getPromisedTypeOfPromise(type)`
-        get_promised_type_of_promise PromisedTypeOfPromise;
         /// `InterfaceType.thisType`
         this_type ThisType;
         /// `getModifiersTypeFromMappedType(type)`, `type.modifiersType`: the `T` of
         /// `{ [P in keyof T]: .. }`.
         get_modifiers_type_from_mapped_type ModifiersTypeOfMapped;
-        /// The type of `x` in `for (const x of value)`.
-        get_iterated_type Iterated;
-        /// The type of `x` in `for await (const x of value)`.
-        get_async_iterated_type AsyncIterated;
     }
 
     /// `checker.getTypeArguments(type)`, of a reference to a class, an interface, an array or a

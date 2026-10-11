@@ -276,10 +276,6 @@ queries! {
     fn symbols_in_scope(node: NodeRef, meaning: SymbolFlags) -> &'a [SymbolRef];
     fn symbol_in_scope(node: NodeRef, meaning: SymbolFlags, name: &[u8]) -> Option<SymbolRef>;
     fn resolve_name(node: NodeRef, name: &[u8], meaning: SymbolFlags, exclude_globals: bool) -> Option<SymbolRef>;
-    fn constant_value(node: NodeRef) -> Option<LiteralValue<'a>>;
-    fn is_const_context(node: NodeRef) -> bool;
-    fn flow_type_of_reference(node: NodeRef, declared: TypeId) -> TypeId;
-    fn context_free_type_of_expression(node: NodeRef) -> TypeId;
     fn context_free_type_of_call_resolved_afresh(node: NodeRef) -> TypeId;
 
     // ── types ──
@@ -297,20 +293,13 @@ queries! {
     fn structure(ty: TypeId) -> Structure<'a>;
     fn type_op(op: TypeOp, ty: TypeId) -> Option<TypeId>;
     fn type_test(test: TypeTest, ty: TypeId) -> bool;
-    fn has_type_facts(ty: TypeId, facts: TypeFacts) -> bool;
     fn is_related(relation: Relation, source: TypeId, target: TypeId) -> bool;
     fn base_types(ty: TypeId) -> &'a [TypeId];
     fn properties_of_type(ty: TypeId) -> &'a [SymbolRef];
     fn property_of_type(ty: TypeId, name: &[u8]) -> Option<SymbolRef>;
     fn type_of_property_of_type(ty: TypeId, name: &[u8]) -> Option<TypeId>;
-    fn type_of_property_or_index_signature_of_type(ty: TypeId, name: &[u8]) -> Option<TypeId>;
     fn index_infos_of_type(ty: TypeId) -> &'a [IndexInfoData];
-    fn applicable_index_info(ty: TypeId, key: TypeId) -> Option<IndexInfoData>;
     fn signatures_of_type(ty: TypeId, kind: SignatureKind) -> &'a [SigId];
-    fn union_type(types: &[TypeId], reduction: UnionReduction) -> TypeId;
-    fn intersection_type(types: &[TypeId]) -> TypeId;
-    fn assignment_reduced_type(declared: TypeId, assigned: TypeId) -> TypeId;
-    fn global_type(name: &[u8], arity: u32) -> Option<TypeId>;
     fn compare_types(a: TypeId, b: TypeId) -> Option<std::cmp::Ordering>;
     fn type_to_string(ty: TypeId, enclosing: Option<NodeRef>, flags: TypeFormatFlags) -> Vec<u8>;
 
@@ -324,8 +313,6 @@ queries! {
     fn symbol_op(op: SymbolOp, symbol: SymbolRef) -> Option<SymbolRef>;
     fn symbol_table(table: SymbolTable, symbol: SymbolRef) -> &'a [SymbolRef];
     fn is_unknown_symbol(symbol: SymbolRef) -> bool;
-    fn is_readonly_symbol(symbol: SymbolRef) -> bool;
-    fn is_spreadable_property(symbol: SymbolRef) -> bool;
     fn deprecation_of_symbol(symbol: SymbolRef) -> Option<&'a [u8]>;
     fn symbol_to_string(symbol: SymbolRef) -> Vec<u8>;
 

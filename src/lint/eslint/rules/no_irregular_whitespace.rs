@@ -51,22 +51,12 @@ fn oxlint_reports_each_character(file: &File) -> bool {
     file.language().is_oxlint
 }
 
-/// The token or the comment that `offset` is in.
-// TODO(api): replace by tokens::File::token_or_comment_around
-fn token_or_comment_around<'a>(file: &'a File<'a>, offset: u32) -> Option<Token<'a>> {
-    let next = match file.tokens_before(Span::empty(offset)).with_comments().next() {
-        Some(before) => file.tokens_after(before).with_comments().next(),
-        None => file.tokens().with_comments().next(),
-    }?;
-    (next.start() <= offset).then_some(next)
-}
-
 impl NoIrregularWhitespace {
     /// Whether the whitespace at `offset` is in something that the options allow it in. Each of
     /// the nodes that upstream looks at is one token: a string or a regular expression `Literal`,
     /// a `TemplateElement`, a `JSXText`.
     fn is_skipped<'a>(&self, file: &'a File<'a>, offset: u32) -> bool {
-        let Some(token) = token_or_comment_around(file, offset) else {
+        let Some(token) = file.token_or_comment_around(offset) else {
             return false;
         };
         match token.kind() {

@@ -30,36 +30,9 @@ fn octal_escape(raw: &[u8]) -> Option<&[u8]> {
     None
 }
 
-/// `literal`: what can be a string in quotes.
-fn check(literal: Span, cx: &Cx<'_, NoOctalEscape>) {
-    let raw = cx.slice(literal);
-    if matches!(raw.first(), Some(b'"' | b'\''))
-        && let Some(sequence) = octal_escape(raw)
-    {
-        cx.report(literal, OCTAL_ESCAPE_SEQUENCE).data("sequence", sequence);
-    }
-}
-
-fn check_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoOctalEscape>) {
-    if let Some(key) = key
-        && matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
-    {
-        check(key.inner_span(cx.file()), cx);
-    }
-}
-
 impl Rule for NoOctalEscape {
     const META: Meta = Meta::eslint("no-octal-escape", Kind::Suggestion);
-    const ON: On = On::new()
-        .exprs(&[ExprTag::String])
-        .props()
-        .members()
-        .enum_members()
-        .pats(&[PatTag::Object])
-        .types(&[TypeTag::StringLit])
-        .import_specs()
-        .export_specs()
-        .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar, StmtTag::ImportEquals, StmtTag::Module]);
+    const ON: On = On::new().string_literals();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
@@ -70,57 +43,9 @@ impl Rule for NoOctalEscape {
         strings::contains_char(file.text(), b'\\').then_some(())
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !e.is_jsx_text() && !e.is_jsx_tag_name() {
-            check(e.span(), cx);
-        }
-    }
-
-    // The strings that are a `Literal` for ESLint and not an expression here.
-
-    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        check_key(prop.key(), cx);
-    }
-
-    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if member.flags().contains(Flags::STRING_NAME) {
-            check_key(member.key(), cx);
-        }
-    }
-
-    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
-        check_key(member.key(), cx);
-    }
-
-    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        if let PatKind::Object(props) = pat.kind() {
-            props.iter().for_each(|prop| check_key(prop.key(), cx));
-        }
-    }
-
-    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        check(ty.span(), cx);
-    }
-
-    fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        check(spec.imported().span(), cx);
-    }
-
-    fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        check(spec.local().span(), cx);
-        if spec.is_renamed() {
-            check(spec.exported().span(), cx);
-        }
-    }
-
-    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        match stmt.kind() {
-            StmtKind::ExportStar { alias: Some(alias), .. } => check(alias.span(), cx),
-            StmtKind::Module(module) => check(module.name_span(), cx),
-            _ => {}
-        }
-        if let Some(specifier) = stmt.module_specifier_span() {
-            check(specifier, cx);
+    fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(sequence) = octal_escape(literal.text()) {
+            cx.report(literal, OCTAL_ESCAPE_SEQUENCE).data("sequence", sequence);
         }
     }
 }

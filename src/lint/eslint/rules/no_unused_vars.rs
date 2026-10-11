@@ -8,37 +8,37 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Disallow unused variables.
 pub struct NoUnusedVars {
-    vars: Vars,
-    args: Args,
-    ignore_rest_siblings: bool,
-    checks_caught_errors: bool,
-    ignore_class_with_static_init_block: bool,
-    ignore_using_declarations: bool,
-    report_used_ignore_pattern: bool,
-    vars_ignore_pattern: Option<Pattern>,
-    args_ignore_pattern: Option<Pattern>,
-    caught_errors_ignore_pattern: Option<Pattern>,
-    destructured_array_ignore_pattern: Option<Pattern>,
+    pub vars: Vars,
+    pub args: Args,
+    pub ignore_rest_siblings: bool,
+    pub checks_caught_errors: bool,
+    pub ignore_class_with_static_init_block: bool,
+    pub ignore_using_declarations: bool,
+    pub report_used_ignore_pattern: bool,
+    pub vars_ignore_pattern: Option<Pattern>,
+    pub args_ignore_pattern: Option<Pattern>,
+    pub caught_errors_ignore_pattern: Option<Pattern>,
+    pub destructured_array_ignore_pattern: Option<Pattern>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Vars {
+pub enum Vars {
     All,
     Local,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Args {
+pub enum Args {
     All,
     AfterUsed,
     None,
 }
 
-const UNUSED_VAR: Message = Message::new(
+pub const UNUSED_VAR: Message = Message::new(
     "unusedVar",
     "'{{varName}}' is {{action}} but never used{{additional}}.",
 );
-const USED_IGNORED_VAR: Message = Message::new(
+pub const USED_IGNORED_VAR: Message = Message::new(
     "usedIgnoredVar",
     "'{{varName}}' is marked as ignored but is used{{additional}}.",
 );
@@ -47,7 +47,7 @@ const REMOVE_VAR: Message = Message::new("removeVar", "Remove unused variable '{
 // ───────────────────────────── options ─────────────────────────────
 
 /// One of the `..IgnorePattern` options.
-struct Pattern {
+pub struct Pattern {
     regex: Regex,
     /// `String(regex)`
     text: String,
@@ -63,14 +63,19 @@ impl Pattern {
         })
     }
 
-    fn test(&self, name: Name) -> bool {
+    pub fn test(&self, name: Name) -> bool {
         self.regex.test(name.bytes())
+    }
+
+    /// As it is in the configuration.
+    pub fn source(&self) -> &str {
+        self.text.strip_prefix('/').and_then(|it| it.strip_suffix("/u")).unwrap_or(&self.text)
     }
 }
 
 /// What a message calls a variable, which decides the pattern that it names.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum VariableType {
+pub enum VariableType {
     ArrayDestructure,
     CatchClause,
     Parameter,
@@ -246,7 +251,7 @@ fn is_setter(func: Func) -> bool {
 }
 
 /// Whether `pat` is where the parameter `symbol` is written first: `function (a, b, a) {}`
-fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
+pub fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
     let first = symbol.declarations().find_map(|def| match def {
         Declaration::Param(it) => Some(it),
         _ => None,
@@ -891,6 +896,22 @@ impl NoUnusedVars {
         }
     }
 
+    /// The `additional` of `getDefinedMessageData` and `getAssignedMessageData`.
+    pub fn unused_message_data(&self, kind: VariableType) -> String {
+        match self.description(kind) {
+            (description, Some(pattern)) => format!(". Allowed unused {description} must match {}", pattern.text),
+            _ => String::new(),
+        }
+    }
+
+    /// The `additional` of `getUsedIgnoredMessageData`.
+    pub fn used_ignored_message_data(&self, kind: VariableType) -> String {
+        match self.description(kind) {
+            (description, Some(pattern)) => format!(". Used {description} must not match {}", pattern.text),
+            _ => String::new(),
+        }
+    }
+
     /// Reports a variable whose name says that it is unused, if it is used.
     fn report_if_used<'a>(
         &self,
@@ -906,13 +927,9 @@ impl NoUnusedVars {
         let Some(at) = name_span(def) else {
             return;
         };
-        let additional = match self.description(kind) {
-            (description, Some(pattern)) => {
-                format!(". Used {description} must not match {}", pattern.text)
-            }
-            _ => String::new(),
-        };
-        cx.report(at, USED_IGNORED_VAR).data("varName", name).data("additional", additional);
+        cx.report(at, USED_IGNORED_VAR)
+            .data("varName", name)
+            .data("additional", self.used_ignored_message_data(kind));
     }
 
     /// ESLint's `hasRestSpreadSibling`.
@@ -1025,16 +1042,10 @@ impl NoUnusedVars {
         if self.destructured_array_ignore_pattern.is_some() && is_defined_in_array_pattern(def) {
             kind = VariableType::ArrayDestructure;
         }
-        let additional = match self.description(kind) {
-            (description, Some(pattern)) => {
-                format!(". Allowed unused {description} must match {}", pattern.text)
-            }
-            _ => String::new(),
-        };
         cx.report(last_write.map_or(at, identifier_span), UNUSED_VAR)
             .data("varName", name)
             .data("action", if is_assigned { "assigned a value" } else { "defined" })
-            .data("additional", additional)
+            .data("additional", self.unused_message_data(kind))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
                 handle_fixes(fixer, variable, def, at)
             });

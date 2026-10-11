@@ -698,7 +698,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     // ───────────────────────────── other symbols ─────────────────────────────
 
     pub fn symbol_op(&mut self, op: SymbolOp, symbol: SymbolRef) -> Option<SymbolRef> {
-        let (key, prop) = self.entry(symbol)?;
+        let (key, _) = self.entry(symbol)?;
         let files = self.c.files();
         match (op, key) {
             (SymbolOp::Merged, _) => Some(symbol),
@@ -733,25 +733,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let exported = files.symbol(sym).export_symbol.some()?;
                 Some(self.symbol(files.sym(sym.file, exported)))
             }
-            (SymbolOp::Parent, Key::Symbol(sym) | Key::Instantiated(sym, _)) => {
-                let parent = match files.parent_of_symbol(sym) {
-                    Some(parent) => parent,
-                    None => match files.value_declaration(sym)? {
-                        (file, Decl::Member(member)) => {
-                            self.c.symbol_of_member_owner(file, member)?
-                        }
-                        _ => self.c.declaring_class_of_symbol(sym)?,
-                    },
-                };
-                Some(self.symbol(parent))
-            }
-            (SymbolOp::Parent, Key::Property(..)) => {
-                let class = self.c.declaring_class(prop?.0)?;
-                Some(self.symbol(class))
-            }
-            (SymbolOp::Parent, Key::Prototype(parent) | Key::SyntheticDefault(parent)) => {
-                Some(self.symbol(parent))
-            }
             _ => None,
         }
     }
@@ -765,7 +746,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             SymbolTable::ExportsOfModule => {
                 files.exports_of_module(sym).iter().map(|it| it.1).collect()
             }
-            SymbolTable::Exports => files.each_export(sym).map(|it| it.1).collect(),
             SymbolTable::Members => files.members_in_table(sym).iter().map(|it| it.1).collect(),
         };
         let symbols: Vec<SymbolRef> = symbols.into_iter().map(|it| self.symbol(it)).collect();
@@ -774,29 +754,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn is_unknown_symbol(&mut self, symbol: SymbolRef) -> bool {
         self.sym_of(symbol) == Some(self.c.files().unknown_symbol)
-    }
-
-    pub fn is_readonly_symbol(&mut self, symbol: SymbolRef) -> bool {
-        if let Some((prop, _)) = self.prop_of(symbol) {
-            return self.c.is_readonly_symbol(prop);
-        }
-        // `isReadonlySymbol`: a `const`, an enum member.
-        match self.sym_of(symbol) {
-            Some(sym) => {
-                let flags = self.c.files().flags(sym);
-                flags.contains(SymFlags::ENUM_MEMBER)
-                    || flags.contains(SymFlags::VARIABLE | SymFlags::CONST)
-                    || flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST)
-            }
-            None => false,
-        }
-    }
-
-    pub fn is_spreadable_property(&mut self, symbol: SymbolRef) -> bool {
-        match self.prop_of(symbol) {
-            Some((prop, _)) => self.c.is_spreadable_property(prop),
-            None => false,
-        }
     }
 
     pub fn symbol_to_string(&mut self, symbol: SymbolRef) -> Vec<u8> {
@@ -852,15 +809,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn type_of_property_of_type(&mut self, ty: TypeId, name: &[u8]) -> Option<TypeId> {
         let name = self.property_name(name);
         self.c.type_of_property_of_type(ty, name)
-    }
-
-    pub fn type_of_property_or_index_signature_of_type(
-        &mut self,
-        ty: TypeId,
-        name: &[u8],
-    ) -> Option<TypeId> {
-        let name = self.property_name(name);
-        self.c.type_of_property_or_index_signature_of_type(ty, name)
     }
 
     // ───────────────────────────── signatures ─────────────────────────────

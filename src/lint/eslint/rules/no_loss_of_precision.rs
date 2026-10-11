@@ -100,92 +100,22 @@ fn loses_precision(raw: &[u8]) -> bool {
     }
 }
 
-fn check<R: Rule>(literal: Span, cx: &Cx<'_, R>) {
-    if loses_precision(cx.slice(literal)) {
+pub fn check<'a, R: Rule>(literal: Literal<'a>, cx: &Cx<'a, R>) {
+    if !literal.is_bigint() && loses_precision(literal.text()) {
         cx.report(literal, NO_LOSS_OF_PRECISION);
-    }
-}
-
-fn check_key<'a, R: Rule>(key: Option<Key<'a>>, cx: &Cx<'a, R>) {
-    if let Some(key) = key
-        && matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))
-    {
-        let literal = key.inner_span(cx.file());
-        if !cx.slice(literal).ends_with(b"n") {
-            check(literal, cx);
-        }
-    }
-}
-
-/// ESTree has a `Literal` for a number in an expression, in a type and in the name of a property. A rule with this
-/// calls what follows, each from its method of the same name.
-pub const ON: On = On::new()
-    .exprs(&[ExprTag::Number])
-    .types(&[TypeTag::NumberLit])
-    .members()
-    .props()
-    .pats(&[PatTag::Object]);
-
-pub fn expr<'a, R: Rule>(e: Expr<'a>, cx: &mut Cx<'a, R>) {
-    check(e.span(), cx);
-}
-
-pub fn ty<'a, R: Rule>(ty: TypeNode<'a>, cx: &mut Cx<'a, R>) {
-    let literal = ty.span();
-    match ty.text().starts_with(b"-") {
-        true => check(Span::new(skip_trivia(cx.text(), literal.start + 1), literal.end), cx),
-        false => check(literal, cx),
-    }
-}
-
-pub fn member<'a, R: Rule>(member: Member<'a>, cx: &mut Cx<'a, R>) {
-    if member.flags().intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME) {
-        check_key(member.key(), cx);
-    }
-}
-
-pub fn prop<'a, R: Rule>(property: Prop<'a>, cx: &mut Cx<'a, R>) {
-    // A property that is not a method starts with its key.
-    let first = cx.text().get(property.span().start as usize);
-    if property.kind() != PropKind::Init || matches!(first, Some(b'0'..=b'9' | b'.' | b'[')) {
-        check_key(property.key(), cx);
-    }
-}
-
-pub fn pat<'a, R: Rule>(pattern: Pat<'a>, cx: &mut Cx<'a, R>) {
-    if let PatKind::Object(properties) = pattern.kind() {
-        for property in properties {
-            check_key(property.key(), cx);
-        }
     }
 }
 
 impl Rule for NoLossOfPrecision {
     const META: Meta = Meta::eslint("no-loss-of-precision", Kind::Problem).recommended();
-    const ON: On = ON;
+    const ON: On = On::new().number_literals();
     no_state!();
 
     fn new(_: &Options) -> Self {
         NoLossOfPrecision
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        expr(e, cx);
-    }
-
-    fn ty<'a>(&self, it: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        ty(it, cx);
-    }
-
-    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        pat(pattern, cx);
-    }
-
-    fn member<'a>(&self, it: Member<'a>, cx: &mut Cx<'a, Self>) {
-        member(it, cx);
-    }
-
-    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        prop(property, cx);
+    fn number_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        check(literal, cx);
     }
 }

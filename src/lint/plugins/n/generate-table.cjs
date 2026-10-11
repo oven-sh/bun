@@ -16,6 +16,18 @@ function place(pool, list) {
   return pool.length - list.length;
 }
 
+/** The rows of an array, as many on a line as fit. */
+function pack(rows) {
+  const lines = [];
+  let line = "   ";
+  for (const row of rows) {
+    if (line.length + row.length + 2 > 120) (lines.push(line), (line = "   "));
+    line += ` ${row},`;
+  }
+  if (line !== "   ") lines.push(line);
+  return lines.join("\n");
+}
+
 class Table {
   /** For each array of members its rows: `{ name, kinds: [read, call, construct], members: an array or undefined }`. */
   arrays = [];
@@ -79,7 +91,7 @@ class Table {
           .map(it => it ?? NONE),
       );
       if (!this.kinds.includes(kinds)) this.kinds.push(kinds);
-      return `    m(${this.textOf(row.name)}, ${this.kinds.indexOf(kinds)}, ${this.runOf(row.members)}), // ${row.name}`;
+      return `m(${this.textOf(row.name)}, ${this.kinds.indexOf(kinds)}, ${this.runOf(row.members)})`;
     });
   }
 
@@ -123,14 +135,14 @@ static NAMES: &str = ${JSON.stringify(this.names)};
 /// What is at \`[READ]\`, \`[CALL]\` and \`[CONSTRUCT]\`.
 #[rustfmt::skip]
 static KINDS: [[u16; 3]; ${this.kinds.length}] = [
-${this.kinds.map(it => `    ${it.replaceAll(",", ", ").replaceAll(String(NONE), "NONE")},`).join("\n")}
+${pack(this.kinds.map(it => it.replaceAll(",", ", ").replaceAll(String(NONE), "NONE")))}
 ];
 
 #[rustfmt::skip]
 static MEMBERS: [Member<${name}>; ${this.rows.length}] = [
-${this.rows.join("\n")}
+${pack(this.rows)}
 ];`;
   }
 }
 
-module.exports = { NONE, Table, check, place };
+module.exports = { NONE, Table, check, pack, place };

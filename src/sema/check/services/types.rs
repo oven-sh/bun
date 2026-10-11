@@ -1,6 +1,5 @@
 //! What is asked of a type.
 
-use super::super::flow::facts;
 use super::super::print;
 use super::*;
 
@@ -291,9 +290,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
             }
             TypeData::StringMapping { ty: of, .. } => Structure::StringMapping { ty: of },
-            TypeData::Substitution { base, constraint } => {
-                Structure::Substitution { base, constraint }
-            }
             _ => Structure::Other,
         }
     }
@@ -315,31 +311,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(match op {
             TypeOp::Apparent => c.apparent_type(ty),
             TypeOp::BaseConstraint => return c.base_constraint_of(ty),
-            TypeOp::ConstraintOfTypeParameter => {
-                if c.flags(ty) & tf::TYPE_PARAMETER == 0 {
-                    return None;
-                }
-                return c.constraint_of_type_param(ty);
-            }
-            TypeOp::DefaultOfTypeParameter => {
-                if c.flags(ty) & tf::TYPE_PARAMETER == 0 {
-                    return None;
-                }
-                return c.default_of_type_param(ty);
-            }
             TypeOp::Awaited => return c.awaited_or_none(ty),
-            TypeOp::PromisedTypeOfPromise => return c.thenable_value(ty),
             TypeOp::Widened => c.get_widened_type(ty),
-            TypeOp::WidenedLiteral => c.widen_literal(ty),
             TypeOp::BaseTypeOfLiteral => c.base_of_literal(ty),
-            TypeOp::Regular => c.regular(ty),
-            TypeOp::Fresh => c.fresh(ty),
             TypeOp::NonNullable => c.non_nullable(ty),
-            TypeOp::Reduced => c.reduced(ty),
-            TypeOp::ReducedApparent => c.reduced_apparent_type(ty),
-            TypeOp::Keyof => c.keyof(ty),
-            TypeOp::RemoveDefinitelyFalsy => c.remove_definitely_falsy(ty),
-            TypeOp::ExtractDefinitelyFalsy => c.definitely_falsy_part(ty),
             TypeOp::Target => match *c.data(ty) {
                 TypeData::Ref { target, .. } => c.declared_type(target),
                 TypeData::Tuple { .. } => ty,
@@ -351,9 +326,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
                 _ => return None,
             },
-            TypeOp::Iterated => return c.iterated_type_if_any(ty, false),
-            TypeOp::AsyncIterated => return c.iterated_type_if_any(ty, true),
-            TypeOp::NonOptional => c.remove_missing_type(ty, true),
             TypeOp::ModifiersTypeOfMapped => return c.mapped_modifiers_type(ty),
         })
     }
@@ -362,7 +334,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let c = &mut *self.c;
         match test {
             TypeTest::Array => c.is_array(ty),
-            TypeTest::ReadonlyArray => c.is_reference_to_global(ty, known::ReadonlyArray, 1),
             TypeTest::Tuple => c.is_tuple(ty),
             TypeTest::ArrayLike => c.is_array_like(ty),
             TypeTest::Error => c.is_error_type(ty),
@@ -372,44 +343,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                         .object_flags(ty)
                         .contains(crate::types::ObjectFlags::HAS_UNRESOLVED)
             }
-            TypeTest::ThisTypeParameter => matches!(c.data(ty), TypeData::ThisParam(_)),
-            TypeTest::FreshLiteral => c.is_fresh_literal(ty),
-            TypeTest::Thenable => c.is_thenable(ty),
-            TypeTest::ClassOrInterface => match *c.data(ty) {
-                TypeData::Ref { target, .. } => c.declared_type(target) == ty,
-                _ => false,
-            },
             TypeTest::NonDeferredTypeReference => {
                 matches!(c.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. })
                     && c.types().deferred(ty).is_none()
             }
-            TypeTest::EmptyAnonymousObject => c.is_empty_anonymous_object_type(ty),
-            TypeTest::Generic => c.is_generic_object_type(ty) || c.is_generic_index_type(ty),
         }
-    }
-
-    pub fn has_type_facts(&mut self, ty: TypeId, asked: TypeFacts) -> bool {
-        const FACTS: [(TypeFacts, u32); 5] = [
-            (TypeFacts::TRUTHY, facts::TRUTHY),
-            (TypeFacts::FALSY, facts::FALSY),
-            (TypeFacts::EQ_UNDEFINED_OR_NULL, facts::EQ_UNDEFINED_OR_NULL),
-            (TypeFacts::IS_UNDEFINED, facts::IS_UNDEFINED),
-            (TypeFacts::IS_NULL, facts::IS_NULL),
-        ];
-        let mask = FACTS
-            .iter()
-            .filter(|it| asked.contains(it.0))
-            .fold(0, |all, it| all | it.1);
-        self.c.has_type_facts(ty, mask)
     }
 
     pub fn is_related(&mut self, relation: Relation, source: TypeId, target: TypeId) -> bool {
         match relation {
             Relation::Assignable => self.c.is_assignable(source, target),
-            Relation::Identical => self.c.is_identical(source, target),
-            Relation::Subtype => self.c.is_subtype(source, target),
-            Relation::StrictSubtype => self.c.is_strict_subtype(source, target),
-            Relation::Comparable => self.c.is_comparable(source, target),
             Relation::SameTupleTarget => match (self.c.data(source), self.c.data(target)) {
                 (
                     TypeData::Tuple {
@@ -464,12 +407,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    pub fn applicable_index_info(&mut self, ty: TypeId, key: TypeId) -> Option<IndexInfoData> {
-        let members = self.c.members_for_index_infos(ty)?;
-        let info = self.c.applicable_index_info(&members, key)?;
-        Some(self.index_info(info))
-    }
-
     pub fn signatures_of_type(&mut self, ty: TypeId, kind: SignatureKind) -> &'c [SigId] {
         if let Some(&known) = self.many_signatures.get(&(ty, kind)) {
             return known;
@@ -480,31 +417,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             self.many_signatures.insert((ty, kind), signatures);
         }
         signatures
-    }
-
-    pub fn union_type(&mut self, types: &[TypeId], reduction: UnionReduction) -> TypeId {
-        match reduction {
-            UnionReduction::None => self.c.union_unreduced(types),
-            UnionReduction::Literal => self.c.union(types),
-            UnionReduction::Subtype => self.c.union_reduced(types),
-        }
-    }
-
-    pub fn intersection_type(&mut self, types: &[TypeId]) -> TypeId {
-        self.c.intersection(types)
-    }
-
-    pub fn assignment_reduced_type(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
-        self.c.assignment_reduced_type(declared, assigned)
-    }
-
-    pub fn global_type(&mut self, name: &[u8], arity: u32) -> Option<TypeId> {
-        let name = self.c.atoms().lookup(name)?;
-        let symbol = match self.c.global_type_of_arity(name, arity as usize) {
-            Some(symbol) => symbol,
-            None => self.c.global_type_symbol(name)?,
-        };
-        Some(self.c.declared_type(symbol))
     }
 
     pub fn compare_types(&mut self, a: TypeId, b: TypeId) -> Option<std::cmp::Ordering> {

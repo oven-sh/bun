@@ -5,20 +5,20 @@ use rustc_hash::FxHashSet;
 /// Disallow async functions which have no `await` expression.
 pub struct RequireAwait;
 
-const MISSING_AWAIT: Message = Message::new("missingAwait", "{{name}} has no 'await' expression.");
-const REMOVE_ASYNC: Message = Message::new("removeAsync", "Remove 'async'.");
+pub const MISSING_AWAIT: Message = Message::new("missingAwait", "{{name}} has no 'await' expression.");
+pub const REMOVE_ASYNC: Message = Message::new("removeAsync", "Remove 'async'.");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The async functions that are neither generators nor empty.
-    candidates: Vec<Func<'a>>,
-    with_await: FxHashSet<Func<'a>>,
+    /// The async functions that can be reported.
+    pub candidates: Vec<Func<'a>>,
+    pub with_await: FxHashSet<Func<'a>>,
     /// The function that a node is directly in.
-    functions: AncestorMemo<'a, Func<'a>>,
+    pub functions: AncestorMemo<'a, Func<'a>>,
 }
 
 /// `node` awaits something: so does the function that it is directly in.
-fn mark_function_around<'a>(node: Node<'a>, cx: &mut Cx<'a, RequireAwait>) {
+pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(node: Node<'a>, cx: &mut Cx<'a, R>) {
     let function = cx.state.functions.find(node, |_, parent| {
         parent.as_func().filter(|func| func.kind() != FnKind::StaticBlock)
     });
@@ -30,7 +30,7 @@ fn mark_function_around<'a>(node: Node<'a>, cx: &mut Cx<'a, RequireAwait>) {
 }
 
 /// The method that `func` is the value of, which is where its `async` is, or else the function.
-fn node_with_async_keyword(func: Func<'_>) -> Node<'_> {
+pub fn node_with_async_keyword(func: Func<'_>) -> Node<'_> {
     match func.owner() {
         Node::Expr(e) => match e.parent() {
             Node::Prop(prop) if prop.kind() == PropKind::Method && prop.value() == Some(e) => {

@@ -8,17 +8,15 @@ use bun_lint::utils::ts_scope::{
     is_used_global_variable,
 };
 use bun_lint::utils::ts_utils::is_definition_file;
+use bun_lint_eslint::rules::no_unused_vars::{
+    Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars, is_first_parameter_named,
+};
 use rustc_hash::FxHashMap;
 
 /// Disallow unused variables.
 pub struct NoUnusedVars {
-    vars: Vars,
-    args: Args,
-    ignore_rest_siblings: bool,
-    ignore_using_declarations: bool,
-    checks_caught_errors: bool,
-    ignore_class_with_static_init_block: bool,
-    report_used_ignore_pattern: bool,
+    /// The options that ESLint's rule has too.
+    base: Base,
     autofixes_imports: bool,
     /// Options of oxlint.
     fix_imports: FixMode,
@@ -27,35 +25,12 @@ pub struct NoUnusedVars {
     has_options_object: bool,
     /// An option of oxlint.
     reports_vars_only_used_as_types: bool,
-    vars_ignore_pattern: Option<Pattern>,
-    args_ignore_pattern: Option<Pattern>,
-    caught_errors_ignore_pattern: Option<Pattern>,
-    destructured_array_ignore_pattern: Option<Pattern>,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Vars {
-    All,
-    Local,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Args {
-    All,
-    AfterUsed,
-    None,
 }
 
 const REMOVE_UNUSED_IMPORT_DECLARATION: Message =
     Message::new("removeUnusedImportDeclaration", "Remove unused import declaration.");
 const REMOVE_UNUSED_VAR: Message =
     Message::new("removeUnusedVar", "Remove unused variable \"{{varName}}\".");
-const UNUSED_VAR: Message =
-    Message::new("unusedVar", "'{{varName}}' is {{action}} but never used{{additional}}.");
-const USED_IGNORED_VAR: Message = Message::new(
-    "usedIgnoredVar",
-    "'{{varName}}' is marked as ignored but is used{{additional}}.",
-);
 const USED_ONLY_AS_TYPE: Message = Message::new(
     "usedOnlyAsType",
     "'{{varName}}' is {{action}} but only used as a type{{additional}}.",
@@ -652,33 +627,6 @@ fn oxlint_is_in_return_statement(statement: Stmt) -> bool {
     false
 }
 
-/// One of the `..IgnorePattern` options.
-struct Pattern {
-    regex: Regex,
-    /// `String(regex)`
-    text: String,
-}
-
-impl Pattern {
-    fn new(options: Object, key: &str) -> Option<Pattern> {
-        options.str(key).filter(|source| !source.is_empty())?;
-        let regex = options.regex(key, "u")?;
-        Some(Pattern {
-            text: regex.to_string(),
-            regex,
-        })
-    }
-
-    fn test(&self, name: Name) -> bool {
-        self.regex.test(name.bytes())
-    }
-
-    /// As it is in the configuration.
-    fn source(&self) -> &str {
-        self.text.strip_prefix('/').and_then(|it| it.strip_suffix("/u")).unwrap_or(&self.text)
-    }
-}
-
 /// `pronoun_for_symbol` of oxlint: what it calls a variable, and several of them.
 fn oxlint_pronoun_for_symbol(variable: Variable) -> (&'static str, &'static str) {
     static PRONOUNS: [(&str, &str); 9] = [
@@ -709,15 +657,6 @@ fn oxlint_pronoun_for_symbol(variable: Variable) -> (&'static str, &'static str)
         _ => PRONOUNS.len(),
     });
     first.min().and_then(|it| PRONOUNS.get(it)).copied().unwrap_or(("Variable", "variables"))
-}
-
-/// What a message calls a variable, which decides the pattern that it names.
-#[derive(Copy, Clone)]
-enum VariableType {
-    ArrayDestructure,
-    CatchClause,
-    Parameter,
-    Variable,
 }
 
 pub struct State<'a> {
@@ -798,15 +737,6 @@ fn function_of_plain_parameter(def: Declaration<'_>, is_oxlint: bool) -> Option<
         return None;
     }
     param.func().filter(|function| function.has_body())
-}
-
-/// Whether `pat` is where the parameter `symbol` is written first: `function (a, b, a) {}`
-fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
-    let first = symbol.declarations().find_map(|def| match def {
-        Declaration::Param(it) => Some(it),
-        _ => None,
-    });
-    first == Some(pat)
 }
 
 /// Where the last parameter of `function` that is used starts. 0 if none is used.
@@ -1085,7 +1015,7 @@ impl NoUnusedVars {
     }
 
     fn def_to_variable_type(&self, def: Declaration) -> VariableType {
-        if self.destructured_array_ignore_pattern.is_some() && is_defined_in_array_pattern(def) {
+        if self.base.destructured_array_ignore_pattern.is_some() && is_defined_in_array_pattern(def) {
             return VariableType::ArrayDestructure;
         }
         match def.kind() {
@@ -1095,38 +1025,10 @@ impl NoUnusedVars {
         }
     }
 
-    fn get_variable_description(&self, variable_type: VariableType) -> (Option<&Pattern>, &'static str) {
-        match variable_type {
-            VariableType::ArrayDestructure => {
-                (self.destructured_array_ignore_pattern.as_ref(), "elements of array destructuring")
-            }
-            VariableType::CatchClause => (self.caught_errors_ignore_pattern.as_ref(), "caught errors"),
-            VariableType::Parameter => (self.args_ignore_pattern.as_ref(), "args"),
-            VariableType::Variable => (self.vars_ignore_pattern.as_ref(), "vars"),
-        }
-    }
-
     /// The `additional` of `getDefinedMessageData` and `getAssignedMessageData`.
     fn get_unused_message_data(&self, unused_var: Variable) -> String {
-        let Some(def) = unused_var.defs().next() else {
-            return String::new();
-        };
-        match self.get_variable_description(self.def_to_variable_type(def)) {
-            (Some(pattern), description) => {
-                format!(". Allowed unused {description} must match {}", pattern.text)
-            }
-            _ => String::new(),
-        }
-    }
-
-    /// The `additional` of `getUsedIgnoredMessageData`.
-    fn get_used_ignored_message_data(&self, variable_type: VariableType) -> String {
-        match self.get_variable_description(variable_type) {
-            (Some(pattern), description) => {
-                format!(". Used {description} must not match {}", pattern.text)
-            }
-            _ => String::new(),
-        }
+        (unused_var.defs().next())
+            .map_or_else(String::new, |def| self.base.unused_message_data(self.def_to_variable_type(def)))
     }
 
     /// How a message of oxlint ends: what unused `plural` are to be called. `has_default`: without options it is `^_`.
@@ -1149,16 +1051,16 @@ impl NoUnusedVars {
             return says("marked as ignored but is used", "");
         }
         let is_only_used_as_type = message.id == USED_ONLY_AS_TYPE.id;
-        let hint_for_vars = || self.oxlint_hint(self.vars_ignore_pattern.as_ref(), true, plural);
+        let hint_for_vars = || self.oxlint_hint(self.base.vars_ignore_pattern.as_ref(), true, plural);
         match variable.defs().next() {
             Some(Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) | Declaration::ImportSpec(_)) => {
                 says("imported but never used", "")
             }
             Some(Declaration::Param(_)) => {
-                let is_default = self.args_ignore_pattern.is_none() && !self.has_options_object;
+                let is_default = self.base.args_ignore_pattern.is_none() && !self.has_options_object;
                 let hint = match is_default && name == b"_" {
                     true => String::new(),
-                    false => self.oxlint_hint(self.args_ignore_pattern.as_ref(), true, "parameters"),
+                    false => self.oxlint_hint(self.base.args_ignore_pattern.as_ref(), true, "parameters"),
                 };
                 let what: &[u8] = match is_only_used_as_type {
                     true => b"' is declared but only used as a type.",
@@ -1167,7 +1069,7 @@ impl NoUnusedVars {
                 [&b"Parameter '"[..], name, what, hint.as_bytes()].concat()
             }
             Some(def @ Declaration::Var(_)) if def.is_catch_parameter() => {
-                says("caught but never used", &self.oxlint_hint(self.caught_errors_ignore_pattern.as_ref(), false, plural))
+                says("caught but never used", &self.oxlint_hint(self.base.caught_errors_ignore_pattern.as_ref(), false, plural))
             }
             Some(Declaration::Var(_)) if variable.references().any(|it| it.is_write() && !it.is_init()) => {
                 says("assigned a value but never used", &hint_for_vars())
@@ -1186,7 +1088,7 @@ impl NoUnusedVars {
     fn oxlint_help(&self, variable: Variable, message: Message) -> String {
         if message.id == USED_IGNORED_VAR.id {
             let without_underscore = variable.name().bytes().strip_prefix(b"_");
-            let to = match (self.vars_ignore_pattern.as_ref().map(Pattern::source), without_underscore) {
+            let to = match (self.base.vars_ignore_pattern.as_ref().map(Pattern::source), without_underscore) {
                 (None, _) if self.has_options_object => ".".to_owned(),
                 (None | Some("^_"), Some(name)) => format!(" to '{}'.", bstr::BStr::new(name)),
                 (None | Some("^_"), None) => ".".to_owned(),
@@ -1233,7 +1135,7 @@ impl NoUnusedVars {
         let is_in_head =
             matches!(statement.parent(), Node::Stmt(it) if matches!(it.tag(), StmtTag::ForIn | StmtTag::ForOf));
         if is_in_head || variable.references().any(|it| !it.is_init()) {
-            let can_rename = match &self.vars_ignore_pattern {
+            let can_rename = match &self.base.vars_ignore_pattern {
                 Some(pattern) => pattern.source() == "^_",
                 None => self.oxlint_ignores_underscore_by_default(file),
             };
@@ -1294,7 +1196,7 @@ impl NoUnusedVars {
             Declaration::Var(own) => self.oxlint_fix_variable(fixer, variable, own),
             // oxlint's `rename_unused_function_parameter`
             Declaration::Param(own) => {
-                let can_rename = match &self.args_ignore_pattern {
+                let can_rename = match &self.base.args_ignore_pattern {
                     Some(pattern) => pattern.source() == "^_",
                     None => self.oxlint_ignores_underscore_by_default(file),
                 };
@@ -1397,7 +1299,7 @@ impl NoUnusedVars {
     }
 
     fn has_rest_spread_sibling(&self, variable: Variable) -> bool {
-        self.ignore_rest_siblings
+        self.base.ignore_rest_siblings
             && (variable.defs().any(|def| match def {
                 Declaration::Var(pat) | Declaration::Param(pat) => has_rest_sibling(Node::Pat(pat)),
                 _ => false,
@@ -1421,7 +1323,7 @@ impl NoUnusedVars {
             true => oxlint_takes_for_global(variable, def),
             false => variable.scope().kind() == ScopeKind::Global,
         };
-        if self.vars == Vars::Local && is_global {
+        if self.base.vars == Vars::Local && is_global {
             return false;
         }
         let name = variable.name();
@@ -1430,24 +1332,24 @@ impl NoUnusedVars {
             // A parameter that is called `_` is not ignored.
             let is_underscore_ignored = ignores_underscore
                 && name.bytes().starts_with(b"_")
-                && (std::ptr::eq(pattern, &raw const self.vars_ignore_pattern) || std::ptr::eq(pattern, &raw const self.args_ignore_pattern) && !name.is("_"));
+                && (std::ptr::eq(pattern, &raw const self.base.vars_ignore_pattern) || std::ptr::eq(pattern, &raw const self.base.args_ignore_pattern) && !name.is("_"));
             is_named_by_identifier(def) && (is_underscore_ignored || pattern.as_ref().is_some_and(|it| it.test(name)))
         };
         let mut report_if_used = |variable_type: VariableType| {
-            if self.report_used_ignore_pattern && used {
-                let additional = self.get_used_ignored_message_data(variable_type);
+            if self.base.report_used_ignore_pattern && used {
+                let additional = self.base.used_ignored_message_data(variable_type);
                 self.report(cx, reported, variable, USED_IGNORED_VAR, ("", additional));
             }
         };
 
-        if is_ignored(&self.destructured_array_ignore_pattern)
+        if is_ignored(&self.base.destructured_array_ignore_pattern)
             && (is_defined_in_array_pattern(def) || variable.references().any(is_referenced_in_array_pattern))
         {
             report_if_used(VariableType::ArrayDestructure);
             return false;
         }
 
-        if self.ignore_class_with_static_init_block
+        if self.base.ignore_class_with_static_init_block
             && let Declaration::Class(class) = def
             && class.members().iter().any(|member| member.kind() == MemberKind::StaticBlock)
         {
@@ -1456,24 +1358,24 @@ impl NoUnusedVars {
 
         match def.kind() {
             Some(DeclarationKind::CatchClause) => {
-                if !self.checks_caught_errors {
+                if !self.base.checks_caught_errors {
                     return false;
                 }
-                if is_ignored(&self.caught_errors_ignore_pattern) {
+                if is_ignored(&self.base.caught_errors_ignore_pattern) {
                     report_if_used(VariableType::CatchClause);
                     return false;
                 }
             }
             Some(DeclarationKind::Parameter) => {
-                if self.args == Args::None {
+                if self.base.args == Args::None {
                     return false;
                 }
-                if is_ignored(&self.args_ignore_pattern) {
+                if is_ignored(&self.base.args_ignore_pattern) {
                     report_if_used(VariableType::Parameter);
                     return false;
                 }
                 // Upstream's `isAfterLastUsedArg`.
-                if self.args == Args::AfterUsed
+                if self.base.args == Args::AfterUsed
                     && let Some(function) = function_of_plain_parameter(def, is_oxlint)
                     && let Declaration::Param(pat) = def
                     && pat.span().start
@@ -1493,7 +1395,7 @@ impl NoUnusedVars {
                 }
             }
             kind => {
-                if is_ignored(&self.vars_ignore_pattern) {
+                if is_ignored(&self.base.vars_ignore_pattern) {
                     // The members of an enum always count as used, whether they are or not.
                     if kind != Some(DeclarationKind::TsEnumMember) {
                         report_if_used(VariableType::Variable);
@@ -1503,7 +1405,7 @@ impl NoUnusedVars {
             }
         }
 
-        if self.ignore_using_declarations
+        if self.base.ignore_using_declarations
             && def.kind() == Some(DeclarationKind::Variable)
             && matches!(
                 def.node(),
@@ -1515,7 +1417,7 @@ impl NoUnusedVars {
 
         !used
             && !self.has_rest_spread_sibling(variable)
-            && !(is_oxlint && self.ignore_rest_siblings && variable.defs().any(oxlint_has_rest_sibling))
+            && !(is_oxlint && self.base.ignore_rest_siblings && variable.defs().any(oxlint_has_rest_sibling))
             && !analysis.is_eslint_used(variable)
     }
 
@@ -1576,7 +1478,7 @@ impl NoUnusedVars {
         }
 
         let mut reported = SymbolSet::default();
-        let used_variables: &[Variable<'a>] = match self.report_used_ignore_pattern {
+        let used_variables: &[Variable<'a>] = match self.base.report_used_ignore_pattern {
             true => analysis.used_variables(),
             false => &[],
         };
@@ -1672,29 +1574,12 @@ impl Rule for NoUnusedVars {
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         NoUnusedVars {
-            vars: match options.str(0).or_else(|| object.str("vars")) {
-                Some("local") => Vars::Local,
-                _ => Vars::All,
-            },
-            args: match object.str("args") {
-                Some("all") => Args::All,
-                Some("none") => Args::None,
-                _ => Args::AfterUsed,
-            },
-            ignore_rest_siblings: object.bool_or("ignoreRestSiblings", false),
-            ignore_using_declarations: object.bool_or("ignoreUsingDeclarations", false),
-            checks_caught_errors: object.str("caughtErrors") != Some("none"),
-            ignore_class_with_static_init_block: object.bool_or("ignoreClassWithStaticInitBlock", false),
-            report_used_ignore_pattern: object.bool_or("reportUsedIgnorePattern", false),
+            base: Base::new(options),
             autofixes_imports: object.object("enableAutofixRemoval").bool_or("imports", false),
             fix_imports: FixMode::new(object.object("fix"), "imports"),
             fix_variables: FixMode::new(object.object("fix"), "variables"),
             has_options_object: options.get(0).is_some_and(|it| it.as_object().is_some()),
             reports_vars_only_used_as_types: object.bool_or("reportVarsOnlyUsedAsTypes", false),
-            vars_ignore_pattern: Pattern::new(object, "varsIgnorePattern"),
-            args_ignore_pattern: Pattern::new(object, "argsIgnorePattern"),
-            caught_errors_ignore_pattern: Pattern::new(object, "caughtErrorsIgnorePattern"),
-            destructured_array_ignore_pattern: Pattern::new(object, "destructuredArrayIgnorePattern"),
         }
     }
 

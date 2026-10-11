@@ -215,6 +215,7 @@ fn search(
     let matchers: Vec<Matcher> = (search.patterns.iter())
         .map(|it| Matcher::new(&paths::relative(&search.base_path, &it.pattern)))
         .collect();
+    let takes_everything = (matchers.iter()).all(|it| matches!(it, Matcher::Everything));
     let dotfiles = search.dotfiles;
     let is_matched: Vec<AtomicBool> = matchers.iter().map(|_| AtomicBool::new(false)).collect();
     let registry = loader.linter.registry();
@@ -299,6 +300,7 @@ fn search(
                 ignores = ignores.and_in(&directory.path, loader.ignore_file_name(&own), has);
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
+            let mut within = own.config.within(&directory.path);
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
                 let mut real = None;
@@ -318,6 +320,7 @@ fn search(
                     continue;
                 }
                 let relative = match directory.relative.is_empty() {
+                    _ if !entry.is_directory && takes_everything => Vec::new(),
                     true => entry.name.clone(),
                     false => paths::join(&directory.relative, &entry.name),
                 };
@@ -325,8 +328,7 @@ fn search(
                     if !matchers.iter().any(|it| it.matches_partially(&relative)) {
                         continue;
                     }
-                    let is_hidden =
-                        is_hidden || own.config.is_directory_ignored_in(&path, dotfiles);
+                    let is_hidden = is_hidden || within.is_directory_ignored(&path, dotfiles);
                     if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
                         let real =
                             real.unwrap_or_else(|| paths::join(&directory.way.real, &entry.name));
@@ -359,13 +361,8 @@ fn search(
                     {
                         continue;
                     }
-                    let config = config.get_or_insert_with(|| {
-                        match own.config.is_file_ignored_in(&path, dotfiles) {
-                            true => FileConfig::Ignored,
-                            false if selects => own.config.get_for_pattern(registry, &path),
-                            false => own.config.get_unless_ignored(registry, &path),
-                        }
-                    });
+                    let config = config
+                        .get_or_insert_with(|| within.get(registry, &path, dotfiles, selects));
                     if matches!(config, FileConfig::Matched(_)) {
                         is_matched.store(true, Ordering::Relaxed);
                     }

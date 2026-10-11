@@ -14,6 +14,8 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use smallvec::SmallVec;
+
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::diagnostics::CompilerDiagnostic;
@@ -160,22 +162,33 @@ pub(crate) fn infer_mutation_aliasing_effects(
     let hoisted_context_declarations = find_hoisted_context_declarations(func, env);
     let non_mutating_spreads = find_non_mutated_destructure_spreads(func, env);
 
+    let revisitable = blocks_reachable_from_back_edges(func);
+
+    let mut instruction_signature_cache = Vec::new();
+    if !revisitable.is_empty() {
+        instruction_signature_cache.resize_with(func.instructions.len(), || None);
+    }
     let mut context = Context {
         interned_effects: (!env.config.effects_keep_their_place).then(HashMap::default),
-        instruction_signature_cache: HashMap::default(),
+        instruction_signature_cache,
+        signature: Vec::new(),
+        effects: Vec::new(),
         catch_handlers: HashMap::default(),
         is_function_expression,
         hoisted_context_declarations,
         non_mutating_spreads,
-        effect_value_id_cache: HashMap::default(),
-        function_values: HashMap::default(),
+        effect_value_id_cache: HashMap::with_capacity_and_hasher(
+            func.instructions.len(),
+            Default::default(),
+        ),
+        function_values: Vec::new(),
         function_signature_cache: HashMap::default(),
         aliasing_config_temp_cache: HashMap::default(),
         next_value_id,
         fallback_value_ids: HashMap::default(),
     };
 
-    let revisitable = blocks_reachable_from_back_edges(func);
+    let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 
     let mut iteration_count = 0;
 
@@ -190,15 +203,14 @@ pub(crate) fn infer_mutation_aliasing_effects(
             ));
         }
 
-        // Collect block IDs to process in order
-        let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
-        for block_id in block_ids {
+        for &block_id in &block_ids {
             let incoming_state = match queued_states.swap_remove(&block_id) {
                 Some(s) => s,
                 None => continue,
             };
 
-            let mut state = if revisitable.contains(&block_id) {
+            let is_revisitable = revisitable.contains(&block_id);
+            let mut state = if is_revisitable {
                 let state = incoming_state.clone();
                 states_by_block.insert(block_id, incoming_state);
                 state
@@ -206,7 +218,14 @@ pub(crate) fn infer_mutation_aliasing_effects(
                 incoming_state
             };
 
-            infer_block(&mut context, &mut state, block_id, func, env)?;
+            infer_block(
+                &mut context,
+                &mut state,
+                block_id,
+                is_revisitable,
+                func,
+                env,
+            )?;
 
             // Check for uninitialized identifier access (matches TS invariant:
             // "Expected value kind to be initialized")
@@ -240,7 +259,8 @@ pub(crate) fn infer_mutation_aliasing_effects(
             }
 
             // Queue successors
-            let mut successors = terminal_successors(&func.body.blocks[&block_id].terminal);
+            let mut successors =
+                visitors::each_terminal_successor(&func.body.blocks[&block_id].terminal);
             let last = successors.pop();
             for next_block_id in successors {
                 let state = Cow::Borrowed(&state);
@@ -278,7 +298,7 @@ fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
         .collect();
     let mut worklist: Vec<BlockId> = Vec::new();
     for (index, block) in func.body.blocks.values().enumerate() {
-        for successor in terminal_successors(&block.terminal) {
+        for successor in visitors::each_terminal_successor(&block.terminal) {
             if position.get(&successor).is_some_and(|&p| p <= index) {
                 worklist.push(successor);
             }
@@ -290,7 +310,7 @@ fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
             continue;
         }
         if let Some(block) = func.body.blocks.get(&block_id) {
-            worklist.extend(terminal_successors(&block.terminal));
+            worklist.extend(visitors::each_terminal_successor(&block.terminal));
         }
     }
     reachable
@@ -723,11 +743,8 @@ impl InferenceState {
         self.variables.is_defined(place_id)
     }
 
-    fn values_for(&self, place_id: IdentifierId) -> Vec<ValueId> {
-        match self.variables.get(place_id) {
-            Some(values) => values.as_slice().to_vec(),
-            None => Vec::new(),
-        }
+    fn values_for(&self, place_id: IdentifierId) -> ValueIdSet {
+        self.variables.get(place_id).cloned().unwrap_or_default()
     }
 
     fn kind(&self, place_id: IdentifierId) -> AbstractValue {
@@ -741,9 +758,8 @@ impl InferenceState {
         let value = self.kind(place_id);
         match value.kind {
             ValueKind::Context | ValueKind::Mutable | ValueKind::MaybeFrozen => {
-                let value_ids: Vec<ValueId> = self.values_for(place_id);
-                for vid in value_ids {
-                    self.freeze_value(vid, reason);
+                for vid in &self.values_for(place_id) {
+                    self.freeze_value(*vid, reason);
                 }
                 true
             }
@@ -868,8 +884,13 @@ enum MutationResult {
 
 struct Context {
     /// `None`: `EnvironmentConfig::effects_keep_their_place`
-    interned_effects: Option<HashMap<u64, AliasingEffect>>,
-    instruction_signature_cache: HashMap<u32, InstructionSignature>,
+    interned_effects: Option<HashMap<u64, Rc<AliasingEffect>>>,
+    /// By index into `HirFunction::instructions`, for the blocks that can be visited again.
+    instruction_signature_cache: Vec<Option<Vec<AliasingEffect>>>,
+    /// The signature of the instruction at hand, in a block that is visited once.
+    signature: Vec<AliasingEffect>,
+    /// The effects of the instruction at hand.
+    effects: Vec<AliasingEffect>,
     catch_handlers: HashMap<BlockId, Place>,
     is_function_expression: bool,
     hoisted_context_declarations: HashMap<DeclarationId, Option<Place>>,
@@ -879,9 +900,9 @@ struct Context {
     effect_value_id_cache: HashMap<u64, ValueId>,
     /// Maps ValueId to FunctionId for function expressions, so we can look up
     /// locally-declared functions when processing Apply effects.
-    function_values: HashMap<ValueId, FunctionId>,
+    function_values: Vec<Option<FunctionId>>,
     /// Cache of function expression signatures, keyed by FunctionId
-    function_signature_cache: HashMap<FunctionId, AliasingSignature>,
+    function_signature_cache: HashMap<FunctionId, Rc<AliasingSignature>>,
     /// Cache of temporary places created for aliasing signature config temporaries.
     /// Keyed by (lvalue_identifier_id, index into config.temporaries) to ensure
     /// stable allocation across fixpoint iterations.
@@ -894,12 +915,24 @@ struct Context {
 }
 
 impl Context {
+    /// `None`: the effect itself.
+    fn interned_effect(&mut self, effect: &AliasingEffect) -> Option<Rc<AliasingEffect>> {
+        let interned_effects = self.interned_effects.as_mut()?;
+        let interned = interned_effects
+            .entry(hash_effect(effect))
+            .or_insert_with(|| Rc::new(effect.clone()));
+        Some(Rc::clone(interned))
+    }
+
     fn intern_effect(&mut self, effect: AliasingEffect) -> AliasingEffect {
-        let Some(interned_effects) = &mut self.interned_effects else {
-            return effect;
-        };
-        let hash = hash_effect(&effect);
-        interned_effects.entry(hash).or_insert(effect).clone()
+        match self.interned_effect(&effect) {
+            Some(interned) => AliasingEffect::clone(&interned),
+            None => effect,
+        }
+    }
+
+    fn function_of(&self, value_id: ValueId) -> Option<FunctionId> {
+        function_of(&self.function_values, value_id)
     }
 
     fn new_value_id(&mut self) -> ValueId {
@@ -929,9 +962,12 @@ impl Context {
     }
 }
 
-struct InstructionSignature {
-    effects: Vec<AliasingEffect>,
+fn function_of(function_values: &[Option<FunctionId>], value_id: ValueId) -> Option<FunctionId> {
+    function_values.get(value_id.0 as usize).copied().flatten()
 }
+
+/// The places that the instruction at hand has initialized.
+type Initialized = SmallVec<[IdentifierId; 8]>;
 
 // =============================================================================
 // Helper: hash_effect
@@ -1142,12 +1178,16 @@ fn find_hoisted_context_declarations(
                         hoisted.insert(decl_id, None);
                     }
                 }
+                _ if hoisted.is_empty() => {}
                 _ => {
                     for operand in visitors::each_instruction_value_operand(&instr.value, env) {
                         visit(&mut hoisted, &operand, env);
                     }
                 }
             }
+        }
+        if hoisted.is_empty() {
+            continue;
         }
         for operand in visitors::each_terminal_operand(&block.terminal) {
             visit(&mut hoisted, &operand, env);
@@ -1316,48 +1356,48 @@ fn infer_block(
     context: &mut Context,
     state: &mut InferenceState,
     block_id: BlockId,
+    is_revisitable: bool,
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
     let block = &func.body.blocks[&block_id];
 
     // Process phis
-    let phis: Vec<(IdentifierId, crate::collections::IndexMap<BlockId, Place>)> = block
-        .phis
-        .iter()
-        .map(|phi| (phi.place.identifier, phi.operands.clone()))
-        .collect();
-    for (place_id, operands) in &phis {
-        state.infer_phi(*place_id, operands);
+    for phi in &block.phis {
+        state.infer_phi(phi.place.identifier, &phi.operands);
     }
 
     // Process instructions
-    let instr_ids: Vec<u32> = block.instructions.iter().map(|id| id.0).collect();
-    for instr_idx in &instr_ids {
-        let instr_index = *instr_idx as usize;
+    let mut signature = std::mem::take(&mut context.signature);
+    let mut effects = std::mem::take(&mut context.effects);
+    for instr_id in &block.instructions {
+        let instr_index = instr_id.0 as usize;
+        let instr = &func.instructions[instr_index];
 
-        // Compute signature if not cached
-        if !context.instruction_signature_cache.contains_key(instr_idx) {
-            let sig = compute_signature_for_instruction(
-                context,
-                env,
-                &func.instructions[instr_index],
-                func,
-            );
-            context.instruction_signature_cache.insert(*instr_idx, sig);
+        if is_revisitable {
+            let cached = match context.instruction_signature_cache[instr_index].take() {
+                Some(cached) => cached,
+                None => {
+                    let mut computed = Vec::new();
+                    compute_signature_for_instruction(context, env, instr, &mut computed);
+                    computed
+                }
+            };
+            apply_signature(context, state, &cached, instr, env, &mut effects)?;
+            context.instruction_signature_cache[instr_index] = Some(cached);
+        } else {
+            signature.clear();
+            compute_signature_for_instruction(context, env, instr, &mut signature);
+            apply_signature(context, state, &signature, instr, env, &mut effects)?;
         }
-
-        // Apply signature
-        let effects = apply_signature(
-            context,
-            state,
-            *instr_idx,
-            &func.instructions[instr_index],
-            env,
-            func,
-        )?;
-        func.instructions[instr_index].effects = effects;
+        func.instructions[instr_index].effects = if effects.is_empty() {
+            None
+        } else {
+            Some(AstAlloc::vec_from_iter(effects.drain(..)))
+        };
     }
+    context.signature = signature;
+    context.effects = effects;
 
     // Process terminal
     // Determine what terminal action to take without holding borrows
@@ -1397,8 +1437,8 @@ fn infer_block(
             if let Some(handler_param) = context.catch_handlers.get(&handler_id).cloned() {
                 if state.is_defined(handler_param.identifier) {
                     let mut terminal_effects: HirVec<AliasingEffect> = AstAlloc::vec();
-                    for instr_idx in &instr_ids {
-                        let instr = &func.instructions[*instr_idx as usize];
+                    for instr_id in &func.body.blocks[&block_id].instructions {
+                        let instr = &func.instructions[instr_id.0 as usize];
                         match &instr.value {
                             InstructionValue::CallExpression { .. }
                             | InstructionValue::MethodCall { .. } => {
@@ -1464,13 +1504,11 @@ fn infer_block(
 fn apply_signature(
     context: &mut Context,
     state: &mut InferenceState,
-    instr_idx: u32,
+    signature: &[AliasingEffect],
     instr: &crate::hir::Instruction,
     env: &mut Environment,
-    func: &HirFunction,
-) -> Result<Option<HirVec<AliasingEffect>>, CompilerDiagnostic> {
-    let mut effects: HirVec<AliasingEffect> = AstAlloc::vec();
-
+    effects: &mut Vec<AliasingEffect>,
+) -> Result<(), CompilerDiagnostic> {
     // For function instructions, validate frozen mutation
     match &instr.value {
         InstructionValue::FunctionExpression { lowered_func, .. }
@@ -1536,22 +1574,10 @@ fn apply_signature(
     }
 
     // Track which values we've already initialized
-    let mut initialized: HashSet<IdentifierId> = HashSet::default();
+    let mut initialized = Initialized::new();
 
-    // Get the cached signature effects
-    let sig = context.instruction_signature_cache.get(&instr_idx).unwrap();
-    let sig_effects: Vec<AliasingEffect> = sig.effects.clone();
-
-    for effect in &sig_effects {
-        apply_effect(
-            context,
-            state,
-            effect.clone(),
-            &mut initialized,
-            &mut effects,
-            env,
-            func,
-        )?;
+    for effect in signature {
+        apply_effect(context, state, effect, &mut initialized, effects, env)?;
     }
 
     // If lvalue is not yet defined, initialize it with a default value.
@@ -1569,11 +1595,7 @@ fn apply_signature(
         state.define(instr.lvalue.identifier, vid);
     }
 
-    Ok(if effects.is_empty() {
-        None
-    } else {
-        Some(effects)
-    })
+    Ok(())
 }
 
 // =============================================================================
@@ -1591,7 +1613,7 @@ fn freeze_function_captures_transitive(
     value_id: ValueId,
     reason: ValueReason,
 ) {
-    if let Some(&func_id) = context.function_values.get(&value_id) {
+    if let Some(func_id) = context.function_of(value_id) {
         if !env.has_stack() {
             return;
         }
@@ -1609,11 +1631,10 @@ fn freeze_function_captures_transitive(
             let kind = state.kind(ctx_id).kind;
             match kind {
                 ValueKind::Context | ValueKind::Mutable | ValueKind::MaybeFrozen => {
-                    let vids: Vec<ValueId> = state.values_for(ctx_id);
-                    for vid in vids {
-                        state.freeze_value(vid, reason);
+                    for vid in &state.values_for(ctx_id) {
+                        state.freeze_value(*vid, reason);
                         // Recurse into nested function captures
-                        freeze_function_captures_transitive(state, context, env, vid, reason);
+                        freeze_function_captures_transitive(state, context, env, *vid, reason);
                     }
                 }
                 ValueKind::Frozen | ValueKind::Global | ValueKind::Primitive => {
@@ -1631,15 +1652,15 @@ fn freeze_function_captures_transitive(
 fn apply_effect(
     context: &mut Context,
     state: &mut InferenceState,
-    effect: AliasingEffect,
-    initialized: &mut HashSet<IdentifierId>,
-    effects: &mut HirVec<AliasingEffect>,
+    effect: &AliasingEffect,
+    initialized: &mut Initialized,
+    effects: &mut Vec<AliasingEffect>,
     env: &mut Environment,
-    func: &HirFunction,
 ) -> Result<(), CompilerDiagnostic> {
-    let effect = context.intern_effect(effect);
+    let interned = context.interned_effect(effect);
+    let effect = interned.as_deref().unwrap_or(effect);
     match effect {
-        AliasingEffect::Freeze { ref value, reason } => {
+        &AliasingEffect::Freeze { ref value, reason } => {
             let did_freeze = state.freeze(value.identifier, reason);
             if did_freeze {
                 effects.push(effect.clone());
@@ -1652,14 +1673,13 @@ fn apply_effect(
                     // freezeValue() calls freeze() on each capture, which
                     // calls freezeValue() again — creating a transitive
                     // closure through arbitrarily nested function captures.
-                    let value_ids: Vec<ValueId> = state.values_for(value.identifier);
-                    for vid in &value_ids {
+                    for vid in &state.values_for(value.identifier) {
                         freeze_function_captures_transitive(state, context, env, *vid, reason);
                     }
                 }
             }
         }
-        AliasingEffect::Create {
+        &AliasingEffect::Create {
             ref into,
             value: kind,
             reason,
@@ -1668,8 +1688,8 @@ fn apply_effect(
                 !initialized.contains(&into.identifier),
                 "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
             )?;
-            initialized.insert(into.identifier);
-            let value_id = context.get_or_create_value_id(&effect);
+            initialized.push(into.identifier);
+            let value_id = context.get_or_create_value_id(effect);
             state.initialize(
                 value_id,
                 AbstractValue {
@@ -1680,7 +1700,7 @@ fn apply_effect(
             state.define(into.identifier, value_id);
             effects.push(effect.clone());
         }
-        AliasingEffect::ImmutableCapture { ref from, .. } => {
+        AliasingEffect::ImmutableCapture { from, .. } => {
             let kind = state.kind(from.identifier).kind;
             match kind {
                 ValueKind::Global | ValueKind::Primitive => {
@@ -1691,14 +1711,14 @@ fn apply_effect(
                 }
             }
         }
-        AliasingEffect::CreateFrom { ref from, ref into } => {
+        AliasingEffect::CreateFrom { from, into } => {
             crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
                 "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
             )?;
-            initialized.insert(into.identifier);
+            initialized.push(into.identifier);
             let from_value = state.kind(from.identifier);
-            let value_id = context.get_or_create_value_id(&effect);
+            let value_id = context.get_or_create_value_id(effect);
             state.initialize(
                 value_id,
                 AbstractValue {
@@ -1726,14 +1746,13 @@ fn apply_effect(
                     apply_effect(
                         context,
                         state,
-                        AliasingEffect::ImmutableCapture {
+                        &AliasingEffect::ImmutableCapture {
                             from: from.clone(),
                             into: into.clone(),
                         },
                         initialized,
                         effects,
                         env,
-                        func,
                     )?;
                 }
                 _ => {
@@ -1741,7 +1760,7 @@ fn apply_effect(
                 }
             }
         }
-        AliasingEffect::CreateFunction {
+        &AliasingEffect::CreateFunction {
             ref captures,
             function_id,
             ref into,
@@ -1750,7 +1769,7 @@ fn apply_effect(
                 !initialized.contains(&into.identifier),
                 "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
             )?;
-            initialized.insert(into.identifier);
+            initialized.push(into.identifier);
             effects.push(effect.clone());
 
             // Check if function is mutable
@@ -1786,8 +1805,7 @@ fn apply_effect(
             let is_mutable = has_captures || has_tracked_side_effects || captures_ref;
 
             // Update context variable effects
-            let context_places = inner_func.context.clone();
-            for operand in &context_places {
+            for operand in &mut env.functions[function_id.0 as usize].context {
                 if operand.effect != Effect::Capture {
                     continue;
                 }
@@ -1799,19 +1817,17 @@ fn apply_effect(
                     || kind == ValueKind::Frozen
                     || kind == ValueKind::Global
                 {
-                    // Downgrade to Read - we need to mutate the inner function
-                    let inner_func_mut = &mut env.functions[function_id.0 as usize];
-                    for ctx in &mut inner_func_mut.context {
-                        if ctx.identifier == operand.identifier && ctx.effect == Effect::Capture {
-                            ctx.effect = Effect::Read;
-                        }
-                    }
+                    operand.effect = Effect::Read;
                 }
             }
 
-            let value_id = context.get_or_create_value_id(&effect);
+            let value_id = context.get_or_create_value_id(effect);
             // Track this value as a function expression so Apply can look it up
-            context.function_values.insert(value_id, function_id);
+            let value_index = value_id.0 as usize;
+            if context.function_values.len() <= value_index {
+                context.function_values.resize(value_index + 1, None);
+            }
+            context.function_values[value_index] = Some(function_id);
             state.initialize(
                 value_id,
                 AbstractValue {
@@ -1829,20 +1845,19 @@ fn apply_effect(
                 apply_effect(
                     context,
                     state,
-                    AliasingEffect::Capture {
+                    &AliasingEffect::Capture {
                         from: capture.clone(),
                         into: into.clone(),
                     },
                     initialized,
                     effects,
                     env,
-                    func,
                 )?;
             }
         }
-        AliasingEffect::MaybeAlias { ref from, ref into }
-        | AliasingEffect::Alias { ref from, ref into }
-        | AliasingEffect::Capture { ref from, ref into } => {
+        AliasingEffect::MaybeAlias { from, into }
+        | AliasingEffect::Alias { from, into }
+        | AliasingEffect::Capture { from, into } => {
             let is_capture = matches!(effect, AliasingEffect::Capture { .. });
             let is_maybe_alias = matches!(effect, AliasingEffect::MaybeAlias { .. });
             // For Alias, destination must already be initialized (Capture/MaybeAlias are exempt)
@@ -1871,14 +1886,13 @@ fn apply_effect(
                 apply_effect(
                     context,
                     state,
-                    AliasingEffect::ImmutableCapture {
+                    &AliasingEffect::ImmutableCapture {
                         from: from.clone(),
                         into: into.clone(),
                     },
                     initialized,
                     effects,
                     env,
-                    func,
                 )?;
             } else if (source_type == Some("mutable") && destination_type == Some("mutable"))
                 || is_maybe_alias
@@ -1890,37 +1904,35 @@ fn apply_effect(
                 apply_effect(
                     context,
                     state,
-                    AliasingEffect::MaybeAlias {
+                    &AliasingEffect::MaybeAlias {
                         from: from.clone(),
                         into: into.clone(),
                     },
                     initialized,
                     effects,
                     env,
-                    func,
                 )?;
             }
         }
-        AliasingEffect::Assign { ref from, ref into } => {
+        AliasingEffect::Assign { from, into } => {
             crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
                 "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
             )?;
-            initialized.insert(into.identifier);
+            initialized.push(into.identifier);
             let from_value = state.kind_with_loc(from.identifier, from.loc);
             match from_value.kind {
                 ValueKind::Frozen => {
                     apply_effect(
                         context,
                         state,
-                        AliasingEffect::ImmutableCapture {
+                        &AliasingEffect::ImmutableCapture {
                             from: from.clone(),
                             into: into.clone(),
                         },
                         initialized,
                         effects,
                         env,
-                        func,
                     )?;
                     let cache_key = {
                         use std::hash::Hasher;
@@ -1979,7 +1991,7 @@ fn apply_effect(
                 }
             }
         }
-        AliasingEffect::Apply(ref apply) => {
+        AliasingEffect::Apply(apply) => {
             let ApplyEffect {
                 receiver,
                 function,
@@ -1995,23 +2007,19 @@ fn apply_effect(
             }
             // First, check if the callee is a locally-declared function expression
             // whose aliasing effects we already know (TS lines 1016-1068)
-            if state.is_defined(function.identifier) {
-                let function_values = state.values_for(function.identifier);
-                if function_values.len() == 1 {
-                    let value_id = function_values[0];
-                    if let Some(func_id) = context.function_values.get(&value_id).copied() {
+            if let Some(function_values) = state.variables.get(function.identifier) {
+                if let &[value_id] = function_values.as_slice() {
+                    if let Some(func_id) = context.function_of(value_id) {
                         let inner_func = &env.functions[func_id.0 as usize];
                         if inner_func.aliasing_effects.is_some() {
                             // Build or retrieve the signature from the function expression
                             if !context.function_signature_cache.contains_key(&func_id) {
                                 let sig = build_signature_from_function_expression(env, func_id);
-                                context.function_signature_cache.insert(func_id, sig);
+                                context
+                                    .function_signature_cache
+                                    .insert(func_id, Rc::new(sig));
                             }
-                            let sig = context
-                                .function_signature_cache
-                                .get(&func_id)
-                                .unwrap()
-                                .clone();
+                            let sig = Rc::clone(&context.function_signature_cache[&func_id]);
                             let inner_func = &env.functions[func_id.0 as usize];
                             let context_places = inner_func.context.clone();
                             let sig_effects = compute_effects_for_aliasing_signature(
@@ -2028,24 +2036,15 @@ fn apply_effect(
                                 apply_effect(
                                     context,
                                     state,
-                                    AliasingEffect::MutateTransitiveConditionally {
+                                    &AliasingEffect::MutateTransitiveConditionally {
                                         value: function.clone(),
                                     },
                                     initialized,
                                     effects,
                                     env,
-                                    func,
                                 )?;
                                 for se in sig_effs {
-                                    apply_effect(
-                                        context,
-                                        state,
-                                        se,
-                                        initialized,
-                                        effects,
-                                        env,
-                                        func,
-                                    )?;
+                                    apply_effect(context, state, &se, initialized, effects, env)?;
                                 }
                                 return Ok(());
                             }
@@ -2090,7 +2089,7 @@ fn apply_effect(
                     )?;
                     if let Some(sig_effs) = sig_effects {
                         for se in sig_effs {
-                            apply_effect(context, state, se, initialized, effects, env, func)?;
+                            apply_effect(context, state, &se, initialized, effects, env)?;
                         }
                         return Ok(());
                     }
@@ -2114,14 +2113,14 @@ fn apply_effect(
                     return Err(CompilerDiagnostic::from_detail(err_detail));
                 }
                 for le in legacy_effects {
-                    apply_effect(context, state, le, initialized, effects, env, func)?;
+                    apply_effect(context, state, &le, initialized, effects, env)?;
                 }
             } else {
                 // No signature: default behavior
                 apply_effect(
                     context,
                     state,
-                    AliasingEffect::Create {
+                    &AliasingEffect::Create {
                         into: into.clone(),
                         value: ValueKind::Mutable,
                         reason: ValueReason::Other,
@@ -2129,7 +2128,6 @@ fn apply_effect(
                     initialized,
                     effects,
                     env,
-                    func,
                 )?;
 
                 let all_operands = build_apply_operands(receiver, function, args);
@@ -2143,13 +2141,12 @@ fn apply_effect(
                         apply_effect(
                             context,
                             state,
-                            AliasingEffect::MutateTransitiveConditionally {
+                            &AliasingEffect::MutateTransitiveConditionally {
                                 value: operand.clone(),
                             },
                             initialized,
                             effects,
                             env,
-                            func,
                         )?;
                     }
 
@@ -2157,29 +2154,20 @@ fn apply_effect(
                         let ty = &env.types
                             [env.identifiers[operand.identifier.0 as usize].type_.0 as usize];
                         if let Some(mutate_iter) = conditionally_mutate_iterator(operand, ty) {
-                            apply_effect(
-                                context,
-                                state,
-                                mutate_iter,
-                                initialized,
-                                effects,
-                                env,
-                                func,
-                            )?;
+                            apply_effect(context, state, &mutate_iter, initialized, effects, env)?;
                         }
                     }
 
                     apply_effect(
                         context,
                         state,
-                        AliasingEffect::MaybeAlias {
+                        &AliasingEffect::MaybeAlias {
                             from: operand.clone(),
                             into: into.clone(),
                         },
                         initialized,
                         effects,
                         env,
-                        func,
                     )?;
 
                     // In TS, `other === arg` compares the Place extracted from
@@ -2196,20 +2184,19 @@ fn apply_effect(
                         apply_effect(
                             context,
                             state,
-                            AliasingEffect::Capture {
+                            &AliasingEffect::Capture {
                                 from: operand.clone(),
                                 into: other.clone(),
                             },
                             initialized,
                             effects,
                             env,
-                            func,
                         )?;
                     }
                 }
             }
         }
-        ref eff @ (AliasingEffect::Mutate { .. }
+        eff @ (AliasingEffect::Mutate { .. }
         | AliasingEffect::MutateConditionally { .. }
         | AliasingEffect::MutateTransitive { .. }
         | AliasingEffect::MutateTransitiveConditionally { .. }) => {
@@ -2292,14 +2279,13 @@ fn apply_effect(
                     apply_effect(
                         context,
                         state,
-                        AliasingEffect::MutateFrozen {
+                        &AliasingEffect::MutateFrozen {
                             place: value.clone(),
                             error: Rc::new(diagnostic),
                         },
                         initialized,
                         effects,
                         env,
-                        func,
                     )?;
                 } else {
                     let reason_str = get_write_error_reason(abstract_value);
@@ -2325,7 +2311,7 @@ fn apply_effect(
                     if let AliasingEffect::Mutate {
                         reason: Some(MutationReason::AssignCurrentProperty),
                         ..
-                    } = &effect
+                    } = effect
                     {
                         diagnostic.details.push(crate::diagnostics::CompilerDiagnosticDetail::Hint {
                             message: "Hint: If this value is a Ref (value returned by `useRef()`), rename the variable to end in \"Ref\".".to_string(),
@@ -2343,7 +2329,7 @@ fn apply_effect(
                             error: Rc::new(diagnostic),
                         }
                     };
-                    apply_effect(context, state, error_kind, initialized, effects, env, func)?;
+                    apply_effect(context, state, &error_kind, initialized, effects, env)?;
                 }
             }
         }
@@ -2362,14 +2348,13 @@ fn apply_effect(
 // =============================================================================
 
 fn compute_signature_for_instruction(
-    context: &mut Context,
+    context: &Context,
     env: &Environment,
     instr: &crate::hir::Instruction,
-    _func: &HirFunction,
-) -> InstructionSignature {
+    effects: &mut Vec<AliasingEffect>,
+) {
     let lvalue = &instr.lvalue;
     let value = &instr.value;
-    let mut effects: Vec<AliasingEffect> = Vec::new();
 
     match value {
         InstructionValue::ArrayExpression { elements, .. } => {
@@ -2927,8 +2912,6 @@ fn compute_signature_for_instruction(
             });
         }
     }
-
-    InstructionSignature { effects }
 }
 
 // =============================================================================
@@ -2943,7 +2926,7 @@ fn compute_effects_for_legacy_signature(
     args: &[PlaceOrSpreadOrHole],
     _loc: Option<&SourceLocation>,
     env: &Environment,
-    function_values: &HashMap<ValueId, FunctionId>,
+    function_values: &[Option<FunctionId>],
     todo_errors: &mut Vec<crate::diagnostics::CompilerErrorDetail>,
 ) -> Vec<AliasingEffect> {
     let return_value_reason = signature.return_value_reason.unwrap_or(ValueReason::Other);
@@ -3144,7 +3127,7 @@ fn are_arguments_immutable_and_non_mutating(
     state: &InferenceState,
     args: &[PlaceOrSpreadOrHole],
     env: &Environment,
-    function_values: &HashMap<ValueId, FunctionId>,
+    function_values: &[Option<FunctionId>],
 ) -> bool {
     for arg in args {
         match arg {
@@ -3185,7 +3168,7 @@ fn are_arguments_immutable_and_non_mutating(
                 // that mutates its parameters (TS lines 2545-2557)
                 let value_ids = state.values_for(place.identifier);
                 for vid in &value_ids {
-                    if let Some(&func_id) = function_values.get(vid) {
+                    if let Some(func_id) = function_of(function_values, *vid) {
                         let inner_func = &env.functions[func_id.0 as usize];
                         let mutates_params = inner_func.params.iter().any(|param| {
                             let param_id = param.place().identifier;
@@ -3961,58 +3944,6 @@ fn create_temp_place(env: &mut Environment, loc: Option<SourceLocation>) -> Plac
         effect: Effect::Unknown,
         reactive: false,
         loc,
-    }
-}
-
-// =============================================================================
-// Terminal successor helper
-// =============================================================================
-
-/// Returns the successor blocks used for traversal in mutation/aliasing inference.
-///
-/// Matches the TS `eachTerminalSuccessor` which yields standard control-flow
-/// successors but NOT pseudo-successors (fallthroughs). Fallthroughs for
-/// Logical/Ternary/Optional and Try/Scope/PrunedScope are reached naturally
-/// via the block iteration order (blocks are stored in topological order).
-fn terminal_successors(terminal: &crate::hir::Terminal) -> Vec<BlockId> {
-    use crate::hir::Terminal;
-    match terminal {
-        Terminal::Goto { block, .. } => vec![*block],
-        Terminal::If {
-            consequent,
-            alternate,
-            ..
-        } => vec![*consequent, *alternate],
-        Terminal::Branch {
-            consequent,
-            alternate,
-            ..
-        } => vec![*consequent, *alternate],
-        Terminal::Switch { cases, .. } => cases.iter().map(|c| c.block).collect(),
-        Terminal::For { init, .. } => vec![*init],
-        Terminal::ForOf { init, .. } | Terminal::ForIn { init, .. } => vec![*init],
-        Terminal::DoWhile { loop_block, .. } => vec![*loop_block],
-        Terminal::While { test, .. } => vec![*test],
-        Terminal::Return { .. }
-        | Terminal::Throw { .. }
-        | Terminal::Unreachable { .. }
-        | Terminal::Unsupported { .. } => vec![],
-        Terminal::Try { block, .. } => vec![*block],
-        Terminal::MaybeThrow {
-            continuation,
-            handler,
-            ..
-        } => {
-            let mut v = vec![*continuation];
-            if let Some(h) = handler {
-                v.push(*h);
-            }
-            v
-        }
-        Terminal::Label { block, .. } | Terminal::Sequence { block, .. } => vec![*block],
-        Terminal::Logical { test, .. } | Terminal::Ternary { test, .. } => vec![*test],
-        Terminal::Optional { test, .. } => vec![*test],
-        Terminal::Scope { block, .. } | Terminal::PrunedScope { block, .. } => vec![*block],
     }
 }
 

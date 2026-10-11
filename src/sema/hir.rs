@@ -2622,7 +2622,10 @@ macro_rules! moved_lists {
     ($arena:ident) => {
         macro_rules! few {
             ($list:expr) => {
-                few_to_arena(std::mem::take(&mut $list), $arena)
+                match $list.is_empty() {
+                    true => ArenaFew::default(),
+                    false => few_to_arena(std::mem::take(&mut $list), $arena),
+                }
             };
         }
         macro_rules! kept {

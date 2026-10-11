@@ -2300,6 +2300,27 @@ impl Lexer<'_> {
                 }
                 Some(_) => {}
             }
+            // Between two elements there is mostly a line break and the indentation.
+            let (mut end, mut has_line_break) = (start, false);
+            while let Some(c @ (b' ' | b'\t' | b'\n' | b'\r')) = src.get(end) {
+                has_line_break |= matches!(c, b'\n' | b'\r');
+                end += 1;
+            }
+            let is_all = match src.get(end) {
+                None | Some(b'{') => true,
+                // Not what may be a conflict marker.
+                Some(b'<') => src.get(end + 1) != Some(&b'<'),
+                Some(_) => false,
+            };
+            if is_all && has_line_break {
+                debug_assert!(
+                    core::str::from_utf8(&src[start..end])
+                        .is_ok_and(|it| fix_whitespace_and_decode_jsx_entities(it).is_empty())
+                );
+                newline_before = true;
+                start = end;
+                continue;
+            }
             let rest = &src[start..];
             let len = bun_core::strings::index_of_any(rest, b"{<").unwrap_or(rest.len());
             let text = &rest[..len];
@@ -2407,7 +2428,15 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
     // The blanks at the start of the first line stay.
     let mut first_non_whitespace = Some(0);
     for (at, c) in text.char_indices() {
-        if is_js_line_terminator(u32::from(c)) {
+        let (is_line_break, is_blank) = match c {
+            '!'..='~' => (false, false),
+            ' ' | '\t' => (false, true),
+            c => (
+                is_js_line_terminator(u32::from(c)),
+                bun_core::lexer::is_white_space_single_line(c as i32),
+            ),
+        };
+        if is_line_break {
             if let (Some(start), Some(end)) = (first_non_whitespace, after_last_non_whitespace) {
                 if !decoded.is_empty() {
                     decoded.push(b' ');
@@ -2415,7 +2444,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
                 decode_jsx_entities(&text[start..end], &mut decoded);
             }
             first_non_whitespace = None;
-        } else if !bun_core::lexer::is_white_space_single_line(c as i32) {
+        } else if !is_blank {
             after_last_non_whitespace = Some(at + c.len_utf8());
             first_non_whitespace.get_or_insert(at);
         }

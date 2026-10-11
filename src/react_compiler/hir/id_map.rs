@@ -152,9 +152,7 @@ impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     }
     #[inline]
     pub(crate) fn get_mut(&mut self, k: K) -> Option<&mut V> {
-        self.index
-            .position(k.into())
-            .map(|at| &mut self.values[at])
+        self.index.position(k.into()).map(|at| &mut self.values[at])
     }
     #[inline]
     pub(crate) fn contains_key(&self, k: K) -> bool {

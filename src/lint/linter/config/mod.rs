@@ -373,6 +373,93 @@ pub struct Config {
     cache: Cache,
 }
 
+/// What a [`Config`] sees of the entries of one directory. What is the same for all of them is computed once.
+pub struct Within<'c> {
+    config: &'c Config,
+    /// Where the name starts in the path of an entry.
+    name_at: usize,
+    /// [`Config::relative`] of the entry that was asked about last.
+    seen: Vec<u8>,
+    /// How much of it is before the name. `None`: the base path is further down, and that is not the same for all entries.
+    seen_len: Option<usize>,
+    /// For each object with a base path of its own, by its index: what it sees before the name. `None`: as above.
+    seen_by_objects: Vec<(u32, Option<Vec<u8>>)>,
+}
+
+/// An entry of the directory of a [`Within`].
+struct Entry<'w> {
+    name: &'w [u8],
+    seen_by_objects: &'w [(u32, Option<Vec<u8>>)],
+}
+
+impl Entry<'_> {
+    /// What the object at `index`, which has a base path of its own, sees of it, if that is known.
+    fn seen_by(&self, index: usize) -> Option<Vec<u8>> {
+        let objects = self.seen_by_objects;
+        let at = objects
+            .binary_search_by_key(&index, |it| it.0 as usize)
+            .ok()?;
+        Some([objects.get(at)?.1.as_deref()?, self.name].concat())
+    }
+}
+
+impl Within<'_> {
+    /// The entry at `path`, and what the patterns see of it, which has a slash behind it for a directory. `None`: see `seen_len`.
+    fn see<'w>(
+        &'w mut self,
+        path: &'w [u8],
+        is_directory: bool,
+    ) -> Option<(Candidate<'w>, Entry<'w>)> {
+        let name = path.get(self.name_at..)?;
+        self.seen.truncate(self.seen_len?);
+        self.seen.extend_from_slice(name);
+        debug_assert_eq!(self.seen, self.config.relative(path));
+        if is_directory {
+            self.seen.push(b'/');
+        }
+        let seen_by_objects = &self.seen_by_objects[..];
+        Some((
+            Candidate::new(&self.seen),
+            Entry {
+                name,
+                seen_by_objects,
+            },
+        ))
+    }
+
+    /// [`Config::is_directory_ignored`] for the directory at `path`, an entry, if the directory that it is in is not ignored.
+    pub fn is_directory_ignored(&mut self, path: &[u8], dotfiles: Dotfiles) -> bool {
+        let config = self.config;
+        match self.see(path, true) {
+            Some((parts, entry)) => config.is_ignored_globally_as(&parts, Some(&entry), dotfiles),
+            None => config.is_directory_ignored_in(path, dotfiles),
+        }
+    }
+
+    /// [`Config::get`] for the file at `path`, an entry, if the directory that it is in is not ignored.
+    /// `is_selected`: a pattern among the arguments matches it. ESLint 8 lints that, whatever it is called.
+    pub fn get(
+        &mut self,
+        registry: &Registry,
+        path: &[u8],
+        dotfiles: Dotfiles,
+        is_selected: bool,
+    ) -> FileConfig {
+        let config = self.config;
+        let must_match = !(is_selected && config.is_legacy);
+        let Some((parts, entry)) = self.see(path, false) else {
+            return match config.is_file_ignored_in(path, dotfiles) {
+                true => FileConfig::Ignored,
+                false => config.get_if(registry, path, must_match),
+            };
+        };
+        match config.is_ignored_globally_as(&parts, Some(&entry), dotfiles) {
+            true => FileConfig::Ignored,
+            false => config.get_as(registry, path, &parts, Some(&entry), must_match),
+        }
+    }
+}
+
 /// `shouldIgnorePath` for the `ignores` of one object.
 fn is_ignored_by(ignores: &[Pattern], path: &Candidate, mut is_ignored: bool) -> bool {
     for pattern in ignores {
@@ -503,7 +590,17 @@ impl Config {
     /// `shouldIgnorePath(this.ignores, ..)`. `relative` is relative to the base path, and ends with
     /// a slash if it is a directory.
     fn is_ignored_globally(&self, relative: &[u8], dotfiles: Dotfiles) -> bool {
-        let parts = Candidate::new(relative);
+        self.is_ignored_globally_as(&Candidate::new(relative), None, dotfiles)
+    }
+
+    /// The same for a path that has been split.
+    fn is_ignored_globally_as(
+        &self,
+        parts: &Candidate,
+        entry: Option<&Entry>,
+        dotfiles: Dotfiles,
+    ) -> bool {
+        let relative = parts.path();
         let mut is_ignored = false;
         // See `Config::relative`.
         let is_outside = relative.starts_with(b"/");
@@ -517,12 +614,15 @@ impl Config {
             let Some(base_path) = &object.base_path else {
                 is_ignored = match &object.ignore_lines {
                     Some(lines) => lines.is_ignored(relative, is_ignored),
-                    None => is_ignored_by(ignores, &parts, is_ignored),
+                    None => is_ignored_by(ignores, parts, is_ignored),
                 };
                 continue;
             };
-            let mut own =
-                paths::relative_to_base(base_path, &paths::resolve(&self.base_path, relative));
+            let computed =
+                || paths::relative_to_base(base_path, &paths::resolve(&self.base_path, relative));
+            let known = entry.and_then(|it| it.seen_by(index));
+            debug_assert!(known.as_ref().is_none_or(|it| *it == computed()));
+            let mut own = known.unwrap_or_else(computed);
             if own.is_empty() || paths::is_external(&own) {
                 continue;
             }
@@ -547,9 +647,50 @@ impl Config {
         }
     }
 
+    /// For the entries of `directory`, which is absolute.
+    pub fn within<'c>(&'c self, directory: &[u8]) -> Within<'c> {
+        let before_name = |base_path: &[u8], directory: &[u8]| {
+            paths::relative_to_base_before_name(base_path, directory)
+        };
+        let seen = before_name(&self.base_path, directory).map(|seen| {
+            if !(self.prefers_typescript_rules && paths::is_external(&seen)) {
+                return seen;
+            }
+            let mut rooted = paths::rooted(directory);
+            if !rooted.ends_with(b"/") {
+                rooted.push(b'/');
+            }
+            rooted
+        });
+        let with_base_paths = (self.objects.iter().zip(0..))
+            .filter_map(|(object, index)| Some((object, index, object.base_path.as_ref()?)));
+        let seen_by_objects = match &seen {
+            Some(seen) => with_base_paths
+                .map(
+                    |(object, index, base_path)| match object.is_global_ignores {
+                        // As `is_ignored_globally_as` makes it.
+                        true => {
+                            let directory = paths::resolve(&self.base_path, seen);
+                            (index, before_name(base_path, &directory))
+                        }
+                        false => (index, before_name(base_path, directory)),
+                    },
+                )
+                .collect(),
+            None => Vec::new(),
+        };
+        Within {
+            config: self,
+            name_at: directory.len() + usize::from(!directory.ends_with(b"/")),
+            seen_len: seen.as_ref().map(Vec::len),
+            seen: seen.unwrap_or_default(),
+            seen_by_objects,
+        }
+    }
+
     /// [`Config::is_directory_ignored`] for a directory inside the base path of which it is known that
     /// no directory that it is in is ignored.
-    pub fn is_directory_ignored_in(&self, directory: &[u8], dotfiles: Dotfiles) -> bool {
+    fn is_directory_ignored_in(&self, directory: &[u8], dotfiles: Dotfiles) -> bool {
         let mut relative = self.relative(directory);
         if relative.is_empty() {
             return false;
@@ -559,7 +700,7 @@ impl Config {
     }
 
     /// Whether a file inside the base path is ignored, if the directory that it is in is not.
-    pub fn is_file_ignored_in(&self, file: &[u8], dotfiles: Dotfiles) -> bool {
+    fn is_file_ignored_in(&self, file: &[u8], dotfiles: Dotfiles) -> bool {
         self.is_ignored_globally(&self.relative(file), dotfiles)
     }
 
@@ -608,26 +749,36 @@ impl Config {
         self.get_if(registry, file, true)
     }
 
-    /// The same for a file that a pattern among the arguments matches. ESLint 8 lints that, whatever it is called.
-    pub fn get_for_pattern(&self, registry: &Registry, file: &[u8]) -> FileConfig {
-        self.get_if(registry, file, !self.is_legacy)
-    }
-
     /// `must_match`: a file that no `files` is for has no configuration.
     fn get_if(&self, registry: &Registry, file: &[u8], must_match: bool) -> FileConfig {
         let relative = self.relative(file);
-        let parts = Candidate::new(&relative);
-        let mut matching: Vec<u32> = Vec::new();
+        self.get_as(registry, file, &Candidate::new(&relative), None, must_match)
+    }
+
+    /// The same. `parts`: [`Config::relative`] of `file`.
+    fn get_as(
+        &self,
+        registry: &Registry,
+        file: &[u8],
+        parts: &Candidate,
+        entry: Option<&Entry>,
+        must_match: bool,
+    ) -> FileConfig {
+        let mut matching: SmallVec<[u32; 16]> = SmallVec::new();
         let mut is_matched = false;
-        let listed = self.heads.of(&relative);
+        let listed = self.heads.of(parts.path());
         for (index, object) in self.objects.iter().enumerate() {
             if (listed.as_ref()).is_some_and(|found| !self.heads.allows_object(found, index)) {
                 continue;
             }
-            let own = object
-                .base_path
-                .as_ref()
-                .map(|base_path| paths::relative_to_base(base_path, file));
+            let own = object.base_path.as_ref().map(|base_path| {
+                let known = entry.and_then(|it| it.seen_by(index));
+                debug_assert!(
+                    (known.as_ref())
+                        .is_none_or(|it| *it == paths::relative_to_base(base_path, file))
+                );
+                known.unwrap_or_else(|| paths::relative_to_base(base_path, file))
+            });
             if own.as_ref().is_some_and(|it| paths::is_external(it)) {
                 continue;
             }
@@ -658,7 +809,7 @@ impl Config {
             };
             let (applies, is_linted) = match &own {
                 Some(own) => status(&Candidate::new(own)),
-                None => status(&parts),
+                None => status(parts),
             };
             if applies {
                 matching.push(index as u32);

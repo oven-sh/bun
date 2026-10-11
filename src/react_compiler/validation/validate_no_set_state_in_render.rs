@@ -51,7 +51,8 @@ fn validate_impl(
         return Err(crate::lowering::nested_too_deeply());
     }
 
-    let unconditional_blocks = compute_unconditional_blocks(func, next_block_id_counter)?;
+    debug_assert!(compute_unconditional_blocks(func, next_block_id_counter).is_ok());
+    let mut unconditional_blocks = None;
     let mut active_manual_memo_id: Option<u32> = None;
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
 
@@ -116,9 +117,20 @@ fn validate_impl(
                     {
                         if active_manual_memo_id.is_some() {
                             errors.push(set_state_in_memo_diag(callee.loc));
-                        } else if unconditional_blocks.contains(&block.id) {
-                            errors
-                                .push(set_state_in_render_diag(callee.loc, enable_use_keyed_state));
+                        } else {
+                            let unconditional_blocks = match &unconditional_blocks {
+                                Some(blocks) => blocks,
+                                None => unconditional_blocks.insert(compute_unconditional_blocks(
+                                    func,
+                                    next_block_id_counter,
+                                )?),
+                            };
+                            if unconditional_blocks.contains(&block.id) {
+                                errors.push(set_state_in_render_diag(
+                                    callee.loc,
+                                    enable_use_keyed_state,
+                                ));
+                            }
                         }
                     }
                 }

@@ -14,20 +14,19 @@
 //!   vars, aliasing between params/context-vars/return-value)
 //! - The legacy `Effect` to store on each Place
 
-use crate::collections::{FxHashSet as HashSet, IdMap};
-
-use crate::collections::IndexMap;
+use crate::collections::{FxHashSet as HashSet, IdBitSet, IdMap};
 
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 use crate::hir::type_config::{ValueKind, ValueReason};
 use crate::hir::visitors::{
-    each_instruction_value_lvalue, for_each_instruction_value_lvalue_mut,
-    for_each_instruction_value_operand_mut, for_each_terminal_operand_mut,
+    for_each_instruction_value_lvalue_mut, for_each_instruction_value_operand_mut,
+    for_each_terminal_operand_mut,
 };
 use crate::hir::{
-    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, HirFunction, IdentifierId,
-    InstructionValue, MutationReason, Place, SourceLocation, is_jsx_type, is_primitive_type,
+    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, HirFunction, Identifier,
+    IdentifierId, InstructionValue, MutationReason, Place, SourceLocation, is_jsx_type,
+    is_primitive_type,
 };
 
 // =============================================================================
@@ -51,11 +50,63 @@ enum EdgeKind {
     MaybeAlias,
 }
 
-#[derive(Debug, Clone)]
-struct Edge {
-    index: usize,
+/// The lists of a node that hold where its value comes from. Each has a node once, with the index
+/// of the first edge from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Incoming {
+    CreatedFrom,
+    Captures,
+    Aliases,
+    MaybeAliases,
+}
+
+/// An item of a [`List`].
+#[derive(Debug, Clone, Copy)]
+struct Link {
+    index: u32,
     node: IdentifierId,
     kind: EdgeKind,
+    next: u32,
+}
+
+/// A list, in the order of insertion, whose items are in `AliasingState::links`.
+#[derive(Debug, Clone, Copy)]
+struct List {
+    first: u32,
+    last: u32,
+}
+
+impl List {
+    /// Past the end of any `links`.
+    const NONE: u32 = u32::MAX;
+    const EMPTY: List = List {
+        first: List::NONE,
+        last: List::NONE,
+    };
+
+    fn iter(self, links: &[Link]) -> impl Iterator<Item = &Link> {
+        let mut at = self.first;
+        std::iter::from_fn(move || {
+            let link = links.get(at as usize)?;
+            at = link.next;
+            Some(link)
+        })
+    }
+
+    fn push(&mut self, links: &mut Vec<Link>, index: u32, node: IdentifierId, kind: EdgeKind) {
+        let at = links.len() as u32;
+        links.push(Link {
+            index,
+            node,
+            kind,
+            next: List::NONE,
+        });
+        match links.get_mut(self.last as usize) {
+            Some(last) => last.next = at,
+            None => self.first = at,
+        }
+        self.last = at;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -74,168 +125,204 @@ enum NodeValue {
 #[derive(Debug, Clone)]
 struct Node {
     id: IdentifierId,
-    created_from: IndexMap<IdentifierId, usize>,
-    captures: IndexMap<IdentifierId, usize>,
-    aliases: IndexMap<IdentifierId, usize>,
-    maybe_aliases: IndexMap<IdentifierId, usize>,
-    edges: Vec<Edge>,
+    /// Of this node alone: another node made for the same identifier has another.
+    serial: u32,
+    created_from: List,
+    captures: List,
+    aliases: List,
+    maybe_aliases: List,
+    edges: List,
     transitive: Option<MutationInfo>,
     local: Option<MutationInfo>,
-    last_mutated: usize,
+    last_mutated: u32,
     mutation_reason: Option<MutationReason>,
     value: NodeValue,
+    /// The last walk that came here, and the kind that it came with.
+    walk: u32,
+    walk_kind: MutationKind,
 }
 
-impl Node {
-    fn new(id: IdentifierId, value: NodeValue) -> Self {
-        Node {
-            id,
-            created_from: IndexMap::new(),
-            captures: IndexMap::new(),
-            aliases: IndexMap::new(),
-            maybe_aliases: IndexMap::new(),
-            edges: Vec::new(),
-            transitive: None,
-            local: None,
-            last_mutated: 0,
-            mutation_reason: None,
-            value,
-        }
-    }
+#[derive(Clone, Copy, PartialEq)]
+enum Direction {
+    Backwards,
+    Forwards,
+}
+
+#[derive(Clone, Copy)]
+struct QueueEntry {
+    place: IdentifierId,
+    transitive: bool,
+    direction: Direction,
+    kind: MutationKind,
 }
 
 struct AliasingState {
-    nodes: IndexMap<IdentifierId, Node>,
+    nodes: IdMap<IdentifierId, Node>,
+    links: Vec<Link>,
+    /// What is in the incoming lists that are too long to look through.
+    long_lists: HashSet<(u32, Incoming, IdentifierId)>,
+    serials: u32,
+    walks: u32,
+    queue: Vec<QueueEntry>,
 }
 
 impl AliasingState {
     fn new() -> Self {
         AliasingState {
-            nodes: IndexMap::new(),
+            nodes: IdMap::new(),
+            links: Vec::new(),
+            long_lists: HashSet::default(),
+            serials: 0,
+            walks: 0,
+            queue: Vec::new(),
         }
     }
 
-    fn create(&mut self, place: &Place, value: NodeValue) {
-        self.nodes
-            .insert(place.identifier, Node::new(place.identifier, value));
+    fn create(&mut self, id: IdentifierId, value: NodeValue) {
+        self.serials += 1;
+        self.nodes.insert(
+            id,
+            Node {
+                id,
+                serial: self.serials,
+                created_from: List::EMPTY,
+                captures: List::EMPTY,
+                aliases: List::EMPTY,
+                maybe_aliases: List::EMPTY,
+                edges: List::EMPTY,
+                transitive: None,
+                local: None,
+                last_mutated: 0,
+                mutation_reason: None,
+                value,
+                walk: 0,
+                walk_kind: MutationKind::Conditional,
+            },
+        );
     }
 
-    fn create_from(&mut self, index: usize, from: &Place, into: &Place) {
+    /// `from` goes into a list of the node of `into`, if there is such a node and `from` is not in the list.
+    fn add_incoming(
+        &mut self,
+        which: Incoming,
+        index: u32,
+        from: IdentifierId,
+        into: IdentifierId,
+    ) {
+        const SHORT: usize = 8;
+        let Some(node) = self.nodes.get_mut(into) else {
+            return;
+        };
+        let list = match which {
+            Incoming::CreatedFrom => &mut node.created_from,
+            Incoming::Captures => &mut node.captures,
+            Incoming::Aliases => &mut node.aliases,
+            Incoming::MaybeAliases => &mut node.maybe_aliases,
+        };
+        let mut len = 0;
+        for link in list.iter(&self.links).take(SHORT + 1) {
+            if link.node == from {
+                return;
+            }
+            len += 1;
+        }
+        if len >= SHORT {
+            if len == SHORT {
+                let short = list.iter(&self.links);
+                self.long_lists
+                    .extend(short.map(|link| (node.serial, which, link.node)));
+            }
+            if !self.long_lists.insert((node.serial, which, from)) {
+                return;
+            }
+        }
+        list.push(&mut self.links, index, from, EdgeKind::Alias);
+    }
+
+    fn create_from(&mut self, index: u32, from: IdentifierId, into: IdentifierId) {
         self.create(into, NodeValue::Object);
-        let from_id = from.identifier;
-        let into_id = into.identifier;
-        // Add forward edge from -> into on the from node
-        if let Some(from_node) = self.nodes.get_mut(&from_id) {
-            from_node.edges.push(Edge {
-                index,
-                node: into_id,
-                kind: EdgeKind::Alias,
-            });
+        if let Some(from_node) = self.nodes.get_mut(from) {
+            from_node
+                .edges
+                .push(&mut self.links, index, into, EdgeKind::Alias);
         }
-        // Add created_from on the into node
-        if let Some(to_node) = self.nodes.get_mut(&into_id) {
-            to_node.created_from.entry(from_id).or_insert(index);
-        }
+        self.add_incoming(Incoming::CreatedFrom, index, from, into);
     }
 
-    fn capture(&mut self, index: usize, from: &Place, into: &Place) {
-        let from_id = from.identifier;
-        let into_id = into.identifier;
-        if !self.nodes.contains_key(&from_id) || !self.nodes.contains_key(&into_id) {
+    fn connect(
+        &mut self,
+        kind: EdgeKind,
+        which: Incoming,
+        index: u32,
+        from: IdentifierId,
+        into: IdentifierId,
+    ) {
+        if !self.nodes.contains_key(into) {
             return;
         }
-        self.nodes.get_mut(&from_id).unwrap().edges.push(Edge {
-            index,
-            node: into_id,
-            kind: EdgeKind::Capture,
-        });
-        self.nodes
-            .get_mut(&into_id)
-            .unwrap()
-            .captures
-            .entry(from_id)
-            .or_insert(index);
-    }
-
-    fn assign(&mut self, index: usize, from: &Place, into: &Place) {
-        let from_id = from.identifier;
-        let into_id = into.identifier;
-        if !self.nodes.contains_key(&from_id) || !self.nodes.contains_key(&into_id) {
+        let Some(from_node) = self.nodes.get_mut(from) else {
             return;
-        }
-        self.nodes.get_mut(&from_id).unwrap().edges.push(Edge {
-            index,
-            node: into_id,
-            kind: EdgeKind::Alias,
-        });
-        self.nodes
-            .get_mut(&into_id)
-            .unwrap()
-            .aliases
-            .entry(from_id)
-            .or_insert(index);
+        };
+        from_node.edges.push(&mut self.links, index, into, kind);
+        self.add_incoming(which, index, from, into);
     }
 
-    fn maybe_alias(&mut self, index: usize, from: &Place, into: &Place) {
-        let from_id = from.identifier;
-        let into_id = into.identifier;
-        if !self.nodes.contains_key(&from_id) || !self.nodes.contains_key(&into_id) {
-            return;
-        }
-        self.nodes.get_mut(&from_id).unwrap().edges.push(Edge {
-            index,
-            node: into_id,
-            kind: EdgeKind::MaybeAlias,
-        });
-        self.nodes
-            .get_mut(&into_id)
-            .unwrap()
-            .maybe_aliases
-            .entry(from_id)
-            .or_insert(index);
+    fn capture(&mut self, index: u32, from: IdentifierId, into: IdentifierId) {
+        self.connect(EdgeKind::Capture, Incoming::Captures, index, from, into);
     }
 
-    fn render(&self, index: usize, start: IdentifierId, env: &mut Environment) {
-        let mut seen = HashSet::default();
+    fn assign(&mut self, index: u32, from: IdentifierId, into: IdentifierId) {
+        self.connect(EdgeKind::Alias, Incoming::Aliases, index, from, into);
+    }
+
+    fn maybe_alias(&mut self, index: u32, from: IdentifierId, into: IdentifierId) {
+        self.connect(
+            EdgeKind::MaybeAlias,
+            Incoming::MaybeAliases,
+            index,
+            from,
+            into,
+        );
+    }
+
+    fn is_mutated(&self, id: IdentifierId) -> bool {
+        self.nodes
+            .get(id)
+            .is_some_and(|node| node.local.is_some() || node.transitive.is_some())
+    }
+
+    fn render(&mut self, index: u32, start: IdentifierId, env: &mut Environment) {
+        self.walks += 1;
         let mut queue: Vec<IdentifierId> = vec![start];
         while let Some(current) = queue.pop() {
-            if !seen.insert(current) {
-                continue;
-            }
-            let node = match self.nodes.get(&current) {
+            let node = match self.nodes.get_mut(current) {
                 Some(n) => n,
                 None => continue,
             };
+            if node.walk == self.walks {
+                continue;
+            }
+            node.walk = self.walks;
             if node.transitive.is_some() || node.local.is_some() {
                 continue;
             }
             if let NodeValue::Function { function_id } = &node.value {
                 append_function_errors(env, *function_id);
             }
-            for (&alias, &when) in &node.created_from {
-                if when >= index {
-                    continue;
+            for list in [node.created_from, node.aliases, node.captures] {
+                for link in list.iter(&self.links) {
+                    if link.index >= index {
+                        continue;
+                    }
+                    queue.push(link.node);
                 }
-                queue.push(alias);
-            }
-            for (&alias, &when) in &node.aliases {
-                if when >= index {
-                    continue;
-                }
-                queue.push(alias);
-            }
-            for (&capture, &when) in &node.captures {
-                if when >= index {
-                    continue;
-                }
-                queue.push(capture);
             }
         }
     }
 
     fn mutate(
         &mut self,
-        index: usize,
+        index: u32,
         start: IdentifierId,
         end: Option<EvaluationOrder>, // None for simulated mutations
         transitive: bool,
@@ -245,41 +332,25 @@ impl AliasingState {
         env: &mut Environment,
         should_record_errors: bool,
     ) {
-        #[derive(Clone)]
-        struct QueueEntry {
-            place: IdentifierId,
-            transitive: bool,
-            direction: Direction,
-            kind: MutationKind,
-        }
-        #[derive(Clone, Copy, PartialEq)]
-        enum Direction {
-            Backwards,
-            Forwards,
-        }
-
-        let mut seen: IdMap<IdentifierId, MutationKind> = IdMap::new();
-        let mut queue: Vec<QueueEntry> = vec![QueueEntry {
+        self.walks += 1;
+        let mut queue = std::mem::take(&mut self.queue);
+        queue.push(QueueEntry {
             place: start,
             transitive,
             direction: Direction::Backwards,
             kind: start_kind,
-        }];
+        });
 
         while let Some(entry) = queue.pop() {
-            let current = entry.place;
-            let previous_kind = seen.get(current).copied();
-            if let Some(prev) = previous_kind {
-                if prev >= entry.kind {
-                    continue;
-                }
-            }
-            seen.insert(current, entry.kind);
-
-            let node = match self.nodes.get_mut(&current) {
+            let node = match self.nodes.get_mut(entry.place) {
                 Some(n) => n,
                 None => continue,
             };
+            if node.walk == self.walks && node.walk_kind >= entry.kind {
+                continue;
+            }
+            node.walk = self.walks;
+            node.walk_kind = entry.kind;
 
             if node.mutation_reason.is_none() {
                 node.mutation_reason = reason.clone();
@@ -299,44 +370,25 @@ impl AliasingState {
                 }
             }
 
-            if entry.transitive {
-                match &node.transitive {
-                    None => {
-                        node.transitive = Some(MutationInfo {
-                            kind: entry.kind,
-                            loc,
-                        });
-                    }
-                    Some(existing) if existing.kind < entry.kind => {
-                        node.transitive = Some(MutationInfo {
-                            kind: entry.kind,
-                            loc,
-                        });
-                    }
-                    _ => {}
-                }
+            let info = if entry.transitive {
+                &mut node.transitive
             } else {
-                match &node.local {
-                    None => {
-                        node.local = Some(MutationInfo {
-                            kind: entry.kind,
-                            loc,
-                        });
-                    }
-                    Some(existing) if existing.kind < entry.kind => {
-                        node.local = Some(MutationInfo {
-                            kind: entry.kind,
-                            loc,
-                        });
-                    }
-                    _ => {}
-                }
+                &mut node.local
+            };
+            if info
+                .as_ref()
+                .is_none_or(|existing| existing.kind < entry.kind)
+            {
+                *info = Some(MutationInfo {
+                    kind: entry.kind,
+                    loc,
+                });
             }
 
             // Forward edges: Capture a -> b, Alias a -> b: mutate(a) => mutate(b)
             let node_is_phi = matches!(node.value, NodeValue::Phi);
 
-            for edge in &node.edges {
+            for edge in node.edges.iter(&self.links) {
                 if edge.index >= index {
                     break;
                 }
@@ -353,12 +405,12 @@ impl AliasingState {
                 });
             }
 
-            for (alias, when) in &node.created_from {
-                if *when >= index {
+            for alias in node.created_from.iter(&self.links) {
+                if alias.index >= index {
                     continue;
                 }
                 queue.push(QueueEntry {
-                    place: *alias,
+                    place: alias.node,
                     transitive: true,
                     direction: Direction::Backwards,
                     kind: entry.kind,
@@ -367,24 +419,24 @@ impl AliasingState {
 
             if entry.direction == Direction::Backwards || !node_is_phi {
                 // Backward alias edges
-                for (alias, when) in &node.aliases {
-                    if *when >= index {
+                for alias in node.aliases.iter(&self.links) {
+                    if alias.index >= index {
                         continue;
                     }
                     queue.push(QueueEntry {
-                        place: *alias,
+                        place: alias.node,
                         transitive: entry.transitive,
                         direction: Direction::Backwards,
                         kind: entry.kind,
                     });
                 }
                 // MaybeAlias backward edges (downgrade to conditional)
-                for (alias, when) in &node.maybe_aliases {
-                    if *when >= index {
+                for alias in node.maybe_aliases.iter(&self.links) {
+                    if alias.index >= index {
                         continue;
                     }
                     queue.push(QueueEntry {
-                        place: *alias,
+                        place: alias.node,
                         transitive: entry.transitive,
                         direction: Direction::Backwards,
                         kind: MutationKind::Conditional,
@@ -394,12 +446,12 @@ impl AliasingState {
 
             // Only transitive mutations affect captures backward
             if entry.transitive {
-                for (capture, when) in &node.captures {
-                    if *when >= index {
+                for capture in node.captures.iter(&self.links) {
+                    if capture.index >= index {
                         continue;
                     }
                     queue.push(QueueEntry {
-                        place: *capture,
+                        place: capture.node,
                         transitive: entry.transitive,
                         direction: Direction::Backwards,
                         kind: entry.kind,
@@ -407,6 +459,47 @@ impl AliasingState {
                 }
             }
         }
+        self.queue = queue;
+    }
+}
+
+/// The legacy effect of each place of the instruction at hand.
+struct OperandEffects {
+    instruction: u32,
+    /// By identifier: the instruction that the effect is of, and the effect.
+    effects: Vec<(u32, Effect)>,
+}
+
+impl OperandEffects {
+    fn new(identifiers: usize) -> Self {
+        OperandEffects {
+            instruction: 0,
+            effects: vec![(0, Effect::Unknown); identifiers],
+        }
+    }
+
+    fn next_instruction(&mut self) {
+        self.instruction += 1;
+    }
+
+    fn insert(&mut self, id: IdentifierId, effect: Effect) {
+        self.effects[id.0 as usize] = (self.instruction, effect);
+    }
+
+    fn get(&self, id: IdentifierId) -> Option<Effect> {
+        let (instruction, effect) = self.effects[id.0 as usize];
+        (instruction == self.instruction).then_some(effect)
+    }
+}
+
+/// A value that no mutation has given a range has the range of the instruction that makes it.
+fn start_range_at(ident: &mut Identifier, eval_order: EvaluationOrder) {
+    if ident.mutable_range.start == EvaluationOrder(0) {
+        ident.mutable_range.start = eval_order;
+    }
+    if ident.mutable_range.end == EvaluationOrder(0) {
+        ident.mutable_range.end =
+            EvaluationOrder((eval_order.0 + 1).max(ident.mutable_range.end.0));
     }
 }
 
@@ -458,66 +551,61 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     let mut state = AliasingState::new();
 
     struct PendingPhiOperand {
-        from: Place,
-        into: Place,
-        index: usize,
+        from: IdentifierId,
+        into: IdentifierId,
+        index: u32,
     }
     let mut pending_phis: IdMap<BlockId, Vec<PendingPhiOperand>> = IdMap::new();
 
     struct PendingMutation {
-        index: usize,
+        index: u32,
         id: EvaluationOrder,
         transitive: bool,
         kind: MutationKind,
-        place: Place,
+        place: IdentifierId,
+        loc: Option<SourceLocation>,
         reason: Option<MutationReason>,
     }
     let mut mutations: Vec<PendingMutation> = Vec::new();
 
     struct PendingRender {
-        index: usize,
-        place: Place,
+        index: u32,
+        place: IdentifierId,
     }
     let mut renders: Vec<PendingRender> = Vec::new();
 
-    let mut index: usize = 0;
+    let mut index: u32 = 0;
 
     let should_record_errors = !is_function_expression && env.enable_validations();
 
     // Create nodes for params, context vars, and return
     for param in &func.params {
-        let place = param.place();
-        state.create(place, NodeValue::Object);
+        state.create(param.place().identifier, NodeValue::Object);
     }
     for ctx in &func.context {
-        state.create(ctx, NodeValue::Object);
+        state.create(ctx.identifier, NodeValue::Object);
     }
-    state.create(&func.returns, NodeValue::Object);
+    state.create(func.returns.identifier, NodeValue::Object);
 
-    let mut seen_blocks: HashSet<BlockId> = HashSet::default();
+    let mut seen_blocks: IdBitSet<BlockId> = IdBitSet::new();
 
-    // Collect block iteration data to avoid borrow conflicts
-    let block_order: Vec<BlockId> = func.body.blocks.keys().cloned().collect();
-
-    for &block_id in &block_order {
-        let block = &func.body.blocks[&block_id];
-
+    for (&block_id, block) in &func.body.blocks {
         // Process phis
         for phi in &block.phis {
-            state.create(&phi.place, NodeValue::Phi);
+            state.create(phi.place.identifier, NodeValue::Phi);
             for (&pred, operand) in &phi.operands {
-                if !seen_blocks.contains(&pred) {
+                if !seen_blocks.contains(pred) {
                     pending_phis
                         .entry(pred)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(PendingPhiOperand {
-                            from: operand.clone(),
-                            into: phi.place.clone(),
-                            index: index,
+                            from: operand.identifier,
+                            into: phi.place.identifier,
+                            index,
                         });
                     index += 1;
                 } else {
-                    state.assign(index, operand, &phi.place);
+                    state.assign(index, operand.identifier, phi.place.identifier);
                     index += 1;
                 }
             }
@@ -525,50 +613,48 @@ pub(crate) fn infer_mutation_aliasing_ranges(
         seen_blocks.insert(block_id);
 
         // Process instruction effects
-        let instr_ids = block.instructions.clone();
-        for instr_id in &instr_ids {
+        for instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             let instr_eval_order = instr.id;
-            let effects = match &instr.effects {
-                Some(e) => e.clone(),
-                None => continue,
+            let Some(effects) = &instr.effects else {
+                continue;
             };
-            for effect in &effects {
+            for effect in effects {
                 match effect {
                     AliasingEffect::Create { into, .. } => {
-                        state.create(into, NodeValue::Object);
+                        state.create(into.identifier, NodeValue::Object);
                     }
                     AliasingEffect::CreateFunction {
                         into, function_id, ..
                     } => {
                         state.create(
-                            into,
+                            into.identifier,
                             NodeValue::Function {
                                 function_id: *function_id,
                             },
                         );
                     }
                     AliasingEffect::CreateFrom { from, into } => {
-                        state.create_from(index, from, into);
+                        state.create_from(index, from.identifier, into.identifier);
                         index += 1;
                     }
                     AliasingEffect::Assign { from, into } => {
-                        if !state.nodes.contains_key(&into.identifier) {
-                            state.create(into, NodeValue::Object);
+                        if !state.nodes.contains_key(into.identifier) {
+                            state.create(into.identifier, NodeValue::Object);
                         }
-                        state.assign(index, from, into);
+                        state.assign(index, from.identifier, into.identifier);
                         index += 1;
                     }
                     AliasingEffect::Alias { from, into } => {
-                        state.assign(index, from, into);
+                        state.assign(index, from.identifier, into.identifier);
                         index += 1;
                     }
                     AliasingEffect::MaybeAlias { from, into } => {
-                        state.maybe_alias(index, from, into);
+                        state.maybe_alias(index, from.identifier, into.identifier);
                         index += 1;
                     }
                     AliasingEffect::Capture { from, into } => {
-                        state.capture(index, from, into);
+                        state.capture(index, from.identifier, into.identifier);
                         index += 1;
                     }
                     AliasingEffect::MutateTransitive { value }
@@ -576,7 +662,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                         let is_transitive_conditional =
                             matches!(effect, AliasingEffect::MutateTransitiveConditionally { .. });
                         mutations.push(PendingMutation {
-                            index: index,
+                            index,
                             id: instr_eval_order,
                             transitive: true,
                             kind: if is_transitive_conditional {
@@ -585,51 +671,47 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                                 MutationKind::Definite
                             },
                             reason: None,
-                            place: value.clone(),
+                            place: value.identifier,
+                            loc: value.loc,
                         });
                         index += 1;
                     }
                     AliasingEffect::Mutate { value, reason } => {
                         mutations.push(PendingMutation {
-                            index: index,
+                            index,
                             id: instr_eval_order,
                             transitive: false,
                             kind: MutationKind::Definite,
                             reason: reason.clone(),
-                            place: value.clone(),
+                            place: value.identifier,
+                            loc: value.loc,
                         });
                         index += 1;
                     }
                     AliasingEffect::MutateConditionally { value } => {
                         mutations.push(PendingMutation {
-                            index: index,
+                            index,
                             id: instr_eval_order,
                             transitive: false,
                             kind: MutationKind::Conditional,
                             reason: None,
-                            place: value.clone(),
+                            place: value.identifier,
+                            loc: value.loc,
                         });
                         index += 1;
                     }
-                    AliasingEffect::MutateFrozen { .. }
-                    | AliasingEffect::MutateGlobal { .. }
-                    | AliasingEffect::Impure { .. } => {
+                    AliasingEffect::MutateFrozen { error, .. }
+                    | AliasingEffect::MutateGlobal { error, .. }
+                    | AliasingEffect::Impure { error, .. } => {
                         if should_record_errors {
-                            match effect {
-                                AliasingEffect::MutateFrozen { error, .. }
-                                | AliasingEffect::MutateGlobal { error, .. }
-                                | AliasingEffect::Impure { error, .. } => {
-                                    env.record_diagnostic(CompilerDiagnostic::clone(error));
-                                }
-                                _ => unreachable!(),
-                            }
+                            env.record_diagnostic(CompilerDiagnostic::clone(error));
                         }
                         function_effects.push(effect.clone());
                     }
                     AliasingEffect::Render { place } => {
                         renders.push(PendingRender {
-                            index: index,
-                            place: place.clone(),
+                            index,
+                            place: place.identifier,
                         });
                         index += 1;
                         function_effects.push(effect.clone());
@@ -641,31 +723,33 @@ pub(crate) fn infer_mutation_aliasing_ranges(
         }
 
         // Process pending phis for this block
-        let block = &func.body.blocks[&block_id];
-        if let Some(block_phis) = pending_phis.remove(block_id) {
+        if let Some(block_phis) = pending_phis.swap_remove(block_id) {
             for pending in block_phis {
-                state.assign(pending.index, &pending.from, &pending.into);
+                state.assign(pending.index, pending.from, pending.into);
             }
         }
 
         // Handle return terminal
         let terminal = &block.terminal;
         if let crate::hir::Terminal::Return { value, .. } = terminal {
-            state.assign(index, value, &func.returns);
+            state.assign(index, value.identifier, func.returns.identifier);
             index += 1;
         }
 
         // Handle terminal effects (MaybeThrow and Return)
-        let terminal_effects = match terminal {
-            crate::hir::Terminal::MaybeThrow { effects, .. }
-            | crate::hir::Terminal::Return { effects, .. } => effects.clone(),
-            _ => None,
-        };
-        if let Some(effects) = terminal_effects {
-            for effect in &effects {
+        if let crate::hir::Terminal::MaybeThrow {
+            effects: Some(effects),
+            ..
+        }
+        | crate::hir::Terminal::Return {
+            effects: Some(effects),
+            ..
+        } = terminal
+        {
+            for effect in effects {
                 match effect {
                     AliasingEffect::Alias { from, into } => {
-                        state.assign(index, from, into);
+                        state.assign(index, from.identifier, into.identifier);
                         index += 1;
                     }
                     AliasingEffect::Freeze { .. } => {
@@ -684,11 +768,11 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     for mutation in &mutations {
         state.mutate(
             mutation.index,
-            mutation.place.identifier,
+            mutation.place,
             Some(EvaluationOrder(mutation.id.0 + 1)),
             mutation.transitive,
             mutation.kind,
-            mutation.place.loc,
+            mutation.loc,
             mutation.reason.clone(),
             env,
             should_record_errors,
@@ -696,9 +780,9 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     }
 
     // Process renders
-    for render in &renders {
-        if should_record_errors {
-            state.render(render.index, render.place.identifier, env);
+    if should_record_errors {
+        for render in &renders {
+            state.render(render.index, render.place, env);
         }
     }
 
@@ -713,34 +797,14 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     }
 
     // Set effect on mutated params/context vars
-    // We need to do this in a separate pass because we need to know which params
-    // were mutated before setting effects
-    let mut captured_params: HashSet<IdentifierId> = HashSet::default();
-    for param in &func.params {
-        let place = param.place();
-        if let Some(node) = state.nodes.get(&place.identifier) {
-            if node.local.is_some() || node.transitive.is_some() {
-                captured_params.insert(place.identifier);
-            }
-        }
-    }
-    for ctx in &func.context {
-        if let Some(node) = state.nodes.get(&ctx.identifier) {
-            if node.local.is_some() || node.transitive.is_some() {
-                captured_params.insert(ctx.identifier);
-            }
-        }
-    }
-
-    // Now mutate the effects on params/context in place
     for param in &mut func.params {
         let place = param.place_mut();
-        if captured_params.contains(&place.identifier) {
+        if state.is_mutated(place.identifier) {
             place.effect = Effect::Capture;
         }
     }
     for ctx in &mut func.context {
-        if captured_params.contains(&ctx.identifier) {
+        if state.is_mutated(ctx.identifier) {
             ctx.effect = Effect::Capture;
         }
     }
@@ -749,127 +813,65 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     // Part 2: Add legacy operand-specific effects based on instruction effects
     //         and mutable ranges. Also fix up mutable range start values.
     // =========================================================================
-    // Part 2 loop
-    for &block_id in &block_order {
-        let block = &func.body.blocks[&block_id];
-
+    let mut operand_effects = OperandEffects::new(env.identifiers.len());
+    for block in func.body.blocks.values_mut() {
         // Process phis
-        let phi_data: Vec<_> = block
-            .phis
-            .iter()
-            .map(|phi| {
-                let first_instr_id = block
-                    .instructions
-                    .first()
-                    .map(|id| func.instructions[id.0 as usize].id)
-                    .unwrap_or_else(|| block.terminal.evaluation_order());
-
-                let is_mutated_after_creation = env.identifiers[phi.place.identifier.0 as usize]
-                    .mutable_range
-                    .end
-                    > first_instr_id;
-
-                (
-                    phi.place.identifier,
-                    phi.operands
-                        .values()
-                        .map(|o| o.identifier)
-                        .collect::<Vec<_>>(),
-                    is_mutated_after_creation,
-                    first_instr_id,
-                )
-            })
-            .collect();
-
-        for (phi_id, _operand_ids, is_mutated_after_creation, first_instr_id) in &phi_data {
-            // Set phi place effect to Store
-            // We need to find this phi in the block and set it
-            let block = func.body.blocks.get_mut(&block_id).unwrap();
+        if !block.phis.is_empty() {
+            let first_instr_id = block
+                .instructions
+                .first()
+                .map(|id| func.instructions[id.0 as usize].id)
+                .unwrap_or_else(|| block.terminal.evaluation_order());
             for phi in &mut block.phis {
-                if phi.place.identifier == *phi_id {
-                    phi.place.effect = Effect::Store;
-                    for operand in phi.operands.values_mut() {
-                        operand.effect = if *is_mutated_after_creation {
-                            Effect::Capture
-                        } else {
-                            Effect::Read
-                        };
-                    }
-                    break;
+                let ident = &mut env.identifiers[phi.place.identifier.0 as usize];
+                let is_mutated_after_creation = ident.mutable_range.end > first_instr_id;
+                phi.place.effect = Effect::Store;
+                for operand in phi.operands.values_mut() {
+                    operand.effect = if is_mutated_after_creation {
+                        Effect::Capture
+                    } else {
+                        Effect::Read
+                    };
                 }
-            }
-
-            if *is_mutated_after_creation {
-                let ident = &mut env.identifiers[phi_id.0 as usize];
-                if ident.mutable_range.start == EvaluationOrder(0) {
+                if is_mutated_after_creation && ident.mutable_range.start == EvaluationOrder(0) {
                     ident.mutable_range.start = EvaluationOrder(first_instr_id.0.saturating_sub(1));
                 }
             }
         }
 
-        let block = &func.body.blocks[&block_id];
-        let instr_ids = block.instructions.clone();
-
-        for instr_id in &instr_ids {
-            let instr = &func.instructions[instr_id.0 as usize];
+        for instr_id in &block.instructions {
+            let instr = &mut func.instructions[instr_id.0 as usize];
             let eval_order = instr.id;
 
             // Set lvalue effect to ConditionallyMutate and fix up mutable range
             // This covers the top-level lvalue
-            let lvalue_id = instr.lvalue.identifier;
-            {
-                let ident = &mut env.identifiers[lvalue_id.0 as usize];
-                if ident.mutable_range.start == EvaluationOrder(0) {
-                    ident.mutable_range.start = eval_order;
-                }
-                if ident.mutable_range.end == EvaluationOrder(0) {
-                    ident.mutable_range.end =
-                        EvaluationOrder((eval_order.0 + 1).max(ident.mutable_range.end.0));
-                }
-            }
-            func.instructions[instr_id.0 as usize].lvalue.effect = Effect::ConditionallyMutate;
+            start_range_at(
+                &mut env.identifiers[instr.lvalue.identifier.0 as usize],
+                eval_order,
+            );
+            instr.lvalue.effect = Effect::ConditionallyMutate;
 
             // Also handle value-level lvalues (DeclareLocal, StoreLocal, etc.)
-            let value_lvalue_ids: Vec<IdentifierId> =
-                each_instruction_value_lvalue(&func.instructions[instr_id.0 as usize].value)
-                    .into_iter()
-                    .map(|p| p.identifier)
-                    .collect();
-            for vlid in &value_lvalue_ids {
-                let ident = &mut env.identifiers[vlid.0 as usize];
-                if ident.mutable_range.start == EvaluationOrder(0) {
-                    ident.mutable_range.start = eval_order;
-                }
-                if ident.mutable_range.end == EvaluationOrder(0) {
-                    ident.mutable_range.end =
-                        EvaluationOrder((eval_order.0 + 1).max(ident.mutable_range.end.0));
-                }
-            }
-            for_each_instruction_value_lvalue_mut(
-                &mut func.instructions[instr_id.0 as usize].value,
-                &mut |place| {
-                    place.effect = Effect::ConditionallyMutate;
-                },
-            );
+            for_each_instruction_value_lvalue_mut(&mut instr.value, &mut |place| {
+                start_range_at(
+                    &mut env.identifiers[place.identifier.0 as usize],
+                    eval_order,
+                );
+                place.effect = Effect::ConditionallyMutate;
+            });
 
-            // Set operand effects to Read
-            for_each_instruction_value_operand_mut(
-                &mut func.instructions[instr_id.0 as usize].value,
-                &mut |place| {
+            let Some(effects) = &instr.effects else {
+                // Set operand effects to Read
+                for_each_instruction_value_operand_mut(&mut instr.value, &mut |place| {
                     place.effect = Effect::Read;
-                },
-            );
-
-            let instr = &func.instructions[instr_id.0 as usize];
-            if instr.effects.is_none() {
+                });
                 continue;
-            }
+            };
 
             // Compute operand effects from instruction effects
-            let effects = instr.effects.as_ref().unwrap().clone();
-            let mut operand_effects: IdMap<IdentifierId, Effect> = IdMap::new();
+            operand_effects.next_instruction();
 
-            for effect in &effects {
+            for effect in effects {
                 match effect {
                     AliasingEffect::Assign { from, into, .. }
                     | AliasingEffect::Alias { from, into }
@@ -923,83 +925,54 @@ pub(crate) fn infer_mutation_aliasing_ranges(
             }
 
             // Apply operand effects to top-level lvalue
-            let instr = &mut func.instructions[instr_id.0 as usize];
-            let lvalue_id = instr.lvalue.identifier;
-            if let Some(&effect) = operand_effects.get(lvalue_id) {
+            if let Some(effect) = operand_effects.get(instr.lvalue.identifier) {
                 instr.lvalue.effect = effect;
             }
             // Apply operand effects to value-level lvalues
             for_each_instruction_value_lvalue_mut(&mut instr.value, &mut |place| {
-                if let Some(&effect) = operand_effects.get(place.identifier) {
+                if let Some(effect) = operand_effects.get(place.identifier) {
                     place.effect = effect;
                 }
             });
 
             // Apply operand effects to value operands and fix up mutable ranges
-            {
-                let mut apply = |place: &mut Place| {
-                    // Fix up mutable range start
-                    let ident = &env.identifiers[place.identifier.0 as usize];
-                    if ident.mutable_range.end > eval_order
-                        && ident.mutable_range.start == EvaluationOrder(0)
-                    {
-                        env.identifiers[place.identifier.0 as usize]
-                            .mutable_range
-                            .start = eval_order;
-                    }
-                    // Apply effect
-                    if let Some(&effect) = operand_effects.get(place.identifier) {
-                        place.effect = effect;
-                    }
-                };
-                for_each_instruction_value_operand_mut(&mut instr.value, &mut apply);
-
-                // FunctionExpression/ObjectMethod context variables are operands that
-                // require env access (they live in env.functions[func_id].context).
-                if let InstructionValue::FunctionExpression { lowered_func, .. }
-                | InstructionValue::ObjectMethod { lowered_func, .. } = &instr.value
+            let apply = |place: &mut Place, identifiers: &mut [Identifier]| {
+                // Fix up mutable range start
+                let ident = &mut identifiers[place.identifier.0 as usize];
+                if ident.mutable_range.end > eval_order
+                    && ident.mutable_range.start == EvaluationOrder(0)
                 {
-                    let func_id = lowered_func.func;
-                    let ctx_ids: Vec<IdentifierId> = env.functions[func_id.0 as usize]
-                        .context
-                        .iter()
-                        .map(|c| c.identifier)
-                        .collect();
-                    for ctx_id in &ctx_ids {
-                        let ident = &env.identifiers[ctx_id.0 as usize];
-                        if ident.mutable_range.end > eval_order
-                            && ident.mutable_range.start == EvaluationOrder(0)
-                        {
-                            env.identifiers[ctx_id.0 as usize].mutable_range.start = eval_order;
-                        }
-                        let effect = operand_effects
-                            .get(*ctx_id)
-                            .copied()
-                            .unwrap_or(Effect::Read);
-                        let inner_func = &mut env.functions[func_id.0 as usize];
-                        for ctx_place in &mut inner_func.context {
-                            if ctx_place.identifier == *ctx_id {
-                                ctx_place.effect = effect;
-                            }
-                        }
-                    }
+                    ident.mutable_range.start = eval_order;
+                }
+                // Apply effect
+                place.effect = operand_effects
+                    .get(place.identifier)
+                    .unwrap_or(Effect::Read);
+            };
+            for_each_instruction_value_operand_mut(&mut instr.value, &mut |place| {
+                apply(place, &mut env.identifiers);
+            });
+
+            // FunctionExpression/ObjectMethod context variables are operands that
+            // require env access (they live in env.functions[func_id].context).
+            if let InstructionValue::FunctionExpression { lowered_func, .. }
+            | InstructionValue::ObjectMethod { lowered_func, .. } = &instr.value
+            {
+                for ctx_place in &mut env.functions[lowered_func.func.0 as usize].context {
+                    apply(ctx_place, &mut env.identifiers);
                 }
             }
 
             // Handle StoreContext case: extend rvalue range if needed
-            let instr = &func.instructions[instr_id.0 as usize];
             if let InstructionValue::StoreContext { value, .. } = &instr.value {
-                let val_id = value.identifier;
-                let val_range_end = env.identifiers[val_id.0 as usize].mutable_range.end;
-                if val_range_end <= eval_order {
-                    env.identifiers[val_id.0 as usize].mutable_range.end =
-                        EvaluationOrder(eval_order.0 + 1);
+                let range = &mut env.identifiers[value.identifier.0 as usize].mutable_range;
+                if range.end <= eval_order {
+                    range.end = EvaluationOrder(eval_order.0 + 1);
                 }
             }
         }
 
         // Set terminal operand effects
-        let block = func.body.blocks.get_mut(&block_id).unwrap();
         match &mut block.terminal {
             crate::hir::Terminal::Return { value, .. } => {
                 value.effect = if is_function_expression {
@@ -1072,7 +1045,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                 continue;
             }
 
-            let Some(from_node) = state.nodes.get(&from.identifier) else {
+            let Some(from_node) = state.nodes.get(from.identifier) else {
                 return Err(cold_invariant(
                     "Expected a node to exist for all parameters and context variables",
                     None,
@@ -1109,7 +1082,7 @@ fn collect_param_effects(
     place: &Place,
     function_effects: &mut Vec<AliasingEffect>,
 ) {
-    let node = match state.nodes.get(&place.identifier) {
+    let node = match state.nodes.get(place.identifier) {
         Some(n) => n,
         None => return,
     };

@@ -62,7 +62,14 @@ fn of_node(style: Style, answer: &[u8]) -> Vec<u8> {
 
 /// `path.isAbsolute(path)`, on this system.
 pub fn is_absolute(path: &[u8]) -> bool {
-    is_absolute_as(if cfg!(windows) { Style::Windows } else { Style::Posix }, path)
+    is_absolute_as(
+        if cfg!(windows) {
+            Style::Windows
+        } else {
+            Style::Posix
+        },
+        path,
+    )
 }
 
 pub(crate) fn is_absolute_as(style: Style, path: &[u8]) -> bool {
@@ -139,7 +146,12 @@ fn names(path: &[u8]) -> Vec<&[u8]> {
 /// `path.toNamespacedPath` makes of them, which all begins with `\\?\`.
 pub(crate) fn relative_to_base(base: &[u8], path: &[u8]) -> Vec<u8> {
     // What follows the base as it is written is the answer if there is nothing in it to resolve.
-    if let Some([b'/', rest @ ..]) = path.strip_prefix(base)
+    let rest = match path.strip_prefix(base) {
+        Some([b'/', rest @ ..]) => Some(rest),
+        Some(rest) if base.ends_with(b"/") => Some(rest),
+        _ => None,
+    };
+    if let Some(rest) = rest
         && strings::split(rest, b"/").all(|name| !matches!(name, b"" | b"." | b".."))
     {
         return rest.to_vec();
@@ -155,6 +167,19 @@ pub(crate) fn relative_to_base(base: &[u8], path: &[u8]) -> Vec<u8> {
     let mut parts: Vec<&[u8]> = vec![b".."; base.len() - common];
     parts.extend_from_slice(&path[common..]);
     parts.join(&b'/')
+}
+
+/// What [`relative_to_base`] of `base` and an entry of `directory` has before the name of the entry. `None`: `base` is further
+/// down, and it is not the same for all of them.
+pub(crate) fn relative_to_base_before_name(base: &[u8], directory: &[u8]) -> Option<Vec<u8>> {
+    let mut relative = relative_to_base(base, directory);
+    if !relative.is_empty() {
+        if strings::split(&relative, b"/").all(|name| name == b"..") {
+            return None;
+        }
+        relative.push(b'/');
+    }
+    Some(relative)
 }
 
 /// `/^\.\.(?:\/|$)/.test(relative)`

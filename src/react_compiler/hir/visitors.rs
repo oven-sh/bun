@@ -5,51 +5,160 @@
  * LICENSE file in the root directory of this source tree.
  */
 use crate::collections::FxHashMap as HashMap;
+use core::slice;
 use smallvec::SmallVec;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
-    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, HirFunction, IdentifierId,
-    Instruction, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependencyRoot,
-    ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place, PlaceOrSpread, ScopeId, Terminal,
+    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, Case, HirFunction,
+    IdentifierId, Instruction, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependency,
+    ManualMemoDependencyRoot, ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place,
+    PlaceOrSpread, ScopeId, Terminal,
 };
 
 // =============================================================================
-// Iterator functions (return Vec instead of generators)
+// Borrowing iterators (no allocation, no clone)
 // =============================================================================
 
-/// An instruction seldom has more.
-pub type Places = SmallVec<[Place; 4]>;
-pub type Ids = SmallVec<[IdentifierId; 4]>;
-pub type Blocks = SmallVec<[BlockId; 4]>;
-
-/// Yields `instr.lvalue` plus the value's lvalues.
-/// Equivalent to TS `eachInstructionLValue`.
-pub fn each_instruction_lvalue(instr: &Instruction) -> Places {
-    let mut result = SmallVec::new();
-    result.push(instr.lvalue.clone());
-    result.extend(each_instruction_value_lvalue(&instr.value));
-    result
+/// Places of an instruction, a pattern or a terminal, in upstream's order.
+pub struct PlaceIter<'a> {
+    first: [Option<&'a Place>; 3],
+    at: usize,
+    rest: Rest<'a>,
 }
 
-/// Yields lvalues from DeclareLocal/StoreLocal/DeclareContext/StoreContext/Destructure/PostfixUpdate/PrefixUpdate.
+enum Rest<'a> {
+    None,
+    Places(slice::Iter<'a, Place>),
+    Arguments(slice::Iter<'a, PlaceOrSpread>),
+    Jsx(slice::Iter<'a, JsxAttribute>, slice::Iter<'a, Place>),
+    /// The place of a property whose computed key was yielded last comes first.
+    Properties(slice::Iter<'a, ObjectPropertyOrSpread>, Option<&'a Place>),
+    Elements(slice::Iter<'a, ArrayElement>),
+    Dependencies(slice::Iter<'a, ManualMemoDependency>),
+    ArrayPattern(slice::Iter<'a, ArrayPatternElement>),
+    ObjectPattern(slice::Iter<'a, ObjectPropertyOrSpread>),
+    Cases(slice::Iter<'a, Case>),
+}
+
+impl<'a> PlaceIter<'a> {
+    #[inline]
+    fn new<const N: usize>(first: [&'a Place; N], rest: Rest<'a>) -> Self {
+        let mut slots = [None; 3];
+        for (slot, place) in slots[3 - N..].iter_mut().zip(first) {
+            *slot = Some(place);
+        }
+        PlaceIter {
+            first: slots,
+            at: 3 - N,
+            rest,
+        }
+    }
+
+    #[inline]
+    fn of_pattern<const N: usize>(first: [&'a Place; N], pattern: &'a Pattern) -> Self {
+        Self::new(
+            first,
+            match pattern {
+                Pattern::Array(array) => Rest::ArrayPattern(array.items.iter()),
+                Pattern::Object(object) => Rest::ObjectPattern(object.properties.iter()),
+            },
+        )
+    }
+}
+
+impl<'a> Iterator for PlaceIter<'a> {
+    type Item = &'a Place;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a Place> {
+        if self.at < 3 {
+            self.at += 1;
+            return self.first[self.at - 1];
+        }
+        match &mut self.rest {
+            Rest::None => None,
+            Rest::Places(places) => places.next(),
+            Rest::Arguments(arguments) => arguments.next().map(PlaceOrSpread::place),
+            Rest::Jsx(attributes, children) => match attributes.next() {
+                Some(JsxAttribute::Attribute { place, .. }) => Some(place),
+                Some(JsxAttribute::SpreadAttribute { argument }) => Some(argument),
+                None => children.next(),
+            },
+            Rest::Properties(properties, value) => {
+                if let Some(value) = value.take() {
+                    return Some(value);
+                }
+                match properties.next()? {
+                    ObjectPropertyOrSpread::Property(property) => match &property.key {
+                        ObjectPropertyKey::Computed { name } => {
+                            *value = Some(&property.place);
+                            Some(name)
+                        }
+                        _ => Some(&property.place),
+                    },
+                    ObjectPropertyOrSpread::Spread(spread) => Some(&spread.place),
+                }
+            }
+            Rest::Elements(elements) => elements.find_map(|element| match element {
+                ArrayElement::Place(place) => Some(place),
+                ArrayElement::Spread(spread) => Some(&spread.place),
+                ArrayElement::Hole => None,
+            }),
+            Rest::Dependencies(dependencies) => {
+                dependencies.find_map(|dependency| match &dependency.root {
+                    ManualMemoDependencyRoot::NamedLocal { value, .. } => Some(value),
+                    ManualMemoDependencyRoot::Global { .. } => None,
+                })
+            }
+            Rest::ArrayPattern(items) => items.find_map(|item| match item {
+                ArrayPatternElement::Place(place) => Some(place),
+                ArrayPatternElement::Spread(spread) => Some(&spread.place),
+                ArrayPatternElement::Hole => None,
+            }),
+            Rest::ObjectPattern(properties) => properties.next().map(|property| match property {
+                ObjectPropertyOrSpread::Property(property) => &property.place,
+                ObjectPropertyOrSpread::Spread(spread) => &spread.place,
+            }),
+            Rest::Cases(cases) => cases.find_map(|case| case.test.as_ref()),
+        }
+    }
+}
+
+/// `instr.lvalue`, then the value's lvalues.
+/// Equivalent to TS `eachInstructionLValue`.
+pub fn lvalues(instr: &Instruction) -> PlaceIter<'_> {
+    match &instr.value {
+        InstructionValue::DeclareContext { lvalue, .. }
+        | InstructionValue::StoreContext { lvalue, .. }
+        | InstructionValue::DeclareLocal { lvalue, .. }
+        | InstructionValue::StoreLocal { lvalue, .. } => {
+            PlaceIter::new([&instr.lvalue, &lvalue.place], Rest::None)
+        }
+        InstructionValue::Destructure { lvalue, .. } => {
+            PlaceIter::of_pattern([&instr.lvalue], &lvalue.pattern)
+        }
+        InstructionValue::PostfixUpdate { lvalue, .. }
+        | InstructionValue::PrefixUpdate { lvalue, .. } => {
+            PlaceIter::new([&instr.lvalue, lvalue], Rest::None)
+        }
+        _ => PlaceIter::new([&instr.lvalue], Rest::None),
+    }
+}
+
+/// The lvalues of DeclareLocal/StoreLocal/DeclareContext/StoreContext/Destructure/PostfixUpdate/PrefixUpdate.
 /// Equivalent to TS `eachInstructionValueLValue`.
-pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Places {
-    let mut result = SmallVec::new();
+pub fn value_lvalues(value: &InstructionValue) -> PlaceIter<'_> {
     match value {
         InstructionValue::DeclareContext { lvalue, .. }
         | InstructionValue::StoreContext { lvalue, .. }
         | InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::StoreLocal { lvalue, .. } => {
-            result.push(lvalue.place.clone());
+            PlaceIter::new([&lvalue.place], Rest::None)
         }
-        InstructionValue::Destructure { lvalue, .. } => {
-            result.extend(each_pattern_operand(&lvalue.pattern));
-        }
+        InstructionValue::Destructure { lvalue, .. } => PlaceIter::of_pattern([], &lvalue.pattern),
         InstructionValue::PostfixUpdate { lvalue, .. }
-        | InstructionValue::PrefixUpdate { lvalue, .. } => {
-            result.push(lvalue.clone());
-        }
+        | InstructionValue::PrefixUpdate { lvalue, .. } => PlaceIter::new([lvalue], Rest::None),
         // All other variants have no lvalues
         InstructionValue::LoadLocal { .. }
         | InstructionValue::LoadContext { .. }
@@ -86,9 +195,173 @@ pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Places {
         | InstructionValue::Debugger { .. }
         | InstructionValue::StartMemoize { .. }
         | InstructionValue::FinishMemoize { .. }
-        | InstructionValue::UnsupportedNode { .. } => {}
+        | InstructionValue::UnsupportedNode { .. } => PlaceIter::new([], Rest::None),
     }
-    result
+}
+
+/// The operands of a value. Those of a function are what it captures.
+/// Equivalent to TS `eachInstructionValueOperand`.
+pub fn operands<'a>(value: &'a InstructionValue, functions: &'a [HirFunction]) -> PlaceIter<'a> {
+    match value {
+        InstructionValue::NewExpression { callee, args, .. }
+        | InstructionValue::CallExpression { callee, args, .. } => {
+            PlaceIter::new([callee], Rest::Arguments(args.iter()))
+        }
+        InstructionValue::BinaryExpression { left, right, .. } => {
+            PlaceIter::new([left, right], Rest::None)
+        }
+        InstructionValue::MethodCall {
+            receiver,
+            property,
+            args,
+            ..
+        } => PlaceIter::new([receiver, property], Rest::Arguments(args.iter())),
+        InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
+            PlaceIter::new([place], Rest::None)
+        }
+        InstructionValue::StoreContext { lvalue, value, .. } => {
+            PlaceIter::new([&lvalue.place, value], Rest::None)
+        }
+        InstructionValue::StoreLocal { value, .. }
+        | InstructionValue::StoreGlobal { value, .. }
+        | InstructionValue::Destructure { value, .. }
+        | InstructionValue::UnaryExpression { value, .. }
+        | InstructionValue::TypeCastExpression { value, .. }
+        | InstructionValue::Await { value, .. }
+        | InstructionValue::NextPropertyOf { value, .. }
+        | InstructionValue::PostfixUpdate { value, .. }
+        | InstructionValue::PrefixUpdate { value, .. } => PlaceIter::new([value], Rest::None),
+        InstructionValue::PropertyLoad { object, .. }
+        | InstructionValue::PropertyDelete { object, .. } => PlaceIter::new([object], Rest::None),
+        InstructionValue::PropertyStore { object, value, .. } => {
+            PlaceIter::new([object, value], Rest::None)
+        }
+        InstructionValue::ComputedLoad {
+            object, property, ..
+        }
+        | InstructionValue::ComputedDelete {
+            object, property, ..
+        } => PlaceIter::new([object, property], Rest::None),
+        InstructionValue::ComputedStore {
+            object,
+            property,
+            value,
+            ..
+        } => PlaceIter::new([object, property, value], Rest::None),
+        InstructionValue::JsxExpression {
+            tag,
+            props,
+            children,
+            ..
+        } => {
+            let children = children.as_ref().map_or(&[][..], |children| &children[..]);
+            let rest = Rest::Jsx(props.iter(), children.iter());
+            match tag {
+                JsxTag::Place(place) => PlaceIter::new([place], rest),
+                JsxTag::Builtin(_) => PlaceIter::new([], rest),
+            }
+        }
+        InstructionValue::JsxFragment { children, .. } => {
+            PlaceIter::new([], Rest::Places(children.iter()))
+        }
+        InstructionValue::ObjectExpression { properties, .. } => {
+            PlaceIter::new([], Rest::Properties(properties.iter(), None))
+        }
+        InstructionValue::ArrayExpression { elements, .. } => {
+            PlaceIter::new([], Rest::Elements(elements.iter()))
+        }
+        InstructionValue::ObjectMethod { lowered_func, .. }
+        | InstructionValue::FunctionExpression { lowered_func, .. } => {
+            let func = &functions[lowered_func.func.0 as usize];
+            PlaceIter::new([], Rest::Places(func.context.iter()))
+        }
+        InstructionValue::TaggedTemplateExpression { tag, .. } => PlaceIter::new([tag], Rest::None),
+        InstructionValue::TemplateLiteral { subexprs, .. } => {
+            PlaceIter::new([], Rest::Places(subexprs.iter()))
+        }
+        InstructionValue::GetIterator { collection, .. } => {
+            PlaceIter::new([collection], Rest::None)
+        }
+        InstructionValue::IteratorNext {
+            iterator,
+            collection,
+            ..
+        } => PlaceIter::new([iterator, collection], Rest::None),
+        InstructionValue::StartMemoize { deps, .. } => {
+            let deps = deps.as_ref().map_or(&[][..], |deps| &deps[..]);
+            PlaceIter::new([], Rest::Dependencies(deps.iter()))
+        }
+        InstructionValue::FinishMemoize { decl, .. } => PlaceIter::new([decl], Rest::None),
+        InstructionValue::DeclareContext { .. }
+        | InstructionValue::DeclareLocal { .. }
+        | InstructionValue::Debugger { .. }
+        | InstructionValue::RegExpLiteral { .. }
+        | InstructionValue::MetaProperty { .. }
+        | InstructionValue::LoadGlobal { .. }
+        | InstructionValue::UnsupportedNode { .. }
+        | InstructionValue::Primitive { .. }
+        | InstructionValue::JSXText { .. } => PlaceIter::new([], Rest::None),
+    }
+}
+
+/// The places of array/object patterns.
+/// Equivalent to TS `eachPatternOperand`.
+pub fn pattern_operands(pattern: &Pattern) -> PlaceIter<'_> {
+    PlaceIter::of_pattern([], pattern)
+}
+
+/// The places used by a terminal.
+/// Equivalent to TS `eachTerminalOperand`.
+pub fn terminal_operands(terminal: &Terminal) -> PlaceIter<'_> {
+    match terminal {
+        Terminal::If { test, .. } | Terminal::Branch { test, .. } => {
+            PlaceIter::new([test], Rest::None)
+        }
+        Terminal::Switch { test, cases, .. } => PlaceIter::new([test], Rest::Cases(cases.iter())),
+        Terminal::Return { value, .. } | Terminal::Throw { value, .. } => {
+            PlaceIter::new([value], Rest::None)
+        }
+        Terminal::Try {
+            handler_binding: Some(binding),
+            ..
+        } => PlaceIter::new([binding], Rest::None),
+        Terminal::Try { .. }
+        | Terminal::MaybeThrow { .. }
+        | Terminal::Sequence { .. }
+        | Terminal::Label { .. }
+        | Terminal::Optional { .. }
+        | Terminal::Ternary { .. }
+        | Terminal::Logical { .. }
+        | Terminal::DoWhile { .. }
+        | Terminal::While { .. }
+        | Terminal::For { .. }
+        | Terminal::ForOf { .. }
+        | Terminal::ForIn { .. }
+        | Terminal::Goto { .. }
+        | Terminal::Unreachable { .. }
+        | Terminal::Unsupported { .. }
+        | Terminal::Scope { .. }
+        | Terminal::PrunedScope { .. } => PlaceIter::new([], Rest::None),
+    }
+}
+
+// =============================================================================
+// Iterator functions (return Vec instead of generators)
+// =============================================================================
+
+/// An instruction seldom has more.
+pub type Places = SmallVec<[Place; 4]>;
+pub type Ids = SmallVec<[IdentifierId; 4]>;
+pub type Blocks = SmallVec<[BlockId; 4]>;
+
+/// [`lvalues`], cloned.
+pub fn each_instruction_lvalue(instr: &Instruction) -> Places {
+    lvalues(instr).cloned().collect()
+}
+
+/// [`value_lvalues`], cloned.
+pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Places {
+    value_lvalues(value).cloned().collect()
 }
 
 /// Delegates to each_instruction_value_operand.
@@ -97,8 +370,7 @@ pub fn each_instruction_operand(instr: &Instruction, env: &Environment) -> Place
     each_instruction_value_operand(&instr.value, env)
 }
 
-/// Yields operand places from an InstructionValue.
-/// Equivalent to TS `eachInstructionValueOperand`.
+/// [`operands`], cloned.
 pub fn each_instruction_value_operand(value: &InstructionValue, env: &Environment) -> Places {
     each_instruction_value_operand_with_functions(value, &env.functions)
 }
@@ -109,249 +381,12 @@ pub fn each_instruction_value_operand_with_functions(
     value: &InstructionValue,
     functions: &[HirFunction],
 ) -> Places {
-    let mut result = SmallVec::new();
-    match value {
-        InstructionValue::NewExpression { callee, args, .. }
-        | InstructionValue::CallExpression { callee, args, .. } => {
-            result.push(callee.clone());
-            result.extend(each_call_argument(args));
-        }
-        InstructionValue::BinaryExpression { left, right, .. } => {
-            result.push(left.clone());
-            result.push(right.clone());
-        }
-        InstructionValue::MethodCall {
-            receiver,
-            property,
-            args,
-            ..
-        } => {
-            result.push(receiver.clone());
-            result.push(property.clone());
-            result.extend(each_call_argument(args));
-        }
-        InstructionValue::DeclareContext { .. } | InstructionValue::DeclareLocal { .. } => {
-            // no operands
-        }
-        InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
-            result.push(place.clone());
-        }
-        InstructionValue::StoreLocal { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::StoreContext {
-            lvalue, value: val, ..
-        } => {
-            result.push(lvalue.place.clone());
-            result.push(val.clone());
-        }
-        InstructionValue::StoreGlobal { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::Destructure { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::PropertyLoad { object, .. } => {
-            result.push(object.clone());
-        }
-        InstructionValue::PropertyDelete { object, .. } => {
-            result.push(object.clone());
-        }
-        InstructionValue::PropertyStore {
-            object, value: val, ..
-        } => {
-            result.push(object.clone());
-            result.push(val.clone());
-        }
-        InstructionValue::ComputedLoad {
-            object, property, ..
-        } => {
-            result.push(object.clone());
-            result.push(property.clone());
-        }
-        InstructionValue::ComputedDelete {
-            object, property, ..
-        } => {
-            result.push(object.clone());
-            result.push(property.clone());
-        }
-        InstructionValue::ComputedStore {
-            object,
-            property,
-            value: val,
-            ..
-        } => {
-            result.push(object.clone());
-            result.push(property.clone());
-            result.push(val.clone());
-        }
-        InstructionValue::UnaryExpression { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::JsxExpression {
-            tag,
-            props,
-            children,
-            ..
-        } => {
-            if let JsxTag::Place(place) = tag {
-                result.push(place.clone());
-            }
-            for attribute in props {
-                match attribute {
-                    JsxAttribute::Attribute { place, .. } => {
-                        result.push(place.clone());
-                    }
-                    JsxAttribute::SpreadAttribute { argument, .. } => {
-                        result.push(argument.clone());
-                    }
-                }
-            }
-            if let Some(children) = children {
-                for child in children {
-                    result.push(child.clone());
-                }
-            }
-        }
-        InstructionValue::JsxFragment { children, .. } => {
-            for child in children {
-                result.push(child.clone());
-            }
-        }
-        InstructionValue::ObjectExpression { properties, .. } => {
-            for property in properties {
-                match property {
-                    ObjectPropertyOrSpread::Property(prop) => {
-                        if let ObjectPropertyKey::Computed { name } = &prop.key {
-                            result.push(name.clone());
-                        }
-                        result.push(prop.place.clone());
-                    }
-                    ObjectPropertyOrSpread::Spread(spread) => {
-                        result.push(spread.place.clone());
-                    }
-                }
-            }
-        }
-        InstructionValue::ArrayExpression { elements, .. } => {
-            for element in elements {
-                match element {
-                    ArrayElement::Place(place) => {
-                        result.push(place.clone());
-                    }
-                    ArrayElement::Spread(spread) => {
-                        result.push(spread.place.clone());
-                    }
-                    ArrayElement::Hole => {}
-                }
-            }
-        }
-        InstructionValue::ObjectMethod { lowered_func, .. }
-        | InstructionValue::FunctionExpression { lowered_func, .. } => {
-            let func = &functions[lowered_func.func.0 as usize];
-            for ctx_place in &func.context {
-                result.push(ctx_place.clone());
-            }
-        }
-        InstructionValue::TaggedTemplateExpression { tag, .. } => {
-            result.push(tag.clone());
-        }
-        InstructionValue::TypeCastExpression { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::TemplateLiteral { subexprs, .. } => {
-            for subexpr in subexprs {
-                result.push(subexpr.clone());
-            }
-        }
-        InstructionValue::Await { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::GetIterator { collection, .. } => {
-            result.push(collection.clone());
-        }
-        InstructionValue::IteratorNext {
-            iterator,
-            collection,
-            ..
-        } => {
-            result.push(iterator.clone());
-            result.push(collection.clone());
-        }
-        InstructionValue::NextPropertyOf { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::PostfixUpdate { value: val, .. }
-        | InstructionValue::PrefixUpdate { value: val, .. } => {
-            result.push(val.clone());
-        }
-        InstructionValue::StartMemoize { deps, .. } => {
-            if let Some(deps) = deps {
-                for dep in deps {
-                    if let ManualMemoDependencyRoot::NamedLocal { value, .. } = &dep.root {
-                        result.push(value.clone());
-                    }
-                }
-            }
-        }
-        InstructionValue::FinishMemoize { decl, .. } => {
-            result.push(decl.clone());
-        }
-        InstructionValue::Debugger { .. }
-        | InstructionValue::RegExpLiteral { .. }
-        | InstructionValue::MetaProperty { .. }
-        | InstructionValue::LoadGlobal { .. }
-        | InstructionValue::UnsupportedNode { .. }
-        | InstructionValue::Primitive { .. }
-        | InstructionValue::JSXText { .. } => {
-            // no operands
-        }
-    }
-    result
+    operands(value, functions).cloned().collect()
 }
 
-/// Yields each arg's place.
-/// Equivalent to TS `eachCallArgument`.
-pub fn each_call_argument(args: &[PlaceOrSpread]) -> Places {
-    let mut result = SmallVec::new();
-    for arg in args {
-        result.push(arg.place().clone());
-    }
-    result
-}
-
-/// Yields places from array/object patterns.
-/// Equivalent to TS `eachPatternOperand`.
+/// [`pattern_operands`], cloned.
 pub fn each_pattern_operand(pattern: &Pattern) -> Places {
-    let mut result = SmallVec::new();
-    match pattern {
-        Pattern::Array(arr) => {
-            for item in &arr.items {
-                match item {
-                    ArrayPatternElement::Place(place) => {
-                        result.push(place.clone());
-                    }
-                    ArrayPatternElement::Spread(spread) => {
-                        result.push(spread.place.clone());
-                    }
-                    ArrayPatternElement::Hole => {}
-                }
-            }
-        }
-        Pattern::Object(obj) => {
-            for property in &obj.properties {
-                match property {
-                    ObjectPropertyOrSpread::Property(prop) => {
-                        result.push(prop.place.clone());
-                    }
-                    ObjectPropertyOrSpread::Spread(spread) => {
-                        result.push(spread.place.clone());
-                    }
-                }
-            }
-        }
-    }
-    result
+    pattern_operands(pattern).cloned().collect()
 }
 
 /// Returns true if the pattern contains a spread element.
@@ -454,55 +489,9 @@ pub fn each_terminal_successor(terminal: &Terminal) -> Blocks {
     result
 }
 
-/// Yields places used by terminal.
-/// Equivalent to TS `eachTerminalOperand`.
+/// [`terminal_operands`], cloned.
 pub fn each_terminal_operand(terminal: &Terminal) -> Places {
-    let mut result = SmallVec::new();
-    match terminal {
-        Terminal::If { test, .. } => {
-            result.push(test.clone());
-        }
-        Terminal::Branch { test, .. } => {
-            result.push(test.clone());
-        }
-        Terminal::Switch { test, cases, .. } => {
-            result.push(test.clone());
-            for case in cases {
-                if let Some(test) = &case.test {
-                    result.push(test.clone());
-                }
-            }
-        }
-        Terminal::Return { value, .. } | Terminal::Throw { value, .. } => {
-            result.push(value.clone());
-        }
-        Terminal::Try {
-            handler_binding, ..
-        } => {
-            if let Some(binding) = handler_binding {
-                result.push(binding.clone());
-            }
-        }
-        Terminal::MaybeThrow { .. }
-        | Terminal::Sequence { .. }
-        | Terminal::Label { .. }
-        | Terminal::Optional { .. }
-        | Terminal::Ternary { .. }
-        | Terminal::Logical { .. }
-        | Terminal::DoWhile { .. }
-        | Terminal::While { .. }
-        | Terminal::For { .. }
-        | Terminal::ForOf { .. }
-        | Terminal::ForIn { .. }
-        | Terminal::Goto { .. }
-        | Terminal::Unreachable { .. }
-        | Terminal::Unsupported { .. }
-        | Terminal::Scope { .. }
-        | Terminal::PrunedScope { .. } => {
-            // no-op
-        }
-    }
-    result
+    terminal_operands(terminal).cloned().collect()
 }
 
 // =============================================================================
@@ -1022,39 +1011,25 @@ impl ScopeBlockTraversal {
 // =============================================================================
 
 /// Collect all lvalue IdentifierIds from an instruction.
-/// Convenience wrapper around `each_instruction_lvalue` that maps to ids.
 pub fn each_instruction_lvalue_ids(instr: &Instruction) -> Ids {
-    each_instruction_lvalue(instr)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
+    lvalues(instr).map(|p| p.identifier).collect()
 }
 
 /// Collect all operand IdentifierIds from an instruction.
-/// Convenience wrapper around `each_instruction_operand` that maps to ids.
 pub fn each_instruction_operand_ids(instr: &Instruction, env: &Environment) -> Ids {
-    each_instruction_operand(instr, env)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
+    each_instruction_value_operand_ids(&instr.value, env)
 }
 
 /// Collect all operand IdentifierIds from an instruction value.
-/// Convenience wrapper around `each_instruction_value_operand` that maps to ids.
 pub fn each_instruction_value_operand_ids(value: &InstructionValue, env: &Environment) -> Ids {
-    each_instruction_value_operand(value, env)
-        .into_iter()
+    operands(value, &env.functions)
         .map(|p| p.identifier)
         .collect()
 }
 
 /// Collect all operand IdentifierIds from a terminal.
-/// Convenience wrapper around `each_terminal_operand` that maps to ids.
 pub fn each_terminal_operand_ids(terminal: &Terminal) -> Ids {
-    each_terminal_operand(terminal)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
+    terminal_operands(terminal).map(|p| p.identifier).collect()
 }
 
 // =============================================================================

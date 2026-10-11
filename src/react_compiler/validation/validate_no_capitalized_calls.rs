@@ -1,4 +1,4 @@
-use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::collections::FxHashMap as HashMap;
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::environment::Environment;
@@ -12,18 +12,6 @@ pub(crate) fn validate_no_capitalized_calls(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    // Build the allow list from global registry keys + config entries
-    let mut allow_list: HashSet<Vec<u8>> = env
-        .globals()
-        .keys()
-        .map(|k| k.as_bytes().to_vec())
-        .collect();
-    if let Some(config_entries) = &env.config.validate_no_capitalized_calls {
-        for entry in config_entries {
-            allow_list.insert(entry.as_bytes().to_vec());
-        }
-    }
-
     let mut capital_load_globals: HashMap<IdentifierId, StoreStr> = HashMap::default();
     let mut capitalized_properties: HashMap<IdentifierId, StoreStr> = HashMap::default();
 
@@ -41,7 +29,7 @@ pub(crate) fn validate_no_capitalized_calls(
                     if name.first().is_some_and(u8::is_ascii_uppercase)
                         // We don't want to flag CONSTANTS()
                         && name.iter().any(u8::is_ascii_lowercase)
-                        && !allow_list.contains(name)
+                        && !is_allowed(env, name)
                     {
                         capital_load_globals.insert(lvalue_id, StoreStr::new(name));
                     }
@@ -93,4 +81,11 @@ pub(crate) fn validate_no_capitalized_calls(
         }
     }
     Ok(())
+}
+
+/// The allow list is the keys of the global registry and the entries of the config.
+fn is_allowed(env: &Environment, name: &[u8]) -> bool {
+    core::str::from_utf8(name).is_ok_and(|name| env.globals().contains_key(name))
+        || (env.config.validate_no_capitalized_calls.iter().flatten())
+            .any(|entry| entry.as_bytes() == name)
 }

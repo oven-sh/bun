@@ -1268,6 +1268,10 @@ impl Run<'_> {
         let denies_warnings =
             options.deny_warnings || of_cwd.as_ref().is_some_and(|it| it.denies_warnings);
         let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
+        // Only these two have something for a file without a problem.
+        if !matches!(format, Format::Json | Format::JsonWithMetadata) {
+            results.retain(|it| !it.messages.is_empty());
+        }
         match results.iter().all(|it| is_ordered_by_bytes(&it.path)) {
             true => bun_lint::utils::sort::sort_by(&mut results, |a, b| a.path.cmp(&b.path)),
             false => bun_lint::utils::sort::sort_by(&mut results, |a, b| {

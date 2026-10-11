@@ -151,21 +151,6 @@ impl GlobalRegistry {
             || (self.base && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
     }
 
-    /// Iterate over all keys in the registry (base + extras).
-    /// Keys in extras that shadow base keys appear only once.
-    pub fn keys(&self) -> impl Iterator<Item = &str> {
-        let entries = &self.entries;
-        let base_keys = self
-            .base
-            .then(|| BASE_GLOBAL_INDEX.keys())
-            .into_iter()
-            .flatten()
-            // SAFETY: comptime_string_map! keys are ASCII byte-string literals.
-            .map(|k| unsafe { core::str::from_utf8_unchecked(k) })
-            .filter(move |k| !entries.contains_key(*k));
-        entries.keys().map(|k| &**k).chain(base_keys)
-    }
-
     /// Consume the registry and return the inner HashMap.
     /// Only valid in builder mode (no base).
     pub fn into_inner(self) -> HashMap<Cow<'static, str>, Global> {

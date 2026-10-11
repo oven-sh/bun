@@ -66,6 +66,11 @@ Keep the diff between upstream and the port as small as the type substitution
 allows — the `/sync-react-compiler` skill re-ports upstream changes hunk by
 hunk, so gratuitous restructuring makes that harder.
 
+Where a ported file has to differ from upstream (a bug or a cost that upstream
+has too), the code that differs starts with a `Not in upstream` comment that
+says why. Search the file for that marker before you apply an upstream hunk
+to it.
+
 ### Type mapping (input: lowering)
 
 | upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |

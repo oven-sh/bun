@@ -20,6 +20,34 @@ struct State {
     incomplete_phis: Vec<IncompletePhi>,
 }
 
+/// Not in upstream. What `get_id_at` returns for a block, known before it makes anything.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reaching {
+    /// An identifier that is in `defs` already.
+    Def(IdentifierId),
+    /// The identifier that `get_id_at` makes at this block: a phi or an incomplete phi.
+    MadeAt(BlockId),
+    /// The old identifier: no block on the way to a block without predecessors defines it.
+    Unknown,
+}
+
+/// Not in upstream. What one lookup knows about a block that it passed.
+#[derive(Clone, Copy)]
+struct Passed {
+    /// `SSABuilder::lookup` of that lookup. Every other lookup ignores the rest.
+    lookup: u64,
+    reaching: Reaching,
+    /// How many successors of the block the lookup came from.
+    came_from: u32,
+}
+
+/// Not in upstream. A block whose predecessors `SSABuilder::reaching` still asks.
+struct Asked {
+    block_id: BlockId,
+    next_pred: usize,
+    reaching: Option<Reaching>,
+}
+
 struct SSABuilder {
     /// Indexed by `BlockId.0`.
     states: Vec<Option<State>>,
@@ -33,13 +61,30 @@ struct SSABuilder {
     /// Indexed by `BlockId.0`.
     pending_phis: Vec<Vec<Phi>>,
     processed_functions: Vec<FunctionId>,
+    /// Not in upstream. Indexed by `BlockId.0`: how many successors the block has.
+    successors: Vec<u32>,
+    /// Not in upstream. Indexed by `BlockId.0`.
+    passed: Vec<Passed>,
+    /// Not in upstream. The blocks that the current lookup passed.
+    passed_blocks: Vec<BlockId>,
+    /// Not in upstream. Empty between two calls of `reaching`, kept for its capacity.
+    asked: Vec<Asked>,
+    /// Not in upstream. Counts the lookups from outside `get_id_at`. Each is for one identifier.
+    lookup: u64,
+    /// Not in upstream. The identifier of the current lookup, once `reaching` ran for it.
+    looked_up: Option<IdentifierId>,
 }
 
 impl SSABuilder {
     fn new(blocks: &IndexMap<BlockId, BasicBlock>, num_blocks: usize) -> Self {
         let mut block_preds: Vec<Vec<BlockId>> = vec![Vec::new(); num_blocks];
+        // Not in upstream: the successor counts that `end_lookup` compares with.
+        let mut successors: Vec<u32> = vec![0; num_blocks];
         for (id, block) in blocks {
             block_preds[id.0 as usize] = block.preds.iter().copied().collect();
+            for pred in &block.preds {
+                successors[pred.0 as usize] += 1;
+            }
         }
         let mut states = Vec::with_capacity(num_blocks);
         states.resize_with(num_blocks, || None);
@@ -52,12 +97,30 @@ impl SSABuilder {
             context: HashSet::new(),
             pending_phis: vec![Vec::new(); num_blocks],
             processed_functions: Vec::new(),
+            // Not in upstream: the fields from here on.
+            successors,
+            passed: vec![
+                Passed {
+                    lookup: 0,
+                    reaching: Reaching::MadeAt(BlockId(0)),
+                    came_from: 0,
+                };
+                num_blocks
+            ],
+            passed_blocks: Vec::new(),
+            asked: Vec::new(),
+            lookup: 1,
+            looked_up: None,
         }
     }
 
     fn define_function(&mut self, func: &HirFunction) {
         for (id, block) in &func.body.blocks {
             self.block_preds[id.0 as usize] = block.preds.iter().copied().collect();
+            // Not in upstream: the successor counts, as in `new`.
+            for pred in &block.preds {
+                self.successors[pred.0 as usize] += 1;
+            }
         }
     }
 
@@ -135,6 +198,8 @@ impl SSABuilder {
     fn get_place(&mut self, old_place: &Place, env: &mut Environment) -> Place {
         let current_id = self.current.expect("must be in a block");
         let new_id = self.get_id_at(old_place, current_id, env);
+        // Not in upstream: this lookup is over.
+        self.end_lookup(old_place.identifier);
         Place {
             identifier: new_id,
             effect: old_place.effect,
@@ -192,6 +257,22 @@ impl SSABuilder {
             return new_id;
         }
 
+        // Not in upstream, which makes a phi here also when all predecessors have one identifier.
+        let new_id = match self.reaching(old_place.identifier, block_id) {
+            Reaching::Def(new_id) => Some(new_id),
+            Reaching::MadeAt(at) if at != block_id => Some(self.get_id_at(old_place, at, env)),
+            // The upstream code below makes every identifier that is still made, in its order.
+            Reaching::MadeAt(_) | Reaching::Unknown => None,
+        };
+        if let Some(new_id) = new_id {
+            self.states[block_id.0 as usize]
+                .as_mut()
+                .unwrap()
+                .defs
+                .insert(old_place.identifier, new_id);
+            return new_id;
+        }
+
         let new_id = self.make_id(old_place.identifier, env);
         self.states[block_id.0 as usize]
             .as_mut()
@@ -206,6 +287,117 @@ impl SSABuilder {
         };
         self.add_phi(block_id, old_place, &new_place, env);
         new_id
+    }
+
+    /// Not in upstream. The cases of `get_id_at` without its side effects: change the two together.
+    fn reaching(&mut self, old_id: IdentifierId, block_id: BlockId) -> Reaching {
+        debug_assert!(
+            self.looked_up.is_none_or(|id| id == old_id),
+            "the lookup before this one did not call end_lookup"
+        );
+        self.looked_up = Some(old_id);
+        // A work list and no recursion: a lookup can pass every block of the function.
+        let mut asked = std::mem::take(&mut self.asked);
+        let mut block_id = block_id;
+        let reaching = loop {
+            let index = block_id.0 as usize;
+            let came_from = u32::from(!asked.is_empty());
+            let mut found = if let Some(&new_id) = self.states[index]
+                .as_ref()
+                .and_then(|state| state.defs.get(old_id))
+            {
+                Some(if new_id == old_id {
+                    Reaching::Unknown
+                } else {
+                    Reaching::Def(new_id)
+                })
+            } else if self.passed[index].lookup == self.lookup {
+                self.passed[index].came_from += came_from;
+                Some(self.passed[index].reaching)
+            } else if self.block_preds[index].is_empty() {
+                Some(Reaching::Unknown)
+            } else if self.unsealed_preds[index].unwrap_or(0) > 0 {
+                Some(Reaching::MadeAt(block_id))
+            } else {
+                // A block that is asked again before it is done closes a loop: it is its phi.
+                self.passed[index] = Passed {
+                    lookup: self.lookup,
+                    reaching: Reaching::MadeAt(block_id),
+                    came_from,
+                };
+                self.passed_blocks.push(block_id);
+                asked.push(Asked {
+                    block_id,
+                    next_pred: 0,
+                    reaching: None,
+                });
+                None
+            };
+            // Give `found` to the block that asked, then ask its next predecessor or finish it.
+            let next_pred = loop {
+                let Some(top) = asked.last_mut() else {
+                    break None;
+                };
+                if let Some(found) = found.take() {
+                    top.reaching = Some(match top.reaching {
+                        Some(reaching) if reaching != found => Reaching::MadeAt(top.block_id),
+                        _ => found,
+                    });
+                }
+                let preds = &self.block_preds[top.block_id.0 as usize];
+                if let Some(&pred) = preds.get(top.next_pred) {
+                    top.next_pred += 1;
+                    break Some(pred);
+                }
+                let mut reaching = top.reaching.expect("a block that asks has predecessors");
+                // `unmark_unknown` tells the old identifier from a phi of it: the join stays a phi.
+                if reaching == Reaching::Unknown && preds.len() > 1 {
+                    reaching = Reaching::MadeAt(top.block_id);
+                }
+                self.passed[top.block_id.0 as usize].reaching = reaching;
+                asked.pop();
+                found = Some(reaching);
+            };
+            match next_pred {
+                Some(pred) => block_id = pred,
+                None => break found.expect("the first block was found or it asked"),
+            }
+        };
+        self.asked = asked;
+        reaching
+    }
+
+    /// Not in upstream, which adds the identifier to `defs` of every block that a lookup passes.
+    fn end_lookup(&mut self, old_id: IdentifierId) {
+        debug_assert!(self.looked_up.is_none_or(|id| id == old_id));
+        self.looked_up = None;
+        for i in 0..self.passed_blocks.len() {
+            let index = self.passed_blocks[i].0 as usize;
+            let Passed {
+                reaching,
+                came_from,
+                ..
+            } = self.passed[index];
+            // A later lookup comes to this block only from a successor that this one skipped.
+            if came_from == self.successors[index] {
+                continue;
+            }
+            let new_id = match reaching {
+                Reaching::Def(new_id) => Some(new_id),
+                Reaching::MadeAt(at) => self.states[at.0 as usize]
+                    .as_ref()
+                    .and_then(|state| state.defs.get(old_id))
+                    .copied(),
+                Reaching::Unknown => Some(old_id),
+            };
+            if let (Some(new_id), Some(state)) = (new_id, self.states[index].as_mut()) {
+                if !state.defs.contains_key(old_id) {
+                    state.defs.insert(old_id, new_id);
+                }
+            }
+        }
+        self.passed_blocks.clear();
+        self.lookup += 1;
     }
 
     fn add_phi(
@@ -248,6 +440,8 @@ impl SSABuilder {
         );
         for phi in &incomplete_phis {
             self.add_phi(block_id, &phi.old_place, &phi.new_place, env);
+            // Not in upstream: each incomplete phi is a lookup of its own.
+            self.end_lookup(phi.old_place.identifier);
         }
     }
 
@@ -462,6 +656,8 @@ fn enter_ssa_impl(
                     .preds
                     .clear();
                 builder.block_preds[inner_entry.0 as usize] = Vec::new();
+                // Not in upstream: `define_function` counted the entry block as a successor.
+                builder.successors[block_id.0 as usize] -= 1;
             }
         }
 

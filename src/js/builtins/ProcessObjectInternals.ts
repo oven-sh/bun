@@ -91,7 +91,21 @@ export function getStdioWriteStream(
   stream.fd = fd;
 
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
+  if (!underlyingSink && !stream._writableState.autoDestroy) {
+    // No FileSink: writes go through Writable, which parks them after a failed write until the stream is
+    // destroyed. Destroy it then (the _destroy above resets it), but keep end() final, as with a FileSink.
+    const write = stream._write;
+    stream._write = function (chunk, encoding, cb) {
+      write.$call(this, chunk, encoding, err => {
+        if (err) this._writableState.autoDestroy = true;
+        cb(err);
+      });
+    };
+    stream._final = function (cb) {
+      this._writableState.autoDestroy = false;
+      cb();
+    };
+  }
   return [stream, underlyingSink];
 }
 

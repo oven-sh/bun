@@ -120,7 +120,7 @@ export async function run(shell: string, script: string) {
 export function dupPathDestinationRows(writers: Writer[], emptyWriters: EmptyWriter[]) {
   for (const { title, write, size, result } of writers) {
     for (const redirect of redirects) {
-      it(`${title} keeps the other bytes of ${redirect.title}`, async () => {
+      it.concurrent(`${title} keeps the other bytes of ${redirect.title}`, async () => {
         const script = `${redirect.before} const result = ${write(redirect.dest)}; fs.writeSync(${redirect.report}, String(result));`;
         const { stdout, stderr, exitCode, log } = await run(redirect.shell, script);
 
@@ -133,7 +133,7 @@ export function dupPathDestinationRows(writers: Writer[], emptyWriters: EmptyWri
       });
     }
 
-    it(`${title} writes to a pipe through /dev/stdout`, async () => {
+    it.concurrent(`${title} writes to a pipe through /dev/stdout`, async () => {
       const script = `const result = ${write(`"/dev/stdout"`)}; fs.writeSync(2, String(result));`;
       const { stdout, stderr, exitCode } = await run(`"$BUN" -e "$SCRIPT" | cat`, script);
 
@@ -143,7 +143,7 @@ export function dupPathDestinationRows(writers: Writer[], emptyWriters: EmptyWri
   }
 
   for (const { title, write, result } of emptyWriters) {
-    it(`${title} leaves a file that stdout appends to (>>) as it is`, async () => {
+    it.concurrent(`${title} leaves a file that stdout appends to (>>) as it is`, async () => {
       const script = `const result = ${write}; fs.writeSync(2, String(result));`;
       const { stdout, stderr, exitCode, log } = await run(`"$BUN" -e "$SCRIPT" >> "$LOG"`, script);
 

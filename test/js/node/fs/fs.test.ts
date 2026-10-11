@@ -869,9 +869,6 @@ describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
   });
 });
 
-// Writes at or above the preallocate threshold take the fallocate() path, which
-// grows the file before the data lands. O_APPEND then writes past the grown end,
-// leaving a hole of zeroes where the data belongs.
 // See dup-path-destination.ts.
 describe.skipIf(!opensAsDup)("writeFile to a path that opens as a dup of a descriptor", () => {
   dupPathDestinationRows(
@@ -893,6 +890,9 @@ describe.skipIf(!opensAsDup)("writeFile to a path that opens as a dup of a descr
   );
 });
 
+// Writes at or above the preallocate threshold take the fallocate() path, which
+// grows the file before the data lands. O_APPEND then writes past the grown end,
+// leaving a hole of zeroes where the data belongs.
 describe("writeFile with a preallocate-sized buffer", () => {
   const big = Buffer.alloc(3 * 1024 * 1024, "A");
 

@@ -503,8 +503,7 @@ impl CopyFile {
         Ok(())
     }
 
-    /// Whether Bun opened the destination as a new open file. A descriptor of
-    /// the caller keeps its length, and so does a path that opens as a dup of one.
+    /// Bun opened the destination by a path, and not as a dup of a descriptor of the caller.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn opened_new_destination(&self) -> bool {
         matches!(

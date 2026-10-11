@@ -5158,8 +5158,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     str: &BunString,
     needs_async: &mut bool,
 ) -> JSValue {
-    // A dup of a descriptor keeps O_TRUNC in the open, where the kernel applies it to a
-    // new file only, and is not resized after the write.
+    // A dup is not resized after the write. O_TRUNC in its open is for a new file at that name.
     let dest_is_dup = NEEDS_OPEN && bun_sys::path_opens_as_dup(pathlike.path().slice());
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5246,8 +5245,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     bytes: &[u8],
     needs_async: &mut bool,
 ) -> JSValue {
-    // A dup of a descriptor keeps O_TRUNC in the open, where the kernel applies it to a
-    // new file only, and is not resized after the write.
+    // A dup is not resized after the write. O_TRUNC in its open is for a new file at that name.
     let dest_is_dup = NEEDS_OPEN && bun_sys::path_opens_as_dup(pathlike.path().slice());
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()

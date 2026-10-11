@@ -342,7 +342,7 @@ fn relative_workspace_path<'b>(
 }
 
 impl WorkspaceMap {
-    /// `"workspaces"` of `manifest`: an array, or an object with a `"packages"` array. Any other shape lists nothing.
+    /// `"workspaces"`: an array, or an object with a `"packages"` array. Any other lists nothing.
     pub(crate) fn process_manifest(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
@@ -525,11 +525,11 @@ impl WorkspaceMap {
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
                     root_dir,
-                    /* dot: */ false,
-                    /* absolute: */ false,
+                    false,
+                    false,
                     /* follow_symlinks: */ true,
-                    /* error_on_broken_symlinks: */ false,
-                    /* only_files: */ true,
+                    false,
+                    true,
                     Some(ignored_workspace_paths),
                 )? {
                     Ok(w) => w,
@@ -584,7 +584,7 @@ impl WorkspaceMap {
                                 root_dir,
                                 workspace_dir_of(abs_package_json_path),
                             );
-                            // skip root package.json: `**`, or a pattern that leaves the root and matches it again (`../*`)
+                            // skip root package.json: `**`, or `../*` matching it again
                             if dir.is_empty() {
                                 continue;
                             }

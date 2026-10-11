@@ -1455,10 +1455,7 @@ impl Map {
         })
     }
 
-    /// The environment of a `git` whose repository bun names (`-C`, cwd, the clone target): the
-    /// process's own, so that nothing a project's `.env` sets reaches git, without the variables
-    /// that name another repository (`git rev-parse --local-env-vars` minus the `GIT_CONFIG*`
-    /// user settings; git exports `GIT_DIR` and `GIT_INDEX_FILE` to hooks).
+    /// The process's own (no `.env`), minus `git rev-parse --local-env-vars` except `GIT_CONFIG*`.
     pub fn for_git_child() -> Result<Map, AllocError> {
         const REPOSITORY_VARS: &[&[u8]] = &[
             b"GIT_DIR",

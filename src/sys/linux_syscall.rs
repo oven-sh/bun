@@ -89,10 +89,7 @@ pub(crate) fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd,
     retry(|| rustix::fs::openat(dir, path.as_cstr(), oflags, mode)).map(own_fd)
 }
 
-/// Android's app seccomp policy answers `openat2(2)`/`fchmodat2(2)` with SIGSYS, not ENOSYS,
-/// so they must not even be probed there; the linux build runs under Termux, hence at runtime.
-/// Vendor kernels lack "android" in `uname -r`: there `$ANDROID_ROOT` has to hold Android's
-/// dynamic linker, so that a variable alone never turns `RESOLVE_*` off.
+/// Android's seccomp answers `openat2`/`fchmodat2` with SIGSYS; Termux runs the linux build.
 pub(crate) fn is_android_kernel() -> bool {
     static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHED.get_or_init(|| {

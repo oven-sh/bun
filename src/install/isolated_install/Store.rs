@@ -26,8 +26,7 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
-    /// The `node_modules/.bun/node_modules` names an entry holds through a dependency that
-    /// joined it under another name than the one that created it (`Entry::hoisted`).
+    /// `node_modules/.bun/node_modules` names other than that of the entry's `node_id`.
     pub(crate) hidden_hoist_keys: Vec<entry::DependenciesItem>,
 }
 
@@ -292,12 +291,10 @@ pub mod entry {
         // no atomic-enum wrapper exists.
         pub step: core::sync::atomic::AtomicU32,
 
-        // if true this entry gets symlinked to `node_modules/.bun/node_modules`, under the name
-        // of `node_id`'s dependency
+        // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
 
-        /// Exists only inside the packages declaring it (`isolated_install::contained_folders`):
-        /// no store directory, task or hoist slot; linked in `Installer::symlink_dependencies`.
+        /// Exists only inside the packages declaring it: no store directory, task or hoist slot.
         pub nested_folder: bool,
 
         /// Of a `file:` / URL tarball also the integrity bun.lock pins; without peers its first 8 bytes.

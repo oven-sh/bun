@@ -249,8 +249,7 @@ pub fn served_peers(
     Ok(peers_served_in(&store, lockfile, None))
 }
 
-/// The nodes whose links reach the disk. The second pass of `build_store` folds a node into the entry
-/// of an equal one, and the installer links the first entry of a workspace only.
+/// The nodes whose links reach the disk: one per entry, and only the first entry of a workspace.
 fn linked_nodes(store: &Store, lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
     let pkg_resolutions = lockfile.packages.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
@@ -338,8 +337,7 @@ pub struct StoreFolder {
     pub pkg_id: PackageID,
     /// Edges between the root and `dep_id`'s owner.
     pub depth: usize,
-    /// `node_modules/.bun/<entry>`, a link if the entry is in the global store. The package is in
-    /// `node_modules/<package name>` below it.
+    /// `node_modules/.bun/<entry>`; the package is in `node_modules/<package name>` below it.
     pub entry_dir: Vec<u8>,
 }
 
@@ -390,10 +388,7 @@ pub fn store_folders(
     Ok(folders)
 }
 
-/// `dep` is a `file:` dependency whose path is relative to the package declaring it
-/// (resolved as `declarer`): `Package::from_npm` stores these paths as declared,
-/// `Package::parse` and `overrides` store top-level relative ones. Such a folder is
-/// linked from inside the package and is not a peer provider for the packages below.
+/// A `file:` path relative to the package declaring it, not to the project (local, `overrides`).
 fn dependency_is_contained_folder(
     lockfile: &Lockfile,
     declarer: &Resolution,
@@ -408,8 +403,7 @@ fn dependency_is_contained_folder(
         .contains_name(dep.name_hash, dep.name.slice(string_buf), string_buf)
 }
 
-/// `dependency_is_contained_folder` for every `DependencyID`, and the `PackageID`s only such
-/// dependencies resolve to: they get no store entry (`store::entry::Entry::nested_folder`).
+/// The `DependencyID`s that are contained folders, and the `PackageID`s only those resolve to.
 fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSet), AllocError> {
     let pkgs = lockfile.packages.slice();
     let pkg_resolutions = pkgs.items_resolution();
@@ -449,8 +443,7 @@ fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSe
             }
         }
     }
-    // A peer has no say where there is such a dependency: the hoisted tree binds an optional
-    // peer to the nearest folder of its name, whose path only its declarer can follow.
+    // The hoisted tree binds an optional peer to a folder whose path only its declarer can follow.
     nested.set_intersection(&inside_a_package);
 
     Ok((contained, nested))
@@ -1469,7 +1462,7 @@ fn move_entries_aside(from: &mut AutoRelPath, to: &mut AutoRelPath, keep_links: 
         from.append(name).assume_ok();
         to.append(name).assume_ok();
 
-        if keep_links && entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
+        if entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
             let _ = sys::mkdirat(Fd::cwd(), to.slice_z(), 0o755);
             move_entries_aside(from, to, keep_links);
             let _ = sys::rmdir(from.slice_z());
@@ -1483,9 +1476,7 @@ fn move_entries_aside(from: &mut AutoRelPath, to: &mut AutoRelPath, keep_links: 
     dir.close();
 }
 
-/// What stays of the other linker's tree shadows the new one (a real directory where a link
-/// belongs), or has every later install replace the tree again (`node_modules/.bun`).
-/// `false`: `from` is a mount point (a Docker volume), which no linker made. It is left as it is.
+/// What stays of the other linker's tree shadows the new one. `false`: `from` is a mount point (a Docker volume), left as it is.
 fn move_or_delete(from: &bun_core::ZStr, to: &bun_core::ZStr) -> bool {
     use bun_sys::FdExt as _;
 

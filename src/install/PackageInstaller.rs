@@ -468,8 +468,7 @@ fn abs_node_modules_path(
     abs
 }
 
-/// Removes what the hoisted linker placed for `alias` in `tree_id`: `node_modules/<alias>`
-/// (for a workspace or `link:` package only the link) and the `.bin` links into it.
+/// Of a workspace or `link:` package only the link goes.
 pub(crate) fn remove_placed_package(
     lockfile: &Lockfile,
     tree_id: lockfile::tree::Id,
@@ -483,8 +482,7 @@ pub(crate) fn remove_placed_package(
     crate::prune::prune_bins(&node_modules);
 }
 
-/// The path rules alone: on top of `is_safe_install_folder_name` a single path component, or
-/// two for a scoped name. For the own name of the project, a workspace or a folder.
+/// The path rules alone, for the own name of the project, a workspace or a folder.
 pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
     if name.len() >= MAX_PATH_BYTES || !crate::dependency::is_safe_install_folder_name(name) {
         return false;
@@ -497,9 +495,7 @@ pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
     }
 }
 
-/// The alias is the install destination inside `node_modules` (renamed aside, deleted and
-/// re-created): `name` or `@scope/name`, and no directory the installer owns there (`.bin`,
-/// which is on the PATH of every script, `.bun`, `node_modules`, a whole `@scope`).
+/// `node_modules/<alias>` is deleted and made again: it is no directory the installer owns there.
 pub fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if !name_is_single_path_entry(alias) {
         return false;
@@ -679,7 +675,6 @@ impl<'a> PackageInstaller<'a> {
         let tree = &mut self.trees[tree_id as usize];
         let mut deferred: Vec<DependencyID> = Vec::new();
 
-        // Also on a run that installs nothing: a wrong entry of `.bin` is deleted and made again.
         // A `.bin` that does not fit the buffer is reported by the linker, for each bin.
         if let Some(bin_dir) = join_abs_string_buf_z_checked::<platform::Auto>(
             self.node_modules.path.as_slice(),
@@ -1184,7 +1179,9 @@ impl<'a> PackageInstaller<'a> {
                 patch_contents_hash,
             ),
             _ => package_manager::cached_tarball_folder_name(
+                self.manager(),
                 &self.metas[package_id as usize].integrity,
+                resolution,
                 patch_contents_hash,
             ),
         }
@@ -1195,8 +1192,7 @@ impl<'a> PackageInstaller<'a> {
         (self.linked_ahead.as_ref()).is_some_and(|ahead| ahead.until <= tree_id)
     }
 
-    /// The packages of `from` and of the trees after it that only need their files linked: in the
-    /// cache, not patched, every tree above complete. Reports and counts nothing: that is the walk's.
+    /// The packages from `from` on that only need their files linked. The walk reports and counts.
     pub(crate) fn collect_links(
         &mut self,
         from: lockfile::tree::Id,
@@ -1232,8 +1228,7 @@ impl<'a> PackageInstaller<'a> {
         while (until as usize) < trees.len() && ahead.tree_dirs.len() < MAX_TREES {
             let tree = trees[until as usize];
 
-            // Below a tree that waits for a download it is left to the walk. Below a tree
-            // of this batch it is for the next one, when that tree has had its turn.
+            // Below a tree that waits for a download, and below a tree of this batch.
             let mut is_left_to_the_walk = ahead.shared_trees.is_set(until as usize);
             let mut is_for_the_next_batch = false;
             let mut parent = tree.parent;
@@ -1439,8 +1434,8 @@ impl<'a> PackageInstaller<'a> {
 
         // If a newly computed integrity hash is available (e.g. for a GitHub
         // tarball) and the lockfile doesn't already have one, persist it so
-        // the lockfile gets re-saved with the hash. Must happen before the
-        // callbacks below: a `file:` / URL tarball's cache entry is named after it.
+        // the lockfile gets re-saved with the hash.
+        // Before the callbacks below: a `file:` / URL tarball's cache entry is named after it.
         if data.integrity.tag.is_supported() {
             let pkg_metas = self.lockfile_mut().packages.items_meta_mut();
             if !pkg_metas[package_id as usize].integrity.tag.is_supported() {
@@ -1843,8 +1838,7 @@ impl<'a> PackageInstaller<'a> {
             );
         self.summary.skipped += (!needs_install) as u32;
 
-        // `install_from_link` (symlink/workspace) re-points one symlink; everything else
-        // replaces the folder. Child trees of a replaced folder inherit the flag.
+        // `install_from_link` re-points one symlink; everything else replaces the folder.
         if verifying
             && needs_install
             && !inside_replaced_folder
@@ -1929,8 +1923,7 @@ impl<'a> PackageInstaller<'a> {
                     }
                     resolution::Tag::Npm => {
                         let npm = *resolution.npm();
-                        // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
-                        // This caused bugs. We can't assert on it because they could come from old lockfiles
+                        // No assert: lockfiles of very old versions of Bun lack the tarball url.
                         #[cfg(debug_assertions)]
                         if npm.url.is_empty() {
                             bun_core::debug_warn!(
@@ -1961,9 +1954,7 @@ impl<'a> PackageInstaller<'a> {
                     Err(ForTarballError::InvalidURL) => {
                         self.fail(is_pending_package_install, log_level)
                     }
-                    // Its download already failed: whoever found that out reported it, as a warning
-                    // if only an optional dependency had asked by then. Or `--offline` and not
-                    // cached: `report_offline_misses` reports it.
+                    // Reported by whoever saw the download fail, or by `report_offline_misses`.
                     Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {
                         if self.manager().options.offline
                             == crate::package_manager_real::options::OfflineMode::Offline
@@ -2125,9 +2116,7 @@ impl<'a> PackageInstaller<'a> {
                         let result = if resolution.tag == resolution::Tag::Root {
                             installer.install_from_link(self.skip_delete, destination_dir)
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
-                            // What a package ships inside itself is linked where it is, as the isolated
-                            // linker does: one module instance, with all that is shipped below it.
-                            // The tarball may also ship a directory at the destination.
+                            // What a package ships inside itself is linked where it is.
                             let mut shipped_buf = bun_paths::path_buffer_pool::get();
                             match join_abs_string_buf_z_checked::<platform::Auto>(
                                 dir_name,
@@ -2234,8 +2223,7 @@ impl<'a> PackageInstaller<'a> {
                         )
                         && self.metas[package_id as usize].has_install_script()
                     {
-                        // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
-                        // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                        // `hasInstallScript` is a false positive when binding.gyp is not published.
                         let mut folder_path =
                             AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
                         folder_path
@@ -2420,8 +2408,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    /// Enqueues the lifecycle scripts of a trusted (or workspace) dependency. `record_trust`:
-    /// `--trust` named it, so its name goes into package.json and the lockfile.
+    /// `record_trust`: `--trust` named it, so its name goes into package.json and the lockfile.
     fn enqueue_lifecycle_scripts_for_trusted(
         &mut self,
         log_level: Options::LogLevel,
@@ -2539,12 +2526,7 @@ impl<'a> PackageInstaller<'a> {
             return false;
         }
 
-        // Bind once: two sequential `manager_mut()` derives would each
-        // create a fresh Unique from the raw root under SB, popping the
-        // first while `scripts_node` (derived through it) is still live.
-        // `scripts_node_mut()` takes `&self` and returns a backref to a
-        // caller stack-local (disjoint from `*m`), so a single `m` covers
-        // both the `total_scripts` write and `set_node_name`.
+        // Bind once: a second `manager_mut()` would invalidate `scripts_node`, derived from the first.
         let m = self.manager_mut();
         m.total_scripts += scripts_list.total as usize;
         if let Some(scripts_node) = m.scripts_node_mut() {

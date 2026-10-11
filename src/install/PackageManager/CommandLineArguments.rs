@@ -32,8 +32,7 @@ fn pretty_help(text: &str) {
     Output::pretty(text);
 }
 
-/// `--cpu` / `--os` / `--libc`, combined like the package.json arrays they filter. Unlike there
-/// (`Negatable::apply` skips names this build does not know), an unknown name is a typo and fatal.
+/// `--cpu` / `--os` / `--libc`. Unlike in a package.json array, an unknown name is fatal.
 fn parse_platform_flag<T: Npm::NegatableEnum>(
     values: &[&[u8]],
     what: &str,
@@ -64,8 +63,7 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
 }
 
 type ParamType = clap::Param<clap::Help>;
-/// A command's params as the slices they are made of: 96 bytes per param, and most are shared by
-/// 17 commands. `parse` and `print_help` join the one table they need.
+/// Slices, joined on use: a param is 96 bytes and most are shared by 17 commands.
 type ParamTable = &'static [&'static [ParamType]];
 
 // `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`.
@@ -83,9 +81,7 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
-// Every flag of `bun --help` (`AUTO_PARAMS` in runtime/cli/Arguments.rs) that takes no value and that no
-// table here has: `bun --bun install` is not a typo. They do nothing. Aliases of one hidden param, so
-// that the tables do not each carry 55 more.
+// The valueless flags of `AUTO_PARAMS` (runtime/cli/Arguments.rs) no table here has; ignored.
 const RUNTIME_FLAGS_PARAM: ParamType = clap::param!(
     "-b, --bun/--no-orphans/--workspaces/--parallel/--sequential/--no-exit-on-error/--version/--revision/--watch/--hot/--no-clear-screen/--smol/--cpu-prof/--cpu-prof-md/--heap-prof/--heap-prof-md/--if-present/--no-install/--prefer-latest/--experimental-http2-fetch/--experimental-http3-fetch/--insecure-http-parser/--experimental-stream-iter/--expose-gc/--no-deprecation/--throw-deprecation/--no-warnings/--trace-warnings/--trace-deprecation/--pending-deprecation/--zero-fill-buffers/--use-system-ca/--use-openssl-ca/--use-bundled-ca/--tls-min-v1.0/--tls-min-v1.1/--tls-min-v1.2/--tls-min-v1.3/--tls-max-v1.2/--tls-max-v1.3/--redis-preconnect/--sql-preconnect/--no-addons/--no-ffi-cc/--trace-events-enabled/--trace-env/--trace-env-js-stack/--trace-env-native-stack/--trace-exit/--expose-internals/--preserve-symlinks/--preserve-symlinks-main/--no-macros/--jsx-side-effects/--ignore-dce-annotations"
 );
@@ -1250,8 +1246,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // `args` must stay alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
-        // `'static`; inner `&[u8]` are argv-backed and already `'static`. `update`,
-        // `link` and `unlink` parse the same argv twice: the first `Args` stays.
+        // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
+        // are parsed twice by `update`, `link` and `unlink`: the first `Args` stays.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
         let first_parse;
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(

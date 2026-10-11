@@ -903,8 +903,7 @@ impl PackageJSON {
                                     let Some(version_str) = prop.value.as_str() else {
                                         continue;
                                     };
-                                    // A value with JSON escapes is decoded outside the buffer that
-                                    // the strings of the parsed version are offsets into.
+                                    // A value with JSON escapes is decoded outside the buffer.
                                     if !bun_alloc::is_slice_in_buffer(
                                         version_str,
                                         package_json.dependencies.source_buf,

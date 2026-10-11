@@ -207,8 +207,7 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
-    // `NotFound` again once its parent exists can never succeed (dangling symlink,
-    // Windows OBJECT_NAME_INVALID surfacing as ENOENT): abort instead of looping (#39357).
+    // `NotFound` again once its parent exists (a dangling symlink) can never succeed.
     let mut last_not_found: Option<usize> = None;
     loop {
         match mkdir(comp.path)? {
@@ -372,8 +371,6 @@ mod tests {
 
     #[test]
     fn make_path_terminates_on_uncreatable_component() {
-        // `x` always reports NotFound while its parent EEXISTs; the walk must
-        // return the error instead of ping-ponging Exists<->NotFound forever.
         let it = ComponentIterator::init(&b"/t/dangling/x"[..], PathFormat::Posix).unwrap();
         let mut calls = 0usize;
         let result = make_path_with(it, |p| {

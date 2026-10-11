@@ -708,9 +708,7 @@ pub(crate) fn effective_version(
     Some(version)
 }
 
-// Optional-peer edges are followed too: `clean` keeps a target the loaded lockfile held through them alone
-// (`Lockfile::held_at_load`), and a version that survives here keeps every edge it had, so anything else they reach stays held.
-// `collapse_appended` does not follow bundled edges: what a bundle holds ships in its tarball, so an edge outside that shares the version saves no copy and costs a download.
+// `collapse_appended` skips bundled edges: sharing what ships in a tarball costs a download.
 fn reachable(
     lockfile: &Lockfile,
     resolutions: &[PackageID],

@@ -29,11 +29,7 @@ fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Resu
     update_package_json_and_install_and_cli(ctx, subcommand, cli).map_err(Into::into)
 }
 
-/// `--analyze` of `bun install` / `bun add`:
-/// 1. Run the bundler on source files
-/// 2. Rewrite positional arguments to act identically to the developer
-///    typing in the dependency names
-/// 3. Run the install command
+/// `--analyze`: bundles the source files, then installs what they import as if it were typed.
 pub(crate) fn analyze_dependencies_and_install(
     ctx: &mut ContextData,
     cli: &mut CommandLineArguments,

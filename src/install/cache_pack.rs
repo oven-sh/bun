@@ -1,21 +1,4 @@
-//! `bun pm cache pack <file>` / `bun pm cache unpack <file>`: the cache entries a lockfile
-//! needs, as one uncompressed file. Little endian:
-//!
-//! ```text
-//! magic "BUNCACHEPACK\0v1\n"
-//! record = u8 kind | u32 path_len | path | u32 mode | u64 size | size bytes
-//!   1 package    path = cache folder name; bytes = its records: (2 | 3 | 4)*, then one 5.
-//!                Packages ascend by name.
-//!   2 file       path relative to the package, `/` separated; bytes = contents
-//!   3 symlink    bytes = target
-//!   4 directory  comes before everything inside it
-//!   5 checksum   bytes = u64 wyhash of the folder name, then of the package's bytes up to here
-//!   0 end        nothing follows
-//! ```
-//!
-//! The installer trusts whatever is in the cache directory, so `unpack` reads a pack as hostile
-//! input: nothing reaches the cache before the whole pack was read and verified, and an entry
-//! that exists is never touched.
+//! A pack is hostile input: nothing reaches the cache before the whole pack is verified.
 
 use core::fmt;
 
@@ -33,13 +16,17 @@ use crate::package_manager_real::package_manager_options::LogLevel;
 use crate::repository::is_safe_resolved_tag;
 use crate::resolution::Tag as ResolutionTag;
 
+/// Then records, little endian: u8 kind | u32 path_len | path | u32 mode | u64 size | size bytes.
 const MAGIC: &[u8; 16] = b"BUNCACHEPACK\0v1\n";
 
 const KIND_END: u8 = 0;
+/// path = cache folder name, ascending; bytes = its records: (2 | 3 | 4)*, then one 5.
 const KIND_PACKAGE: u8 = 1;
 const KIND_FILE: u8 = 2;
 const KIND_SYMLINK: u8 = 3;
+/// Comes before everything inside it.
 const KIND_DIRECTORY: u8 = 4;
+/// bytes = u64 wyhash of the folder name, then of the package's bytes up to here.
 const KIND_CHECKSUM: u8 = 5;
 
 /// Longest record path or symlink target; with its NUL it fits a `PathBuffer`.

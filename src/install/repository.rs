@@ -228,8 +228,7 @@ pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
     -> Result<Repository, AllocError>;
-    /// `dependency::fallback_package_name` of the repository, for a checkout
-    /// whose package.json has no `name` (or no package.json at all).
+    /// For a checkout whose package.json has no `name` (or no package.json at all).
     fn fallback_package_name<'a>(&'a self, string_buf: &'a [u8]) -> &'a [u8];
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])

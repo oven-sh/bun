@@ -152,14 +152,12 @@ pub mod api {
         pub token: Box<[u8]>,
         /// `.npmrc`'s `_auth`, sent verbatim as npm sends it. `bunfig.toml` has no key for it.
         pub auth: Box<[u8]>,
-        /// Declared by a `.npmrc` `registry=` line: a credential inside that URL yields to any `.npmrc` line for it,
-        /// where one in a URL from `bunfig.toml`, the environment or the command line stands.
+        /// By a `registry=` line: a credential inside that URL yields to any `.npmrc` line for it.
         pub declared_in_npmrc: bool,
     }
 
     impl NpmRegistry {
-        /// The credentials in a URL are percent-encoded (RFC 3986 section 3.2.1: the password `p@ss` is written `p%40ss`)
-        /// and decoded here. The `username`, `password` and `token` config keys are not, and stay as written.
+        /// Credentials in a URL are percent-encoded (RFC 3986 section 3.2.1); config keys are not.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
             use bun_url::PercentEncoding;
 
@@ -195,8 +193,7 @@ pub mod api {
             registry
         }
 
-        /// `URL::href_without_auth` invents `http://` for a URL without a scheme, which would turn a string bun
-        /// refuses to request into a request that carries the credential in cleartext.
+        /// Without the `http://` that `URL::href_without_auth` invents: cleartext credentials.
         pub fn href_without_auth(url: &bun_url::URL) -> Box<[u8]> {
             let href = url.href_without_auth();
             if !url.protocol.is_empty() {
@@ -219,8 +216,7 @@ pub mod api {
         pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
     }
 
-    /// The credential one `.npmrc` key resolved to (`//host/path/:_authToken=...`, `:_auth=`, `:username=` + `:_password=`),
-    /// kept past config loading: the package manager matches it against registry and tarball URLs it only learns later.
+    /// The credential of one `.npmrc` key, to match against URLs learned after config loading.
     #[derive(Clone, Debug, Default)]
     pub struct NpmUrlAuth {
         /// npm's config key as written between `//` and `:<opt>=`, e.g. `host/path/`.

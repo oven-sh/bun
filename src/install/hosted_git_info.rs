@@ -1043,8 +1043,6 @@ pub(crate) mod formatters {
         }
 
         /// `/user/project[.git][/aux]` with the committish in the fragment.
-        /// `user_optional`: a lone segment is the project. `error_as_none`: a
-        /// part that cannot be decoded means "not a hosted git URL".
         fn user_project_committish(
             url: &URL,
             reject_aux: &[u8],
@@ -1121,16 +1119,14 @@ pub(crate) mod formatters {
                 return Ok(None);
             }
 
-            // If the type part says something other than "tree", we're not looking at a
-            // github URL that we understand.
+            // Only `/tree/<committish>` is a github URL that we understand.
             if let Some(tp) = type_part {
                 if tp != b"tree" {
                     return Ok(None);
                 }
             }
 
-            // Hold the owned fragment here so the `committish` borrow stays
-            // valid until it's copied into the StringBuilder.
+            // Owns the fragment that `committish` borrows.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
                 fragment_utf8 = url.fragment_identifier().into_utf8();

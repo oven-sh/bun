@@ -1877,8 +1877,7 @@ fn substitute_template(
     Ok(())
 }
 
-/// `Display` adapter pairing a runtime template with a [`FmtTuple`]. The tuple is `dyn` so that
-/// nothing below the public entry points is instantiated once per argument tuple.
+/// `Display` adapter pairing a runtime template with a [`FmtTuple`].
 pub struct TemplateDisplay<'a> {
     template: Vec<u8>,
     args: &'a dyn FmtTuple,
@@ -2365,8 +2364,7 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
 /// re-instantiated for every `(ErrName, FmtTuple)` pair.
 #[inline(never)]
 fn err_erased(error_name: &dyn ErrName, fmt: &str, args: &dyn FmtTuple) {
-    // `fmt` is rendered into a `{}` arg, so strip a trailing \n and let
-    // pretty_errorln! add exactly one.
+    // Rendered into a `{}` arg: strip a trailing \n, pretty_errorln! adds exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = &pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
 

@@ -389,14 +389,12 @@ pub enum BuilderMethod {
 
     /// This will filter out disabled dependencies, resulting in more aggresive
     /// hoisting compared to `.resolvable`. We skip dependencies based on 'os', 'cpu',
-    /// 'libc' (optional dependencies only, see `Libc::for_dependency`), and omitted
-    /// dependency types (`--omit=dev/peer/optional`).
+    /// 'libc' (optional only), and omitted dependency types (`--omit=dev/peer/optional`).
     /// Dependencies of a disabled package are not included in the output.
     Filter,
 }
 
-// `manager`/`workspace_filters`/`install_root_dependencies`/`packages_to_install`
-// are only meaningful when `METHOD == .Filter`.
+// `manager` and the three fields from `workspace_filters` on: only for `METHOD == .Filter`.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) list: MultiArrayList<BuilderEntry>,
     pub(crate) resolutions: &'a mut [PackageID],
@@ -427,20 +425,14 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) peer_probes: PeerProbes,
     /// The first row of each name in each tree, which is what `hoist_dependency` looks for.
     pub(crate) placed: bun_collections::HashMap<(Id, PackageNameHash), DependencyID>,
-    /// `(tree id, dependency id)` of each row of the install tree that a tarball ships: a bundled
-    /// dependency and every row placed from below one. They take their places as in the saved
-    /// tree, so that no row bun installs resolves through one, and `clean` drops them.
+    /// Install-tree rows a tarball ships: placed as in the saved tree, then dropped by `clean`.
     pub(crate) shipped_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// The folder `process_subtree` is filling is one of `shipped_rows`.
     pub(crate) in_shipped_folder: bool,
     pub(crate) linked: reachable::Linked,
 }
 
-/// The required peers of the package that is being hoisted, each with whether a `node_modules`
-/// it would still see if it stayed put holds a version in range. Hoisting stops below a
-/// `node_modules` that would hide that version behind one out of range.
-///
-/// The second field: the packages that have such a peer. Most have none, and `begin` runs for every row that is hoisted.
+/// The hoisted package's required peers (does staying put find it in range?); who has any.
 #[derive(Default)]
 pub(crate) struct PeerProbes(Vec<(DependencyID, bool)>, Option<DynamicBitSet>);
 
@@ -585,13 +577,12 @@ pub(crate) struct CleanResult {
 }
 
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
-    /// MUST NOT be used to read `buffers.resolutions`: `self.resolutions` is a live `&mut` alias of it.
+    /// MUST NOT be used to read `buffers.resolutions`: `self.resolutions` is a live `&mut` to it.
     #[inline]
     fn lockfile(&self) -> &Lockfile {
         self.lockfile.get()
     }
 
-    /// The unresolved peers of the name, which deduplicated onto one another, resolve to `pkg_id`.
     fn bind_pending_peers(&mut self, name_hash: PackageNameHash, pkg_id: PackageID) {
         if let Some((_, peers)) = self.pending_peers.fetch_swap_remove(&name_hash) {
             for &dep_id in peers.keys() {
@@ -604,8 +595,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
-    /// Binds a peer edge the way loading `bun.lock` does, whatever the resolver, a previous
-    /// lockfile or a migration left it bound to, so every tree built from these packages agrees.
+    /// Binds a peer edge the way loading `bun.lock` does, so every tree of these packages agrees.
     fn bind_peer(&mut self, dep_id: DependencyID) {
         let lockfile_ref = self.lockfile;
         let lockfile: &Lockfile = lockfile_ref.get();
@@ -622,11 +612,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         }
     }
 
-    /// `Some(n)` when the `n` trees from `parent` up and the `n` above those belong to the same edges and hold
-    /// the same entries (an upper one may hold more by now: a bundle's dependencies arrive later), and a tree
-    /// for `dependency_id` in `parent` would start a third round. Placement only looks at the nearest entry of
-    /// a name, so every further round comes out like the last: a@1 -> b@1 -> a@2 -> b@2 -> a@1 nests forever.
-    /// A package below a copy of itself is not enough, such a layout can still end.
+    /// `Some(n)`: two equal rounds of `n` trees end at `parent`, so a third would nest forever.
     fn repeating_period(&self, parent: Id, dependency_id: DependencyID) -> Option<usize> {
         let trees = self.list.items_tree();
         let entries = self.list.items_dependencies();
@@ -930,8 +916,7 @@ impl Tree {
             // filter out disabled dependencies. Not what a tarball ships: see `shipped_rows`.
             if METHOD == BuilderMethod::Filter && !shipped && !dependency.behavior.is_bundled() {
                 let manager = builder.manager.expect("manager set when METHOD == Filter");
-                // As in `isolated_install::build_store`: the list replaces the filter for
-                // the root's own dependencies (a devDependency under `--production`).
+                // As in `build_store`: the list replaces the filter for the root's own rows.
                 let filtered = match builder.packages_to_install.filter(|_| parent_pkg_id == 0) {
                     Some(packages_to_install) => !packages_to_install.contains(&pkg_id),
                     None => is_filtered_dependency_or_workspace(
@@ -946,8 +931,7 @@ impl Tree {
                     ),
                 };
 
-                // unresolved packages already had their chance to resolve. Of the links to a pruned
-                // workspace, only a peer that `bind_peer` found no other copy for is left.
+                // unresolved packages already had their chance to resolve.
                 if filtered
                     || pkg_id == invalid_package_id
                     || pruned_workspaces::skips_link_to_pruned_workspace(

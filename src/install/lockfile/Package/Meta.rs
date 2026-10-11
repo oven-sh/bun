@@ -18,8 +18,7 @@ pub struct Meta {
 
     pub(crate) arch: Architecture,
     pub(crate) os: OperatingSystem,
-    /// Occupies what used to be padding, so a `bun.lockb` written before this
-    /// field existed reads back as `Libc::NONE` (not declared).
+    /// In former padding: an older `bun.lockb` reads back as `Libc::NONE` (not declared).
     pub(crate) libc: Libc,
     pub(crate) _padding_libc: u8,
 
@@ -68,8 +67,7 @@ impl Default for Meta {
 
 impl Meta {
     /// Does the `cpu` arch, `os` and `libc` match the requirements listed in the package?
-    /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc,
-    /// except that callers pass `Libc::for_dependency` of the dependency being checked as `libc`.
+    /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
     pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem, libc: Libc) -> bool {
         !self.arch.is_match(cpu) || !self.os.is_match(os) || !self.libc.is_match(libc)
     }

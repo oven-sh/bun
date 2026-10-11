@@ -90,8 +90,7 @@ fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
     // No `O_TRUNC`: a target that is rejected must not have been emptied first.
     sys::ftruncate(fd, 0)?;
 
-    // A crafted `@@ -0,0 +0,0 @@` header with no body parses to a hunk with
-    // zero parts; either way the file is left empty.
+    // A `@@ -0,0 +0,0 @@` header with no body parses to a hunk with zero parts.
     let Some(first_part) = creation.hunk.as_ref().and_then(|h| h.parts.first()) else {
         return Ok(());
     };
@@ -110,8 +109,7 @@ fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
 fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
     let (fd, _) = open_target_file(parent.fd, &base, sys::O::RDONLY, 0)?;
-    // On Windows `fchmod` needs a CRT-backed fd, and closing that one also
-    // closes the underlying HANDLE; elsewhere the conversion is the identity.
+    // On Windows `fchmod` needs a CRT-backed fd; closing that one also closes the HANDLE.
     let fd = fd.make_libuv_owned().map_err(|()| {
         fd.close();
         sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
@@ -121,7 +119,6 @@ fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
 }
 
 /// Hunks are placed by matching their `-` side, as `git apply` does; `+` starts can be stale.
-/// Nothing is written until every hunk has a place.
 fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), ApplyError> {
     // One fd for the read and the write-back, so nothing can be swapped in between them.
     let (file_fd, stat) = open_target_file(parent, base, sys::O::RDWR, 0)?;
@@ -280,13 +277,10 @@ impl Drop for ParentDir {
     }
 }
 
-/// The separators [`paths::dirname_simple`] splits on, so the walk below and
-/// the basename it leaves behind always reassemble the original path.
+/// The separators [`paths::dirname_simple`] splits on, so the walk and the basename agree.
 const PATH_SEPS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
 
-/// Validates a patch path and resolves it to the verified directory holding
-/// its final component plus that component, the pair every `*at` syscall in
-/// `apply` operates on.
+/// The verified directory holding `path`'s final component, and that component.
 fn resolve_target(
     patch_dir: Fd,
     path: &[u8],
@@ -305,9 +299,7 @@ fn resolve_target(
     Ok((parent, ZBox::from_vec_with_nul(base.to_vec())))
 }
 
-/// Opens the parent directory of `path` one component at a time from
-/// `patch_dir`, refusing symlinks, creating missing components when
-/// `create_mode` is given. [`is_safe_patch_path`] has ruled out `..`.
+/// One component at a time, refusing symlinks. [`is_safe_patch_path`] has ruled out `..`.
 fn open_parent_beneath(
     patch_dir: Fd,
     path: &[u8],
@@ -330,18 +322,14 @@ fn open_parent_beneath(
     Ok(cur)
 }
 
-/// On Windows `O_NOFOLLOW` opens a reparse point itself rather than failing,
-/// and `fstat` on that handle reports an ordinary file or directory, so the
-/// entry's own attributes are checked by name first (hence not atomic against
-/// a concurrent swap, unlike the POSIX path).
+/// `O_NOFOLLOW` here opens the reparse point itself and `fstat` hides it. Not atomic with the open.
 #[cfg(windows)]
 fn reject_reparse_point(dir: Fd, name: &ZStr) -> sys::Result<()> {
     match sys::get_file_attributes_at(dir, name) {
         Ok(attrs) if attrs.is_reparse_point => {
             Err(sys::Error::from_code(sys::E::ELOOP, sys::Tag::open))
         }
-        // Nonexistent (about to be created) or unreadable: the open that
-        // follows reports the real error.
+        // Nonexistent or unreadable: the open that follows reports the real error.
         _ => Ok(()),
     }
 }
@@ -370,9 +358,7 @@ fn open_dir_component(
     sys::openat(dir, component, flags, 0).map_err(|e| symlink_component_err(dir, component, e))
 }
 
-/// `O_NOFOLLOW` on a symlink reports ENOTDIR or ELOOP on Linux, ELOOP on
-/// Darwin, and EMLINK on FreeBSD; report the symlink case as ELOOP everywhere.
-/// (Only the errno depends on this lstat, never whether the open was refused.)
+/// `O_NOFOLLOW` on a symlink: ENOTDIR or ELOOP on Linux, EMLINK on FreeBSD. ELOOP everywhere.
 fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error {
     if matches!(
         e.get_errno(),
@@ -385,9 +371,7 @@ fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error
     e
 }
 
-/// Opens `base` under a verified parent without following a symlink and
-/// requires a regular file with a single hard link: a second link means the
-/// same inode is also reachable from outside the patch dir.
+/// A regular file with one hard link: a second may reach the inode from outside the patch dir.
 fn open_target_file(
     parent: Fd,
     base: &ZStr,
@@ -396,8 +380,7 @@ fn open_target_file(
 ) -> sys::Result<(Fd, sys::Stat)> {
     #[cfg(windows)]
     reject_reparse_point(parent, base)?;
-    // Without `O_NONBLOCK`, opening a FIFO blocks until a writer appears and
-    // the `!ISREG` rejection below is never reached.
+    // Without `O_NONBLOCK`, opening a FIFO blocks before the `!ISREG` rejection below.
     let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
     let fd = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
         .map_err(|e| symlink_component_err(parent, base, e))?;
@@ -942,8 +925,7 @@ fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
-        // On Windows, openat strips a drive prefix from a relative component,
-        // so `"C:.."` (not byte-equal to `..` below) resolves a real `..`.
+        // On Windows, openat strips a drive prefix from a component: `C:..` resolves a real `..`.
         && !(cfg!(windows) && strings::contains_char(path, b':'))
         && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
@@ -1101,9 +1083,7 @@ impl<'a> PatchLinesParser<'a> {
                     }
                 }
                 ParserState::ParsingHunks => {
-                    // Legacy (non `diff --git`) patches delimit files with `--- a/<path>`,
-                    // which also matches a deletion line. It is a file header only when the
-                    // current hunk already has the line counts its `@@` header declared.
+                    // A legacy file header, or a deletion line unless the hunk is already complete.
                     if line.starts_with(b"--- a/")
                         && self.current_hunk.as_ref().is_some_and(|hunk| {
                             hunk.verify_integrity(self.current_hunk_mutation_part.as_ref())
@@ -1350,7 +1330,6 @@ pub fn spawn_opts(
     };
 
     // The machine's and the user's git config must not shape the patch.
-    // Static entries point at 'static literals; PATH=<value>\0 needs an owned buffer.
     let path_var: Option<Vec<u8>> = bun_core::env_var::PATH
         .get()
         .map(|p| [&b"PATH="[..], p, b"\0"].concat());
@@ -1379,8 +1358,7 @@ pub fn spawn_opts(
         cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // `bun_spawn::sync::spawn`'s Windows path unconditionally derefs
-        // `windows.loop_`, and `WindowsOptions::default()` is zeroed.
+        // `spawn` derefs `windows.loop_` unconditionally; `WindowsOptions::default()` is zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
             // `as_handle` owns the handle conversion so variant internals

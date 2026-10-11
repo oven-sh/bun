@@ -157,8 +157,7 @@ pub mod lib {
         pub result: Result,
     }
 
-    /// Whether `pwrite` still works for placing a block in an output file. One
-    /// per extraction: once it fails, later entries do not try it again.
+    /// One per extraction: once `pwrite` fails, later entries do not try it again.
     pub struct WriteStrategy {
         pub pwrite: bool,
     }
@@ -169,11 +168,7 @@ pub mod lib {
         }
     }
 
-    /// Writes the data of one archive entry to its output file. Nothing proves
-    /// the archive holds as many bytes as the entry header or a sparse map say,
-    /// so no write and no allocation is sized from either: a block goes to its
-    /// offset with `pwrite` or a seek (never by writing zeros), and `finish`
-    /// gives the file its length.
+    /// Sizes no write or allocation from the entry header or sparse map: nothing proves them.
     pub struct EntryWriter {
         fd: Fd,
         /// One past the last byte written.
@@ -200,15 +195,13 @@ pub mod lib {
             self.fd
         }
 
-        /// Call before the file gets a range that no block fills. NTFS gives
-        /// such a range real clusters unless the file is marked sparse.
+        /// NTFS gives a range that nothing writes real clusters unless the file is marked sparse.
         #[inline]
         fn before_hole(&mut self) {
             #[cfg(windows)]
             if !self.marked_sparse {
                 self.marked_sparse = true;
-                // A volume without sparse files refuses the mark. The hole
-                // then takes disk, as it does on such a volume anywhere.
+                // A volume without sparse files refuses the mark; the hole then takes disk.
                 let _ = bun_sys::set_sparse(self.fd);
             }
         }
@@ -257,9 +250,7 @@ pub mod lib {
             Ok(())
         }
 
-        /// Call when libarchive reports the end of the entry's data. `end` is
-        /// the offset it returned with `ARCHIVE_EOF`: the length of the file.
-        /// When that is past the last byte written, the entry ends in a hole.
+        /// `end` is the offset libarchive returned with `ARCHIVE_EOF`: the length of the file.
         pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
             if end > self.end {
                 self.before_hole();
@@ -321,9 +312,7 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// Appends the data of the current entry to `out`, at most `size`
-        /// bytes. Reads in steps so untrusted entry sizes don't drive
-        /// allocation. `Ok(false)` means libarchive reported a read error.
+        /// Reads in steps so an untrusted `size` doesn't drive allocation. `Ok(false)`: read error.
         pub(crate) fn read_data_to_vec(
             &self,
             size: usize,
@@ -350,9 +339,7 @@ pub mod lib {
             Ok(true)
         }
 
-        /// `archive_read_data_block`. Returns `None` at the end of the entry's
-        /// data; `*offset` is then the logical length of the entry, which is
-        /// past the last block when the entry ends in a hole.
+        /// `archive_read_data_block` — returns `None` on EOF; `*offset` is then the entry's length.
         pub fn next(&self, offset: &mut i64) -> Option<Block<'_>> {
             let mut buff: *const c_void = core::ptr::null();
             let mut size: usize = 0;
@@ -380,8 +367,6 @@ pub mod lib {
             })
         }
 
-        /// Reads the data of the current entry and writes it to `fd` through
-        /// an [`EntryWriter`].
         pub fn read_data_into_fd(&self, fd: Fd, strategy: &mut WriteStrategy) -> Result {
             let mut writer = EntryWriter::new(fd);
             let mut offset: i64 = 0;
@@ -1210,8 +1195,6 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     })
 }
 
-/// The file of the entry being extracted. Closed on drop unless a plucker took
-/// it or the caller asked for open handles.
 struct OutputFile {
     fd: Fd,
     close: bool,
@@ -1220,19 +1203,7 @@ struct OutputFile {
 impl Drop for OutputFile {
     fn drop(&mut self) {
         if self.close {
-            // On windows, AV hangs these closes really badly.
-            // 'bun i @mui/icons-material' takes like 20 seconds to extract
-            // mostly spend on waiting for things to close closing
-            //
-            // Using Async.Closer defers closing the file to a different thread,
-            // which can make the NtSetInformationFile call fail.
-            //
-            // Using async closing doesnt actually improve end user performance
-            // probably because our process is still waiting on AV to do it's thing.
-            //
-            // But this approach does not actually solve the problem, it just
-            // defers the close to a different thread. And since we are already
-            // on a worker thread, that doesn't help us.
+            // On Windows AV makes this slow; an async close can fail NtSetInformationFile, gains nothing.
             self.fd.close();
         }
     }

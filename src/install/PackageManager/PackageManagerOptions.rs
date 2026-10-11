@@ -323,8 +323,7 @@ impl Options {
     }
 }
 
-/// Gives `scope` the credentials `.npmrc` configures for its URL, by npm's key walk, unless it has some from
-/// `bunfig.toml`, the environment or the command line. One written into a `.npmrc` `registry=` URL yields.
+/// `.npmrc`'s credentials for the URL of `scope` yield to bunfig.toml, the environment and flags.
 fn fill_scope_from_url_auth(url_auth: &[Npm::registry::UrlAuth], scope: &mut Npm::registry::Scope) {
     let own = Npm::registry::UrlAuth::find_entry(url_auth, &scope.url.url());
     scope.url_auth_key = own.map(|entry| entry.key.clone());
@@ -342,8 +341,7 @@ fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
 }
 
 impl Options {
-    /// The scope for `url` once it replaces `current` (`--registry`, `$BUN_CONFIG_REGISTRY`, `publishConfig`): the credentials
-    /// written into `url`, else those of a registry configured under the same URL, else `current`'s. `.npmrc` lines come after.
+    /// The scope for `url` once it replaces `current`. The caller applies `.npmrc` lines after.
     fn scope_for_registry_url(
         &self,
         name: &[u8],
@@ -379,8 +377,7 @@ impl Options {
         Ok(scope)
     }
 
-    /// A registry at or under `old` keeps its credentials, unless `.npmrc` has a deeper line for it. Under: same host and port
-    /// text, no https-to-http downgrade, and `old`'s path is a segment-wise prefix (`/npm/team-ab/x` is not under `/npm/team-a/`).
+    /// A registry at or under `old` keeps its credentials unless `.npmrc` has a deeper line for it.
     fn inherits_credentials(&self, old: &Npm::registry::Scope, new_url: &bun_url::URL) -> bool {
         use Npm::registry::{UrlAuth, query_free_path};
         use bun_core::strings::tokenize;
@@ -397,8 +394,7 @@ impl Options {
             }
     }
 
-    /// `url` is package data, like a tarball URL: no variable of this process is expanded into it, and a `.npmrc` line
-    /// follows it only over https.
+    /// `url` is package data: no variable is expanded into it; `.npmrc` follows it only over https.
     fn scope_for_publish_config(
         &self,
         name: &[u8],
@@ -492,8 +488,7 @@ impl Options {
     }
 }
 
-/// Where and how one package is published. `bun publish --recursive` takes it before and after a package's
-/// `publishConfig` is applied, so that the tag, access, registry and credentials of one never reach the next.
+/// What a `publishConfig` changes: `bun publish --recursive` puts it back between packages.
 pub struct PublishTarget {
     publish_config: PublishConfig,
     default_scope: Npm::registry::Scope,
@@ -665,8 +660,7 @@ impl Options {
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_ref: Option<&Api::BunInstall>,
-        // Runtime auto-install, which cannot merge it under a `bun_install_ref` it only borrows: what `.npmrc` configures,
-        // of which only the registries and their credentials are read.
+        // Runtime auto-install's `.npmrc`: only the registries and their credentials are read.
         runtime_npmrc: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> crate::Result<()> {
@@ -893,8 +887,7 @@ impl Options {
 
             for registry_key in REGISTRY_KEYS {
                 if let Some(registry_) = env.get(registry_key) {
-                    // Any non-empty value is the registry, as for `registry=` in .npmrc and `install.registry` in bunfig.toml:
-                    // an unusable one is refused when it is requested, not replaced in silence by the next layer's registry.
+                    // An unusable value fails on use: it never falls through to the next layer.
                     let registry_ = bun_core::strings::trim(registry_, b" \t\r\n");
                     if !registry_.is_empty() {
                         let url: Box<[u8]> = registry_.into();
@@ -1300,8 +1293,7 @@ bitflags::bitflags! {
         /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
         /// `install.globalStore = true` in bunfig to enable.
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
-        /// `bun add` with `--dev`, `--optional`, `--peer` or `--save-prod`: an entry another
-        /// group has moves into the named one. A bare `bun add` leaves it where it is.
+        /// `bun add` named a group: an entry another group has moves into it.
         const MOVE_TO_GROUP          = 1 << 10;
         // _: u5 padding
     }

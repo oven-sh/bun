@@ -117,8 +117,7 @@ impl ProgressBuf {
     }
 }
 
-/// Refreshes the progress bar when `exec` returns. A raw pointer, so that it
-/// does not hold an exclusive borrow for the whole fn body.
+/// A raw pointer, so that it does not hold an exclusive borrow for the whole body of `exec`.
 struct RefreshOnDrop(*mut Progress);
 
 impl Drop for RefreshOnDrop {
@@ -201,8 +200,7 @@ fn names_path_inside_dir(name: &[u8]) -> bool {
     depth > 0
 }
 
-/// The destination is the template or inside it (as given, then as the OS reports),
-/// so the copy would truncate its source or walk into its own output.
+/// Such a copy would truncate its source or walk into its own output.
 fn destination_is_inside_template(
     template_dir: &bun_sys::Dir,
     abs_template_path: &[u8],
@@ -233,8 +231,7 @@ fn destination_is_inside_template(
     }
 }
 
-/// A component of `path` is a link in `destination`, so what is written there lands wherever the
-/// link leads. `overwrite` removes the link instead.
+/// A component of `path` is a link in `destination`. `overwrite` removes the link instead.
 fn leaves_destination(destination: &[u8], path: &[u8], overwrite: bool) -> bun_sys::Result<bool> {
     use bun_sys::FileKind;
     let mut buf = bun_paths::path_buffer_pool::get();

@@ -94,8 +94,7 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// `--install=...`. On the resolver before `configure_linker()` caches the project's package.json:
-    /// only an auto-installing resolver records the dependency ranges auto-install resolves against.
+    /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
@@ -5495,8 +5494,7 @@ impl VirtualMachine {
                     }
                 }
             };
-            // Why it failed (`GET <url> - 404`, ...) is in `log`, which dies with this frame. Deduplicated:
-            // `_resolve` retries once after busting the directory cache and can log a failure twice.
+            // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
             let mut notes = core::mem::take(&mut msg.notes).into_vec();
             for (i, logged) in log.msgs.iter().enumerate() {
                 if Some(i) == resolve_msg_index

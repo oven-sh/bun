@@ -1204,13 +1204,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // A fast-exiting scanner gets here with the JSON still in the kernel
-            // pipe buffer (`ipc_reader.start()` only registers a poll on POSIX, and
-            // `MiniEventLoop::tick_once` skips the uws tick while the exit
-            // notification is queued), so drain it synchronously, and tear the
-            // reader down only if the drain reached EOF. Otherwise the poll stays:
-            // the next tick delivers readable+HUP and `on_reader_done` decrements
-            // `remaining_fds` exactly once. Windows reads via libuv (async).
+            // The JSON may still be in the pipe: drain it; only EOF tears the reader's poll down.
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();

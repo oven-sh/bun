@@ -1224,8 +1224,7 @@ mod _event_loop_draft {
         }
     }
 
-    /// A refused `pthread_create`/`CreateThread` (`RLIMIT_NPROC`, a container pids limit, no memory)
-    /// is the environment's limit, not a bug: a fatal CLI error, not the crash reporter.
+    /// A refused thread is the environment's limit, not a bug: no crash reporter.
     #[cold]
     #[inline(never)]
     fn exit_spawn_failed(err: &std::io::Error) -> ! {

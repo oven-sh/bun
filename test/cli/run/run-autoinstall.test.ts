@@ -806,8 +806,12 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expect(requests).toEqual(Array(requestsPerLookup).fill(path));
   }
 
+  // A 404 is an answer, and stands for as long as a manifest would (300 seconds) unless the registry says otherwise.
+  const notFound = (headers: HeadersInit = { "Cache-Control": "no-cache" }) =>
+    new Response("{}", { status: 404, headers });
+
   const failures: Record<string, { respond: (deadPort: number) => Response; requestsPerLookup: number }> = {
-    "404": { respond: () => new Response("{}", { status: 404 }), requestsPerLookup: 1 },
+    "404 with Cache-Control: no-cache": { respond: () => notFound(), requestsPerLookup: 1 },
     "500": { respond: () => new Response("{}", { status: 500 }), requestsPerLookup: 2 },
     // The JS thread waits for the lookup, so there is no backoff, whatever the registry asks for.
     "503 with Retry-After": {
@@ -851,8 +855,30 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["no Cache-Control", {}],
+    ["max-age=600", { "Cache-Control": "public, max-age=600" }],
+  ])("a 404 with %s is asked for once, however often the event loop goes around", async (_, headers) => {
+    using registry = flakyRegistry(() => notFound(headers));
+    const { stdout, exitCode } = await run(
+      registry,
+      `
+        const results = [];
+        for (let turn = 0; turn < 5; turn++) {
+          try { results.push(require("flaky-pkg").version); } catch (e) { results.push(e.code); }
+          await next("__next");
+        }
+        console.log(JSON.stringify(results));
+      `,
+    );
+
+    expect(stdout).toBe(JSON.stringify(Array(5).fill("MODULE_NOT_FOUND")));
+    expect(registry.lookups).toEqual([["/flaky-pkg"], [], [], [], [], []]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a loop that never yields asks once, and again once the event loop has gone around", async () => {
-    using registry = flakyRegistry(() => new Response("{}", { status: 404 }));
+    using registry = flakyRegistry(() => notFound());
     const { stdout, exitCode } = await run(
       registry,
       `
@@ -873,7 +899,7 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
   });
 
   test("through every way to resolve", async () => {
-    using registry = flakyRegistry(() => new Response("{}", { status: 404 }));
+    using registry = flakyRegistry(() => notFound());
     const { stdout, exitCode } = await run(
       registry,
       `

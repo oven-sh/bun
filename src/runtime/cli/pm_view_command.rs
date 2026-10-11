@@ -329,8 +329,7 @@ pub(crate) fn view(
         manifest.set(&bump, b"versions", versions_array)?;
     }
 
-    // Like `npm view`, add what the registry says about the package as a whole (`dist-tags`, `time`, ...).
-    // The readme is long: only on request.
+    // Like `npm view`, add the package-level fields (`dist-tags`, `time`); the readme on request.
     json.try_for_each_property(|key, _, value| {
         if key != b"versions"
             && (key != b"readme" || !fields.is_empty())

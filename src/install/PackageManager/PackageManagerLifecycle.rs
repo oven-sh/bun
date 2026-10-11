@@ -78,8 +78,7 @@ impl PackageManager {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
-                // Nor another libc's variant; only for this dependency (`Libc::for_dependency`),
-                // so the state stays untouched and a later regular dependency still installs it.
+                // Per dependency: the state stays, so that a regular dependency still installs it.
                 if !pkg
                     .meta
                     .libc
@@ -153,7 +152,12 @@ impl PackageManager {
                         )
                     }
                     ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                        directories::cached_tarball_folder_name(&pkg.meta.integrity, patch_hash)
+                        directories::cached_tarball_folder_name(
+                            self,
+                            &pkg.meta.integrity,
+                            &pkg.resolution,
+                            patch_hash,
+                        )
                     }
                     _ => ZStr::EMPTY,
                 };
@@ -349,8 +353,17 @@ impl PackageManager {
         )?;
 
         let mut parent: Option<&[u8]> = Some(cwd);
+        // An untrusted package can link a `node` or `sh` into a shared `.bin`: a dependency's script finds those last.
+        let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
+        let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
         while let Some(dir) = parent {
+            if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
+                if let Some(inherited) = inherited_path.take() {
+                    append_path_without_ancestor_bins(&mut path, inherited, cwd)?;
+                }
+            }
+
             let mut builder = path.path_component_builder();
             builder.append(dir);
             builder.append(b"node_modules/.bin");
@@ -359,7 +372,11 @@ impl PackageManager {
             parent = bun_paths::dirname(dir);
         }
 
-        path.append(original_path.as_slice())?;
+        match inherited_path {
+            Some(inherited) => append_path_without_ancestor_bins(&mut path, inherited, cwd)?,
+            None if list.is_dependency => {}
+            None => path.append(original_path.as_slice())?,
+        }
         script_env.put(b"PATH", path.slice())?;
 
         put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
@@ -421,8 +438,7 @@ impl PackageManager {
     }
 }
 
-/// `npm_package_{json,name,version}` and `npm_package_config_<key>` (the subset `bun run` exports) from the package.json of the package
-/// whose scripts run, in place of what a `bun run` above this install set (`spawn_next_script` adds `npm_lifecycle_*` per script).
+/// The `npm_package_*` subset `bun run` exports, replacing what a `bun run` above this install set.
 fn put_npm_package_env(
     script_env: &mut bun_dotenv::Map,
     package_dir: &[u8],
@@ -470,6 +486,27 @@ fn put_npm_package_env(
         }
         _ => Ok(()),
     })?;
+    Ok(())
+}
+
+/// `inherited` without the `node_modules/.bin` of `cwd` and its ancestors, which a `bun run` above this install put in front.
+fn append_path_without_ancestor_bins(
+    path: &mut EnvPath,
+    inherited: &[u8],
+    cwd: &[u8],
+) -> Result<(), bun_alloc::AllocError> {
+    let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
+    for entry in strings::split(inherited, &[bun_paths::DELIMITER]) {
+        let is_ancestor_bin = strings::without_trailing_slash(entry)
+            .strip_suffix(bin)
+            .is_some_and(|dir| {
+                cwd.strip_prefix(dir)
+                    .is_some_and(|rest| rest.first().is_none_or(|&c| c == bun_paths::SEP))
+            });
+        if !is_ancestor_bin {
+            path.append(entry)?;
+        }
+    }
     Ok(())
 }
 

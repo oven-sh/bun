@@ -823,8 +823,7 @@ fn restore_tree(lockfile: &mut Lockfile, saved: SavedTree) {
     lockfile.buffers.hoisted_dependencies = saved.hoisted_dependencies;
 }
 
-/// The sorted names this install puts in the root `node_modules`. The lockfile also keeps the
-/// packages of the dependency types the install skips.
+/// Sorted. Only what this install places: the lockfile also has the dependency types it skips.
 pub(crate) fn top_level_names(manager: &mut PackageManager) -> Option<Vec<Box<[u8]>>> {
     let saved = hoist_install_tree(manager, install_features(manager)).ok()?;
     let buffers = &manager.lockfile.buffers;
@@ -1347,11 +1346,7 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
     (slice.begin() as usize..slice.end() as usize).any(|i| deps[i].behavior.is_bundled())
 }
 
-/// Hoisted post-install pass of every command that changed what bun.lock holds (install_with_manager.rs):
-/// removes what `before` placed at the root and the install no longer does, and the copies `before` placed
-/// in a nested or workspace `node_modules` that the install now provides from an ancestor.
-/// The folders are compared with the install tree (only it applies the self-contained barrier), hoisted with
-/// every dependency type and platform: what `--production` / `--omit` / `--os` / `--cpu` skipped this run stays.
+/// Removes what `before` placed and the install tree of all dependency types and platforms lacks.
 pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
     let options = &mut manager.options;
     let platform = (options.cpu, options.os, options.libc);
@@ -1485,8 +1480,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         plan.retain(folder_idx, dir);
     }
 
-    // Workspace node_modules: dropped `before` rows resolve like nested trees; other entries go only once the root copy is installed,
-    // and only for the commands that collapse copies: no bun.lock says that bun placed them.
+    // No bun.lock says that bun placed the other entries of a workspace's `node_modules`.
     let removes_other_entries = matches!(
         manager.subcommand,
         crate::Subcommand::Dedupe | crate::Subcommand::Audit | crate::Subcommand::Update
@@ -1906,8 +1900,7 @@ fn direct_aliases(
     };
     let mut direct: Vec<Box<[u8]>> = Vec::new();
     for dep_id in slice.begin()..slice.end() {
-        // `build_store` links a peer that `--omit=peer` leaves out when an ancestor provides it:
-        // the package itself or the root.
+        // `build_store` links a peer that `--omit=peer` leaves out when an ancestor provides it.
         let dep = &deps[dep_id as usize];
         let is_omitted_peer = dep.behavior.is_peer()
             && !(dep.behavior).is_placed(manager.options.local_package_features);
@@ -2049,8 +2042,7 @@ fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     result
 }
 
-/// `path` is a directory the installer makes for itself below the project's `node_modules` (an `@scope`, `.bin`,
-/// a nested `node_modules`, a package's folder). A link there came with the project and leads elsewhere: it goes.
+/// `path` is a directory the installer makes for itself: a link there came with the project.
 pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
     #[cfg(not(windows))]
     let (stat, remove) = (sys::lstatat(dir, path), || sys::unlinkat(dir, path));
@@ -2068,8 +2060,7 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
     }
 }
 
-/// `remove_planted_link` for each component of `path` after `path[..real_len]`. `path` is
-/// absolute or starts at the cwd.
+/// For each component of `path` (absolute, or from the cwd) after `path[..real_len]`.
 pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
     let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -2218,8 +2209,7 @@ pub(crate) fn prune_bins(node_modules: &Dir) {
     }
 }
 
-/// `prune_bins` for the global bin folder, which also holds what bun did not put there: only
-/// a link into `global_node_modules` goes. Both paths are absolute.
+/// The folder also holds what is not bun's: only a link into `global_node_modules` goes.
 pub(crate) fn prune_global_bins(bin_path: &[u8], global_node_modules: &[u8]) {
     let Some(parent) = bun_paths::dirname(bin_path).and_then(|parent| Dir::open(parent).ok())
     else {
@@ -2261,8 +2251,7 @@ fn remove_dangling_bins(bin: &Dir, _parent: &Dir, global: Option<(&[u8], &[u8])>
     }
 }
 
-// `.bunx` layout: windows-shim/BinLinkingShim.rs (a relative target path starts at `parent`, the folder that holds `bin`).
-// Only bun writes a `.bunx`, in the global bin folder too.
+// `.bunx` layout: windows-shim/BinLinkingShim.rs. Only bun writes one, also in the global folder.
 #[cfg(windows)]
 fn remove_dangling_bins(bin: &Dir, parent: &Dir, _global: Option<(&[u8], &[u8])>) {
     let mut shims: Vec<Box<[u8]>> = Vec::new();
@@ -2296,8 +2285,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, _global: Option<(&[u8], &[u8])>
     }
 }
 
-/// Removes from `dest`, a copy of the folder `src`, what `src` no longer has. `node_modules` is
-/// no part of the copy. A folder that cannot be listed, or whose source cannot, stays as it is.
+/// `dest` is a copy of the folder `src` without its `node_modules`. What cannot be listed stays.
 pub(crate) fn remove_entries_missing_from(src: &Dir, dest: &Dir) {
     fn list(dir: &Dir) -> Option<Vec<(Box<[u8]>, EntryKind)>> {
         let mut entries = Vec::new();

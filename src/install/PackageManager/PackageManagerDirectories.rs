@@ -387,7 +387,6 @@ pub struct CacheDir {
     pub is_cwd_fallback: bool,
 }
 
-/// `ENAMETOOLONG` when the configured directory does not fit a `PathBuffer`.
 /// An empty variable counts as unset: `abs(&[b""])` is the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
@@ -424,8 +423,7 @@ pub fn fetch_cache_directory_path(
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 
-/// What a cache root entry (or an entry of a `@scope` directory) is, by name: what `bun pm cache prune`
-/// may delete. Every writer into the cache root is listed next to its variant.
+/// What an entry of the cache root is, by name. Every writer into it is listed at its variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheEntryKind {
     /// `<name>@<version>...`, `@G@...`, `@GH@...`, `@T@...` (the printers below).
@@ -434,9 +432,7 @@ pub enum CacheEntryKind {
     Scope,
     /// `<name>/<version>...` symlinks to `Package` directories (`ExtractTarball::extract`).
     Index,
-    /// `links/` (isolated installer), `<hex>.git` (`GitRunner`), `@t@`
-    /// (`RuntimeTranspilerCache`), `.<tmp>` staging, and non-directories
-    /// (`.npm` manifests, `bun-<os>-<arch>-v*` from `StandaloneModuleGraph`).
+    /// `links/`, `<hex>.git`, `@t@` (`RuntimeTranspilerCache`), `.<tmp>` staging, non-directories.
     Other,
 }
 
@@ -785,13 +781,11 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL names different bytes over time
-/// and, for a path, in every project sharing the cache, so a `file:` / URL tarball is cached under
-/// the integrity bun.lock pins. A row that has none and gets none (`pins_tarballs`) has only its
-/// path or URL: `@T@<hash of it>@@@1`.
+/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL holds other bytes tomorrow, so the integrity bun.lock pins names the entry.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
+    tag: ResolutionTag,
     url: &[u8],
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
@@ -803,7 +797,13 @@ pub fn cached_tarball_folder_name_print<'a>(
         w.put_byte(b'-');
         w.put_hex_bytes(&digest[..digest.len().min(16)]);
     } else {
-        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
+        // A row that has none and gets none (`pins_tarballs`). The same path is another file in every project.
+        let mut hasher = bun_wyhash::Wyhash11::init(0);
+        if tag == ResolutionTag::LocalTarball {
+            hasher.update(FileSystem::instance().top_level_dir());
+        }
+        hasher.update(url);
+        w.put_u64_hex16::<true>(hasher.final_());
     }
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
@@ -827,6 +827,7 @@ pub fn cached_tarball_folder_name(
     cached_tarball_folder_name_print(
         cached_package_folder_name_buf(),
         integrity,
+        resolution.tag,
         this.lockfile.str(url),
         patch_hash,
     )
@@ -838,8 +839,6 @@ impl PackageManager {
         self.options.do_.save_lockfile() && self.options.offline != options::OfflineMode::Offline
     }
 
-    /// Only bun.lock's hash says which bytes a `file:` path or URL meant. `--force`, `bun update`
-    /// and naming the dependency on the command line read it again and pin what is there now.
     /// `named_here`: the names on the command line are about the package.json `dependency` is in.
     pub(crate) fn repins_tarball(
         &self,
@@ -1084,7 +1083,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-            cache_dir_subpath = cached_tarball_folder_name(integrity, patch_hash);
+            cache_dir_subpath =
+                cached_tarball_folder_name(manager, integrity, resolution, patch_hash);
             if cache_dir_subpath.is_empty() {
                 Output::err_generic(
                     "the lockfile does not record an integrity for <b>{}@{}<r>, run <cyan>bun install<r> first",

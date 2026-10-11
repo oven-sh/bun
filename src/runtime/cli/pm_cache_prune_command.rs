@@ -1,5 +1,4 @@
-//! `bun pm cache prune`: remove the `CacheEntryKind::Package` directories that were neither extracted
-//! (mtime) nor, where the file system records it, linked from (atime) in the last `--max-age` days.
+//! Removes package directories neither extracted (mtime) nor linked from (atime) for `--max-age`.
 
 use bstr::BStr;
 use bun_core::fmt::escape_control_chars;

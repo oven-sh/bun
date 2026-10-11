@@ -24,9 +24,7 @@ pub(crate) fn workspace_is_missing_on_disk(
     !bun_sys::exists_z(package_json_path.slice_z())
 }
 
-/// An edge bun.lock may leave unresolved (`may_stay_unresolved`) is treated as unresolved when
-/// `target` is a pruned workspace. Not an edge of a local package: its package.json is on disk
-/// and names a workspace that is not (`exit_if_survivor_depends_on_missing`).
+/// Not for a local package's edge: that is an error (`exit_if_survivor_depends_on_missing`).
 pub(crate) fn skips_link_to_pruned_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -89,8 +87,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
                 return Some(id);
             }
         }
-        // A plain install resolves the row again. A frozen one must not ask the registry for the
-        // name of a workspace: what counts is the package the lockfile binds the row to.
+        // A frozen install must not ask the registry for a workspace's name; a plain one resolves.
         if !frozen {
             return None;
         }

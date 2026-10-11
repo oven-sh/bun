@@ -203,8 +203,7 @@ fn finish_checkout(task: &mut Task::Task<'_>, staging: CacheStaging) -> Result<E
     read_package_json(task, package_dir)
 }
 
-/// bun installs what a package needs, so the `node_modules` a repository commits goes, as it does
-/// for npm and pnpm. A package that bundles dependencies keeps it, without the links in it.
+/// As npm and pnpm do. A package that bundles dependencies keeps it, without the links in it.
 fn strip_node_modules(checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
     use bun_sys::{E, EntryKind, O};
 
@@ -368,8 +367,7 @@ impl CacheStaging {
         let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(&self.tmp_name);
     }
 
-    /// Renames the staging folder to `folder_name`, unless a folder that passes
-    /// `is_complete` is there already, and opens it.
+    /// Opens `folder_name`: the staging folder, or one there already that passes `is_complete`.
     fn publish(
         self,
         log: &mut bun_ast::Log,

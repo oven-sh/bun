@@ -3386,8 +3386,8 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
   // docker-compose: a volume for each node_modules, and the source of a package mounted into one.
   // Bind mounts of `vol/*`, so what the installs leave in them can be read after the namespace is gone.
   test.skipIf(!canMount).concurrent.each([
-    { linkers: ["isolated"], root: [".bun", "dep", "mine"], web: ["lib"] },
-    { linkers: ["isolated", "hoisted"], root: ["dep", "lib", "mine", "web"], web: [] },
+    { linkers: ["isolated"], root: [".bun", "@acme", "dep", "mine"], web: ["lib"] },
+    { linkers: ["isolated", "hoisted"], root: ["@acme", "dep", "lib", "mine", "web"], web: [] },
   ])(
     "a mount point stays, and what another linker put in a node_modules that is one goes: $linkers",
     async expected => {
@@ -3409,10 +3409,13 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
         "vol/root/stale/package.json": JSON.stringify({ name: "stale", version: "1.0.0" }),
         "vol/root/dep/.keep": "",
         "vol/root/mine/.keep": "",
+        "vol/root/@acme/stale/package.json": JSON.stringify({ name: "@acme/stale", version: "1.0.0" }),
+        "vol/root/@acme/ui/.keep": "",
         "vol/web/lib/package.json": JSON.stringify({ name: "lib", version: "0.0.1" }),
         "vol/web/stale/package.json": JSON.stringify({ name: "stale", version: "1.0.0" }),
         "vol/dep/source.js": "",
         "vol/mine/source.js": "",
+        "vol/ui/source.js": "",
       });
       const vol = (...path: string[]) => join(String(dir), "vol", ...path);
 
@@ -3427,6 +3430,7 @@ mount -o bind vol/root node_modules
 mount -o bind vol/web packages/web/node_modules
 mount -o bind vol/dep node_modules/dep
 mount -o bind vol/mine node_modules/mine
+mount -o bind vol/ui node_modules/@acme/ui
 for linker in "$@"; do "$BUN" install --linker="$linker"; done`,
           "sh",
           ...expected.linkers,
@@ -3444,8 +3448,10 @@ for linker in "$@"; do "$BUN" install --linker="$linker"; done`,
       expect({
         root: await readdirSorted(vol("root")),
         web: await readdirSorted(vol("web")),
+        "@acme": await readdirSorted(vol("root", "@acme")),
         mine: await readdirSorted(vol("mine")),
-      }).toEqual({ root: expected.root, web: expected.web, mine: ["source.js"] });
+        ui: await readdirSorted(vol("ui")),
+      }).toEqual({ root: expected.root, web: expected.web, "@acme": ["ui"], mine: ["source.js"], ui: ["source.js"] });
       expect(await readdirSorted(vol("dep"))).toContain("source.js");
       if (expected.web.length > 0) expect(readlinkSync(vol("web", "lib"))).toBe(join("..", "..", "lib"));
       expect(exitCode).toBe(0);

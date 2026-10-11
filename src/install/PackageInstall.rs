@@ -90,8 +90,7 @@ pub enum Method {
     /// - it reads each dir twice incase the first pass modifies it
     Copyfile,
 
-    /// One symlink per file. Used for `--backend=symlink` and for a package
-    /// that depends on itself (`file:.`).
+    /// One symlink per file: `--backend=symlink`, or a package that depends on itself (`file:.`).
     Symlink,
 }
 
@@ -285,8 +284,7 @@ pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) ->
         .map_err(|err| err.err)
 }
 
-// Written by the CLI option-load and by the fallback in `link_files_into`, on any thread.
-// A hint: whoever reads the old value finds out for itself, so `Relaxed`.
+// A hint, written on any thread: whoever reads the old value finds out for itself, so `Relaxed`.
 pub(crate) static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
     Method::Clonefile as u8
 } else {
@@ -544,8 +542,8 @@ impl<TaskType> NewTaskQueue<TaskType> {
     }
 
     /// # Safety
-    /// `task` must be the `heap::into_raw` pointer of a live `TaskType` whose
-    /// ownership is being handed to the thread pool; the worker reclaims it.
+    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
+    /// being handed to the thread pool; the worker reclaims it in its callback.
     pub(crate) unsafe fn push(&self, task: *mut TaskType)
     where
         TaskType: IntrusiveWorkTask,
@@ -882,8 +880,7 @@ impl LinkBatch {
 
     /// Meanwhile `while_linking` runs on this thread; it is to return when `remaining` is 0.
     pub(crate) fn run(&self, while_linking: &mut dyn FnMut()) {
-        // The kernel lets one thread at a time into a `node_modules`. 600 packages of 31 files
-        // on 64 cores: 111 ms on 1 thread, 20 ms on 8, 26 ms on 64.
+        // The kernel lets one thread at a time into a `node_modules`: more threads are slower.
         const MAX_THREADS: usize = 8;
 
         // Not worth waking a thread for.
@@ -1601,11 +1598,7 @@ impl PackageFiles<'_> {
             let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
-            // on Windows, tasks already pushed to `queue` are running on
-            // worker threads; an early `?` here would return before `queue.wait()`,
-            // letting the caller re-enter `init_queue()` and reset the WaitGroup
-            // while workers are still inside `complete_one()` (data race on the
-            // counter/condvar). Capture loop errors and always fall through to wait.
+            // Workers already run what was pushed: keep loop errors, always reach `queue.wait()`.
             #[cfg(windows)]
             let mut loop_err: Option<crate::Error> = None;
 
@@ -2358,8 +2351,7 @@ impl PackageFiles<'_> {
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
-        // As in the isolated linker: a folder's `node_modules` is no part of it, it is hard linked where a
-        // package would be cloned (an edit shows), and its file system says nothing about the cache's.
+        // A folder is hard linked, not cloned (an edit shows); its file system is not the cache's.
         let is_folder = resolution_tag == resolution::Tag::Folder;
         let skip_dirs: &[&OSPathSlice] = if is_folder {
             &[bun_paths::os_path_literal!("node_modules")]
@@ -2406,8 +2398,7 @@ impl PackageFiles<'_> {
 
 type Walker = walker_skippable::Walker;
 
-/// The walk of the copyfile and symlink backends on Windows: makes each directory and calls
-/// `per_file(dest, src, entry_path)`, both absolute, for each file.
+/// Makes each directory; calls `per_file(dest, src, entry_path)`, both absolute, for each file.
 #[cfg(windows)]
 fn walk_install_dir_windows(
     state: &mut InstallDirState,

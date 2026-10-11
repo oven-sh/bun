@@ -271,8 +271,7 @@ pub mod registry {
         terminal: bool,
     }
 
-    /// The rightmost credential marker in `pathname`, as `(start, index in EMBEDDED_OPTIONS)`. Anchored on the whole marker:
-    /// a `:` or `/` inside the value (base64 holds `/`) does not end the scan, and one that belongs to the path is left alone.
+    /// `(start, index in EMBEDDED_OPTIONS)`. Anchored on the whole marker: base64 values hold `/`.
     fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, usize)> {
         (0..pathname.len())
             .rev()
@@ -284,8 +283,7 @@ pub mod registry {
             })
     }
 
-    /// A `:<word>=` run at the very end of the path whose word is no known option (`:_passwd=`, `:authtoken=`):
-    /// a misspelt credential, stripped from the request path and never adopted.
+    /// A trailing `:<word>=` of no known option is a misspelt credential: stripped, never adopted.
     fn trailing_misspelt_marker(pathname: &[u8]) -> Option<usize> {
         let unslashed = pathname.strip_suffix(b"/").unwrap_or(pathname);
         let start = strings::last_index_of_char(unslashed, b'/')? + 1;
@@ -301,8 +299,7 @@ pub mod registry {
         shaped.then_some(start)
     }
 
-    /// Strips trailing credential segments out of `url.pathname`, whether or not they are adopted: left there, the secret
-    /// ships in every request path. <https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364>
+    /// Stripped whether or not adopted: left there, the secret ships in every request path.
     fn parse_embedded_auth<'a>(url: &mut URL<'a>) -> EmbeddedAuth<'a> {
         let mut out = EmbeddedAuth::default();
         let mut pathname: &'a [u8] = url.pathname;
@@ -361,8 +358,7 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        /// `Authorization` for a request to `url`, as `(scheme, value)`. The one place a credential leaves a `Scope`,
-        /// so the one place that refuses a URL that is not http(s), which the HTTP client would send over plain TCP.
+        /// The one place a credential leaves a `Scope`, so the one that refuses a non-http(s) URL.
         pub fn authorization_parts(&self, url: &URL) -> Option<(&'static [u8], &[u8])> {
             if !url.has_http_like_protocol() {
                 None
@@ -433,8 +429,7 @@ pub mod registry {
             })
         }
 
-        /// The one builder of a `Scope`, so the one place that checks what will be written into `Authorization`:
-        /// here `$VAR`, `${VAR}`, URL userinfo and `:_authToken=` URL suffixes have produced the final bytes.
+        /// The one builder of a `Scope`: checks the final bytes that go into `Authorization`.
         fn build(
             name: &[u8],
             mut registry: api::NpmRegistry,
@@ -634,8 +629,7 @@ pub mod registry {
         Some(href)
     }
 
-    /// `normalize_tarball_url` without the parse, for a URL that was just built from `Scope::url` (a serialisation already)
-    /// and a package name: nothing in it that the parse would resolve, or that hides a dot segment.
+    /// `normalize_tarball_url` without the parse, for a URL just built from `Scope::url` and a name.
     pub fn is_normalized_tarball_url(url: &[u8]) -> bool {
         !url.iter().any(|&b| b <= 0x20 || b >= 0x7f || b == b'\\')
             && !hides_dot_segment(query_free_path(&URL::parse(url)))
@@ -683,8 +677,7 @@ pub mod registry {
         NotFound,
     }
 
-    /// Until when the packument that a 200 or 304 delivered is used without asking again. 300 seconds is what
-    /// registry.npmjs.org sends, the most that is honoured, and what a response that does not say gets.
+    /// 300 seconds is what registry.npmjs.org sends, the most that is honoured, and the default.
     pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
         let mut max_age: u64 = 300;
         for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
@@ -839,10 +832,9 @@ pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonV
     this.combine()
 }
 
-/// Only the registry's full document has `libc`, so it is what `NetworkTask::for_manifest` requests for these
-/// names. A function of the name alone, not of the host or the dependency kind: a lockfile written on macOS
-/// records `libc` for Linux. `gnu` is left out: it is also in `signup`, and comes after `linux` where it means glibc.
+/// Only the registry's full document has `libc`. By name alone: macOS locks `libc` for Linux too.
 pub(crate) fn name_suggests_libc(name: &[u8]) -> bool {
+    // Not `gnu`: it is also in `signup`, and comes after `linux` where it means glibc.
     strings::contains(name, b"linux")
         || strings::contains(name, b"musl")
         || strings::contains(name, b"glibc")
@@ -1688,8 +1680,7 @@ impl FindResult<'_> {
     }
 }
 
-/// `minimumReleaseAgeExcludes` entries (pnpm grammar): `name` exempts a package, `name@1.2.3 || 1.2.4` only those
-/// versions (matched with `Version::eql`, which compares tags by hash, so no string buffer is kept).
+/// pnpm's grammar: `name` exempts a package, `name@1.2.3 || 1.2.4` only those versions.
 pub struct MinimumReleaseAgeExcludes(Vec<(&'static [u8], Option<Semver::Version>)>);
 
 impl MinimumReleaseAgeExcludes {
@@ -1997,8 +1988,7 @@ impl PackageManifest {
         )
     }
 
-    /// npm's `*` (the empty range, as in `npm:name`): `latest`, prerelease or not, unless it is deprecated or names no
-    /// version. Then the highest release, a deprecated one only when all are, never a prerelease.
+    /// npm's `*`: `latest`, even a prerelease, unless it is deprecated; else the highest release.
     pub(crate) fn find_any_version(
         &self,
         minimum_release_age_ms: Option<f64>,
@@ -2228,8 +2218,7 @@ impl PackageManifest {
             return self.find_by_version(exact);
         }
 
-        // As npm-pick-manifest: a deprecated version is picked only when every match is deprecated,
-        // and the empty range (see `find_any_version`) follows `latest` even onto a prerelease.
+        // As npm-pick-manifest: a deprecated version is picked only when every match is deprecated.
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if result.package.deprecated.is_empty()
                 && (group.is_empty()

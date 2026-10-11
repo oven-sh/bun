@@ -1477,8 +1477,7 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
-    /// The WHATWG percent-decode algorithm, which cannot fail: a `%` that no two hex digits follow stays as written.
-    /// curl reads the userinfo of a URL the same way.
+    /// WHATWG percent-decode, which cannot fail: a `%` that no two hex digits follow stays.
     pub fn decode_lenient_alloc(input: &[u8]) -> Box<[u8]> {
         let mut out: Vec<u8> = Vec::with_capacity(input.len());
         let mut rest = input;

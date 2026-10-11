@@ -765,8 +765,7 @@ pub fn install_with_manager(
                         .unwrap_or(false))
                 };
                 if same_packages {
-                    // A row that was added, removed, moved to another group or retyped resolves to what is
-                    // locked, and an install that may save rewrites it. Not judged for another tool's lockfile.
+                    // Same packages, other rows: a save would rewrite it. A migration is not judged.
                     if load_result.migrated_from().is_some()
                         || !manager.summary.changes_dependencies()
                     {
@@ -1581,8 +1580,7 @@ fn report_lockfile_load_error(
     Ok(())
 }
 
-/// Re-resolves the rows `selects` in package order (root first, so later rows dedupe onto what its rows append),
-/// skipping rows in no list (the root's loaded rows the differ replaced) and `pinned_rows` (the update plan's).
+/// Root first, so that later rows dedupe onto what its rows append. Rows in no list are skipped.
 fn reresolve_owned_rows(
     manager: &mut PackageManager,
     pinned_rows: &DynamicBitSet,
@@ -1611,8 +1609,7 @@ fn enqueue_row(manager: &mut PackageManager, row: DependencyID, resolution: Pack
     }
 }
 
-/// A range of a registry package links a workspace only through the root's edge to it; once the root has dropped
-/// the edge the range resolves again. Runs when all else is resolved: a row that `clean` discards must not ask the registry.
+/// Runs when all else is resolved: a row that `clean` discards must not ask the registry.
 #[cold]
 #[inline(never)]
 fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
@@ -2217,8 +2214,7 @@ fn clean_lockfile(
     Ok(before_clean)
 }
 
-/// The write-back gave `overrides` other values (`edit_after_resolve`): a row whose package its rule's range no longer
-/// accepts resolves again and the lockfile is cleaned a second time. Returns the packages those rows moved to.
+/// After `edit_after_resolve` gave `overrides` other values. Returns the packages rows moved to.
 #[cold]
 #[inline(never)]
 fn reresolve_rows_outside_overrides(
@@ -2376,8 +2372,7 @@ fn run_security_scanner(
     }
 }
 
-// bun.lockb -> bun.lock (`--save-text-lockfile --frozen-lockfile --lockfile-only`) is the one write while
-// `Do::SAVE_LOCKFILE` is off; migrations (which may report `Format::Binary` too) save via `FORCE_SAVE_LOCKFILE`.
+// The one write while `Do::SAVE_LOCKFILE` is off; migrations save via `FORCE_SAVE_LOCKFILE`.
 fn converts_binary_lockfile_to_text(
     load_result: &lockfile::LoadResult,
     save_format: lockfile::Format,

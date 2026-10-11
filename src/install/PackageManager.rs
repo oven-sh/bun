@@ -996,8 +996,7 @@ impl PackageManager {
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
-                // `handler`'s second arg is the erased `*mut PackageManager`
-                // (`bun_install_types` cannot name this type).
+                // `bun_install_types` cannot name `PackageManager`: the second arg is erased.
                 (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
@@ -1443,9 +1442,7 @@ fn allocate_package_manager(
                 core::ptr::addr_of_mut!((*p).$field).write($val)
             };
         }
-        // The two large pools: in-place init that only zeros the 256 B
-        // occupancy bitset and leaves `[MaybeUninit<T>; N]` untouched — no
-        // stack temporary, no memcpy.
+        // In place: zeros only the 256 B occupancy bitset; no stack temporary, no memcpy.
         PreallocatedNetworkTasks::init_in_place(core::ptr::addr_of_mut!(
             (*p).preallocated_network_tasks
         ));
@@ -1710,8 +1707,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// Appends `<separator>package.json\0` to a directory. The root of a Windows drive, `C:\`, has
-/// its separator already.
+/// Appends `<separator>package.json\0`. A Windows drive root, `C:\`, has its separator already.
 fn push_package_json(path: &mut Vec<u8>) {
     if !(cfg!(windows) && path.last().is_some_and(|&c| bun_paths::is_sep_native(c))) {
         path.push(SEP);
@@ -1736,8 +1732,7 @@ fn load_npmrc_files(
         .into_iter()
         .find_map(|key| env.get(key).filter(|path| !path.is_empty()));
 
-    // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-    // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
+    // npm ignores XDG_CONFIG_HOME: `$XDG_CONFIG_HOME/.npmrc` counts only when that file exists.
     let mut global_len: usize = 0;
     if let Some(userconfig) = userconfig {
         global_len = join(start_dir, &mut buf, &[userconfig]).map_or(0, ZStr::len);
@@ -1758,8 +1753,7 @@ fn load_npmrc_files(
     install
 }
 
-/// The one upward walk of [`init`], from the cwd to the filesystem root. Step 1 takes the first
-/// `package.json` it opens; step 2 goes on from there, looking for the workspace root.
+/// The one upward walk of [`init`]: to the first `package.json`, then on to the workspace root.
 struct PackageJsonWalk<'a> {
     cwd: &'a [u8],
     next_dir: Option<&'a [u8]>,
@@ -1806,9 +1800,7 @@ impl<'a> PackageJsonWalk<'a> {
     }
 }
 
-/// Sticky and writable by the group or by everyone, like `/tmp`: any local user can put a
-/// `package.json` (`trustedDependencies`, `.npmrc`, `bunfig.toml`) above a project that is not
-/// theirs. A directory that cannot be read counts as shared.
+/// Sticky and group- or world-writable, like `/tmp`: any local user can put a `package.json` there.
 #[cfg(unix)]
 fn is_shared_directory(dir: &[u8]) -> bool {
     use bun_sys::S;
@@ -1849,9 +1841,8 @@ pub fn init(
     // `holder::RAW_PTR`) instead of `Box::leak`.
     let env: &mut dot_env::Loader = unsafe {
         let mut loader_ptr = holder::ENV_LOADER.load();
-        // `init()` runs again once a missing package.json is created. The cwd has moved by then, so
-        // that run keeps what the first one read from the `--env-file` paths.
-        if loader_ptr.is_null() || cli.env_files.is_empty() {
+        // A second `init()` has another cwd: it keeps what the first read from `--env-file` paths.
+        if loader_ptr.is_null() {
             loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
             holder::ENV_LOADER.store(loader_ptr);
         }
@@ -1887,8 +1878,7 @@ pub fn init(
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
         let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
-        // Keeps the first directory it is given, also when `init()` runs again: `initial_top_level_dir()`
-        // is where `bun add -g ./path` was typed.
+        // The first call wins: `initial_top_level_dir()` is where `bun add -g ./path` was typed.
         bun_paths::fs::FileSystem::init(bun_sys::getcwd_alloc()?.as_bytes());
         bun_sys::fchdir(global_dir)?;
     }
@@ -2077,8 +2067,7 @@ pub fn init(
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
-                    // The path as opened, not the fd's realpath, which may be on another drive
-                    // (subst, junction) or outside the project (symlink) (#39357).
+                    // As opened: the fd's realpath may be on another drive or outside the project.
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
                     // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
                     let json_path: &[u8] = unsafe {
@@ -2142,8 +2131,7 @@ pub fn init(
                             break;
                         };
                         let mut log = bun_ast::Log::init();
-                        // An error is about another entry or member. The members found up to it are
-                        // enough to tell whether the cwd is one; a command that needs the rest reports it.
+                        // An error is about another member; a command that needs it reports it.
                         let _ = workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
@@ -2250,8 +2238,7 @@ pub fn init(
     };
 
     env.load_process()?;
-    // npm's `ignore-scripts`, before the project's `.env` files load. It only turns scripts off:
-    // `false` does not undo a config file.
+    // npm's `ignore-scripts`, before the project's `.env` files load. It only turns scripts off.
     let env_ignores_scripts = [
         b"NPM_CONFIG_IGNORE_SCRIPTS" as &[u8],
         b"npm_config_ignore_scripts",
@@ -2260,8 +2247,7 @@ pub fn init(
     .filter_map(|key| env.get(key))
     .any(|value| !value.is_empty() && ini::npm_config_bool(value));
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
-        // Copy the listing's basenames out under `entries_mutex`; `.data` must
-        // only be probed while the lock is held.
+        // `.data` must only be probed while `entries_mutex` is held.
         let env_probe_keys = {
             let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
             dot_env::DirEntryKeys(
@@ -2369,8 +2355,7 @@ pub fn init(
     {
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
-        // separators before hashing; the folder resolver always builds its `Key` from
-        // `/`-separated bytes. On Windows this path contains `\`, so
+        // separators: the folder resolver's `Key` has `/` only; on Windows this path has `\`, so
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.

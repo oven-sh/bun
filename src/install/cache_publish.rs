@@ -5,8 +5,7 @@ use core::fmt;
 use bun_core::ZStr;
 use bun_sys::{self as sys, Dir, E, Fd, O};
 
-/// A cache entry being built in a directory whose name no other process knows.
-/// Deleted on drop unless [`publish`](Self::publish) renamed it.
+/// A cache entry being built under a name no other process knows. Deleted on drop if unpublished.
 pub(crate) struct StagedEntry<'a> {
     parent: Fd,
     name: &'a ZStr,
@@ -39,12 +38,7 @@ impl<'a> StagedEntry<'a> {
         }
     }
 
-    /// Renames the directory to `to` in `cache_dir`.
-    ///
-    /// The name of a cache entry says what it holds, so the first writer wins: another
-    /// install that shares the cache may publish `to` first and already be reading it.
-    /// A folder there that passes `is_complete` is kept, and returned. Only one that
-    /// fails it is replaced.
+    /// The first writer wins: a folder at `to` that passes `is_complete` is kept, and returned.
     pub(crate) fn publish(
         mut self,
         cache_dir: Fd,
@@ -56,15 +50,13 @@ impl<'a> StagedEntry<'a> {
         let mut retry = RenameRetry::new();
         let mut attempts = 0;
         loop {
-            // `rename` replaces a directory only when it is empty, so this never
-            // overwrites a published folder.
+            // `rename` replaces only an empty directory: never a published folder.
             let Err(err) = retry.rename(self.parent, self.name, cache_dir, to) else {
                 self.renamed = true;
                 return Ok(None);
             };
             attempts += 1;
-            // What takes the name is removed in ways that cannot remove a published
-            // folder, one that appears under the name meanwhile included.
+            // Nothing below can remove a published folder, even one that appears meanwhile.
             match cache.open_at_with(to.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
                 Ok(published) if is_complete(&published) => return Ok(Some(published)),
                 _ if attempts == MAX_ATTEMPTS => return Err(err),
@@ -99,12 +91,7 @@ fn delete_children(dir: &Dir) {
     }
 }
 
-/// Renames of directories bun has just written.
-///
-/// Windows refuses to rename a directory while any process holds a file in it open without
-/// `FILE_SHARE_DELETE`, which is how scanners and the indexer open new files. The renames of
-/// one `RenameRetry` wait that out, together for `BUN_INSTALL_WINDOWS_RENAME_RETRY_MS`.
-/// Nothing is tried again on POSIX, where an open file blocks no rename.
+/// Windows renames no directory in which a scanner has a new file open; one budget for all waits.
 pub(crate) struct RenameRetry {
     #[cfg(windows)]
     started: Option<std::time::Instant>,
@@ -201,8 +188,7 @@ impl fmt::Display for RenameError {
     }
 }
 
-/// Links `<cache>/<name>/<version>` to the entry at `target`; auto-install resolves through
-/// it. Best effort, and never replaces a link.
+/// `<cache>/<name>/<version>`, for auto-install. Best effort, and never replaces a link.
 pub(crate) fn create_index_link(
     cache_dir: Fd,
     cache_dir_path: &[u8],

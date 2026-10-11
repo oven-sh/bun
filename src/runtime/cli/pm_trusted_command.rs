@@ -59,8 +59,7 @@ struct Blocked {
     /// Scripts run deepest first, like during an install.
     depth: usize,
     scripts_list: ScriptsList,
-    /// Other projects share the directory, so nothing runs there. An install gives a trusted
-    /// package a directory inside the project.
+    /// Other projects share the directory: nothing runs there until an install moves the package.
     in_global_store: bool,
     action: Action,
 }

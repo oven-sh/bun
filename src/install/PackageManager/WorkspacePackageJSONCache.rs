@@ -116,8 +116,7 @@ impl WorkspacePackageJSONCache {
         self.get_or_insert(log, abs_package_json_path, opts, None)
     }
 
-    /// Caches `contents` as the package.json of a folder that has none and gets none
-    /// (`bun add --dry-run`), so that nothing reads the path.
+    /// `contents` stands for a package.json that is never written (`bun add --dry-run`).
     pub(crate) fn insert_unwritten(
         &mut self,
         log: &mut Log,

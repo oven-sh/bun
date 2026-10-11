@@ -159,9 +159,7 @@ impl Header {
     }
 }
 
-// The `Display` impls in this file (except `Headers`, which is wire format) render the verbose
-// trace of peer-supplied text: HTTP/1.1 admits UTF-8 encoded C1 controls (U+009B, CSI), HPACK/QPACK
-// only reject NUL, CR and LF. A value can be a URL with credentials (`Location`): `for_terminal`.
+// The `Display` impls here (except `Headers`: wire format) print peer-supplied text to a terminal.
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape

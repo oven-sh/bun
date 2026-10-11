@@ -3641,8 +3641,7 @@ mod windows_impl {
         }
         Ok(bytes_written as usize)
     }
-    /// `Ok(false)` when `nonblocking` and the lock is held elsewhere. Unlike `flock(2)`,
-    /// `LockFileEx` cannot convert a lock the handle already holds.
+    /// Unlike `flock(2)`, `LockFileEx` cannot convert a lock the handle already holds.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
         use w::kernel32::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
         let flags = (LOCKFILE_EXCLUSIVE_LOCK * u32::from(mode == FileLockMode::Exclusive))
@@ -3919,9 +3918,7 @@ mod windows_impl {
         }
         Ok(())
     }
-    /// `FSCTL_SET_SPARSE`. NTFS gives every byte below the end of a file real
-    /// clusters unless the file has this mark, so set it before a seek or an
-    /// `ftruncate` leaves a range that nothing writes to.
+    /// `FSCTL_SET_SPARSE`: without it NTFS gives every byte below the end of a file real clusters.
     pub fn set_sparse(fd: Fd) -> Maybe<()> {
         let mut returned: w::DWORD = 0;
         // SAFETY: FFI; fd is a valid HANDLE, the call passes no buffer, and
@@ -7164,8 +7161,7 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// `NtQueryAttributesFile` on an NT-prefixed wide path relative to `dir`.
-/// Like `GetFileAttributesW`, a final-component reparse point is not followed.
+/// `path` is NT-prefixed. Like `GetFileAttributesW`, does not follow a final reparse point.
 #[cfg(windows)]
 fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
@@ -7217,8 +7213,6 @@ pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Maybe<WindowsFileAttribute
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
     })
 }
-/// Shared by the UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`)
-/// entry points.
 #[cfg(windows)]
 fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;

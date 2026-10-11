@@ -659,8 +659,7 @@ pub mod semver_string {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             use core::fmt::Write;
             for chunk in self.bytes.utf8_chunks() {
-                // `?` would be parsed as a query-string delimiter during
-                // module resolution (and is invalid in Windows filenames).
+                // `?`: a query-string delimiter in module resolution, invalid in Windows filenames.
                 let mut rest = chunk.valid();
                 while let Some(i) = strings::index_of_any(rest.as_bytes(), b"/\\:#?") {
                     f.write_str(&rest[..i])?;

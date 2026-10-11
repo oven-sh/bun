@@ -355,8 +355,7 @@ fn parse_classic(
     Ok(out)
 }
 
-/// `root`, parsed from `source`, copied out of the thread-local `Store` into `bump`, for a tree
-/// that outlives the next reset of the `Store`. Fails the way parsing a document that is too deep does.
+/// For a tree that outlives the next reset of the thread-local `Store`.
 pub fn clone_out_of_store(
     root: &Expr,
     source: &bun_ast::Source,

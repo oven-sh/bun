@@ -735,8 +735,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             if v.order(inst.current, manifest_buf, buf) != Ordering::Less {
                 continue;
             }
-            // Downgrades stay in the installed major (minor below 1.0.0): an older line is a different API,
-            // and the bulk response only has advisories for the installed versions' lines (#39309).
+            // The bulk response only has advisories for the release lines that are installed.
             let cur = inst.current;
             if v.major != cur.major || (v.major == 0 && v.minor != cur.minor) {
                 break;

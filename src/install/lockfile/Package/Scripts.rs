@@ -258,6 +258,10 @@ impl Scripts {
                 items: scripts,
                 first_index: u8::try_from(first_index).expect("int cast"),
                 total,
+                is_dependency: !matches!(
+                    resolution_tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                ),
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
@@ -306,8 +310,7 @@ impl Scripts {
         }
     }
 
-    /// Runs on the isolated linker's task threads. `trusted` is the caller's verdict on the package,
-    /// or `true` to list what would run; without it there is no default `node-gyp rebuild`.
+    /// Runs on the isolated linker's task threads. `trusted`: also `true` to list what would run.
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
@@ -447,6 +450,8 @@ pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub(crate) first_index: u8,
     pub total: u8,
+    /// Neither the project's nor a workspace's own scripts.
+    pub(crate) is_dependency: bool,
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,

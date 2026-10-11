@@ -28,8 +28,7 @@ bun_output::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
-/// `flock` on `<bunx cache dir>.lock`, next to (not inside) the tree: exclusive while installing, probed shared
-/// before running out of it. CLOEXEC, so exec'ing the target releases it too.
+/// `flock` on `<bunx cache dir>.lock`, next to the tree. CLOEXEC: exec'ing the target releases it.
 struct InstallLock {
     _file: bun_sys::File,
 }
@@ -55,9 +54,7 @@ impl InstallLock {
     }
 }
 
-/// What `<bunx cache dir>/package.json` says about the tree beside it. bunx writes
-/// [`BunxCommand::EMPTY_PACKAGE_JSON`] there before every install and `bun add` replaces that only once
-/// everything is linked: its size tells a finished install from a killed one, its mtime when it ran.
+/// `bun add` replaces the tree's `EMPTY_PACKAGE_JSON` only once everything is linked.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tree {
     Missing,
@@ -292,8 +289,7 @@ impl BunxCommand {
 
     const EMPTY_PACKAGE_JSON: &[u8] = b"{}\n";
 
-    /// `bin` keys (and the `name` fallback) in package.json are command names, not paths:
-    /// `bun_which::which` resolves names with a slash against the cwd, escaping `node_modules/.bin`.
+    /// `bun_which::which` resolves a name with a slash against the cwd, outside `node_modules/.bin`.
     fn is_safe_bin_name(name: &[u8]) -> bool {
         !name.is_empty()
             && name != b"."
@@ -447,11 +443,7 @@ impl BunxCommand {
         Self::get_bin_name_from_cache_directory(transpiler, bunx_cache_dir, package_name)
     }
 
-    /// The directory `package_fmt` is installed into: `<install cache>/.bunx-<uid>/<package_fmt>`. `.bunx-<uid>`, a
-    /// directory of this user with mode 0700, is the trust boundary: nothing below it is checked. `require` and the
-    /// dynamic loader walk toward `/`, so its ancestors have to belong to this user or to root: the temp directory,
-    /// where any user can create `node_modules`, is only used, with a warning, without an install cache to write to.
-    /// Writes nothing unless `create` (a run that installs). `None` when no candidate holds such a directory.
+    /// `.bunx-<uid>`, this user's with mode 0700, is the trust boundary: nothing below is checked.
     #[cfg(unix)]
     fn cache_dir(
         env: &mut bun_dotenv::Loader,
@@ -550,8 +542,7 @@ impl BunxCommand {
         ))
     }
 
-    /// What to run out of the tree: the bin called `initial_bin_name`, else the one the package.json of
-    /// `package_name` declares (`None` with `--package`, which names the bin).
+    /// `package_name` is `None` with `--package`, which names the bin.
     fn find_in_cache(
         transpiler: &mut Transpiler,
         bunx_cache_dir: &[u8],
@@ -928,8 +919,7 @@ impl BunxCommand {
         Self::prepend_to_path(env_loader, bunx_cache_dir, &path)?;
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
-        // Concurrent runs of one package share this directory: hold the lock through the install and
-        // the bin lookups below, until exec. Unlockable: install without it.
+        // Held through the install and the bin lookups, until exec. Unlockable: install without it.
         let mut install_lock =
             InstallLock::acquire(bunx_cache_dir, bun_sys::FileLockMode::Exclusive, false);
 
@@ -991,8 +981,7 @@ impl BunxCommand {
             args.push(b"--no-cache");
         }
         if installed.is_none() {
-            // Without it the install keeps every package whose package.json has the right name and version:
-            // only for a tree known to be whole. Linking again repairs a killed install, and once a day every tree.
+            // Links every package again, which repairs a killed install.
             args.push(b"--force");
         }
         if opts.verbose_install {
@@ -1053,8 +1042,7 @@ impl BunxCommand {
             Ok(Ok(result)) => result,
         };
 
-        // Only for the install: with it, a tool that runs `bunx add` gets `bun add`, and its own
-        // `bun install` finds no workspace root.
+        // Only for the install: the tool's own `bunx` and `bun install` must not inherit it.
         env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
 
         /// The raw byte: `signal_code()` would drop RT signals (>31).
@@ -1077,8 +1065,7 @@ impl BunxCommand {
                 use bun_install::package_manager_real::run_tasks::BUNX_REGISTRY_UNREACHABLE;
                 match (exited.code as u32, &finished_package_json) {
                     (0, _) => {}
-                    // The install touched nothing, so the tree is what it was. It counts as refreshed:
-                    // without a network every run would wait for the attempt.
+                    // Counts as refreshed: without a network every run would wait for the attempt.
                     (BUNX_REGISTRY_UNREACHABLE, Some(package_json)) => {
                         write_package_json(package_json);
                         if !look_for_existing_bin {

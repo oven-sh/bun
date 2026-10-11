@@ -61,9 +61,7 @@ impl ScratchManifests {
         self.fail_on_logged_errors()
     }
 
-    /// `parse_root(Features::main())` minus its `workspaces` walk, which reads every member's package.json:
-    /// `workspace:` rows resolve through the paths `manager.lockfile` recorded. The versions it recorded may
-    /// be behind the files, so they are left out and no `workspace:` range is checked.
+    /// Reads no member: takes bun.lock's workspace paths, not its versions, which may be stale.
     fn parse_root_alone(&mut self, manager: &mut PackageManager) -> crate::Result<()> {
         let installed = &manager.lockfile;
         let buf = installed.buffers.string_bytes.as_slice();
@@ -93,8 +91,7 @@ impl ScratchManifests {
         )
     }
 
-    /// `parse_member` after `parse_root_alone`, for a caller that goes on without the file: nothing is printed
-    /// and `log` is left clean.
+    /// For a caller that goes on without the file: nothing is printed and `log` is left clean.
     fn try_parse_member(
         &mut self,
         manager: &mut PackageManager,
@@ -343,8 +340,7 @@ fn installed_row(
     same_name
 }
 
-/// The workspace versions and catalogs `bun pm pack` / `bun publish` substitute, read from the package.json
-/// files as they are now (bun.lock has the versions of the last install; releases bump them after it).
+/// What `bun pm pack` / `bun publish` substitute, from the files: bun.lock's versions may be stale.
 pub struct WorkspaceManifests {
     lockfile: Lockfile,
     /// Has a `Behavior::WORKSPACE` entry per workspace: its name and root-relative directory.
@@ -543,8 +539,7 @@ pub(crate) fn relation_graph(
     WorkspaceGraph::from_edges(targets.len(), edges)
 }
 
-/// The package.json paths of the packages `--filter` selects (without one: the root and every workspace), each
-/// after the selected ones it depends on. For `bun publish --recursive`: read from the files, not from bun.lock.
+/// The package.json paths `--filter` selects (without one: all), each after those it depends on.
 pub fn selected_in_dependency_order(
     manager: &mut PackageManager,
     original_cwd: &[u8],

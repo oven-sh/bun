@@ -1496,7 +1496,9 @@ impl<'a> Installer<'a> {
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let pkg_id = self.store.ids(entry_id).pkg_id;
                 directories::cached_tarball_folder_name(
+                    manager,
                     &self.lockfile().packages.items_meta()[pkg_id as usize].integrity,
+                    pkg_res,
                     patch_hash,
                 )
             }

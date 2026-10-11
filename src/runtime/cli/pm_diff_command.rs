@@ -690,8 +690,7 @@ fn read_dir_tree(
     Ok(tree)
 }
 
-/// What `bun pm pack` in `dir` resolves `workspace:` and `catalog:` through: this project's package.json files, if
-/// `dir` is its root or one of its workspaces. `manifest` is `dir`'s package.json.
+/// What `bun pm pack` in `dir` resolves the `workspace:` and `catalog:` of `manifest` through.
 fn manifests_for(
     pm: &mut PackageManager,
     dir: &[u8],

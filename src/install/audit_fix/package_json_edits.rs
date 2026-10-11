@@ -251,9 +251,7 @@ pub(super) fn override_literal(
     literal
 }
 
-/// Visits, in file order, the value of every entry declaring `selector` for `name`, whichever of the accepted key spellings (`a>b`, `a/b`, `**/b`, `{"a": {"b": ..}}`, `{"b": {".": ..}}`) each uses.
-///
-/// Walks both `overrides` and `resolutions`, like `OverrideMap::parse_append`; npm's `"parent": { "child": .. }` form only counts in `overrides`, where the parser accepts it.
+/// In file order, every entry `OverrideMap::parse_append` reads as `selector` for `name`.
 fn for_each_override_value(
     root: &Expr,
     name: &[u8],

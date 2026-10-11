@@ -115,9 +115,7 @@ pub struct TarballStream {
     phase: Phase,
 
     /// Output file for the entry currently being written. `None` while
-    /// between entries or when the current entry is being skipped. The
-    /// writer is the one the buffered extractor uses, kept here so a block
-    /// can be written on each side of an ARCHIVE_RETRY yield.
+    /// between entries or when the current entry is being skipped.
     out: Option<lib::EntryWriter>,
     write_strategy: lib::WriteStrategy,
 
@@ -703,8 +701,7 @@ impl TarballStream {
         Ok(())
     }
 
-    /// The current entry's data ended at `end`. Gives the output file that
-    /// length, then closes it.
+    /// The entry's data ended at `end`: the output file gets that length.
     fn finish_output_file(&mut self, end: i64) -> crate::Result<()> {
         let Some(mut out) = self.out.take() else {
             return Ok(());
@@ -714,8 +711,7 @@ impl TarballStream {
         result.map_err(|e| e.to_zig_err().into())
     }
 
-    /// Closes the output file of an entry that did not reach its end. The
-    /// file keeps the bytes that were written and nothing more.
+    /// For an entry that did not reach its end.
     fn close_output_file(&mut self) {
         if let Some(out) = self.out.take() {
             out.fd().close();

@@ -35,7 +35,6 @@ pub struct ScopedOverride {
     pub(crate) dep: Dependency,
 }
 
-/// The rule `OverrideMap::lookup` chose for one dependency edge.
 #[derive(Clone, Copy)]
 pub(crate) enum OverrideRule<'a> {
     Flat(&'a Dependency),
@@ -80,7 +79,7 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
     })
 }
 
-/// dependency id -> owning package id, filled lazily. Checked on use: the differ and the folder resolver replace a package's rows.
+/// dependency id -> owning package id, filled lazily. Checked on use: a package's rows can move.
 #[derive(Default)]
 struct OwnerIndex {
     by_dep: Vec<PackageID>,
@@ -105,8 +104,7 @@ pub struct OverrideMap {
     pub(crate) scoped: Vec<ScopedOverride>,
     scoped_names: ArrayHashMap<PackageNameHash, ()>,
     owner_index: RefCell<OwnerIndex>,
-    /// Set by `parse_append` when `"resolutions"` added rules to those of `"overrides"`: how many
-    /// entries of `map` and of `scoped` the latter gave. They come first until `sort`.
+    /// `map` / `scoped` entries of `"overrides"` (first until `sort`), if `"resolutions"` added.
     overrides_field: Option<(usize, usize)>,
 }
 
@@ -156,8 +154,7 @@ fn is_comment_key(key: &[u8]) -> bool {
 
 struct ParseContext<'a, 'b> {
     field: Field,
-    /// Parsing only appends or replaces in place, so the rules `"overrides"` produced are the first
-    /// `overrides_flat` entries of `map` and the first `overrides_scoped` of `scoped`.
+    /// Parsing appends or replaces in place: the rules of `"overrides"` are the first this many.
     overrides_flat: usize,
     overrides_scoped: usize,
     pm: &'a mut PackageManager,
@@ -372,9 +369,7 @@ impl OverrideMap {
         }
     }
 
-    /// Bun 1.4 and older read `"resolutions"` only without `"overrides"`, so their lockfile has the
-    /// rules of `"overrides"` alone. For a frozen install, before `changed`: when `recorded` has as
-    /// many rules as that field gave `self`, the rules of `"resolutions"` are dropped from `self`.
+    /// For a frozen install: Bun 1.4 and older recorded `"overrides"` alone when both were present.
     #[cold]
     pub(crate) fn drop_resolutions_unknown_to(&mut self, recorded: &OverrideMap) -> bool {
         let Some((flat, scoped)) = self.overrides_field.take() else {
@@ -537,7 +532,7 @@ impl OverrideMap {
         self.put_scoped(rule, buf, 0);
     }
 
-    /// Like `push_scoped`, except that a matching rule among the first `keep` is kept and `rule` is dropped.
+    /// `push_scoped`, except that a matching rule among the first `keep` wins over `rule`.
     fn put_scoped(&mut self, rule: ScopedOverride, buf: &[u8], keep: usize) {
         if self.scoped_names.contains(&rule.dep.name_hash) {
             if let Some(index) = self.scoped.iter().position(|existing| {
@@ -694,8 +689,7 @@ impl OverrideMap {
         }
     }
 
-    /// Parses the root package.json's `"overrides"` and `"resolutions"` into this (empty) map.
-    /// Both fields apply; where they define the same selector the `"overrides"` rule wins.
+    /// The map must be empty. Where both fields define a selector, the `"overrides"` rule wins.
     pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
@@ -941,7 +935,7 @@ impl OverrideMap {
 
         let name_hash = SemverBuilder::string_hash(target.name);
         let is_flat = parent.is_none() && target.range.is_empty();
-        // Checked before the value is parsed: a flat `npm:` value also registers an alias, which a skipped rule must not do.
+        // Before parsing the value, which registers a flat `npm:` alias; a skipped rule must not.
         if is_flat
             && self
                 .map

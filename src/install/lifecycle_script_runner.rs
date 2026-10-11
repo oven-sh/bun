@@ -254,9 +254,7 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
-/// `args` follows `npm run `, `out` ends in `bun run`. npm takes `-w <workspace>` / `--workspaces` anywhere; `bun run` hands
-/// them to the script when behind its name. Appends the command with them in front, as `--filter=<workspace>` / `--workspaces`,
-/// and returns how much of `args` that was: 0 when the command selects no workspace or is more than plain words.
+/// npm takes `-w` / `--workspaces` anywhere, `bun run` only in front. Returns the `args` consumed.
 fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
     use bun_core::strings;
 
@@ -326,8 +324,7 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
     command.len()
 }
 
-/// `<shell> -c <script>`, or without a POSIX shell (always on Windows, where `find_shell` yields
-/// cmd.exe) `bun exec --no-env-file <script>`: like `sh`, that adds no `.env*` file to the envp.
+/// Without a POSIX shell, `bun exec --no-env-file`: like `sh`, it adds no `.env*` file to the envp.
 pub struct ScriptArgv<'a>([*const c_char; 5], core::marker::PhantomData<&'a ZStr>);
 
 impl<'a> ScriptArgv<'a> {
@@ -387,14 +384,11 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
 }
 
-/// The linker that placed the package. It, not the script's cwd, says what is
-/// removed when a script of an optional dependency fails.
+/// The linker, not the script's cwd, says what a failed optional dependency's script removes.
 pub enum InstallCtx<'a> {
     Isolated {
         entry_id: entry::Id,
-        /// Raw `*mut` for the same reason as
-        /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
-        /// mutate Installer state from inside an exit-handler callback.
+        /// Raw `*mut`: `on_task_complete`/`start_task` mutate it from an exit-handler callback.
         installer: *mut Installer<'a>,
     },
     /// The package is `node_modules/<package_name>` of this tree.
@@ -404,8 +398,7 @@ pub enum InstallCtx<'a> {
     },
 }
 
-/// The tree and folder name of every package the hoisted linker placed in this install whose
-/// scripts have not all run yet. Main thread only.
+/// What the hoisted linker placed whose scripts have not all run yet. Main thread only.
 pub(crate) type UnfinishedScripts =
     std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
 
@@ -775,15 +768,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     res => {
                         #[cfg(windows)]
                         {
-                            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                            // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
-                            // error return (uv_pipe_init failure, uv_spawn failure) ownership
-                            // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
-                            // and `uv_close`+free them explicitly here — otherwise the heap
-                            // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                            // linked in the libuv loop's handle queue forever). Allocation
-                            // happens inline (see OWNERSHIP note above), so the error
-                            // path must be handled explicitly.
+                            // On error the `uv::Pipe`s stay ours; `WindowsStdio` has no `Drop`.
                             let mut spawn_options = spawn_options;
                             spawn_options.stdout.deinit();
                             spawn_options.stderr.deinit();
@@ -1147,8 +1132,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    /// A script failed and ends the install. Both linkers take a package that is in place for installed, so
-    /// those whose scripts have not all run are removed: the next install places them again and runs the scripts.
+    /// Both linkers take a package in place for installed: removed, the next install runs them.
     fn discard_packages_with_unfinished_scripts(&self) {
         Output::flush();
         if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {

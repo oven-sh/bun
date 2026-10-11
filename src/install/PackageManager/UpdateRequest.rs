@@ -350,9 +350,7 @@ impl PackageManager {
         self.index_of_update_request(name_hash, name).is_some()
     }
 
-    /// Whether a package in the root `node_modules` of a global install links its bins into the
-    /// global bin dir: the ones named on the command line, and the direct dependencies of the
-    /// global package.json that this run installed. The links of the others stay as they are.
+    /// Named on the command line, or a direct dependency of the global package.json just installed.
     pub(crate) fn links_bins_globally(&self, package_id: PackageID, installed: bool) -> bool {
         self.options.global
             && (self

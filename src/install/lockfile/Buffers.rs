@@ -67,8 +67,7 @@ mod sizes {
 pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     let start_pos = stream.read_int_le::<u64>()?;
 
-    // 0xDEADBEEF: the value was never written. The positions are absolute and follow a prefix,
-    // so they are never zero, and they do not go backwards.
+    // 0xDEADBEEF: never written. Positions are absolute, follow a prefix and do not go backwards.
     if start_pos == 0xDEAD_BEEF
         || start_pos == 0
         || start_pos < (stream.pos as u64).saturating_sub(size_of::<u64>() as u64)
@@ -91,7 +90,7 @@ pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> 
     stream.pos = end_pos as usize;
 
     if byte_len == 0 {
-        // `write_array` does not pad before an empty array, so its start offset need not be aligned.
+        // `write_array` does not pad before an empty array: its start need not be aligned.
         return Ok(Vec::new());
     }
 
@@ -365,7 +364,7 @@ pub(crate) fn load(
 
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
-        // Each mention of a package is the next dependency that resolves to it: `first[package]`, `next[dependency]`.
+        // Each mention of a package is the next dependency that resolves to it.
         let mut first: Vec<DependencyID> = vec![invalid_package_id; packages_len];
         let mut next: Vec<DependencyID> = vec![invalid_package_id; this.resolutions.len()];
         for (dependency_id, &package_id) in this.resolutions.iter().enumerate().rev() {

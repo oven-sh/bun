@@ -125,6 +125,8 @@ pub struct DedupeMapEntry {
     pub(crate) manifest: ManifestOrigin,
     /// The iteration of the event loop in which a runtime lookup of this manifest found nothing (`enqueue_dependency_to_root`).
     pub(crate) missed_in: Option<u64>,
+    /// `Registry::manifest_expiry` of a 404 for this manifest: a runtime lookup does not ask again before.
+    pub(crate) missing_until: u32,
 }
 
 /// Where this run's copy of a manifest is from: a version that a cached copy lacks may have been published since.

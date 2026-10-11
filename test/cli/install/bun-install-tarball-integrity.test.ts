@@ -534,6 +534,7 @@ describe.concurrent("tarball integrity", () => {
 // bun.lock says which bytes were meant, so that names the cache entry. Two projects,
 // or two branches of one, get separate entries, an entry is never replaced, and a
 // lockfile that does not record an integrity cannot name one and has the tarball read.
+// An install that cannot record one either caches that tarball under its path or URL.
 describe.concurrent.each(
   (["file:", "URL"] as const).flatMap(kind =>
     (["hoisted", "isolated"] as const).map(linker => [kind, linker] as const),
@@ -726,6 +727,35 @@ describe.concurrent.each(
     expect(await box.installed("app")).toBe('module.exports = "mine";\n');
   });
 
+  it.skipIf(kind === "URL")(
+    "keeps the tarballs of two projects apart whose lockfiles record no integrity for the same path",
+    async () => {
+      const tarballs = { one: await tarball("one"), two: await tarball("two") };
+      using box = sandbox("tarball-unpinned-two-projects", { one: {}, two: {} });
+      for (const [project, tgz] of Object.entries(tarballs)) {
+        await writeFile(
+          join(box.root, project, "bun.lock"),
+          JSON.stringify({
+            lockfileVersion: 1,
+            configVersion: 1,
+            workspaces: { "": { name: "app", dependencies: { pkg: box.spec } } },
+            packages: { pkg: [`pkg@${box.resolution}`, {}] },
+          }),
+        );
+        await box.put(project, tgz);
+        await box.ok(project, "install", "--frozen-lockfile");
+      }
+      expect(await box.cacheEntries()).toHaveLength(2);
+
+      // Each from its own entry: the files are gone.
+      for (const project of Object.keys(tarballs)) {
+        await rm(join(box.root, project, "pkg.tgz"));
+        await box.reinstall(project, "--frozen-lockfile");
+        expect(await box.installed(project)).toBe(`module.exports = ${JSON.stringify(project)};\n`);
+      }
+    },
+  );
+
   it.each(["--frozen-lockfile", "--no-save"])(
     "reads the tarball once when the lockfile does not record its integrity and bun install %s cannot record it",
     async flag => {
@@ -757,6 +787,11 @@ describe.concurrent.each(
       }
       expect(box.requests.length).toBe(kind === "URL" ? 1 : 0);
       expect(await box.lockfile("app")).toBe(lockfile);
+
+      // An install that can record it still reads the tarball.
+      await box.put("app", v1);
+      await box.reinstall("app");
+      expect(await box.state("app")).toEqual(stateOf("v1", v1));
     },
   );
 

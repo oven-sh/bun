@@ -461,8 +461,7 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    // With the global store `bun patch` makes the copy there, and an install leaves a package it
-    // finds there alone. The patch has the edits now, unless the install cannot read it.
+    // An install leaves the copy `bun patch` made here alone; a readable patch has the edits now.
     if linker == NodeLinker::Isolated
         && is_link_position(&new_folder)
         && bun_patch::parse_patch_file(&patchfile_contents).is_ok()
@@ -477,8 +476,7 @@ pub fn do_patch_commit(
     }))
 }
 
-/// `git diff` of the cache entry against the package folder. `None` after an error, which is
-/// printed: the caller exits, and `Global::crash()` in here would skip the drop of `HiddenFromDiff`.
+/// `None` after a printed error: `Global::crash()` in here would skip `HiddenFromDiff`'s drop.
 fn diff_against_cache(
     manager: &mut PackageManager,
     old_folder: &[u8],
@@ -560,9 +558,7 @@ const ITERATE: sys::OpenDirOptions = sys::OpenDirOptions {
     no_follow: false,
 };
 
-/// What is in the package folder but is not the package: the `.bun-tag-<hash>` markers of earlier
-/// patches and the packages bun installed under it. `git diff --no-index` takes no pathspec, so
-/// they wait in a folder next to the package until this is dropped.
+/// `git diff --no-index` takes no pathspec: what is not the package waits next to it until drop.
 struct HiddenFromDiff {
     folder: Dir,
     stash: Dir,
@@ -819,13 +815,7 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
     }
 }
 
-/// The folder that holds the package's files. The isolated linker's link to the package, a
-/// workspace link or a symlinked `node_modules` on the way to it stay as they are: what
-/// `bun patch` replaces and `--commit` reads is the folder behind them.
-///
-/// With `globalStore = true` that folder is shared with other projects, and an install puts the
-/// link to the shared entry back over a `node_modules/.bun/<entry>` of the project's own. There
-/// `bun patch` (`replaces_folder`) replaces the project's link to the package instead.
+/// `folder`, links resolved; when that is in the shared store, `bun patch` replaces the last link.
 fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u8> {
     let resolve = |path: &[u8]| match resolve_links(path) {
         Ok(real) => real,
@@ -873,8 +863,7 @@ fn is_link(path: &[u8]) -> bool {
     sys::readlink(&ZBox::from_bytes(path), &mut buf[..]).is_ok()
 }
 
-/// `folder`, links resolved, is where the isolated linker has a link to a package or nothing: an
-/// entry of one of the project's `node_modules`, outside `node_modules/.bun`.
+/// `folder`, links resolved, is an entry of a project `node_modules` outside `node_modules/.bun`.
 fn is_link_position(folder: &[u8]) -> bool {
     use resolve_path::{ParentEqual, dirname, is_parent_or_equal};
     let Ok(store) = resolve_links(b"node_modules/.bun") else {
@@ -890,8 +879,7 @@ fn is_link_position(folder: &[u8]) -> bool {
         && is_parent_or_equal(&store, folder) == ParentEqual::Unrelated
 }
 
-/// A path next to `folder`, named like an install's staging folder so that `bun prune` collects
-/// one that a crash left behind.
+/// Named like an install's staging folder, so that `bun prune` collects one a crash left behind.
 fn temp_sibling(folder: &[u8]) -> Vec<u8> {
     let mut path = resolve_path::dirname::<platform::Auto>(folder).to_vec();
     write!(
@@ -922,8 +910,7 @@ impl Drop for TempTree {
     }
 }
 
-/// `folder` is never partial: the copy is made next to it, then the old package moves aside and
-/// the copy in.
+/// `folder` is never partial: the copy is made next to it and renamed in.
 fn replace_with_cache_copy(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
@@ -1266,8 +1253,7 @@ fn pkg_info_for_name_and_version(
         }
     };
 
-    // An alias is installed under the dependency's name. It becomes a path that `bun patch`
-    // replaces, the same as in an install.
+    // An alias is installed under the dependency's name, which becomes a path.
     let folder_name = dependencies[dep_id as usize].name.slice(strbuf);
     if !alias_is_safe_install_target(folder_name) {
         bun_core::pretty_errorln!(

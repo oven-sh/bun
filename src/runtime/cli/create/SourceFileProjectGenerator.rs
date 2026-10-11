@@ -534,8 +534,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                     return Some(duped);
                 }
 
-                // Extremely naive pascal case conversion
-                // - Does not handle unicode.
+                // Extremely naive pascal case conversion: does not handle unicode.
                 let mut output_index: usize = 0;
                 let mut capitalize_next = false;
                 for input_index in 0..duped.len() {

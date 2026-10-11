@@ -277,7 +277,7 @@ pub fn enqueue_tarball_for_reading(
         alias,
         path,
         resolution,
-        &integrity,
+        Some(&integrity),
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
 }
@@ -521,7 +521,7 @@ pub fn enqueue_dependency_to_root(
         break 'brk index;
     } as DependencyID;
 
-    // This manager lives as long as the process: a lookup that found nothing stands until the event loop has gone around, then the registry is asked again.
+    // This manager lives as long as the process: a failed lookup stands until the event loop has gone around, a 404 also for as long as a manifest would.
     let turn = this.event_loop.iteration_number();
     let manifest_task_id = {
         let real_name = this.lockfile.buffers.dependencies[dep_id as usize].realname();
@@ -529,9 +529,10 @@ pub fn enqueue_dependency_to_root(
     };
 
     if this.lockfile.buffers.resolutions[dep_id as usize] == invalid_package_id {
-        if (this.network_dedupe_map.get(&manifest_task_id))
-            .is_some_and(|entry| entry.missed_in.is_some_and(|missed_in| missed_in != turn))
-        {
+        if (this.network_dedupe_map.get(&manifest_task_id)).is_some_and(|entry| {
+            entry.missed_in.is_some_and(|missed_in| missed_in != turn)
+                && i64::from(entry.missing_until) <= bun_core::time::timestamp()
+        }) {
             let _ = this.network_dedupe_map.remove(&manifest_task_id);
         }
 
@@ -1526,15 +1527,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if res.tag == ResolutionTag::LocalTarball {
                 if !this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                     let dep_name = this.lockfile.str_detached(&dependency.name);
-                    let task = enqueue_local_tarball(
-                        this,
-                        task_id,
-                        id,
-                        dep_name,
-                        url,
-                        &res,
-                        &Integrity::default(),
-                    );
+                    let task = enqueue_local_tarball(this, task_id, id, dep_name, url, &res, None);
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 return Ok(());
@@ -1944,7 +1937,8 @@ fn enqueue_local_tarball(
     name: &[u8],
     path: &[u8],
     resolution: &Resolution,
-    integrity: &Integrity,
+    // Of the package in the loaded lockfile.
+    locked_integrity: Option<&Integrity>,
 ) -> *mut ThreadPool::Task {
     // Resolve the on-disk tarball path here on the main thread. The task
     // callback runs on a ThreadPool worker and must not read
@@ -1979,7 +1973,8 @@ fn enqueue_local_tarball(
                     cache_dir: get_cache_directory(this),
                     temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
-                    integrity: *integrity,
+                    integrity: locked_integrity.copied().unwrap_or_default(),
+                    stays_unpinned: locked_integrity.is_some() && !this.pins_tarballs(),
                     url: stored_string(path),
                     skip_verify: false,
                     in_trusted_dependencies: false,

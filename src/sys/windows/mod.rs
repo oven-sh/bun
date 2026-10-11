@@ -78,8 +78,7 @@ pub mod kernel32 {
             dwFlags: DWORD,
         ) -> BOOL;
 
-        /// `lpOverlapped` may be null for a handle opened without
-        /// `FILE_FLAG_OVERLAPPED`.
+        /// `lpOverlapped` may be null for a handle opened without `FILE_FLAG_OVERLAPPED`.
         pub fn DeviceIoControl(
             hDevice: HANDLE,
             dwIoControlCode: DWORD,
@@ -1877,8 +1876,7 @@ pub fn move_opened_file_at(
         }
     };
     let mut rc = rename_as(win32::FileInformationClass::FileRenameInformationEx, flags);
-    // exFAT and FAT32 only implement the legacy class (same fallback as `DeleteFileBun`). The SDK
-    // declares the first field as `union { BOOLEAN ReplaceIfExists; ULONG Flags; }`.
+    // exFAT and FAT32 only implement the legacy class, where `Flags` is `BOOLEAN ReplaceIfExists`.
     if rc == win32::ntstatus::INVALID_PARAMETER {
         rc = rename_as(
             win32::FileInformationClass::FileRenameInformation,

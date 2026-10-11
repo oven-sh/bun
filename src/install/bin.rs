@@ -41,8 +41,7 @@ pub struct Bin {
     pub tag: Tag,
     pub(crate) _padding_tag: [u8; 3],
 
-    // Copied byte for byte into bun.lockb and the npm manifest cache: build it with
-    // `Value::init_*`, a `Value { .. }` literal of an 8-byte member leaves 8 bytes unset.
+    // Written to disk byte for byte: `Value::init_*` sets all bytes, a `Value { .. }` literal not.
     pub(crate) value: Value,
 }
 
@@ -643,8 +642,7 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-/// The packages of one `node_modules` link their bins in this order (field by field), under both
-/// linkers. The first link for a bin name stays (`Linker::seen`).
+/// The order in which the packages of one `node_modules` link their bins; the first link stays.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct LinkOrder<'a> {
     /// Neither the root package nor a workspace member declares the dependency.
@@ -678,8 +676,7 @@ impl<'a> LinkOrder<'a> {
         behavior.is_prod() || behavior.is_dev() || behavior.is_optional() || behavior.is_workspace()
     }
 
-    /// The packages that the root package or a workspace member depends on directly. By package,
-    /// not by dependency: a hoisted package keeps the id of the first dependency that reached it.
+    /// By package: a hoisted package keeps the id of the first dependency that reached it.
     pub(crate) fn direct_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
         let pkgs = lockfile.packages.slice();
         let mut direct = DynamicBitSet::init_empty(pkgs.len())?;
@@ -709,8 +706,7 @@ impl<'a> LinkOrder<'a> {
     }
 }
 
-// BACKREF — the `PackageInstaller` that owns these queues also borrows the
-// `Lockfile` mutably, so this cannot be a `&'a Lockfile`.
+// BACKREF — the `PackageInstaller` that owns these queues also borrows the `Lockfile` mutably.
 pub struct PriorityQueueContext {
     pub(crate) lockfile: bun_ptr::BackRef<Lockfile>,
     /// `LinkOrder::direct_packages`
@@ -719,8 +715,7 @@ pub struct PriorityQueueContext {
 
 impl PriorityQueueContext {
     fn link_order(&self, dependency_id: DependencyID) -> LinkOrder<'_> {
-        // Re-read the slices on every compare: the buffers and the package list
-        // can grow during the install (`fix_cached_lockfile_package_slices`).
+        // Read anew on every compare: the buffers and the package list can grow during the install.
         let lockfile = self.lockfile.get();
         let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize] as usize;
         LinkOrder::new(
@@ -754,8 +749,6 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
 
     // npm's `join('/', key).slice(1)` collapses `.`/`..` to empty; do the same
     // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
-    // The cut above leaves one component without `/`, `\` or `:`, so this is all of
-    // `is_safe_install_folder_name` but its length limit: a name that is too long fails to link and is reported.
     debug_assert!(strings::index_of_any(name, b"/\\:").is_none());
     if matches!(name, b"" | b"." | b"..") || crate::dependency::contains_control_character(name) {
         return b"";
@@ -873,8 +866,7 @@ impl<'a> Linker<'a> {
         exec_mode();
     }
 
-    /// `global_owner`: the global bin dir also holds what bun did not put there. Only a link
-    /// into this directory is removed from it.
+    /// The global bin dir also holds what is not bun's: only a link into `global_owner` goes.
     fn unlink_bin_or_shim(abs_dest: &ZStr, global_owner: Option<&[u8]>) {
         #[cfg(not(windows))]
         {
@@ -1239,8 +1231,7 @@ impl<'a> Linker<'a> {
             abs_target.as_bytes(),
         );
 
-        // The shim resolves `bin_path` against its directory's parent, hence no `..\`. Global
-        // installs can target another drive or the bin directory itself: store those absolute.
+        // The shim resolves `bin_path` against its directory's parent; other targets are absolute.
         let (bin_path, is_absolute_target): (&[u8], bool) =
             match strings::without_prefix_if_possible_comptime(rel_target.as_bytes(), b"..\\") {
                 Some(rel_to_parent) => (rel_to_parent, false),
@@ -1301,8 +1292,7 @@ impl<'a> Linker<'a> {
         global: bool,
     ) -> Result<(), Error> {
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
-        // Need not start with `..` (a global install may nest the package inside the bin
-        // directory), and one `..` per component of `abs_dest_dir` can outgrow `abs_target`.
+        // One `..` per component of `abs_dest_dir` can outgrow `abs_target`.
         let rel_bound = abs_target.len() + 3 * (strings::count_char(abs_dest_dir, SEP) + 1) + 2;
         let mut rel_spill = Vec::new();
         let rel_buf = resolve_path::buf_or_spill(self.rel_buf, &mut rel_spill, rel_bound);
@@ -1358,8 +1348,7 @@ impl<'a> Linker<'a> {
                 }
                 // Removed in the meantime.
                 sys::Errno::ENOENT if errno == sys::Errno::EEXIST => {}
-                // The name is free and the directory is writable: the filesystem has no symlinks
-                // (Android's shared storage). A copy in `.bin` could not find its package.
+                // A free name in a writable directory: no symlinks here (Android's shared storage).
                 sys::Errno::ENOENT
                     if !global
                         && sys::access(
@@ -1621,8 +1610,7 @@ impl<'a> Linker<'a> {
         Some(off)
     }
 
-    /// `<bin dir>/<name>` in `abs_dest_buf`, which starts with the `dir_len` bytes of the bin dir.
-    /// `None`, and `err` is set: it does not fit.
+    /// `abs_dest_buf` starts with the `dir_len` bytes of the bin dir. `None` (and `err`): no room.
     fn append_dest<'b>(&mut self, dir_len: usize, name: &[u8]) -> Option<&'b ZStr> {
         let len = dir_len + name.len();
         if len >= self.abs_dest_buf.len() {
@@ -1744,7 +1732,6 @@ impl<'a> Linker<'a> {
                 let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                     Ok(d) => sys::Dir::from_fd(d),
                     // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
-                    // avoid erroring when the directory does not exist
                     Err(err) if err.get_errno() == sys::Errno::ENOENT => return,
                     Err(err) => {
                         self.err = Some(err.into());

@@ -390,8 +390,7 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). Only its owner uses the
-    /// directory, and `/tmp` is everybody's. Windows: `windows_node_shim_dir`.
+    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant): `/tmp` is everybody's, this is one user's.
     ///
     /// NOTE: the SHA alone does not uniquely identify a binary — two local
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
@@ -418,9 +417,7 @@ impl RunCommand {
         })
     }
 
-    /// Where the `node.exe` and `bun.exe` hard links to the running bun go: `%TEMP%\bun-node-<sha>`,
-    /// or `<directory of bun.exe>\bun-node` when `%TEMP%` is on another drive, which a hard link
-    /// cannot reach. Writes it to `buf` without a trailing separator and returns its length.
+    /// Under `%TEMP%`, or beside bun.exe when that is another drive, which no hard link reaches.
     #[cfg(windows)]
     pub fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
         use bun_sys::windows as win;

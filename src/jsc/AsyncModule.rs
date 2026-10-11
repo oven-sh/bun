@@ -72,10 +72,7 @@ pub struct Queue {
     pub(crate) scheduled: u32,
 }
 
-/// The resolver `WakeHandler`'s opaque context: the module queue plus the
-/// VM's weak handle the process-wide install / HTTP threads (which outlive
-/// any one VM) post the poll task through. Allocated once per VM at
-/// registration and kept for the VM's lifetime.
+/// The `WakeHandler`'s context, kept for the VM's lifetime; the waking threads outlive any one VM.
 pub struct WakeContext {
     pub queue: *mut Queue,
     pub handle: crate::VmHandle,
@@ -296,8 +293,7 @@ impl Queue {
     pub fn on_poll(&mut self) {
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
-            // The tasks of a synchronous auto-install (`enqueue_dependency_to_root`): it drains them
-            // itself, and draining them here would drop their failures.
+            // A synchronous auto-install drains its own tasks; here their failures would be dropped.
             return;
         }
         self.run_tasks();

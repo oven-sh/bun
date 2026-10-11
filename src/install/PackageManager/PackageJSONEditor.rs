@@ -419,9 +419,7 @@ pub(crate) fn edit_update_entries(
                 }
                 let entry = updating_packages.get_or_put(key_str)?;
 
-                // If a dependency is present in more than one dependency group, only one of it's versions
-                // will be updated. The group is determined by the order of `dependency_groups`, the same
-                // order used to choose which version to install.
+                // The first of `dependency_groups` wins: the order that picks the installed version.
                 if entry.found_existing {
                     continue;
                 }
@@ -1405,8 +1403,7 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
-                // Still unresolved after the install: an optional or peer dependency that nothing satisfies. The entry stays as declared.
-                // So it does before the install of --latest, which steers the row at resolve time (`picks_latest_tag`).
+                // Nothing satisfies it, or `picks_latest_tag` steers it later: it stays as declared.
                 if update_to_latest
                     || (manager.subcommand == Subcommand::Update && !options.before_install)
                 {

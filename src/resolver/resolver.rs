@@ -21,8 +21,8 @@ use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
 
-// LAYERING: `PackageManager.initWithRuntime` and `Dependency.parse` live in
-// `bun_install`, which depends on this crate. Both bodies are defined
+// LAYERING: `PackageManager.initWithRuntime` lives in
+// `bun_install`, which depends on this crate. It and `Dependency.parse` are defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
 // `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
@@ -879,8 +879,7 @@ impl<'a> Resolver<'a> {
         self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
     }
 
-    /// The first bare import creates the package manager, so the project's own package.json, whose
-    /// versions auto-install resolves against, is normally parsed without one.
+    /// The project's package.json is parsed before the first bare import creates the manager.
     pub(crate) fn parse_dependency(
         &mut self,
         name: Semver::String,

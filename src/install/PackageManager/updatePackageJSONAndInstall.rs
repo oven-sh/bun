@@ -525,8 +525,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     let subcommand = manager.subcommand;
     let placed: Option<Vec<Box<[u8]>>> = match subcommand {
         Subcommand::Remove => None,
-        // `-d` with `--production`, `--peer` with `peer = false`: the install skips the group the
-        // entry is in now, and hoists without it. bun.lock keeps the package.
+        // `-d` with `--production`: the install skips the group the entry is in now.
         Subcommand::Add
             if manager.options.do_.contains(Do::INSTALL_PACKAGES)
                 && !manager

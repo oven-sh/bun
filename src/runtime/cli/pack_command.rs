@@ -429,8 +429,7 @@ fn iterate_included_project_tree(
             if is_listed_bin(bins, BinType::Dir, &entry_subpath) {
                 continue;
             }
-            // TODO: do not traverse directories that match patterns
-            // excluding all files within them (e.g. `!test/**`)
+            // TODO: do not traverse directories whose files a pattern all excludes (`!test/**`)
             let subdir = open_subdir(dir, entry_name, &entry_subpath);
             let subdir = DirInfo(subdir, entry_subpath.as_bytes().into(), dir_depth + 1);
             if included {
@@ -522,8 +521,7 @@ fn open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> Option<Dir> {
     }
 }
 
-/// The next entry of a package directory. Where the filesystem reports no kind (FUSE, NFS, XFS `ftype=0`) `lstat`
-/// does, so a link stays a link. A directory removed since it was opened has ended; any other failure is fatal.
+/// `lstat`s where the filesystem reports no kind (FUSE, NFS, XFS `ftype=0`): a link stays a link.
 pub(crate) fn next_dir_entry(
     iter: &mut DirIterator::WrappedIterator,
     dir_subpath: &[u8],
@@ -787,8 +785,7 @@ fn add_bundled_dep(
     Ok(())
 }
 
-/// For each dependency of the bundled package in `dir`, queues the closest `node_modules/<name>`,
-/// starting from the package's own `node_modules`.
+/// Queues the closest `node_modules/<name>` of each dependency of the bundled package in `dir`.
 fn find_dependencies_to_bundle(
     log: &mut bun_ast::Log,
     root_dir: &Dir,
@@ -866,8 +863,7 @@ fn find_dependencies_to_bundle(
     Ok(())
 }
 
-/// Adds the files below `root_dir` to `pack_queue` (ignore files and default ignores apply).
-/// `files_excludes`: `root_dir` is a directory that `"files"` includes, and these are its negated entries.
+/// `files_excludes`: `"files"` includes the directory `root_dir`; these are its negated entries.
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
@@ -914,8 +910,7 @@ fn iterate_project_tree(
             let entry_subpath_ = entry_subpath(&dir_subpath, entry_name)?;
 
             if dir_depth == 1 {
-                // The root package.json (always included, possibly edited) and the bundled
-                // dependencies are handled separately.
+                // The root package.json and the bundled dependencies are handled separately.
                 if entry_name == b"package.json" || entry_name == b"node_modules" {
                     continue;
                 }
@@ -1149,8 +1144,7 @@ fn is_unconditionally_excluded(
 enum Exclusion<'a> {
     Included,
     Excluded(&'a [u8], IgnorePatternsKind),
-    /// A directory that stays excluded while a negation names something below it. It is walked, and its
-    /// entries inherit the exclusion: unlike in npm, `secrets/` + `!secrets/keep.js` packs nothing but `keep.js`.
+    /// An excluded directory with a negation below it; unlike in npm, entries inherit the exclusion.
     WalkOnly(&'a [u8], IgnorePatternsKind),
 }
 
@@ -2402,8 +2396,7 @@ fn publish_spec_for_workspace_range_or_directory(
     ))
 }
 
-/// `<name>@<range>` of `workspace:<name>@<range>`; `<name>` may be scoped, so it ends at the last
-/// `@`, and a directory like `../@scope/pkg` is not an alias since `../` is no package name.
+/// `workspace:<name>@<range>`; `<name>` may be scoped, and `../@scope/pkg` is a directory.
 fn split_workspace_alias(spec: &[u8]) -> Option<(&[u8], &[u8])> {
     let at = strings::last_index_of_char(spec, b'@').filter(|at| *at > 0)?;
     let (name, range) = (&spec[..at], &spec[at + 1..]);

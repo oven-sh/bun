@@ -865,10 +865,7 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// https://docs.npmjs.com/cli/v10/configuring-npm/package-json#libc
-///
-/// Unlike `os`/`cpu`, zero is "not declared" (also what everything written before
-/// this field was read contains), and such a package installs on every libc.
+/// Unlike `os`/`cpu`, zero is "not declared": such a package installs on every libc.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Libc(pub u8);
@@ -882,8 +879,7 @@ impl Libc {
 
     pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    /// The default filter. The musl build is a separate binary, so the build target is
-    /// the host libc; other operating systems have no libc in the npm sense.
+    /// The musl build is a separate binary, so the build target is the host libc.
     #[cfg(all(target_os = "linux", target_env = "musl"))]
     pub const CURRENT: Self = Self(Self::MUSL);
     #[cfg(all(target_os = "linux", not(target_env = "musl")))]
@@ -897,8 +893,7 @@ impl Libc {
         self.0 == 0 || (self.0 & target.0) != 0
     }
 
-    /// `self` is the target libc (`--libc`). Only optional dependencies are filtered,
-    /// so a required package is never left out.
+    /// `self` is the target libc (`--libc`), which filters only optional dependencies.
     #[inline]
     pub fn for_dependency(self, behavior: Behavior) -> Self {
         if behavior.is_optional() {
@@ -1307,17 +1302,13 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Opaque (ctx-ptr + fn-ptr) handle the runtime installs to nudge the JS
-/// event loop when a network task completes. The resolver only stores and
-/// forwards it; `Default` is unregistered (`None`).
+/// What the runtime installs to nudge the JS event loop when a network task completes.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the fn-ptr is POD.
 #[derive(Default, Copy, Clone)]
 pub struct WakeHandler(pub Option<WakeTarget>);
 
-/// `handler`'s second parameter (`*PackageManager`) is erased to
-/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake_raw` casts at the call site.
+/// `handler`'s second parameter is a `*PackageManager`, which lives in a higher tier.
 #[derive(Copy, Clone)]
 pub struct WakeTarget {
     pub context: NonNull<c_void>,
@@ -1438,9 +1429,7 @@ pub trait AutoInstaller {
     fn lockfile_dependencies_buf(&self) -> &[Dependency];
     fn lockfile_resolutions_buf(&self) -> &[PackageID];
     fn lockfile_string_bytes(&self) -> &[u8];
-    /// `version_buf` holds the strings `version` was parsed against (a
-    /// package.json's bytes, the lockfile's string buffer, or the import
-    /// specifier itself).
+    /// `version_buf` holds the strings `version` was parsed against.
     fn lockfile_resolve(
         &self,
         name: &[u8],

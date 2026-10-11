@@ -39,6 +39,8 @@ With `bun --prefer-offline` (or [`install.prefer = "offline"`](/runtime/bunfig#i
 
 The first import of a package that is not in the cache blocks the thread until the download finishes. Timers and other requests' handlers do not run inside `require()`, `import()`, or `Bun.resolveSync()`.
 
+When the registry answers that a package does not exist (404), Bun does not ask for it again for 5 minutes, or less if the response's `Cache-Control` says so. After any other failure, such as a 5xx or a dropped connection, the next import asks again.
+
 ---
 
 ## Registries

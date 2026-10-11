@@ -77,8 +77,7 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
 pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
 
 impl NegatedWorkspaces {
-    /// Whether `entry` is negated (an odd count of `!`). Such an entry only removes members: it is never walked.
-    /// Kept in the shape of a matched directory: `/` separators, no `./`, no trailing slash.
+    /// Whether `entry` is negated: it is kept, in the shape of a matched directory, and not walked.
     pub fn take(&mut self, entry: &[u8]) -> bool {
         let (glob, negated) = strip_negations(entry);
         if negated {
@@ -93,8 +92,7 @@ impl NegatedWorkspaces {
         negated
     }
 
-    /// Whether a `!` entry removes `dir`, a directory relative to the workspace root that a glob entry matched.
-    /// Like npm and pnpm, wherever the `!` entry is in the array. A directory listed by its path stays a member: do not ask.
+    /// For a `dir` that a glob entry matched. One listed by its path stays a member: do not ask.
     pub fn excludes(&self, dir: &[u8]) -> bool {
         // `dir/**` also removes `dir` itself, as in npm.
         self.0.iter().any(|glob| {

@@ -413,8 +413,7 @@ impl PmPkgCommand {
     pub(crate) const EMPTY_BRACKETS: &'static str =
         "Empty brackets are not valid syntax for retrieving values.";
 
-    /// Adds what `key` names in `root`, like `npm view` and `npm pkg get`: nothing, one value under `key`, or,
-    /// where a name meets an array (`maintainers.name`), one per element under `maintainers[0].name`, ...
+    /// As in npm, a name that meets an array (`maintainers.name`) adds `maintainers[0].name`, ...
     pub(crate) fn query(
         root: Expr,
         key: &[u8],
@@ -477,8 +476,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    /// `[...]` holds one literal name, dots included (`exports[./package.json]`); the rest splits on `.`.
-    /// Names are sub-slices of `key`; `E::Object::put` stores them by reference (#33186).
+    /// `[...]` holds one literal name, dots included. `E::Object::put` keeps the sub-slices of `key`.
     fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
         let mut segments: Vec<Segment<'_>> = Vec::new();
 

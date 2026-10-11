@@ -34,6 +34,8 @@ pub struct ExtractTarball {
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
+    /// A row of the lockfile in a run that cannot pin it (`pins_tarballs`): no `integrity` is computed and `url` names the entry.
+    pub(crate) stays_unpinned: bool,
     pub(crate) url: StringOrTinyString,
     /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
     /// copied out because extract workers must not read lockfile buffers. When
@@ -66,13 +68,11 @@ impl ExtractTarball {
         Ok(result)
     }
 
-    /// What the lockfile pins for a GitHub / URL / local tarball so later installs verify the
-    /// same bytes: the already pinned value, else `compute`d on first install. Settled before
-    /// extracting because a `file:` / URL tarball's cache entry is named after it.
+    /// Settled before extracting: a `file:` / URL tarball's cache entry is named after it.
     pub(crate) fn lockfile_integrity(&self, compute: impl FnOnce() -> Integrity) -> Integrity {
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
-                if self.integrity.tag.is_supported() {
+                if self.integrity.tag.is_supported() || self.stays_unpinned {
                     self.integrity
                 } else {
                     compute()
@@ -463,8 +463,8 @@ impl ExtractTarball {
 
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
-    /// between the buffered and streaming extraction paths. `resolved` names a
-    /// GitHub cache entry, `integrity` a `file:` / URL tarball's.
+    /// between the buffered and streaming extraction paths.
+    /// `resolved` names a GitHub cache entry, `integrity` a `file:` / URL tarball's.
     pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
@@ -542,6 +542,8 @@ impl ExtractTarball {
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
                         integrity,
+                        self.resolution.tag,
+                        self.url.slice(),
                         None,
                     )
                 }
@@ -560,8 +562,7 @@ impl ExtractTarball {
                     bun_sys::make_path::make_path(cache_dir, &folder_name[..scope_len as usize]);
             }
 
-            // Read where it was extracted: a package that fails the install for its
-            // package.json must not become a cache hit for the next one.
+            // Read in staging: a package.json that fails the install must not become a cache hit.
             let needs_json = match self.resolution.tag {
                 // TODO remove extracted files not matching any globs under "files"
                 ResolutionTag::Github

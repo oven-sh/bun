@@ -39,8 +39,6 @@ use crate::ZStr;
 // ──────────────────────────────────────────────────────────────────────────────
 
 new!(pub AGENT: string, "AGENT", {});
-// Set by Android init for every process; read by bun_sys's runtime Android
-// detection (`is_android_kernel`).
 new!(pub ANDROID_ROOT: string, "ANDROID_ROOT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
 // A compiled executable decodes ALL of its embedded bytecode at exit and writes one digest line per module here: for
@@ -125,9 +123,7 @@ new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SI
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
-// How long `bun install` retries a rename that Windows refuses because a scanner
-// has a file in the directory open (`bun_install::cache_publish::RenameRetry`).
-// Also what a permanent failure costs before it is reported.
+// How long `bun install` retries a rename Windows refuses while a scanner holds a file open.
 new!(pub BUN_INSTALL_WINDOWS_RENAME_RETRY_MS: unsigned, "BUN_INSTALL_WINDOWS_RENAME_RETRY_MS", { default: 5_000 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});

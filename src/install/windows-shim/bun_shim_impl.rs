@@ -11,12 +11,6 @@
 //! launcher exe. We read that (see `BinLinkingShim.rs` for the creation of this file)
 //! and then we call NtCreateProcess to spawn the correct child process.
 //!
-//! The target path stored in the `.bunx` file is usually relative to the parent of the
-//! directory the launcher lives in, and is read into memory directly after that directory's
-//! path to form the absolute path without copying. When the `.bunx` file carries
-//! `Flags::is_absolute_target`, the stored path is already absolute and is used as-is from
-//! where it was read.
-//!
 //! Every attempt possible to make this file as minimal as possible has been made.
 //! Which has unfortunatly made is difficult to read. To make up for this, every
 //! part of this program is documented as much as possible, including links to
@@ -43,9 +37,7 @@
 //! This file is compiled twice: into bun.exe (for the bunx fast paths below) and as
 //! the standalone `bun-shim-impl.exe` PE (see `main.rs` / the `shim_standalone`
 //! feature), which is then `include_bytes!`-embedded into Bun by `BinLinkingShim.rs`.
-//! When the encoding changes, `BinLinkingShim::VersionFlag::CURRENT` should be bumped, unless
-//! the change only affects files carrying a new flag bit that older launchers already reject
-//! (see the assertions below `Flags` in `BinLinkingShim.rs`).
+//! When the encoding changes, `BinLinkingShim::VersionFlag::CURRENT` should be bumped.
 //!
 //! Theorized and written by @paperclover during one of the most entranced all-nighters of her life.
 
@@ -969,18 +961,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
     }
 
-    // Where the target's absolute path starts in buf1. A relative bin path was read in directly
-    // after the parent of the launcher's directory, so the absolute path starts right after the
-    // NT object prefix. An absolute bin path is complete on its own, so it starts where it was
-    // read and the directory left in front of it is never used:
-    //
-    //   relative: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#...'
-    //                 ^ bin_path_start
-    //   absolute: '\??\C:\Users\chloe\.bun\E:\store\node_modules\my-cli\src\app.js"#...'
-    //                                     ^ bin_path_start (== metadata_ptr)
-    //
-    // Either way the u16 right before it is a `\` (the end of the NT prefix, or the separator
-    // the directory walk above stopped on) which the no-shebang path below may overwrite.
+    // An absolute bin path starts where it was read. The u16 before either start is a spare `\`.
     let bin_path_start: *mut u16 = if flags.is_absolute_target() {
         metadata_ptr
     } else {
@@ -1197,10 +1178,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // SAFETY: slice within buf1.
             let filename: &[u8] =
                 unsafe { bun_core::ffi::slice(bin_path_start.cast::<u8>(), length_of_filename_u8) };
-            // `filename` is a UTF-16 byte view: its base is a `*mut u16` into buf1 (⇒ 2-aligned)
-            // and its length is the difference of two `*mut u16`-derived addresses minus an even
-            // constant ⇒ even. `bytemuck::cast_slice` checks both invariants at runtime, so no
-            // `unsafe` needed.
+            // The base is a `*mut u16` and the length is even; `cast_slice` checks both at runtime.
             let filename_u16: &[u16] = bytemuck::cast_slice(filename);
             if DBG {
                 debug!("filename and quote: '{}'", fmt16(filename_u16));
@@ -1220,8 +1198,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
             }
 
-            // BinLinkingShim.rs gives these two extensions the launcher `cmd /c`. cmd.exe reads
-            // the line again and drops its outer quotes, so no quoting protects an argument.
+            // These run under `cmd /c`, which parses the line again: quoting protects no argument.
             if (filename_u16.ends_with(bun_core::w!(".cmd\""))
                 || filename_u16.ends_with(bun_core::w!(".bat\"")))
                 && user_arguments_u16
@@ -1785,8 +1762,7 @@ pub(crate) fn main() -> ! {
 
 // ───── helpers ─────
 
-/// The set of `batch_arg_has_cmd_metachars` in `src/which/lib.rs` without `"`, which in a raw
-/// command line is the quoting around an argument.
+/// `batch_arg_has_cmd_metachars` (src/which/lib.rs) without `"`: a raw command line quotes with it.
 fn is_cmd_special_character(unit: u16) -> bool {
     // % & | < > ^ \r \n
     matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)

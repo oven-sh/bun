@@ -182,8 +182,7 @@ impl PackageManagerCommand {
         Global::crash();
     }
 
-    /// What `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it. The
-    /// setting says where the cache is, not that the directory holds only a cache.
+    /// What `bun pm cache rm` must not delete, if `dir` (a real path) is or contains it.
     fn protected_in(dir: &[u8], bun_install: Option<&[u8]>, cwd: &[u8]) -> Option<&'static str> {
         let protected: [(&'static str, Option<&[u8]>); 5] = [
             ("the home directory", env_var::HOME.get_not_empty()),

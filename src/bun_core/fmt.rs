@@ -305,9 +305,7 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
     RedactedNpmUrlFormatter { url: str }
 }
 
-/// [`redacted_npm_url`] over a `Display` (a lockfile resolution, a dependency specifier, the name
-/// `bun add <url>` gives the dependency until it is read); values without `://` pass unchanged so a
-/// version whose pre-release tag looks like a token is not masked.
+/// [`redacted_npm_url`] over a `Display`; a value without `://` (a version) passes unchanged.
 pub struct Redacted<T>(T);
 
 impl<T: Display> Display for Redacted<T> {
@@ -3413,12 +3411,7 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// escapeControlChars
-// ───────────────────────────────────────────────────────────────────────────
-
-/// Spells out C0/C1 controls and DEL (`\n`, `\x1b`, `\u009b`) in text somebody else authored
-/// (registry manifests, a dependency's `package.json`) so it cannot repaint or forge our output.
+/// Spells out C0/C1 controls and DEL so text somebody else authored cannot repaint our output.
 pub struct EscapeControlChars<T>(pub T);
 
 /// [`EscapeControlChars`] that lets `\t`, `\n` and `\r\n` through (`bun pm view <pkg> readme`).

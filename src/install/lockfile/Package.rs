@@ -104,7 +104,7 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
-/// The form `Version.value.folder` has in root, workspace and `file:` packages (`None`: too long for `buf`).
+/// The form `Version.value.folder` has in local packages. `None`: too long for `buf`.
 pub(crate) fn folder_relative_to_top_level_dir<'a>(
     pkg_dir: &[u8],
     folder: &[u8],
@@ -141,8 +141,7 @@ fn invalid_trusted_dependencies(
     crate::Error::InvalidPackageJSON
 }
 
-/// Once per file: the differ parses every workspace package, and one whose dependencies changed
-/// is parsed again, into the same log, when it is re-resolved.
+/// Once per file: a workspace package that changed is parsed twice into the same log.
 #[cold]
 fn warn_ignored_patched_dependencies(
     log: &mut bun_ast::Log,
@@ -161,7 +160,7 @@ fn warn_ignored_patched_dependencies(
     }
 }
 
-/// A declared `trustedDependencies` (even `[]`) replaces the default list, so the set becomes `Some` as soon as the field exists.
+/// A declared `trustedDependencies`, even `[]`, replaces the default list: the set becomes `Some`.
 pub(crate) fn parse_append_trusted_dependencies(
     trusted_dependencies: &mut Option<TrustedDependenciesSet>,
     log: &mut bun_ast::Log,
@@ -193,7 +192,7 @@ pub(crate) fn parse_append_trusted_dependencies(
     Ok(())
 }
 
-/// For a migration, which may not have parsed the root package.json. Keeps what the other lockfile recorded.
+/// For a migration, which may not have parsed the root package.json. Keeps what it recorded.
 pub(crate) fn append_patched_dependencies(
     lockfile: &mut Lockfile,
     json: Expr,
@@ -270,8 +269,7 @@ pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
-// Concrete resolvers (folder/cache/git) override what they need. The `()` impl is the
-// no-op resolver. Object-safe, so that `parse_with_json` is compiled once.
+// `()` is the no-op resolver. Object-safe, so that `parse_with_json` is compiled once.
 pub trait ResolverContext {
     fn is_void(&self) -> bool {
         false
@@ -291,7 +289,7 @@ pub trait ResolverContext {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    /// Name to store when the package.json has none; git/tarball/folder resolvers derive one from the source.
+    /// Name to store when the package.json has none.
     fn fallback_name(&self) -> Option<Vec<u8>> {
         None
     }
@@ -528,8 +526,7 @@ impl Package<u64> {
                 resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
             };
 
-            // Weak peer slots must not keep their target alive; bound in `Cloner::flush`. A target the
-            // loaded lockfile held through weak peers alone is cloned like a dependency.
+            // Weak peer slots must not keep their target alive; bound in `Cloner::flush`.
             if old.is_weak_peer(self.dependencies.off + i as u32, *old_resolution)
                 && old
                     .held_at_load
@@ -661,7 +658,7 @@ impl Package<u64> {
                 'list: for (i, (key, version_string_)) in
                     keys.iter().zip(version_strings.iter()).enumerate()
                 {
-                    // Somebody else's manifest (#31652): not this project's error, and nothing to ask the registry for.
+                    // Somebody else's manifest: not this project's error.
                     let declared = version_string_.slice(&manifest.string_buf);
                     if key.slice(&manifest.string_buf).is_empty()
                         || dependency::nameless_npm_alias(declared).is_some()
@@ -809,8 +806,7 @@ pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
     pub(crate) update: u32,
-    /// Of `update`: the ones that leave every dependency as it is (a script, a `bin`, a range
-    /// written differently that means the same).
+    /// Of `update`: the ones that leave every dependency as it is.
     pub(crate) script_only_updates: u32,
     pub(crate) overrides_changed: bool,
     pub(crate) catalogs_changed: bool,
@@ -916,11 +912,7 @@ impl Diff {
                 from.name_hash,
                 from.name.slice(from_buf!()),
             );
-        // Parsing a package.json (here or in a recursive call) may grow
-        // `to_lockfile.buffers.dependencies` and invalidate the old slice, so `to_deps` is
-        // re-derived after it. Held as raw fat pointers so the `&mut to_lockfile`/
-        // `&mut from_lockfile` reborrows below (sort, recursive `generate`) don't conflict
-        // with these read views; of `from_lockfile.buffers` only `string_bytes` grows.
+        // Re-derived after each package.json parse, which may grow `to_lockfile`'s dependencies.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1054,10 +1046,7 @@ impl Diff {
         // Two `from` rows can pair with one `to` row, so the lengths do not give the added count.
         let mut paired = AutoBitSet::init_empty(to_deps!().len())?;
         for (i, from_dep) in from_deps.iter().enumerate() {
-            // common case, dependency is present in both versions:
-            // - in the same position
-            // - shifted by a constant offset
-            // less common, the o(n^2) case: it comes before
+            // Common: the same position or a constant offset. The o(n^2) case: it comes before.
             let found = (to_i..to_deps!().len()).chain(0..to_i).find(|&to_i| {
                 let to_dep = &to_deps!()[to_i];
                 from_dep.name_hash == to_dep.name_hash
@@ -1091,12 +1080,12 @@ impl Diff {
 
             let to_version = &to_deps!()[cur_to_i].version;
             let same = Dependency::eql(&to_deps!()[cur_to_i], from_dep, to_buf!(), from_buf!());
-            // `file:x` for `file:./x` is what a migration writes. Both sides hold the path from the project.
+            // A migration writes `file:x` for `file:./x`.
             let same_folder = !same
                 && from_dep.version.tag == dependency::version::Tag::Folder
                 && to_version.tag == dependency::version::Tag::Folder
                 && (to_version.folder()).eql(*from_dep.version.folder(), to_buf!(), from_buf!());
-            // The lockfile records the literal: one that is written differently and means the same is an update that keeps its package.
+            // The lockfile records the literal: an update that keeps its package.
             let retyped = same
                 && !from_dep.behavior.is_workspace()
                 && !(to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
@@ -1142,8 +1131,7 @@ impl Diff {
                         .dependencies
                         .get(to_lockfile.buffers.dependencies.as_slice())
                         .into();
-                    // No earlier version read these again, so lockfiles that are out of date through no
-                    // omission of the user are common: a frozen install takes the directory as it is locked.
+                    // Older versions never updated these: a frozen install takes it as locked.
                     if frozen
                         && (folder_diff.take()).is_some_and(|diff| diff.changes_dependencies())
                     {
@@ -1179,9 +1167,7 @@ impl Diff {
 
                     let mut workspace_pkg = Package::default();
 
-                    // A stable BACKREF to the cache entry's `source`, so that the `&mut pm`
-                    // reborrow below doesn't conflict: `parse_with_json` does not touch the
-                    // backing storage of the `StringHashMap` it lives in.
+                    // `parse_with_json` does not touch the storage of the map `source` lives in.
                     let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
                         match pm
                             .workspace_package_json_cache
@@ -1267,7 +1253,7 @@ impl Diff {
                 }
             }
 
-            // A pnpm-lock.yaml that an older bun migrated records the catalog's range where package.json says `catalog:`.
+            // An older bun's pnpm migration recorded the catalog's range in place of `catalog:`.
             if frozen
                 && to_deps!()[cur_to_i].version.tag == dependency::version::Tag::Catalog
                 && (to_lockfile.catalogs)
@@ -1281,7 +1267,6 @@ impl Diff {
                 continue;
             }
 
-            // Changed literal: keep the locked package while the new one still accepts it (npm's sticky rule), unless this row is being updated.
             // Still counted as an update so `had_any_diffs` triggers the rebuild path.
             let still_satisfied = || {
                 Self::locked_version_satisfies(
@@ -1298,15 +1283,14 @@ impl Diff {
                 mapping[cur_to_i] = i as PackageID;
             }
             summary.update += 1;
-            // No earlier version rewrote these, so a lockfile that has one is not the user's omission.
-            // Nor is the request (`""`, a tag) that `bun add` left in the lockfile up to Bun 1.1, next to the range it wrote to package.json.
+            // Up to Bun 1.1, `bun add` left its request (`""`, a tag) in the lockfile.
             let recorded_request = (from_dep.version.tag == dependency::version::Tag::DistTag
                 || from_dep.version.literal.is_empty())
                 && still_satisfied();
             summary.script_only_updates += (retyped || recorded_request) as u32;
         }
 
-        // A bun.lock from before a name that only `peerDependenciesMeta` lists was recorded lacks its `*` optional peer.
+        // An older bun.lock lacks the `*` optional peer of a name only `peerDependenciesMeta` has.
         summary.add = to_deps!()
             .iter()
             .enumerate()
@@ -1327,7 +1311,7 @@ impl Diff {
                 to_lockfile.trusted_dependencies =
                     Some(Lockfile::recorded_default_trust(recorded)?);
             }
-            // A frozen install cannot record that a newly trusted package's scripts ran, so every one would run them.
+            // A frozen install cannot record that the scripts ran: every one would run them.
             if !frozen {
                 Self::trusted_dependencies(
                     &mut summary,
@@ -1411,8 +1395,7 @@ impl Diff {
         Ok(summary)
     }
 
-    /// The package.json of the `file:` directory a row of the root or of a workspace is locked to,
-    /// against its lockfile entry, as for a workspace. `None`: not on disk or malformed, the entry stands.
+    /// A `file:` directory's package.json against its entry. `None`: unreadable, the entry stands.
     #[inline(never)]
     fn generate_folder(
         pm: &mut PackageManager,
@@ -1439,7 +1422,7 @@ impl Diff {
         let source =
             bun_ast::Source::init_path_string(package_json_path.slice(), contents.as_slice());
         let mut folder_pkg = Package::default();
-        // Its messages point into `source`. The resolver reports them when it reads a changed directory again.
+        // Its messages point into `source`; the resolver reports them when it reads the directory.
         let mut parse_log = bun_ast::Log::init();
         if folder_pkg
             .parse(
@@ -1505,9 +1488,7 @@ impl Diff {
             && (npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
     }
 
-    /// `to` is the package.json of the loaded package `from_id`, read again into the same lockfile
-    /// and about to replace it. Its rows keep what `generate` lets a row of the root keep. Not a
-    /// `file:` directory, whose own package.json is what may have changed.
+    /// `to` is about to replace `from_id`; its rows keep what `generate` lets a root row keep.
     pub(crate) fn keep_resolutions(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
         if pm.to_update || from_id >= pm.lockfile.loaded_package_count {
             return;
@@ -1656,7 +1637,7 @@ impl Package<u64> {
     ) -> crate::Result<Option<Dependency>> {
         let nameless_alias = dependency::nameless_npm_alias(version);
         if external_alias.value.is_empty() || nameless_alias.is_some() {
-            // Packages that others publish do have these (#31652), and that is not this project's error.
+            // Packages that others publish do have these, and that is not this project's error.
             if !(features.is_main || features.is_workspace) {
                 log.add_warning_fmt_no_excerpt(
                     source,
@@ -1833,7 +1814,7 @@ impl Package<u64> {
                     dependency_version.value.folder = string_builder.append::<String>(relative);
                 }
 
-                // The root has one `node_modules/<name>`: the workspace of that name wins over the folder.
+                // The root has one `node_modules/<name>`: the workspace wins over the folder.
                 if !is_link
                     && let Some(path) = workspace_path
                     && package_dependencies
@@ -2092,11 +2073,9 @@ impl Package<u64> {
     ) -> crate::Result<()> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // For `asString` transcoding (transcoded strings are only borrowed until
-        // `string_builder.append` copies them).
+        // For `asString` transcoding: borrowed only until `string_builder.append` copies.
         let bump = bun_alloc::Arena::new();
-        // Reads of `lockfile.buffers.string_bytes` must go through
-        // `string_builder.string_bytes` while it's live.
+        // While it's live, read `string_bytes` through `string_builder.string_bytes`.
         let mut string_builder = crate::string_builder!(lockfile);
         let mut total_dependencies_count: u32 = 0;
 
@@ -2113,8 +2092,7 @@ impl Package<u64> {
             if let Some(name_q) = json.as_property(b"name") {
                 if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
-                        // Non-root names become bun.lock `packages` entries, which can
-                        // only be read back if `is_safe_lockfile_package_name` holds.
+                        // Non-root names become bun.lock `packages` keys, read back only if safe.
                         if !FEATURES.is_main && !dependency::is_safe_lockfile_package_name(name) {
                             log.add_error_fmt(
                                 source,
@@ -2486,9 +2464,7 @@ impl Package<u64> {
         let off = lockfile.buffers.dependencies.len();
         debug_assert!(lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len());
 
-        // Appended to the lockfile buffer once all `?`-points are past: the caller may swallow an
-        // error of `parse_dependency` and re-enter for the next package, which must find
-        // `dependencies.len() == resolutions.len()`.
+        // Appended to the lockfile after the last `?`: a caller may swallow an error and re-enter.
         let mut package_dependencies: Vec<Dependency> =
             Vec::with_capacity(total_dependencies_count as usize);
 

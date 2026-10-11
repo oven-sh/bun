@@ -149,8 +149,7 @@ impl Group {
         false
     }
 
-    /// Whether `self` is satisfied by a version that a comparator of `other` names. An exclusive bound counts
-    /// (`2.0.0` for `^1.0.0`, which is `<2.0.0-0`), and so does the `0.0.0` of an unset comparator.
+    /// An exclusive bound counts (`2.0.0` for `^1.0.0`), and so does an unset comparator's `0.0.0`.
     pub fn is_satisfied_by_a_bound_of(
         &self,
         self_buf: &[u8],

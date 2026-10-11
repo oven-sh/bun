@@ -81,8 +81,7 @@ fn parse_bundle(pkg: &E::ObjectJSON) -> Result<Bundle, Error> {
     }
 }
 
-/// The `os` / `cpu` / `libc` of a package-lock entry: npm copies the field
-/// from package.json as-is, so a single string is accepted like npm does.
+/// npm copies `os` / `cpu` / `libc` from package.json as-is: it may be a single string.
 fn parse_platform_list<T: Npm::NegatableEnum>(
     value: Option<&E::JsonValue>,
     absent: T,
@@ -969,8 +968,7 @@ impl<'a> Migrator<'a> {
             .is_some_and(|r| r.starts_with(b"file:") && DepTag::infer(r) == DepTag::Folder)
     }
 
-    /// Which directory a dependency names is for its declarer's `file:` spec to say, not for the lockfile: the edge is
-    /// dropped, and the install resolves it like a dependency added after the lockfile was written.
+    /// The edge is dropped: the install resolves it from its declarer's `file:` spec.
     fn skip_copied_folder(&mut self, t: u32, name: &[u8]) {
         if !self.silent && !self.shadowed.is_set(t as usize) {
             bun_core::warn!(

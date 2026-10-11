@@ -2135,8 +2135,7 @@ pub(crate) mod strings_impl {
 
     /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
     /// `(offset, len)` of the password segment, or None.
-    /// `s` must start with a URL (`https://`, `git+ssh://`, ...); rejects an
-    /// empty password.
+    /// `s` must start with a URL (`https://`, `git+ssh://`, ...); rejects empty pw.
     pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
         // RFC 3986 scheme (`git+https` is one scheme) followed by `://`.
         if !s.first().is_some_and(u8::is_ascii_alphabetic) {
@@ -2155,8 +2154,7 @@ pub(crate) mod strings_impl {
         b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
     }
 
-    /// [`find_url_password`] for what follows `scheme://`. The search region is truncated at the
-    /// first '\n' and at the end of the authority; the userinfo ends at its last '@', as in `bun_url`.
+    /// [`find_url_password`] for what follows `scheme://`; userinfo ends at the last '@'.
     pub(crate) fn find_authority_password(mut rest: &[u8]) -> Option<(usize, usize)> {
         if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
             rest = &rest[..nl];
@@ -2174,8 +2172,7 @@ pub(crate) mod strings_impl {
         Some((colon + 1, at - colon - 1))
     }
 
-    /// [`find_url_password`] for the first URL at or after `from` that has one, wherever in `s` it
-    /// starts (`name@ssh://..`, `npm:https://..`). The offset is into `s`.
+    /// [`find_url_password`] for the first URL at or after `from` that has one; offset into `s`.
     pub(crate) fn next_url_password(s: &[u8], mut from: usize) -> Option<(usize, usize)> {
         while let Some(separator) = crate::strings::index_of(&s[from..], b"://") {
             let separator = from + separator;

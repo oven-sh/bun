@@ -2138,9 +2138,7 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub(crate) stack_check: StackCheck,
-    /// The least `stack_check.remaining()` a `parse_node` began with since the
-    /// innermost `PendingAnchor` was scanned, an alias counting as the stack
-    /// its target took.
+    /// Since the innermost `PendingAnchor` was scanned; an alias counts as its target's stack.
     least_stack_left: usize,
 
     pub(crate) merge_props_budget: usize,
@@ -3320,17 +3318,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    /// The stack used since `anchor` was scanned. That also counts for the
-    /// anchor scanned before it, so every anchor comes through here unless the
-    /// parse fails.
+    /// The stack used since `anchor` was scanned. Every anchor must come here: outer ones count it.
     fn close_anchor(&mut self, anchor: &PendingAnchor) -> usize {
         let stack = anchor.stack_left.saturating_sub(self.least_stack_left);
         self.least_stack_left = self.least_stack_left.min(anchor.outer_least_stack_left);
         stack
     }
 
-    /// For an alias returned as it is: the anchors on the lines before it
-    /// annotate nothing.
+    /// For an alias returned as it is: the anchors on the lines before it annotate nothing.
     fn drop_anchors(&mut self, props: NodeProperties<Enc>) {
         for anchor in [props.has_anchor, props.has_mapping_anchor]
             .into_iter()
@@ -3873,11 +3868,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(())
     }
 
-    /// Whoever walks the returned tree recurses through aliases, which this
-    /// parser does not: `&a [[... *a ...]]` repeated nests to any depth while
-    /// each line stays shallow. So an alias is charged the stack its target took
-    /// to parse, and a document is too deep exactly when it would be with every
-    /// alias written out.
+    /// Walkers of the tree recurse through aliases, so an alias is charged its target's stack.
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         let stack_left = self.stack_check.remaining();
         if stack_left == 0 {

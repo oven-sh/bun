@@ -1024,8 +1024,7 @@ mod draft {
         !folded.is_empty() && NAMES.iter().any(|name| fold(name) == folded)
     }
 
-    /// npm's `nerfDart`: no scheme, a lowercase host. A port stays as written, except the default port of a scheme
-    /// that is spelled out (`//http://host:80/:_authToken=`, the form Bun's docs long showed).
+    /// npm's `nerfDart`: no scheme, a lowercase host, no default port of a spelled-out scheme.
     fn normalize_key(raw: &[u8]) -> Box<[u8]> {
         let has_scheme = |scheme: &[u8]| {
             raw.len() >= scheme.len() && raw[..scheme.len()].eq_ignore_ascii_case(scheme)
@@ -1056,8 +1055,7 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// npm's Boolean coercion (`@npmcli/config` parse-field, then nopt `validateBoolean`): `false`, `null`, `undefined` and a
-    /// numeric zero are false, everything else is true, an empty value included.
+    /// npm's Boolean coercion (`@npmcli/config` parse-field, then nopt `validateBoolean`).
     fn npmrc_bool(expr: &Expr) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),
@@ -1070,8 +1068,7 @@ mod draft {
         }
     }
 
-    /// [`npmrc_bool`] of a string, which is all that `npm_config_<key>` in the environment can hold
-    /// (npm skips a variable with an empty value).
+    /// [`npmrc_bool`] of a string, which is all `npm_config_<key>` in the environment can hold.
     pub fn npm_config_bool(value: &[u8]) -> bool {
         let value = trim_js_whitespace(value);
         if value.is_empty() {
@@ -1178,8 +1175,7 @@ mod draft {
         }
     }
 
-    /// A URL as npm's key walk sees it: the WHATWG serialisation `Scope::set_url` stores (so the key and the request
-    /// agree on the authority) without scheme and query. A URL WHATWG rejects (`$VAR`) falls back to the raw text.
+    /// A URL as npm's key walk sees it: its WHATWG serialisation without scheme and query.
     pub struct RegistryKey {
         /// `<host><path>/`: npm's key for the registry itself, and where the walk starts.
         key: Box<[u8]>,
@@ -1230,8 +1226,7 @@ mod draft {
             }
         }
 
-        /// npm's `regFromURI`: this key, then one component shorter each time, down to the bare host.
-        /// For `https://h/a/` that is `h/a/`, `h:443/a/`, `h/a`, `h:443/a`, `h/`, `h:443/`, `h`, `h:443`.
+        /// npm's `regFromURI`. `https://h/a/`: `h/a/`, `h:443/a/`, `h/a`, `h:443/a`, `h/`, ..., `h:443`.
         pub fn walk(&self) -> impl Iterator<Item = &[u8]> {
             let mut next = Some(self.key.len());
             let mut with_default_port: Option<&[u8]> = None;
@@ -1278,8 +1273,7 @@ mod draft {
         decoded.into_boxed_slice()
     }
 
-    /// What one config key supplies, by npm's `hasAuth` order, in the shape `Scope::from_api` consumes. No `certfile` /
-    /// `keyfile`: Bun has no mTLS, and they would stop the walk on a key that supplies no credential.
+    /// npm's `hasAuth` order, without `certfile` / `keyfile`: they would stop the walk, and no mTLS.
     fn credentials_of_key(configs: &[ConfigItem], key: &[u8]) -> Option<NpmRegistry> {
         // npm's `opts[k]` truthiness test, after the collapse: a later `username=` clears an earlier one.
         let truthy =
@@ -1298,8 +1292,7 @@ mod draft {
         Some(credentials)
     }
 
-    /// `install.url_auth`: npm's config map, reduced to one entry per key that carries a complete credential. An empty `_auth` on
-    /// the own key of a registry that is declared (or npm's default) is an error, reported once, at the line the key collapsed to.
+    /// `install.url_auth`: npm's config map, one entry per key that carries a complete credential.
     fn resolve_url_auth(
         install: &mut BunInstall,
         bunfig: &BunInstall,
@@ -1572,8 +1565,7 @@ mod draft {
                 .ok()
                 .and_then(|word| word.parse::<ConfigOpt>().ok())
             else {
-                // Only a misspelt credential option warns; `always-auth`, `tokenHelper`, `cafile` are ignored as in npm.
-                // No second colon after the key's last `/`: `//host/:_auth:dXNl…` would name the credential as the option.
+                // `/` right before the colon: in `//host/:_auth:dXNl…` the word is the credential.
                 if key[colon - 1] == b'/'
                     && !bun_core::strings::contains_char(word, b'/')
                     && folds_to_credential_option(word)

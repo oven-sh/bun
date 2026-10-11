@@ -50,7 +50,6 @@ impl Options {
         }
     }
 
-    // Does the install take this row's dependency group?
     fn group_enabled(&self, behavior: Behavior) -> bool {
         if behavior.is_optional_peer() {
             self.optional_peer
@@ -65,8 +64,7 @@ impl Options {
         }
     }
 
-    // An optional peer resolves nothing itself: it borrows the package of a row of the same name in
-    // `siblings`, the rows of its package.json. True when every such row is in an omitted group.
+    // An optional peer borrows the package of a same-name row in `siblings`: are all those omitted?
     fn omits_optional_peer(&self, dep: &Dependency, siblings: &[Dependency]) -> bool {
         if !dep.behavior.is_optional_peer() || (self.dev && self.optional) {
             return false;
@@ -84,13 +82,12 @@ impl Options {
     }
 }
 
-/// The packages a `--production` / `--omit` install links. Computed on first use, for one `resolutions` buffer.
+/// What a `--production` / `--omit` install links. Computed once, for one `resolutions` buffer.
 #[derive(Default)]
 pub(crate) struct Linked(Option<DynamicBitSet>);
 
 impl Linked {
-    /// True for an optional peer of `parent_pkg_id` whose package only an omitted group asked for
-    /// (`devDependencies` + optional `peerDependencies` under `--production`).
+    /// An optional peer of `parent_pkg_id` whose package only an omitted group asked for.
     pub(crate) fn omits_optional_peer(
         &mut self,
         dep_id: DependencyID,
@@ -158,7 +155,7 @@ pub fn packages_from(
     Walk::new(lockfile, resolutions, follow_workspace_edges, options).reach(roots)
 }
 
-// What an install that goes on without `left_out` still needs: an optional dependency on one of those is not followed.
+// What an install without `left_out` still needs: optional edges to those are not followed.
 pub(crate) fn packages_without(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
@@ -275,8 +272,7 @@ impl<'a> Walk<'a> {
             && self.options.group_enabled(behavior)
     }
 
-    // `behavior` is the edge `target` is reached through; like the tree builder
-    // (`is_filtered_dependency_or_workspace`), libc only disables optional edges.
+    // As in `is_filtered_dependency_or_workspace`, libc only disables optional edges.
     fn admit(
         &self,
         target: PackageID,

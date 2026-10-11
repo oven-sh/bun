@@ -61,8 +61,7 @@ enum FilterType<'a> {
     Name(&'a [u8]),
 }
 
-/// Combines the patterns like `--filter` values (`workspace_selection::select`). Each pattern is tried on both
-/// names of an aliased dependency, so every name the table prints can be passed back.
+/// Combines the patterns like `--filter` values (`workspace_selection::select`).
 fn package_patterns_select(
     patterns: &[FilterType<'_>],
     package_name: &[u8],

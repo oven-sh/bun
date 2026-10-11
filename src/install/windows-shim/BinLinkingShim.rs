@@ -4,13 +4,11 @@
 //! The format is as follows:
 //!
 //! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
+//! - bin_path starts at the parent of the shim's directory, unless `Flags::is_absolute_target`
 //!
 //! if shebang:
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
 //! - args always ends with a trailing space
-//!
-//! `bin_path` is relative to the parent of the directory containing the shim, or, where a global
-//! install has no such path (another drive), absolute with `Flags::is_absolute_target` set.
 //!
 //! See `bun_shim_impl.rs` for more details on how this file is consumed.
 //!
@@ -117,10 +115,7 @@ impl Flags {
     }
 }
 
-// Launchers that predate `is_absolute_target` validate `bits >> 3 == 5478`. A relative
-// shim must still satisfy that (they keep working on existing installs, and the bunx fast
-// path in a newer bun.exe keeps accepting the files they wrote), and an absolute shim must
-// not (they would otherwise resolve the absolute path as a relative one).
+// Older launchers check `bits >> 3 == 5478`: they are to take a relative shim, not an absolute one.
 const _: () = assert!(Flags::new(false, false, false, false, VersionFlag::V5).bits() == 5478 << 3);
 const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bits() >> 3 != 5478);
 

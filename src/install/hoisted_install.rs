@@ -83,8 +83,7 @@ fn run_tasks_until_done(
     struct Closure<'a, 'b> {
         installer: &'a mut PackageInstaller<'b>,
         err: Option<crate::Error>,
-        // raw `*mut` — `sleep_until`
-        // also receives this pointer, so `&mut` here would alias.
+        // raw `*mut` — `sleep_until` also receives this pointer, so `&mut` here would alias.
         manager: *mut PackageManager,
         links: Option<&'a AtomicUsize>,
     }
@@ -221,7 +220,6 @@ pub(crate) fn install_hoisted_packages(
     };
 
     // A partial install (security scanner) runs ahead of the real one and must not touch the layout.
-    // Without an explicit `hoisted`, `install_with_manager` came here because there is no store.
     let replacing_isolated_node_modules = packages_to_install.is_none()
         && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
@@ -296,8 +294,7 @@ pub(crate) fn install_hoisted_packages(
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so deref the Box for the heap addr.
         let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
-        // BACKREF — outlives this install pass, and borrows nothing of `this`, which
-        // `PackageInstaller` reaches through `mgr_ptr` at the same time.
+        // BACKREF — outlives this install pass; `PackageInstaller` reaches `this` at the same time.
         let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
         );
@@ -374,8 +371,7 @@ pub(crate) fn install_hoisted_packages(
             // so we want to make sure they're not accessible to the rest of this function
             // to make mistakes harder
             //
-            // RawSlice invariant: the packages column buffers are not freed for the lifetime of
-            // `installer`, only grow (`fix_cached_lockfile_package_slices` re-snapshots).
+            // RawSlice invariant: on growth `fix_cached_lockfile_package_slices` re-snapshots.
             let parts = lockfile_ref.packages.slice();
             let metas = bun_ptr::RawSlice::new(parts.items_meta());
             let bins = bun_ptr::RawSlice::new(parts.items_bin());

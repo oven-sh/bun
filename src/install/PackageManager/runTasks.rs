@@ -717,6 +717,11 @@ fn run_tasks_erased(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
+                    if response.status_code == 404
+                        && let Some(entry) = manager.network_dedupe_map.get_mut(&task.task_id)
+                    {
+                        entry.missing_until = npm::Registry::manifest_expiry(&response.headers);
+                    }
                     if cb.has_on_package_manifest_error {
                         let err: PackageManifestError = match response.status_code {
                             400 => PackageManifestError::PackageManifestHTTP400,
@@ -1992,6 +1997,7 @@ pub fn generate_network_task_for_tarball<'a>(
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,
+        stays_unpinned: package.meta.id != bun_install::invalid_package_id && !this.pins_tarballs(),
         url: stored_string(url),
         // Copied here: extract workers must not read lockfile buffers.
         github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {

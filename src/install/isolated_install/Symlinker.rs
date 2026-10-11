@@ -5,8 +5,7 @@ use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 pub(crate) struct Symlinker {
     pub(crate) dest: bun_paths::Path,
     pub(crate) target: bun_paths::RelPath,
-    /// The directories of `dest` after `dest[..real_len]` are the linker's own and were there
-    /// before this run: `prune::remove_planted_links` looks at them before anything is written.
+    /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
     #[cfg(windows)]
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
@@ -94,9 +93,7 @@ impl Symlinker {
                                         linked => linked.map(|()| true),
                                     }
                                 }
-                                // Not a link. A directory with a package.json is the copy
-                                // `bun patch <pkg>` made for the user to edit: keep it. A mount
-                                // point (EBUSY) is the user's as well.
+                                // Not a link. Kept: the copy `bun patch <pkg>` made to edit (has a package.json), a mount point (EBUSY).
                                 _ => {
                                     let has_package_json = {
                                         let mut dest = self.dest.save();

@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, statSync } from "fs";
 import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isLinux, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
+import { bunExe, bunEnv as env, isLinux, isRoot, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -222,10 +222,7 @@ it("bun.lockb prints a text bun.lock without opening .env", async () => {
 
 // Root can list any directory, so the command runs as "nobody".
 const canRunAsNobody =
-  isLinux &&
-  process.getuid?.() === 0 &&
-  !!Bun.which("runuser") &&
-  /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+  isLinux && isRoot && !!Bun.which("runuser") && /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
 
 it.skipIf(!canRunAsNobody)("bun.lockb prints a lockfile in a directory that cannot be listed", async () => {
   using dir = tempDir("lockb-unlistable", { "project/bun.lock": textBunLock });

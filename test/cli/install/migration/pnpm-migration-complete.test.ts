@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunExe, bunEnv as harnessEnv, tempDir } from "harness";
 import { join } from "path";
+import { startNpmjs } from "./migration-harness";
+
+const npmjs = await startNpmjs();
+afterAll(() => npmjs.stop());
+const bunEnv = { ...harnessEnv, ...npmjs.env };
 
 describe("PNPM Migration Complete Test Suite", () => {
   test("comprehensive PNPM migration with all edge cases", async () => {

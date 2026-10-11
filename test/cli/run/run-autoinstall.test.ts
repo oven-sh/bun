@@ -778,7 +778,11 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
   async function run(registry: { url: string }, script: string, env: Record<string, string | undefined> = {}) {
     using dir = tempDir("autoinstall-failed-lookup", {
       "bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
-      "index.js": `const registry = ${JSON.stringify(registry.url)};\n${script}`,
+      // A failed lookup stands until the event loop goes around again. A timer only fires from there,
+      // while the continuation of an awaited fetch() can run in the iteration that started it.
+      "index.js": `const registry = ${JSON.stringify(registry.url)};
+        const next = async path => { await fetch(registry + path); await new Promise(resolve => setTimeout(resolve, 0)); };
+        ${script}`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.js"],
@@ -827,10 +831,10 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
           try { return require("flaky-pkg").version; } catch (e) { return e.code; }
         };
         const results = [attempt()];
-        await fetch(registry + "__next");
+        await next("__next");
         results.push(attempt());
-        await fetch(registry + "__heal");
-        await fetch(registry + "__next");
+        await next("__heal");
+        await next("__next");
         results.push(attempt());
         results.push(await import("flaky-pkg").then(m => m.default.version, e => e.code));
         console.log(JSON.stringify(results));
@@ -847,7 +851,7 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expect(exitCode).toBe(0);
   });
 
-  test("a loop that never yields asks once, the next turn of the event loop asks again", async () => {
+  test("a loop that never yields asks once, and again once the event loop has gone around", async () => {
     using registry = flakyRegistry(() => new Response("{}", { status: 404 }));
     const { stdout, exitCode } = await run(
       registry,
@@ -857,7 +861,7 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
         };
         const results = new Set();
         for (let i = 0; i < 50; i++) results.add(attempt());
-        await fetch(registry + "__next");
+        await next("__next");
         for (let i = 0; i < 50; i++) results.add(attempt());
         console.log(JSON.stringify([...results]));
       `,
@@ -886,12 +890,12 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
         for (const [way, resolve] of Object.entries(ways)) {
           const name = "flaky-pkg-" + i++;
           const attempt = () => Promise.resolve(name).then(resolve).catch(e => e.code);
-          await fetch(registry + "__break");
+          await next("__break");
           const broken = await attempt();
-          await fetch(registry + "__next");
-          await fetch(registry + "__heal");
+          await next("__next");
+          await next("__heal");
           results[way] = [broken, await attempt()];
-          await fetch(registry + "__next");
+          await next("__next");
         }
         console.log(JSON.stringify(results));
       `,

@@ -12122,7 +12122,7 @@ it.concurrent("does not extract a tarball for a dependency alias containing '..'
   });
 });
 
-describe("dependency names containing terminal control characters", () => {
+describe.concurrent("dependency names containing terminal control characters", () => {
   // OSC 52 (write to the clipboard) followed by CSI 2J (clear the screen). A
   // registry serves it as an ordinary JSON string (`"ev\u001b]52;..."`), so it
   // reaches bun like any other dependency name.
@@ -12368,132 +12368,138 @@ describe("dependency names containing terminal control characters", () => {
   });
 });
 
-it("does not install a registry package's transitive file: dependency that points outside its package", async () => {
-  // A dependency declared by a registry package uses a file: specifier
-  // pointing at an absolute path outside of that package and outside the
-  // project. Registry content is not written by the user, so that directory
-  // must not be resolved or linked into node_modules. (file: dependencies
-  // declared by the project's own local file: packages are user authored and
-  // are allowed to point outside the project; see the tests below.)
-  await withContext(defaultOpts, async ctx => {
-    const urls: string[] = [];
-    using dir = tempDir("registry-transitive-file-dep", {
-      "secret/credentials.txt": "do-not-link-me",
-    });
-    const secretDir = join(String(dir), "secret");
-    setContextHandler(
-      ctx,
-      dummyRegistryForContext(ctx, urls, {
-        "0.0.3": {
-          dependencies: {
-            loot: "file:" + secretDir.replaceAll("\\", "/"),
-          },
-        },
-      }),
-    );
-    await writeFile(
-      join(ctx.package_dir, "package.json"),
-      JSON.stringify({
-        name: "my-app",
-        version: "1.0.0",
-        dependencies: {
-          baz: "0.0.3",
-        },
-      }),
-    );
-
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: ctx.package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
-
-    // The directory outside the package must not appear under node_modules,
-    // neither hoisted nor nested under the declaring package.
-    expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
-    expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
-    // The dependency is reported as unresolvable instead of silently linking local files.
-    expect(err).toContain("Could not find package.json");
-    expect(out).not.toContain("2 packages installed");
-    expect(exitCode).toBe(1);
-  });
-});
-
-it("refuses to install an escaping file: dependency that a registry package's own folder declares in the lockfile", async () => {
-  // Bun's resolver records no dependencies for a folder that a registry package
-  // ships, but a lockfile written elsewhere (a migration) can. Trust for a
-  // folder parent is anchored at the root or a workspace, so the installer still
-  // refuses the escaping path.
-  await withContext(defaultOpts, async ctx => {
-    const urls: string[] = [];
-    using dir = tempDir("registry-folder-declares-file-dep", {
-      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
-      "secret/credentials.txt": "do-not-link-me",
-    });
-    const secretDir = join(String(dir), "secret").replaceAll("\\", "/");
-    setContextHandler(
-      ctx,
-      dummyRegistryForContext(ctx, urls, {
-        "0.0.3": {
-          dependencies: {
-            inner: "file:./inner",
-          },
-        },
-      }),
-    );
-    await writeFile(
-      join(ctx.package_dir, "package.json"),
-      JSON.stringify({
-        name: "my-app",
-        version: "1.0.0",
-        dependencies: {
-          baz: "0.0.3",
-        },
-      }),
-    );
-    await writeFile(
-      join(ctx.package_dir, "bun.lock"),
-      JSON.stringify({
-        lockfileVersion: 1,
-        workspaces: {
-          "": {
-            name: "my-app",
+it.concurrent(
+  "does not install a registry package's transitive file: dependency that points outside its package",
+  async () => {
+    // A dependency declared by a registry package uses a file: specifier
+    // pointing at an absolute path outside of that package and outside the
+    // project. Registry content is not written by the user, so that directory
+    // must not be resolved or linked into node_modules. (file: dependencies
+    // declared by the project's own local file: packages are user authored and
+    // are allowed to point outside the project; see the tests below.)
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      using dir = tempDir("registry-transitive-file-dep", {
+        "secret/credentials.txt": "do-not-link-me",
+      });
+      const secretDir = join(String(dir), "secret");
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
             dependencies: {
-              baz: "0.0.3",
+              loot: "file:" + secretDir.replaceAll("\\", "/"),
             },
           },
-        },
-        packages: {
-          "baz": ["baz@0.0.3", `${ctx.registry_url}baz-0.0.3.tgz`, { dependencies: { inner: "file:./inner" } }, ""],
-          "baz/inner": ["inner@file:node_modules/baz/inner", { dependencies: { loot: "file:" + secretDir } }],
-          "baz/inner/loot": ["loot@file:" + secretDir, {}],
-        },
-      }),
-    );
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            baz: "0.0.3",
+          },
+        }),
+      );
 
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: ctx.package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+      // The directory outside the package must not appear under node_modules,
+      // neither hoisted nor nested under the declaring package.
+      expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
+      // The dependency is reported as unresolvable instead of silently linking local files.
+      expect(err).toContain("Could not find package.json");
+      expect(out).not.toContain("2 packages installed");
+      expect(exitCode).toBe(1);
     });
-    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  },
+);
 
-    expect(err).toContain("refusing to install dependency loot with unsafe folder path");
-    expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
-    expect(
-      await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "inner", "node_modules", "loot")),
-    ).toBe(false);
-    expect(out).not.toContain("3 packages installed");
-    expect(exitCode).toBe(1);
-  });
-});
+it.concurrent(
+  "refuses to install an escaping file: dependency that a registry package's own folder declares in the lockfile",
+  async () => {
+    // Bun's resolver records no dependencies for a folder that a registry package
+    // ships, but a lockfile written elsewhere (a migration) can. Trust for a
+    // folder parent is anchored at the root or a workspace, so the installer still
+    // refuses the escaping path.
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      using dir = tempDir("registry-folder-declares-file-dep", {
+        "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+        "secret/credentials.txt": "do-not-link-me",
+      });
+      const secretDir = join(String(dir), "secret").replaceAll("\\", "/");
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            dependencies: {
+              inner: "file:./inner",
+            },
+          },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            baz: "0.0.3",
+          },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: {
+            "": {
+              name: "my-app",
+              dependencies: {
+                baz: "0.0.3",
+              },
+            },
+          },
+          packages: {
+            "baz": ["baz@0.0.3", `${ctx.registry_url}baz-0.0.3.tgz`, { dependencies: { inner: "file:./inner" } }, ""],
+            "baz/inner": ["inner@file:node_modules/baz/inner", { dependencies: { loot: "file:" + secretDir } }],
+            "baz/inner/loot": ["loot@file:" + secretDir, {}],
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+      expect(err).toContain("refusing to install dependency loot with unsafe folder path");
+      expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
+      expect(
+        await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "inner", "node_modules", "loot")),
+      ).toBe(false);
+      expect(out).not.toContain("3 packages installed");
+      expect(exitCode).toBe(1);
+    });
+  },
+);
 
 describe.concurrent('a registry package\'s file: dependency that hides ".." behind a NUL', () => {
   // The OS ends a path at a NUL. For a check that only splits on separators,
@@ -12875,78 +12881,81 @@ describe.concurrent("isolated linker: file: dependencies that point outside the 
   }
 });
 
-it("installs transitive file: dependencies of a local file: package that point outside the project", async () => {
-  // A file: package referenced by the root package.json lives outside the
-  // project and declares its own relative folder dependencies that also land
-  // outside the project. The declaring package is local (not from a registry),
-  // so its file: paths are user authored and must not be rejected by the
-  // escape check that constrains registry packages.
-  using dir = tempDir("local-file-dep-outside", {
-    "packages/plugin/package.json": JSON.stringify({
-      name: "plugin",
-      version: "1.0.0",
-      dependencies: {
-        "shared-lib": "../shared-lib",
-      },
-      devDependencies: {
-        "shared-dev-lib": "file:../shared-dev-lib",
-      },
-    }),
-    "packages/plugin/index.js": "module.exports = 'plugin';",
-    "packages/shared-lib/package.json": JSON.stringify({ name: "shared-lib", version: "1.0.0" }),
-    "packages/shared-dev-lib/package.json": JSON.stringify({ name: "shared-dev-lib", version: "1.0.0" }),
-    "project/package.json": JSON.stringify({
-      name: "my-app",
-      version: "1.0.0",
-      dependencies: {
-        plugin: "file:../packages/plugin",
-      },
-    }),
-  });
-  const projectDir = join(String(dir), "project");
-
-  // 1) `bun install` with no lockfile and 2) `bun update` exercise the
-  // resolve/enqueue path; 3) `bun install` with the saved lockfile and an
-  // empty node_modules exercises the package installer path.
-  for (const [i, cmd] of ["install", "update", "install"].entries()) {
-    if (i === 2) {
-      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
-    }
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), cmd],
-      cwd: projectDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
+it.concurrent(
+  "installs transitive file: dependencies of a local file: package that point outside the project",
+  async () => {
+    // A file: package referenced by the root package.json lives outside the
+    // project and declares its own relative folder dependencies that also land
+    // outside the project. The declaring package is local (not from a registry),
+    // so its file: paths are user authored and must not be rejected by the
+    // escape check that constrains registry packages.
+    using dir = tempDir("local-file-dep-outside", {
+      "packages/plugin/package.json": JSON.stringify({
+        name: "plugin",
+        version: "1.0.0",
+        dependencies: {
+          "shared-lib": "../shared-lib",
+        },
+        devDependencies: {
+          "shared-dev-lib": "file:../shared-dev-lib",
+        },
+      }),
+      "packages/plugin/index.js": "module.exports = 'plugin';",
+      "packages/shared-lib/package.json": JSON.stringify({ name: "shared-lib", version: "1.0.0" }),
+      "packages/shared-dev-lib/package.json": JSON.stringify({ name: "shared-dev-lib", version: "1.0.0" }),
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          plugin: "file:../packages/plugin",
+        },
+      }),
     });
-    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+    const projectDir = join(String(dir), "project");
 
-    expect(err).not.toContain("Could not find package.json");
-    expect(err).not.toContain("failed to resolve");
-    expect(err).not.toContain("unsafe folder path");
-    expect(err).not.toContain("refusing to install");
-    // The update finds the three folders as the install left them.
-    expect(out).toContain(i === 1 ? "(no changes)" : "plugin");
-    expect(exitCode).toBe(0);
-  }
+    // 1) `bun install` with no lockfile and 2) `bun update` exercise the
+    // resolve/enqueue path; 3) `bun install` with the saved lockfile and an
+    // empty node_modules exercises the package installer path.
+    for (const [i, cmd] of ["install", "update", "install"].entries()) {
+      if (i === 2) {
+        await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+      }
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), cmd],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-  // Both transitive folder dependencies resolve, relative to the project root.
-  // On Windows the stored folder path uses backslashes (JSON-escaped in the
-  // lockfile); normalize them before asserting.
-  const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
-  expect(lock).toContain('"plugin/shared-lib"');
-  expect(lock).toContain("shared-lib@file:../packages/shared-lib");
-  expect(lock).toContain('"plugin/shared-dev-lib"');
-  expect(await exists(join(projectDir, "node_modules", "plugin", "package.json"))).toBe(true);
-  // And both are linked under the declaring package.
-  expect(await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-lib", "package.json"))).toBe(
-    true,
-  );
-  expect(
-    await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-dev-lib", "package.json")),
-  ).toBe(true);
-});
+      expect(err).not.toContain("Could not find package.json");
+      expect(err).not.toContain("failed to resolve");
+      expect(err).not.toContain("unsafe folder path");
+      expect(err).not.toContain("refusing to install");
+      // The update finds the three folders as the install left them.
+      expect(out).toContain(i === 1 ? "(no changes)" : "plugin");
+      expect(exitCode).toBe(0);
+    }
+
+    // Both transitive folder dependencies resolve, relative to the project root.
+    // On Windows the stored folder path uses backslashes (JSON-escaped in the
+    // lockfile); normalize them before asserting.
+    const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
+    expect(lock).toContain('"plugin/shared-lib"');
+    expect(lock).toContain("shared-lib@file:../packages/shared-lib");
+    expect(lock).toContain('"plugin/shared-dev-lib"');
+    expect(await exists(join(projectDir, "node_modules", "plugin", "package.json"))).toBe(true);
+    // And both are linked under the declaring package.
+    expect(await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-lib", "package.json"))).toBe(
+      true,
+    );
+    expect(
+      await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-dev-lib", "package.json")),
+    ).toBe(true);
+  },
+);
 
 describe.concurrent("a dependency whose own package.json has an invalid name", () => {
   // The name inside a tarball, folder or git dependency's package.json is written
@@ -13185,7 +13194,7 @@ it.concurrent("does not install transitive file: dependencies with overlong fold
 // against the buffer when package.json is parsed, but the appended bytes were not, so a
 // folder path within 13 bytes of the buffer size aborted the install. Windows' buffer is
 // larger than any path the OS accepts, so the boundary cannot be reached there.
-describe.skipIf(isWindows)("file: dependency whose package.json path is around the path buffer size", () => {
+describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path is around the path buffer size", () => {
   const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
 
   // A relative path of exactly `bytes` bytes made of one letter directory names, so that a
@@ -13829,7 +13838,7 @@ for (const field of ["resolutions", "overrides"]) {
     });
   });
 
-  it(`applies a root "${field}" file: path to a registry package's dependency`, async () => {
+  it.concurrent(`applies a root "${field}" file: path to a registry package's dependency`, async () => {
     // overrides/resolutions are declared in the root package.json, so a file:
     // path applied through them is trusted even for a dependency declared by a
     // registry package (which is otherwise constrained; see the test above).
@@ -13904,141 +13913,147 @@ for (const field of ["resolutions", "overrides"]) {
   const nestedRule = (parent: string, value: string) =>
     field === "overrides" ? { [parent]: { shared: value } } : { [`${parent}/shared`]: value };
 
-  it(`rejects a nested "${field}" rule pointing at a file: path outside the project for a registry package's dependency`, async () => {
-    // A nested rule only replaces one parent -> child edge, so it does not
-    // make every edge of that name root authored. The trust checks therefore
-    // only consult plain rules, and a nested file: path that escapes the
-    // project is still rejected when the parent is a registry package.
-    await withContext(defaultOpts, async ctx => {
-      const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            dependencies: {
-              shared: "1.0.0",
+  it.concurrent(
+    `rejects a nested "${field}" rule pointing at a file: path outside the project for a registry package's dependency`,
+    async () => {
+      // A nested rule only replaces one parent -> child edge, so it does not
+      // make every edge of that name root authored. The trust checks therefore
+      // only consult plain rules, and a nested file: path that escapes the
+      // project is still rejected when the parent is a registry package.
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, {
+            "0.0.3": {
+              dependencies: {
+                shared: "1.0.0",
+              },
             },
-          },
-        }),
-      );
-      // The project is a subdirectory so that `../shared` exists and is outside it.
-      const projectDir = join(ctx.package_dir, "project");
-      await write(
-        join(ctx.package_dir, "shared", "package.json"),
-        JSON.stringify({ name: "shared", version: "1.0.0" }),
-      );
-      await write(join(ctx.package_dir, "shared", "index.js"), "module.exports = 'shared';");
-      await write(
-        join(projectDir, "bunfig.toml"),
-        `
+          }),
+        );
+        // The project is a subdirectory so that `../shared` exists and is outside it.
+        const projectDir = join(ctx.package_dir, "project");
+        await write(
+          join(ctx.package_dir, "shared", "package.json"),
+          JSON.stringify({ name: "shared", version: "1.0.0" }),
+        );
+        await write(join(ctx.package_dir, "shared", "index.js"), "module.exports = 'shared';");
+        await write(
+          join(projectDir, "bunfig.toml"),
+          `
 [install]
 cache = false
 registry = "${ctx.registry_url}"
 `,
-      );
-      await write(
-        join(projectDir, "package.json"),
-        JSON.stringify({
+        );
+        await write(
+          join(projectDir, "package.json"),
+          JSON.stringify({
+            name: "my-app",
+            version: "1.0.0",
+            dependencies: {
+              baz: "0.0.3",
+            },
+            [field]: nestedRule("baz", "file:../shared"),
+          }),
+        );
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: projectDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+        // stderr also carries the progress lines of the registry fetch of `baz`.
+        expect(err.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
+          'error: Could not find package.json for "file:../shared" dependency "shared"',
+          "error: shared@1.0.0 failed to resolve",
+        ]);
+        expect(out).not.toContain("packages installed");
+        expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
+        expect(await exists(join(projectDir, "node_modules", "baz", "node_modules", "shared"))).toBe(false);
+        expect(await exists(join(projectDir, "bun.lock"))).toBe(false);
+        expect(urls.filter(url => url.includes("shared"))).toEqual([]);
+        expect(exitCode).toBe(1);
+      });
+    },
+  );
+
+  it.concurrent(
+    `installs a nested "${field}" rule pointing at a file: path outside the project for a local file: package's dependency`,
+    async () => {
+      // The parent is a file: package of the root, so its dependencies' file:
+      // paths are trusted like root dependencies (see the transitive file: tests
+      // above), nested rule or not.
+      using dir = tempDir("nested-override-file-dep-outside-local", {
+        "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "shared/index.js": "module.exports = 'shared';",
+        "project/package.json": JSON.stringify({
           name: "my-app",
           version: "1.0.0",
           dependencies: {
-            baz: "0.0.3",
+            "pkg-a": "file:./pkg-a",
           },
-          [field]: nestedRule("baz", "file:../shared"),
+          [field]: nestedRule("pkg-a", "file:../shared"),
         }),
-      );
-
-      await using proc = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: projectDir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env,
+        "project/pkg-a/package.json": JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          dependencies: {
+            shared: "1.0.0",
+          },
+        }),
+        "project/pkg-a/index.js": "module.exports = require('shared');",
       });
-      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      const projectDir = join(String(dir), "project");
 
-      // stderr also carries the progress lines of the registry fetch of `baz`.
-      expect(err.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
-        'error: Could not find package.json for "file:../shared" dependency "shared"',
-        "error: shared@1.0.0 failed to resolve",
-      ]);
-      expect(out).not.toContain("packages installed");
-      expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
-      expect(await exists(join(projectDir, "node_modules", "baz", "node_modules", "shared"))).toBe(false);
-      expect(await exists(join(projectDir, "bun.lock"))).toBe(false);
-      expect(urls.filter(url => url.includes("shared"))).toEqual([]);
-      expect(exitCode).toBe(1);
-    });
-  });
+      // The first pass resolves the rule (enqueue path); the second installs
+      // from the lockfile it wrote (package installer path).
+      for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+        await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
-  it(`installs a nested "${field}" rule pointing at a file: path outside the project for a local file: package's dependency`, async () => {
-    // The parent is a file: package of the root, so its dependencies' file:
-    // paths are trusted like root dependencies (see the transitive file: tests
-    // above), nested rule or not.
-    using dir = tempDir("nested-override-file-dep-outside-local", {
-      "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
-      "shared/index.js": "module.exports = 'shared';",
-      "project/package.json": JSON.stringify({
-        name: "my-app",
-        version: "1.0.0",
-        dependencies: {
-          "pkg-a": "file:./pkg-a",
-        },
-        [field]: nestedRule("pkg-a", "file:../shared"),
-      }),
-      "project/pkg-a/package.json": JSON.stringify({
-        name: "pkg-a",
-        version: "1.0.0",
-        dependencies: {
-          shared: "1.0.0",
-        },
-      }),
-      "project/pkg-a/index.js": "module.exports = require('shared');",
-    });
-    const projectDir = join(String(dir), "project");
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: projectDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
-    // The first pass resolves the rule (enqueue path); the second installs
-    // from the lockfile it wrote (package installer path).
-    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
-      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+        expect(err).not.toContain("error:");
+        expect(out).toContain("2 packages installed");
+        expect(exitCode).toBe(0);
 
-      await using proc = spawn({
-        cmd: [bunExe(), ...args],
-        cwd: projectDir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env,
-      });
-      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        await using runProc = spawn({
+          cmd: [bunExe(), "-e", "console.log(require('pkg-a'))"],
+          cwd: projectDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [runOut, runErr, runExit] = await Promise.all([
+          runProc.stdout.text(),
+          runProc.stderr.text(),
+          runProc.exited,
+        ]);
+        expect(runErr).toBe("");
+        expect(runOut).toBe("shared\n");
+        expect(runExit).toBe(0);
+      }
 
-      expect(err).not.toContain("error:");
-      expect(out).toContain("2 packages installed");
-      expect(exitCode).toBe(0);
+      const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
+      expect(lock).toContain('"pkg-a/shared": ["shared@file:../shared", {}]');
+    },
+  );
 
-      await using runProc = spawn({
-        cmd: [bunExe(), "-e", "console.log(require('pkg-a'))"],
-        cwd: projectDir,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [runOut, runErr, runExit] = await Promise.all([
-        runProc.stdout.text(),
-        runProc.stderr.text(),
-        runProc.exited,
-      ]);
-      expect(runErr).toBe("");
-      expect(runOut).toBe("shared\n");
-      expect(runExit).toBe(0);
-    }
-
-    const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
-    expect(lock).toContain('"pkg-a/shared": ["shared@file:../shared", {}]');
-  });
-
-  it(`installs a nested "${field}" rule pointing at a file: path inside the project`, async () => {
+  it.concurrent(`installs a nested "${field}" rule pointing at a file: path inside the project`, async () => {
     using dir = tempDir("nested-override-file-dep-inside", {
       "package.json": JSON.stringify({
         name: "my-app",
@@ -14774,7 +14789,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
 });
 
 for (const lockfile of ["bun.lock", "bun.lockb"]) {
-  it(`installs a file: dependency whose version literal has leading whitespace (${lockfile})`, async () => {
+  it.concurrent(`installs a file: dependency whose version literal has leading whitespace (${lockfile})`, async () => {
     // The folder path is longer than an inline string so that it has to be appended to the
     // lockfile's string buffer, which only has room for it if the literal was classified as a folder.
     const literal = " file:./vendor/some-long-directory-name/lib";
@@ -14900,7 +14915,7 @@ async function installFileDepCycle(projectDir: string): Promise<string> {
   return normalizeBunSnapshot(lock, projectDir);
 }
 
-it("installs file: dependencies that depend on each other", async () => {
+it.concurrent("installs file: dependencies that depend on each other", async () => {
   using dir = tempDir("file-dep-cycle", fileDepCycleFixture);
   expect(await installFileDepCycle(String(dir))).toMatchInlineSnapshot(`
     "{
@@ -14928,24 +14943,26 @@ it("installs file: dependencies that depend on each other", async () => {
   `);
 });
 
-it("installs file: dependencies that depend on each other from a lockfile that only lists the root's copies", async () => {
-  using dir = tempDir("file-dep-cycle-lock", {
-    ...fileDepCycleFixture,
-    "bun.lock": JSON.stringify({
-      lockfileVersion: 1,
-      workspaces: {
-        "": {
-          name: "my-app",
-          dependencies: { a: "file:./packages/a", b: "file:./packages/b" },
+it.concurrent(
+  "installs file: dependencies that depend on each other from a lockfile that only lists the root's copies",
+  async () => {
+    using dir = tempDir("file-dep-cycle-lock", {
+      ...fileDepCycleFixture,
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": {
+            name: "my-app",
+            dependencies: { a: "file:./packages/a", b: "file:./packages/b" },
+          },
         },
-      },
-      packages: {
-        a: ["a@file:packages/a", { dependencies: { b: "file:../b" } }],
-        b: ["b@file:packages/b", { dependencies: { a: "file:../a" } }],
-      },
-    }),
-  });
-  expect(await installFileDepCycle(String(dir))).toMatchInlineSnapshot(`
+        packages: {
+          a: ["a@file:packages/a", { dependencies: { b: "file:../b" } }],
+          b: ["b@file:packages/b", { dependencies: { a: "file:../a" } }],
+        },
+      }),
+    });
+    expect(await installFileDepCycle(String(dir))).toMatchInlineSnapshot(`
     "{
       "lockfileVersion": 1,
       "configVersion": 0,
@@ -14969,60 +14986,63 @@ it("installs file: dependencies that depend on each other from a lockfile that o
       }
     }"
   `);
-});
+  },
+);
 
-it("reloads the lockfile it wrote when a file: dependency and the root declare the same folder", async () => {
-  using dir = tempDir("shared-file-dep", {
-    "package.json": JSON.stringify({
-      name: "my-app",
-      version: "1.0.0",
-      dependencies: {
-        lib: "file:./vendor/lib",
-        shared: "file:./vendor/shared",
-      },
-    }),
-    "vendor/lib/package.json": JSON.stringify({
-      name: "lib",
-      version: "1.0.0",
-      dependencies: { shared: "file:../shared" },
-    }),
-    "vendor/shared/package.json": JSON.stringify({
-      name: "shared",
-      version: "1.0.0",
-      dependencies: { nested: "file:../nested" },
-    }),
-    "vendor/nested/package.json": JSON.stringify({ name: "nested", version: "1.0.0" }),
-  });
-
-  const install = async (...args: string[]) => {
-    await using proc = spawn({
-      cmd: [bunExe(), "install", ...args],
-      cwd: String(dir),
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env,
+it.concurrent(
+  "reloads the lockfile it wrote when a file: dependency and the root declare the same folder",
+  async () => {
+    using dir = tempDir("shared-file-dep", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          lib: "file:./vendor/lib",
+          shared: "file:./vendor/shared",
+        },
+      }),
+      "vendor/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { shared: "file:../shared" },
+      }),
+      "vendor/shared/package.json": JSON.stringify({
+        name: "shared",
+        version: "1.0.0",
+        dependencies: { nested: "file:../nested" },
+      }),
+      "vendor/nested/package.json": JSON.stringify({ name: "nested", version: "1.0.0" }),
     });
-    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  };
 
-  const [, err, exitCode] = await install();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  expect(exitCode).toBe(0);
-  const lock = await file(join(String(dir), "bun.lock")).text();
+    const install = async (...args: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: String(dir),
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    };
 
-  // `lib/shared` was a second `shared` package with no dependencies. The parser
-  // makes one package of the two rows, so it looked for a `lib/shared/nested` row:
-  // "Failed to resolve prod dependency 'nested' for package 'lib/shared'".
-  await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
-  const [, err2, exitCode2] = await install("--frozen-lockfile");
-  expect(err2).not.toContain("error:");
-  expect(err2).not.toContain("Ignoring lockfile");
-  expect(exitCode2).toBe(0);
-  expect(await file(join(String(dir), "bun.lock")).text()).toBe(lock);
+    const [, err, exitCode] = await install();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    const lock = await file(join(String(dir), "bun.lock")).text();
 
-  expect(normalizeBunSnapshot(lock, dir)).toMatchInlineSnapshot(`
+    // `lib/shared` was a second `shared` package with no dependencies. The parser
+    // makes one package of the two rows, so it looked for a `lib/shared/nested` row:
+    // "Failed to resolve prod dependency 'nested' for package 'lib/shared'".
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    const [, err2, exitCode2] = await install("--frozen-lockfile");
+    expect(err2).not.toContain("error:");
+    expect(err2).not.toContain("Ignoring lockfile");
+    expect(exitCode2).toBe(0);
+    expect(await file(join(String(dir), "bun.lock")).text()).toBe(lock);
+
+    expect(normalizeBunSnapshot(lock, dir)).toMatchInlineSnapshot(`
     "{
       "lockfileVersion": 2,
       "configVersion": 1,
@@ -15048,9 +15068,10 @@ it("reloads the lockfile it wrote when a file: dependency and the root declare t
       }
     }"
   `);
-});
+  },
+);
 
-it("keeps a registry package's own file: folder apart from the root's folder of the same path", async () => {
+it.concurrent("keeps a registry package's own file: folder apart from the root's folder of the same path", async () => {
   // A registry package's `file:` path is relative to that package, so `file:x`
   // under it names a different folder than the root's `file:x`. The root's copy
   // has the trusted `postinstall`; it must not run in the package's copy.
@@ -15133,7 +15154,7 @@ it("keeps a registry package's own file: folder apart from the root's folder of 
   }
 });
 
-it("fails when a transitive file: dependency's folder does not exist", async () => {
+it.concurrent("fails when a transitive file: dependency's folder does not exist", async () => {
   using dir = tempDir("transitive-file-dep-missing", {
     "package.json": JSON.stringify({
       name: "my-app",
@@ -15281,41 +15302,44 @@ for (const [first, second] of [
   ["link", "file"],
   ["file", "link"],
 ] as const) {
-  it(`resolves file: and link: to the same directory as separate packages (${first}: resolves first)`, async () => {
-    using dir = tempDir("file-and-link-to-same-dir", {
-      "shared/package.json": JSON.stringify({
-        name: "shared",
-        version: "1.0.0",
-        dependencies: { extra: "file:../app/extra" },
-      }),
-      "app/extra/package.json": JSON.stringify({ name: "extra", version: "1.0.0" }),
-      "app/package.json": JSON.stringify({
-        name: "app",
-        dependencies: { a: `${first}:../shared`, z: `${second}:../shared` },
-      }),
-    });
-    const projectDir = join(String(dir), "app");
-    const fileAlias = first === "file" ? "a" : "z";
-    const linkAlias = first === "link" ? "a" : "z";
+  it.concurrent(
+    `resolves file: and link: to the same directory as separate packages (${first}: resolves first)`,
+    async () => {
+      using dir = tempDir("file-and-link-to-same-dir", {
+        "shared/package.json": JSON.stringify({
+          name: "shared",
+          version: "1.0.0",
+          dependencies: { extra: "file:../app/extra" },
+        }),
+        "app/extra/package.json": JSON.stringify({ name: "extra", version: "1.0.0" }),
+        "app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: { a: `${first}:../shared`, z: `${second}:../shared` },
+        }),
+      });
+      const projectDir = join(String(dir), "app");
+      const fileAlias = first === "file" ? "a" : "z";
+      const linkAlias = first === "link" ? "a" : "z";
 
-    await using proc = spawn({
-      cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: projectDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
-    expect(err).not.toContain("error:");
-    expect(exitCode).toBe(0);
-    const lockfile = Bun.JSONC.parse(await file(join(projectDir, "bun.lock")).text()) as any;
-    expect(lockfile.packages).toEqual({
-      [fileAlias]: ["shared@file:../shared", { dependencies: { extra: "file:../app/extra" } }],
-      [`${fileAlias}/extra`]: ["extra@file:extra", {}],
-      [linkAlias]: ["shared@link:../shared", {}],
-    });
-  });
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      const lockfile = Bun.JSONC.parse(await file(join(projectDir, "bun.lock")).text()) as any;
+      expect(lockfile.packages).toEqual({
+        [fileAlias]: ["shared@file:../shared", { dependencies: { extra: "file:../app/extra" } }],
+        [`${fileAlias}/extra`]: ["extra@file:extra", {}],
+        [linkAlias]: ["shared@link:../shared", {}],
+      });
+    },
+  );
 }
 
 const doesNotExtractOutsideTempDir =
@@ -15908,19 +15932,46 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
 });
 
 // The progress bar copies the name it is currently showing into a fixed
-// 768-byte buffer (PackageManager.progress_name_buf). While dependency and
-// package names had no length limit, a longer name aborted the install with
-// "panic: range end index 900 out of range for slice of length 768" whenever
-// the progress bar was on. Names end at 255 bytes now, so this is the longest
-// it is given. BUN_INSTALL_PROGRESS=1 turns it on without a TTY; with colors
-// enabled an emoji shares the buffer with the name, so both color settings
-// are covered.
-describe("progress bar with the longest name a package can have", () => {
+// 768-byte buffer (PackageManager.progress_name_buf). A longer name aborted the
+// install with "panic: range end index 900 out of range for slice of length
+// 768" whenever the progress bar was on. BUN_INSTALL_PROGRESS=1 turns it on
+// without a TTY; with colors enabled an emoji shares the buffer with the name,
+// so both color settings are covered.
+describe.concurrent("progress bar with a long name", () => {
+  // Names end at 255 bytes now, which always fitted: the two tests with this name only pin that
+  // the longest name is shown and reported whole.
   const longName = Buffer.alloc(255, "a").toString();
   const progressEnvs = [
     ["NO_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1" }],
     ["FORCE_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: undefined, FORCE_COLOR: "1" }],
   ] as const;
+
+  // What still outgrows the buffer: a dependency that has no name yet is keyed by its specifier
+  // (`bun add <url>` writes that until the tarball tells the name), and a URL has no length limit.
+  it.each(progressEnvs)("tarball URL longer than the buffer, not named yet (%s)", async (_colors, progressEnv) => {
+    const tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+    using server = Bun.serve({ port: 0, fetch: () => new Response(tarball) });
+    const url = `${server.url}${Buffer.alloc(900, "a")}.tgz`;
+    using dir = tempDir("install-progress-long-url", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { [url]: url } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...progressEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(Bun.stripANSI(err)).not.toContain("error:");
+    expect(Bun.stripANSI(out)).toContain(`+ dep@${url}`);
+    expect(exitCode).toBe(0);
+  });
 
   it.each(progressEnvs)("dependency whose manifest is fetched (%s)", async (_colors, progressEnv) => {
     await withContext(defaultOpts, async ctx => {

@@ -1901,25 +1901,40 @@ fn direct_aliases(
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
-    let slice = lockfile.packages.items_dependencies()[pkg_id as usize];
+    let dependency_lists = lockfile.packages.items_dependencies();
+    let slice = dependency_lists[pkg_id as usize];
+    let mut is_filtered = |dep_id: DependencyID, declarer: PackageID| {
+        is_filtered_dependency_or_workspace(
+            dep_id,
+            declarer,
+            &[],
+            true,
+            manager,
+            lockfile,
+            resolutions,
+            linked,
+        )
+    };
     let mut direct: Vec<Box<[u8]>> = Vec::new();
     for dep_id in slice.begin()..slice.end() {
-        // `build_store` links a peer that `--omit=peer` leaves out when an ancestor provides it.
-        let behavior = deps[dep_id as usize].behavior;
-        let is_omitted_peer =
-            behavior.is_peer() && !behavior.is_placed(manager.options.local_package_features);
-        if !is_omitted_peer
-            && is_filtered_dependency_or_workspace(
-                dep_id,
-                pkg_id,
-                &[],
-                true,
-                manager,
-                lockfile,
-                resolutions,
-                linked,
-            )
-        {
+        // `build_store` links a peer that `--omit=peer` leaves out when an ancestor provides it:
+        // the package itself or the root.
+        let dep = &deps[dep_id as usize];
+        let is_omitted_peer = dep.behavior.is_peer()
+            && !(dep.behavior).is_placed(manager.options.local_package_features);
+        let is_linked = if is_omitted_peer {
+            [pkg_id, 0].into_iter().any(|ancestor| {
+                let rows = dependency_lists[ancestor as usize];
+                (rows.begin()..rows.end()).any(|row| {
+                    deps[row as usize].name_hash == dep.name_hash
+                        && !deps[row as usize].behavior.is_peer()
+                        && !is_filtered(row, ancestor)
+                })
+            })
+        } else {
+            !is_filtered(dep_id, pkg_id)
+        };
+        if !is_linked {
             continue;
         }
         let target = resolutions[dep_id as usize];
@@ -2060,7 +2075,8 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
     });
     match stat {
         Ok(st) if sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink => remove(),
-        Err(err) if err.get_errno() != E::ENOENT => Err(err),
+        // Below a plain file there is no link either: whoever makes the directory next says what is in the way.
+        Err(err) if !matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) => Err(err),
         _ => Ok(()),
     }
 }

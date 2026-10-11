@@ -1,8 +1,18 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, realpathSync } from "fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { exists, rm } from "fs/promises";
-import { bunEnv, bunExe, isASAN, pack, readdirSorted, runBunInstall } from "harness";
+import { bunEnv, bunExe, isASAN, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -1259,4 +1269,187 @@ test.concurrent("a package stays under the host that bundles the version its pee
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await runBunInstall(env, packageDir, { savesLockfile: false });
   expect(await layout()).toEqual(expected);
+});
+
+// Into a `node_modules` that was not there the hoisted linker links the packages of the cache on
+// the thread pool; over one that was, empty or not, each in its turn. Nothing else may differ.
+describe("a node_modules that was not there gets what an empty one gets", () => {
+  // Every entry below `dir`: its kind, its mode, and where it leads or what is in it.
+  function entriesOf(dir: string, prefix = "", entries: Record<string, string> = {}) {
+    for (const name of readdirSync(dir).sort()) {
+      const path = join(dir, name);
+      const stat = lstatSync(path);
+      const mode = (stat.mode & 0o777).toString(8);
+      if (stat.isSymbolicLink()) {
+        entries[prefix + name] = `link to ${readlinkSync(path)}`;
+      } else if (stat.isDirectory()) {
+        entries[prefix + name] = `directory ${mode}`;
+        entriesOf(path, `${prefix}${name}/`, entries);
+      } else {
+        const links = stat.nlink > 1 ? "linked" : "alone";
+        entries[prefix + name] = `file ${mode} ${links} ${Bun.hash(readFileSync(path)).toString(16)}`;
+      }
+    }
+    return entries;
+  }
+
+  async function bun(cwd: string, cache: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cache },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const timeless = (text: string) => text.replace(/\[\d+(\.\d+)?m?s\]/g, "[time]");
+    return { stdout: timeless(stdout), stderr: timeless(stderr), exitCode };
+  }
+
+  // Trees two levels deep, scopes, bins at the root and below a package, a script that runs the bin
+  // of the package nested below its own, what a tarball ships, a folder, a member with copies of its
+  // own, a member that goes by two names, and (`bun patch` adds it) a patched package.
+  const members = ["member", "twice", "other"];
+  const files = (optionalDependencies: Record<string, string>) => ({
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: {
+        "no-deps": "2.0.0",
+        "one-fixed-dep": "2.0.0",
+        "one-dep": "1.0.0",
+        "two-level-nest": "1.0.0",
+        "@types/no-deps": "1.0.0",
+        "@types/is-number": "1.0.0",
+        "@scoped/no-deps": "1.0.0",
+        "@scoped/has-bin-entry": "1.0.0",
+        "what-bin": "1.5.0",
+        "uses-what-bin": "1.0.0",
+        "is-number": "2.0.0",
+        "bundled-1": "1.0.0",
+        "folder": "file:./folder",
+        "member": "workspace:*",
+      },
+      optionalDependencies,
+      trustedDependencies: ["uses-what-bin"],
+    }),
+    "folder/package.json": JSON.stringify({ name: "folder", version: "1.0.0", dependencies: { "no-deps": "1.0.1" } }),
+    "folder/lib/index.js": "module.exports = 'folder';\n",
+    "packages/member/package.json": JSON.stringify({
+      name: "member",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0", "@types/no-deps": "2.0.0" },
+    }),
+    "packages/twice/package.json": JSON.stringify({
+      name: "twice",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.1.0" },
+    }),
+    "packages/other/package.json": JSON.stringify({
+      name: "other",
+      version: "1.0.0",
+      dependencies: { "twice-again": "workspace:twice@*" },
+    }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+  });
+
+  function removeNodeModules(project: string, ofMembers = true) {
+    rmSync(join(project, "node_modules"), { recursive: true, force: true });
+    for (const member of ofMembers ? members : []) {
+      rmSync(join(project, "packages", member, "node_modules"), { recursive: true, force: true });
+    }
+  }
+
+  // Leaves bun.lock, the patch and a warm cache.
+  async function prepare(project: string, cache: string) {
+    const installed = await bun(project, cache, "install");
+    expect(installed.stderr).not.toContain("error:");
+    expect(installed.exitCode).toBe(0);
+    expect((await bun(project, cache, "patch", "is-number")).exitCode).toBe(0);
+    writeFileSync(join(project, "node_modules", "is-number", "patched.js"), "module.exports = 'patched';\n");
+    expect((await bun(project, cache, "patch", "--commit", "node_modules/is-number")).exitCode).toBe(0);
+    return readFileSync(join(project, "bun.lock"), "utf8");
+  }
+
+  const installedIn = (project: string) => ({
+    node_modules: entriesOf(join(project, "node_modules")),
+    members: Object.fromEntries(members.map(member => [member, entriesOf(join(project, "packages", member))])),
+  });
+
+  for (const [title, optionalDependencies] of [
+    ["every package can be installed", {}],
+    ["an optional dependency cannot be downloaded", { "missing-tarball": "1.0.0" }],
+  ] as const) {
+    for (const cacheIs of ["cold", "warm"]) {
+      test.concurrent(`bun.lock, a ${cacheIs} cache, ${title}`, async () => {
+        using dir = tempDir("linked-by-the-pool", { project: files(optionalDependencies) });
+        const project = join(String(dir), "project");
+        const lockfile = await prepare(project, join(String(dir), "cache"));
+
+        const install = async (name: string) => ({
+          ...(await bun(project, join(String(dir), cacheIs === "warm" ? "cache" : `cache-${name}`), "install")),
+          lockfile: readFileSync(join(project, "bun.lock"), "utf8"),
+          ...installedIn(project),
+        });
+        removeNodeModules(project);
+        mkdirSync(join(project, "node_modules"));
+        const inTurn = await install("in-turn");
+        removeNodeModules(project);
+        const byThePool = await install("by-the-pool");
+        expect(byThePool).toEqual(inTurn);
+
+        expect(byThePool.stderr).not.toContain("error:");
+        expect(byThePool.lockfile).toBe(lockfile);
+        const version = (...path: string[]) =>
+          JSON.parse(readFileSync(join(project, "node_modules", ...path, "package.json"), "utf8")).version;
+        expect({
+          root: version("no-deps"),
+          "one-dep": version("one-dep", "node_modules", "no-deps"),
+          "two-level-nest": version("two-level-nest", "node_modules", "no-deps"),
+          "two-level-nest/one-fixed-dep": version(
+            ...["two-level-nest", "node_modules", "one-fixed-dep", "node_modules", "no-deps"],
+          ),
+          member: version("member", "node_modules", "no-deps"),
+          twice: version("twice", "node_modules", "no-deps"),
+          "twice-again": version("twice-again", "node_modules", "no-deps"),
+          folder: version("folder", "node_modules", "no-deps"),
+          shipped: version("bundled-1", "node_modules", "no-deps"),
+          script: readFileSync(join(project, "node_modules", "uses-what-bin", "what-bin.txt"), "utf8"),
+          patched: readFileSync(join(project, "node_modules", "is-number", "patched.js"), "utf8"),
+        }).toEqual({
+          root: "2.0.0",
+          "one-dep": "1.0.1",
+          "two-level-nest": "1.1.0",
+          "two-level-nest/one-fixed-dep": "1.0.0",
+          member: "1.0.0",
+          twice: "1.1.0",
+          "twice-again": "1.1.0",
+          folder: "1.0.1",
+          shipped: "1.0.0",
+          script: "what-bin@1.0.0",
+          patched: "module.exports = 'patched';\n",
+        });
+        expect(byThePool.exitCode).toBe(0);
+      });
+    }
+  }
+
+  // Nothing is deleted first then, so the packages of the members are linked over what is there.
+  test.concurrent("the node_modules of the members were left", async () => {
+    using dir = tempDir("linked-by-the-pool-over-members", { project: files({}) });
+    const project = join(String(dir), "project");
+    const cache = join(String(dir), "cache");
+    await prepare(project, cache);
+    const complete = installedIn(project);
+
+    removeNodeModules(project, false);
+    const stale = join(project, "packages", "member", "node_modules", "no-deps", "package.json");
+    rmSync(stale);
+    writeFileSync(stale, "{}");
+    const { stderr, exitCode } = await bun(project, cache, "install");
+    expect(stderr).not.toContain("error:");
+    expect(installedIn(project)).toEqual(complete);
+    expect(exitCode).toBe(0);
+  });
 });

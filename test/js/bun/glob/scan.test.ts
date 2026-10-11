@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -620,7 +620,7 @@ describe("literal fast path", async () => {
 
   // The fast path stats the literal in each matched directory. Mode 444 fails that stat.
   // Root ignores the mode bits, and chmod on Windows cannot make a directory unsearchable.
-  test.skipIf(isWindows || process.getuid?.() === 0)("a failed stat reports the path from cwd", () => {
+  test.skipIf(isWindows || isRoot)("a failed stat reports the path from cwd", () => {
     using dir = tempDir("glob-scan-literal-fast-path-eacces", { "packages/a/package.json": "hi" });
     const unsearchable = path.join(String(dir), "packages", "a");
     fs.chmodSync(unsearchable, 0o444);

@@ -68,28 +68,38 @@ const completeTree = { entries: expectedTree.size, missing: 0, firstMissing: [],
 type RegistryPackage = {
   tgz: Uint8Array;
   scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  // 1.0.0 unless it says otherwise.
+  version?: string;
   // The tarball is not sent before this resolves.
   release?: Promise<void>;
 };
 
-// Every package is published as version 1.0.0.
+// Every package is published in one version.
 function serveRegistry(packages: Record<string, RegistryPackage>) {
   return Bun.serve({
     port: 0,
     async fetch(request) {
       const { origin, pathname } = new URL(request.url);
-      const name = pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
+      const name = pathname.slice(1).replace(/-\d\.0\.0\.tgz$/, "");
       const pkg = packages[name];
       if (!pkg) return new Response("not found", { status: 404 });
       if (pathname.endsWith(".tgz")) {
         await pkg.release;
         return new Response(pkg.tgz);
       }
+      const version = pkg.version ?? "1.0.0";
       return Response.json({
         name,
-        "dist-tags": { latest: "1.0.0" },
+        "dist-tags": { latest: version },
         versions: {
-          "1.0.0": { name, version: "1.0.0", scripts: pkg.scripts, dist: { tarball: `${origin}/${name}-1.0.0.tgz` } },
+          [version]: {
+            name,
+            version,
+            scripts: pkg.scripts,
+            dependencies: pkg.dependencies,
+            dist: { tarball: `${origin}/${name}-${version}.tgz` },
+          },
         },
       });
     },
@@ -134,7 +144,9 @@ const shimSource = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -149,10 +161,36 @@ static int interrupted(const char *name) {
   return 1;
 }
 
+// No thread links its first file before STAGING_TEST_THREADS threads have come to link one.
+static void meet(void) {
+  static __thread int is_here;
+  static int here;
+  const char *threads = getenv("STAGING_TEST_THREADS");
+  if (!threads || is_here) return;
+  is_here = 1;
+  __sync_add_and_fetch(&here, 1);
+  while (__sync_add_and_fetch(&here, 0) < atoi(threads)) usleep(100);
+}
+
+// A file called held.js is not linked before there is a file "released" in STAGING_TEST_HOLD.
+// A file "holding" there says that one is waiting.
+static void hold(const char *path) {
+  const char *dir = getenv("STAGING_TEST_HOLD");
+  size_t length = strlen(path);
+  char marker[4096];
+  if (!dir || length < 7 || strcmp(path + length - 7, "held.js") != 0) return;
+  snprintf(marker, sizeof marker, "%s/holding", dir);
+  close(open(marker, O_CREAT | O_WRONLY, 0644));
+  snprintf(marker, sizeof marker, "%s/released", dir);
+  while (access(marker, F_OK) != 0) usleep(100);
+}
+
 int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
   static int (*real_linkat)(int, const char *, int, const char *, int);
   if (!real_linkat) real_linkat = dlsym(RTLD_NEXT, "linkat");
   if (interrupted("linkat")) return -1;
+  meet();
+  hold(newpath);
   return real_linkat(olddirfd, oldpath, newdirfd, newpath, flags);
 }
 
@@ -208,9 +246,12 @@ beforeAll(async () => {
 });
 afterAll(() => shimDir?.[Symbol.dispose]());
 
-const shimEnv = ({ syscall, after }: Interrupt, kill: boolean) => ({
+const preloadEnv = () => ({
   ...installEnv,
   LD_PRELOAD: [join(String(shimDir), "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+});
+const shimEnv = ({ syscall, after }: Interrupt, kill: boolean) => ({
+  ...preloadEnv(),
   STAGING_TEST_SYSCALL: syscall,
   STAGING_TEST_AFTER: String(after),
   STAGING_TEST_KILL: kill ? "1" : undefined,
@@ -499,8 +540,8 @@ for (const [linker, otherPackageDir] of Object.entries(otherPackageDirs)) {
 
 // https://github.com/oven-sh/bun/issues/43256: bun exits as soon as a lifecycle
 // script fails, while the isolated linker's tasks for other packages are still
-// linking on other threads. (The hoisted linker links on the thread that would
-// exit, so it cannot be caught midway like this.) With a lockfile and a cold
+// linking on other threads. (What it has just downloaded the hoisted linker links on the
+// thread that would exit, so it cannot be caught midway like this.) With a lockfile and a cold
 // cache, tarballs are downloaded while packages are being linked, so the
 // registry can hold the large package back until the script runs, and the
 // script fails once something shows up where that package is linked: the exit
@@ -859,3 +900,179 @@ test.concurrent.skipIf(isWindows)(
     expect(readdirSync(join(root, "node_modules"))).toEqual([]);
   },
 );
+
+// Into a node_modules that was not there the hoisted linker links the packages that are in the
+// cache on the thread pool, several at a time. All else about them happens on the main thread,
+// in the order in which it links them itself over a node_modules that was there.
+describe("hoisted linker: packages linked by the thread pool", () => {
+  const FILES = 40;
+  const pack = (name: string, more: { files?: string[]; [key: string]: unknown } = {}) => {
+    const { files = Array.from({ length: FILES }, (_, i) => `lib/d${i % 4}/f${i}.js`), ...manifest } = more;
+    return new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name, version: "1.0.0", ...manifest }),
+        ...Object.fromEntries(files.map(file => [`package/${file}`, `module.exports = "${name}/${file}";\n`])),
+      },
+      { compress: "gzip" },
+    ).bytes();
+  };
+  const packAll = async (names: string[]) =>
+    Object.fromEntries(await Promise.all(names.map(async name => [name, { tgz: await pack(name) }])));
+  const project = (name: string, registry: { url: URL }, packageJson: object) =>
+    tempDir(name, {
+      "package.json": JSON.stringify({ name: "app", ...packageJson }),
+      "bunfig.toml": ({ root }) =>
+        Bun.TOML.stringify({
+          install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker: "hoisted" },
+        }),
+    });
+  // Leaves bun.lock and a warm cache.
+  async function warmUp(root: string, args: string[] = []) {
+    const warm = await install(root, args);
+    expect(warm.stderr).not.toContain("error");
+    expect(warm.exitCode).toBe(0);
+  }
+
+  // On Windows no tree that exists is longer than the buffers its paths are built in.
+  test.concurrent.skipIf(isWindows)("packages that cannot be linked fail alone, and in their turn", async () => {
+    const names = ["a-first", "b-deep", "c-deep", "d-last"];
+    using registry = serveRegistry(await packAll(names));
+    using dir = project("pool-enametoolong", registry, {
+      dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+    });
+    const root = String(dir);
+
+    await warmUp(root);
+    for (const name of ["b-deep", "c-deep"]) {
+      const cached = readdirSync(join(root, ".bun-cache")).filter(entry => entry.startsWith(`${name}@`));
+      expect(cached).toHaveLength(1);
+      createTreeDeeperThanPathMax(join(root, ".bun-cache", cached[0]), join(root, `scratch-${name}`));
+    }
+
+    const timeless = (text: string) => text.replace(/\[\d+(\.\d+)?m?s\]/g, "[time]");
+    const result = async () => {
+      // clonefile, the default on macOS, copies the tree without naming its paths.
+      const { stdout, stderr, exitCode } = await install(root, ["--backend", "hardlink"]);
+      return {
+        stdout: timeless(stdout),
+        stderr: timeless(stderr),
+        exitCode,
+        installed: readdirSync(join(root, "node_modules")).sort(),
+      };
+    };
+    rmSync(join(root, "node_modules"), { recursive: true });
+    mkdirSync(join(root, "node_modules"));
+    const inTurn = await result();
+    rmSync(join(root, "node_modules"), { recursive: true });
+    const byThePool = await result();
+
+    expect(byThePool).toEqual(inTurn);
+    expect(byThePool.stderr.split("\n").filter(line => line.includes("ENAMETOOLONG"))).toEqual([
+      "ENAMETOOLONG: failed copying files from cache to destination for package b-deep",
+      "ENAMETOOLONG: failed copying files from cache to destination for package c-deep",
+    ]);
+    expect(byThePool.installed).toEqual(["a-first", "d-last"]);
+    expect(byThePool.exitCode).toBe(1);
+  });
+
+  test.concurrent.skipIf(!shimDir)(
+    "an install killed while it links several leaves whole packages, and the next one links the rest",
+    async () => {
+      const names = Array.from({ length: 8 }, (_, i) => `package-${i}`);
+      using registry = serveRegistry(await packAll(names));
+      using dir = project("pool-killed", registry, {
+        dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+      });
+      const root = String(dir);
+      const nodeModules = join(root, "node_modules");
+      const filesOf = (name: string) =>
+        (readdirSync(join(nodeModules, name), { recursive: true }) as string[]).filter(file => file.endsWith(".js"))
+          .length;
+
+      await warmUp(root);
+      rmSync(nodeModules, { recursive: true });
+
+      const half = (names.length * (FILES + 1)) / 2;
+      expect(await installAndKill(root, [], { syscall: "linkat", after: half }, () => false)).toBe(true);
+      const left = readdirSync(nodeModules);
+      const whole = left.filter(name => !isStagingDir(name));
+      expect(left.filter(isStagingDir)).not.toEqual([]);
+      expect(whole.map(filesOf)).toEqual(whole.map(() => FILES));
+
+      const repaired = await install(root);
+      expect(repaired.stderr).not.toContain("error");
+      expect(repaired.exitCode).toBe(0);
+      expect(readdirSync(nodeModules).sort()).toEqual(names);
+      expect(names.map(filesOf)).toEqual(names.map(() => FILES));
+    },
+  );
+
+  test.concurrent.skipIf(!shimDir)("two threads link at the same time", async () => {
+    using registry = serveRegistry(await packAll(["one", "two"]));
+    using dir = project("pool-two-threads", registry, { dependencies: { one: "1.0.0", two: "1.0.0" } });
+    const root = String(dir);
+
+    await warmUp(root);
+    rmSync(join(root, "node_modules"), { recursive: true });
+
+    const { stderr, exitCode } = await install(root, [], { ...preloadEnv(), STAGING_TEST_THREADS: "2" });
+    expect(stderr).not.toContain("error");
+    expect(readdirSync(join(root, "node_modules")).sort()).toEqual(["one", "two"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `scripted` sits below `a-host`, and its scripts start when that tree is done. `held-1` and
+  // `held-2` sit two levels below `b-host`, and are linked after that. Their links wait for the
+  // second script, which bun starts when it has seen the first one end, which waits for the links.
+  test.concurrent.skipIf(!shimDir)("lifecycle scripts go on while the pool links", async () => {
+    const scripts = {
+      install: `until [ -e "$STAGING_TEST_HOLD/holding" ]; do :; done`,
+      postinstall: `: > "$STAGING_TEST_HOLD/released"`,
+    };
+    const publish = async (name: string, more: Omit<RegistryPackage, "tgz"> & { files?: string[] } = {}) => [
+      name,
+      { ...more, tgz: await pack(name, more) },
+    ];
+    using registry = serveRegistry(
+      Object.fromEntries(
+        await Promise.all([
+          publish("a-host", { dependencies: { scripted: "1.0.0" } }),
+          publish("b-host", {
+            dependencies: { inner: "1.0.0", "held-1": "npm:filler@3.0.0", "held-2": "npm:filler@3.0.0" },
+          }),
+          publish("inner", { dependencies: { "held-1": "1.0.0", "held-2": "1.0.0" } }),
+          publish("scripted", { scripts }),
+          publish("held-1", { files: ["held.js"] }),
+          publish("held-2", { files: ["held.js"] }),
+          publish("root-filler", { version: "2.0.0" }),
+          publish("filler", { version: "3.0.0" }),
+        ]),
+      ),
+    );
+    using dir = project("pool-scripts", registry, {
+      dependencies: {
+        "a-host": "1.0.0",
+        "b-host": "1.0.0",
+        ...Object.fromEntries(["scripted", "inner", "held-1", "held-2"].map(name => [name, "npm:root-filler@2.0.0"])),
+      },
+      trustedDependencies: ["scripted"],
+    });
+    const root = String(dir);
+    const deepest = join(root, "node_modules", "b-host", "node_modules", "inner", "node_modules");
+
+    await warmUp(root, ["--ignore-scripts"]);
+    expect(readdirSync(deepest).sort()).toEqual(["held-1", "held-2"]);
+    expect(readdirSync(join(root, "node_modules", "a-host", "node_modules"))).toEqual(["scripted"]);
+    rmSync(join(root, "node_modules"), { recursive: true });
+    mkdirSync(join(root, "markers"));
+
+    const { stderr, exitCode } = await install(root, [], {
+      ...preloadEnv(),
+      STAGING_TEST_HOLD: join(root, "markers"),
+    });
+    expect(stderr).not.toContain("error");
+    expect(readdirSync(join(root, "markers")).sort()).toEqual(["holding", "released"]);
+    expect(readdirSync(deepest).sort()).toEqual(["held-1", "held-2"]);
+    expect(exitCode).toBe(0);
+  });
+});

@@ -728,8 +728,8 @@ pub fn enqueue_dependency_to_root(
         break 'brk index;
     } as DependencyID;
 
-    // This manager lives as long as the process, so a lookup that found nothing is not final: a later
-    // turn of the event loop asks the registry again. Within one turn the answer stands, for the
+    // This manager lives as long as the process, so a lookup that found nothing is not final: once the
+    // event loop has gone around, the registry is asked again. Until then the answer stands, for the
     // resolver's second pass and for a `try { require() } catch {}` in a loop.
     let turn = this.event_loop.iteration_number();
     let manifest_task_id = {

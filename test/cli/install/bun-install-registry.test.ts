@@ -1438,7 +1438,7 @@ test.concurrent("--lockfile-only", async () => {
   expect(err).toBe("");
 });
 
-describe("frozen lockfile", () => {
+describe.concurrent("frozen lockfile", () => {
   async function runInstall(
     { packageDir, env }: { packageDir: string; env: NodeJS.Dict<string> },
     args: string[],
@@ -6301,9 +6301,7 @@ describe.concurrent("hoisting", async () => {
     });
   }
 
-  // Which `a-dep` gets hoisted depends on the order the manifests arrive in, so these run one at a
-  // time to keep the registry quiet while they run.
-  describe.serial("peers", async () => {
+  describe("peers", async () => {
     var peerTests: any = [
       {
         situation: "peer 1.0.2",
@@ -13878,37 +13876,80 @@ test.concurrent("npm manifest cache entries are only reused for the package name
   expect(exitCode).toBe(0);
 });
 
-test("a cached manifest whose name hash disagrees with the name installs with the hash of the name", async () => {
-  const { packageDir, packageJson, env } = await setupTest();
-  const { parseManifest } = npm_manifest_test_helpers;
-  const cacheDir = join(packageDir, ".bun-cache");
-  const lockbPath = join(packageDir, "bun.lockb");
+test.concurrent(
+  "a cached manifest whose name hash disagrees with the name installs with the hash of the name",
+  async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    const { parseManifest } = npm_manifest_test_helpers;
+    const cacheDir = join(packageDir, ".bun-cache");
+    const lockbPath = join(packageDir, "bun.lockb");
 
-  // bun.lockb stores packages as columns. `name` (8 bytes per package) comes
-  // first, then `name_hash` (8 bytes per package). Package 0 is the root.
-  const nameHashes = async () => {
-    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
-    const count = Number(lockb.readBigUInt64LE(86));
-    const start = Number(lockb.readBigUInt64LE(110)) + count * 8;
-    return Array.from({ length: count }, (_, i) => lockb.readBigUInt64LE(start + i * 8));
-  };
+    // bun.lockb stores packages as columns. `name` (8 bytes per package) comes
+    // first, then `name_hash` (8 bytes per package). Package 0 is the root.
+    const nameHashes = async () => {
+      const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+      const count = Number(lockb.readBigUInt64LE(86));
+      const start = Number(lockb.readBigUInt64LE(110)) + count * 8;
+      return Array.from({ length: count }, (_, i) => lockb.readBigUInt64LE(start + i * 8));
+    };
 
-  // The name must be longer than 8 bytes. Shorter names are stored inline and
-  // never touch the string buffer.
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "dep-with-tags": "1.0.0",
-      },
-    }),
-  );
+    // The name must be longer than 8 bytes. Shorter names are stored inline and
+    // never touch the string buffer.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "dep-with-tags": "1.0.0",
+        },
+      }),
+    );
 
-  {
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("+ dep-with-tags@1.0.0");
+      expect(exitCode).toBe(0);
+    }
+
+    const hashes = await nameHashes();
+    expect(hashes).toHaveLength(2);
+    const nameHash = hashes[1];
+
+    const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+    expect(manifestFiles).toHaveLength(1);
+    const manifestPath = join(cacheDir, manifestFiles[0]);
+
+    // The package record starts at byte 72 (the 49-byte header and the registry
+    // hash and length, aligned to 8). Its name is at byte 32 of the record: a
+    // string (8 bytes), then the hash (8 bytes).
+    const hashOffset = 72 + 32 + 8;
+    const manifest = Buffer.from(await file(manifestPath).arrayBuffer());
+    expect(manifest.readBigUInt64LE(hashOffset)).toBe(nameHash);
+    manifest.writeBigUInt64LE(nameHash ^ 0xffffn, hashOffset);
+    await write(manifestPath, manifest);
+    expect(parseManifest(manifestPath, registryUrl()).name).toBe("dep-with-tags");
+
+    await Promise.all([
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+      rm(lockbPath, { force: true }),
+    ]);
+
+    // The root's dependency had already pooled the name by its bytes, so the
+    // size pass reserved nothing for it. The append looked the name up by the
+    // cached hash, found nothing, and wrote the name past the reserved bytes:
+    // "panic: range end index N out of range for slice of length M".
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--prefer-offline"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "ignore",
@@ -13919,50 +13960,10 @@ test("a cached manifest whose name hash disagrees with the name installs with th
     expect(err).toContain("Saved lockfile");
     expect(out).toContain("+ dep-with-tags@1.0.0");
     expect(exitCode).toBe(0);
-  }
 
-  const hashes = await nameHashes();
-  expect(hashes).toHaveLength(2);
-  const nameHash = hashes[1];
-
-  const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
-  expect(manifestFiles).toHaveLength(1);
-  const manifestPath = join(cacheDir, manifestFiles[0]);
-
-  // The package record starts at byte 72 (the 49-byte header and the registry
-  // hash and length, aligned to 8). Its name is at byte 32 of the record: a
-  // string (8 bytes), then the hash (8 bytes).
-  const hashOffset = 72 + 32 + 8;
-  const manifest = Buffer.from(await file(manifestPath).arrayBuffer());
-  expect(manifest.readBigUInt64LE(hashOffset)).toBe(nameHash);
-  manifest.writeBigUInt64LE(nameHash ^ 0xffffn, hashOffset);
-  await write(manifestPath, manifest);
-  expect(parseManifest(manifestPath, registryUrl()).name).toBe("dep-with-tags");
-
-  await Promise.all([
-    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
-    rm(lockbPath, { force: true }),
-  ]);
-
-  // The root's dependency had already pooled the name by its bytes, so the
-  // size pass reserved nothing for it. The append looked the name up by the
-  // cached hash, found nothing, and wrote the name past the reserved bytes:
-  // "panic: range end index N out of range for slice of length M".
-  await using proc = spawn({
-    cmd: [bunExe(), "install", "--prefer-offline"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  });
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(err).toContain("Saved lockfile");
-  expect(out).toContain("+ dep-with-tags@1.0.0");
-  expect(exitCode).toBe(0);
-
-  expect(await nameHashes()).toEqual(hashes);
-});
+    expect(await nameHashes()).toEqual(hashes);
+  },
+);
 
 // A manifest cache entry is written to a temporary file in the temporary
 // directory and renamed into the cache directory. Every install on the machine
@@ -13972,7 +13973,7 @@ test("a cached manifest whose name hash disagrees with the name installs with th
 // file, and the rename of one moved the other's bytes into its cache (an entry
 // for the wrong registry) or left it with no entry at all. Linux writes the
 // entry with O_TMPFILE and does not use the name.
-describe("manifest cache temporary files", () => {
+describe.concurrent("manifest cache temporary files", () => {
   const { parseManifest } = npm_manifest_test_helpers;
   const name = "shared-temp-name";
   const tarballPath = `/${name}-1.0.0.tgz`;

@@ -664,7 +664,7 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
       for (const [path, mode] of restoreModes) fs.chmodSync(path, mode);
     },
   };
-  if (isWindows || process.getuid!() !== 0) return options;
+  if (!isRoot) return options;
 
   const NOBODY = 65534;
   try {

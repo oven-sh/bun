@@ -1,9 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isRoot, isWindows, tempDir } from "harness";
+import { bunExe, bunEnv as harnessEnv, isRoot, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { startNpmjs } from "./migration-harness";
+
+const npmjs = await startNpmjs();
+afterAll(() => npmjs.stop());
+const bunEnv = { ...harnessEnv, ...npmjs.env };
 
 describe("pnpm-lock.yaml migration", () => {
+  // The one test here that installs: the versions and integrities are those of the test registry's tarballs.
   test("simple pnpm lockfile migration produces correct bun.lock", async () => {
     await using tmpDir = tempDir("pnpm-migrate-simple", {
       "package.json": JSON.stringify(
@@ -11,8 +17,8 @@ describe("pnpm-lock.yaml migration", () => {
           name: "simple-pnpm-test",
           version: "1.0.0",
           dependencies: {
-            "is-number": "^7.0.0",
-            "left-pad": "^1.3.0",
+            "is-number": "^2.0.0",
+            "left-pad": "^1.0.0",
           },
         },
         null,
@@ -29,27 +35,27 @@ importers:
   .:
     dependencies:
       is-number:
-        specifier: ^7.0.0
-        version: 7.0.0
+        specifier: ^2.0.0
+        version: 2.0.0
       left-pad:
-        specifier: ^1.3.0
-        version: 1.3.0
+        specifier: ^1.0.0
+        version: 1.0.0
 
 packages:
 
-  is-number@7.0.0:
-    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==}
+  is-number@2.0.0:
+    resolution: {integrity: sha512-BUFNwemjM+kyrOa4KeXh4B3ay3Sh7HnmxWp+uRrGMJXuzc8vp/MsCyPX08NxfZvWWy0pOTj6tkJ3kgTqUUkN3w==}
     engines: {node: '>=0.12.0'}
 
-  left-pad@1.3.0:
-    resolution: {integrity: sha512-XI5MPzVNApjAyhQzphX8BkmKsKUxD4LdyK24iZeQGinBN9yTQT3bFlCBy/aVx2HrNcqQGsdot8ghrjyrvMCoEA==}
+  left-pad@1.0.0:
+    resolution: {integrity: sha512-+4x+fPUv96e+piHW2kG7BY7sTzd1MfANrsWt1zvG+91BjS+/aOvQSzqrsL9kYgPnwBqN/COQOCKxc9f2jPPwOw==}
     deprecated: use String.prototype.padStart()
 
 snapshots:
 
-  is-number@7.0.0: {}
+  is-number@2.0.0: {}
 
-  left-pad@1.3.0: {}
+  left-pad@1.0.0: {}
 `,
     });
 

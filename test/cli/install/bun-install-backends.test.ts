@@ -6,7 +6,7 @@
 // the install reports success, and a file that cannot be installed has to fail
 // the package (as it does with the hardlink backend) rather than exit bun.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, readdirSorted, tempDir } from "harness";
 import {
   chmodSync,
   closeSync,
@@ -111,8 +111,6 @@ function fanOfLeaves(center: number, spread: number, contents: string | null) {
   // The middle leaf (name length shortestName + spread) lands on `center`.
   return { leaves, dirsLen: center - 1 - shortestName - spread };
 }
-
-const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 // Root ignores directory permissions. When the tests run as root on Linux the
 // install that depends on them runs as `nobody` instead (like

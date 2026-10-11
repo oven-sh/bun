@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
 let cwd: string;
@@ -58,7 +58,7 @@ test.concurrent("glob entry under a missing directory reports the errno name and
 
 // npm, pnpm and yarn 1 fail here too. Root ignores the mode bits, and chmod on Windows
 // cannot make a directory unreadable or unsearchable.
-test.concurrent.skipIf(isWindows || process.getuid?.() === 0).each([
+test.concurrent.skipIf(isWindows || isRoot).each([
   ["unreadable", 0o000, "open", "secret"],
   ["unsearchable", 0o444, "fstatat", join("secret", "package.json")],
 ])("glob entry that reaches an %s directory names what it failed on", async (_, mode, syscall, failedOn) => {
@@ -666,7 +666,7 @@ describe.concurrent.skipIf(isWindows)("package.json in a sticky, shared director
   });
 
   // root opens the file whatever its mode is
-  test.skipIf(process.getuid?.() === 0)("is passed over as well when it cannot be opened", async () => {
+  test.skipIf(isRoot)("is passed over as well when it cannot be opened", async () => {
     using dir = tempDir("root-discovery-sticky-unreadable", projectFiles);
     const root = String(dir);
     chmodSync(join(root, "shared", "package.json"), 0);

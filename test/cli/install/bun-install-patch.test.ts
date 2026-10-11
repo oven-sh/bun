@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   DirectoryTree,
+  isRoot,
   isWindows,
   normalizeBunSnapshot as normalizeBunSnapshot_,
   runBunInstall,
@@ -468,9 +469,8 @@ diff --git a/package.json b/package.json
   // https://github.com/oven-sh/bun/issues/33571
   // The new directories used to get the file's mode (0644), which only root can enter
   // (CAP_DAC_OVERRIDE), so as root the install runs without that capability.
-  const asRoot = process.getuid?.() === 0;
-  const setpriv = asRoot ? Bun.which("setpriv") : null;
-  test.skipIf(isWindows || (asRoot && !setpriv))(
+  const setpriv = isRoot ? Bun.which("setpriv") : null;
+  test.skipIf(isWindows || (isRoot && !setpriv))(
     "should apply a patch that adds a file in a directory the package does not have",
     async () => {
       await using project = createProject("patch-new-dir", {

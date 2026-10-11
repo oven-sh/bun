@@ -1041,9 +1041,12 @@ describe.concurrent("a failed download that several dependencies share", () => {
       ...files,
       "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: registry.url.href, linker } }),
     });
+    let errorLines: string[] = [];
     return {
       dir: String(dir),
       url: (name: string, version: string) => `${registry.url.href}${name}-${version}.tgz`,
+      /** Of the last install. */
+      errorLines: () => errorLines,
       /** From now on nothing is installed or cached, and this tarball is a 404. */
       loseTarball(name: string, version: string) {
         rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
@@ -1061,8 +1064,9 @@ describe.concurrent("a failed download that several dependencies share", () => {
         });
         const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         const lines = err.split(/\r?\n/);
+        errorLines = lines.filter(line => line.startsWith("error:"));
         return {
-          errors: lines.filter(line => line.startsWith("error:")).length,
+          errors: errorLines.length,
           // Not the ones about peers.
           warnings: lines.filter(line => line.startsWith("warn: GET ")).length,
           failed: out.includes("Failed to install"),
@@ -1087,7 +1091,21 @@ describe.concurrent("a failed download that several dependencies share", () => {
       p.loseTarball("baz", "1.0.0");
       expect(
         await p.install({ dependencies: { a: "npm:baz@1.0.0" }, optionalDependencies: { b: "npm:baz@1.0.0" } }),
-      ).toEqual({ errors: 0, warnings: 1, failed: true, exitCode: 1 });
+      ).toEqual({ errors: 1, warnings: 1, failed: true, exitCode: 1 });
+      expect(p.errorLines()).toEqual(["error: failed to download baz@1.0.0"]);
+    });
+
+    // The same with the root's optional dependency first and a package that requires baz.
+    it("fails for the package that requires it after it failed for the optional dependency while resolving", async () => {
+      using p = await project(linker, [baz, { name: "bar", version: "1.0.0", dependencies: { baz: "1.0.0" } }]);
+      p.loseTarball("baz", "1.0.0");
+      expect(await p.install({ dependencies: { bar: "1.0.0" }, optionalDependencies: { baz: "1.0.0" } })).toEqual({
+        errors: 1,
+        warnings: 1,
+        failed: true,
+        exitCode: 1,
+      });
+      expect(p.errorLines()).toEqual(["error: failed to download baz@1.0.0"]);
     });
 
     // bun.lock resolves both to one package. The linker asks for it through `b`, which sorts first.

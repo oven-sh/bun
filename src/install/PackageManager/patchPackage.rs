@@ -451,8 +451,11 @@ pub fn do_patch_commit(
         _ => unreachable!("patch_features must be Commit in doPatchCommit"),
     };
 
-    let path_in_patches_dir =
-        resolve_path::join_z::<platform::Posix>(&[patches_dir, patch_filename]);
+    // Owned: `join` hands out the thread's one buffer, and every later `join` writes to it.
+    let path_in_patches_dir = ZBox::from_bytes(resolve_path::join::<platform::Posix>(&[
+        patches_dir,
+        patch_filename,
+    ]));
 
     // mkdir-p syscall is used here, no JS surface; route directly through
     // `bun_sys::mkdir_recursive` to avoid the `bun_runtime` dep cycle.
@@ -470,7 +473,7 @@ pub fn do_patch_commit(
         tmpdir,
         tempfile_name,
         Fd::cwd(),
-        path_in_patches_dir,
+        &path_in_patches_dir,
         sys::RenameOptions {
             move_fallback: true,
         },

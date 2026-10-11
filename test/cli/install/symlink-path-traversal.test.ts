@@ -1580,13 +1580,33 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     using root = tempDir("nm-left-out", {});
     const victim = await plantVictim(String(root), "@x", "gone");
     await writeFile(join(victim, "gone"), KEEP);
-    const repo = join(String(root), "repo");
+    using p = await projectWithOptionalPackage(String(root), {});
+    for (const link of [
+      join(await entryOf(p.repo, "@x+gone@"), "node_modules"),
+      join(storeOf(p.repo), "node_modules", "@x"),
+    ]) {
+      await rm(link, { recursive: true });
+      await linkDir(victim, link);
+    }
+
+    const { stderr, exitCode } = await p.install();
+
+    expect(stderr).toContain("404");
+    expect((await readdir(victim)).sort()).toEqual(["@x", "gone"]);
+    expect(await Bun.file(join(victim, "gone")).text()).toBe(KEEP);
+    await expectVictimUntouched(victim, "@x", "gone");
+    expect(exitCode).toBe(0);
+  });
+
+  // `@x/gone` is installed from a registry. Then it is in no cache and its tarball is a 404.
+  async function projectWithOptionalPackage(root: string, config: object) {
+    const [repo, cache] = [join(root, "repo"), join(root, "cache")];
     await mkdir(repo);
     const tarball = createTarball([
       { name: "package/package.json", type: "file", content: JSON.stringify({ name: "@x/gone", version: "1.0.0" }) },
     ]);
     let gone = false;
-    using server = Bun.serve({
+    const server = Bun.serve({
       port: 0,
       fetch(request) {
         const { origin, pathname } = new URL(request.url);
@@ -1595,31 +1615,24 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
         return Response.json({ name: "@x/gone", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
       },
     });
-    await writeFile(join(repo, "bunfig.toml"), `[install]\nregistry = "${server.url}"\n`);
+    await writeFile(
+      join(repo, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { registry: server.url.href, ...config } }),
+    );
     await writeFile(
       join(repo, "package.json"),
-      JSON.stringify({ name: "coolproject", optionalDependencies: { "@x/gone": "1.0.0" } }),
+      JSON.stringify({
+        name: "coolproject",
+        optionalDependencies: { "@x/gone": "1.0.0" },
+        trustedDependencies: ["@x/gone"],
+      }),
     );
-    expect((await install(repo)).exitCode).toBe(0);
-
+    const install = () => runBun(repo, ["install", "--ignore-scripts", "--linker", "isolated"], cache);
+    expect((await install()).exitCode).toBe(0);
     gone = true;
-    await rm(join(repo, ".bun-cache"), { recursive: true });
-    for (const link of [
-      join(await entryOf(repo, "@x+gone@"), "node_modules"),
-      join(storeOf(repo), "node_modules", "@x"),
-    ]) {
-      await rm(link, { recursive: true });
-      await linkDir(victim, link);
-    }
-
-    const { stderr, exitCode } = await install(repo);
-
-    expect(stderr).toContain("404");
-    expect((await readdir(victim)).sort()).toEqual(["@x", "gone"]);
-    expect(await Bun.file(join(victim, "gone")).text()).toBe(KEEP);
-    await expectVictimUntouched(victim, "@x", "gone");
-    expect(exitCode).toBe(0);
-  });
+    await rm(cache, { recursive: true });
+    return { repo, cache, install, [Symbol.dispose]: () => void server.stop(true) };
+  }
 
   // People do link the project's own `node_modules` (a Docker volume, Nix, Bazel).
   it.skipIf(isWindows)("still installs through a link at the project's own node_modules", async () => {
@@ -1674,6 +1687,26 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
       if (globalStore) expect(await readlink(entry)).toBe(computed);
       else expect((await lstat(entry)).isDirectory()).toBe(true);
       await expectInstalled(repo, result);
+    });
+
+    // The entry of a trusted package is a directory in the project.
+    it("is not deleted through when its package is left out", async () => {
+      using root = tempDir("nm-global-left-out", {});
+      using p = await projectWithOptionalPackage(String(root), { globalStore: true });
+      const entry = await entryOf(p.repo, "@x+gone@");
+      expect((await lstat(entry)).isDirectory()).toBe(true);
+      await mkdir(join(p.cache, "links"), { recursive: true });
+      const victim = join(resolve(target(p.cache)), "node_modules", "@x", "gone");
+      await mkdir(victim, { recursive: true });
+      await writeFile(join(victim, "keep.txt"), KEEP);
+      await rm(entry, { recursive: true });
+      await linkDir(target(p.cache), entry);
+
+      const { stderr, exitCode } = await p.install();
+
+      expect(stderr).toContain("404");
+      await expectVictimUntouched(victim);
+      expect(exitCode).toBe(0);
     });
   });
 

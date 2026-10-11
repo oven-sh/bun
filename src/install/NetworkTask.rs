@@ -120,7 +120,7 @@ pub struct DedupeMapEntry {
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
     pub(crate) manifest: ManifestOrigin,
-    /// The turn of the event loop in which a runtime lookup of this manifest found nothing (`enqueue_dependency_to_root`).
+    /// The iteration of the event loop in which a runtime lookup of this manifest found nothing (`enqueue_dependency_to_root`).
     pub(crate) missed_in: Option<u64>,
 }
 

@@ -2383,6 +2383,46 @@ test.concurrent.each([false, true])(
   },
 );
 
+// `lib` tests against its optional peer, and only its consumer `web` brings the package. Both flags leave `lib` without
+// the link, whether the install never makes it or the prune takes it away.
+test.concurrent.each(["an install with the flags", "a full install"])(
+  "isolated: --production --omit=peer, install and prune agree on a dev + optional peer that a consumer provides (after %s)",
+  async start => {
+    const flags = ["--production", "--omit=peer", "--linker", "isolated"];
+    const dir = await setupWorkspaces("isolated", {
+      packages: {
+        lib: {
+          devDependencies: { "no-deps": "1.0.0" },
+          peerDependencies: { "no-deps": "*" },
+          peerDependenciesMeta: { "no-deps": { optional: true } },
+        },
+        web: { dependencies: { lib: "workspace:*", "no-deps": "1.0.0" } },
+      },
+    });
+    const sees = (member: string) =>
+      existsSync(join(dir, "packages", member, "node_modules", "no-deps", "package.json"));
+    expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: true, web: true });
+    const lockBefore = await lock(dir);
+
+    if (start === "an install with the flags") {
+      for (const at of [dir, join(dir, "packages", "lib"), join(dir, "packages", "web")]) {
+        rmSync(join(at, "node_modules"), { recursive: true, force: true });
+      }
+      await install(dir, ...flags);
+      expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: false, web: true });
+    }
+
+    const { stdout, exitCode } = await prune(dir, ...flags);
+    expect(out(stdout)).toEndWith(start === "a full install" ? REMOVED(1, 4) : NOTHING(3, 3));
+    expect(exitCode).toBe(0);
+    expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: false, web: true });
+
+    expect(await install(dir, ...flags)).toContain("no changes");
+    expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: false, web: true });
+    expect(await lock(dir)).toBe(lockBefore);
+  },
+);
+
 // The peer edge survives --production, so `bun install --production` still installs the peer into the store; only the root's dev link goes.
 test.concurrent.each(["peer-deps-fixed", "optional-peer-deps"])(
   "isolated: --production keeps %s's peer-hash entry and the peer a devDependency pulled in, removes the dev link",

@@ -18,6 +18,7 @@ import {
   bunEnv as baseEnv,
   bunExe,
   githubTarball,
+  isLinux,
   isWindows,
   readdirSorted,
   runBunInstall,
@@ -315,6 +316,74 @@ test.concurrent("a negative workspace pattern does not remove a member listed by
   await runBunInstall(env, packageDir);
 
   expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/pkg1"]);
+});
+
+// Only a root directory of its own can hold a `/package.json`: a chroot in a private user and mount namespace.
+// Skipped where those are turned off, as in most containers.
+const canChangeRoot =
+  isLinux &&
+  Bun.which("unshare") !== null &&
+  Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+describe.skipIf(!canChangeRoot)("package.json in the filesystem root", () => {
+  const changeRoot = `set -e
+for dir in /usr /bin /lib /lib64 "$BUN_DIR"; do
+  [ -d "$dir" ] || continue
+  mkdir -p "$NEW_ROOT$dir"
+  mount -o rbind "$dir" "$NEW_ROOT$dir"
+  mount -o remount,bind,ro "$NEW_ROOT$dir"
+done
+mount -o rbind /proc "$NEW_ROOT/proc"
+exec chroot "$NEW_ROOT" /bin/sh -c 'cd "$0" && exec "$@"' "$@"`;
+
+  // Members listed by path: a glob is walked from an open directory and never needed the root's path.
+  test.concurrent.each([
+    { title: "from /", cwd: "/", root: {} },
+    { title: "from a member", cwd: "/members/a", root: {} },
+    { title: "from below a member", cwd: "/members/a/src", root: {} },
+    {
+      title: "an override that refers to a dependency of the root",
+      cwd: "/",
+      root: { dependencies: { b: "workspace:*" }, overrides: { x: "$b" } },
+    },
+  ])("$title", async ({ cwd, root }) => {
+    using dir = tempDir("fs-root", {
+      "package.json": JSON.stringify({ name: "fs-root", workspaces: ["members/a", "members/b"], ...root }),
+      "members/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "workspace:*" } }),
+      "members/a/src/index.js": "",
+      "members/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      "home/.keep": "",
+      "proc/.keep": "",
+      "tmp/.keep": "",
+    });
+    const bun = realpathSync(bunExe());
+    await using proc = spawn({
+      cmd: ["unshare", "-Urm", "/bin/sh", "-c", changeRoot, "sh", cwd, bun, "install"],
+      env: {
+        ...baseEnv,
+        NEW_ROOT: String(dir),
+        BUN_DIR: dirname(bun),
+        HOME: "/home",
+        TMPDIR: "/tmp",
+        BUN_INSTALL_CACHE_DIR: "/tmp/cache",
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Saved lockfile");
+    expect(Object.values(parseLockfile(String(dir)).workspace_paths).sort()).toEqual(["members/a", "members/b"]);
+    expect({
+      "/members/a/bun.lock": await exists(join(String(dir), "members", "a", "bun.lock")),
+      "/members/a/node_modules/b": await file(
+        join(String(dir), "members", "a", "node_modules", "b", "package.json"),
+      ).json(),
+    }).toEqual({ "/members/a/bun.lock": false, "/members/a/node_modules/b": { name: "b", version: "1.0.0" } });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // pnpm and npm accept workspace members whose package.json has no "name" (vite's

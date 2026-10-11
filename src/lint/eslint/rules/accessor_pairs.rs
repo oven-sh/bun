@@ -201,15 +201,22 @@ impl Rule for AccessorPairs {
         }
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         let is_checked = match func.kind() {
             FnKind::Getter => self.get_without_set,
             FnKind::Setter => self.set_without_get,
             _ => false,
         };
-        if !is_checked {
-            return;
+        if is_checked {
+            self.check_accessor(func, cx);
         }
+    }
+}
+
+impl AccessorPairs {
+    #[inline(never)]
+    fn check_accessor<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
         match func.owner() {
             Node::Expr(e) => {
                 if let Node::Prop(prop) = e.parent()

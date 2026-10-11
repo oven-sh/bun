@@ -271,14 +271,10 @@ impl ObjectShorthand {
         }
     }
 
-    fn check_property<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if prop.is_jsx_attribute() {
-            return;
-        }
-        let Some(value) = prop.value() else {
-            return;
-        };
-        let may_find = match prop.kind() {
+    /// Whether [`ObjectShorthand::find`] can find something for a property of this kind with the value `value`.
+    #[inline]
+    fn may_find(&self, prop: Prop, value: Expr) -> bool {
+        match prop.kind() {
             PropKind::Method => self.is_never || self.avoids_quotes,
             PropKind::Shorthand => self.is_never,
             PropKind::Init => match value.tag() {
@@ -287,10 +283,11 @@ impl ObjectShorthand {
                 _ => false,
             },
             _ => false,
-        };
-        if !may_find {
-            return;
         }
+    }
+
+    #[inline(never)]
+    fn check_property<'a>(&self, prop: Prop<'a>, value: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(key) = prop.key() else {
             return;
         };
@@ -362,6 +359,11 @@ impl Rule for ObjectShorthand {
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_property(prop, cx);
+        if !prop.is_jsx_attribute()
+            && let Some(value) = prop.value()
+            && self.may_find(prop, value)
+        {
+            self.check_property(prop, value, cx);
+        }
     }
 }

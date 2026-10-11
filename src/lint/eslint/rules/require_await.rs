@@ -35,6 +35,7 @@ impl<'a> State<'a> {
 }
 
 /// `node` awaits something: so does the function that it is directly in.
+#[inline(never)]
 pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(node: Node<'a>, cx: &mut Cx<'a, R>) {
     let function = cx.state.functions.find(node, |_, parent| {
         parent.as_func().filter(|func| func.kind() != FnKind::StaticBlock)
@@ -140,6 +141,7 @@ impl Rule for RequireAwait {
         }
     }
 
+    #[inline]
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if declaration.var_kind() == VarKind::AwaitUsing {
             mark_function_around(declaration.into(), cx);

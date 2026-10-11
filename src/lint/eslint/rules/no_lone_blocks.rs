@@ -71,6 +71,29 @@ fn check_as_oxlint<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a
     }
 }
 
+/// `block` has the statements `body`.
+#[inline(never)]
+fn check<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a, NoLoneBlocks>) {
+    if cx.language().is_oxlint {
+        return check_as_oxlint(block, body, cx);
+    }
+    // Whether it is in a block, which the body of a function is too, and alone in it.
+    let (is_nested, is_only_child) = match block.parent() {
+        Node::Stmt(parent) => match parent.as_block() {
+            Some(siblings) => (true, has_one(siblings)),
+            None => return,
+        },
+        Node::Func(func) => (true, func.body_statements().is_some_and(has_one)),
+        Node::File(_) => (false, false),
+        Node::Case(case) if !has_one(case.body()) => (false, false),
+        _ => return,
+    };
+    if !is_only_child && cx.language().ecma_version >= 2015 && has_block_level_binding(body) {
+        return;
+    }
+    cx.report(block, if is_nested { REDUNDANT_NESTED_BLOCK } else { REDUNDANT_BLOCK });
+}
+
 impl Rule for NoLoneBlocks {
     const META: Meta = Meta::eslint("no-lone-blocks", Kind::Suggestion);
     const ON: On = On::new().stmts(&[StmtTag::Block]);
@@ -85,23 +108,13 @@ impl Rule for NoLoneBlocks {
         let Some(body) = block.as_block() else {
             return;
         };
-        if cx.language().is_oxlint {
-            return check_as_oxlint(block, body, cx);
-        }
-        // Whether it is in a block, which the body of a function is too, and alone in it.
-        let (is_nested, is_only_child) = match block.parent() {
-            Node::Stmt(parent) => match parent.as_block() {
-                Some(siblings) => (true, has_one(siblings)),
-                None => return,
-            },
-            Node::Func(func) => (true, func.body_statements().is_some_and(has_one)),
-            Node::File(_) => (false, false),
-            Node::Case(case) if !has_one(case.body()) => (false, false),
-            _ => return,
-        };
-        if !is_only_child && cx.language().ecma_version >= 2015 && has_block_level_binding(body) {
+        // Most are the body of an `if`, of a loop or of a `try` statement.
+        if let Node::Stmt(parent) = block.parent()
+            && parent.tag() != StmtTag::Block
+            && !(cx.language().is_oxlint && body.is_empty())
+        {
             return;
         }
-        cx.report(block, if is_nested { REDUNDANT_NESTED_BLOCK } else { REDUNDANT_BLOCK });
+        check(block, body, cx);
     }
 }

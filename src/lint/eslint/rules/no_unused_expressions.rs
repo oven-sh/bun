@@ -132,11 +132,17 @@ pub(super) fn body_with_directives(parent: Node<'_>) -> Option<List<'_, Stmt<'_>
     }
 }
 
+/// Whether [`check`] has nothing to say about `statement`, as about most: it is a call, an assignment or an `await`.
+#[inline]
+pub fn is_plainly_used(statement: Stmt) -> bool {
+    statement.as_expr().is_some_and(|e| matches!(e.tag(), ExprTag::Call | ExprTag::Assign | ExprTag::Await))
+}
+
 /// The whole rule, for an expression statement. typescript-eslint's rule of the same name is no
 /// different.
+#[inline(never)]
 pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, prologue: &mut Prologue<'a>, cx: &Cx<'a, R>) {
     if let Some(e) = statement.as_expr()
-        && !matches!(e.tag(), ExprTag::Call | ExprTag::Assign | ExprTag::Await)
         && config.is_disallowed(e)
         && !ast_utils::is_directive(statement)
         && !(config.ignore_directives && is_in_directive_prologue(statement, prologue))
@@ -161,6 +167,9 @@ impl Rule for NoUnusedExpressions {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if is_plainly_used(statement) {
+            return;
+        }
         let mut prologue = std::mem::take(&mut cx.state);
         check(self.config, statement, &mut prologue, cx);
         cx.state = prologue;

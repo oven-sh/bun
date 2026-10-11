@@ -376,10 +376,29 @@ impl Rule for ArrowBodyStyle {
         Some(State::default())
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(func) = e.as_fn().filter(|it| it.is_arrow()) else {
             return;
         };
+        let may_be_wrong = match func.body() {
+            FnBody::Block(statements) => {
+                self.mode != Mode::Always && (statements.len() == 1 || self.mode == Mode::Never)
+            }
+            FnBody::Expr(_) => {
+                self.mode == Mode::Always || self.mode == Mode::AsNeeded && self.require_return_for_object_literal
+            }
+            FnBody::None => false,
+        };
+        if may_be_wrong {
+            self.check(e, func, cx);
+        }
+    }
+}
+
+impl ArrowBodyStyle {
+    #[inline(never)]
+    fn check<'a>(&self, e: Expr<'a>, func: Func<'a>, cx: &Cx<'a, Self>) {
         match func.body() {
             FnBody::Block(statements) => self.check_block(e, func, statements, cx),
             FnBody::Expr(body) => {

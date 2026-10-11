@@ -199,6 +199,7 @@ fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a,
 }
 
 impl NoImplicitCoercion {
+    #[inline(never)]
     fn check_unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(op), Some(operand)) = (e.unary_op(), e.operand()) else {
             return;
@@ -240,6 +241,7 @@ impl NoImplicitCoercion {
         }
     }
 
+    #[inline(never)]
     fn check_binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
             return;
@@ -278,6 +280,7 @@ impl NoImplicitCoercion {
         }
     }
 
+    #[inline(never)]
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if e.assign_op() == Some(Some(BinOp::Add))
             && let (Some(target), Some(value)) = (e.left(), e.right())
@@ -290,6 +293,7 @@ impl NoImplicitCoercion {
         }
     }
 
+    #[inline(never)]
     fn check_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Template(template) = e.kind() else {
             return;
@@ -363,19 +367,43 @@ impl Rule for NoImplicitCoercion {
         on
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::Assign => self.check_assignment(e, cx),
+            ExprTag::Assign if e.assign_op() == Some(Some(BinOp::Add)) => self.check_assignment(e, cx),
             ExprTag::Template => self.check_template(e, cx),
             _ => {}
         }
     }
 
+    /// One operand has to be a `1`, a `0` or an empty string.
+    #[inline]
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_binary(e, cx);
+        let Some((op, left, right)) = e.as_binary() else {
+            return;
+        };
+        let may_coerce = match op {
+            BinOp::Add => [left, right].into_iter().any(|it| matches!(it.tag(), ExprTag::String | ExprTag::Template)),
+            BinOp::Sub => right.tag() == ExprTag::Number,
+            _ => left.tag() == ExprTag::Number || right.tag() == ExprTag::Number,
+        };
+        if may_coerce {
+            self.check_binary(e, cx);
+        }
     }
 
+    #[inline]
     fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_unary(e, cx);
+        let Some((op, operand)) = e.as_unary() else {
+            return;
+        };
+        let may_coerce = match op {
+            UnOp::Not | UnOp::Minus => operand.unary_op() == Some(op),
+            UnOp::BitNot => operand.tag() == ExprTag::Call,
+            _ => true,
+        };
+        if may_coerce {
+            self.check_unary(e, cx);
+        }
     }
 }

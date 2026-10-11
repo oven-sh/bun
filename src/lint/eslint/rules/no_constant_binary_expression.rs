@@ -376,22 +376,78 @@ impl Rule for NoConstantBinaryExpression {
         }
     }
 
+    #[inline]
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
+        let may_be_constant = match op {
+            BinOp::And | BinOp::Or => !is_variable_link(left),
+            BinOp::Nullish => !matches!(left.tag(), ExprTag::Dot | ExprTag::Index),
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => may_be_static_literal(left) && may_be_static_literal(right),
+            _ => [left, right].into_iter().any(|it| may_be_null_or_boolean(it) || may_be_always_new(it)),
+        };
+        if may_be_constant {
+            Self::check(e, (op, left, right), cx);
+        }
+    }
+}
+
+/// By its kind and its name `e` can be what [`is_null_or_undefined`] or [`is_static_boolean`] holds for.
+#[inline]
+fn may_be_null_or_boolean(e: Expr<'_>) -> bool {
+    match e.tag() {
+        ExprTag::Null | ExprTag::True | ExprTag::False => true,
+        ExprTag::Unary => matches!(e.unary_op(), Some(UnOp::Void | UnOp::Not)),
+        ExprTag::Ident => e.is_ident("undefined"),
+        ExprTag::Call => e.callee().is_some_and(|it| it.is_ident("Boolean")),
+        _ => false,
+    }
+}
+
+/// The same for [`is_always_new`].
+#[inline]
+fn may_be_always_new(e: Expr<'_>) -> bool {
+    !matches!(
+        e.tag(),
+        ExprTag::Ident
+            | ExprTag::Dot
+            | ExprTag::Index
+            | ExprTag::Call
+            | ExprTag::Unary
+            | ExprTag::String
+            | ExprTag::Number
+            | ExprTag::Null
+            | ExprTag::True
+            | ExprTag::False
+    )
+}
+
+/// The same for [`is_static_literal`].
+#[inline]
+fn may_be_static_literal(e: Expr<'_>) -> bool {
+    match e.tag() {
+        ExprTag::Dot | ExprTag::Index | ExprTag::Call => false,
+        ExprTag::Ident => e.is_ident("undefined"),
+        _ => true,
+    }
+}
+
+impl NoConstantBinaryExpression {
+    #[inline(never)]
+    fn check<'a>(e: Expr<'a>, (op, left, right): (BinOp, Expr<'a>, Expr<'a>), cx: &mut Cx<'a, Self>) {
         // oxlint points at the whole.
         let (left_place, right_place) = if cx.language().is_oxlint { (e, e) } else { (left, right) };
         match op {
             BinOp::And | BinOp::Or => {
-                if !is_variable_link(left) && is_constant_in(left, true, &mut cx.state) {
+                if is_constant_in(left, true, &mut cx.state) {
                     cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "truthiness")
                         .data("operator", bin_op_text(op));
                 }
             }
             BinOp::Nullish => {
-                if !matches!(left.tag(), ExprTag::Dot | ExprTag::Index) && has_constant_nullishness(left, false) {
+                if has_constant_nullishness(left, false) {
                     cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "nullishness")
                         .data("operator", bin_op_text(op));

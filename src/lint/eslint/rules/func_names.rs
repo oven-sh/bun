@@ -133,10 +133,20 @@ impl Rule for FuncNames {
         Some(GuessedNames::default())
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // A method has no name of its own and never needs one.
+        if matches!(func.kind(), FnKind::Expr | FnKind::Decl) {
+            self.check(func, cx);
+        }
+    }
+}
+
+impl FuncNames {
+    #[inline(never)]
+    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // For oxlint `export default function (): void;` is a function like others.
-        if !matches!(func.kind(), FnKind::Expr | FnKind::Decl) || !func.has_body() && !cx.language().is_oxlint {
+        if !func.has_body() && !cx.language().is_oxlint {
             return;
         }
         let config = match self.generators {

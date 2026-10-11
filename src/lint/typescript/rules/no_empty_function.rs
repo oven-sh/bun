@@ -20,6 +20,7 @@ impl Rule for NoEmptyFunction {
         }
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         check(func, self.allow, cx);
     }

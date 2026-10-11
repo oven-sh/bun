@@ -5,7 +5,6 @@ use crate::unicorn::{
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use smallvec::SmallVec;
 
 /// Enforce explicitly comparing the `length` or `size` property of a value.
 pub struct ExplicitLengthCheck {
@@ -77,28 +76,28 @@ impl ExplicitLengthCheck {
 
 impl Rule for ExplicitLengthCheck {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "explicit-length-check", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Dot]);
-    /// Those of `length` and `size` that the file mentions, and what [`is_boolean_node`] knows.
-    type State<'a> = (SmallVec<[Name<'a>; 2]>, AncestorMemo<'a, bool>);
+    const ON: On = On::new().members_named(&["length", "size"]);
+    /// See [`is_boolean_node`].
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         ExplicitLengthCheck { is_non_zero_not_equal: options.object(0).str("non-zero") == Some("not-equal") }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let names: SmallVec<_> =
-            ["length", "size"].into_iter().filter_map(|it| file.find_name(it)).collect();
-        (!names.is_empty()).then(|| (names, AncestorMemo::default()))
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions_any(&["length", "size"]) { Self::ON } else { On::new() }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !member.member_name().is_some_and(|it| cx.state.0.contains(&it.name())) {
-            return;
-        }
-        let Some((obj, _, Chain::No)) = member.as_dot() else {
+        let Some((obj, name, Chain::No)) = member.as_dot() else {
             return;
         };
-        if obj.tag() == ExprTag::This && !obj.is_parenthesized()
+        if !name.name().is_any(&["length", "size"])
+            || obj.tag() == ExprTag::This && !obj.is_parenthesized()
             || expression_uses_optional_chain(obj)
             || member.is_jsx_tag_name()
             || member.is_in_type_query()
@@ -115,7 +114,7 @@ impl Rule for ExplicitLengthCheck {
             return;
         }
         let (ancestor, is_negative) = get_boolean_ancestor(member);
-        if is_boolean_node(ancestor, &mut cx.state.1) {
+        if is_boolean_node(ancestor, &mut cx.state) {
             self.report(ancestor, is_negative, member, true, cx);
             return;
         }

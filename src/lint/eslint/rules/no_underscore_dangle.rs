@@ -85,14 +85,14 @@ impl NoUnderscoreDangle {
         }
     }
 
+    #[inline(never)]
     fn check_variable<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         let is_declarator =
             || matches!(declaration.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Var);
         let pat = declaration.pat();
         if let PatKind::Ident(name) = pat.kind() {
             let is_using = matches!(declaration.var_kind(), VarKind::Using | VarKind::AwaitUsing);
-            if may_dangle(cx.text(), pat.span())
-                && self.is_unexpected(name.bytes())
+            if self.is_unexpected(name.bytes())
                 && is_declarator()
                 && !(is_using && self.allow_in_using_declarations)
             {
@@ -125,6 +125,7 @@ impl NoUnderscoreDangle {
         });
     }
 
+    #[inline(never)]
     fn check_member_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some((object, identifier)) = object_and_property_name(e) else {
             return;
@@ -301,6 +302,13 @@ impl Rule for NoUnderscoreDangle {
     }
 
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_variable(declaration, cx);
+        let pat = declaration.pat();
+        let may_report = match pat.tag() {
+            PatTag::Ident => may_dangle(cx.text(), pat.span()),
+            _ => !(self.allow_in_array_destructuring && self.allow_in_object_destructuring),
+        };
+        if may_report {
+            self.check_variable(declaration, cx);
+        }
     }
 }

@@ -162,7 +162,17 @@ impl Rule for GetterReturn {
         (file.has_classes() || file.has_exprs([ExprTag::Object])).then_some(())
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.has_body() && (func.kind() == FnKind::Getter || matches!(func.owner(), Node::Expr(_))) {
+            self.check(func, cx);
+        }
+    }
+}
+
+impl GetterReturn {
+    #[inline(never)]
+    fn check<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
         if cx.language().is_oxlint {
             if is_getter_for_oxlint(func) {
                 self.check_as_oxlint(func, cx);

@@ -140,6 +140,7 @@ impl Rule for RequireAwait {
         }
     }
 
+    #[inline]
     fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if node.var_kind() == VarKind::AwaitUsing {
             mark_function_around(node.into(), cx);

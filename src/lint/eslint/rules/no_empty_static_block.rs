@@ -19,10 +19,17 @@ impl Rule for NoEmptyStaticBlock {
         NoEmptyStaticBlock
     }
 
+    #[inline]
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if member.kind() != MemberKind::StaticBlock {
-            return;
+        if member.kind() == MemberKind::StaticBlock {
+            Self::check(member, cx);
         }
+    }
+}
+
+impl NoEmptyStaticBlock {
+    #[inline(never)]
+    fn check<'a>(member: Member<'a>, cx: &Cx<'a, Self>) {
         let Some(func) = member.func() else {
             return;
         };

@@ -16,10 +16,15 @@ fn estree_span(param: Param) -> Span {
 
 /// `reports_rest`: whether a rest parameter before a required one is reported too, which is an
 /// error that only TypeScript's parser lets through.
+#[inline]
 pub fn check<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
-    if func.params().len() < 2 || !ast_utils::is_function_with_body(func) {
-        return;
+    if func.params().len() >= 2 && ast_utils::is_function_with_body(func) {
+        check_params(func, reports_rest, cx);
     }
+}
+
+#[inline(never)]
+fn check_params<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
     let mut has_seen_required_parameter = false;
     for param in func.params().iter().rev() {
         // `...a = []` is an error, and a `RestElement` for ESLint.

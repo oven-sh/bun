@@ -245,6 +245,7 @@ impl Checker {
         self.check_type(ty, cx);
     }
 
+    #[inline]
     pub fn member<'a, R: Rule>(&self, member: Member<'a>, cx: &mut Cx<'a, R>) {
         if member.flags().intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME) {
             self.check_key(member.key(), place_of_member(member, false), cx);
@@ -333,6 +334,7 @@ impl Checker {
         self.check(literal, Place::LiteralType(ty), cx);
     }
 
+    #[inline(never)]
     fn check_key<'a, R: Rule>(&self, key: Option<Key<'a>>, place: Place<'a>, cx: &Cx<'a, R>) {
         let Some(key) = key else {
             return;
@@ -450,6 +452,7 @@ impl Rule for NoMagicNumbers {
         self.0.pat(pattern, cx);
     }
 
+    #[inline]
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         self.0.member(member, cx);
     }

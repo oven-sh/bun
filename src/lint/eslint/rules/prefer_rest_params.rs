@@ -57,8 +57,18 @@ impl Rule for PreferRestParams {
         })
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if e.as_ident() != Some(cx.state.name) || is_normal_member_access(e) {
+        if e.as_ident() == Some(cx.state.name) {
+            Self::check(e, cx);
+        }
+    }
+}
+
+impl PreferRestParams {
+    #[inline(never)]
+    fn check<'a>(e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if is_normal_member_access(e) {
             return;
         }
         let Some(symbol) = e.reference().and_then(Reference::symbol) else {

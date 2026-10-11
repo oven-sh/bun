@@ -51,14 +51,18 @@ impl Config {
         }
     }
 
+    #[inline]
     pub fn check<'a, R: Rule>(&self, func: Func<'a>, cx: &Cx<'a, R>) {
-        let Some(max) = self.max else {
-            return;
-        };
         // `this` is one more at most.
-        if func.params().len() < max {
-            return;
+        if let Some(max) = self.max
+            && func.params().len() >= max
+        {
+            self.check_many(func, max, cx);
         }
+    }
+
+    #[inline(never)]
+    fn check_many<'a, R: Rule>(&self, func: Func<'a>, max: usize, cx: &Cx<'a, R>) {
         let is_oxlint = cx.language().is_oxlint;
         let is_checked = match func.kind() {
             FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::FunctionType => true,

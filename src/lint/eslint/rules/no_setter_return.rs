@@ -33,8 +33,18 @@ impl Rule for NoSetterReturn {
         NoSetterReturn
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if !func.has_body() || !is_setter(func, cx.language().is_oxlint) {
+        if func.has_body() && (func.kind() == FnKind::Setter || !cx.language().is_oxlint) {
+            Self::check(func, cx);
+        }
+    }
+}
+
+impl NoSetterReturn {
+    #[inline(never)]
+    fn check<'a>(func: Func<'a>, cx: &Cx<'a, Self>) {
+        if !is_setter(func, cx.language().is_oxlint) {
             return;
         }
         if let FnBody::Expr(body) = func.body() {

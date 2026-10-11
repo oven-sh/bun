@@ -124,6 +124,7 @@ impl NewCap {
         }
     }
 
+    #[inline(never)]
     fn check_new<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::New(call) = e.kind()
             && let callee = callee_of(call)
@@ -135,6 +136,7 @@ impl NewCap {
         }
     }
 
+    #[inline(never)]
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Call(call) = e.kind()
             && let callee = callee_of(call)

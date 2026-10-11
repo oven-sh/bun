@@ -30,6 +30,7 @@ impl Rule for NoMagicNumbers {
         self.0.pat(pattern, cx);
     }
 
+    #[inline]
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         self.0.member(member, cx);
     }

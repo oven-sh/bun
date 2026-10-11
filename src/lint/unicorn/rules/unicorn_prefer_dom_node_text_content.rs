@@ -15,7 +15,7 @@ fn inner_text_key<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<Span> {
 impl Rule for PreferDomNodeTextContent {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-text-content", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Dot]).pats(&[PatTag::Object]).props();
+    const ON: On = On::new().members_named(&["innerText"]).pats(&[PatTag::Object]).props();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

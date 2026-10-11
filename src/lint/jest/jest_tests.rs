@@ -13,10 +13,11 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_member_expr, is_global_turned_off, static_property_name,
+    static_string,
 };
 use bun_lint_oxlint::module_record::debug;
 use bun_lint_oxlint::regex_flags::rust_regex;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 pub(crate) mod no_focused_tests {
@@ -816,26 +817,32 @@ pub(crate) mod no_identical_title {
         parent: u32,
     }
 
+    /// The first argument of a call, and what it says.
+    fn title_of(node: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
+        let argument = (node.as_call()?.args().first()).filter(|it| !it.is_parenthesized())?;
+        Some((argument, static_string(argument)?))
+    }
+
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
+        // The titles of more than one call. Most files have none.
+        let (mut titles, mut repeated) = (FxHashSet::default(), FxHashSet::default());
+        for (_, title) in iter_possible_jest_call_node(ctx.file).filter_map(|it| title_of(it.node))
+        {
+            if !titles.insert(title) {
+                repeated.insert(title);
+            }
+        }
+        if repeated.is_empty() {
+            return;
+        }
         let mut blocks = AncestorMemo::default();
         let mut title_to_calls: FxHashMap<Name<'a>, SmallVec<[Titled<'a>; 1]>> =
             FxHashMap::default();
         for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
             let node = possible_jest_node.node;
-            let Some(argument) = node
-                .as_call()
-                .and_then(|it| it.args().first())
-                .filter(|it| !it.is_parenthesized())
+            let Some((argument, title)) = title_of(node).filter(|it| repeated.contains(&it.1))
             else {
                 continue;
-            };
-            let title = match argument.kind() {
-                ExprKind::String(value) => value,
-                ExprKind::Template(template) => match template.as_static() {
-                    Some(quasi) => quasi,
-                    None => continue,
-                },
-                _ => continue,
             };
             let Some(result) = parse_general_jest_fn_call(ctx.file, possible_jest_node) else {
                 continue;

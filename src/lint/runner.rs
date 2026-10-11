@@ -369,6 +369,9 @@ pub(crate) struct ByKind {
     unaries: OnceCell<Grouped<{ UnOp::PostDec as usize + 1 }>>,
     calls_by_name: OnceCell<Box<ByName>>,
     members_by_name: OnceCell<Box<ByName>>,
+    /// The group `ByName::OTHERS` of each, for a file that is asked for nothing else.
+    other_calls: OnceCell<Vec<u32>>,
+    other_members: OnceCell<Vec<u32>>,
     /// A list that `File::named` has filled and that is not in use any more.
     spare: Cell<Vec<u32>>,
     fns: OnceCell<Vec<u32>>,
@@ -592,40 +595,100 @@ impl<'a> File<'a> {
         }
     }
 
+    /// `by_name`, if it is needed or there already. `may_have_names`: the file may have a name of the groups that are asked
+    /// for. If not, only the group `OTHERS` of them can have something.
+    #[inline]
+    fn by_name_if(&'a self, kind: ExprTag, may_have_names: bool) -> Option<&'a ByName> {
+        let made = match kind {
+            ExprTag::Call => self.by_kind().calls_by_name.get(),
+            _ => self.by_kind().members_by_name.get(),
+        };
+        match (made, may_have_names) {
+            (Some(made), _) => Some(made),
+            (None, true) => Some(self.by_name(kind)),
+            (None, false) => None,
+        }
+    }
+
+    /// The group `ByName::OTHERS` of the `Call`s or the `Dot`s, in the order of `exprs_of`, found without grouping the rest.
+    fn others(&'a self, kind: ExprTag) -> &'a [u32] {
+        let text = self.text();
+        let is_private = |pos: u32| text.get(pos as usize) == Some(&b'#');
+        match kind {
+            ExprTag::Call => self.by_kind().other_calls.get_or_init(|| {
+                let is_other = |id: &u32| {
+                    let callee = grouped_expr(self, *id).callee();
+                    match callee.and_then(Expr::try_raw).map(|it| it.kind) {
+                        Some(hir::ExprKind::Dot { name_pos, .. }) => is_private(name_pos),
+                        Some(hir::ExprKind::Ident(_)) => false,
+                        _ => true,
+                    }
+                };
+                let all = self.exprs_of(ExprTag::Call).iter().copied();
+                all.filter(is_other).collect()
+            }),
+            _ => self.by_kind().other_members.get_or_init(|| {
+                if !bun_core::strings::contains_char(text, b'#') {
+                    return Vec::new();
+                }
+                let is_other = |id: &u32| match self.hir.exprs.get(*id as usize).map(|it| it.kind) {
+                    Some(hir::ExprKind::Dot { name_pos, .. }) => is_private(name_pos),
+                    _ => true,
+                };
+                let all = self.exprs_of(ExprTag::Dot).iter().copied();
+                all.filter(is_other).collect()
+            }),
+        }
+    }
+
     /// Whether one of these groups of the `Call`s or the `Dot`s has something.
     #[inline(never)]
-    fn has_named(&'a self, kind: ExprTag, groups: [u64; 4]) -> bool {
-        self.by_name(kind).has_any_of(groups)
+    fn has_named(&'a self, kind: ExprTag, groups: [u64; 4], may_have_names: bool) -> bool {
+        match self.by_name_if(kind, may_have_names) {
+            Some(by_name) => by_name.has_any_of(groups),
+            None => !self.others(kind).is_empty(),
+        }
     }
 
     /// The `Call`s or the `Dot`s of these groups, in the order of `exprs_of`. The list is for `spare` afterwards.
     #[inline(never)]
-    fn named(&'a self, kind: ExprTag, groups: [u64; 4]) -> Vec<u32> {
+    fn named(&'a self, kind: ExprTag, groups: [u64; 4], may_have_names: bool) -> Vec<u32> {
         let mut found = self.by_kind().spare.take();
-        self.by_name(kind)
-            .find(groups, self.exprs_of(kind), &mut found);
+        match self.by_name_if(kind, may_have_names) {
+            Some(by_name) => by_name.find(groups, self.exprs_of(kind), &mut found),
+            None => {
+                found.clear();
+                found.extend_from_slice(self.others(kind));
+            }
+        }
         found
+    }
+
+    /// Whether the file may have one of the names that a `Call` or a `Dot` by name of `on` can have.
+    #[inline(always)]
+    fn may_have_names_of(&self, on: &On) -> bool {
+        (on.mentions()).is_none_or(|bits| bits.iter().any(|&bit| self.mentions_bit(u32::from(bit))))
     }
 
     /// The `Call`s that a rule with this `on` is called with: see [`On::method_calls`] and [`On::function_calls`]. For a rule that
     /// looks at the calls from [`Rule::start`] or [`Rule::finish`]: `file.calls_on(&On::new().method_calls(&["then"]))`.
     pub fn calls_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
-        self.exprs_on(ExprTag::Call, on.exprs, on.groups_of_calls())
+        self.exprs_on(ExprTag::Call, on, on.groups_of_calls())
     }
 
     /// The `Dot`s that a rule with this `on` is called with: see [`On::members_named`].
     pub fn members_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
-        self.exprs_on(ExprTag::Dot, on.exprs, on.groups_of_members())
+        self.exprs_on(ExprTag::Dot, on, on.groups_of_members())
     }
 
     fn exprs_on(
         &'a self,
         kind: ExprTag,
-        kinds: u64,
+        on: &On,
         groups: [u64; 4],
-    ) -> impl Iterator<Item = Expr<'a>> {
-        let found = match (groups[3] != 0, kinds & (1 << kind as u32) != 0) {
-            (true, _) => self.named(kind, groups),
+    ) -> impl Iterator<Item = Expr<'a>> + use<'a> {
+        let found = match (groups[3] != 0, on.exprs & (1 << kind as u32) != 0) {
+            (true, _) => self.named(kind, groups, self.may_have_names_of(on)),
             (false, true) => self.exprs_of(kind).to_vec(),
             (false, false) => Vec::new(),
         };
@@ -865,8 +928,9 @@ fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
         pats present_pats;
     }
     let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
-    has_any = has_any || calls[3] != 0 && file.has_named(ExprTag::Call, calls);
-    has_any = has_any || members[3] != 0 && file.has_named(ExprTag::Dot, members);
+    let may_have_names = (calls[3] | members[3]) != 0 && file.may_have_names_of(&on);
+    has_any = has_any || calls[3] != 0 && file.has_named(ExprTag::Call, calls, may_have_names);
+    has_any = has_any || members[3] != 0 && file.has_named(ExprTag::Dot, members, may_have_names);
     has_any = has_any || on.has(On::OPTIONAL_CHAINS) && file.present_chained() != 0;
     macro_rules! sorts {
         ($($sort:ident $field:ident;)*) => {
@@ -898,10 +962,13 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
     // Those by name where all of the kind would be.
     let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
     let named = (calls[3] << ExprTag::Call as u32) | (members[3] << ExprTag::Dot as u32);
+    let may_have_names = named != 0 && file.may_have_names_of(on);
     each_bit(on.exprs | named, |kind| {
         let found = match named & (1 << kind) != 0 {
-            true if kind == ExprTag::Call as usize => Some(file.named(ExprTag::Call, calls)),
-            true => Some(file.named(ExprTag::Dot, members)),
+            true if kind == ExprTag::Call as usize => {
+                Some(file.named(ExprTag::Call, calls, may_have_names))
+            }
+            true => Some(file.named(ExprTag::Dot, members, may_have_names)),
             false => None,
         };
         for &id in (found.as_deref()).unwrap_or_else(|| file.exprs_of(EXPR_TAGS[kind])) {

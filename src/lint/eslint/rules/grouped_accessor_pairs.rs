@@ -154,10 +154,17 @@ impl Rule for GroupedAccessorPairs {
     }
 
     /// A pair has one setter.
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.kind() != FnKind::Setter {
-            return;
+        if func.kind() == FnKind::Setter {
+            self.check_setter(func, cx);
         }
+    }
+}
+
+impl GroupedAccessorPairs {
+    #[inline(never)]
+    fn check_setter<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
         match func.owner() {
             Node::Expr(e) => {
                 if let Node::Prop(prop) = e.parent()

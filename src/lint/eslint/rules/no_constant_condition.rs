@@ -35,6 +35,14 @@ fn place(test: Expr) -> Span {
 }
 
 impl NoConstantCondition {
+    #[inline(never)]
+    fn check<'a>(test: Expr<'a>, cx: &Cx<'a, Self>) {
+        if ast_utils::is_constant(test, true) {
+            cx.report(place(test), UNEXPECTED);
+        }
+    }
+
+    #[inline(never)]
     fn check_loop<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // A `yield` in the `init` of a `for` is evaluated once, before the loop.
         let (test, from) = match statement.kind() {
@@ -82,25 +90,21 @@ impl Rule for NoConstantCondition {
         on
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some((test, ..)) = e.as_cond()
-            && is_constant(test)
+            && !is_variable(test)
         {
-            cx.report(place(test), UNEXPECTED);
+            Self::check(test, cx);
         }
     }
 
+    #[inline]
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        match statement.tag() {
-            StmtTag::If => {
-                if let Some((test, ..)) = statement.as_if()
-                    && is_constant(test)
-                {
-                    cx.report(place(test), UNEXPECTED);
-                }
-            }
-            StmtTag::While | StmtTag::DoWhile | StmtTag::For => self.check_loop(statement, cx),
-            _ => {}
+        match statement.as_if() {
+            Some((test, ..)) if is_variable(test) => {}
+            Some((test, ..)) => Self::check(test, cx),
+            None => self.check_loop(statement, cx),
         }
     }
 }

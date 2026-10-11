@@ -124,6 +124,7 @@ impl Config {
     }
 
     /// ESLint's listener for a `VariableDeclarator`. `can_fix`: whether to offer the fix.
+    #[inline(never)]
     pub fn check_variable_declarator<'a, R: Rule>(&self, declaration: VarDecl<'a>, cx: &Cx<'a, R>, can_fix: bool) {
         let Some((object, property)) = declaration.init().and_then(member_expression) else {
             return;
@@ -185,6 +186,7 @@ impl Config {
     }
 
     /// ESLint's listener for an `AssignmentExpression`.
+    #[inline(never)]
     pub fn check_assignment_expression<'a, R: Rule>(&self, e: Expr<'a>, cx: &Cx<'a, R>) {
         let Some((None, target, value)) = e.as_assign() else {
             return;
@@ -197,7 +199,6 @@ impl Config {
         // whatever the options are.
         if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint {
             let (arrays, objects) = match property {
-                _ if utils::is_assignment_target(e) => (0, 0),
                 Property::Name(name) => (0, usize::from(enabled.object && left == Some(name))),
                 Property::Computed(index) => match index.kind() {
                     ExprKind::Template(_) => (0, 0),
@@ -210,6 +211,9 @@ impl Config {
                     _ => (0, usize::from(self.enforce_for_renamed_properties && enabled.object)),
                 },
             };
+            if arrays + objects == 0 || utils::is_assignment_target(e) {
+                return;
+            }
             let arrays = std::iter::repeat_n(("Array", "array"), arrays);
             for (said, kind) in arrays.chain(std::iter::repeat_n(("Object", "object"), objects)) {
                 cx.report(e, PREFER_DESTRUCTURING).data("type", said).data("kind", kind);
@@ -223,6 +227,11 @@ impl Config {
             cx.report(e, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx)).data("kind", kind);
         }
     }
+}
+
+#[inline]
+fn is_member(e: Expr) -> bool {
+    matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
 }
 
 fn is_enabled(it: Enabled) -> bool {
@@ -255,10 +264,15 @@ impl Rule for PreferDestructuring {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.config.check_assignment_expression(e, cx);
+        if e.right().is_some_and(is_member) {
+            self.config.check_assignment_expression(e, cx);
+        }
     }
 
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if !declaration.init().is_some_and(is_member) {
+            return;
+        }
         let has_type_annotation = cx.language().is_oxlint && declaration.ty().is_some();
         if !has_type_annotation || self.enforce_for_declaration_with_type_annotation {
             self.config.check_variable_declarator(declaration, cx, !has_type_annotation);

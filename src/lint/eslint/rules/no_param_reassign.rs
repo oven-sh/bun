@@ -145,7 +145,10 @@ impl Rule for NoParamReassign {
     fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
         // oxlint does not look at a rest parameter.
         if param.func().is_some_and(Func::has_body) && !(param.is_rest() && cx.language().is_oxlint) {
-            param.pat().for_each_binding(&mut |pat| self.check_variable(pat, cx));
+            match param.pat() {
+                name if name.tag() == PatTag::Ident => self.check_variable(name, cx),
+                pattern => pattern.for_each_binding(&mut |pat| self.check_variable(pat, cx)),
+            }
         }
     }
 }

@@ -328,14 +328,20 @@ impl Rule for ArrayCallbackReturn {
         Some(State::default())
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if !matches!(func.kind(), FnKind::Expr | FnKind::Arrow) {
-            return;
-        }
         // Only what `forEach` is given can be wrong without a block.
-        if !self.check_for_each && !matches!(func.body(), FnBody::Block(_)) {
-            return;
+        if matches!(func.kind(), FnKind::Expr | FnKind::Arrow)
+            && (self.check_for_each || matches!(func.body(), FnBody::Block(_)))
+        {
+            self.check(func, cx);
         }
+    }
+}
+
+impl ArrayCallbackReturn {
+    #[inline(never)]
+    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         let Some((method, callee)) = get_array_method_name(func, &mut cx.state) else {
             return;
         };

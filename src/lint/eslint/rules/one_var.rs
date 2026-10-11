@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ast_utils;
+use std::cell::OnceCell;
 use std::cmp::Reverse;
 
 /// Enforce variables to be declared either together or separately in functions.
@@ -212,20 +213,16 @@ pub(super) fn body_of(parent: Node<'_>) -> Option<List<'_, Stmt<'_>>> {
     match parent {
         Node::File(file) => Some(file.body()),
         Node::Func(func) => func.body_statements(),
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Block(body) => Some(body),
-            StmtKind::Module(module) => Some(module.body()),
-            _ => None,
-        },
+        Node::Stmt(parent) => parent.as_block().or_else(|| Some(parent.as_module()?.body())),
         _ => None,
     }
 }
 
 /// The `VariableDeclaration` of the same kind right before `statement`.
-fn previous_declarations(statement: Stmt<'_>, kind: VarKind) -> Option<List<'_, VarDecl<'_>>> {
+fn previous_declaration(statement: Stmt<'_>, kind: VarKind) -> Option<(Stmt<'_>, List<'_, VarDecl<'_>>)> {
     let previous = previous_statement(statement).filter(|it| !it.is_exported())?;
     let (declarations, previous_kind) = as_variable_declaration(previous)?;
-    (previous_kind == kind).then_some(declarations)
+    (previous_kind == kind).then_some((previous, declarations))
 }
 
 /// `statement` is the `init` of a `for`.
@@ -240,16 +237,13 @@ fn is_for_left(statement: Stmt<'_>) -> bool {
         if matches!(parent.kind(), StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == statement))
 }
 
-/// ESLint's `joinDeclarations`
-/// Whether [`join_declarations`] does anything.
-fn can_join(statement: Stmt, kind: VarKind) -> bool {
+/// What [`join_declarations`] joins `statement` with.
+fn joined_with(statement: Stmt<'_>, kind: VarKind) -> Option<Stmt<'_>> {
     // oxlint joins nothing with a `declare`, and nothing that is exported.
     let is_ambient = |it: Stmt| it.flags().contains(Flags::AMBIENT);
-    previous_declarations(statement, kind).is_some()
-        && !(statement.file().language().is_oxlint
-            && (is_ambient(statement)
-                || previous_statement(statement).is_some_and(is_ambient)
-                || statement.is_exported()))
+    let (previous, _) = previous_declaration(statement, kind)?;
+    let is_left = statement.file().language().is_oxlint && (is_ambient(statement) || is_ambient(previous));
+    (!is_left).then_some(previous)
 }
 
 /// oxlint's `help` is what it calls its fix.
@@ -257,22 +251,26 @@ fn name_of_fix(name: &str, is_fixed: bool) -> String {
     if is_fixed { name.to_owned() } else { String::new() }
 }
 
-fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, kind: VarKind) -> Option<Vec<Fix>> {
-    if !can_join(statement, kind) {
-        return None;
-    }
+/// ESLint's `joinDeclarations`: a `,` in the place of the `;` of `previous`, or after it, and no keyword.
+fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'a>, kind: VarKind) -> Option<Fix> {
     let file = fixer.file();
-    let keyword = file.first_token(statement)?;
-    let before_keyword = file.token_before(keyword)?;
-    let mut fixes = vec![match before_keyword.is(";") {
-        true => fixer.replace(before_keyword, ","),
-        false => fixer.insert_after(before_keyword, ","),
-    }];
+    let first = match statement.modifiers().is_empty() {
+        true => {
+            let (start, word) = (statement.span().start, if kind == VarKind::AwaitUsing { "await" } else { kind_text(kind) });
+            Span::new(start, start + word.len() as u32)
+        }
+        false => file.first_token(statement)?.span(),
+    };
+    let mut text = b",".to_vec();
+    text.extend_from_slice(file.slice(previous.span().between(first)));
+    let mut end = first.end;
     if kind == VarKind::AwaitUsing {
-        fixes.push(fixer.remove(file.token_after(keyword)?));
+        let using = skip_trivia(file.text(), end);
+        text.extend_from_slice(file.slice(Span::new(end, using)));
+        end = using + "using".len() as u32;
     }
-    fixes.push(fixer.remove(keyword));
-    Some(fixes)
+    let start = previous.semicolon().map_or_else(|| previous.span().end, |it| it.start);
+    Some(fixer.replace(Span::new(start, end), text))
 }
 
 /// ESLint's `splitDeclarations`
@@ -318,11 +316,13 @@ fn split_declarations<'a>(
 }
 
 fn report_combine<'a>(cx: &Cx<'a, OneVar>, statement: Stmt<'a>, kind: VarKind, message: Message) {
-    let mut report = cx.report(statement.span_without_export(), message).data("type", kind_text(kind));
-    if cx.language().is_oxlint {
-        report = report.help_with(|| name_of_fix("Combine variable declarations", can_join(statement, kind)));
-    }
-    report.fix(|fixer| join_declarations(fixer, statement, kind));
+    let previous = OnceCell::new();
+    let previous = || *previous.get_or_init(|| joined_with(statement, kind));
+    cx.report(statement.span_without_export(), message)
+        .data("type", kind_text(kind))
+        // oxlint's `help` is what it calls its fix.
+        .labels_with(|details| details.help = if previous().is_some() { "Combine variable declarations" } else { "" }.into())
+        .fix(|fixer| join_declarations(fixer, statement, previous()?, kind));
 }
 
 impl OneVar {
@@ -386,7 +386,7 @@ impl OneVar {
         }
 
         if options.has(Mode::Consecutive)
-            && let Some(previous) = previous_declarations(statement, kind)
+            && let Some((_, previous)) = previous_declaration(statement, kind)
         {
             let previous = Counts::of(previous, cx.state);
             let requires = counts.requires + previous.requires;

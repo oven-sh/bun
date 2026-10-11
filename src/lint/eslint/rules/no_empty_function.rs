@@ -236,6 +236,7 @@ pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     }
 }
 
+#[inline(never)]
 fn check_without_statements<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     let (Some(kind), Some(body)) = (get_kind(func), func.body_span()) else {
         return;
@@ -275,6 +276,7 @@ impl Rule for NoEmptyFunction {
         }
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         check(func, self.allow, cx);
     }

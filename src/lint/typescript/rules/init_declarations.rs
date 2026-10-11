@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::init_declarations::{Config, declared_namespace_around, has_declare};
+use bun_lint_eslint::rules::init_declarations::{Config, Finding, declared_namespace_around, has_declare};
 
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
@@ -31,11 +31,18 @@ impl Rule for InitDeclarations {
         Some(())
     }
 
+    #[inline]
     fn var_decl<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(found) = self.config.check(decl) {
+            self.report(decl, &found, cx);
+        }
+    }
+}
+
+impl InitDeclarations {
+    #[inline(never)]
+    fn report<'a>(&self, decl: VarDecl<'a>, found: &Finding<'a>, cx: &Cx<'a, Self>) {
         let config = &self.config;
-        let Some(found) = config.check(decl) else {
-            return;
-        };
         if decl.flags().contains(Flags::AMBIENT)
             && (has_declare(found.declaration)
                 || !config.is_never && declared_namespace_around(found.declaration).is_some())

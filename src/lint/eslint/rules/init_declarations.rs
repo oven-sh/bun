@@ -38,10 +38,22 @@ impl Config {
         }
     }
 
+    #[inline]
     pub fn check<'a>(&self, decl: VarDecl<'a>) -> Option<Finding<'a>> {
         let Node::Stmt(declaration) = decl.parent() else {
             return None;
         };
+        // As most are.
+        let is_in_loop = matches!(declaration.parent(), Node::Stmt(block) if block.is_loop());
+        if !is_in_loop && decl.init().is_some() != self.is_never {
+            return None;
+        }
+        self.check_closer(decl, declaration)
+    }
+
+    /// `declaration`: the parent of `decl`.
+    #[inline(never)]
+    fn check_closer<'a>(&self, decl: VarDecl<'a>, declaration: Stmt<'a>) -> Option<Finding<'a>> {
         // Whether it is in the head of the `for` statement that is its parent.
         let in_for_loop = match declaration.parent() {
             Node::Stmt(block) if block.is_loop() => match block.kind() {
@@ -52,7 +64,6 @@ impl Config {
             _ => None,
         };
         let is_initialized = in_for_loop.unwrap_or_else(|| decl.init().is_some());
-        // As most are.
         if is_initialized != self.is_never {
             return None;
         }
@@ -153,10 +164,17 @@ impl Rule for InitDeclarations {
         Some(State::default())
     }
 
+    #[inline]
     fn var_decl<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(found) = self.config.check(decl) else {
-            return;
-        };
+        if let Some(found) = self.config.check(decl) {
+            Self::report(decl, &found, cx);
+        }
+    }
+}
+
+impl InitDeclarations {
+    #[inline(never)]
+    fn report<'a>(decl: VarDecl<'a>, found: &Finding<'a>, cx: &mut Cx<'a, Self>) {
         if decl.flags().contains(Flags::AMBIENT)
             && (has_declare(found.declaration) || is_inside_declared_namespace(found.declaration, &mut cx.state))
         {

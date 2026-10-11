@@ -44,6 +44,7 @@ const SEPARATE: Message = Message::new(
 
 const PRECEDENCE_OF_ASSIGNMENT_EXPR: i32 = 1;
 
+#[inline]
 fn is_logical(op: BinOp) -> bool {
     matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
 }
@@ -58,6 +59,7 @@ fn is_undefined(e: Expr<'_>) -> bool {
 }
 
 /// `e`, for oxlint without what only concerns types: `a as T`, `a!`.
+#[inline]
 fn seen(e: Expr<'_>) -> Expr<'_> {
     if e.file().language().is_oxlint { get_inner_expression(e) } else { e }
 }
@@ -215,6 +217,7 @@ impl LogicalAssignmentOperators {
     }
 
     /// `"never"`: `a ||= b`
+    #[inline(never)]
     fn check_logical_assignment<'a>(&self, assignment: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Assign { op: Some(op), target, value } = assignment.kind() else {
             return;
@@ -253,6 +256,7 @@ impl LogicalAssignmentOperators {
     }
 
     /// `a = a || b`
+    #[inline(never)]
     fn check_assignment<'a>(&self, assignment: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(None), Some(target), Some(value)) = (assignment.assign_op(), assignment.left(), assignment.right())
         else {
@@ -299,6 +303,7 @@ impl LogicalAssignmentOperators {
     }
 
     /// `a || (a = b)`
+    #[inline(never)]
     fn check_logical<'a>(&self, logical: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(op), Some(left), Some(right)) = (logical.binary_op(), logical.left(), logical.right()) else {
             return;
@@ -432,15 +437,22 @@ impl Rule for LogicalAssignmentOperators {
         Some(WithBlocks::default())
     }
 
+    #[inline]
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match self.is_never {
-            true => self.check_logical_assignment(expr, cx),
-            false => self.check_assignment(expr, cx),
+        match (self.is_never, expr.assign_op()) {
+            (true, Some(Some(op))) if is_logical(op) => self.check_logical_assignment(expr, cx),
+            (false, Some(None)) if expr.right().and_then(Expr::binary_op).is_some_and(is_logical) => {
+                self.check_assignment(expr, cx);
+            }
+            _ => {}
         }
     }
 
+    #[inline]
     fn binary<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_logical(expr, cx);
+        if expr.right().is_some_and(|right| seen(right).assign_op() == Some(None)) {
+            self.check_logical(expr, cx);
+        }
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

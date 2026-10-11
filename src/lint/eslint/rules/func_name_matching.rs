@@ -191,10 +191,18 @@ impl Rule for FuncNameMatching {
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.kind() != FnKind::Expr {
-            return;
+        if func.kind() == FnKind::Expr
+            && let Some(func_name) = func.name()
+        {
+            self.check_function(func, func_name, cx);
         }
-        let (Some(func_name), Node::Expr(function)) = (func.name(), func.owner()) else {
+    }
+}
+
+impl FuncNameMatching {
+    #[inline(never)]
+    fn check_function<'a>(&self, func: Func<'a>, func_name: Ident<'a>, cx: &Cx<'a, Self>) {
+        let Node::Expr(function) = func.owner() else {
             return;
         };
         match function.parent() {

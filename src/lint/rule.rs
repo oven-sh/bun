@@ -594,6 +594,10 @@ pub struct On {
     calls: [u64; 3],
     /// [`On::members_named`]: a bit for each [`name_class`].
     members: [u64; 2],
+    /// `mention_bit` of each of the names of `calls` and `members`, and how many they are. More than there is room for: it is
+    /// not known what they are.
+    mentions: [u16; On::MOST_MENTIONS],
+    mention_count: u8,
     /// The constants below.
     sorts: u32,
     pub(crate) nodes: NodeTags,
@@ -663,6 +667,8 @@ impl On {
             pats: 0,
             calls: [0; 3],
             members: [0; 2],
+            mentions: [0; On::MOST_MENTIONS],
+            mention_count: 0,
             sorts: 0,
             nodes: NodeTags::EMPTY,
             enter: NodeTags::EMPTY,
@@ -711,7 +717,8 @@ impl On {
     ///
     /// **The rule still has to compare the name**: the calls are grouped by a class of names, so it is also called with
     /// a few calls of other names. The calls that it is called with come in the order in which it would be called with
-    /// all, and where it would be. In a file that has none of them it is not started.
+    /// all, and where it would be. In a file that has none of them it is not started. A file that
+    /// [mentions](File::mentions) none of up to 12 names is not even asked for more than the calls of the third sort.
     ///
     /// With `.exprs(&[ExprTag::Call])` as well, the rule is called with every call. [`Rule::narrow`] of a rule with that in
     /// its `ON` can name methods and functions that its options tell.
@@ -728,7 +735,34 @@ impl On {
     pub const fn method_call(mut self, name: &[u8]) -> On {
         let class = name_class(name);
         self.calls[class / 64] |= 1 << (class % 64);
+        self.with_mention_of(name)
+    }
+
+    const MOST_MENTIONS: usize = 12;
+
+    const fn with_mention_of(mut self, name: &[u8]) -> On {
+        let (bit, count) = (
+            bun_sema::hir::mention_bit(name) as u16,
+            self.mention_count as usize,
+        );
+        let mut at = 0;
+        while at < count && at < On::MOST_MENTIONS {
+            if self.mentions[at] == bit {
+                return self;
+            }
+            at += 1;
+        }
+        if count < On::MOST_MENTIONS {
+            self.mentions[count] = bit;
+        }
+        self.mention_count = self.mention_count.saturating_add(1);
         self
+    }
+
+    /// `mention_bit` of each name that a `Call` or a `Dot` by name can have. `None`: that is not known.
+    #[inline]
+    pub(crate) fn mentions(&self) -> Option<&[u16]> {
+        self.mentions.get(..self.mention_count as usize)
     }
 
     /// As [`On::method_calls`], and together with it: the `Call`s whose callee is an identifier that is one of `names`.
@@ -745,7 +779,7 @@ impl On {
     /// [`On::function_calls`] with one name.
     pub const fn function_call(mut self, name: &[u8]) -> On {
         self.calls[2] |= 1 << (name_class(name) % 64);
-        self
+        self.with_mention_of(name)
     }
 
     /// [`On::method_calls`] and [`On::function_calls`] with the same names: `a.b()` and `b()`.
@@ -769,7 +803,7 @@ impl On {
     pub const fn member_named(mut self, name: &[u8]) -> On {
         let class = name_class(name);
         self.members[class / 64] |= 1 << (class % 64);
-        self
+        self.with_mention_of(name)
     }
 
     /// The groups of the `Call`s by name that it is called with: see `runner::ByName`. None: it is called with all `Call`s or
@@ -879,6 +913,18 @@ impl On {
                 false => other.members,
             },
         );
+        // What is by name in one is among the names of that one.
+        let (all_calls, all_members) = (self.has_expr(ExprTag::Call), self.has_expr(ExprTag::Dot));
+        let (other_all_calls, other_all_members) =
+            (other.has_expr(ExprTag::Call), other.has_expr(ExprTag::Dot));
+        let (mentions, mention_count) =
+            if (!other_all_calls || all_calls) && (!other_all_members || all_members) {
+                (other.mentions, other.mention_count)
+            } else if (!all_calls || other_all_calls) && (!all_members || other_all_members) {
+                (self.mentions, self.mention_count)
+            } else {
+                (self.mentions, u8::MAX)
+            };
         On {
             exprs: self.exprs & other.exprs,
             binaries: self.binaries & other.binaries,
@@ -892,6 +938,8 @@ impl On {
                 calls[2] & other_calls[2],
             ],
             members: [members[0] & other_members[0], members[1] & other_members[1]],
+            mentions,
+            mention_count,
             sorts: self.sorts & other.sorts,
             nodes: self.nodes.and(other.nodes),
             enter: self.enter.and(other.enter),

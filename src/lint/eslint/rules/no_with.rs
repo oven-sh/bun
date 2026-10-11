@@ -10,10 +10,14 @@ impl Rule for NoWith {
     const META: Meta = Meta::eslint("no-with", Kind::Suggestion).recommended();
     // A `with` statement has the tag `Block`.
     const ON: On = On::new().stmts(&[StmtTag::Block]);
-    no_state!();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoWith
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_with_statements().then_some(())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

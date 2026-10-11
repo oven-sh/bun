@@ -46,6 +46,7 @@ fn is_looped<'a>(node: Node<'a>, parent: Node<'a>) -> bool {
 }
 
 impl NoAwaitInLoop {
+    #[inline(never)]
     fn validate<'a>(&self, await_node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let is_in_loop = cx.state.find(await_node, |node, parent| match is_boundary(parent) {
             true => Some(false),
@@ -90,6 +91,7 @@ impl Rule for NoAwaitInLoop {
     }
 
     /// The statement is validated with the first that it declares.
+    #[inline]
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if declaration.var_kind() == VarKind::AwaitUsing
             && let Node::Stmt(stmt) = declaration.parent()

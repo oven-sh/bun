@@ -70,15 +70,34 @@ fn check_ident<'a>(name: Ident<'a>, cx: &mut Cx<'a, NoTemplateCurlyInString>) {
     }
 }
 
+#[inline]
 fn check_key<'a>(key: Option<Key<'a>>, cx: &mut Cx<'a, NoTemplateCurlyInString>) {
     if let Some(key) = key
         && let KeyKind::String(value) | KeyKind::ComputedString(value) = key.kind()
-        && has_placeholder(value.bytes(), cx.language().is_oxlint)
     {
+        check_string_key(key, value, cx);
+    }
+}
+
+#[inline(never)]
+fn check_string_key<'a>(key: Key<'a>, value: Name<'a>, cx: &Cx<'a, NoTemplateCurlyInString>) {
+    if has_placeholder(value.bytes(), cx.language().is_oxlint) {
         let span = key.inner_span(cx.file());
         if is_quoted(cx.file(), span) {
             cx.report(span, UNEXPECTED_TEMPLATE_EXPRESSION);
         }
+    }
+}
+
+/// `e`: a string with a candidate in it.
+#[inline(never)]
+fn check_string<'a>(e: Expr<'a>, cx: &Cx<'a, NoTemplateCurlyInString>) {
+    let is_oxlint = cx.language().is_oxlint;
+    let is_as_written = is_oxlint && e.is_jsx_attribute_string();
+    let value = e.as_string().map(|it| if is_as_written { e.text() } else { it.bytes() });
+    let has_one = value.is_some_and(|it| has_placeholder(it, is_oxlint));
+    if has_one && !e.is_jsx_text() && !e.is_jsx_tag_name() {
+        cx.report(e, UNEXPECTED_TEMPLATE_EXPRESSION);
     }
 }
 
@@ -120,16 +139,10 @@ impl Rule for NoTemplateCurlyInString {
         (substitutions.sum::<usize>() != candidates.len()).then_some(candidates)
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !has_candidate(&cx.state, e.span()) {
-            return;
-        }
-        let is_oxlint = cx.language().is_oxlint;
-        let is_as_written = is_oxlint && e.is_jsx_attribute_string();
-        let value = e.as_string().map(|it| if is_as_written { e.text() } else { it.bytes() });
-        let has_one = value.is_some_and(|it| has_placeholder(it, is_oxlint));
-        if has_one && !e.is_jsx_text() && !e.is_jsx_tag_name() {
-            cx.report(e, UNEXPECTED_TEMPLATE_EXPRESSION);
+        if has_candidate(&cx.state, e.span()) {
+            check_string(e, cx);
         }
     }
 
@@ -179,12 +192,14 @@ impl Rule for NoTemplateCurlyInString {
         }
     }
 
+    #[inline]
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if member.flags().contains(Flags::STRING_NAME) {
             check_key(member.key(), cx);
         }
     }
 
+    #[inline]
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         check_key(prop.key(), cx);
     }

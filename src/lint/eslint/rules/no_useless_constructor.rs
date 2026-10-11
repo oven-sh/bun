@@ -55,10 +55,15 @@ fn is_redundant_super_call<'a>(body: List<'a, Stmt<'a>>, params: List<'a, Param<
 
 /// The whole rule, for a member of a class. typescript-eslint's rule of the same name is no
 /// different.
+#[inline]
 pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
-    if !member.is_constructor() {
-        return;
+    if member.is_constructor() {
+        check_constructor(member, cx);
     }
+}
+
+#[inline(never)]
+fn check_constructor<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
     let (Some(func), Node::Class(class)) = (member.func(), member.parent()) else {
         return;
     };

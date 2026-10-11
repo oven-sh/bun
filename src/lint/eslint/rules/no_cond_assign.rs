@@ -14,6 +14,7 @@ const MISSING: Message = Message::new(
 );
 
 /// The test of a statement or of a conditional expression, and how the message describes that.
+#[inline]
 fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
     match node {
         Node::Stmt(stmt) if stmt.tag() == StmtTag::If => Some((stmt.as_if()?.0, "an 'if' statement")),
@@ -39,6 +40,7 @@ fn place<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
 
 impl NoCondAssign {
     /// `"always"`: an assignment anywhere in a test.
+    #[inline(never)]
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let kind = cx.state.find(Node::Expr(e), |inner, ancestor| {
             if ast_utils::is_function(ancestor) {
@@ -56,6 +58,7 @@ impl NoCondAssign {
     }
 
     /// With `"always"` oxlint says it once more of a test that is an assignment.
+    #[inline(never)]
     fn check_test_once_more<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         if let Some((test, kind)) = test_of(node)
             && let assignment = get_inner_expression(test)
@@ -66,13 +69,18 @@ impl NoCondAssign {
     }
 
     /// `"except-parens"`: a test that is an assignment, without parentheses of its own.
+    #[inline]
     fn check_test<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Some((test, _)) = test_of(node) else {
-            return;
-        };
-        if test.tag() != ExprTag::Assign {
-            return;
+        if let Some((test, _)) = test_of(node)
+            && test.tag() == ExprTag::Assign
+        {
+            Self::check_parentheses(node, test, cx);
         }
+    }
+
+    /// `test`: that of `node`, an assignment.
+    #[inline(never)]
+    fn check_parentheses<'a>(node: Node<'a>, test: Expr<'a>, cx: &Cx<'a, Self>) {
         // ESLint wants two pairs around every test but that of a `for`. One of them is part of an
         // `if`, a `while` and a `do`, and none is part of a conditional expression.
         let needed = match node {
@@ -120,6 +128,7 @@ impl Rule for NoCondAssign {
         Some(AncestorMemo::default())
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Assign => self.check_assignment(e, cx),
@@ -129,6 +138,7 @@ impl Rule for NoCondAssign {
         }
     }
 
+    #[inline]
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if self.is_always {
             self.check_test_once_more(stmt.into(), cx);

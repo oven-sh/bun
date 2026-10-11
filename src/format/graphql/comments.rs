@@ -34,7 +34,7 @@ pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         }
         // Prettier's `decorateComment`: the innermost node that the comment is in, and its
         // children before and after the comment.
-        let mut enclosing = path.last().copied().unwrap_or(tree.root());
+        let mut enclosing = path.last().copied().unwrap_or_else(|| tree.root());
         let (mut preceding, mut following);
         'descend: loop {
             (preceding, following) = (None, None);

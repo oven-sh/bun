@@ -48,8 +48,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerMessagingProxy);
 // ---- The native thread object (src/jsc/web_worker.rs) --------------------------------------------
 extern "C" {
 
-// Allocates the thread object holding one ref for the caller, takes the keep-alive on the parent
-// event loop, and spawns the thread. Null (with errorMessage set) if nothing was started.
+// Validates the options and allocates the thread object holding one ref for the caller. Null (with errorMessage set) otherwise.
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
@@ -58,9 +57,8 @@ void* WebWorker__create(
     BunString* errorMessage,
     bool* errorIsInvalidExecArgv,
     uint32_t parentContextId,
-    uint32_t contextId,
+    uint32_t* contextId,
     bool miniMode,
-    bool unrefByDefault,
     bool evalMode,
     bool isNodeWorker,
     StringImpl** argvPtr,
@@ -70,6 +68,8 @@ void* WebWorker__create(
     size_t execArgvLen,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
+// Takes the keep-alive on the parent event loop and spawns the thread. False if the OS refused it.
+bool WebWorker__start(void*, bool unrefByDefault);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -89,7 +89,6 @@ WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject, ScriptExecution
     , m_workerObject(&workerObject)
     , m_loaderContextIdentifier(parentContext.identifier())
     , m_loaderLoopKind(parentContext.currentLoopKind())
-    , m_workerContextIdentifier(ScriptExecutionContext::generateIdentifier())
     , m_options(WTF::move(options))
 {
     ASSERT(parentContext.isContextThread());
@@ -109,7 +108,7 @@ WorkerMessagingProxy::~WorkerMessagingProxy()
 
 // ---- WorkerGlobalScopeProxy (parent thread) ------------------------------------------------------
 
-ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scriptURL)
+ExceptionOr<void> WorkerMessagingProxy::prepareWorkerGlobalScope(const String& scriptURL)
 {
     ASSERT(m_scriptExecutionContext && m_scriptExecutionContext->isContextThread());
     ASSERT(!m_workerThread);
@@ -155,9 +154,8 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         &errorMessage,
         &errorIsInvalidExecArgv,
         m_loaderContextIdentifier,
-        m_workerContextIdentifier,
+        &m_workerContextIdentifier,
         m_options.mini,
-        m_options.unref,
         m_options.evalMode,
         m_options.kind == WorkerOptions::Kind::Node,
         reinterpret_cast<WTF::StringImpl**>(m_options.argv.begin()),
@@ -175,6 +173,35 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         return Exception { errorIsInvalidExecArgv ? WORKER_INVALID_EXEC_ARGV : TypeError, errorMessage.transferToWTFString() };
     }
     return {};
+}
+
+ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&& sharedEnvStore)
+{
+    ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
+
+    // Stopped at birth, or by script that ran while workerData was serialized: nothing starts or takes the data.
+    if (m_askedToTerminate) {
+        discardUnstartedWorkerGlobalScope();
+        return {};
+    }
+    m_options.workerDataAndEnvironmentData = WTF::move(workerDataAndEnvironmentData);
+    m_options.dataMessagePorts = WTF::move(dataMessagePorts);
+    m_options.sharedEnvStore = WTF::move(sharedEnvStore);
+    if (!WebWorker__start(m_workerThread, m_options.unref)) {
+        discardUnstartedWorkerGlobalScope();
+        return Exception { TypeError, "Failed to spawn worker thread"_s };
+    }
+    return {};
+}
+
+void WorkerMessagingProxy::discardUnstartedWorkerGlobalScope()
+{
+    ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
+    // The Worker object, which calls this, holds a ref: the one dropped here is not the last.
+    releaseWorkerThread();
+    // Nothing reads the options of a worker that never ran: free them now, not when the Worker is collected.
+    m_options = {};
+    m_scriptExecutionContext = nullptr;
 }
 
 void WorkerMessagingProxy::terminateWorkerGlobalScope()
@@ -539,7 +566,7 @@ void WorkerMessagingProxy::releaseWorkerThread()
     WebWorker__join(workerThread);
     WebWorker__deref(workerThread);
     m_state.store(State::Closed);
-    // The ref startWorkerGlobalScope() took on behalf of the thread.
+    // The ref prepareWorkerGlobalScope() took on behalf of the thread.
     deref();
 }
 

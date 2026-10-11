@@ -70,6 +70,7 @@
 #include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include <wtf/Scope.h>
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
 #include "BunProcess.h"
@@ -343,11 +344,26 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         }
     }
 
+    // Every option is rejected here, before anything the caller cannot take back; start() rejects nothing.
+    auto created = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
+    if (created.hasException()) [[unlikely]] {
+        WebCore::propagateException(*lexicalGlobalObject, throwScope, created.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    Ref worker = created.releaseReturnValue();
+    auto discardUnstarted = makeScopeExit([&] { worker->discardUnstarted(); });
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), worker.copyRef());
+
+    setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     // Resolve the spawning thread's env tree (founding one if needed) so disjoint
-    // SHARE_ENV chains stay isolated. Runs only after every option validated,
+    // SHARE_ENV chains stay isolated. Runs only after Worker::create() validated the options,
     // because founding a tree swaps this thread's process.env.
+    RefPtr<Bun::SharedEnvStore> sharedEnvStore;
     if (shareEnv) {
-        options.sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
+        sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
@@ -392,19 +408,12 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         transferredPorts = disentangleResult.releaseReturnValue();
     }
 
-    options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
-    options.dataMessagePorts = WTF::move(transferredPorts);
-
-    auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-
-    setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
+    auto started = worker->start(serialized.releaseReturnValue(), WTF::move(transferredPorts), WTF::move(sharedEnvStore));
+    discardUnstarted.release();
+    if (started.hasException()) [[unlikely]] {
+        WebCore::propagateException(*lexicalGlobalObject, throwScope, started.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
 
     // Emit the 'worker' event on the process. If we are constructing a `node:worker_threads`
     // worker, we emit the event with the worker_threads Worker object instead of the Web Worker.

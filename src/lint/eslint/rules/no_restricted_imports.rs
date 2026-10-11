@@ -2,7 +2,7 @@ use bun_core::strings;
 pub use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax};
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 /// Disallow specified modules when loaded by `import`.
@@ -270,8 +270,14 @@ enum NameResult {
 /// What oxlint takes for the name that `import a = require("m")` imports.
 const NAME_THAT_CANNOT_BE_USED: &[u8] = b"__<>import_name_that_cant_be_used<>__";
 
-/// With a configuration of oxlint: the modules that an `import "m"` has been seen of. It looks at the first of each.
-pub type SideEffectImports<'a> = FxHashSet<&'a [u8]>;
+/// With a configuration of oxlint.
+#[derive(Default)]
+pub struct SideEffectImports<'a> {
+    /// The modules that an `import "m"` has been seen of. It looks at the first of each.
+    modules: FxHashSet<&'a [u8]>,
+    /// [`Restrictions::check_what_is_exported_again`] has run.
+    has_seen_exports: bool,
+}
 
 /// The elements of `paths`.
 pub fn restricted_paths<'o>(options: &Options<'o>) -> &'o [Json] {
@@ -398,6 +404,7 @@ pub fn is_type_only(statement: Stmt) -> bool {
     }
 }
 
+#[derive(Copy, Clone)]
 struct Specifier<'a> {
     /// The name in the other module. `*` for all of it.
     name: &'a [u8],
@@ -708,10 +715,13 @@ impl Restrictions {
         statement: Stmt<'a>,
         dialect: Dialect,
     ) {
+        let is_oxlint = cx.language().is_oxlint;
         let Some(source) = import_source(statement, dialect) else {
+            if is_oxlint && statement.tag() == StmtTag::ExportNamed {
+                self.check_what_is_exported_again(cx, dialect);
+            }
             return;
         };
-        let is_oxlint = cx.language().is_oxlint;
         let applying = self.applying_to(source, is_oxlint);
         if applying.is_empty() {
             return;
@@ -725,7 +735,7 @@ impl Restrictions {
         }
         // oxlint's `report_side_effects`. It says nothing about `export {} from "m"`. A restriction of some names does
         // not hold, but for a `group`, and of these only the last. That it is `import type {} from "m"` is not looked at.
-        if statement.tag() != StmtTag::Import || !cx.state.insert(source) {
+        if statement.tag() != StmtTag::Import || !cx.state.modules.insert(source) {
             return;
         }
         let imported = Imported { is_type_only: false, ..imported };
@@ -738,6 +748,70 @@ impl Restrictions {
             };
             if holds {
                 restriction.check(&|at, message| cx.report(at, message), is_oxlint, &imported);
+            }
+        }
+    }
+
+    /// oxlint goes through the entries of its module record, where `export { a }` of a name that is imported is an indirect
+    /// export, as in the specification: it has the module and the name of the `import`, and in oxlint its place too. So an
+    /// `import` of which a name is exported again is reported as if it also were `export { a } from "m"`. For all such
+    /// statements of the file, at the first of them.
+    fn check_what_is_exported_again<'a, R: Rule<State<'a> = SideEffectImports<'a>>>(
+        &self,
+        cx: &mut Cx<'a, R>,
+        dialect: Dialect,
+    ) {
+        if std::mem::replace(&mut cx.state.has_seen_exports, true) {
+            return;
+        }
+        let file = cx.file();
+        // By the name here, the first of each. `None`: `* as a`, which is a local export there.
+        let mut entries: FxHashMap<&'a [u8], Option<(Stmt<'a>, Specifier<'a>)>> = FxHashMap::default();
+        for statement in file.body() {
+            let StmtKind::Import(import) = statement.kind() else {
+                continue;
+            };
+            let mut add = |local: Ident<'a>, imported: Option<Ident<'a>>, is_type_only: bool| {
+                let specifier = |it: Ident<'a>| Specifier { name: it.bytes(), span: it.span(), is_type_only };
+                entries.entry(local.bytes()).or_insert(imported.map(|it| (statement, specifier(it))));
+            };
+            // It takes the name here for the name there.
+            if let Some(default) = import.default() {
+                add(default, Some(default), import.is_type_only());
+            }
+            if let Some(namespace) = import.namespace() {
+                add(namespace, None, false);
+            }
+            for it in import.named() {
+                add(it.local(), Some(it.imported()), import.is_type_only() || it.is_type_only());
+            }
+        }
+        let mut again: Vec<Imported<'a>> = Vec::new();
+        // Where each `import` is in `again`, by where it starts.
+        let mut places: FxHashMap<u32, usize> = FxHashMap::default();
+        for statement in file.body() {
+            let StmtKind::ExportNamed(export) = statement.kind() else {
+                continue;
+            };
+            for item in export.items().iter().filter(|_| export.spec().is_none()) {
+                let Some(&Some((import, specifier))) = entries.get(item.local().bytes()) else {
+                    continue;
+                };
+                let Some(source) = import_source(import, dialect) else {
+                    continue;
+                };
+                let at = *places.entry(import.span().start).or_insert(again.len());
+                if at == again.len() {
+                    again.push(Imported { node: import.span(), source, is_type_only: false, specifiers: SmallVec::new() });
+                }
+                if let Some(imported) = again.get_mut(at) {
+                    imported.specifiers.push(specifier);
+                }
+            }
+        }
+        for imported in &again {
+            for restriction in self.applying_to(imported.source, true) {
+                restriction.check(&|at, message| cx.report(at, message), true, imported);
             }
         }
     }

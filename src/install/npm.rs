@@ -1423,7 +1423,9 @@ pub mod package_manifest {
 
         /// The next run, `--offline` above all, reads what this one fetched. A pool thread must not wait for its own pool.
         pub(crate) extern "C" fn finish_saves_at_exit() {
-            if bun_crash_handler::cli_state::is_main_thread() {
+            if bun_crash_handler::cli_state::is_main_thread()
+                && PackageManager::get().thread_pool.has_workers()
+            {
                 SAVES.wait();
             }
         }

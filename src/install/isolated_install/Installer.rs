@@ -703,6 +703,8 @@ impl<'a> Installer<'a> {
 
     /// Main thread. An entry left in place counts as installed: its scripts would never run.
     pub(crate) fn discard_entries_with_unfinished_scripts(&self, failed: StoreEntryId) {
+        // A task that still runs would put its entry in place after this has looked at it.
+        self.tasks_in_flight.wait();
         for (index, step) in self.store.entries.items_step().iter().enumerate() {
             let entry_id = StoreEntryId::from(index as u32);
             // Whether an unfinished entry has scripts is not known yet (bun.lock does not say).

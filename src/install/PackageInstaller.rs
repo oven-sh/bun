@@ -1241,6 +1241,16 @@ impl<'a> PackageInstaller<'a> {
                 }
 
                 let pkg_name = self.names[package_id as usize];
+                // The walk places it and lists its scripts in one step: a failed install removes what is listed.
+                if (self.trusted_dependencies_from_update_requests).contains(&package_id)
+                    || lockfile.has_trusted_dependency(
+                        alias,
+                        pkg_name.slice(string_buf),
+                        resolution,
+                    )
+                {
+                    continue;
+                }
                 if has_patches {
                     use std::io::Write;
                     name_and_version.clear();

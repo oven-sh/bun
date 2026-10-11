@@ -5,6 +5,7 @@
 // through the crash reporter ("oh no: Bun has crashed", bun.report link).
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, compileFixture, isASAN, isLinux, isMusl, tempDir } from "harness";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -57,5 +58,69 @@ describe.skipIf(!isLinux || isMusl || isASAN || !cc)(
       expect(stderr).not.toContain("Bun has crashed");
       expect(exitCode).toBe(1);
     });
+  },
+);
+
+// Only the HTTP client thread starts. After a 304 the main thread queues the manifest's cache entry on a pool that never runs it.
+test.skipIf(!isLinux || isMusl || isASAN || !cc)(
+  "bun install exits when no worker of the thread pool can be started",
+  async () => {
+    const statuses: number[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const headers = { etag: '"v1"', "cache-control": "no-cache" };
+        const status = request.headers.get("if-none-match") === headers.etag ? 304 : 200;
+        statuses.push(status);
+        if (status === 304) return new Response(null, { status, headers });
+        const version = { name: "dep", version: "1.0.0", dist: { tarball: `${server.url}dep-1.0.0.tgz` } };
+        return Response.json(
+          { name: "dep", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } },
+          { headers },
+        );
+      },
+    });
+    using dir = tempDir("install-no-pool-worker", {
+      "shim.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <unistd.h>
+
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
+  static int created;
+  if (__atomic_fetch_add(&created, 1, __ATOMIC_SEQ_CST) > 0) {
+    (void)!write(2, "refused a thread\\n", 17);
+    return EAGAIN;
+  }
+  return ((int (*)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *))dlsym(RTLD_NEXT, "pthread_create"))(thread, attr, start, arg);
+}
+`,
+      "package.json": JSON.stringify({ name: "no-pool-worker", dependencies: { dep: "^1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
+    });
+    const shim = compileFixture(join(String(dir), "shim.c"), { flags: ["-ldl"] });
+
+    async function resolve(env: Record<string, string> = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"), ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    expect(await resolve()).toEqual({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+    await rm(join(String(dir), "bun.lock"));
+
+    const { stderr, exitCode } = await resolve({ LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") });
+    expect(stderr).toContain("refused a thread");
+    expect(stderr).not.toContain("error:");
+    expect(statuses).toEqual([200, 304]);
+    expect(exitCode).toBe(0);
   },
 );

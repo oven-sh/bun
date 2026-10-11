@@ -1402,7 +1402,6 @@ fn allocate_package_manager(
     // Uninitialized memory, abort-on-OOM.
     let p = bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(p, core::sync::atomic::Ordering::Release);
-    bun_core::add_exit_callback(crate::npm::package_manifest::Serializer::finish_saves_at_exit);
     #[cfg(bun_asan)]
     bun_core::add_exit_callback(deinit_caches_at_exit);
 
@@ -1550,6 +1549,8 @@ fn allocate_package_manager(
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
     holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
+    // Not before this line: it reads `thread_pool`.
+    bun_core::add_exit_callback(crate::npm::package_manifest::Serializer::finish_saves_at_exit);
     p
 }
 

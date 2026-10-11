@@ -2482,6 +2482,42 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     expect(second.exitCode).toBe(0);
   });
 
+  // The root's `dep` is another package: hoisted, each parent has its own copy, and the first fails before the walk is at the last.
+  test.skipIf(isWindows)("copies that the failed install had not come to", async () => {
+    const parents = Array.from({ length: 40 }, (_, i) => `parent-${i}`);
+    using ctx = await setupScriptPackages(linker, {
+      scripted: { scripts: { postinstall: `echo ran >> "$RUNS" && test -z "$FAIL"` } },
+      other: {},
+      ...Object.fromEntries(parents.map(name => [name, { dependencies: { dep: "npm:scripted@1.0.0" } }])),
+    });
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { dep: "npm:other@1.0.0", ...Object.fromEntries(parents.map(name => [name, "1.0.0"])) },
+        trustedDependencies: ["scripted"],
+      }),
+    );
+    // With everything in the cache an install only links.
+    expect((await ctx.bun("install", "--ignore-scripts")).exitCode).toBe(0);
+    await rm(join(ctx.packageDir, "node_modules"), { recursive: true });
+
+    Object.assign(ctx.env, { RUNS: join(ctx.packageDir, "first.txt"), FAIL: "1" });
+    const first = await ctx.bun("install");
+    expect(splitErrLines(first.err).filter(line => line.startsWith("error:"))).toEqual([
+      'error: postinstall script from "dep" exited with 1',
+    ]);
+    expect(first.exitCode).toBe(1);
+
+    Object.assign(ctx.env, { RUNS: join(ctx.packageDir, "second.txt"), FAIL: "" });
+    const second = await ctx.bun("install");
+    expect(second.err).not.toContain("error:");
+    expect(readFileSync(ctx.env.RUNS, "utf8").split("\n").filter(Boolean)).toHaveLength(
+      linker === "hoisted" ? parents.length : 1,
+    );
+    expect(second.exitCode).toBe(0);
+  });
+
   // The scripts of a registry package are read from the package.json that was linked.
   test("a package whose scripts cannot be read fails every install", async () => {
     using ctx = await setupScriptPackages(linker, {

@@ -216,57 +216,60 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
     }
   });
 
+  // Nothing stalls these two installs before the rename: one the fixture comes too late for must succeed, and another is made.
   test.each(modes)("patched package: $mode", async ({ budget, holdMs }) => {
     await using server = serveRegistry();
-    using s = scaffold("rename-retry-patch", registryBunfig(server.port), {
-      patchedDependencies: { [`${PKG}@1.0.0`]: `patches/${PKG}.patch` },
-    });
-    mkdirSync(join(s.project, "patches"));
-    writeFileSync(join(s.project, "patches", `${PKG}.patch`), patch);
+    for (let held = false; !held; ) {
+      using s = scaffold("rename-retry-patch", registryBunfig(server.port), {
+        patchedDependencies: { [`${PKG}@1.0.0`]: `patches/${PKG}.patch` },
+      });
+      mkdirSync(join(s.project, "patches"));
+      writeFileSync(join(s.project, "patches", `${PKG}.patch`), patch);
 
-    // The patch is applied in a `.<hex>-<n>.tmp` dir under the temp dir. The
-    // tarball is extracted into a `.<hex>-<n>.av-test-pkg` sibling first,
-    // which the filter keeps the fixture away from.
-    const blocker = spawnBlocker(s.tmp, ".tmp", holdMs);
-    await blocker.ready;
+      // The patch is applied in a `.<hex>-<n>.tmp` dir under the temp dir. The
+      // tarball is extracted into a `.<hex>-<n>.av-test-pkg` sibling first,
+      // which the filter keeps the fixture away from.
+      const blocker = spawnBlocker(s.tmp, ".tmp", holdMs);
+      await blocker.ready;
 
-    const result = await runInstall(s.project, { ...s.env, [ENV]: budget });
-    const blockerOut = await blocker.finish();
-    expect(blockerOut).toContain("HELD");
+      const result = await runInstall(s.project, { ...s.env, [ENV]: budget });
+      held = (await blocker.finish()).includes("HELD");
 
-    if (budget === undefined) {
-      expect(result).toMatchObject({ exitCode: 0 });
-      expect(readFileSync(join(s.project, "node_modules", PKG, "index.js"), "utf8")).toContain('"patched"');
-    } else {
-      expect(result.stderr).toContain("renaming changes to cache dir");
-      expect(result.stderr).toContain(ENV);
-      expect(result.exitCode).not.toBe(0);
+      if (budget === undefined || !held) {
+        expect(result).toMatchObject({ exitCode: 0 });
+        expect(readFileSync(join(s.project, "node_modules", PKG, "index.js"), "utf8")).toContain('"patched"');
+      } else {
+        expect(result.stderr).toContain("renaming changes to cache dir");
+        expect(result.stderr).toContain(ENV);
+        expect(result.exitCode).not.toBe(0);
+      }
     }
   });
 
   test.each(modes)("global virtual store entry: $mode", async ({ budget, holdMs }) => {
     await using server = serveRegistry();
-    using s = scaffold("rename-retry-global-store", registryBunfig(server.port) + `linker = "isolated"\n`, {});
+    for (let held = false; !held; ) {
+      using s = scaffold("rename-retry-global-store", registryBunfig(server.port) + `linker = "isolated"\n`, {});
 
-    // Entries are assembled in `<cache>/links/<entry>.tmp-<suffix>` and
-    // renamed to `<cache>/links/<entry>`.
-    const blocker = spawnBlocker(join(s.cache, "links"), ".tmp-", holdMs);
-    await blocker.ready;
+      // Entries are assembled in `<cache>/links/<entry>.tmp-<suffix>` and
+      // renamed to `<cache>/links/<entry>`.
+      const blocker = spawnBlocker(join(s.cache, "links"), ".tmp-", holdMs);
+      await blocker.ready;
 
-    const result = await runInstall(s.project, { ...s.env, BUN_INSTALL_GLOBAL_STORE: "1", [ENV]: budget });
-    const blockerOut = await blocker.finish();
-    expect(blockerOut).toContain("HELD");
+      const result = await runInstall(s.project, { ...s.env, BUN_INSTALL_GLOBAL_STORE: "1", [ENV]: budget });
+      held = (await blocker.finish()).includes("HELD");
 
-    if (budget === undefined) {
-      expect(result).toMatchObject({ exitCode: 0 });
-      const entry = readlinkSync(join(s.project, "node_modules", ".bun", `${PKG}@1.0.0`));
-      expect(existsSync(join(entry, "node_modules", PKG, "bin.exe"))).toBe(true);
-    } else {
-      // Without the retry this path mistook the held staging dir for an
-      // entry a concurrent install had published, deleted it and reported
-      // success, leaving node_modules/.bun pointing at nothing.
-      expect(result.stderr).toContain(ENV);
-      expect(result.exitCode).not.toBe(0);
+      if (budget === undefined || !held) {
+        expect(result).toMatchObject({ exitCode: 0 });
+        const entry = readlinkSync(join(s.project, "node_modules", ".bun", `${PKG}@1.0.0`));
+        expect(existsSync(join(entry, "node_modules", PKG, "bin.exe"))).toBe(true);
+      } else {
+        // Without the retry this path mistook the held staging dir for an
+        // entry a concurrent install had published, deleted it and reported
+        // success, leaving node_modules/.bun pointing at nothing.
+        expect(result.stderr).toContain(ENV);
+        expect(result.exitCode).not.toBe(0);
+      }
     }
   });
 });

@@ -45,6 +45,7 @@ pub mod reactive;
 pub mod type_config;
 pub mod visitors;
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::collections::IndexMap;
@@ -1579,15 +1580,7 @@ pub enum AliasingEffect {
     /// Immutable data flow (escape analysis only, no mutable range influence).
     ImmutableCapture { from: Place, into: Place },
     /// Function call application.
-    Apply {
-        receiver: Place,
-        function: Place,
-        mutates_function: bool,
-        args: HirVec<PlaceOrSpreadOrHole>,
-        into: Place,
-        signature: Option<FunctionSignature>,
-        loc: Option<SourceLocation>,
-    },
+    Apply(Rc<ApplyEffect>),
     /// Function expression creation with captures.
     CreateFunction {
         captures: HirVec<Place>,
@@ -1597,20 +1590,32 @@ pub enum AliasingEffect {
     /// Mutation of a value known to be frozen (error).
     MutateFrozen {
         place: Place,
-        error: CompilerDiagnostic,
+        error: Rc<CompilerDiagnostic>,
     },
     /// Mutation of a global value (error).
     MutateGlobal {
         place: Place,
-        error: CompilerDiagnostic,
+        error: Rc<CompilerDiagnostic>,
     },
     /// Side-effect not safe during render.
     Impure {
         place: Place,
-        error: CompilerDiagnostic,
+        error: Rc<CompilerDiagnostic>,
     },
     /// Value is accessed during render.
     Render { place: Place },
+}
+
+/// Behind a pointer, like the diagnostics: else every effect had the size of this one, five times two places.
+#[derive(Debug)]
+pub struct ApplyEffect {
+    pub receiver: Place,
+    pub function: Place,
+    pub mutates_function: bool,
+    pub args: HirVec<PlaceOrSpreadOrHole>,
+    pub into: Place,
+    pub signature: Option<FunctionSignature>,
+    pub loc: Option<SourceLocation>,
 }
 
 /// Combined Place/Spread/Hole for Apply args.

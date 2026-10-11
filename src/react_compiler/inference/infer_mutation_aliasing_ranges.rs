@@ -433,7 +433,9 @@ fn append_function_errors(env: &mut Environment, function_id: FunctionId) {
             .filter_map(|effect| match effect {
                 AliasingEffect::Impure { error, .. }
                 | AliasingEffect::MutateFrozen { error, .. }
-                | AliasingEffect::MutateGlobal { error, .. } => Some(error.clone()),
+                | AliasingEffect::MutateGlobal { error, .. } => {
+                    Some(CompilerDiagnostic::clone(error))
+                }
                 _ => None,
             })
             .collect();
@@ -627,7 +629,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                                 AliasingEffect::MutateFrozen { error, .. }
                                 | AliasingEffect::MutateGlobal { error, .. }
                                 | AliasingEffect::Impure { error, .. } => {
-                                    env.record_diagnostic(error.clone());
+                                    env.record_diagnostic(CompilerDiagnostic::clone(error));
                                 }
                                 _ => unreachable!(),
                             }
@@ -902,7 +904,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                     AliasingEffect::Mutate { value, .. } => {
                         operand_effects.insert(value.identifier, Effect::Store);
                     }
-                    AliasingEffect::Apply { .. } => {
+                    AliasingEffect::Apply(_) => {
                         return Err(cold_invariant(
                             "[AnalyzeFunctions] Expected Apply effects to be replaced with more precise effects",
                             None,

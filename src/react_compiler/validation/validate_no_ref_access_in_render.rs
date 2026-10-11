@@ -952,7 +952,7 @@ fn validate_no_ref_access_in_render_impl(
                                         }
                                         AliasingEffect::Create { .. }
                                         | AliasingEffect::CreateFunction { .. }
-                                        | AliasingEffect::Apply { .. }
+                                        | AliasingEffect::Apply(_)
                                         | AliasingEffect::Impure { .. }
                                         | AliasingEffect::MutateFrozen { .. }
                                         | AliasingEffect::MutateGlobal { .. } => continue,

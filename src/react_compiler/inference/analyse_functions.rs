@@ -171,7 +171,7 @@ where
             | AliasingEffect::ImmutableCapture { .. } => {
                 // no-op
             }
-            AliasingEffect::Apply { .. } => {
+            AliasingEffect::Apply(_) => {
                 return Err(cold_invariant(
                     "[AnalyzeFunctions] Expected Apply effects to be replaced with more precise effects",
                     None,

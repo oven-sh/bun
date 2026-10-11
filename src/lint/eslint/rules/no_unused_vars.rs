@@ -424,6 +424,16 @@ fn param_count(func: Func) -> usize {
     func.params().len() + usize::from(func.this_param().is_some())
 }
 
+/// Which of ESLint's functions goes on, with a node further out. There they call each other: a level of the stack for each level
+/// of the pattern, of which the parser holds more.
+enum Step<'a> {
+    Done(Option<Fix>),
+    Variables(Estree<'a>),
+    NestedObjectVariable(Estree<'a>),
+    NestedArrayVariable(Estree<'a>),
+    RestInPattern(Estree<'a>),
+}
+
 /// ESLint's `handleFixes`.
 struct Fixes<'a> {
     fixer: Fixer<'a>,
@@ -541,96 +551,123 @@ impl<'a> Fixes<'a> {
         self.remove_with_previous(span)
     }
 
-    /// ESLint's `fixVariables`.
+    fn follow(&self, mut step: Step<'a>) -> Option<Fix> {
+        loop {
+            step = match step {
+                Step::Done(fix) => return fix,
+                Step::Variables(node) => self.variables(node),
+                Step::NestedObjectVariable(node) => self.nested_object_variable(node),
+                Step::NestedArrayVariable(node) => self.nested_array_variable(node),
+                Step::RestInPattern(node) => self.rest_in_pattern(node),
+            };
+        }
+    }
+
     fn fix_variables(&self, node: Estree<'a>) -> Option<Fix> {
+        self.follow(Step::Variables(node))
+    }
+
+    fn fix_nested_array_variable(&self, node: Estree<'a>) -> Option<Fix> {
+        self.follow(Step::NestedArrayVariable(node))
+    }
+
+    fn fix_rest_in_pattern(&self, node: Estree<'a>) -> Option<Fix> {
+        self.follow(Step::RestInPattern(node))
+    }
+
+    /// What ESLint's `fixVariables` does with a pattern that is all of what `declarator` declares.
+    fn fix_whole_declarator(&self, declarator: VarDecl<'a>) -> Option<Fix> {
+        let statement = declarator.parent().as_stmt()?;
+        let StmtKind::Var(declarations) = statement.kind() else {
+            return None;
+        };
+        if ast_utils::is_loop(statement.parent()) {
+            return None;
+        }
+        if declarations.len() == 1 {
+            return self.remove_declaration(statement.span_without_export());
+        }
+        let is_last = declarations.last() == Some(declarator);
+        self.remove_declarator(declarator, statement, is_last)
+    }
+
+    /// ESLint's `fixVariables`.
+    fn variables(&self, node: Estree<'a>) -> Step<'a> {
         let parent = node.parent();
         if let Estree::VariableDeclarator(declarator) = parent {
-            let statement = declarator.parent().as_stmt()?;
-            let StmtKind::Var(declarations) = statement.kind() else {
-                return None;
-            };
-            if ast_utils::is_loop(statement.parent()) {
-                return None;
-            }
-            if declarations.len() == 1 {
-                return self.remove_declaration(statement.span_without_export());
-            }
-            let is_last = declarations.last() == Some(declarator);
-            return self.remove_declarator(declarator, statement, is_last);
+            return Step::Done(self.fix_whole_declarator(declarator));
         }
         if self.is_before(node.span(), ":") && matches!(parent.parent(), Estree::ObjectPattern(_)) {
-            return self.fix_object_with_value_separator(node);
+            return self.object_with_value_separator(node);
         }
-        self.fix_function_parameters(node)
+        Step::Done(self.fix_function_parameters(node))
     }
 
     /// ESLint's `fixNestedObjectVariable`.
-    fn fix_nested_object_variable(&self, node: Estree<'a>) -> Option<Fix> {
+    fn nested_object_variable(&self, node: Estree<'a>) -> Step<'a> {
         let property = node.parent();
         let object = property.parent();
         let Estree::ObjectPattern(pat) = object else {
-            return None;
+            return Step::Done(None);
         };
         if property_count(pat) == 1 {
             return match object.parent().parent() {
-                Estree::ObjectPattern(_) => self.fix_nested_object_variable(object),
-                _ => self.fix_variables(object),
+                Estree::ObjectPattern(_) => Step::NestedObjectVariable(object),
+                _ => Step::Variables(object),
             };
         }
         let span = property.span();
         if self.is_before(span, "{") {
-            return self.remove_with_next(span);
+            return Step::Done(self.remove_with_next(span));
         }
-        self.remove_with_previous(span)
+        Step::Done(self.remove_with_previous(span))
     }
 
     /// ESLint's `fixNestedArrayVariable`.
-    fn fix_nested_array_variable(&self, node: Estree<'a>) -> Option<Fix> {
+    fn nested_array_variable(&self, node: Estree<'a>) -> Step<'a> {
         let parent = node.parent();
         let Estree::ArrayPattern(array) = parent else {
-            return None;
+            return Step::Done(None);
         };
         if has_single_element(array) {
             return match parent.parent() {
-                Estree::ArrayPattern(_) => self.fix_nested_array_variable(parent),
-                _ if self.is_before(parent.span(), ":") => self.fix_variables(parent),
-                rest @ Estree::RestElement(_) => self.fix_rest_in_pattern(rest),
-                _ => self.fix_variables(parent),
+                Estree::ArrayPattern(_) => Step::NestedArrayVariable(parent),
+                _ if self.is_before(parent.span(), ":") => Step::Variables(parent),
+                rest @ Estree::RestElement(_) => Step::RestInPattern(rest),
+                _ => Step::Variables(parent),
             };
         }
         let span = node.span();
         if self.is_before(span, ",") && self.is_after(span, "]") {
-            return self.remove_with_previous(span);
+            return Step::Done(self.remove_with_previous(span));
         }
-        Some(self.fixer.remove(span))
+        Step::Done(Some(self.fixer.remove(span)))
     }
 
     /// ESLint's `fixObjectWithValueSeparator`.
-    fn fix_object_with_value_separator(&self, node: Estree<'a>) -> Option<Fix> {
+    fn object_with_value_separator(&self, node: Estree<'a>) -> Step<'a> {
         let object = node.parent().parent();
         if let Estree::ObjectPattern(pat) = object
             && property_count(pat) == 1
             && matches!(object.parent(), Estree::ArrayPattern(_))
         {
-            return self.fix_nested_array_variable(object);
+            return Step::NestedArrayVariable(object);
         }
-        self.fix_nested_object_variable(node)
+        Step::NestedObjectVariable(node)
     }
 
     /// ESLint's `fixRestInPattern`.
-    fn fix_rest_in_pattern(&self, node: Estree<'a>) -> Option<Fix> {
+    fn rest_in_pattern(&self, node: Estree<'a>) -> Step<'a> {
         let span = node.span();
         match node.parent() {
-            Estree::Function(func) if param_count(func) == 1 => Some(self.fixer.remove(span)),
-            Estree::Function(_) => self.remove_with_previous(span),
-            parent @ Estree::ArrayPattern(array) if has_single_element(array) => {
-                match parent.parent() {
-                    Estree::ArrayPattern(_) => self.fix_nested_array_variable(parent),
-                    _ => self.fix_variables(parent),
-                }
-            }
-            Estree::ArrayPattern(_) => self.remove_with_previous(span),
-            _ => None,
+            Estree::Function(func) if param_count(func) == 1 => Step::Done(Some(self.fixer.remove(span))),
+            Estree::Function(_) => Step::Done(self.remove_with_previous(span)),
+            parent @ Estree::ArrayPattern(array) if has_single_element(array) => match parent.parent() {
+                Estree::ArrayPattern(_) => Step::NestedArrayVariable(parent),
+                _ => Step::Variables(parent),
+            },
+            Estree::ArrayPattern(_) => Step::Done(self.remove_with_previous(span)),
+            _ => Step::Done(None),
         }
     }
 

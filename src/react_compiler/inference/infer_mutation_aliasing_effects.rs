@@ -20,6 +20,7 @@ use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::hir::AliasingEffect;
 use crate::hir::AliasingSignature;
+use crate::hir::ApplyEffect;
 use crate::hir::AstAlloc;
 use crate::hir::BlockId;
 use crate::hir::DeclarationId;
@@ -462,73 +463,58 @@ impl<'a> IntoIterator for &'a ValueIdSet {
 const CHUNK: usize = 64;
 const CHUNK_OF_CHUNKS: usize = CHUNK * CHUNK;
 
-type Chunk<T> = Option<Rc<[T; CHUNK]>>;
-
-/// A vector in chunks of chunks that its clones share until one of them writes to a chunk. `None`: all is the default.
+/// A vector in chunks of chunks that its clones share until one of them writes to the chunk.
 #[derive(Debug, Clone)]
-struct ChunkedVec<T>(Vec<Chunk<Chunk<T>>>);
+struct ChunkedVec<T>(Vec<Rc<[Rc<[T; CHUNK]>; CHUNK]>>);
 
 impl<T: Clone + Default> ChunkedVec<T> {
     fn with_len(len: usize) -> Self {
-        ChunkedVec(vec![None; len.div_ceil(CHUNK_OF_CHUNKS)])
+        let mut this = ChunkedVec(Vec::new());
+        this.grow(len.div_ceil(CHUNK_OF_CHUNKS));
+        this
     }
 
     fn grow(&mut self, chunks_of_chunks: usize) {
         if chunks_of_chunks > self.0.len() {
-            self.0.resize(chunks_of_chunks, None);
+            let empty = Rc::new(std::array::from_fn(|_| T::default()));
+            let empty = Rc::new(std::array::from_fn(|_| Rc::clone(&empty)));
+            self.0.resize(chunks_of_chunks, empty);
         }
     }
 
     #[inline]
     fn get(&self, i: usize) -> Option<&T> {
-        let chunks = self.0.get(i / CHUNK_OF_CHUNKS)?.as_ref()?;
-        Some(&chunks[i / CHUNK % CHUNK].as_ref()?[i % CHUNK])
+        let chunks = self.0.get(i / CHUNK_OF_CHUNKS)?;
+        Some(&chunks[i / CHUNK % CHUNK][i % CHUNK])
     }
 
     #[inline]
     fn get_mut(&mut self, i: usize) -> &mut T {
         self.grow(i / CHUNK_OF_CHUNKS + 1);
-        Self::cell_mut(
-            &mut self.0[i / CHUNK_OF_CHUNKS],
-            i / CHUNK % CHUNK,
-            i % CHUNK,
-        )
-    }
-
-    fn cell_mut(chunks: &mut Chunk<Chunk<T>>, chunk: usize, at: usize) -> &mut T {
-        let chunks = chunks.get_or_insert_with(|| Rc::new(std::array::from_fn(|_| None)));
-        let chunk = &mut Rc::make_mut(chunks)[chunk];
-        let chunk = chunk.get_or_insert_with(|| Rc::new(std::array::from_fn(|_| T::default())));
-        &mut Rc::make_mut(chunk)[at]
+        let chunks = Rc::make_mut(&mut self.0[i / CHUNK_OF_CHUNKS]);
+        &mut Rc::make_mut(&mut chunks[i / CHUNK % CHUNK])[i % CHUNK]
     }
 
     fn iter(&self) -> impl Iterator<Item = &T> {
-        let chunks = self.0.iter().flatten().flat_map(|chunks| chunks.iter());
-        chunks.flatten().flat_map(|chunk| chunk.iter())
+        let chunks = self.0.iter().flat_map(|chunks| chunks.iter());
+        chunks.flat_map(|chunk| chunk.iter())
     }
 
     /// Puts `merged(mine, theirs)` at each index where it is something, and copies no chunk for less. Whether it was.
-    /// `merged(mine, &T::default())` is nothing.
     fn merge_from(&mut self, other: &Self, merged: impl Fn(&T, &T) -> Option<T>) -> bool {
         self.grow(other.0.len());
-        let is = |mine: Option<&Rc<_>>, theirs| mine.is_some_and(|mine| Rc::ptr_eq(mine, theirs));
-        let nothing = T::default();
         let mut changed = false;
         for (mine, theirs) in self.0.iter_mut().zip(&other.0) {
-            let Some(theirs) = theirs else { continue };
-            if mine.as_ref().is_some_and(|mine| Rc::ptr_eq(mine, theirs)) {
+            if Rc::ptr_eq(mine, theirs) {
                 continue;
             }
             for (chunk, theirs) in theirs.iter().enumerate() {
-                let Some(theirs) = theirs else { continue };
-                if is(mine.as_ref().and_then(|mine| mine[chunk].as_ref()), theirs) {
+                if Rc::ptr_eq(&mine[chunk], theirs) {
                     continue;
                 }
                 for (at, theirs) in theirs.iter().enumerate() {
-                    let cells = mine.as_ref().and_then(|mine| mine[chunk].as_ref());
-                    let cell = cells.map_or(&nothing, |cells| &cells[at]);
-                    if let Some(merged) = merged(cell, theirs) {
-                        *Self::cell_mut(mine, chunk, at) = merged;
+                    if let Some(merged) = merged(&mine[chunk][at], theirs) {
+                        Rc::make_mut(&mut Rc::make_mut(mine)[chunk])[at] = merged;
                         changed = true;
                     }
                 }
@@ -941,19 +927,13 @@ fn hash_effect(effect: &AliasingEffect) -> u64 {
     use std::hash::Hasher;
     let mut h = rustc_hash::FxHasher::default();
     match effect {
-        AliasingEffect::Apply {
-            receiver,
-            function,
-            mutates_function,
-            args,
-            into,
-            ..
-        } => {
+        AliasingEffect::Apply(apply) => {
+            let into = &apply.into;
             h.write_u8(0);
-            h.write_u32(receiver.identifier.0);
-            h.write_u32(function.identifier.0);
-            h.write_u8(*mutates_function as u8);
-            for a in args.iter() {
+            h.write_u32(apply.receiver.identifier.0);
+            h.write_u32(apply.function.identifier.0);
+            h.write_u8(apply.mutates_function as u8);
+            for a in apply.args.iter() {
                 match a {
                     PlaceOrSpreadOrHole::Hole => h.write_u8(0),
                     PlaceOrSpreadOrHole::Place(p) => {
@@ -1532,7 +1512,7 @@ fn apply_signature(
                         }
                         effects.push(AliasingEffect::MutateFrozen {
                             place: mutate_value.clone(),
-                            error: diagnostic,
+                            error: Rc::new(diagnostic),
                         });
                     }
                 }
@@ -1985,15 +1965,16 @@ fn apply_effect(
                 }
             }
         }
-        AliasingEffect::Apply {
-            ref receiver,
-            ref function,
-            mutates_function,
-            ref args,
-            ref into,
-            ref signature,
-            ref loc,
-        } => {
+        AliasingEffect::Apply(ref apply) => {
+            let ApplyEffect {
+                receiver,
+                function,
+                mutates_function,
+                args,
+                into,
+                signature,
+                loc,
+            } = &**apply;
             // The one kind whose effects can be of its own kind: each cycle of calls comes through here.
             if !env.has_stack() {
                 return Err(crate::lowering::nested_too_deeply());
@@ -2142,7 +2123,7 @@ fn apply_effect(
                     // In TS, the check is `operand !== effect.function || effect.mutatesFunction`.
                     // This compares by reference identity, so for CallExpression/NewExpression
                     // where receiver === function, BOTH are skipped when !mutatesFunction.
-                    if operand.identifier == function.identifier && !mutates_function {
+                    if operand.identifier == function.identifier && !*mutates_function {
                         // Don't mutate callee for non-mutating calls
                     } else {
                         apply_effect(
@@ -2299,7 +2280,7 @@ fn apply_effect(
                         state,
                         AliasingEffect::MutateFrozen {
                             place: value.clone(),
-                            error: diagnostic,
+                            error: Rc::new(diagnostic),
                         },
                         initialized,
                         effects,
@@ -2340,12 +2321,12 @@ fn apply_effect(
                     let error_kind = if abstract_value.kind == ValueKind::Frozen {
                         AliasingEffect::MutateFrozen {
                             place: value.clone(),
-                            error: diagnostic,
+                            error: Rc::new(diagnostic),
                         }
                     } else {
                         AliasingEffect::MutateGlobal {
                             place: value.clone(),
-                            error: diagnostic,
+                            error: Rc::new(diagnostic),
                         }
                     };
                     apply_effect(context, state, error_kind, initialized, effects, env, func)?;
@@ -2449,7 +2430,7 @@ fn compute_signature_for_instruction(
             let sig = get_function_call_signature(env, callee.identifier)
                 .ok()
                 .flatten();
-            effects.push(AliasingEffect::Apply {
+            effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
                 receiver: callee.clone(),
                 function: callee.clone(),
                 mutates_function: false,
@@ -2457,13 +2438,13 @@ fn compute_signature_for_instruction(
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
-            });
+            })));
         }
         InstructionValue::CallExpression { callee, args, loc } => {
             let sig = get_function_call_signature(env, callee.identifier)
                 .ok()
                 .flatten();
-            effects.push(AliasingEffect::Apply {
+            effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
                 receiver: callee.clone(),
                 function: callee.clone(),
                 mutates_function: true,
@@ -2471,7 +2452,7 @@ fn compute_signature_for_instruction(
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
-            });
+            })));
         }
         InstructionValue::MethodCall {
             receiver,
@@ -2482,7 +2463,7 @@ fn compute_signature_for_instruction(
             let sig = get_function_call_signature(env, property.identifier)
                 .ok()
                 .flatten();
-            effects.push(AliasingEffect::Apply {
+            effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
                 receiver: receiver.clone(),
                 function: property.clone(),
                 mutates_function: false,
@@ -2490,7 +2471,7 @@ fn compute_signature_for_instruction(
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
-            });
+            })));
         }
         InstructionValue::PropertyDelete { object, .. }
         | InstructionValue::ComputedDelete { object, .. } => {
@@ -2877,7 +2858,7 @@ fn compute_signature_for_instruction(
                 });
             effects.push(AliasingEffect::MutateGlobal {
                 place: sg_value.clone(),
-                error: diagnostic,
+                error: Rc::new(diagnostic),
             });
             effects.push(AliasingEffect::Assign {
                 from: sg_value.clone(),
@@ -2982,7 +2963,7 @@ fn compute_effects_for_legacy_signature(
             });
         effects.push(AliasingEffect::Impure {
             place: receiver.clone(),
-            error: diagnostic,
+            error: Rc::new(diagnostic),
         });
     }
 
@@ -3372,11 +3353,11 @@ fn compute_effects_for_aliasing_signature_config(
                 for v in values {
                     effects.push(AliasingEffect::Impure {
                         place: v,
-                        error: CompilerDiagnostic::new(
+                        error: Rc::new(CompilerDiagnostic::new(
                             ErrorCategory::Purity,
                             "Impure function call",
                             None,
-                        ),
+                        )),
                     });
                 }
             }
@@ -3434,7 +3415,7 @@ fn compute_effects_for_aliasing_signature_config(
                             }
                         }
                     }
-                    effects.push(AliasingEffect::Apply {
+                    effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
                         receiver: recv,
                         function: func,
                         mutates_function: *mutates_function,
@@ -3442,7 +3423,7 @@ fn compute_effects_for_aliasing_signature_config(
                         into,
                         signature: None,
                         loc: _loc.copied(),
-                    });
+                    })));
                 } else {
                     return Ok(None);
                 }
@@ -3616,7 +3597,7 @@ fn compute_effects_for_aliasing_signature(
                 for v in values {
                     effects.push(AliasingEffect::Impure {
                         place: v,
-                        error: error.clone(),
+                        error: Rc::clone(error),
                     });
                 }
             }
@@ -3628,7 +3609,7 @@ fn compute_effects_for_aliasing_signature(
                 for v in values {
                     effects.push(AliasingEffect::MutateFrozen {
                         place: v,
-                        error: error.clone(),
+                        error: Rc::clone(error),
                     });
                 }
             }
@@ -3640,7 +3621,7 @@ fn compute_effects_for_aliasing_signature(
                 for v in values {
                     effects.push(AliasingEffect::MutateGlobal {
                         place: v,
-                        error: error.clone(),
+                        error: Rc::clone(error),
                     });
                 }
             }
@@ -3727,15 +3708,16 @@ fn compute_effects_for_aliasing_signature(
                     });
                 }
             }
-            AliasingEffect::Apply {
-                receiver: r,
-                function: f,
-                mutates_function: mf,
-                args: a,
-                into: i,
-                signature: s,
-                loc: _l,
-            } => {
+            AliasingEffect::Apply(apply) => {
+                let ApplyEffect {
+                    receiver: r,
+                    function: f,
+                    mutates_function: mf,
+                    args: a,
+                    into: i,
+                    signature: s,
+                    loc: _l,
+                } = &**apply;
                 let recv = substitutions
                     .get(&r.identifier)
                     .and_then(|v| v.first())
@@ -3773,7 +3755,7 @@ fn compute_effects_for_aliasing_signature(
                             }
                         }
                     }
-                    effects.push(AliasingEffect::Apply {
+                    effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
                         receiver: recv,
                         function: func,
                         mutates_function: *mf,
@@ -3781,7 +3763,7 @@ fn compute_effects_for_aliasing_signature(
                         into: apply_into,
                         signature: s.clone(),
                         loc: _loc.copied(),
-                    });
+                    })));
                 } else {
                     return Ok(None);
                 }

@@ -1280,20 +1280,94 @@ describe("Transactions", () => {
       () => null,
       err => err.code,
     );
+  const closedCode = "ERR_SQLITE_CONNECTION_CLOSED";
+  const untouched = [{ balance: 1000 }, { balance: 500 }];
+  const balances = () => sql`SELECT balance FROM accounts ORDER BY id`;
+  // How begin() settles, then what its callback returns. begin() can reject before its callback is done.
+  async function inTransaction(body: (tx: any) => Promise<unknown[]>) {
+    let ran: Promise<unknown[]> | undefined;
+    const settled = await code(sql.begin(tx => (ran = body(tx))));
+    return [settled, ...(await ran!)];
+  }
+  const closes: Array<[string, (tx: any) => Promise<unknown>]> = [
+    ["close()", tx => tx.close()],
+    ["close({ timeout })", tx => tx.close({ timeout: 60 })],
+  ];
 
-  // bun:test fails this test if close() starts the fragment or the identifier: nothing handles their rejection.
-  test("tx.close({ timeout }) rolls back and starts nothing that was not started", async () => {
-    let late: unknown;
-    const begin = sql.begin(async tx => {
+  // bun:test fails these tests if close() starts the fragment or the identifier: nothing handles their rejection.
+  test.each(closes)("tx.%s rolls back and starts nothing that was not started", async (_, close) => {
+    const result = await inTransaction(async tx => {
       await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
       const lazy = tx`UPDATE accounts SET balance = 0 WHERE id = 2`;
+      const executed = tx`UPDATE accounts SET balance = 1 WHERE id = 2`;
       tx`id = ${1}`;
       tx("id");
-      await tx.close({ timeout: 60 });
-      late = await code(lazy);
+      const closed = close(tx);
+      const executedAfter = code(executed.execute());
+      await closed;
+      return [await executedAfter, await code(lazy)];
     });
-    expect([await code(begin), late]).toEqual(["ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED"]);
-    expect(await sql`SELECT balance FROM accounts ORDER BY id`).toEqual([{ balance: 1000 }, { balance: 500 }]);
+    expect(result).toEqual([closedCode, closedCode, closedCode]);
+    expect(await balances()).toEqual(untouched);
+  });
+
+  // then() starts a query one job later, so a close({ timeout }) in the tick of then() comes first, as on the pool.
+  test("tx.close({ timeout }) in the tick of then() refuses the statement and rolls back", async () => {
+    const result = await inTransaction(async tx => {
+      const started = code(tx`UPDATE accounts SET balance = 0 WHERE id = 1`);
+      await tx.close({ timeout: 60 });
+      return [await started];
+    });
+    expect(result).toEqual([closedCode, closedCode]);
+    expect(await balances()).toEqual(untouched);
+  });
+
+  test.each(closes)("a query that is cancelled before it starts rejects after tx.%s", async (_, close) => {
+    const result = await inTransaction(async tx => {
+      const cancelled = tx`UPDATE accounts SET balance = 0 WHERE id = 1`.cancel();
+      await close(tx);
+      return [await code(cancelled)];
+    });
+    expect(result).toEqual([closedCode, "ERR_SQLITE_QUERY_CANCELLED"]);
+    expect(await balances()).toEqual(untouched);
+  });
+
+  // close() runs between the call of savepoint() and the start of its SAVEPOINT statement.
+  test.each(closes)("tx.%s stops a savepoint that did not start", async (_, close) => {
+    const result = await inTransaction(async tx => {
+      await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+      let ran = false;
+      const savepoint = code(
+        tx.savepoint(async () => {
+          ran = true;
+        }),
+      );
+      await close(tx);
+      return [await savepoint, ran];
+    });
+    expect(result).toEqual([closedCode, closedCode, false]);
+    expect(await balances()).toEqual(untouched);
+  });
+
+  // close() checks its argument before it stops the handle.
+  test("a tx.close() that rejects its timeout leaves the transaction open", async () => {
+    const result = await inTransaction(async tx => [
+      await code(tx.close({ timeout: -1 })),
+      await code(tx`UPDATE accounts SET balance = 1 WHERE id = 1`),
+    ]);
+    expect(result).toEqual([null, "ERR_INVALID_ARG_VALUE", null]);
+    expect(await balances()).toEqual([{ balance: 1 }, { balance: 500 }]);
+  });
+
+  // SQLite answers a COMMIT with no open transaction with an error, so begin() rejects. A COMMIT that
+  // goes first stores the row instead.
+  test.each(closes)("a tx.%s that is not awaited rolls back before begin() sends COMMIT", async (_, close) => {
+    const begin = sql.begin(async tx => {
+      await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+      close(tx);
+    });
+    expect(await code(begin)).not.toBeNull();
+    expect(await balances()).toEqual(untouched);
   });
 
   test("a query that is cancelled before it starts rejects and does not run", async () => {

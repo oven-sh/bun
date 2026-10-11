@@ -111,9 +111,20 @@ function firstInterleaving(received: Received[]): string | null {
   return null;
 }
 
-const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; beginCommand: string }> = [
-  { adapter: "postgres", mockServer: pgMockServer, beginCommand: "BEGIN" },
-  { adapter: "mysql", mockServer: mysqlMockServer, beginCommand: "START TRANSACTION" },
+// rollbackDistributed: what a distributed transaction named "dtx" sends when its callback closes it.
+const adapters: Array<{
+  adapter: "postgres" | "mysql";
+  mockServer: MockServer;
+  beginCommand: string;
+  rollbackDistributed: string[];
+}> = [
+  { adapter: "postgres", mockServer: pgMockServer, beginCommand: "BEGIN", rollbackDistributed: ["BEGIN", "ROLLBACK"] },
+  {
+    adapter: "mysql",
+    mockServer: mysqlMockServer,
+    beginCommand: "START TRANSACTION",
+    rollbackDistributed: ["XA START 'dtx'", "XA END 'dtx'", "XA ROLLBACK 'dtx'"],
+  },
 ];
 
 // reserved.begin() / beginDistributed() calls that reject before anything is sent.
@@ -130,7 +141,7 @@ const rejectedBeforeBegin = [
   },
 ];
 
-describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
+describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, rollbackDistributed }) => {
   const options = (port: number): Bun.SQL.Options => ({
     adapter,
     hostname: "127.0.0.1",
@@ -455,6 +466,9 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       return err.code ?? err.message;
     }
   }
+  // For a query that must not run, where the error it gets is not the subject.
+  const outcome = async (query: PromiseLike<unknown>): Promise<string> =>
+    (await code(query)) === null ? "resolved" : "rejected";
 
   // Runs `run` against a fresh mock server. Returns its result and every statement the server received.
   async function withServer<T>(run: (sql: SQL) => Promise<T>) {
@@ -462,7 +476,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     const { port, server } = await mockServer(received);
     const sql = new SQL(options(port));
     try {
-      return { result: await run(sql), sent: received.map(r => r.sql) };
+      return { result: await run(sql), sent: received.map(r => r.sql), received };
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
@@ -510,17 +524,20 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     ["close({ timeout })", handle => handle.close({ timeout: 60 }), [], ["ROLLBACK"]],
     ["a dropped connection", handle => code(handle.unsafe("SELECT 'KILL'")), ["SELECT 'KILL'"], ["SELECT 'KILL'"]],
   ];
+  const closes = endings.slice(0, 2);
   // Starts the queries that were made before the end, then one of each kind that is made after it.
   // Nothing handles the first one: bun:test fails the test if that is reported as an unhandled rejection.
   async function startLate(handle: any, made: PromiseLike<unknown>[]) {
     using dir = tempDir("sql-handle-late-start", { "late.sql": "SELECT 'file'" });
     handle.unsafe("SELECT 'ignored'").execute();
     const late = [handle.unsafe("SELECT 'after'").execute(), handle.file(path.join(String(dir), "late.sql"))];
-    return await Promise.all([...made, ...late].map(code));
+    return await Promise.all([...made, ...late].map(outcome));
   }
+  const fourRejected = ["rejected", "rejected", "rejected", "rejected"];
 
   // The end of a handle must not start or reject what never started: bun:test fails these tests if an
-  // identifier or a query that nothing awaited yet is reported as an unhandled rejection.
+  // identifier or a query that nothing awaited yet is reported as an unhandled rejection. What starts
+  // after the end settles and does not run.
   test.each(endings)("%s leaves alone what a reserved connection never started", async (_, end, sentByEnd) => {
     const { result, sent } = await withServer(async sql => {
       const reserved = await sql.reserve();
@@ -529,23 +546,8 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       await end(reserved);
       return startLate(reserved, made);
     });
-    expect(result).toEqual([closedCode, closedCode, closedCode, closedCode]);
+    expect(result).toEqual(fourRejected);
     expect(sent).toEqual(sentByEnd);
-  });
-
-  test("a query that first starts after the connection dropped rejects with the error of the drop", async () => {
-    const { result } = await withServer(async sql => {
-      const reserved = await sql.reserve();
-      const lazy = reserved.unsafe("SELECT 'lazy'");
-      const error = (query: PromiseLike<unknown>) =>
-        query.then(
-          () => null,
-          err => err,
-        );
-      const dropped = await error(reserved.unsafe("SELECT 'KILL'"));
-      return [dropped?.code, (await error(lazy)) === dropped];
-    });
-    expect(result).toEqual([closedCode, true]);
   });
 
   // How begin() settles, then what its callback returns. begin() can reject before its callback is done.
@@ -564,30 +566,125 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
         return startLate(tx, made);
       }),
     );
-    expect(result).toEqual([closedCode, closedCode, closedCode, closedCode, closedCode]);
+    expect(result).toEqual([closedCode, ...fourRejected]);
     expect(sent).toEqual([beginCommand, ...sentByEnd]);
   });
 
-  // execute() starts a query at once and then() starts it one job later: close({ timeout }) waits for both, as end()
-  // does in postgres.js. A first await calls then() after close({ timeout }) ran, and what comes after it is refused.
+  // The error of a late start is the error of the handle, on both kinds of handle.
+  test.each(endings)("a query that first starts after %s rejects with connection closed", async (_, end) => {
+    const { result } = await withServer(async sql => {
+      const reserved = await sql.reserve();
+      const onReserved = reserved.unsafe("SELECT 'lazy'");
+      await end(reserved);
+      const inTx = await inTransaction(sql, async tx => {
+        const lazy = tx.unsafe("SELECT 'lazy'");
+        await end(tx);
+        return [await code(lazy)];
+      });
+      return [await code(onReserved), ...inTx];
+    });
+    expect(result).toEqual([closedCode, closedCode, closedCode]);
+  });
+
+  test("a query that first starts after the connection dropped rejects with the error of the drop", async () => {
+    const { result } = await withServer(async sql => {
+      const reserved = await sql.reserve();
+      const lazy = reserved.unsafe("SELECT 'lazy'");
+      const error = (query: PromiseLike<unknown>) =>
+        query.then(
+          () => null,
+          err => err,
+        );
+      const dropped = await error(reserved.unsafe("SELECT 'KILL'"));
+      return [dropped?.code, (await error(lazy)) === dropped];
+    });
+    expect(result).toEqual([closedCode, true]);
+  });
+
+  // The pool has one slot, and the slot of a dropped connection gets a new connection. How a handle loses
+  // its connection, with what it made before, and what that sends on the old connection.
+  type Dropped = { handle: any; made: PromiseLike<unknown>[] };
+  const droppedHandles: Array<[string, (sql: SQL) => Promise<Dropped>, string[]]> = [
+    [
+      "a reserved connection",
+      async sql => {
+        const handle = await sql.reserve();
+        const made = [handle.unsafe("SELECT 'dead unsafe'"), handle`SELECT 'dead tagged'`.simple()];
+        await code(handle.unsafe("SELECT 'KILL'"));
+        return { handle, made };
+      },
+      ["SELECT 'KILL'"],
+    ],
+    [
+      "a transaction",
+      async sql => {
+        let dropped: Dropped | undefined;
+        await code(
+          sql.begin(async tx => {
+            dropped = { handle: tx, made: [tx.unsafe("SELECT 'dead unsafe'"), tx`SELECT 'dead tagged'`.simple()] };
+            await tx.unsafe("SELECT 'KILL'");
+          }),
+        );
+        return dropped!;
+      },
+      [beginCommand, "SELECT 'KILL'"],
+    ],
+  ];
+
+  test.each(droppedHandles)(
+    "%s whose connection dropped sends nothing on the next connection of its pool slot",
+    async (_, drop, sentOnDropped) => {
+      const { result, received } = await withServer(async sql => {
+        const { handle, made } = await drop(sql);
+        return sql.begin(async tx => {
+          await tx.unsafe("SELECT 'T1a'");
+          const late = await startLate(handle, made);
+          await tx.unsafe("SELECT 'T1b'");
+          return late;
+        });
+      });
+      expect(result).toEqual(fourRejected);
+      expect(received).toEqual([
+        ...sentOnDropped.map(sql => ({ conn: 0, sql })),
+        { conn: 1, sql: beginCommand },
+        { conn: 1, sql: "SELECT 'T1a'" },
+        { conn: 1, sql: "SELECT 'T1b'" },
+        { conn: 1, sql: "COMMIT" },
+      ]);
+    },
+  );
+
+  // execute() starts a query in the call, and close({ timeout }) waits for it. Everything else that starts
+  // after the call is refused: a first await, file() and the distributed pair start at least one job later.
   test("reserved.close({ timeout }) waits for a query in flight and rejects one that starts later", async () => {
+    using dir = tempDir("sql-handle-close", { "statement.sql": "SELECT 'file'" });
     const { result, sent } = await withServer(async sql => {
       const reserved = await sql.reserve();
+      const lazy = reserved.unsafe("SELECT 'lazy'");
       const inFlight = code(reserved.unsafe("SELECT 'in flight'").execute());
-      const thenBefore = code(reserved.unsafe("SELECT 'then before'").then(rows => rows));
-      const sameTick = code(reserved.unsafe("SELECT 'same tick'"));
+      const sameTick = [
+        code(reserved.unsafe("SELECT 'same tick'")),
+        code(reserved.file(path.join(String(dir), "statement.sql"))),
+        code(reserved.commitDistributed("late")),
+        code(reserved.rollbackDistributed("late")),
+      ];
       const closed = reserved.close({ timeout: 60 });
       const after = [
+        code(lazy.execute()),
+        code(reserved.unsafe("SELECT 'executed after'").execute()),
         code(reserved.unsafe("SELECT 'unsafe after'")),
         code(reserved`SELECT 'tagged after'`),
         code(reserved.begin(async () => {})),
+        code(reserved.beginDistributed("late", async () => {})),
+        code(reserved.commitDistributed("late")),
+        code(reserved.rollbackDistributed("late")),
       ];
       await closed;
       reserved.release();
-      return Promise.all([inFlight, thenBefore, sameTick, ...after]);
+      return Promise.all([inFlight, Promise.all(sameTick), Promise.all(after)]);
     });
-    expect(result).toEqual([null, null, closedCode, closedCode, closedCode, closedCode]);
-    expect(sent).toEqual(["SELECT 'in flight'", "SELECT 'then before'"]);
+    expect(result).toEqual([null, Array(4).fill(closedCode), Array(8).fill(closedCode)]);
+    expect(sent).toEqual(["SELECT 'in flight'"]);
   });
 
   // bun:test fails this test if the wait of close({ timeout }) reports the failed query as an unhandled rejection.
@@ -602,10 +699,24 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     expect(sent).toEqual(["SELECT 'KILL'"]);
   });
 
-  // release() runs in the job that close({ timeout }) gives to the statements that already called then().
-  test("a reserved.close({ timeout }) that release() overtakes leaves the released connection alone", async () => {
-    const { result, sent } = await withServer(async sql => {
+  test("tx.close({ timeout }) does not report a query that fails during its wait", async () => {
+    const { result, sent } = await withServer(sql =>
+      inTransaction(sql, async tx => {
+        const dropped = code(tx.unsafe("SELECT 'KILL'").execute());
+        await tx.close({ timeout: 60 });
+        return [await dropped];
+      }),
+    );
+    expect(result).toEqual([closedCode, closedCode]);
+    expect(sent).toEqual([beginCommand, "SELECT 'KILL'"]);
+  });
+
+  // With nothing in flight close({ timeout }) closes the connection in the call. A release() right after
+  // it cannot give that connection back to the pool.
+  test("reserved.close({ timeout }) followed by release() gives the next caller a new connection", async () => {
+    const { result, received } = await withServer(async sql => {
       const reserved = await sql.reserve();
+      await reserved.unsafe("SELECT 'reserved'");
       const closed = reserved.close({ timeout: 60 });
       reserved.release();
       const next = code(sql.unsafe("SELECT 'next'").execute());
@@ -613,7 +724,35 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       return next;
     });
     expect(result).toBeNull();
-    expect(sent).toEqual(["SELECT 'next'"]);
+    expect(received).toEqual([
+      { conn: 0, sql: "SELECT 'reserved'" },
+      { conn: 1, sql: "SELECT 'next'" },
+    ]);
+  });
+
+  // then() starts a query one job later, so a close({ timeout }) in the tick of then() comes first. The pool
+  // refuses that query, and a handle does the same.
+  test("close({ timeout }) in the tick of then() refuses the query on a handle as on the pool", async () => {
+    const started = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => null,
+        err => err.code,
+      );
+    const { result, sent } = await withServer(async sql => {
+      const reserved = await sql.reserve();
+      const onReserved = started(reserved.unsafe("SELECT 'on reserved'"));
+      await reserved.close({ timeout: 60 });
+      const inTx = await inTransaction(sql, async tx => {
+        const onTransaction = started(tx.unsafe("SELECT 'in transaction'"));
+        await tx.close({ timeout: 60 });
+        return [await onTransaction];
+      });
+      const onPool = started(sql.unsafe("SELECT 'on pool'"));
+      await sql.close({ timeout: 60 });
+      return [await onReserved, ...inTx, await onPool];
+    });
+    expect(result).toEqual([closedCode, closedCode, closedCode, closedCode]);
+    expect(sent).toEqual([beginCommand, "ROLLBACK"]);
   });
 
   test("tx.close() lets a query in flight finish and rejects one that starts later", async () => {
@@ -630,42 +769,58 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     expect(sent).toEqual([beginCommand, "SELECT 'in flight'", "ROLLBACK"]);
   });
 
+  // tx.commitDistributed() and tx.rollbackDistributed() are statements of the caller, like tx.unsafe().
   test("tx.close({ timeout }) rolls back at once when nothing is in flight", async () => {
     const { result, sent } = await withServer(sql =>
       inTransaction(sql, async tx => {
-        const sameTick = code(tx.unsafe("SELECT 'same tick'"));
-        await tx.close({ timeout: 60 });
-        return [await sameTick];
+        const lazy = tx.unsafe("SELECT 'lazy'");
+        const sameTick = [code(tx.unsafe("SELECT 'same tick'")), code(tx.commitDistributed("late"))];
+        const closed = tx.close({ timeout: 60 });
+        const after = [
+          code(lazy.execute()),
+          code(tx.unsafe("SELECT 'executed after'").execute()),
+          code(tx.commitDistributed("late")),
+          code(tx.rollbackDistributed("late")),
+        ];
+        await closed;
+        return Promise.all([...sameTick, ...after]);
       }),
     );
-    expect(result).toEqual([closedCode, closedCode]);
+    expect(result).toEqual(Array(7).fill(closedCode));
     expect(sent).toEqual([beginCommand, "ROLLBACK"]);
   });
 
-  test("tx.close({ timeout }) waits for a statement whose then() ran before it", async () => {
-    const { result, sent } = await withServer(sql =>
-      inTransaction(sql, async tx => {
-        const thenBefore = code(tx.unsafe("SELECT 'then before'").then(rows => rows));
-        await tx.close({ timeout: 60 });
-        return [await thenBefore];
-      }),
-    );
-    // How begin() settles after close({ timeout }) is not the subject here.
-    expect(result.slice(1)).toEqual([null]);
-    expect(sent.slice(0, 2)).toEqual([beginCommand, "SELECT 'then before'"]);
+  // begin() sends COMMIT behind the ROLLBACK of a close() that nobody awaited, and resolves. That part is
+  // #32148 and is not the subject: close() makes its ROLLBACK in the call, and a late statement is refused.
+  test.each(closes)("a %s that is not awaited sends ROLLBACK first and refuses a late statement", async (_, end) => {
+    const { result, sent } = await withServer(async sql => [
+      await code(
+        sql.begin(async tx => {
+          await tx.unsafe("SELECT 'first'");
+          end(tx);
+        }),
+      ),
+      ...(await inTransaction(sql, async tx => {
+        await tx.unsafe("SELECT 'second'");
+        end(tx);
+        return [await code(tx.unsafe("SELECT 'late'"))];
+      })),
+    ]);
+    const transaction = (statement: string) => [beginCommand, statement, "ROLLBACK", "COMMIT"];
+    expect(result).toEqual([null, null, closedCode]);
+    expect(sent).toEqual([...transaction("SELECT 'first'"), ...transaction("SELECT 'second'")]);
   });
 
-  test("a second close() in the job after tx.close({ timeout }) sends one ROLLBACK", async () => {
+  test("tx.close() in a distributed transaction sends the statements that roll it back", async () => {
     const { result, sent } = await withServer(sql =>
-      inTransaction(sql, async tx => {
-        const first = tx.close({ timeout: 60 });
-        await tx.close();
-        await first;
-        return [];
-      }),
+      code(
+        sql.beginDistributed("dtx", async tx => {
+          await tx.close();
+        }),
+      ),
     );
-    expect(result).toEqual([closedCode]);
-    expect(sent).toEqual([beginCommand, "ROLLBACK"]);
+    expect(result).toBe(closedCode);
+    expect(sent).toEqual(rollbackDistributed);
   });
 
   // close() checks its argument before it stops the handle.
@@ -693,24 +848,33 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     expect(sent).toEqual([beginCommand, "SELECT 'unsafe'", "SELECT 'tagged'", "COMMIT"]);
   });
 
-  // release() and the end of a transaction do not close the handle's connection.
-  test("a query that first starts after release() or after COMMIT still runs", async () => {
+  // Unchanged from main: release() and the end of a transaction do not stop a query that was made before
+  // them. #43261 asks whether they must. A statement that is made after them is refused where it is made.
+  test("after release() or COMMIT a query that was made before runs and a new statement is refused", async () => {
     const { result, sent } = await withServer(async sql => {
       const reserved = await sql.reserve();
-      const afterRelease = reserved.unsafe("SELECT 'after release'");
+      const beforeRelease = reserved.unsafe("SELECT 'made before release'");
       await reserved.release();
-      let afterCommit: PromiseLike<unknown> | undefined;
+      const afterRelease = code(reserved`SELECT 'made after release'`);
+      let ended: any;
+      let beforeCommit: PromiseLike<unknown> | undefined;
       await sql.begin(async tx => {
-        afterCommit = tx.unsafe("SELECT 'after commit'");
+        ended = tx;
+        beforeCommit = tx.unsafe("SELECT 'made before commit'");
       });
-      return [await code(afterRelease), await code(afterCommit!)];
+      const afterCommit = [
+        code(ended`SELECT 'made after commit'`),
+        code(ended.savepoint(async () => {})),
+        code(ended.commitDistributed("late")),
+      ];
+      return Promise.all([code(beforeRelease), code(beforeCommit!), afterRelease, ...afterCommit]);
     });
-    expect(result).toEqual([null, null]);
-    expect(sent).toEqual([beginCommand, "COMMIT", "SELECT 'after release'", "SELECT 'after commit'"]);
+    expect(result).toEqual([null, null, closedCode, closedCode, closedCode, closedCode]);
+    expect(sent).toEqual([beginCommand, "COMMIT", "SELECT 'made before release'", "SELECT 'made before commit'"]);
   });
 
   // close() runs between the call of savepoint() and the start of its SAVEPOINT statement.
-  test("tx.close() stops a savepoint that did not start", async () => {
+  test.each(closes)("tx.%s stops a savepoint that did not start", async (_, end) => {
     const { result, sent } = await withServer(sql =>
       inTransaction(sql, async tx => {
         let ran = false;
@@ -719,7 +883,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
             ran = true;
           }),
         );
-        await tx.close();
+        await end(tx);
         return [await savepoint, ran];
       }),
     );
@@ -727,23 +891,27 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     expect(sent).toEqual([beginCommand, "ROLLBACK"]);
   });
 
-  // bun:test fails this test if the wait of close({ timeout }) reports the stopped savepoint as an unhandled rejection.
-  test("tx.close({ timeout }) stops a savepoint that did not start", async () => {
+  // A wait that drains ends in COMMIT, as on main: that part is #32148 and is not the subject.
+  test("tx.close({ timeout }) waits for a savepoint that started", async () => {
     const { result, sent } = await withServer(sql =>
       inTransaction(sql, async tx => {
-        let ran = false;
+        const started = Promise.withResolvers<void>();
+        const body = Promise.withResolvers<void>();
         const savepoint = code(
-          tx.savepoint(async () => {
-            ran = true;
+          tx.savepoint(() => {
+            started.resolve();
+            return body.promise;
           }),
         );
-        await tx.close({ timeout: 60 });
-        return [await savepoint, ran];
+        await started.promise;
+        const closed = tx.close({ timeout: 60 });
+        body.resolve();
+        await closed;
+        return [await savepoint];
       }),
     );
-    // How begin() settles after close({ timeout }) is not the subject here.
-    expect(result.slice(1)).toEqual([closedCode, false]);
-    expect(sent.filter(statement => statement.startsWith("SAVEPOINT"))).toEqual([]);
+    expect(result).toEqual([null, null]);
+    expect(sent).toEqual([beginCommand, "SAVEPOINT s0", "RELEASE SAVEPOINT s0", "COMMIT"]);
   });
 
   // The reserved connection closes after the savepoint made its RELEASE SAVEPOINT statement and before that starts.

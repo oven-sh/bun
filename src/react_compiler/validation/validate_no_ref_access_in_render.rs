@@ -10,7 +10,7 @@ use crate::diagnostics::{
 };
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
-use crate::hir::visitors::{self, each_pattern_operand, each_terminal_operand};
+use crate::hir::visitors::{self, pattern_operands, terminal_operands};
 use crate::hir::{
     AliasingEffect, BlockId, HirFunction, Identifier, IdentifierId, InstructionValue, Place,
     PrimitiveValue, PropertyLiteral, Terminal, Type, UnaryOperator,
@@ -1061,7 +1061,7 @@ fn validate_no_ref_access_in_render_impl(
                                     )
                                 }),
                             );
-                            for pattern_place in each_pattern_operand(&lvalue.pattern) {
+                            for pattern_place in pattern_operands(&lvalue.pattern) {
                                 ref_env.set(
                                     pattern_place.identifier,
                                     lookup_type.clone().unwrap_or_else(|| {
@@ -1470,7 +1470,7 @@ fn validate_no_ref_access_in_render_impl(
             if !is_return && !ref_env.may_report() {
                 continue;
             }
-            for operand in &each_terminal_operand(&block.terminal) {
+            for operand in terminal_operands(&block.terminal) {
                 if !is_return {
                     validate_no_ref_value_access(errors, ref_env, operand);
                     if !matches!(&block.terminal, Terminal::If { .. }) {

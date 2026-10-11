@@ -13,24 +13,26 @@
 
 use crate::collections::FxHashSet as HashSet;
 
+use crate::collections::IdBitSet;
 use crate::collections::IdMap;
 use crate::collections::IndexMap;
+use crate::collections::IndexSet;
 use crate::hir::AstAlloc;
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::EvaluationOrder;
 use crate::hir::GotoVariant;
 use crate::hir::HirFunction;
-use crate::hir::IdentifierId;
+use crate::hir::Place;
 use crate::hir::ScopeId;
 use crate::hir::Terminal;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::cfg_utils::reverse_postorder_blocks;
 use crate::hir::environment::Environment;
-use crate::hir::visitors::each_instruction_lvalue_ids;
-use crate::hir::visitors::each_instruction_operand_ids;
-use crate::hir::visitors::each_terminal_operand_ids;
+use crate::hir::visitors::lvalues;
+use crate::hir::visitors::operands;
+use crate::hir::visitors::terminal_operands;
 
 // =============================================================================
 // getScopes
@@ -40,11 +42,12 @@ use crate::hir::visitors::each_terminal_operand_ids;
 /// Corresponds to TS `getScopes(fn)`.
 fn get_scopes(func: &HirFunction, env: &Environment) -> Vec<ScopeId> {
     let mut scope_ids: HashSet<ScopeId> = HashSet::default();
+    let mut seen: IdBitSet<ScopeId> = IdBitSet::new();
 
-    let mut visit_place = |identifier_id: IdentifierId| {
-        if let Some(scope_id) = env.identifiers[identifier_id.0 as usize].scope {
+    let mut visit_place = |place: &Place| {
+        if let Some(scope_id) = env.identifiers[place.identifier.0 as usize].scope {
             let range = &env.scopes[scope_id.0 as usize].range;
-            if range.start != range.end {
+            if range.start != range.end && seen.insert(scope_id) {
                 scope_ids.insert(scope_id);
             }
         }
@@ -53,19 +56,10 @@ fn get_scopes(func: &HirFunction, env: &Environment) -> Vec<ScopeId> {
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
-            // lvalues
-            for id in each_instruction_lvalue_ids(instr) {
-                visit_place(id);
-            }
-            // operands
-            for id in each_instruction_operand_ids(instr, env) {
-                visit_place(id);
-            }
+            lvalues(instr).for_each(&mut visit_place);
+            operands(&instr.value, &env.functions).for_each(&mut visit_place);
         }
-        // terminal operands
-        for id in each_terminal_operand_ids(&block.terminal) {
-            visit_place(id);
-        }
+        terminal_operands(&block.terminal).for_each(&mut visit_place);
     }
 
     scope_ids.into_iter().collect()
@@ -192,7 +186,8 @@ fn collect_scope_rewrites(
 
 struct RewriteContext {
     next_block_id: BlockId,
-    next_preds: Vec<BlockId>,
+    /// `None`: those of the source block.
+    next_pred: Option<BlockId>,
     instr_slice_idx: usize,
     rewrites: Vec<BasicBlock>,
 }
@@ -200,7 +195,7 @@ struct RewriteContext {
 fn handle_rewrite(
     terminal_info: &TerminalRewriteInfo,
     idx: usize,
-    source_block: &BasicBlock,
+    source_block: &mut BasicBlock,
     context: &mut RewriteContext,
 ) {
     let terminal: Terminal = match terminal_info {
@@ -228,10 +223,10 @@ fn handle_rewrite(
     };
 
     let curr_block_id = context.next_block_id;
-    let mut preds = crate::collections::IndexSet::new();
-    for &p in &context.next_preds {
-        preds.insert(p);
-    }
+    let preds = match context.next_pred {
+        Some(pred) => IndexSet::from([pred]),
+        None => std::mem::take(&mut source_block.preds),
+    };
 
     context.rewrites.push(BasicBlock {
         kind: source_block.kind,
@@ -241,15 +236,11 @@ fn handle_rewrite(
         ),
         preds,
         // Only the first rewrite should reuse source block phis
-        phis: if context.rewrites.is_empty() {
-            source_block.phis.clone()
-        } else {
-            AstAlloc::vec()
-        },
+        phis: AstAlloc::take(&mut source_block.phis),
         terminal,
     });
 
-    context.next_preds = vec![curr_block_id];
+    context.next_pred = Some(curr_block_id);
     context.next_block_id = match terminal_info {
         TerminalRewriteInfo::StartScope { block_id, .. } => *block_id,
         TerminalRewriteInfo::EndScope { fallthrough_id, .. } => *fallthrough_id,
@@ -281,12 +272,11 @@ pub(crate) fn build_reactive_scope_terminals_hir(
     // Reverse so we can pop from the end while traversing in ascending order
     queued_rewrites.reverse();
 
-    for (_block_id, block) in &func.body.blocks {
-        let preds_vec: Vec<BlockId> = block.preds.iter().copied().collect();
+    for (_block_id, mut block) in std::mem::take(&mut func.body.blocks) {
         let mut context = RewriteContext {
             next_block_id: block.id,
             rewrites: Vec::new(),
-            next_preds: preds_vec,
+            next_pred: None,
             instr_slice_idx: 0,
         };
 
@@ -303,23 +293,19 @@ pub(crate) fn build_reactive_scope_terminals_hir(
                 if rewrite.instr_id() <= instr_id {
                     // Need to pop before calling handle_rewrite
                     let rewrite = queued_rewrites.pop().unwrap();
-                    handle_rewrite(&rewrite, i, block, &mut context);
+                    handle_rewrite(&rewrite, i, &mut block, &mut context);
                 } else {
                     break;
                 }
             }
         }
 
-        if !context.rewrites.is_empty() {
-            let mut final_preds = crate::collections::IndexSet::new();
-            for &p in &context.next_preds {
-                final_preds.insert(p);
-            }
+        if let Some(final_pred) = context.next_pred {
             let final_block = BasicBlock {
                 id: context.next_block_id,
                 kind: block.kind,
-                preds: final_preds,
-                terminal: block.terminal.clone(),
+                preds: IndexSet::from([final_pred]),
+                terminal: block.terminal,
                 instructions: AstAlloc::vec_from_slice(
                     &block.instructions[context.instr_slice_idx..],
                 ),
@@ -332,7 +318,7 @@ pub(crate) fn build_reactive_scope_terminals_hir(
             }
             rewritten_final_blocks.insert(block.id, final_block_id);
         } else {
-            next_blocks.insert(block.id, block.clone());
+            next_blocks.insert(block.id, block);
         }
     }
 
@@ -382,15 +368,6 @@ pub(crate) fn build_reactive_scope_terminals_hir(
 ///
 /// Corresponds to TS `fixScopeAndIdentifierRanges`.
 fn fix_scope_and_identifier_ranges(func: &HirFunction, env: &mut Environment) {
-    // Save original scope ranges before updating them. In TS,
-    // identifier.mutableRange and scope.range may or may not be the same
-    // JS object. Only identifiers whose mutableRange shares the same object
-    // reference as scope.range see the update automatically. We simulate
-    // this by only syncing identifiers whose mutableRange matches the
-    // scope's pre-update range.
-    let original_scope_ranges: Vec<crate::hir::MutableRange> =
-        env.scopes.iter().map(|s| s.range.clone()).collect();
-
     for (_block_id, block) in &func.body.blocks {
         match &block.terminal {
             Terminal::Scope {
@@ -420,7 +397,7 @@ fn fix_scope_and_identifier_ranges(func: &HirFunction, env: &mut Environment) {
 
     // Sync identifier mutable ranges with their scope ranges, but ONLY
     // for identifiers whose mutableRange has the same identity as their
-    // scope's ORIGINAL range (before the updates above). In TS,
+    // scope's range, which the updates above have not changed. In TS,
     // identifier.mutableRange and scope.range are only the same JS object
     // for identifiers that were the canonical representative when the scope
     // was created. After MergeOverlappingReactiveScopesHIR, repointed
@@ -428,9 +405,8 @@ fn fix_scope_and_identifier_ranges(func: &HirFunction, env: &mut Environment) {
     // not the root scope's range — so they should NOT be synced here.
     for ident in &mut env.identifiers {
         if let Some(scope_id) = ident.scope {
-            let original = &original_scope_ranges[scope_id.0 as usize];
-            if ident.mutable_range.same_range(original) {
-                let scope_range = &env.scopes[scope_id.0 as usize].range;
+            let scope_range = &env.scopes[scope_id.0 as usize].range;
+            if ident.mutable_range.same_range(scope_range) {
                 ident.mutable_range.start = scope_range.start;
                 ident.mutable_range.end = scope_range.end;
             }

@@ -215,14 +215,14 @@ pub(crate) fn infer_reactive_places(
         }
 
         let had_changes = reactive_map.snapshot();
-        debug_assert!(!is_settled || !(had_changes || stable_sidemap.has_changes));
+        debug_assert!(!is_settled || !had_changes && stable_sidemap.changed == Changed::Nothing);
         if !had_changes || is_settled {
             break;
         }
         // A round that has changed nothing after it had read it reads the same again, and so
         // writes the same again.
-        is_settled =
-            !reactive_map.has_changed_what_was_read && !stable_sidemap.has_changed_what_was_read;
+        is_settled = !reactive_map.has_changed_what_was_read
+            && stable_sidemap.changed != Changed::WhatWasRead;
         if is_settled && !cfg!(debug_assertions) {
             break;
         }
@@ -335,8 +335,15 @@ struct StableSidemap {
     /// Indexed by `IdentifierId.0`: the last round that has read `map`.
     read_in: Vec<u32>,
     round: u32,
-    has_changes: bool,
-    has_changed_what_was_read: bool,
+    changed: Changed,
+}
+
+/// What a round has changed, at the most.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Changed {
+    Nothing,
+    WhatWasNotRead,
+    WhatWasRead,
 }
 
 impl StableSidemap {
@@ -345,15 +352,13 @@ impl StableSidemap {
             map: vec![None; identifier_count],
             read_in: vec![0; identifier_count],
             round: 0,
-            has_changes: false,
-            has_changed_what_was_read: false,
+            changed: Changed::Nothing,
         }
     }
 
     fn start_round(&mut self) {
         self.round += 1;
-        self.has_changes = false;
-        self.has_changed_what_was_read = false;
+        self.changed = Changed::Nothing;
     }
 
     #[inline]
@@ -361,8 +366,12 @@ impl StableSidemap {
         let slot = &mut self.map[id.0 as usize];
         if *slot != Some(value) {
             *slot = Some(value);
-            self.has_changes = true;
-            self.has_changed_what_was_read |= self.read_in[id.0 as usize] == self.round;
+            self.changed = self
+                .changed
+                .max(match self.read_in[id.0 as usize] == self.round {
+                    true => Changed::WhatWasRead,
+                    false => Changed::WhatWasNotRead,
+                });
         }
     }
 

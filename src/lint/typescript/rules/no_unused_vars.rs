@@ -14,6 +14,7 @@ use bun_lint_eslint::rules::no_unused_vars::{
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::cell::RefCell;
 use std::cmp::Reverse;
 
 /// Disallow unused variables.
@@ -57,7 +58,11 @@ fn oxlint_reports_the_declaration(file: &File) -> bool {
 
 /// What is a use for oxlint 1.87 and not for typescript-eslint: `has_usages` of its rule, as far as values that are read go. It is
 /// asked about the few variables that are about to be reported.
-fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bool) -> bool {
+fn oxlint_counts_as_used<'a>(
+    variable: Variable<'a>,
+    reports_vars_only_used_as_types: bool,
+    walks: &RefCell<OxlintWalks<'a>>,
+) -> bool {
     let (mut is_variable, mut is_function_or_class) = (false, false);
     for def in variable.defs() {
         is_variable |= matches!(def, Declaration::Var(_) | Declaration::Param(_));
@@ -77,7 +82,8 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
     {
         return true;
     }
-    let mut walks = OxlintWalks::default();
+    let walks = &mut *walks.borrow_mut();
+    walks.values = None;
     variable.references().any(|it| {
         if !it.is_value() {
             return !variable.defs().filter_map(Declaration::node).any(|node| node.span().contains(it.span()));
@@ -86,10 +92,10 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
             return !reports_vars_only_used_as_types && oxlint_counts_type_query_as_use(variable, it);
         }
         it.is_read()
-            && !(is_variable && oxlint_is_self_reassignment(variable, it, &mut walks))
+            && !(is_variable && oxlint_is_self_reassignment(variable, it, walks))
             // `is_definitely_reassignable_variable` holds for a `const` too: it asks for a `const` that is a function.
-            && !(is_variable && oxlint_is_discarded_read(variable, it, &mut walks))
-            && !(is_callable && oxlint_is_self_call(variable, it, is_function_or_class, &mut walks))
+            && !(is_variable && oxlint_is_discarded_read(variable, it, walks))
+            && !(is_callable && oxlint_is_self_call(variable, it, is_function_or_class, walks))
     })
 }
 
@@ -336,32 +342,46 @@ fn is_member_expression(e: Expr) -> bool {
 }
 
 /// What is around `node` as oxc has it, without what it calls transparent: parentheses, which are no nodes here, and what only
-/// concerns types. A function and a sequence are one node each.
-fn oxlint_relevant_parents<'a>(node: Node<'a>) -> impl Iterator<Item = Node<'a>> {
-    node.ancestors().filter(|it| match it {
-        Node::Expr(e) => match e.kind() {
-            ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } | ExprKind::NonNull(_) | ExprKind::Instantiation { .. } => false,
-            ExprKind::Fn(_) | ExprKind::Class(_) => false,
-            ExprKind::Binary { op: BinOp::Comma, .. } => {
-                !matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Binary { op: BinOp::Comma, left, .. } if left == *e))
+/// concerns types. A function and a sequence are one node each. `None` for the file.
+fn oxlint_relevant_parent<'a>(node: Node<'a>, walks: &mut OxlintWalks<'a>) -> Option<Node<'a>> {
+    let is_left_of_comma = |child: Node<'a>, parent: Node<'a>| {
+        matches!(parent, Node::Expr(it) if it.binary_op() == Some(BinOp::Comma) && it.left().map(Node::Expr) == Some(child))
+    };
+    let mut at = node;
+    while !matches!(at, Node::File(_)) {
+        at = at.parent();
+        let Node::Expr(e) = at else {
+            return Some(at);
+        };
+        match e.tag() {
+            ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation => {}
+            ExprTag::Fn | ExprTag::Class => {}
+            ExprTag::Binary if e.binary_op() == Some(BinOp::Comma) => {
+                return walks.sequences.find(at, |child, parent| (!is_left_of_comma(child, parent)).then_some(child));
             }
-            _ => true,
-        },
-        _ => true,
-    })
+            _ => return Some(at),
+        }
+    }
+    None
 }
 
-/// What the walks up from the references to one variable have found, for those that start far below: the operands of
-/// `a = a + a + ..`.
+/// What the walks up from the references of a file have found, for those that start far below: the operands of
+/// `a = a + a + ..` and of `a(), b(), ..`.
 #[derive(Default)]
 struct OxlintWalks<'a> {
+    /// The outermost of the `a, b` that a node is or is the left operand of.
+    sequences: AncestorMemo<'a, Node<'a>>,
+    /// The statement around a node.
+    statements: AncestorMemo<'a, Stmt<'a>>,
+    /// The loop, the function or the file around a node.
+    loops: AncestorMemo<'a, Node<'a>>,
     /// The first node around a node that `oxlint_is_self_reassignment` looks at.
     looked_at: AncestorMemo<'a, Node<'a>>,
     /// `oxlint_outermost_operation`
     operations: AncestorMemo<'a, Node<'a>>,
     /// The outermost of the `a && b`, `a || b`, `a ?? b` that a node is an operand of without anything else in between.
     logical: AncestorMemo<'a, Node<'a>>,
-    /// What is given to the variable.
+    /// What is given to the variable that is looked at.
     values: Option<SmallVec<[Span; 2]>>,
 }
 
@@ -460,7 +480,7 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
                         operand,
                     } => {
                         // `for (let x = 0; x++; ) {}`: that the body runs depends on it.
-                        let head = oxlint_relevant_parents(node).find_map(Node::as_stmt).map(Stmt::kind);
+                        let head = walks.statements.find(node, |_, it| it.as_stmt()).map(Stmt::kind);
                         let is_in_head = matches!(head, Some(StmtKind::For { test, update, .. })
                             if test.is_some_and(|it| it.span().contains(at)) || update.is_some_and(|it| it.span().contains(at)));
                         if !is_in_head && !is_member_expression(operand.skip_type_wrappers()) {
@@ -493,13 +513,13 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
                 StmtKind::Switch { expr, .. } if expr.span().contains(at) => return false,
                 StmtKind::ForIn { .. } | StmtKind::ForOf { .. } | StmtKind::While { .. } => break,
                 StmtKind::Expr(_) => {
-                    if oxlint_is_in_loop_body(statement) || oxlint_is_in_return_statement(statement) {
+                    if oxlint_is_in_loop_body(statement, walks) || oxlint_is_in_return_statement(statement) {
                         return false;
                     }
                     break;
                 }
                 // Whether it is returned by the function that the variable is.
-                StmtKind::Return(_) => return oxlint_nearest_function(node, variable) == Some(variable.symbol()),
+                StmtKind::Return(_) => return oxlint_nearest_function(node, variable, walks) == Some(variable.symbol()),
                 _ => {}
             },
             Node::Case(case) if case.test().is_some_and(|it| it.span().contains(at)) => return false,
@@ -512,9 +532,13 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
 }
 
 /// oxlint's `get_nearest_function`: the variable that the function around `node` is, or that it is the value of.
-fn oxlint_nearest_function<'a>(node: Node<'a>, variable: Variable<'a>) -> Option<Symbol<'a>> {
+fn oxlint_nearest_function<'a>(
+    node: Node<'a>,
+    variable: Variable<'a>,
+    walks: &mut OxlintWalks<'a>,
+) -> Option<Symbol<'a>> {
     let (mut is_arrow, mut assigned, mut child) = (false, None, node);
-    for parent in oxlint_relevant_parents(node) {
+    while let Some(parent) = oxlint_relevant_parent(child, walks) {
         match parent {
             Node::Func(func) if func.is_arrow() => is_arrow = true,
             Node::Func(func) => return func.symbol(),
@@ -549,7 +573,7 @@ fn oxlint_is_discarded_read<'a>(variable: Variable<'a>, reference: Reference<'a>
     let at = e.span();
     let is_assignment = |it: Expr| it.skip_type_wrappers().tag() == ExprTag::Assign;
     let mut parent = oxlint_outermost_operation(Node::Expr(e), walks);
-    for grandparent in oxlint_relevant_parents(parent) {
+    while let Some(grandparent) = oxlint_relevant_parent(parent, walks) {
         let (inner, outer) = (std::mem::replace(&mut parent, grandparent), grandparent.as_expr().map(Expr::kind));
         let Node::Expr(inner) = inner else {
             // A function.
@@ -633,12 +657,13 @@ fn oxlint_is_in_function_that_is_the_variable<'a>(
     walks: &mut OxlintWalks<'a>,
 ) -> bool {
     let start = oxlint_outermost_operation(reference.node(), walks);
-    let mut parents = oxlint_relevant_parents(start).peekable();
+    let mut around = oxlint_relevant_parent(start, walks);
     let mut is_value_of_variable = false;
-    while let Some(parent) = parents.next() {
+    while let Some(parent) = around {
+        around = oxlint_relevant_parent(parent, walks);
         let is_function_expression = matches!(parent, Node::Func(func) if matches!(func.kind(), FnKind::Expr | FnKind::Arrow));
         // Whether what is around gives the value to something, and whether that is the variable.
-        let (is_given, is_variable) = match parents.peek() {
+        let (is_given, is_variable) = match around {
             Some(Node::VarDecl(declarator)) => (true, declarator.pat().symbol() == Some(variable.symbol())),
             Some(Node::Expr(around)) => match around.kind() {
                 ExprKind::Assign { target, .. } => (true, refers_to(target, variable)),
@@ -658,11 +683,11 @@ fn oxlint_is_in_function_that_is_the_variable<'a>(
 }
 
 /// oxlint's `is_in_loop_body`: what a variable is in one turn of a loop, the next turn can see.
-fn oxlint_is_in_loop_body(statement: Stmt) -> bool {
-    let around = Node::Stmt(statement).ancestors().find(|it| match it {
-        Node::Stmt(it) => it.is_loop(),
-        Node::Func(_) | Node::File(_) => true,
-        _ => false,
+fn oxlint_is_in_loop_body<'a>(statement: Stmt<'a>, walks: &mut OxlintWalks<'a>) -> bool {
+    let around = walks.loops.find(Node::Stmt(statement), |_, it| match it {
+        Node::Stmt(loop_or_not) => loop_or_not.is_loop().then_some(it),
+        Node::Func(_) | Node::File(_) => Some(it),
+        _ => None,
     });
     match around.and_then(Node::as_stmt).map(Stmt::kind) {
         Some(
@@ -1386,7 +1411,7 @@ impl NoUnusedVars {
     fn is_unused_variable<'a>(
         &self,
         cx: &Cx<'a, Self>,
-        (analysis, unused_for_oxlint): (&VariableAnalysis<'a>, &SymbolSet),
+        (analysis, unused_for_oxlint, walks): (&VariableAnalysis<'a>, &SymbolSet, &RefCell<OxlintWalks<'a>>),
         (reported, last_used_args): (&mut SymbolSet, &mut FxHashMap<Func<'a>, u32>),
         (used, variable): (bool, Variable<'a>),
     ) -> bool {
@@ -1460,7 +1485,7 @@ impl NoUnusedVars {
                                 (true, it) if unused_for_oxlint.contains(it.symbol()) => false,
                                 (true, it) => {
                                     !analysis.is_unused(it.symbol())
-                                        || oxlint_counts_as_used(it, self.reports_vars_only_used_as_types)
+                                        || oxlint_counts_as_used(it, self.reports_vars_only_used_as_types, walks)
                                 }
                                 (false, it) => it.references().next().is_some() || analysis.is_eslint_used(it),
                             })
@@ -1557,10 +1582,11 @@ impl NoUnusedVars {
             true => oxlint_may_be_unused_after_all(file, &cx.state.commas),
             false => Vec::new(),
         };
+        let walks = RefCell::default();
         let is_added = |it: &Variable<'a>| {
             !analysis.is_unused(it.symbol())
                 && !analysis.is_eslint_used(*it)
-                && !oxlint_counts_as_used(*it, self.reports_vars_only_used_as_types)
+                && !oxlint_counts_as_used(*it, self.reports_vars_only_used_as_types, &walks)
                 && !is_exported(*it)
         };
         let added: Vec<Variable<'a>> = candidates.into_iter().map(Variable::new).filter(is_added).collect();
@@ -1574,7 +1600,7 @@ impl NoUnusedVars {
         let mut unused_vars = Vec::new();
         let mut last_used_args = FxHashMap::default();
         for variable in variables {
-            let seen = (&analysis, &unused_for_oxlint);
+            let seen = (&analysis, &unused_for_oxlint, &walks);
             if self.is_unused_variable(cx, seen, (&mut reported, &mut last_used_args), variable) {
                 unused_vars.push(variable.1);
             }
@@ -1585,7 +1611,7 @@ impl NoUnusedVars {
         for unused_var in unused_vars {
             if file.language().is_oxlint
                 && (oxlint_leaves_alone(unused_var)
-                    || oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types)
+                    || oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types, &walks)
                     || unused_var.defs().any(can_be_hidden_by_type_parameter)
                         && (used_beside_infer.get_or_insert_with(|| oxlint_used_beside_infer(file)))
                             .contains(unused_var.symbol()))

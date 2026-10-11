@@ -17,7 +17,7 @@ use crate::diagnostics::{
 use crate::hir::dominator::{BlockSet, compute_unconditional_blocks};
 use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::object_shape::HookKind;
-use crate::hir::visitors::each_terminal_operand;
+use crate::hir::visitors::terminal_operands;
 use crate::hir::{
     BlockId, FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place,
     PropertyLiteral, Type, visitors,
@@ -447,8 +447,8 @@ pub(crate) fn validate_hooks_usage(
         }
 
         // Visit terminal operands
-        for place in each_terminal_operand(&block.terminal) {
-            visit_place(&place, &value_kinds, &mut errors_by_loc, env)?;
+        for place in terminal_operands(&block.terminal) {
+            visit_place(place, &value_kinds, &mut errors_by_loc, env)?;
         }
     }
 

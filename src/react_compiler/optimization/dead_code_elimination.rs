@@ -158,7 +158,7 @@ fn reference_reassigned_variables(
         InstructionValue::Destructure { lvalue, .. }
             if lvalue.kind == InstructionKind::Reassign =>
         {
-            for place in visitors::each_pattern_operand(&lvalue.pattern) {
+            for place in visitors::pattern_operands(&lvalue.pattern) {
                 reference(state, identifiers, place.identifier);
             }
         }
@@ -194,7 +194,7 @@ fn find_referenced_identifiers(
         // In reverse order (postorder - successors before predecessors)
         for block in func.body.blocks.values().rev() {
             // Mark terminal operands
-            for place in visitors::each_terminal_operand(&block.terminal) {
+            for place in visitors::terminal_operands(&block.terminal) {
                 reference(&mut state, &env.identifiers, place.identifier);
             }
 
@@ -394,7 +394,7 @@ fn pruneable_value(value: &InstructionValue, state: &State, env: &Environment) -
         InstructionValue::Destructure { lvalue, .. } => {
             let mut is_id_or_name_used_flag = false;
             let mut is_id_used_flag = false;
-            for place in visitors::each_pattern_operand(&lvalue.pattern) {
+            for place in visitors::pattern_operands(&lvalue.pattern) {
                 if is_id_used(state, place.identifier) {
                     is_id_or_name_used_flag = true;
                     is_id_used_flag = true;

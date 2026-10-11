@@ -1438,3 +1438,103 @@ describe("req.socket reports how the client closed the connection", () => {
     );
   }
 });
+
+// Like Node.js's net.Socket, the connection socket emits 'close' with the hadError argument,
+// and not in the tick of 'error': a throw from the 'error' emit cannot skip it, nor the
+// response 'close' that comes from it. A listener that throws while the closed connection is
+// released does not stop the release either.
+// Runs in a subprocess because what a listener throws is an uncaught exception.
+describe("req.socket emits 'close' with hadError, also when a listener throws", () => {
+  // What each row of the fixture prints. `false`: the fixture leaves the row out over TLS.
+  const rows: [name: string, events: string[], overTls?: false][] = [
+    ["destroy()", ["response close", "socket close false"]],
+    ["destroy(err)", ["socket error: destroyed", "response close", "socket close true", "closeEmitted true true"]],
+    ["destroy(err) twice", ["socket error: first", "response close", "socket close true"]],
+    ["res.destroy(err)", ["socket error: destroyed", "response close", "socket close true"]],
+    ["destroySoon()", ["response close", "socket close false"]],
+    ["resetAndDestroy()", ["response close", "socket close false"], false],
+    ["response with Connection: close", ["response close", "socket close false"]],
+    ["closeAllConnections()", ["response close", "socket close false"]],
+    ["closeIdleConnections()", ["response close", "socket close false"]],
+    ["socket timeout", ["response close", "socket close false"]],
+    ["client FIN", ["response close", "socket close false"]],
+    ["client RST", ["socket error: ECONNRESET", "response close", "socket close true"]],
+    [
+      "destroy(err), no 'error' listener",
+      ["socket error: destroyed", "uncaught: destroyed", "response close", "socket close true"],
+    ],
+    [
+      "destroy(err), 'error' listener throws",
+      ["socket error: destroyed", "uncaught: thrown by 'error'", "response close", "socket close true"],
+    ],
+    [
+      "destroy(err), 'clientError' listener throws",
+      ["socket error: destroyed", "uncaught: thrown by 'clientError'", "response close", "socket close true"],
+    ],
+    [
+      "res.destroy(err), 'clientError' listener throws",
+      ["socket error: destroyed", "uncaught: thrown by 'clientError'", "response close", "socket close true"],
+    ],
+    [
+      "req.destroy(err), 'clientError' listener throws",
+      ["socket error: destroyed", "uncaught: thrown by 'clientError'", "response close", "socket close true"],
+    ],
+    [
+      "pipeline() to the response fails, 'clientError' listener throws",
+      [
+        "socket error: destroyed",
+        "uncaught: thrown by 'clientError'",
+        "response close",
+        "socket close true",
+        "pipeline callback: destroyed",
+      ],
+    ],
+    [
+      "client RST, 'clientError' listener throws",
+      ["socket error: ECONNRESET", "uncaught: thrown by 'clientError'", "response close", "socket close true"],
+    ],
+    [
+      "destroy(err) in 'connection', no 'error' listener",
+      ["socket error: destroyed", "uncaught: destroyed", "socket close true"],
+    ],
+    ["destroy(err) of the 'upgrade' socket", ["socket error: destroyed", "uncaught: destroyed", "socket close true"]],
+    [
+      "destroy(err) of the 'upgrade' socket, server.close() pending",
+      ["socket error: destroyed", "uncaught: destroyed", "socket close true"],
+    ],
+    ["destroy(err) of the 'connect' socket", ["socket error: destroyed", "uncaught: destroyed", "socket close true"]],
+    [
+      "destroy(err) of the 'connect' socket, server.close() pending",
+      ["socket error: destroyed", "uncaught: destroyed", "socket close true"],
+    ],
+    ["finished() of a tunnel that both sides end", ["finished undefined", "socket close false"]],
+    [
+      "idle connection, 'readable' listener throws at the client's FIN",
+      ["response close", "uncaught: thrown by 'readable'", "socket close false", "connections 0", "server close"],
+    ],
+    ["destroy(err, callback), callback throws", ["response close", "socket close true"]],
+    ["destroy(undefined, callback), callback throws", ["response close", "socket close false"]],
+    ["tunnel write callback throws, destroy()", ["uncaught: thrown by the write callback", "socket close false"]],
+    ["tunnel write callback throws, client RST", ["uncaught: thrown by the write callback", "socket close"]],
+    ["Readable: destroy(err), 'error' listener throws", ["uncaught: thrown by 'error'"], false],
+    [
+      "Duplex with an asynchronous _destroy(): destroy(undefined, callback), callback throws",
+      ["uncaught: thrown by the callback"],
+      false,
+    ],
+  ];
+
+  // A debug build needs several seconds to start the fixture.
+  const slowStart = { timeout: process.versions.bun?.includes("debug") ? 90_000 : undefined };
+
+  // Not concurrent: in a debug build the fixture takes the CPU time that the tests above need.
+  test.each(["http", "https"])("%s", slowStart, async protocol => {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [path.join(import.meta.dirname, "node-http-socket-close-fixture.js")],
+      { env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", SECURE: protocol === "https" ? "1" : "0" } },
+    );
+    const expected = rows.filter(([, , overTls]) => protocol === "http" || overTls !== false);
+    expect(JSON.parse(stdout)).toEqual(Object.fromEntries(expected.map(([name, events]) => [name, events])));
+  });
+});

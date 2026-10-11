@@ -4,7 +4,6 @@ use bun_lint::utils::ts_scope::{
     is_referenced_in_array_pattern,
 };
 use bun_lint::utils::{estree_span, get_node_by_range_index};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Disallow unused variables.
 pub struct NoUnusedVars {
@@ -100,13 +99,7 @@ enum Variable<'a> {
 /// Whether `scope` is in a class that `symbol` is the name of. There the name is a second variable
 /// in ESLint.
 fn is_in_class_named<'a>(symbol: Symbol<'a>, scope: Scope<'a>) -> bool {
-    if symbol.declaration_count() > 4 {
-        return scope.chain().any(|it| matches!(it.node(), Node::Class(class) if class.symbol() == Some(symbol)));
-    }
-    symbol.declarations().any(|def| match def {
-        Declaration::Class(class) => class.scope().is_some_and(|inner| inner.contains(scope)),
-        _ => false,
-    })
+    scope.chain().any(|it| matches!(it.node(), Node::Class(class) if class.symbol() == Some(symbol)))
 }
 
 impl<'a> Variable<'a> {
@@ -174,14 +167,7 @@ fn uses_explicit_resource_management(def: Declaration) -> bool {
 
 /// ESLint's `isSelfReference` with `getFunctionDefinitions`: `reference` is in a function that the
 /// variable is the name of, or is initialized with.
-///
-/// `functions`: the scopes of these functions, once a variable with many declarations has been asked
-/// about.
-fn is_self_reference<'a>(
-    variable: Variable<'a>,
-    reference: Reference<'a>,
-    functions: &mut Option<FxHashSet<Scope<'a>>>,
-) -> bool {
+fn is_self_reference<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bool {
     let Variable::Declared { symbol, .. } = variable else {
         return false;
     };
@@ -190,12 +176,7 @@ fn is_self_reference<'a>(
         Declaration::Var(pat) => declarator(pat)?.init()?.as_fn()?.scope(),
         _ => None,
     };
-    let mut scopes = symbol.declarations().filter_map(function);
-    if symbol.declaration_count() <= 4 {
-        return scopes.any(|scope| scope.contains(reference.scope()));
-    }
-    let functions = functions.get_or_insert_with(|| scopes.collect());
-    reference.scope().chain().any(|scope| functions.contains(&scope))
+    symbol.declarations().filter_map(function).any(|scope| scope.contains(reference.scope()))
 }
 
 /// ESLint's `isForInOfRef`.
@@ -228,14 +209,14 @@ fn is_for_in_of_ref(reference: Reference) -> bool {
 
 /// ESLint's `isUsedVariable`, but for `eslintUsed`.
 fn is_used_variable(variable: Variable) -> bool {
-    let (mut rhs, mut functions, mut walks) = (None, None, Walks::default());
+    let (mut rhs, mut walks) = (None, Walks::default());
     variable.references().any(|reference| {
         if is_for_in_of_ref(reference) {
             return true;
         }
         let is_for_itself = is_read_for_itself(reference, rhs, &mut walks);
         rhs = get_rhs_node(reference, rhs, &mut walks);
-        reference.is_read() && !is_for_itself && !is_self_reference(variable, reference, &mut functions)
+        reference.is_read() && !is_for_itself && !is_self_reference(variable, reference)
     })
 }
 
@@ -275,21 +256,13 @@ fn last_used_arg(func: Func) -> u32 {
     last
 }
 
-/// `last_used_arg` of the functions that have been asked about.
-type LastUsedArgs<'a> = FxHashMap<Func<'a>, u32>;
-
 /// ESLint's `isAfterLastUsedArg`, for a parameter `symbol` of `func`.
-fn is_after_last_used_arg<'a>(func: Func<'a>, symbol: Symbol<'a>, known: &mut LastUsedArgs<'a>) -> bool {
+fn is_after_last_used_arg<'a>(func: Func<'a>, symbol: Symbol<'a>) -> bool {
     let first = symbol.declarations().filter_map(|def| match def {
         Declaration::Param(pat) => Some(pat.span().start),
         _ => None,
     });
-    // With few parameters it takes less to look again.
-    let last = match func.params().iter().nth(4) {
-        None => last_used_arg(func),
-        Some(_) => *known.entry(func).or_insert_with(|| last_used_arg(func)),
-    };
-    first.min().is_none_or(|first| last <= first)
+    first.min().is_none_or(|first| last_used_arg(func) <= first)
 }
 
 // ───────────────────────────── suggestions ─────────────────────────────
@@ -947,7 +920,7 @@ impl NoUnusedVars {
         is_defined_beside_rest || variable.references().any(|it| has_rest_sibling(it.node()))
     }
 
-    fn check<'a>(&self, symbol: Symbol<'a>, last_used_args: &mut LastUsedArgs<'a>, cx: &Cx<'a, Self>) {
+    fn check<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
         let Some(def) = symbol.declarations().find(|it| !matches!(it, Declaration::Other)) else {
             return;
         };
@@ -1022,7 +995,7 @@ impl NoUnusedVars {
         if self.args == Args::AfterUsed
             && let Declaration::Param(pat) = def
             && let Estree::Function(func) = Estree::Identifier(pat).parent()
-            && !is_after_last_used_arg(func, symbol, last_used_args)
+            && !is_after_last_used_arg(func, symbol)
         {
             return;
         }
@@ -1116,9 +1089,8 @@ impl Rule for NoUnusedVars {
 
     // At the end, as upstream: other rules mark variables as used while they run.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let mut last_used_args = LastUsedArgs::default();
         for symbol in cx.file().symbols() {
-            self.check(symbol, &mut last_used_args, cx);
+            self.check(symbol, cx);
         }
         if self.vars == Vars::All {
             self.check_global_comments(cx);

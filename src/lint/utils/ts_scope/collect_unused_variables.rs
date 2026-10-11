@@ -26,7 +26,6 @@ use bun_sema::atom::known;
 use bun_sema::bind::PatParent;
 use bun_sema::hir;
 use smallvec::{SmallVec, smallvec};
-use std::cell::OnceCell;
 
 // ───────────────────────────── eslintUsed ─────────────────────────────
 
@@ -356,16 +355,9 @@ impl<'a> Variable<'a> {
     /// `variable.references`
     pub fn references(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let is_class = is_class(self.symbol);
-        // With few declarations it takes less to ask each of them.
-        let classes = (is_class && self.class.is_none() && self.symbol.declaration_count() > 8)
-            .then(|| Ranges::of_classes(self.symbol));
-        self.symbol.references().filter(move |it| {
-            let start = it.ident().start();
-            match &classes {
-                Some(classes) => !classes.contains_offset(start),
-                None => !is_class || self.has_reference_at(start),
-            }
-        })
+        self.symbol
+            .references()
+            .filter(move |it| !is_class || self.has_reference_at(it.ident().start()))
     }
 
     /// Whether a reference to the symbol that is written at `start` is one to this variable.
@@ -891,75 +883,18 @@ fn self_reference_range(definition: Declaration) -> Option<Span> {
     }
 }
 
-/// Ranges, to ask whether an offset is in one of them, in the logarithm of their number.
-pub struct Ranges {
-    /// By where they start. Each ends where the last of those up to it ends.
-    sorted: Vec<Span>,
-}
-
-impl Ranges {
-    #[inline]
-    pub fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
-        Ranges::of(ranges.collect())
-    }
-
-    fn of(mut sorted: Vec<Span>) -> Ranges {
-        crate::utils::sort::sort_unstable_by_key(&mut sorted, |it| it.start);
-        let mut end = 0;
-        for range in &mut sorted {
-            end = end.max(range.end);
-            range.end = end;
-        }
-        Ranges { sorted }
-    }
-
-    /// Where the name of a class is the other variable: in the classes that `symbol` is the name of.
-    fn of_classes(symbol: Symbol) -> Ranges {
-        Ranges::new(symbol.declarations().filter_map(|it| match it {
-            Declaration::Class(class) => Some(class_scope_range(class)),
-            _ => None,
-        }))
-    }
-
-    pub fn contains_offset(&self, offset: u32) -> bool {
-        let before = self.sorted.partition_point(|it| it.start <= offset);
-        (before.checked_sub(1).and_then(|it| self.sorted.get(it))).is_some_and(|it| offset < it.end)
-    }
-}
-
 /// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it,
 /// from outside of its own declaration, and for more than its type unless it is a type.
 fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
     let is_split = facts.has(Facts::CLASS);
-    // With few declarations it takes less to ask each of them.
-    let has_many_declarations = variable.symbol.declaration_count() > 8;
-    let (classes, own_ranges) = (OnceCell::new(), OnceCell::new());
-    let is_in_a_class = |start: u32| {
-        (classes.get_or_init(|| Ranges::of_classes(variable.symbol))).contains_offset(start)
-    };
-    let references = variable.symbol.references().filter(|it| {
-        let start = it.ident().start();
-        match (is_split, variable.class) {
-            (false, _) => true,
-            (true, None) if has_many_declarations => !is_in_a_class(start),
-            (true, _) => variable.has_reference_at(start),
-        }
-    });
+    let references = variable
+        .symbol
+        .references()
+        .filter(|it| !is_split || variable.has_reference_at(it.ident().start()));
     has_use(references, |reference| {
         let is_from_outside = || {
             let start = reference.ident().start();
-            let mut declarations = variable.symbol.declarations();
-            if has_many_declarations {
-                let ranges = own_ranges.get_or_init(|| {
-                    Ranges::new(
-                        declarations
-                            .filter(|it| is_definition(*it))
-                            .filter_map(self_reference_range),
-                    )
-                });
-                return !ranges.contains_offset(start);
-            }
-            !declarations.any(|it| {
+            !variable.symbol.declarations().any(|it| {
                 self_reference_range(it).is_some_and(|range| range.contains_offset(start))
                     && is_definition(it)
             })

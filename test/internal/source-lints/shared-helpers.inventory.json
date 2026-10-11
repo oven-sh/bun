@@ -431,9 +431,6 @@
     "src/format/verify/comments.rs": {
       "lines": 1
     },
-    "src/format/yaml/compose.rs": {
-      "decode_uri_component": 1
-    },
     "src/glob/braces.rs": {
       "parse_integer": 1
     },

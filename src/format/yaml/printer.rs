@@ -1,7 +1,7 @@
 //! Prettier's `language-yaml`: `printer-yaml.js`, `print/*.js` and `utilities.js`.
 
 use super::ast::{Chomping, Id, Kind, List, Node, Tree};
-use super::compose::{ScalarType, scalar_source};
+use super::scalar::scalar_source;
 use crate::css::doc::{Alignment, Elements, Group, IndentCommand, Line};
 use crate::options::ProseWrap;
 use crate::stack::Stack;
@@ -1069,13 +1069,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let Some(node) = node else {
             return true;
         };
-        let kind = match node.kind {
-            Kind::Plain => ScalarType::Plain,
-            Kind::QuoteSingle => ScalarType::QuoteSingle,
-            Kind::QuoteDouble => ScalarType::QuoteDouble,
+        match node.kind {
+            Kind::Plain | Kind::QuoteSingle | Kind::QuoteDouble => {}
             Kind::Alias => return true,
             _ => return false,
-        };
+        }
         if self.prose_wrap == ProseWrap::Preserve {
             return node.position.start.line == node.position.end.line;
         }
@@ -1084,7 +1082,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if source.ends_with(b"\\") || strings::contains(source, b"\\\n") {
             return false;
         }
-        let value = scalar_source(kind, source);
+        let value = scalar_source(node.kind, source);
         match self.prose_wrap {
             ProseWrap::Never => !strings::contains_char(&value, b'\n'),
             _ => strings::index_of_any(&value, b"\n ").is_none(),

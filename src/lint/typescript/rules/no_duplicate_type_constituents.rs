@@ -1,9 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_intrinsic_error_type;
 use bun_lint::types::{Type, TypeFlags};
-use rustc_hash::{FxHashMap, FxHasher};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::hash::{Hash, Hasher};
 
 /// Disallow duplicate constituents of union or intersection types.
 pub struct NoDuplicateTypeConstituents {
@@ -210,121 +209,10 @@ fn is_same_ast_node<'a>(mut a: TypeNode<'a>, mut b: TypeNode<'a>) -> bool {
     }
 }
 
-/// Hashes `text`, of which [`is_same_source`] is asked, without its whitespace. `None` if there can be more to two such texts
-/// than that: a comment, an escape, a character that is not ASCII.
-fn hash_source(text: &[u8], hasher: &mut FxHasher) -> Option<()> {
-    let mut previous = 0;
-    for &byte in text {
-        match byte {
-            b'\\' | b'/' | 0x80.. => return None,
-            // `<!--` and `-->` can start a comment.
-            b'-' if previous == b'-' => return None,
-            b'\t'..=b'\r' | b' ' => {}
-            _ => hasher.write_u8(byte),
-        }
-        previous = byte;
-    }
-    hasher.write_u8(0xFF);
-    Some(())
-}
-
-fn hash_func(func: Func, depth: u32, hasher: &mut FxHasher) -> Option<()> {
-    for param in func.params_with_this() {
-        hasher.write_u8(0xFF);
-        if let Some(ty) = param.ty() {
-            hash_ast_node(ty, depth, hasher)?;
-        }
-    }
-    match func.return_type() {
-        Some(return_type) => hash_ast_node(return_type, depth, hasher),
-        None => Some(()),
-    }
-}
-
 /// [`is_same_ast_node`] of a constituent and a later one. What the later one is a part of is not the same, and all that
 /// is around a type that is nested deeply would be compared with it to the end.
 fn is_repeated_by<'a>(earlier: TypeNode<'a>, later: TypeNode<'a>) -> bool {
     !earlier.span().contains(later.span()) && is_same_ast_node(earlier, later)
-}
-
-/// Hashes some of what two types have in common if [`is_same_ast_node`] holds for them.
-fn hash_ast_node(mut node: TypeNode, depth: u32, hasher: &mut FxHasher) -> Option<()> {
-    while let TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) = node.kind() {
-        node.tag().hash(hasher);
-        node = operand;
-    }
-    node.tag().hash(hasher);
-    if depth >= 16 {
-        return Some(());
-    }
-    let depth = depth + 1;
-    match node.kind() {
-        TypeKind::Ref { name, args } => {
-            for part in name.parts() {
-                hasher.write(part.bytes());
-                hasher.write_u8(0xFF);
-            }
-            for argument in args {
-                hash_ast_node(argument, depth, hasher)?;
-            }
-        }
-        TypeKind::Union(types) | TypeKind::Intersection(types) => {
-            for ty in types {
-                hash_ast_node(ty, depth, hasher)?;
-            }
-        }
-        TypeKind::Tuple(elements) => {
-            for element in elements {
-                hash_ast_node(element.ty(), depth, hasher)?;
-            }
-        }
-        TypeKind::Fn(func) => hash_func(func, depth, hasher)?,
-        TypeKind::Object(members) => {
-            let file = node.file();
-            for member in members {
-                if let Some(key) = member.key() {
-                    hash_source(file.slice(key.span(file)), hasher)?;
-                }
-                if let Some(ty) = member.ty() {
-                    hash_ast_node(ty, depth, hasher)?;
-                }
-                if let Some(func) = member.func() {
-                    hash_func(func, depth, hasher)?;
-                }
-            }
-        }
-        TypeKind::Cond {
-            check,
-            extends,
-            yes,
-            no,
-        } => {
-            for ty in [check, extends, yes, no] {
-                hash_ast_node(ty, depth, hasher)?;
-            }
-        }
-        TypeKind::IndexedAccess { obj, index } => {
-            hash_ast_node(obj, depth, hasher)?;
-            hash_ast_node(index, depth, hasher)?;
-        }
-        TypeKind::Template(_) | TypeKind::Typeof { .. } | TypeKind::Import { .. } => hash_source(node.text(), hasher)?,
-        // The same only if their text is.
-        TypeKind::Keyword(_)
-        | TypeKind::StringLit(_)
-        | TypeKind::NumberLit(_)
-        | TypeKind::BigIntLit { .. }
-        | TypeKind::BoolLit(_) => hasher.write(node.text()),
-        _ => {}
-    }
-    Some(())
-}
-
-/// A number that is the same for two types for which [`is_same_ast_node`] holds. `None`: whether it holds for this type and
-/// another takes a comparison.
-fn fingerprint(node: TypeNode) -> Option<u64> {
-    let mut hasher = FxHasher::default();
-    hash_ast_node(node, 0, &mut hasher)?;
-    Some(hasher.finish())
 }
 
 /// `previous`: for [`DUPLICATE`], `Union` or `Intersection` and the constituent that it repeats.
@@ -395,118 +283,16 @@ fn report<'a>(
     report.fix(|fixer| removed.iter().map(|&span| fixer.remove(span)).collect::<Vec<Fix>>());
 }
 
-/// The name of a type that is nothing but a name.
-fn as_plain_name(node: TypeNode<'_>) -> Option<Ident<'_>> {
-    match node.kind() {
-        TypeKind::Ref { name, args } if name.len() == 1 && args.is_empty() => name.get(0),
-        _ => None,
-    }
-}
-
-/// Whether [`Index::key`] tells `node` from everything that is not the same for
-/// [`is_same_ast_node`].
-fn is_plain(node: TypeNode) -> bool {
-    matches!(
-        node.tag(),
-        TypeTag::Keyword
-            | TypeTag::StringLit
-            | TypeTag::NumberLit
-            | TypeTag::BigIntLit
-            | TypeTag::BoolLit
-            | TypeTag::UniqueSymbol
-    ) || as_plain_name(node).is_some()
-}
-
-/// The constituents of a union of many, which is not searched one by one.
-#[derive(Default)]
-struct Index<'a> {
-    by_key: FxHashMap<(TypeTag, &'a [u8]), TypeNode<'a>>,
-    by_type: FxHashMap<Type<'a>, TypeNode<'a>>,
-    /// Those that are not [plain](is_plain).
-    not_plain: Vec<TypeNode<'a>>,
-    /// The same, by their [`fingerprint`].
-    by_fingerprint: FxHashMap<u64, SmallVec<[TypeNode<'a>; 1]>>,
-    without_fingerprint: Vec<TypeNode<'a>>,
-}
-
-impl<'a> Index<'a> {
-    /// Two with the same key are the same for [`is_same_ast_node`].
-    fn key(node: TypeNode<'a>) -> (TypeTag, &'a [u8]) {
-        (node.tag(), as_plain_name(node).map_or_else(|| node.text(), Ident::bytes))
-    }
-
-    fn insert(&mut self, node: TypeNode<'a>, ty: Type<'a>) {
-        self.by_key.insert(Self::key(node), node);
-        self.by_type.insert(ty, node);
-        if !is_plain(node) {
-            self.not_plain.push(node);
-            match fingerprint(node) {
-                Some(fingerprint) => self.by_fingerprint.entry(fingerprint).or_default().push(node),
-                None => self.without_fingerprint.push(node),
-            }
-        }
-    }
-
-    /// The one that is not [plain](is_plain) and the same as `node`. No two of them are the same.
-    fn find_not_plain(&self, node: TypeNode<'a>) -> Option<TypeNode<'a>> {
-        let is_same = |it: &TypeNode<'a>| is_repeated_by(*it, node);
-        if is_plain(node) {
-            return None;
-        }
-        let Some(fingerprint) = fingerprint(node) else {
-            return self.not_plain.iter().copied().find(is_same);
-        };
-        let with_the_same = self.by_fingerprint.get(&fingerprint).map(|it| it.as_slice()).unwrap_or_default();
-        with_the_same.iter().chain(&self.without_fingerprint).copied().find(is_same)
-    }
-}
-
 struct Constituents<'a> {
     /// `Union` or `Intersection`
     tag: TypeTag,
     /// The union is the type of an optional parameter.
     is_of_optional_parameter: bool,
-    /// Upstream's `uniqueConstituents` and `cachedTypeMap`, while they are few.
-    unique: SmallVec<[(TypeNode<'a>, Type<'a>); 8]>,
-    index: Option<Box<Index<'a>>>,
+    unique_constituents: Vec<TypeNode<'a>>,
+    cached_type_map: FxHashMap<Type<'a>, TypeNode<'a>>,
 }
 
 impl<'a> Constituents<'a> {
-    const MANY: usize = 32;
-
-    fn find_same_ast_node(&self, node: TypeNode<'a>) -> Option<TypeNode<'a>> {
-        let is_same = |it: &TypeNode<'a>| is_repeated_by(*it, node);
-        match &self.index {
-            None => self.unique.iter().map(|it| it.0).find(is_same),
-            Some(index) => {
-                let same_key = index.by_key.get(&Index::key(node)).copied();
-                same_key.or_else(|| index.find_not_plain(node))
-            }
-        }
-    }
-
-    fn find_same_type(&self, ty: Type<'a>) -> Option<TypeNode<'a>> {
-        match &self.index {
-            None => self.unique.iter().find(|it| it.1 == ty).map(|it| it.0),
-            Some(index) => index.by_type.get(&ty).copied(),
-        }
-    }
-
-    fn push(&mut self, node: TypeNode<'a>, ty: Type<'a>) {
-        if let Some(index) = &mut self.index {
-            index.insert(node, ty);
-            return;
-        }
-        self.unique.push((node, ty));
-        if self.unique.len() == Self::MANY {
-            let mut index = Box::<Index<'a>>::default();
-            for (node, ty) in self.unique.drain(..) {
-                index.insert(node, ty);
-            }
-            self.index = Some(index);
-        }
-    }
-
     fn check_duplicate_recursively(
         &mut self,
         constituent_node: TypeNode<'a>,
@@ -523,7 +309,7 @@ impl<'a> Constituents<'a> {
         // The syntax is compared first, which is cheaper than to ask for the type. tsgolint 7.0 only compares the
         // types: `{ a: 1 } | { a: 1 }` are two.
         if !cx.language().is_oxlint
-            && let Some(previous) = self.find_same_ast_node(constituent_node)
+            && let Some(&previous) = self.unique_constituents.iter().find(|it| is_repeated_by(**it, constituent_node))
         {
             report_duplicate(previous);
             return;
@@ -532,7 +318,7 @@ impl<'a> Constituents<'a> {
         if is_intrinsic_error_type(ty) || ty.is_unresolved() {
             return;
         }
-        if let Some(previous) = self.find_same_type(ty) {
+        if let Some(&previous) = self.cached_type_map.get(&ty) {
             report_duplicate(previous);
             return;
         }
@@ -540,7 +326,8 @@ impl<'a> Constituents<'a> {
         if self.is_of_optional_parameter && ty.has_flags(TypeFlags::UNDEFINED) {
             report(cx, UNNECESSARY, constituent_node, None);
         }
-        self.push(constituent_node, ty);
+        self.cached_type_map.insert(ty, constituent_node);
+        self.unique_constituents.push(constituent_node);
 
         if constituent_node.tag() == self.tag
             && let TypeKind::Union(types) | TypeKind::Intersection(types) = constituent_node.kind()
@@ -571,8 +358,8 @@ impl NoDuplicateTypeConstituents {
         let mut constituents = Constituents {
             tag,
             is_of_optional_parameter,
-            unique: SmallVec::new(),
-            index: None,
+            unique_constituents: Vec::new(),
+            cached_type_map: FxHashMap::default(),
         };
         for ty in types {
             constituents.check_duplicate_recursively(ty, cx);

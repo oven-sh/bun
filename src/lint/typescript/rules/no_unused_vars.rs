@@ -3,7 +3,7 @@ use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
-    Ranges, SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, has_rest_sibling,
+    SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, has_rest_sibling,
     is_defined_in_array_pattern, is_referenced_in_array_pattern, is_type_only_reference,
     is_used_global_variable,
 };
@@ -298,8 +298,6 @@ struct OxlintWalks<'a> {
     operations: AncestorMemo<'a, Node<'a>>,
     /// The outermost of the `a && b`, `a || b`, `a ?? b` that a node is an operand of without anything else in between.
     logical: AncestorMemo<'a, Node<'a>>,
-    /// The functions and the classes that the variable is, if they are many.
-    own_ranges: Option<Ranges>,
 }
 
 /// Whether `oxlint_is_self_reassignment` does nothing with `node`.
@@ -552,11 +550,7 @@ fn oxlint_is_self_call<'a>(
             Declaration::Class(class) => Some(class.estree_span()),
             _ => None,
         });
-        // With few declarations it takes less to ask each of them.
-        if variable.symbol().declaration_count() <= 8 {
-            return own.any(|it| it.contains(reference.span()));
-        }
-        return walks.own_ranges.get_or_insert_with(|| Ranges::new(own)).contains_offset(reference.span().start);
+        return own.any(|it| it.contains(reference.span()));
     }
     let start = oxlint_outermost_operation(reference.node(), walks);
     let mut parents = oxlint_relevant_parents(start).peekable();

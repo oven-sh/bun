@@ -6,9 +6,9 @@
 //
 // `--check`: writes nothing, and fails if `data.rs` is not what would be written.
 //
-// Those of the rules of other plugins are in `plugins.json`, as the published packages have them, without what does not matter for
-// validating: EVERY rule of a package, also one that takes no options. Those of Bun's own rules, and that of
-// eslint-plugin-prettier's one, are in `own.json`.
+// Those of the rules of other plugins are what the fixtures in test/cli/lint/conformance/bundle.zst have as `meta`, which is what
+// the published packages have. `plugins.json` has those of the rules without fixtures, and goes first. Those of Bun's own rules,
+// and that of eslint-plugin-prettier's one, are in `own.json`.
 //
 // A subtree that occurs more than once is written once, in `SHARED`, and `{"$":<index>}` stands for it. A long list of strings
 // is in `NAMES`, each as the number of bytes that it has in common with the one before it, the number of the others, and these;
@@ -17,6 +17,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 
 const requireFromEslint = createRequire(join(resolve(process.env.ESLINT_DIR), "package.json"));
 const requireFromPlugin = createRequire(
@@ -64,8 +65,23 @@ const add = (id, rule) => {
 for (const [name, rule] of requireFromEslint("./lib/rules")) add(name, rule);
 for (const [name, rule] of Object.entries(requireFromPlugin("./dist/rules/index.js")))
   add(`@typescript-eslint/${name}`, rule);
-for (const [id, meta] of Object.entries(JSON.parse(readFileSync(join(import.meta.dirname, "plugins.json"), "utf8"))))
-  add(id, { meta });
+const ofPlugins = JSON.parse(readFileSync(join(import.meta.dirname, "plugins.json"), "utf8"));
+// `=== /<path> <length in bytes>\n`, the bytes, `\n`
+const fixtures = join(import.meta.dirname, "../../../../test/cli/lint/conformance/bundle.zst");
+const bundle = zstdDecompressSync(readFileSync(fixtures));
+let at = 0;
+while (at < bundle.length) {
+  const end = bundle.indexOf(10, at);
+  const [, path, length] = /^=== \/(.*) (\d+)$/.exec(bundle.toString("utf8", at, end));
+  const [, id] = /^((?:import|n|oxc|react|react-hooks)\/.*)\.json$/.exec(path) ?? [];
+  if (id !== undefined && !(id in ofPlugins)) {
+    const { schema, defaultOptions } = JSON.parse(bundle.toString("utf8", end + 1, end + 1 + Number(length))).meta;
+    // What a rule does not have is `null` there.
+    ofPlugins[id] = { schema: schema ?? undefined, defaultOptions: defaultOptions ?? undefined };
+  }
+  at = end + 1 + Number(length) + 1;
+}
+for (const [id, meta] of Object.entries(ofPlugins)) add(id, { meta });
 // Bun's own rules are of no package: their schemas are written here. So is that of `prettier/prettier`, which has no fixtures there.
 for (const [id, schema] of Object.entries(JSON.parse(readFileSync(join(import.meta.dirname, "own.json"), "utf8"))))
   add(id, { meta: { schema } });

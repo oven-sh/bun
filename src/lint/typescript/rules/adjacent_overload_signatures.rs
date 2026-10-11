@@ -1,6 +1,5 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::{MemberName, MemberNameType, get_name_from_member};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::hash::Hash;
@@ -64,37 +63,6 @@ fn get_member_method(member: Member<'_>) -> Option<Method<'_>> {
     }
 }
 
-/// The methods of a body, each with a number.
-struct SeenMethods<M> {
-    /// The number is the position.
-    few: SmallVec<[M; 8]>,
-    /// All of them, as soon as they are more than a few.
-    many: FxHashMap<M, usize>,
-}
-
-impl<M: Eq + Hash> SeenMethods<M> {
-    const FEW: usize = 16;
-
-    fn len(&self) -> usize {
-        self.few.len() + self.many.len()
-    }
-
-    fn position(&self, method: &M) -> Option<usize> {
-        match self.many.is_empty() {
-            true => self.few.iter().position(|seen| seen == method),
-            false => self.many.get(method).copied(),
-        }
-    }
-
-    fn push(&mut self, method: M) {
-        if self.few.len() < Self::FEW && self.many.is_empty() {
-            return self.few.push(method);
-        }
-        self.many.extend(self.few.drain(..).enumerate().map(|(at, seen)| (seen, at)));
-        self.many.insert(method, self.many.len());
-    }
-}
-
 /// Calls `report` with each of `members` whose method was seen before, but not just before, and with the last member
 /// with that method that was not reported.
 fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
@@ -105,10 +73,7 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
     if members.len() < 3 {
         return;
     }
-    let mut seen_methods = SeenMethods {
-        few: SmallVec::new(),
-        many: FxHashMap::default(),
-    };
+    let mut seen_methods: SmallVec<[M; 8]> = SmallVec::new();
     // The last member with each of them that is where it should be.
     let mut last_members: SmallVec<[T; 8]> = SmallVec::new();
     // Its number in `seen_methods`.
@@ -118,7 +83,7 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
             last_method = None;
             continue;
         };
-        let index = seen_methods.position(&method);
+        let index = seen_methods.iter().position(|seen| *seen == method);
         match index.and_then(|it| last_members.get_mut(it)) {
             Some(before) if index != last_method => report(member, &method, *before),
             Some(before) => *before = member,

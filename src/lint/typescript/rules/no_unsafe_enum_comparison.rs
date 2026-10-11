@@ -1,5 +1,7 @@
 use bun_lint::prelude::*;
-use bun_lint::types::utils::{EnumComparisons, get_enum_key_for_literal, get_enum_literals};
+use bun_lint::types::utils::{
+    get_enum_key_for_literal, get_enum_literals, is_mismatched_enum_comparison_types,
+};
 use bun_lint::types::{Literal, Type};
 use bun_lint::utils::eslint_utils::{StaticValue, get_static_value};
 
@@ -34,14 +36,10 @@ impl Rule for NoUnsafeEnumComparison {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
     const ON: On = On::new().exprs(&[ExprTag::Binary]).cases();
-    type State<'a> = EnumComparisons<'a>;
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnsafeEnumComparison
-    }
-
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<EnumComparisons<'a>> {
-        Some(EnumComparisons::default())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -62,7 +60,7 @@ impl Rule for NoUnsafeEnumComparison {
             return;
         };
         let (left_type, right_type) = (left.ty(), right.ty());
-        if !cx.state.is_mismatched(left_type, right_type) {
+        if !is_mismatched_enum_comparison_types(left_type, right_type) {
             return;
         }
         // oxlint points at the left side.
@@ -93,7 +91,7 @@ impl Rule for NoUnsafeEnumComparison {
         let StmtKind::Switch { expr: discriminant, .. } = parent.kind() else {
             return;
         };
-        if cx.state.is_mismatched(discriminant.ty(), test.ty()) {
+        if is_mismatched_enum_comparison_types(discriminant.ty(), test.ty()) {
             // oxlint points at what the `switch` compares.
             let place = if cx.language().is_oxlint { discriminant.outer_span() } else { node.span() };
             cx.report(place, MISMATCHED_CASE).comments_apply_at(node.span()).labels_with(|labels| {

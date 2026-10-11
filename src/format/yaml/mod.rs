@@ -1,11 +1,8 @@
-//! YAML: Prettier's `language-yaml`, with ports of the parsers that it uses, `yaml` and
-//! `yaml-unist-parser`.
+//! YAML: Prettier's `language-yaml` and the tree of `yaml-unist-parser`, which is made of what Bun's parser reads.
 
 mod ast;
-mod compose;
-mod cst;
-mod lexer;
 mod printer;
+mod scalar;
 
 use crate::css::doc::{self, Doc, Elements};
 use crate::options::{QuoteStyle, TrailingCommas};
@@ -14,6 +11,7 @@ use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
+use bun_parsers::yaml::{ParseError, YAML};
 use std::borrow::Cow;
 
 /// What can be used again for the next file.
@@ -62,27 +60,51 @@ pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'stat
     elements.to_tree()
 }
 
+/// What Bun's parser refuses at the byte `at`.
+#[cold]
+fn refusal(error: ParseError, at: usize) -> FormatError {
+    let message = match error {
+        ParseError::StackOverflow => return FormatError::NestedTooDeeply,
+        ParseError::OutOfMemory => Message::TooLarge,
+        ParseError::UnexpectedEof => Message::UnexpectedEnd,
+        ParseError::UnexpectedCharacter => Message::UnexpectedCharacter,
+        ParseError::TabIndentation => Message::TabAsIndentation,
+        ParseError::InvalidDirective | ParseError::MultipleYamlDirectives => {
+            Message::InvalidDirective
+        }
+        ParseError::UnresolvedTagHandle => Message::InvalidTag,
+        ParseError::MultilineImplicitKey => Message::KeyOverSeveralLines,
+        ParseError::MultipleAnchors | ParseError::MultipleTags => Message::RepeatedProperty,
+        ParseError::UnexpectedDocumentStart | ParseError::UnexpectedDocumentEnd => {
+            Message::UnclosedString
+        }
+        _ => Message::UnexpectedToken,
+    };
+    FormatError::SyntaxErrorAt(SyntaxError(message, at as u32))
+}
+
 /// Writes the document for `text`, whose line breaks are `\n`, to `out`, which is empty.
 fn write_document(
     text: &[u8],
     options: &FormatOptions,
     out: &mut Elements,
 ) -> Result<(), FormatError> {
-    let lexemes = lexer::lex(text);
-    let tokens = cst::parse(text, &lexemes).map_err(|(cst::ParseError, at)| {
-        FormatError::SyntaxErrorAt(SyntaxError(Message::UnexpectedToken, at))
-    })?;
     // Whatever else is said to be wrong where the stack has run out.
     let because_of = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
         true => FormatError::NestedTooDeeply,
         false => FormatError::SyntaxErrorAt(error),
     };
-    let stack = Stack::for_tree();
-    let documents =
-        compose::compose(text, &tokens, &stack).map_err(|error| because_of(&stack, error))?;
     let stack = Stack::new();
-    let tree =
-        ast::build(text, &documents, &tokens, &stack).map_err(|error| because_of(&stack, error))?;
+    // For `yaml`, U+0000 is a character like another.
+    let without_nul: Cow<'_, [u8]> = match bun_core::strings::contains_char(text, 0) {
+        true => text.iter().map(|&byte| byte.max(1)).collect(),
+        false => Cow::Borrowed(text),
+    };
+    let tree = YAML::parse_as_written(&without_nul, |documents, tokens| {
+        ast::build(text, documents, tokens, &stack)
+    })
+    .map_err(|(error, at)| refusal(error, at.min(text.len())))?
+    .map_err(|error| because_of(&stack, error))?;
     let mut printer = printer::Printer {
         tree: &tree,
         text,

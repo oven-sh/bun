@@ -1,10 +1,12 @@
-//! `yaml-unist-parser` 3.2: the tree that Prettier prints.
+//! `yaml-unist-parser` 3.2: the tree that Prettier prints, from what Bun's parser reads: the documents say what is in
+//! what, the tokens where it is written.
 
-use super::compose::{Document, Node as Composed, NodeKind, Pair, ScalarType, SeqItem};
-use super::cst::{self, Item, SourceToken, Token, TokenType};
 use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
+use bun_ast::expr::Data;
+use bun_ast::{E, Expr, G};
 use bun_core::strings;
+use bun_parsers::yaml::{SourceToken, SourceTokenKind as TokenKind};
 
 /// An error that `yaml-unist-parser` throws, or a `TypeError` in it.
 pub(crate) struct Unexpected;
@@ -227,7 +229,11 @@ type Props = smallvec::SmallVec<[SourceToken; 4]>;
 
 struct Context<'c, 'a> {
     text: &'a [u8],
-    cst: &'c cst::Tree,
+    tokens: &'c [SourceToken],
+    /// How many of `tokens` have been looked at.
+    at: usize,
+    /// The `%TAG` directives of the document: handles and prefixes. The last with a handle counts.
+    tags: smallvec::SmallVec<[(&'a [u8], &'a [u8]); 2]>,
     is_ascii: bool,
     /// Where the lines start.
     line_starts: Vec<u32>,
@@ -245,26 +251,18 @@ struct Context<'c, 'a> {
     stack: &'c Stack,
 }
 
-/// `tokens(..)`: without spaces and line breaks.
-fn tokens(list: &[SourceToken]) -> impl Iterator<Item = SourceToken> + '_ {
-    list.iter()
-        .copied()
-        .filter(|token| !matches!(token.kind, TokenType::Space | TokenType::Newline))
-}
-
 /// `maybeContentPropertyToken`
 fn is_content_property(token: SourceToken) -> bool {
     matches!(
         token.kind,
-        TokenType::Comment | TokenType::Tag | TokenType::Anchor
+        TokenKind::Comment | TokenKind::Tag | TokenKind::Anchor
     )
 }
 
 /// `isEmptyNode`
-fn is_empty_node(node: Option<&Composed<'_>>, props: &[SourceToken]) -> bool {
-    node.is_none_or(|node| {
-        node.range[0] == node.range[1] && props.iter().all(|token| token.kind == TokenType::Comment)
-    })
+fn is_empty_node(node: &Expr, props: &[SourceToken]) -> bool {
+    matches!(node.data, Data::ENull(_))
+        && props.iter().all(|token| token.kind == TokenKind::Comment)
 }
 
 impl<'a> Context<'_, 'a> {
@@ -394,290 +392,343 @@ impl<'a> Context<'_, 'a> {
     }
 
     fn transform_comment(&mut self, token: SourceToken) -> Id {
-        let id = self.new_node(Kind::Comment, self.position(token.offset, token.end));
+        let id = self.new_node(Kind::Comment, self.position(token.start, token.end));
         self.node(id).value = self
             .text
-            .get(token.offset as usize + 1..token.end as usize)
+            .get(token.start as usize + 1..token.end as usize)
             .unwrap_or_default();
         self.comments.push(id);
         id
     }
 
-    /// `extractComments`, where anything else is an error unless `allows` says otherwise.
-    fn extract_comments(
-        &mut self,
-        list: &[SourceToken],
-        allows: impl Fn(TokenType) -> bool,
-    ) -> Result<()> {
-        for token in tokens(list) {
-            match token.kind {
-                TokenType::Comment => {
-                    self.transform_comment(token);
-                }
-                kind if allows(kind) => {}
-                _ => return Err(Unexpected),
-            }
-        }
-        Ok(())
+    fn peek(&self) -> Option<SourceToken> {
+        self.tokens.get(self.at).copied()
     }
 
-    /// `transformContentProperties`, for the node `id` that is made of `node`.
-    fn transform_content_properties(
+    /// The next token, if it is of `kind`.
+    fn take(&mut self, kind: TokenKind) -> Option<SourceToken> {
+        let token = self.peek().filter(|token| token.kind == kind)?;
+        self.at += 1;
+        Some(token)
+    }
+
+    fn expect(&mut self, kind: TokenKind) -> Result<SourceToken> {
+        self.take(kind).ok_or(Unexpected)
+    }
+
+    /// Adds the comments, tags and anchors that follow to `props`.
+    fn take_props(&mut self, props: &mut Props) {
+        while let Some(token) = self.peek().filter(|&token| is_content_property(token)) {
+            props.push(token);
+            self.at += 1;
+        }
+    }
+
+    /// Adds the properties of `node` to `props`, which is written behind `indicator`, in a block collection. Of a node that
+    /// is not written otherwise, they are on the line of the indicator, or further to the right than `entry`, where
+    /// what the indicator belongs to starts: anything else belongs to what follows.
+    fn take_props_behind(
         &mut self,
-        id: Id,
-        node: &Composed<'_>,
-        props: &[SourceToken],
-    ) -> Result<()> {
+        indicator: SourceToken,
+        entry: u32,
+        node: &Expr,
+        props: &mut Props,
+    ) {
+        if !matches!(node.data, Data::ENull(_)) {
+            return self.take_props(props);
+        }
+        while let Some(token) = self.peek().filter(|&token| is_content_property(token)) {
+            if token.kind != TokenKind::Comment {
+                let place = self.point(token.start);
+                if place.line != self.point(indicator.start).line
+                    && place.column <= self.point(entry).column
+                {
+                    break;
+                }
+            }
+            props.push(token);
+            self.at += 1;
+        }
+    }
+
+    fn take_comments(&mut self) {
+        while let Some(token) = self.take(TokenKind::Comment) {
+            self.transform_comment(token);
+        }
+    }
+
+    /// `extractComments`
+    fn extract_comments(&mut self, props: &[SourceToken]) {
+        for &token in props {
+            if token.kind == TokenKind::Comment {
+                self.transform_comment(token);
+            }
+        }
+    }
+
+    /// Whether the tag that is written `source` is `tag:yaml.org,2002:set`.
+    fn is_set_tag(&self, source: &[u8]) -> bool {
+        const SET: &[u8] = b"tag:yaml.org,2002:set";
+        if let Some(verbatim) = source.strip_prefix(b"!<") {
+            return verbatim.strip_suffix(b">") == Some(SET);
+        }
+        let handle_len = strings::last_index_of_char(source, b'!').map_or(0, |at| at + 1);
+        let (handle, suffix) = source.split_at(handle_len);
+        let declared = self.tags.iter().rev().find(|(it, _)| *it == handle);
+        let prefix = match declared {
+            Some((_, prefix)) => Some(*prefix),
+            None => (handle == b"!!").then_some(&b"tag:yaml.org,2002:"[..]),
+        };
+        prefix.is_some_and(|prefix| SET.strip_prefix(prefix) == Some(suffix))
+    }
+
+    /// `transformContentProperties`, for the node `id`, whose content starts at `start`.
+    fn transform_content_properties(&mut self, id: Id, start: u32, props: &[SourceToken]) {
         let mut first_tag_or_anchor_start = None;
         self.has_properties |= !props.is_empty();
         for &token in props {
+            let source = self.text.get(token.start as usize..token.end as usize);
             match token.kind {
-                TokenType::Tag => {
-                    first_tag_or_anchor_start.get_or_insert(token.offset);
-                    let tag = self.new_node(Kind::Tag, self.position(token.offset, token.end));
-                    self.node(tag).is_set_tag = node.has_set_tag;
+                TokenKind::Tag => {
+                    first_tag_or_anchor_start.get_or_insert(token.start);
+                    let tag = self.new_node(Kind::Tag, self.position(token.start, token.end));
+                    self.node(tag).is_set_tag = matches!(
+                        self.nodes[id.index()].kind,
+                        Kind::Mapping | Kind::FlowMapping
+                    ) && self.is_set_tag(source.unwrap_or_default());
                     self.node(id).tag = self.own(id, tag);
                 }
-                TokenType::Anchor => {
-                    first_tag_or_anchor_start.get_or_insert(token.offset);
-                    let anchor =
-                        self.new_node(Kind::Anchor, self.position(token.offset, token.end));
-                    let (start, end) = node.anchor.ok_or(Unexpected)?;
-                    self.node(anchor).value = self
-                        .text
-                        .get(start as usize..end as usize)
-                        .unwrap_or_default();
+                TokenKind::Anchor => {
+                    first_tag_or_anchor_start.get_or_insert(token.start);
+                    let anchor = self.new_node(Kind::Anchor, self.position(token.start, token.end));
+                    self.node(anchor).value = source.and_then(|it| it.get(1..)).unwrap_or_default();
                     self.node(id).anchor = self.own(id, anchor);
                 }
-                TokenType::Comment => {
+                _ => {
                     let comment = self.transform_comment(token);
-                    if first_tag_or_anchor_start.is_some_and(|start| start <= token.offset)
-                        && token.end <= node.range[0]
+                    if first_tag_or_anchor_start.is_some_and(|first| first <= token.start)
+                        && token.end <= start
                     {
                         append(&mut self.nodes, id, Which::MiddleComments, comment);
                     }
                 }
-                _ => return Err(Unexpected),
             }
-        }
-        Ok(())
-    }
-
-    /// The `end` of the token of a scalar or an alias.
-    fn extract_end_comments(&mut self, node: &Composed<'_>) -> Result<()> {
-        match node.src_token {
-            Some(Token::FlowScalar { end, .. }) => {
-                self.extract_comments(self.cst.list(end.unwrap_or_default()), |_| false)
-            }
-            _ => Err(Unexpected),
         }
     }
 
-    /// `transformNode`
-    fn transform_node(&mut self, node: &Composed<'_>, props: &[SourceToken]) -> Result<Id> {
+    /// Whether what starts at the next token is `mapping` in braces, and not a mapping without, whose first key is in
+    /// brackets or braces: that starts where its key does.
+    fn is_in_braces(&self, node: &Expr, mapping: &E::Object) -> bool {
+        let first_key = mapping.properties.first().and_then(|it| it.key.as_ref());
+        self.peek()
+            .is_some_and(|token| token.kind == TokenKind::MappingStart)
+            && !first_key.is_some_and(|key| {
+                matches!(key.data, Data::EObject(_) | Data::EArray(_)) && key.loc == node.loc
+            })
+    }
+
+    /// `transformNode`. `node` is written at the next token, behind `props`.
+    fn transform_node(&mut self, node: &Expr, props: Props) -> Result<Id> {
         if !self.stack.has_room() {
             return Err(Unexpected);
         }
-        let [start, end, _] = node.range;
-        match &node.kind {
-            NodeKind::Alias => {
-                self.extract_end_comments(node)?;
+        match &node.data {
+            Data::EBoolean(scalar) if scalar.value => self.transform_scalar(&props),
+            Data::EBoolean(_) => {
+                let SourceToken { start, end, .. } = self.expect(TokenKind::Alias)?;
                 let id = self.new_node(Kind::Alias, self.position(start, end));
-                self.transform_content_properties(id, node, props)?;
+                self.transform_content_properties(id, start, &props);
                 self.node(id).value = self
                     .text
                     .get(start as usize + 1..end as usize)
                     .unwrap_or_default();
                 Ok(id)
             }
-            NodeKind::Map { flow: true, items } => self.transform_flow_map(node, items, props),
-            NodeKind::Map { flow: false, items } => self.transform_map(node, items, props),
-            NodeKind::Seq { flow: true, items } => self.transform_flow_seq(node, items, props),
-            NodeKind::Seq { flow: false, items } => self.transform_seq(node, items, props),
-            NodeKind::Scalar(kind @ (ScalarType::BlockFolded | ScalarType::BlockLiteral)) => {
-                let Some(Token::BlockScalar {
-                    props: scalar_props,
-                    ..
-                }) = node.src_token
-                else {
-                    return Err(Unexpected);
-                };
-                let mut header = None;
-                let mut indicator_comment = None;
-                for token in tokens(self.cst.list(*scalar_props)) {
-                    match token.kind {
-                        TokenType::Comment => {
-                            indicator_comment = Some(self.transform_comment(token))
-                        }
-                        TokenType::BlockScalarHeader => header = Some(token),
-                        _ => return Err(Unexpected),
-                    }
-                }
-                // `/([+-]?)(\d*)([+-]?)$/`
-                let header = header.ok_or(Unexpected)?.source(self.text);
-                let (before_last_sign, last_sign) = match header {
-                    [rest @ .., sign @ (b'+' | b'-')] => (rest, Some(*sign)),
-                    _ => (header, None),
-                };
-                let digits_len = before_last_sign
-                    .iter()
-                    .rev()
-                    .take_while(|b| b.is_ascii_digit())
-                    .count();
-                let (before_digits, digits) =
-                    before_last_sign.split_at(before_last_sign.len() - digits_len);
-                let first_sign = before_digits
-                    .last()
-                    .copied()
-                    .filter(|b| matches!(b, b'+' | b'-'));
-                let kind = if *kind == ScalarType::BlockFolded {
-                    Kind::BlockFolded
-                } else {
-                    Kind::BlockLiteral
-                };
-                let id = self.new_node(kind, self.position(start, end));
-                self.transform_content_properties(id, node, props)?;
-                let block = self.node(id);
-                block.indent = (!digits.is_empty()).then(|| {
-                    digits
-                        .iter()
-                        .fold(0u32, |all, b| all.saturating_mul(10) + u32::from(b - b'0'))
-                });
-                block.chomping = match last_sign.or(first_sign) {
-                    Some(b'+') => Chomping::Keep,
-                    Some(_) => Chomping::Strip,
-                    None => Chomping::Clip,
-                };
-                block.indicator_comment = indicator_comment;
-                if let Some(comment) = indicator_comment {
-                    self.own(id, comment);
-                }
-                Ok(id)
+            Data::EObject(mapping) if self.is_in_braces(node, mapping) => {
+                self.transform_flow_map(mapping, &props)
             }
-            NodeKind::Scalar(ScalarType::Plain) if start == end => {
-                // `findLastCharIndex(text, start - 1, /\S/) + 1`
-                let before = self.text.get(..start as usize).unwrap_or_default();
-                let index = strings::trim_js_whitespace_end(before).len() as u32;
-                let id = self.new_node(Kind::Plain, self.position(index, index));
-                self.transform_content_properties(id, node, props)?;
-                Ok(id)
-            }
-            NodeKind::Scalar(kind) => {
-                self.extract_end_comments(node)?;
-                let kind = match kind {
-                    ScalarType::QuoteDouble => Kind::QuoteDouble,
-                    ScalarType::QuoteSingle => Kind::QuoteSingle,
-                    _ => Kind::Plain,
-                };
-                let id = self.new_node(kind, self.position(start, end));
-                self.transform_content_properties(id, node, props)?;
-                Ok(id)
-            }
+            Data::EObject(mapping) => self.transform_map(mapping, props),
+            Data::EArray(sequence) => match self.peek().map(|token| token.kind) {
+                Some(TokenKind::SequenceStart) => self.transform_flow_seq(sequence, &props),
+                _ => self.transform_seq(sequence, &props),
+            },
+            _ => self.transform_empty_node(&props),
         }
     }
 
-    /// The items of the token that no item of the node has been made of.
-    fn extract_comments_of_rest(
-        &mut self,
-        items: &[Item],
-        from: usize,
-        allows_comma: bool,
-    ) -> Result<()> {
-        for item in items.get(from..).unwrap_or_default() {
-            self.extract_comments(self.cst.list(item.start), |kind| {
-                allows_comma && kind == TokenType::Comma
-            })?;
-        }
-        Ok(())
+    /// A node of which nothing is written but a tag or an anchor.
+    fn transform_empty_node(&mut self, props: &[SourceToken]) -> Result<Id> {
+        let mut properties = props.iter().filter(|it| it.kind != TokenKind::Comment);
+        let end = properties.next_back().ok_or(Unexpected)?.end;
+        let id = self.new_node(Kind::Plain, self.position(end, end));
+        self.transform_content_properties(id, end, props);
+        Ok(id)
     }
 
-    fn transform_flow_map(
+    fn transform_scalar(&mut self, props: &[SourceToken]) -> Result<Id> {
+        let token = self.expect(TokenKind::Scalar)?;
+        let (kind, end) = match self.text.get(token.start as usize) {
+            Some(b'|') => return self.transform_block_scalar(Kind::BlockLiteral, token, props),
+            Some(b'>') => return self.transform_block_scalar(Kind::BlockFolded, token, props),
+            Some(b'"') => (Kind::QuoteDouble, token.end),
+            Some(b'\'') => (Kind::QuoteSingle, token.end),
+            // Which Bun's parser takes outside of brackets.
+            Some(b',') => return Err(Unexpected),
+            _ => {
+                let source = self.text.get(token.start as usize..token.end as usize);
+                let len = source
+                    .and_then(|it| it.iter().rposition(|b| !matches!(b, b' ' | b'\t' | b'\n')))
+                    .map_or(0, |last| last + 1);
+                (Kind::Plain, token.start + len as u32)
+            }
+        };
+        let id = self.new_node(kind, self.position(token.start, end));
+        self.transform_content_properties(id, token.start, props);
+        Ok(id)
+    }
+
+    /// Where `yaml` has the block scalar end whose lines start at `body`, and which something at `next` follows. Lines at
+    /// the end with nothing in them, and not indented further than the first, are only part of it with `+`.
+    fn end_of_block_scalar(&self, body: usize, next: usize, is_kept: bool) -> usize {
+        let text = self.text;
+        let mut after_line_break = match next >= text.len() && !text.ends_with(b"\n") {
+            true => text.len() + 1,
+            false => strings::last_index_of_char(&text[..next.min(text.len())], b'\n')
+                .map_or(body, |at| at + 1),
+        };
+        let mut indent = 0;
+        for byte in text.get(body..).unwrap_or_default() {
+            match byte {
+                b' ' => indent += 1,
+                b'\n' => indent = 0,
+                _ => break,
+            }
+        }
+        while !is_kept && after_line_break >= 2 {
+            let last = after_line_break - 2;
+            let blanks = (text.get(..=last).unwrap_or_default().iter().rev())
+                .take_while(|&&byte| byte == b' ')
+                .count();
+            match last.checked_sub(blanks) {
+                Some(at) if at >= body && text[at] == b'\n' && at + 1 + indent > last => {
+                    after_line_break = at + 1;
+                }
+                _ => break,
+            }
+        }
+        after_line_break.clamp(body, text.len())
+    }
+
+    fn transform_block_scalar(
         &mut self,
-        node: &Composed<'_>,
-        pairs: &[Pair<'_>],
+        kind: Kind,
+        token: SourceToken,
         props: &[SourceToken],
     ) -> Result<Id> {
-        let Some(Token::FlowCollection {
-            start, items, end, ..
-        }) = node.src_token
-        else {
-            return Err(Unexpected);
+        let rest = self.text.get(token.start as usize..).unwrap_or_default();
+        let header = &rest[..strings::index_of_any(rest, b" \t\n").unwrap_or(rest.len())];
+        let indicator_comment = self
+            .peek()
+            .filter(|it| it.kind == TokenKind::Comment && it.start < token.end)
+            .map(|comment| {
+                self.at += 1;
+                self.transform_comment(comment)
+            });
+        // `/([+-]?)(\d*)([+-]?)$/`
+        let (before_last_sign, last_sign) = match header {
+            [rest @ .., sign @ (b'+' | b'-')] => (rest, Some(*sign)),
+            _ => (header, None),
         };
+        let digits_len = before_last_sign
+            .iter()
+            .rev()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let (before_digits, digits) =
+            before_last_sign.split_at(before_last_sign.len() - digits_len);
+        let first_sign = before_digits
+            .last()
+            .copied()
+            .filter(|b| matches!(b, b'+' | b'-'));
+        let chomping = match last_sign.or(first_sign) {
+            Some(b'+') => Chomping::Keep,
+            Some(_) => Chomping::Strip,
+            None => Chomping::Clip,
+        };
+        let body = strings::index_of_char_usize(rest, b'\n')
+            .map_or(self.text.len(), |at| token.start as usize + at + 1);
+        let end = self.end_of_block_scalar(body, token.end as usize, chomping == Chomping::Keep);
+        let id = self.new_node(kind, self.position(token.start, end as u32));
+        self.transform_content_properties(id, token.start, props);
+        let block = self.node(id);
+        block.indent = (!digits.is_empty()).then(|| {
+            digits
+                .iter()
+                .fold(0u32, |all, b| all.saturating_mul(10) + u32::from(b - b'0'))
+        });
+        block.chomping = chomping;
+        block.indicator_comment = indicator_comment;
+        if let Some(comment) = indicator_comment {
+            self.own(id, comment);
+        }
+        Ok(id)
+    }
+
+    /// The comments and commas before the end of a flow collection, and the end. `children`: where its items start in
+    /// `self.pending`.
+    fn finish_flow_collection(
+        &mut self,
+        kind: Kind,
+        end_kind: TokenKind,
+        start: SourceToken,
+        children: usize,
+        props: &[SourceToken],
+    ) -> Result<Id> {
+        self.take_comments();
+        while self.take(TokenKind::CollectEntry).is_some() {
+            self.take_comments();
+        }
+        let close = self.expect(end_kind)?;
+        let id = self.new_node(kind, self.position(start.start, close.end));
+        self.transform_content_properties(id, start.start, props);
+        self.add_pending_children(id, children);
+        Ok(id)
+    }
+
+    fn transform_flow_map(&mut self, mapping: &E::Object, props: &[SourceToken]) -> Result<Id> {
+        let start = self.expect(TokenKind::MappingStart)?;
         let children = self.pending.len();
-        for (pair, item) in pairs.iter().zip(items) {
-            let child = self.transform_pair(pair, item, Kind::FlowMappingItem)?;
+        for property in mapping.properties.iter() {
+            let child = self.transform_pair(property, Kind::FlowMappingItem, Props::new())?;
             self.pending.push(child);
         }
-        self.extract_comments_of_rest(items, pairs.len(), true)?;
         self.finish_flow_collection(
             Kind::FlowMapping,
-            TokenType::FlowMapEnd,
-            node,
-            *start,
-            self.cst.list(*end),
+            TokenKind::MappingEnd,
+            start,
             children,
             props,
         )
     }
 
-    fn finish_flow_collection(
-        &mut self,
-        kind: Kind,
-        end_kind: TokenType,
-        node: &Composed<'_>,
-        start: SourceToken,
-        end: &[SourceToken],
-        // Where they start in `self.pending`.
-        children: usize,
-        props: &[SourceToken],
-    ) -> Result<Id> {
-        self.extract_comments(end, |kind| kind == end_kind)?;
-        let close = tokens(end)
-            .filter(|token| token.kind == end_kind)
-            .last()
-            .ok_or(Unexpected)?;
-        let id = self.new_node(kind, self.position(start.offset, close.end));
-        self.transform_content_properties(id, node, props)?;
-        self.add_pending_children(id, children);
-        Ok(id)
-    }
-
-    fn transform_flow_seq(
-        &mut self,
-        node: &Composed<'_>,
-        nodes: &[SeqItem<'_>],
-        props: &[SourceToken],
-    ) -> Result<Id> {
-        let Some(Token::FlowCollection {
-            start, items, end, ..
-        }) = node.src_token
-        else {
-            return Err(Unexpected);
-        };
+    fn transform_flow_seq(&mut self, sequence: &E::Array, props: &[SourceToken]) -> Result<Id> {
+        let start = self.expect(TokenKind::SequenceStart)?;
         let children = self.pending.len();
-        for (item_node, item) in nodes.iter().zip(items) {
-            let child = match item_node {
-                SeqItem::Pair(pair) => self.transform_pair(pair, item, Kind::FlowMappingItem)?,
+        for item in sequence.items.iter() {
+            let mut item_props = Props::new();
+            self.take_props(&mut item_props);
+            while self.take(TokenKind::CollectEntry).is_some() {
+                self.take_props(&mut item_props);
+            }
+            let child = match &item.data {
                 // `[ key: value ]`
-                SeqItem::Node(Composed {
-                    kind: NodeKind::Map { items: pairs, .. },
-                    src_token: None,
-                    ..
-                }) => self.transform_pair(
-                    pairs.last().ok_or(Unexpected)?,
-                    item,
+                Data::EObject(pair) if !self.is_in_braces(item, &**pair) => self.transform_pair(
+                    pair.properties.first().ok_or(Unexpected)?,
                     Kind::FlowMappingItem,
+                    item_props,
                 )?,
-                SeqItem::Node(item_node) => {
-                    let mut item_props = Props::new();
-                    for token in tokens(self.cst.list(item.start)) {
-                        match token.kind {
-                            _ if is_content_property(token) => item_props.push(token),
-                            TokenType::Comma => {}
-                            _ => return Err(Unexpected),
-                        }
-                    }
-                    let content = self.transform_node(item_node, &item_props)?;
+                _ => {
+                    let content = self.transform_node(item, item_props)?;
                     let id = self.new_node(Kind::FlowSequenceItem, self.position_of(content));
                     self.add_child(id, content);
                     id
@@ -685,33 +736,23 @@ impl<'a> Context<'_, 'a> {
             };
             self.pending.push(child);
         }
-        self.extract_comments_of_rest(items, nodes.len(), true)?;
         self.finish_flow_collection(
             Kind::FlowSequence,
-            TokenType::FlowSeqEnd,
-            node,
-            *start,
-            self.cst.list(*end),
+            TokenKind::SequenceEnd,
+            start,
             children,
             props,
         )
     }
 
-    fn transform_map(
+    /// A node of `kind` from the first to the last of `self.pending[children..]`, which are in it.
+    fn finish_block_collection(
         &mut self,
-        node: &Composed<'_>,
-        pairs: &[Pair<'_>],
+        kind: Kind,
+        start: u32,
+        children: usize,
         props: &[SourceToken],
     ) -> Result<Id> {
-        let Some(Token::BlockMap { items, .. }) = node.src_token else {
-            return Err(Unexpected);
-        };
-        let children = self.pending.len();
-        for (pair, item) in pairs.iter().zip(items) {
-            let child = self.transform_pair(pair, item, Kind::MappingItem)?;
-            self.pending.push(child);
-        }
-        self.extract_comments_of_rest(items, pairs.len(), false)?;
         let (&first, &last) = self
             .pending
             .get(children)
@@ -721,61 +762,81 @@ impl<'a> Context<'_, 'a> {
             start: self.position_of(first).start,
             end: self.position_of(last).end,
         };
-        let id = self.new_node(Kind::Mapping, position);
-        self.transform_content_properties(id, node, props)?;
+        let id = self.new_node(kind, position);
+        self.transform_content_properties(id, start, props);
         self.add_pending_children(id, children);
         Ok(id)
     }
 
-    fn transform_seq(
-        &mut self,
-        node: &Composed<'_>,
-        nodes: &[SeqItem<'_>],
-        props: &[SourceToken],
-    ) -> Result<Id> {
-        let Some(Token::BlockSeq { items, .. }) = node.src_token else {
-            return Err(Unexpected);
-        };
+    fn transform_map(&mut self, mapping: &E::Object, mut props: Props) -> Result<Id> {
+        let start = self.peek().ok_or(Unexpected)?.start;
+        // `getFirstKeyStartProps`: what is on the line of the first key belongs to that.
+        let line_start = strings::last_index_of_char(&self.text[..start as usize], b'\n')
+            .map_or(0, |at| at as u32 + 1);
+        let own = props.iter().take_while(|it| it.start < line_start).count();
+        let mut key_props: Props = props.drain(own..).collect();
         let children = self.pending.len();
-        for (item_node, item) in nodes.iter().zip(items) {
-            let mut item_props = Props::new();
-            let mut indicator = None;
-            for token in tokens(self.cst.list(item.start)) {
-                match token.kind {
-                    _ if is_content_property(token) => item_props.push(token),
-                    TokenType::SeqItemInd => indicator = Some(token),
-                    _ => return Err(Unexpected),
-                }
+        for property in mapping.properties.iter() {
+            if self.pending.len() > children && self.is_at_key_that_yaml_refuses() {
+                return Err(Unexpected);
             }
+            let key_props = std::mem::take(&mut key_props);
+            let child = self.transform_pair(property, Kind::MappingItem, key_props)?;
+            self.pending.push(child);
+        }
+        self.finish_block_collection(Kind::Mapping, start, children, &props)
+    }
+
+    /// `yaml` 2.9 cannot read a key in brackets or braces without a `?` if anything is written, be it blanks, between it
+    /// and the line that the value above it ends on. That value is in the last of `self.pending`.
+    fn is_at_key_that_yaml_refuses(&self) -> bool {
+        let rest = self.tokens.get(self.at..).unwrap_or_default();
+        let mut rest = rest.iter().filter(|it| it.kind != TokenKind::Comment);
+        let Some(first) = rest.next() else {
+            return false;
+        };
+        let key = std::iter::once(first)
+            .chain(rest)
+            .find(|&&it| !is_content_property(it));
+        let value = (self.pending.last())
+            .and_then(|item| self.nodes[item.index()].children.last())
+            .and_then(|value| self.nodes[value.index()].children.first())
+            .map(|content| &self.nodes[content.index()]);
+        let (Some(TokenKind::SequenceStart | TokenKind::MappingStart), Some(value)) =
+            (key.map(|it| it.kind), value)
+        else {
+            return false;
+        };
+        let end = value.position.end.offset as usize;
+        let between = self.text.get(end..first.start as usize).unwrap_or_default();
+        match value.kind {
+            Kind::BlockFolded | Kind::BlockLiteral => strings::contains_char(between, b'\n'),
+            Kind::Plain if value.position.start.offset as usize == end => false,
+            _ => !between.ends_with(b"\n") || strings::count_char(between, b'\n') != 1,
+        }
+    }
+
+    fn transform_seq(&mut self, sequence: &E::Array, props: &[SourceToken]) -> Result<Id> {
+        let start = self.peek().ok_or(Unexpected)?.start;
+        let children = self.pending.len();
+        for item in sequence.items.iter() {
+            self.take_comments();
+            let indicator = self.expect(TokenKind::SequenceEntry)?;
+            let mut item_props = Props::new();
+            self.take_props_behind(indicator, indicator.start, item, &mut item_props);
             // `transformItemValue`
-            let content = match item_node {
-                SeqItem::Node(item_node) if is_empty_node(Some(item_node), &item_props) => {
-                    self.extract_comments(&item_props, |_| false)?;
+            let content = match is_empty_node(item, &item_props) {
+                true => {
+                    self.extract_comments(&item_props);
                     None
                 }
-                SeqItem::Node(item_node) => Some(self.transform_node(item_node, &item_props)?),
-                SeqItem::Pair(pair) => {
-                    let mapping_item = self.transform_pair(
-                        pair,
-                        pair.src_token.ok_or(Unexpected)?,
-                        Kind::MappingItem,
-                    )?;
-                    let mapping = self.new_node(Kind::Mapping, self.position_of(mapping_item));
-                    self.transform_content_properties(mapping, &pair.key, &item_props)?;
-                    self.add_child(mapping, mapping_item);
-                    Some(mapping)
-                }
+                false => Some(self.transform_node(item, item_props)?),
             };
             let position = Position {
-                start: match (indicator, content) {
-                    (Some(indicator), _) => self.point(indicator.offset),
-                    (None, Some(content)) => self.position_of(content).start,
-                    (None, None) => return Err(Unexpected),
-                },
-                end: match (content, indicator) {
-                    (Some(content), _) => self.position_of(content).end,
-                    (None, Some(indicator)) => self.point(indicator.end),
-                    (None, None) => return Err(Unexpected),
+                start: self.point(indicator.start),
+                end: match content {
+                    Some(content) => self.position_of(content).end,
+                    None => self.point(indicator.end),
                 },
             };
             let id = self.new_node(Kind::SequenceItem, position);
@@ -784,96 +845,102 @@ impl<'a> Context<'_, 'a> {
             }
             self.pending.push(id);
         }
-        self.extract_comments_of_rest(items, nodes.len(), false)?;
-        let (&first, &last) = self
-            .pending
-            .get(children)
-            .zip(self.pending.last())
-            .ok_or(Unexpected)?;
-        let position = Position {
-            start: self.position_of(first).start,
-            end: self.position_of(last).end,
-        };
-        let id = self.new_node(Kind::Sequence, position);
-        self.transform_content_properties(id, node, props)?;
-        self.add_pending_children(id, children);
-        Ok(id)
+        self.finish_block_collection(Kind::Sequence, start, children, props)
     }
 
-    /// `transformPair`. `kind`: of the item.
-    fn transform_pair(&mut self, pair: &Pair<'_>, item: &Item, kind: Kind) -> Result<Id> {
-        let mut key_props = Props::new();
-        let mut explicit_key_ind = None;
-        for token in tokens(self.cst.list(item.start)) {
-            match token.kind {
-                _ if is_content_property(token) => key_props.push(token),
-                TokenType::ExplicitKeyInd => explicit_key_ind = Some(token),
-                TokenType::Comma => {}
-                _ => return Err(Unexpected),
-            }
-        }
-        let mut value_props = Props::new();
-        let mut map_value_ind = None;
-        for token in tokens(self.cst.list(item.sep.unwrap_or_default())) {
-            match token.kind {
-                _ if is_content_property(token) => value_props.push(token),
-                TokenType::MapValueInd => map_value_ind = Some(token),
-                _ => return Err(Unexpected),
-            }
-        }
-        let key_start = explicit_key_ind
-            .map(|it| it.offset)
-            .or_else(|| self.cst.get(item.key).map(Token::offset))
-            .or_else(|| map_value_ind.map(|it| it.offset))
-            .or_else(|| self.cst.get(item.value).map(Token::offset))
-            .ok_or(Unexpected)?;
-        let key_end = match (item.key, explicit_key_ind) {
-            (Some(_), _) => pair.key.range[1],
-            (None, Some(indicator)) => indicator.end,
-            (None, None) => key_start,
+    /// `transformPair`. `kind`: of the item. `key_props`: what has been seen of the properties of the key.
+    fn transform_pair(
+        &mut self,
+        pair: &G::Property,
+        kind: Kind,
+        mut key_props: Props,
+    ) -> Result<Id> {
+        let (Some(key), Some(value)) = (&pair.key, &pair.value) else {
+            return Err(Unexpected);
         };
-        let value_start = pair.value.as_ref().map(|value| {
-            map_value_ind
-                .map(|it| it.offset)
-                .or_else(|| self.cst.get(item.value).map(Token::offset))
-                .unwrap_or(value.range[0])
+        let is_flow = kind == Kind::FlowMappingItem;
+        let mut explicit_key_ind = None;
+        loop {
+            match explicit_key_ind.filter(|_| !is_flow) {
+                Some(it) => self.take_props_behind(it, it.start, key, &mut key_props),
+                None => self.take_props(&mut key_props),
+            }
+            match self.peek().map(|token| token.kind) {
+                Some(TokenKind::MappingKey) if explicit_key_ind.is_none() => {
+                    explicit_key_ind = self.take(TokenKind::MappingKey);
+                }
+                Some(TokenKind::CollectEntry) if is_flow => self.at += 1,
+                _ => break,
+            }
+        }
+        let entry = (key_props
+            .iter()
+            .find(|it| it.kind != TokenKind::Comment)
+            .copied())
+        .or(explicit_key_ind)
+        .or_else(|| self.peek())
+        .map_or(0, |it| {
+            it.start
+                .min(explicit_key_ind.map_or(u32::MAX, |it| it.start))
         });
+        let key_token = self.peek().filter(|_| !matches!(key.data, Data::ENull(_)));
 
         // `transformAstPair`
-        let key_content = match is_empty_node(Some(&pair.key), &key_props) {
+        let key_content = match is_empty_node(key, &key_props) {
             true => {
-                self.extract_comments(&key_props, |_| true)?;
+                self.extract_comments(&key_props);
                 None
             }
-            false => Some(self.transform_node(&pair.key, &key_props)?),
+            false => Some(self.transform_node(key, key_props)?),
         };
-        let value_content = match (
-            &pair.value,
-            is_empty_node(pair.value.as_ref(), &value_props),
-        ) {
-            (Some(value), false) => Some(self.transform_node(value, &value_props)?),
-            _ => {
-                self.extract_comments(&value_props, |_| true)?;
+        self.take_comments();
+        // Further to the left than its `?`, it is that of a mapping around.
+        let map_value_ind = self.peek().filter(|colon| {
+            colon.kind == TokenKind::MappingValue
+                && (is_flow
+                    || explicit_key_ind.is_none_or(|key| {
+                        let (key, colon) = (self.point(key.start), self.point(colon.start));
+                        key.line == colon.line || key.column <= colon.column
+                    }))
+        });
+        let mut value_props = Props::new();
+        if let Some(colon) = map_value_ind {
+            self.at += 1;
+            match is_flow {
+                true => self.take_props(&mut value_props),
+                false => self.take_props_behind(colon, entry, value, &mut value_props),
+            }
+        }
+        let value_content = match is_empty_node(value, &value_props) {
+            true => {
+                self.extract_comments(&value_props);
                 None
             }
+            false => Some(self.transform_node(value, value_props)?),
         };
+
+        let key_start = explicit_key_ind
+            .or(key_token)
+            .or(map_value_ind)
+            .ok_or(Unexpected)?
+            .start;
         let key_position = match key_content.map(|it| self.position_of(it)) {
             Some(content) => Position {
                 start: self.point_near(key_start, content.start),
                 end: content.end,
             },
-            None => self.position(key_start, key_end),
+            None => self.position(key_start, explicit_key_ind.map_or(key_start, |it| it.end)),
         };
         let mapping_key = self.new_node(Kind::MappingKey, key_position);
         if let Some(content) = key_content {
             self.add_child(mapping_key, content);
         }
-        let value_position = match (value_start, value_content) {
-            (Some(start), Some(content)) => Position {
-                start: self.point(start),
+        let value_position = match (map_value_ind, value_content) {
+            (Some(colon), Some(content)) => Position {
+                start: self.point(colon.start),
                 end: self.position_of(content).end,
             },
-            (Some(start), None) => self.position(start, start + 1),
+            (Some(colon), None) => self.position(colon.start, colon.start + 1),
             (None, Some(content)) => self.position_of(content),
             (None, None) => Position {
                 start: key_position.end,
@@ -895,77 +962,129 @@ impl<'a> Context<'_, 'a> {
         self.add_child(id, mapping_value);
         Ok(id)
     }
-}
 
-/// What `transformDocuments` collects for a document.
-struct DocumentData<'t> {
-    tokens_before_body: Vec<&'t Token>,
-    cst_node: Option<&'t Token>,
-    node: &'t Document<'t>,
-    tokens_after_body: Vec<SourceToken>,
-    document_end: Option<&'t Token>,
-}
+    /// The directive whose `%` is `token`, and the comment behind it.
+    fn transform_directive(&mut self, token: SourceToken) -> (Id, Option<SourceToken>) {
+        let text = self.text;
+        let rest = text.get(token.start as usize..).unwrap_or_default();
+        let line = &rest[..strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())];
+        let comment = (1..line.len())
+            .find(|&at| line[at] == b'#' && matches!(line[at - 1], b' ' | b'\t'))
+            .map(|at| SourceToken {
+                kind: TokenKind::Comment,
+                start: token.start + at as u32,
+                end: token.start + line.len() as u32,
+            });
+        let line = &line[..comment.map_or(line.len(), |it| (it.start - token.start) as usize)];
+        let line = &line[..line
+            .iter()
+            .rposition(|b| !matches!(b, b' ' | b'\t'))
+            .map_or(0, |last| last + 1)];
+        let end = token.start + line.len() as u32;
+        let directive = self.new_node(Kind::Directive, self.position(token.start, end));
+        self.node(directive).value = line;
+        let mut parts = strings::split_any(line, b" \t").filter(|part| !part.is_empty());
+        if let (Some(b"%TAG"), Some(handle), Some(prefix)) =
+            (parts.next(), parts.next(), parts.next())
+        {
+            self.tags.push((handle, prefix));
+        }
+        (directive, comment)
+    }
 
-impl<'a> Context<'_, 'a> {
-    fn transform_document(&mut self, data: &DocumentData<'_>) -> Result<Id> {
-        let (cst_start, cst_end) = match data.cst_node {
-            Some(Token::Document { start, end, .. }) => (
-                self.cst.list(*start),
-                self.cst.list(end.unwrap_or_default()),
-            ),
-            _ => (&[][..], &[][..]),
+    /// The comments behind `content`, which is all that is in a document, as far as they are in the document for `yaml`.
+    /// Returns those that it has at the end of the document, and in nothing that is in it.
+    fn take_end_comments(&mut self, content: Option<Id>) -> Vec<Id> {
+        let mut end_comments = Vec::new();
+        let Some(content) = content.map(|content| &self.nodes[content.index()]) else {
+            return end_comments;
         };
+        let is_block = matches!(content.kind, Kind::Mapping | Kind::Sequence);
+        // What is behind an item without a value is in that item.
+        let is_open = is_block
+            && (content.children.last())
+                .map(|item| &self.nodes[item.index()])
+                .and_then(|item| match item.kind {
+                    Kind::MappingItem => item.children.last().map(|it| &self.nodes[it.index()]),
+                    _ => Some(item),
+                })
+                .is_none_or(|it| it.children.is_empty());
+        let last = self.at.checked_sub(1).and_then(|at| self.tokens.get(at));
+        let is_block_scalar =
+            last.is_some_and(|it| matches!(self.text.get(it.start as usize), Some(b'|' | b'>')));
+        let end = match (is_block_scalar, self.peek()) {
+            (false, Some(next)) => {
+                strings::trim_js_whitespace_end(&self.text[..next.start as usize]).len() as u32
+            }
+            _ => content.position.end.offset,
+        };
+        let last_line = self.point(end.saturating_sub(1)).line;
+        while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {
+            let place = self.point(token.start);
+            // A document whose content is no block collection ends with the line after that.
+            if !is_block && place.line > last_line + 1 {
+                break;
+            }
+            self.at += 1;
+            let comment = self.transform_comment(token);
+            if place.line > last_line
+                && !is_open
+                && (!is_block || place.column == 1 || !end_comments.is_empty())
+            {
+                end_comments.push(comment);
+            }
+        }
+        end_comments
+    }
 
+    /// `transformDocument`. `root`: what is in it.
+    fn transform_document(&mut self, root: Option<&Expr>) -> Result<Id> {
+        let root = root.filter(|root| !matches!(root.data, Data::ENull(_)));
         // `transformDocumentHead`
+        self.tags.clear();
         let mut directives: Vec<Id> = Vec::new();
         let mut end_comment_candidates: Vec<Id> = Vec::new();
-        for token in &data.tokens_before_body {
-            match token {
-                Token::Source(token) => {
-                    let comment = self.transform_comment(*token);
-                    let position = self.position_of(comment);
-                    match directives.last().copied() {
-                        Some(last)
-                            if self.position_of(last).end.line == position.start.line
-                                && self.nodes[last.index()].trailing_comment.is_none() =>
-                        {
-                            let directive = self.node(last);
-                            directive.trailing_comment = Some(comment);
-                            directive.position.end = position.end;
-                            self.own(last, comment);
-                        }
-                        _ => end_comment_candidates.push(comment),
+        // Bun's parser takes it for a part of a directive that it does not know.
+        let mut comment_of_directive = None;
+        loop {
+            let unlisted = comment_of_directive.take();
+            if let Some(token) = unlisted.or_else(|| self.take(TokenKind::Comment)) {
+                let comment = self.transform_comment(token);
+                let position = self.position_of(comment);
+                match directives.last().copied() {
+                    Some(last)
+                        if self.position_of(last).end.line == position.start.line
+                            && self.nodes[last.index()].trailing_comment.is_none() =>
+                    {
+                        let directive = self.node(last);
+                        directive.trailing_comment = Some(comment);
+                        directive.position.end = position.end;
+                        self.own(last, comment);
                     }
+                    _ => end_comment_candidates.push(comment),
                 }
-                Token::Directive(token) => {
-                    let directive =
-                        self.new_node(Kind::Directive, self.position(token.offset, token.end));
-                    self.node(directive).value = token.source(self.text);
-                    directives.push(directive);
-                    end_comment_candidates.clear();
-                }
-                _ => return Err(Unexpected),
+            } else if let Some(token) = self.take(TokenKind::Directive) {
+                let (directive, comment) = self.transform_directive(token);
+                directives.push(directive);
+                comment_of_directive = comment.filter(|_| self.peek() != comment);
+                end_comment_candidates.clear();
+            } else {
+                break;
             }
         }
-        let mut between_tokens: Vec<SourceToken> = Vec::new();
-        let mut doc_start: Option<SourceToken> = None;
-        for token in tokens(cst_start) {
-            between_tokens.push(token);
-            if doc_start.is_none() && token.kind == TokenType::DocStart {
-                for token in between_tokens.drain(..) {
-                    if token.kind == TokenType::Comment {
-                        let comment = self.transform_comment(token);
-                        end_comment_candidates.push(comment);
-                    }
-                }
-                doc_start = Some(token);
-            }
-        }
-        let contents = data.node.contents.as_ref();
-        let (mut head_start, head_end) = match (doc_start, contents) {
-            (Some(doc_start), _) => (doc_start.offset, doc_start.end),
-            (None, Some(contents)) => (contents.range[0], contents.range[0]),
-            (None, None) => (data.node.range[0], data.node.range[0]),
+        let doc_start = self.take(TokenKind::DocumentStart);
+        let mut prop_tokens = Props::new();
+        self.take_props(&mut prop_tokens);
+        let has_properties = prop_tokens.iter().any(|it| it.kind != TokenKind::Comment);
+        let contents_start = match root {
+            None => (prop_tokens.iter().rev())
+                .find(|it| it.kind != TokenKind::Comment)
+                .map_or(0, |it| it.end),
+            Some(_) => self.peek().ok_or(Unexpected)?.start,
+        };
+        let (mut head_start, head_end) = match doc_start {
+            Some(doc_start) => (doc_start.start, doc_start.end),
+            None => (contents_start, contents_start),
         };
         if let Some(&first) = directives.first() {
             head_start = self.position_of(first).start.offset;
@@ -973,12 +1092,12 @@ impl<'a> Context<'_, 'a> {
         let head_position = self.position(head_start, head_end);
         let mut head_trailing_comment = None;
         if doc_start.is_some()
-            && let Some(&first) = between_tokens.first()
-            && first.kind == TokenType::Comment
-            && self.point(first.offset).line == head_position.end.line
+            && let Some(&first) = prop_tokens.first()
+            && first.kind == TokenKind::Comment
+            && self.point(first.start).line == head_position.end.line
         {
             head_trailing_comment = Some(self.transform_comment(first));
-            between_tokens.remove(0);
+            prop_tokens.remove(0);
         }
         let head = self.new_node(Kind::DocumentHead, head_position);
         for directive in directives {
@@ -995,63 +1114,35 @@ impl<'a> Context<'_, 'a> {
         }
 
         // `transformDocumentBody`
-        let (doc_end, doc_end_end) = match data.document_end {
-            Some(Token::DocEnd { token, end }) => {
-                (Some(*token), self.cst.list(end.unwrap_or_default()))
-            }
-            _ => (None, &[][..]),
-        };
-        let prop_tokens = between_tokens;
-        if !prop_tokens.iter().all(|&token| is_content_property(token)) {
-            return Err(Unexpected);
-        }
-        self.extract_comments(&data.tokens_after_body, |_| false)?;
-        let doc_end_point = doc_end.map(|token| self.point(token.offset));
-        let mut end_comments = Vec::new();
-        let mut document_trailing_comment = None;
-        if data.cst_node.is_some() {
-            for token in tokens(cst_end).chain(tokens(doc_end_end)) {
-                if token.kind != TokenType::Comment {
-                    return Err(Unexpected);
-                }
-                let comment = self.transform_comment(token);
-                let line = self.position_of(comment).start.line;
-                match doc_end_point {
-                    Some(point) if point.line == line => {
-                        if document_trailing_comment.replace(comment).is_some() {
-                            return Err(Unexpected);
-                        }
-                    }
-                    Some(point) if line < point.line => end_comments.push(comment),
-                    Some(_) => {}
-                    None => end_comments.push(comment),
-                }
-            }
-        }
-        let has_content = contents.is_some_and(|contents| {
-            contents.range[0] < contents.range[1]
-                || prop_tokens
-                    .iter()
-                    .any(|token| matches!(token.kind, TokenType::Tag | TokenType::Anchor))
-        });
-        let content = match (contents, has_content) {
-            (Some(contents), true) => Some(self.transform_node(contents, &prop_tokens)?),
-            _ => {
-                self.extract_comments(&prop_tokens, |_| false)?;
+        let content = match root {
+            Some(root) => Some(self.transform_node(root, prop_tokens)?),
+            None if has_properties => Some(self.transform_empty_node(&prop_tokens)?),
+            None => {
+                self.extract_comments(&prop_tokens);
                 None
             }
         };
-        let text_len = self.text.len() as u32;
-        let body_end = match doc_end {
-            Some(doc_end) => doc_end.offset.saturating_sub(1),
-            // `findCharIndex(text, document.range[2], /\S/) ?? text.length`
-            None => {
-                let rest = self
-                    .text
-                    .get(data.node.range[2] as usize..)
-                    .unwrap_or_default();
-                text_len - strings::trim_js_whitespace_start(rest).len() as u32
+        let end_comments = self.take_end_comments(content);
+        let rest = self.tokens.get(self.at..).unwrap_or_default();
+        let next = rest.iter().find(|it| it.kind != TokenKind::Comment);
+        if next.is_some_and(|it| it.kind == TokenKind::DocumentEnd) {
+            self.take_comments();
+        }
+        let doc_end = self.take(TokenKind::DocumentEnd);
+        let mut document_trailing_comment = None;
+        if let Some(doc_end) = doc_end {
+            let line = self.point(doc_end.start).line;
+            if let Some(comment) = self.peek().filter(|it| it.kind == TokenKind::Comment)
+                && self.point(comment.start).line == line
+            {
+                self.at += 1;
+                document_trailing_comment = Some(self.transform_comment(comment));
             }
+        }
+        let body_end = match (doc_end, self.peek()) {
+            (Some(doc_end), _) => doc_end.start.saturating_sub(1),
+            (None, Some(next)) => next.start,
+            (None, None) => self.text.len() as u32,
         };
         let mut body_start =
             content.map_or(body_end, |content| self.position_of(content).start.offset);
@@ -1092,78 +1183,22 @@ impl<'a> Context<'_, 'a> {
         Ok(document)
     }
 
-    /// `transformDocuments`
-    fn transform_documents<'t>(
-        &mut self,
-        documents: &'t [Document<'t>],
-        cst_tokens: &'t [Token],
-    ) -> Result<Vec<Id>> {
-        let mut data: Vec<DocumentData<'t>> = Vec::new();
-        let mut buffer_comments: Vec<&'t Token> = Vec::new();
-        let mut tokens_before_body: Vec<&'t Token> = Vec::new();
-        let source_tokens = |tokens: &mut Vec<&'t Token>| -> Vec<SourceToken> {
-            tokens
-                .drain(..)
-                .filter_map(|token| match token {
-                    Token::Source(token) => Some(*token),
-                    _ => None,
-                })
-                .collect()
-        };
-        for token in cst_tokens {
-            match token {
-                Token::Source(source) if source.kind == TokenType::Comment => {
-                    buffer_comments.push(token)
-                }
-                Token::Source(_) => {}
-                Token::Document { .. } => {
-                    let node = documents.get(data.len()).ok_or(Unexpected)?;
-                    tokens_before_body.append(&mut buffer_comments);
-                    data.push(DocumentData {
-                        tokens_before_body: std::mem::take(&mut tokens_before_body),
-                        cst_node: Some(token),
-                        node,
-                        tokens_after_body: Vec::new(),
-                        document_end: None,
-                    });
-                }
-                Token::Directive(_) => {
-                    tokens_before_body.append(&mut buffer_comments);
-                    tokens_before_body.push(token);
-                }
-                Token::DocEnd { .. } => {
-                    let current = data
-                        .last_mut()
-                        .filter(|it| it.document_end.is_none())
-                        .ok_or(Unexpected)?;
-                    current.tokens_after_body = source_tokens(&mut buffer_comments);
-                    current.document_end = Some(token);
-                }
-                _ => {}
-            }
+    /// `transformDocuments`. For `yaml`, every `...` ends a document of its own.
+    fn transform_documents(&mut self, documents: &[Expr]) -> Result<Vec<Id>> {
+        let mut roots = documents.iter();
+        let mut children = Vec::with_capacity(documents.len());
+        loop {
+            let rest = self.tokens.get(self.at..).unwrap_or_default();
+            let next = rest.iter().find(|it| it.kind != TokenKind::Comment);
+            let root = match next.map(|it| it.kind) {
+                None if !children.is_empty() => break,
+                Some(TokenKind::DocumentEnd) if !children.is_empty() => None,
+                _ => Some(roots.next().ok_or(Unexpected)?),
+            };
+            children.push(self.transform_document(root)?);
         }
-        if !tokens_before_body.is_empty() {
-            return Err(Unexpected);
-        }
-        if !buffer_comments.is_empty() {
-            if data.is_empty() {
-                data.push(DocumentData {
-                    tokens_before_body: std::mem::take(&mut buffer_comments),
-                    cst_node: None,
-                    node: documents.first().ok_or(Unexpected)?,
-                    tokens_after_body: Vec::new(),
-                    document_end: None,
-                });
-            }
-            if let Some(current) = data.last_mut() {
-                current
-                    .tokens_after_body
-                    .extend(source_tokens(&mut buffer_comments));
-            }
-        }
-        data.iter()
-            .map(|data| self.transform_document(data))
-            .collect()
+        self.take_comments();
+        Ok(children)
     }
 }
 
@@ -1466,11 +1501,11 @@ fn update_start_points(
     }
 }
 
-/// `parse` of `yaml-unist-parser`, from the results of `yaml`.
+/// `parse` of `yaml-unist-parser`.
 pub(crate) fn build<'a>(
     text: &'a [u8],
-    documents: &[Document<'_>],
-    cst: &cst::Tree,
+    documents: &[Expr],
+    tokens: &[SourceToken],
     stack: &Stack,
 ) -> std::result::Result<Tree<'a>, SyntaxError> {
     let mut line_starts = vec![0u32];
@@ -1481,14 +1516,16 @@ pub(crate) fn build<'a>(
     }
     let mut context = Context {
         text,
-        cst,
+        tokens,
+        at: 0,
+        tags: Default::default(),
         is_ascii: text.is_ascii(),
         // Before the first.
         last_line: std::cell::Cell::new((0, 0, 0)),
         last_place: std::cell::Cell::new((0, 0)),
         line_starts,
-        // A key and its value are two tokens and five nodes.
-        nodes: Vec::with_capacity(cst.len() * 3 + 16),
+        // A key, its `:` and its value are three tokens and five nodes.
+        nodes: Vec::with_capacity(tokens.len() * 2 + 16),
         comments: Vec::new(),
         pending: Vec::new(),
         has_properties: false,
@@ -1496,7 +1533,7 @@ pub(crate) fn build<'a>(
     };
     // What has been made last is next to what cannot be.
     let children = context
-        .transform_documents(documents, &cst.tokens)
+        .transform_documents(documents)
         .map_err(|Unexpected| {
             let last = context.nodes.last();
             SyntaxError(

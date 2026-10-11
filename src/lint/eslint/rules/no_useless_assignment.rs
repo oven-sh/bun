@@ -36,7 +36,6 @@ struct ScopeStack<'a> {
     try_statement_blocks: Vec<Span>,
     /// Those of them that have a `finally`, with a configuration of oxlint.
     finalized_blocks: Vec<Span>,
-    segments: Segments<'a>,
 }
 
 #[derive(Default)]
@@ -260,465 +259,6 @@ fn is_any_outside(range: &Range<usize>, without: &Range<usize>) -> bool {
     range.start < range.end && (range.start < without.start || without.end < range.end)
 }
 
-/// Lists of numbers, one after the other.
-struct Lists {
-    starts: Vec<u32>,
-    items: Vec<u32>,
-}
-
-impl Lists {
-    /// `pairs`: the number of a list with an item of it, sorted.
-    fn new(count: usize, pairs: &[(u32, u32)]) -> Lists {
-        let mut starts = vec![0u32; count + 1];
-        for &(list, _) in pairs {
-            starts[list as usize + 1] += 1;
-        }
-        for list in 0..count {
-            starts[list + 1] += starts[list];
-        }
-        Lists {
-            starts,
-            items: pairs.iter().map(|it| it.1).collect(),
-        }
-    }
-
-    fn get(&self, list: u32) -> &[u32] {
-        &self.items[self.starts[list as usize] as usize..self.starts[list as usize + 1] as usize]
-    }
-}
-
-/// The least of any part of a list of numbers, in the logarithm of its length.
-struct Minima {
-    /// The numbers are `tree[size..]`, and `tree[i]` is the lesser of `tree[2 * i]` and
-    /// `tree[2 * i + 1]`.
-    tree: Vec<u32>,
-    size: usize,
-}
-
-impl Minima {
-    fn new(numbers: &[u32]) -> Minima {
-        let size = numbers.len().next_power_of_two();
-        let mut tree = vec![u32::MAX; 2 * size];
-        tree[size..size + numbers.len()].copy_from_slice(numbers);
-        for at in (1..size).rev() {
-            tree[at] = tree[2 * at].min(tree[2 * at + 1]);
-        }
-        Minima { tree, size }
-    }
-
-    fn least_of(&self, part: Range<usize>) -> u32 {
-        let (mut from, mut to, mut least) =
-            (part.start + self.size, part.end + self.size, u32::MAX);
-        while from < to {
-            if from % 2 == 1 {
-                least = least.min(self.tree[from]);
-                from += 1;
-            }
-            if to % 2 == 1 {
-                to -= 1;
-                least = least.min(self.tree[to]);
-            }
-            from /= 2;
-            to /= 2;
-        }
-        least
-    }
-
-    /// Calls `visit` with the index of each number of `part` that is at most `limit`.
-    fn for_each_up_to(&self, part: &Range<usize>, limit: u32, visit: &mut impl FnMut(usize)) {
-        self.for_each_below(1, 0..self.size, part, limit, visit);
-    }
-
-    /// `all`: what `tree[at]` is the least of. It halves with each call.
-    fn for_each_below(
-        &self,
-        at: usize,
-        all: Range<usize>,
-        part: &Range<usize>,
-        limit: u32,
-        visit: &mut impl FnMut(usize),
-    ) {
-        if self.tree[at] > limit || all.end <= part.start || part.end <= all.start {
-            return;
-        }
-        if at >= self.size {
-            return visit(all.start);
-        }
-        let middle = all.start + (all.end - all.start) / 2;
-        self.for_each_below(2 * at, all.start..middle, part, limit, visit);
-        self.for_each_below(2 * at + 1, middle..all.end, part, limit, visit);
-    }
-}
-
-/// The forest that the algorithm of Lengauer and Tarjan grows: the nodes from some number on are
-/// linked to the node from which the search has come to them.
-struct Forest {
-    /// A node further up in the tree of a linked node.
-    ancestors: Vec<u32>,
-    /// The node with the least semidominator from a linked node up to below `ancestors`.
-    labels: Vec<u32>,
-    semidominators: Vec<u32>,
-    path: Vec<u32>,
-}
-
-impl Forest {
-    /// The node with the least semidominator from `from` up to below the root of its tree, if the
-    /// nodes from `linked` on are linked. The way up is made short for the next time.
-    fn least(&mut self, from: u32, linked: u32) -> u32 {
-        let mut top = from as usize;
-        while self.ancestors[top] >= linked {
-            self.path.push(top as u32);
-            top = self.ancestors[top] as usize;
-        }
-        while let Some(it) = self.path.pop() {
-            let it = it as usize;
-            self.ancestors[it] = self.ancestors[top];
-            if self.semidominators[self.labels[top] as usize]
-                < self.semidominators[self.labels[it] as usize]
-            {
-                self.labels[it] = self.labels[top];
-            }
-            top = it;
-        }
-        self.labels[from as usize]
-    }
-}
-
-/// The immediate dominator of each node of a graph, in `m log n` for `n` nodes and `m` edges. The
-/// nodes are numbered in the order of a depth first search from node 0. `parents`: from where the
-/// search has come to each node. `prev`: where the edges to it come from.
-fn immediate_dominators(parents: &[u32], prev: &Lists) -> Vec<u32> {
-    let count = parents.len();
-    let numbers: Vec<u32> = (0..count as u32).collect();
-    let mut forest = Forest {
-        ancestors: parents.to_vec(),
-        labels: numbers.clone(),
-        semidominators: numbers,
-        path: Vec::new(),
-    };
-    let mut dominators = vec![0u32; count];
-    // The nodes with the same semidominator, as a linked list.
-    let (mut first_with, mut next_with) = (vec![NONE; count], vec![NONE; count]);
-    for node in (1..count as u32).rev() {
-        let parent = parents[node as usize];
-        let mut semidominator = parent;
-        for &from in prev.get(node) {
-            let least = forest.least(from, node + 1);
-            semidominator = semidominator.min(forest.semidominators[least as usize]);
-        }
-        forest.semidominators[node as usize] = semidominator;
-        next_with[node as usize] = std::mem::replace(&mut first_with[semidominator as usize], node);
-        let mut it = std::mem::replace(&mut first_with[parent as usize], NONE);
-        while it != NONE {
-            let least = forest.least(it, node);
-            let is_above =
-                forest.semidominators[least as usize] < forest.semidominators[it as usize];
-            // The dominator of `least` is its own, and is known later.
-            dominators[it as usize] = if is_above { least } else { parent };
-            it = next_with[it as usize];
-        }
-    }
-    for node in 1..count {
-        if dominators[node] != forest.semidominators[node] {
-            dominators[node] = dominators[dominators[node] as usize];
-        }
-    }
-    dominators
-}
-
-/// The reachable segments of a code path with their dominator tree, to follow the value of a
-/// variable without passing through the segments that have nothing to do with it.
-///
-/// A segment has the number that a walk through the tree gives it when it enters it, so that what it
-/// dominates are the numbers from its own to `last`.
-struct Graph {
-    /// By the id of a segment.
-    numbers: FxHashMap<u32, u32>,
-    last: Vec<u32>,
-    /// How far it is from the root of the tree.
-    levels: Vec<u32>,
-    /// The segments that precede, sorted.
-    prev: Lists,
-    /// The edges that do not come from the immediate dominator of their target, by where they come
-    /// from. `target` is in the dominance frontier of the segments on the way up the tree from
-    /// `source`, as far as the level in `frontier_levels`. For a segment that is on the way up from
-    /// several edges to a target, that holds for one of them.
-    frontier_sources: Vec<u32>,
-    frontier_targets: Vec<u32>,
-    frontier_levels: Minima,
-    /// The ranges of the identifiers in the segments, each with the number of the segment, by where
-    /// they start.
-    ranges: Vec<(Span, u32)>,
-    /// The greatest end of `ranges[..=i]`.
-    ends: Vec<u32>,
-}
-
-impl Graph {
-    /// It takes `n log n` for `n` segments.
-    fn new(initial: Segment<'_>, started: &[Segment<'_>], identifier_ranges: &[Span]) -> Graph {
-        let mut found: FxHashMap<u32, u32> = FxHashMap::default();
-        let mut parents: Vec<u32> = Vec::new();
-        // The target comes first.
-        let mut edges: Vec<(u32, u32)> = Vec::new();
-        let mut stack = vec![(initial, NONE)];
-        while let Some((segment, from)) = stack.pop() {
-            let node = *found.entry(segment.id()).or_insert(parents.len() as u32);
-            if from != NONE {
-                edges.push((node, from));
-            }
-            if node as usize == parents.len() {
-                parents.push(if from == NONE { 0 } else { from });
-                stack.extend(segment.next_segments().into_iter().map(|next| (next, node)));
-            }
-        }
-        let count = parents.len();
-        edges.sort_unstable();
-        edges.dedup();
-        let dominators = immediate_dominators(&parents, &Lists::new(count, &edges));
-
-        // A dominator has been found before what it dominates.
-        let mut sizes = vec![1u32; count];
-        for node in (1..count).rev() {
-            sizes[dominators[node] as usize] += sizes[node];
-        }
-        let (mut numbers, mut levels, mut last) =
-            (vec![0u32; count], vec![0u32; count], vec![0u32; count]);
-        // The number for the next of the segments that it dominates immediately.
-        let mut free = vec![1u32; count];
-        for node in 1..count {
-            let dominator = dominators[node] as usize;
-            numbers[node] = free[dominator];
-            free[dominator] += sizes[node];
-            free[node] = numbers[node] + 1;
-            levels[numbers[node] as usize] = levels[numbers[dominator] as usize] + 1;
-        }
-        for node in 0..count {
-            last[numbers[node] as usize] = numbers[node] + sizes[node] - 1;
-        }
-
-        let mut frontier: Vec<(u32, u32, u32)> = Vec::new();
-        for edge in &mut edges {
-            // Nothing dominates the root.
-            let is_from_dominator = edge.0 != 0 && dominators[edge.0 as usize] == edge.1;
-            *edge = (numbers[edge.0 as usize], numbers[edge.1 as usize]);
-            if !is_from_dominator {
-                frontier.push((edge.0, edge.1, 0));
-            }
-        }
-        edges.sort_unstable();
-        utils::sort::sort_unstable(&mut frontier);
-        let least_levels = Minima::new(&levels);
-        let mut previous = None;
-        for (target, source, level) in &mut frontier {
-            *level = match previous {
-                // Below what dominates both: the rest of the way up is that of the previous one.
-                Some((it, before)) if it == *target => {
-                    least_levels.least_of(before as usize + 1..*source as usize + 1)
-                }
-                _ => levels[*target as usize],
-            };
-            previous = Some((*target, *source));
-        }
-        utils::sort::sort_unstable_by_key(&mut frontier, |it| it.1);
-        let frontier_levels: Vec<u32> = frontier.iter().map(|it| it.2).collect();
-
-        for node in found.values_mut() {
-            *node = numbers[*node as usize];
-        }
-        let mut ranges: Vec<(Span, u32)> = (started.iter())
-            .filter_map(|it| {
-                Some((
-                    *identifier_ranges.get(it.id() as usize)?,
-                    *found.get(&it.id())?,
-                ))
-            })
-            .filter(|it| it.0 != NO_IDENTIFIERS)
-            .collect();
-        if !ranges.is_sorted_by_key(|it| it.0.start) {
-            utils::sort::sort_by_key(&mut ranges, |it| it.0.start);
-        }
-        let mut end = 0;
-        Graph {
-            numbers: found,
-            last,
-            levels,
-            prev: Lists::new(count, &edges),
-            frontier_sources: frontier.iter().map(|it| it.1).collect(),
-            frontier_targets: frontier.iter().map(|it| it.0).collect(),
-            frontier_levels: Minima::new(&frontier_levels),
-            ends: (ranges.iter())
-                .map(|it| {
-                    end = end.max(it.0.end);
-                    end
-                })
-                .collect(),
-            ranges,
-        }
-    }
-
-    /// Calls `visit` with each segment of the dominance frontier of `segment`: those that it does not
-    /// dominate, or that are itself, with an edge from a segment that it dominates.
-    fn for_each_in_frontier(&self, segment: u32, mut visit: impl FnMut(u32)) {
-        let from = self.frontier_sources.partition_point(|&it| it < segment);
-        let to = self
-            .frontier_sources
-            .partition_point(|&it| it <= self.last[segment as usize]);
-        self.frontier_levels.for_each_up_to(
-            &(from..to),
-            self.levels[segment as usize],
-            &mut |at| {
-                visit(self.frontier_targets[at]);
-            },
-        );
-    }
-
-    /// Calls `visit` with each segment whose range has `identifier` in it.
-    fn for_each_around(&self, identifier: Span, mut visit: impl FnMut(u32)) {
-        let mut at = self
-            .ranges
-            .partition_point(|it| it.0.start <= identifier.start);
-        while at > 0 && self.ends[at - 1] >= identifier.end {
-            at -= 1;
-            if self.ranges[at].0.end >= identifier.end {
-                visit(self.ranges[at].1);
-            }
-        }
-    }
-}
-
-/// What a segment is for a variable.
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Place {
-    /// It is read there before anything is assigned to it.
-    Read,
-    /// Something is assigned to it there before it is read.
-    Assigned,
-    /// Neither: ways from the others meet there.
-    Join,
-}
-
-/// The segments that matter for a variable, to go back from one of them without passing through those
-/// that have nothing to do with it.
-///
-/// It is how a compiler brings a variable into static single assignment form: at the end of a segment
-/// the variable has the value that it has at the end of the nearest of these that dominates it.
-struct Places {
-    /// By the number of the segment: those that the variable is used in, and those where ways from
-    /// these meet, unless `nearest` is empty.
-    list: Vec<(u32, Place)>,
-    /// From each of these numbers to the next, the index in `list` of the nearest that dominates.
-    /// Empty if it takes less to go through all the segments.
-    nearest: Vec<(u32, u32)>,
-    /// `list` by the number of the segment, if `nearest` is empty.
-    all: Vec<Option<Place>>,
-}
-
-/// Numbers of segments.
-enum Seen {
-    Few(FxHashSet<u32>),
-    /// By the number.
-    Many(Vec<bool>),
-}
-
-impl Seen {
-    fn insert(&mut self, segment: u32) -> bool {
-        match self {
-            Seen::Few(few) => few.insert(segment),
-            Seen::Many(many) => many
-                .get_mut(segment as usize)
-                .is_some_and(|it| !std::mem::replace(it, true)),
-        }
-    }
-}
-
-impl Places {
-    fn get(&self, segment: u32) -> Option<Place> {
-        if self.nearest.is_empty() {
-            return self.all.get(segment as usize).copied().flatten();
-        }
-        let at = self.list.binary_search_by_key(&segment, |it| it.0).ok()?;
-        self.list.get(at).map(|it| it.1)
-    }
-
-    /// Calls `visit` with what comes before `segment`: the segments that precede it, or for each of
-    /// these the one of `list` at whose end the variable has the same value.
-    fn for_each_before(&self, graph: &Graph, segment: u32, mut visit: impl FnMut(u32)) {
-        let prev = graph.prev.get(segment);
-        if self.nearest.is_empty() {
-            return prev.iter().copied().for_each(visit);
-        }
-        let mut visit_at = |index: u32| {
-            if let Some(it) = self.list.get(index as usize) {
-                visit(it.0);
-            }
-        };
-        if prev.len() <= self.nearest.len() {
-            for &from in prev {
-                let at = self.nearest.partition_point(|it| it.0 <= from);
-                visit_at(
-                    at.checked_sub(1)
-                        .and_then(|at| self.nearest.get(at))
-                        .map_or(NONE, |it| it.1),
-                );
-            }
-        } else {
-            for (at, &(from, index)) in self.nearest.iter().enumerate() {
-                let to = self.nearest.get(at + 1).map_or(u32::MAX, |it| it.0);
-                if prev
-                    .get(prev.partition_point(|&it| it < from))
-                    .is_some_and(|&it| it < to)
-                {
-                    visit_at(index);
-                }
-            }
-        }
-    }
-
-    /// The segments that the variable is used in from whose end there is a way to the start of one of
-    /// `targets` on which it is not used. Sorted. It takes time in proportion to what is on these ways,
-    /// unless these are expected to be `most` of the segments.
-    fn leading_to(&self, graph: &Graph, targets: Vec<u32>, most: bool) -> Vec<u32> {
-        let mut seen = if most && self.nearest.is_empty() {
-            Seen::Many(vec![false; graph.last.len()])
-        } else {
-            Seen::Few(FxHashSet::default())
-        };
-        let mut found: Vec<u32> = Vec::new();
-        let mut stack = targets;
-        while let Some(segment) = stack.pop() {
-            self.for_each_before(graph, segment, |from| {
-                if seen.insert(from) {
-                    match self.get(from) {
-                        Some(Place::Read | Place::Assigned) => found.push(from),
-                        Some(Place::Join) | None => stack.push(from),
-                    }
-                }
-            });
-        }
-        found.sort_unstable();
-        found
-    }
-}
-
-/// What is known about a variable once the graph has been asked.
-///
-/// `[x, y = (x = 1)] = z`: the outer assignment does not count for the inner one, so the segment that
-/// starts with the outer one is not the same for all. Such segments are kept apart.
-struct Later {
-    /// `Places::leading_to` the segments where the variable is read before anything is assigned to it.
-    read_after: Vec<u32>,
-    /// The same without the segments that are kept apart.
-    read_after_plain: Vec<u32>,
-    /// `Places::leading_to` each segment that is kept apart: the number of a segment that leads to it,
-    /// its number, its id. Sorted.
-    leading_apart: Vec<(u32, u32, u32)>,
-    /// The greatest start of the `expression` of `assignments[..=i]`.
-    expression_starts: Vec<u32>,
-    /// For each of `in_segments`, the least start of an `expression` from the first of its segment
-    /// up to it. 0 if one has no expression.
-    least_expression_starts: Vec<u32>,
-}
-
 /// Where a variable is assigned to and where it is read, all in one code path.
 struct Variable<'a, 'v> {
     /// In the order of the source.
@@ -729,15 +269,6 @@ struct Variable<'a, 'v> {
     ranges: &'v [Span],
     /// The id of a segment with the index of an assignment that was made in it, sorted.
     in_segments: SmallVec<[(u32, u32); 8]>,
-    later: Option<Later>,
-}
-
-/// The segments of a code path.
-struct Segments<'a> {
-    initial: Segment<'a>,
-    /// The reachable ones, in the order in which they start.
-    started: Vec<Segment<'a>>,
-    graph: Option<Graph>,
 }
 
 impl<'a, 'v> Variable<'a, 'v> {
@@ -755,7 +286,6 @@ impl<'a, 'v> Variable<'a, 'v> {
             reads,
             ranges,
             in_segments,
-            later: None,
         }
     }
 
@@ -877,7 +407,6 @@ impl<'a, 'v> Variable<'a, 'v> {
         &self,
         id: u32,
         target: &Assignment<'a>,
-        later: Option<&Later>,
     ) -> Option<&'v Assignment<'a>> {
         let assignments = self.assignments;
         let get = |it: &(u32, u32)| assignments.get(it.1 as usize);
@@ -886,27 +415,14 @@ impl<'a, 'v> Variable<'a, 'v> {
         let in_segment = in_segment
             .get(..in_segment.partition_point(|it| it.0 == id))
             .unwrap_or_default();
-        // None of those before `target` counts if the expressions of all of them come after it.
-        let before = in_segment.partition_point(|it| {
-            get(it).is_some_and(|it| it.identifier.end <= target.identifier.start)
-        });
-        if let Some(last) = before.checked_sub(1)
-            && (later.and_then(|it| it.least_expression_starts.get(from + last)))
-                .is_some_and(|&it| it >= target.identifier.end)
-        {
-            return in_segment.get(before).and_then(get);
-        }
         (in_segment.iter().filter_map(get))
             .find(|it| !is_identifier_used_between_assigned_and_equal_sign(it, target.identifier))
     }
 
     /// Goes from the end of the segments of `target` through those where nothing is assigned to the
-    /// variable, and tells whether it is read on the way. `None` if that takes more than `limit`
-    /// segments.
-    fn search(&self, target: &Assignment<'a>, limit: usize) -> Option<bool> {
-        const FEW: usize = 32;
-        let mut few: SmallVec<[u32; FEW]> = SmallVec::new();
-        let mut many: FxHashSet<u32> = FxHashSet::default();
+    /// variable, and tells whether it is read on the way.
+    fn is_read_later(&self, target: &Assignment<'a>) -> bool {
+        let mut seen: FxHashSet<u32> = FxHashSet::default();
         let mut stack: SmallVec<[Segment<'a>; 16]> = target
             .segments
             .iter()
@@ -914,288 +430,30 @@ impl<'a, 'v> Variable<'a, 'v> {
             .collect();
         while let Some(segment) = stack.pop() {
             let id = segment.id();
-            if few.contains(&id) || few.len() == FEW && !many.insert(id) {
+            if !seen.insert(id) {
                 continue;
             }
-            if few.len() < FEW {
-                few.push(id);
-            }
-            if few.len() + many.len() > limit {
-                return None;
-            }
-            let first = self.first_assignment_in(id, target, None);
+            let first = self.first_assignment_in(id, target);
             if self.is_read_in(id, first) {
-                return Some(true);
+                return true;
             }
             if first.is_none() {
                 stack.extend(segment.next_segments());
             }
         }
-        Some(false)
-    }
-
-    /// It takes `m log n` for the `m` segments that the variable is used in and those where ways from
-    /// these meet, of `n` segments in all, and at most `n`.
-    fn places(&self, graph: &Graph) -> Places {
-        let mut list: Vec<(u32, Place)> = Vec::new();
-        let mut known: FxHashSet<u32> = FxHashSet::default();
-        for in_segment in self.in_segments.chunk_by(|a, b| a.0 == b.0) {
-            if let Some(&(id, first)) = in_segment.first()
-                && let Some(&segment) = graph.numbers.get(&id)
-            {
-                let is_read = self.is_read_in(id, self.assignments.get(first as usize));
-                known.insert(segment);
-                list.push((
-                    segment,
-                    if is_read {
-                        Place::Read
-                    } else {
-                        Place::Assigned
-                    },
-                ));
-            }
-        }
-        for &read in self.reads {
-            graph.for_each_around(read, |segment| {
-                if known.insert(segment) {
-                    list.push((segment, Place::Read));
-                }
-            });
-        }
-        let (used, mut at) = (list.len(), 0);
-        while let Some(&(segment, _)) = list.get(at) {
-            at += 1;
-            graph.for_each_in_frontier(segment, |join| {
-                if known.insert(join) {
-                    list.push((join, Place::Join));
-                }
-            });
-            // Going through all the segments takes less.
-            if list.len() > graph.last.len() / 32 {
-                list.truncate(used);
-                utils::sort::sort_unstable_by_key(&mut list, |it| it.0);
-                let mut all = vec![None; graph.last.len()];
-                for &(segment, place) in &list {
-                    if let Some(it) = all.get_mut(segment as usize) {
-                        *it = Some(place);
-                    }
-                }
-                return Places {
-                    list,
-                    nearest: Vec::new(),
-                    all,
-                };
-            }
-        }
-        utils::sort::sort_unstable_by_key(&mut list, |it| it.0);
-
-        let mut nearest: Vec<(u32, u32)> = Vec::with_capacity(2 * list.len());
-        let mut around: Vec<(u32, u32)> = Vec::new();
-        for (index, &(segment, _)) in list.iter().enumerate() {
-            while let Some(&(_, last)) = around.last().filter(|it| it.1 < segment) {
-                around.pop();
-                nearest.push((last + 1, around.last().map_or(NONE, |it| it.0)));
-            }
-            nearest.push((segment, index as u32));
-            around.push((index as u32, graph.last[segment as usize]));
-        }
-        while let Some((_, last)) = around.pop() {
-            nearest.push((last + 1, around.last().map_or(NONE, |it| it.0)));
-        }
-        Places {
-            list,
-            nearest,
-            all: Vec::new(),
-        }
-    }
-
-    fn look_later(&self, graph: &Graph) -> Later {
-        let count = self.assignments.len();
-        let expression_start = |it: &Assignment<'a>| it.expression.map_or(0, |it| it.start);
-        let (mut expression_starts, mut greatest) = (Vec::with_capacity(count), 0);
-        // Whether another assignment is between the identifier and the expression of each. It does no
-        // harm to say so of one more.
-        let mut is_around = vec![false; count];
-        // Those whose expression is still to come, the last to come first.
-        let mut ahead: Vec<usize> = Vec::new();
-        // What is in one of these is in those before it too.
-        let pop = |ahead: &mut Vec<usize>, is_around: &mut [bool]| {
-            if let Some(last) = ahead.pop()
-                && is_around.get(last) == Some(&true)
-                && let Some(&before) = ahead.last()
-                && let Some(it) = is_around.get_mut(before)
-            {
-                *it = true;
-            }
-        };
-        for (index, it) in self.assignments.iter().enumerate() {
-            greatest = greatest.max(expression_start(it));
-            expression_starts.push(greatest);
-            let get = |index: &usize| self.assignments.get(*index);
-            while ahead
-                .last()
-                .and_then(get)
-                .is_some_and(|last| expression_start(last) < it.identifier.end)
-            {
-                pop(&mut ahead, &mut is_around);
-            }
-            if let Some(&last) = ahead.last()
-                && let Some(last) = is_around.get_mut(last)
-            {
-                *last = true;
-            }
-            if it.expression.is_some() {
-                ahead.push(index);
-            }
-        }
-        while !ahead.is_empty() {
-            pop(&mut ahead, &mut is_around);
-        }
-
-        let mut apart: Vec<(u32, u32)> = Vec::new();
-        let mut least_expression_starts = Vec::with_capacity(self.in_segments.len());
-        for in_segment in self.in_segments.chunk_by(|a, b| a.0 == b.0) {
-            if let Some(&(id, first)) = in_segment.first()
-                && is_around.get(first as usize) == Some(&true)
-                && let Some(&segment) = graph.numbers.get(&id)
-            {
-                apart.push((segment, id));
-            }
-            let mut least = u32::MAX;
-            for it in in_segment {
-                least = least.min(
-                    self.assignments
-                        .get(it.1 as usize)
-                        .map_or(0, expression_start),
-                );
-                least_expression_starts.push(least);
-            }
-        }
-        apart.sort_unstable();
-
-        let places = self.places(graph);
-        let is_plain = |segment: u32| apart.binary_search_by_key(&segment, |it| it.0).is_err();
-        let read: Vec<u32> = places
-            .list
-            .iter()
-            .filter(|it| it.1 == Place::Read && is_plain(it.0))
-            .map(|it| it.0)
-            .collect();
-        let read_after_plain = places.leading_to(graph, read, true);
-        let mut read_after = read_after_plain.clone();
-        let mut leading_apart: Vec<(u32, u32, u32)> = Vec::new();
-        for &(segment, id) in &apart {
-            let leading = places.leading_to(graph, vec![segment], false);
-            if places.get(segment) == Some(Place::Read) {
-                read_after.extend_from_slice(&leading);
-            }
-            leading_apart.extend(leading.into_iter().map(|from| (from, segment, id)));
-        }
-        read_after.sort_unstable();
-        read_after.dedup();
-        utils::sort::sort_unstable(&mut leading_apart);
-        Later {
-            read_after,
-            read_after_plain,
-            leading_apart,
-            expression_starts,
-            least_expression_starts,
-        }
-    }
-
-    /// What `search` finds without a limit, from what is known about all the assignments at once.
-    /// `None` if that does not tell.
-    fn is_read_later_in(
-        &self,
-        index: usize,
-        target: &Assignment<'a>,
-        graph: &Graph,
-        later: &Later,
-    ) -> Option<bool> {
-        let number = |segment: &Segment<'a>| graph.numbers.get(&segment.id()).copied();
-        let mut from: SmallVec<[u32; 2]> =
-            target.segments.iter().map(number).collect::<Option<_>>()?;
-        let is_in_a_pattern = (index
-            .checked_sub(1)
-            .and_then(|it| later.expression_starts.get(it)))
-        .is_some_and(|&start| start >= target.identifier.end);
-        if !is_in_a_pattern {
-            return Some(
-                from.iter()
-                    .any(|it| later.read_after.binary_search(it).is_ok()),
-            );
-        }
-        // From the end of `from`, and then from the end of each of the segments that are kept apart that
-        // is reached and has nothing in it that counts for `target`.
-        let mut seen: SmallVec<[u32; 4]> = SmallVec::new();
-        while !from.is_empty() {
-            if from
-                .iter()
-                .any(|it| later.read_after_plain.binary_search(it).is_ok())
-            {
-                return Some(true);
-            }
-            let mut next: SmallVec<[u32; 2]> = SmallVec::new();
-            for &segment in &from {
-                let at = later.leading_apart.partition_point(|it| it.0 < segment);
-                for &(_, to, id) in later
-                    .leading_apart
-                    .iter()
-                    .skip(at)
-                    .take_while(|it| it.0 == segment)
-                {
-                    if seen.contains(&to) {
-                        continue;
-                    }
-                    seen.push(to);
-                    let first = self.first_assignment_in(id, target, Some(later));
-                    if self.is_read_in(id, first) {
-                        return Some(true);
-                    }
-                    if first.is_none() {
-                        next.push(to);
-                    }
-                }
-            }
-            from = next;
-        }
-        Some(false)
-    }
-
-    /// Whether the variable is read in a segment after those of `assignments[index]`, before
-    /// something else is assigned to it.
-    fn is_read_later(
-        &mut self,
-        index: usize,
-        target: &Assignment<'a>,
-        segments: &mut Segments<'a>,
-    ) -> bool {
-        if let Some(is_read) = self.search(target, 32) {
-            return is_read;
-        }
-        let graph = (segments.graph)
-            .get_or_insert_with(|| Graph::new(segments.initial, &segments.started, self.ranges));
-        let later = self.later.take().unwrap_or_else(|| self.look_later(graph));
-        let is_read = self.is_read_later_in(index, target, graph, &later);
-        self.later = Some(later);
-        is_read.unwrap_or_else(|| self.search(target, usize::MAX).unwrap_or(true))
+        false
     }
 
     /// Whether nothing reads the value that `assignments[index]` assigns. `next`: what
     /// `next_assignments` tells for it.
-    fn is_assignment_unused(
-        &mut self,
-        index: usize,
-        next: u32,
-        segments: &mut Segments<'a>,
-    ) -> bool {
+    fn is_assignment_unused(&self, index: usize, next: u32) -> bool {
         let assignments = self.assignments;
         let Some(target) = assignments.get(index) else {
             return false;
         };
         let next = assignments.get(next as usize);
         !self.is_read_at_once(target, next)
-            && (next.is_some() || !self.is_read_later(index, target, segments))
+            && (next.is_some() || !self.is_read_later(target))
     }
 }
 
@@ -2027,13 +1285,13 @@ impl NoUselessAssignment {
                 utils::sort::sort_unstable_by_key(&mut read_references, |it| it.start);
             }
             utils::sort::sort_by_key(&mut assignments, |it| it.identifier.start);
-            let mut uses =
+            let uses =
                 Variable::new(&assignments, &read_references, &cx.state.identifier_ranges);
             let next = uses.next_assignments();
             for (index, (assignment, &next)) in assignments.iter().zip(&next).enumerate() {
                 let identifier = assignment.identifier;
                 if !is_in_try_statement_block(identifier)
-                    && uses.is_assignment_unused(index, next, &mut target.segments)
+                    && uses.is_assignment_unused(index, next)
                     && !oxlint_takes_for_used(assignments.get(index + 1), read_references.last())
                 {
                     // For oxlint a name that is declared is without its type.
@@ -2077,18 +1335,13 @@ impl NoUselessAssignment {
         }
     }
 
-    fn on_code_path_start<'a>(&self, path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn on_code_path_start<'a>(&self, _: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let scope = node.scope();
         cx.state.stack.push(ScopeStack {
             scope,
             assignments: FxHashMap::default(),
             try_statement_blocks: Vec::new(),
             finalized_blocks: Vec::new(),
-            segments: Segments {
-                initial: path.initial_segment(),
-                started: Vec::new(),
-                graph: None,
-            },
         });
         cx.state.current_segments.code_path_start();
         cx.state.code_path_start_scopes.insert(scope);
@@ -2103,9 +1356,6 @@ impl NoUselessAssignment {
 
     fn on_segment_start<'a>(&self, segment: Segment<'a>, _: Node<'a>, cx: &mut Cx<'a, Self>) {
         cx.state.current_segments.segment_start(segment);
-        if let Some(top) = cx.state.stack.last_mut() {
-            top.segments.started.push(segment);
-        }
         let needed = segment.id() as usize + 1;
         if cx.state.identifier_ranges.len() < needed {
             cx.state.identifier_ranges.resize(needed, NO_IDENTIFIERS);

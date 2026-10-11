@@ -1094,7 +1094,7 @@ pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<L
         return None;
     }
     let on = R::ON.and(&rule.narrow(file));
-    if !has_any_of(file, on) {
+    if !has_any_of(file, &on) {
         return None;
     }
     let mut cx = Cx {
@@ -1130,7 +1130,7 @@ pub(crate) fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
 
 /// Whether `file` has something that a rule with `on` is called with. Where this is inlined `on` is a constant, or a part of one.
 #[inline(always)]
-fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
+fn has_any_of<'a>(file: &'a File<'a>, on: &On) -> bool {
     let always = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
     let mut has_any = on.has_later() || on.has(always) || !on.nodes.is_empty();
     macro_rules! kinds {
@@ -1147,14 +1147,17 @@ fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
         pats present_pats;
     }
     let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
-    let may_have_names = (calls[3] | members[3]) != 0 && file.may_have_names_of(&on);
+    let may_have_names = (calls[3] | members[3]) != 0 && file.may_have_names_of(on);
     has_any = has_any || calls[3] != 0 && file.may_have_named(ExprTag::Call, calls, may_have_names);
     has_any =
         has_any || members[3] != 0 && file.may_have_named(ExprTag::Dot, members, may_have_names);
     has_any = has_any || on.has(On::OPTIONAL_CHAINS) && file.present_chained() != 0;
     macro_rules! sorts {
         ($($sort:ident $field:ident;)*) => {
-            $(has_any = has_any || on.has(On::$sort) && !file.hir.$field.is_empty();)*
+            // Where `on` is no constant: most have none of them.
+            if on.has($(On::$sort)|*) {
+                $(has_any = has_any || on.has(On::$sort) && !file.hir.$field.is_empty();)*
+            }
         };
     }
     sorts! {
@@ -1232,9 +1235,11 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
     });
     macro_rules! sorts {
         ($($sort:ident $every:ident $method:ident;)*) => {
-            $(if on.has(On::$sort) {
-                file.$every(|it| rule.$method(it, cx));
-            })*
+            if on.has($(On::$sort)|*) {
+                $(if on.has(On::$sort) {
+                    file.$every(|it| rule.$method(it, cx));
+                })*
+            }
         };
     }
     sorts! {

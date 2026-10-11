@@ -424,6 +424,14 @@ impl ValueSets {
             members.push(value);
             rest = smaller;
         }
+        let mut rest = theirs;
+        while let Some((_, smaller)) = self.split(rest) {
+            // Or a later one.
+            if smaller == mine {
+                return theirs;
+            }
+            rest = smaller;
+        }
         let theirs = self.oldest_first(theirs);
         let mut all = mine;
         if members.len() <= FEW || theirs.len() <= 1 {

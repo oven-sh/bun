@@ -12,7 +12,7 @@
 //! inferMutationAliasingRanges, rewriteInstructionKindsBasedOnReassignment,
 //! and inferReactiveScopeVariables on each inner function.
 
-use crate::collections::FxHashSet as HashSet;
+use crate::collections::IdBitSet;
 use crate::collections::IndexMap;
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
@@ -141,11 +141,9 @@ where
     // inferReactiveScopeVariables on the inner function
     crate::inference::infer_reactive_scope_variables::infer_reactive_scope_variables(func, env)?;
 
-    func.aliasing_effects = Some(AstAlloc::vec_from_iter(function_effects.iter().cloned()));
-
     // Phase 2: Populate the Effect of each context variable to use in inferring
     // the outer function. Corresponds to TS Phase 2 in lowerWithMutationAliasing.
-    let mut captured_or_mutated: HashSet<IdentifierId> = HashSet::default();
+    let mut captured_or_mutated: IdBitSet<IdentifierId> = IdBitSet::new();
     for effect in &function_effects {
         match effect {
             AliasingEffect::Assign { from, .. }
@@ -182,8 +180,10 @@ where
         }
     }
 
+    func.aliasing_effects = Some(AstAlloc::vec_from_iter(function_effects));
+
     for operand in &mut func.context {
-        if captured_or_mutated.contains(&operand.identifier) || operand.effect == Effect::Capture {
+        if captured_or_mutated.contains(operand.identifier) || operand.effect == Effect::Capture {
             operand.effect = Effect::Capture;
         } else {
             operand.effect = Effect::Read;

@@ -39,7 +39,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(await exited).toBe(0);
 
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    const pkgText = fs.readFileSync(path.join(temp, "package.json"), "utf8");
+    const pkg = JSON.parse(pkgText);
     expect(pkg).toEqual({
       "name": path.basename(temp).toLowerCase().replaceAll(" ", "-"),
       "module": "index.ts",
@@ -55,6 +56,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         "typescript": "^7",
       },
     });
+    // A new package.json has a 2-space indent and ends with a newline.
+    expect(pkgText).toBe(JSON.stringify(pkg, null, 2) + "\n");
     const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
     expect(readme).toStartWith("# " + path.basename(temp).toLowerCase().replaceAll(" ", "-") + "\n");
     expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
@@ -308,14 +311,13 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
+    // The package.json is an existing one, so it gets no `type` and no `private`.
     expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
       name: "x",
       scripts: { typecheck: "bun check" },
       devDependencies: { "@types/bun": "latest" },
       peerDependencies: { typescript: "^7" },
       module: "index.ts",
-      type: "module",
-      private: true,
     });
   }, 30_000);
 
@@ -337,6 +339,256 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       check: "echo mine",
       typecheck: "bun --check",
     });
+  }, 30_000);
+
+  // `bun init` adds these two dependencies. A package.json that lists them
+  // gets no nested `bun install`, so the tests that use them stay offline.
+  const initDeps = { devDependencies: { "@types/bun": "latest" }, peerDependencies: { typescript: "^7" } };
+
+  // Beside an index.ts, `bun init` has nothing to add to this package.json.
+  const completeManifest = {
+    name: "app",
+    module: "index.ts",
+    type: "module",
+    private: true,
+    scripts: { typecheck: "bun check" },
+    ...initDeps,
+  };
+  const completeWithout = (key: keyof typeof completeManifest) => {
+    const { [key]: _, ...rest } = completeManifest;
+    return rest;
+  };
+
+  async function runInit(cwd: string, args: string[], stdin: "ignore" | "pipe" = "ignore") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", ...args],
+      cwd,
+      stdio: [stdin, "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const entryFields = [
+    { entry: "no entry field", fields: {} },
+    { entry: "module", fields: { module: "esm.js" } },
+    { entry: "main", fields: { main: "main.js" } },
+    { entry: "main and module", fields: { main: "main.js", module: "esm.js" } },
+  ];
+  const privateValues = [undefined, true, false, "yes"];
+  const label = (value: unknown) => (value === undefined ? "absent" : JSON.stringify(value));
+
+  test.each(
+    [undefined, "module", "commonjs", 123].flatMap((type, t) =>
+      entryFields.map(({ entry, fields }, e) => {
+        const isPrivate = privateValues[(t + e) % privateValues.length];
+        return { type, isPrivate, entry, fields, typeLabel: label(type), privateLabel: label(isPrivate) };
+      }),
+    ),
+  )(
+    "bun init -y does not change type ($typeLabel) or private ($privateLabel) in an existing package.json with $entry",
+    async ({ type, isPrivate, entry, fields }) => {
+      // JSON.stringify drops a key whose value is undefined, so that key is absent from the file.
+      const manifest = { name: "app", version: "1.0.0", type, private: isPrivate, ...fields, ...initDeps };
+      await using temp = tempDir("bun-init-keeps-values", {
+        "package.json": JSON.stringify(manifest, null, 2) + "\n",
+        "index.js": "module.exports = 1;\n",
+      });
+
+      const { stdout, stderr, exitCode } = await runInit(String(temp), ["-y"]);
+
+      // Only a package.json with no entry field gains a key: the entry point that `bun init` found.
+      const gainsEntry = entry === "no entry field";
+      expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(
+        JSON.parse(JSON.stringify({ ...manifest, ...(gainsEntry ? { module: "index.js" } : {}) })),
+      );
+      expect(stdout.includes(" ~ package.json")).toBe(gainsEntry);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    },
+  );
+
+  // A CommonJS package that can be published. `bun init` used to change it to
+  // `"type": "module"` and `"private": true`.
+  const commonjsManifest = { name: "cjs-app", version: "1.0.0", type: "commonjs", private: false, ...initDeps };
+  const commonjsFiles = {
+    "package.json": JSON.stringify(commonjsManifest, null, 2) + "\n",
+    "index.js": `const os = require("os");\nconsole.log(os.platform());\n`,
+  };
+  const commonjsAfterInit = JSON.stringify({ ...commonjsManifest, module: "index.js" }, null, 2) + "\n";
+
+  test.each([
+    { run: "bun init -y", args: ["-y"], stdin: "ignore" as const, folder: "", after: commonjsAfterInit },
+    { run: "bun init with a stdin pipe", args: [], stdin: "pipe" as const, folder: "", after: commonjsAfterInit },
+    {
+      run: "bun init -y <folder>",
+      args: ["-y", "app"],
+      stdin: "ignore" as const,
+      folder: "app",
+      after: commonjsAfterInit,
+    },
+    // --minimal adds only the dependencies, and they are all present.
+    {
+      run: "bun init -m -y",
+      args: ["-m", "-y"],
+      stdin: "ignore" as const,
+      folder: "",
+      after: commonjsFiles["package.json"],
+    },
+  ])("$run keeps type commonjs and private false", async ({ args, stdin, folder, after }) => {
+    await using temp = tempDir("bun-init-commonjs", folder ? { [folder]: commonjsFiles } : commonjsFiles);
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), args, stdin);
+
+    expect(await Bun.file(path.join(temp, folder, "package.json")).text()).toBe(after);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test.skipIf(isWindows)("bun init on a TTY keeps type commonjs and private false", async () => {
+    await using temp = tempDir("bun-init-commonjs-tty", commonjsFiles);
+    await using terminal = new Bun.Terminal({ cols: 80, rows: 24, data() {} });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      terminal,
+    });
+    const exitCode = await proc.exited;
+
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(commonjsAfterInit);
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun init` adds scripts.typecheck to this package.json and writes it back.
+  const withoutTypecheck = completeWithout("scripts");
+
+  test.each([
+    ...[
+      { layout: "2 spaces", indent: 2 },
+      { layout: "4 spaces", indent: 4 },
+      { layout: "tabs", indent: "\t" },
+    ].flatMap(({ layout, indent }) =>
+      [
+        { eof: "a newline at the end", end: "\n" },
+        { eof: "no newline at the end", end: "" },
+      ].map(({ eof, end }) => ({
+        layout: `${layout} and ${eof}`,
+        print: (manifest: object) => JSON.stringify(manifest, null, indent) + end,
+        printAfter: (manifest: object) => JSON.stringify(manifest, null, indent) + end,
+      })),
+    ),
+    // A file with no line breaks has no indentation to keep.
+    {
+      layout: "one line, as 2 spaces",
+      print: (manifest: object) => JSON.stringify(manifest) + "\n",
+      printAfter: (manifest: object) => JSON.stringify(manifest, null, 2) + "\n",
+    },
+  ])("bun init -y writes an existing package.json back with $layout", async ({ print, printAfter }) => {
+    await using temp = tempDir("bun-init-keeps-layout", {
+      "package.json": print(withoutTypecheck),
+      "index.ts": "export {};\n",
+    });
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), ["-y"]);
+
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(
+      printAfter({ ...withoutTypecheck, scripts: { typecheck: "bun check" } }),
+    );
+    expect(stdout).toContain(" ~ package.json");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  const completeText = JSON.stringify(completeManifest, null, 2);
+  const unchangedSince = new Date("2020-01-01T00:00:00.000Z");
+
+  test.each(
+    [
+      { layout: "4 spaces", text: JSON.stringify(completeManifest, null, 4) + "\n" },
+      { layout: "tabs", text: JSON.stringify(completeManifest, null, "\t") + "\n" },
+      { layout: "one line", text: JSON.stringify(completeManifest) + "\n" },
+      { layout: "CRLF line ends", text: completeText.replaceAll("\n", "\r\n") + "\r\n" },
+      {
+        layout: "a comment and a trailing comma",
+        text: completeText.replace("{\n", "{\n  // a comment\n").replace(/\n}$/, ",\n}\n"),
+      },
+      {
+        layout: "an object on one line",
+        text:
+          completeText.replace(
+            /"scripts": \{\s+"typecheck": "bun check"\s+\}/,
+            `"scripts": { "typecheck": "bun check" }`,
+          ) + "\n",
+      },
+      { layout: "no newline at the end", text: completeText },
+    ].flatMap(row => [
+      { ...row, flags: "-y", args: ["-y"] },
+      { ...row, flags: "-m -y", args: ["-m", "-y"] },
+    ]),
+  )("bun init $flags does not write a package.json with $layout when it has nothing to add", async ({ text, args }) => {
+    await using temp = tempDir("bun-init-nothing-to-add", {
+      "package.json": text,
+      "index.ts": "export {};\n",
+    });
+    const file = path.join(temp, "package.json");
+    fs.utimesSync(file, unchangedSince, unchangedSince);
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), args);
+
+    expect(fs.readFileSync(file, "utf8")).toBe(text);
+    expect(fs.statSync(file).mtimeMs).toBe(unchangedSince.getTime());
+    expect(stdout).not.toContain("package.json");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test.each([
+    {
+      change: "adds a name that is missing",
+      manifest: completeWithout("name"),
+      after: (name: string) => ({ ...completeManifest, name }),
+    },
+    {
+      change: "replaces a name that is not a string",
+      manifest: { ...completeManifest, name: 123 },
+      after: (name: string) => ({ ...completeManifest, name }),
+    },
+    {
+      change: "adds an entry point that is missing",
+      manifest: completeWithout("module"),
+      after: () => completeManifest,
+    },
+    {
+      change: "adds a typecheck script that is missing",
+      manifest: withoutTypecheck,
+      after: () => completeManifest,
+    },
+  ])("bun init -y $change and prints ' ~ package.json'", async ({ manifest, after }) => {
+    await using temp = tempDir("bun-init-one-change", {
+      "package.json": JSON.stringify(manifest, null, 2) + "\n",
+      "index.ts": "export {};\n",
+    });
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), ["-y"]);
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(
+      after(path.basename(temp).toLowerCase().replaceAll(" ", "-")),
+    );
+    expect(stdout).toContain(" ~ package.json");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test("bun init -y adds a dependency that is missing and prints ' ~ package.json'", async () => {
+    // This package.json does not list @types/bun, so the nested `bun install` runs.
+    await using temp = tempDir("bun-init-one-change-install", {
+      "package.json": JSON.stringify(completeWithout("devDependencies"), null, 2) + "\n",
+      "index.ts": "export {};\n",
+    });
+
+    const { stdout, stderr, exitCode } = await runInit(String(temp), ["-y"]);
+
+    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(completeManifest);
+    expect(stdout).toContain(" ~ package.json");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
   }, 30_000);
 
   test("bun init --react works", async () => {

@@ -158,6 +158,7 @@ pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
         Json::Object(entries) => {
             (entries.iter()).any(|it| it.0 == b"$unserializable" || has_what_json_lacks(&it.1))
         }
+        Json::Number(it) => !it.is_finite(),
         _ => false,
     }
 }

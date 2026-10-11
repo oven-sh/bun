@@ -4,6 +4,7 @@ use super::ast::{Attribute, Id, Kind, Node, Span, StartTagComment, Tree};
 use super::data::{self, TagDefinition};
 use super::error::{ErrorKind, SyntaxError};
 use super::lexer::{self, ContentType, GetTagContentType, LexedAttribute, Parts, Token, TokenType};
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
 #[derive(Copy, Clone)]
@@ -39,6 +40,9 @@ struct TreeBuilder<'a, 't, 'k> {
     is_tag_name_case_sensitive: bool,
     is_nested_too_deeply: bool,
     stack_check: bun_core::StackCheck,
+    /// Where the cases of ICU expressions end that have been passed on the way to the end of one around them: by the
+    /// index of their first token, the index of the token that ends them.
+    case_ends: FxHashMap<usize, usize>,
 }
 
 /// A name with its namespace: `:namespace:name`.
@@ -308,9 +312,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             is_tag_name_case_sensitive: self.is_tag_name_case_sensitive,
             is_nested_too_deeply: false,
             stack_check: self.stack_check,
+            case_ends: std::mem::take(&mut self.case_ends),
         };
         builder.build();
         let (errors, is_nested_too_deeply) = (builder.errors, builder.is_nested_too_deeply);
+        self.case_ends = builder.case_ends;
         self.is_nested_too_deeply |= is_nested_too_deeply;
         if !errors.is_empty() {
             self.errors.extend(errors);
@@ -324,24 +330,31 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         use TokenType::{
             Eof, ExpansionCaseExpEnd, ExpansionCaseExpStart, ExpansionFormEnd, ExpansionFormStart,
         };
-        let mut stack = vec![ExpansionCaseExpStart];
+        // It is in a case that has been gone through, and nothing was wrong in that.
+        if let Some(&end) = self.case_ends.get(&self.index) {
+            self.index = end;
+            return Some(());
+        }
+        // What is open, and the index of the first token in it.
+        let mut stack = vec![(ExpansionCaseExpStart, self.index)];
         loop {
             let kind = self.peek().kind;
             if matches!(kind, ExpansionFormStart | ExpansionCaseExpStart) {
-                stack.push(kind);
+                stack.push((kind, self.index + 1));
             }
             if kind == ExpansionCaseExpEnd {
-                if stack.last() != Some(&ExpansionCaseExpStart) {
+                let Some(&(ExpansionCaseExpStart, first)) = stack.last() else {
                     self.error(start.span.start, ErrorKind::IcuWithoutClosingBrace, b"");
                     return None;
-                }
+                };
+                self.case_ends.insert(first, self.index);
                 stack.pop();
                 if stack.is_empty() {
                     return Some(());
                 }
             }
             if kind == ExpansionFormEnd {
-                if stack.last() != Some(&ExpansionFormStart) {
+                if !matches!(stack.last(), Some((ExpansionFormStart, _))) {
                     self.error(start.span.start, ErrorKind::IcuWithoutClosingBrace, b"");
                     return None;
                 }
@@ -718,6 +731,7 @@ pub(crate) fn parse<'a>(
         is_tag_name_case_sensitive: is_case_sensitive,
         is_nested_too_deeply: false,
         stack_check: crate::stack::check_for_tree(),
+        case_ends: FxHashMap::default(),
     };
     builder.build();
     errors.append(&mut builder.errors);

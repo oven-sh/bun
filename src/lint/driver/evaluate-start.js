@@ -30,8 +30,8 @@ for (const name of ["oxlint", "oxfmt", "vite-plus"]) {
   }
 }
 
-function finish(config) {
+function finish(config, stringify = JSON.stringify) {
   // A timer, a watcher or a server that the configuration has left behind would keep the process alive for ever. The answer is
   // there, whatever the configuration has made of `process.exitCode`.
-  process.stdout.write(marker + JSON.stringify({ config }), () => process.exit(0));
+  process.stdout.write(marker + stringify({ config }), () => process.exit(0));
 }

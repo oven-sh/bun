@@ -193,6 +193,12 @@ describe.concurrent("bun format", () => {
       [{ ".prettierrc": '{"printWidth": -1}' }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
       [{ ".prettierrc.yaml": "printWidth: -1\n" }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
       [{ ".prettierrc.toml": "printWidth = -1\n" }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{ ".prettierrc.yaml": "printWidth: .inf\n" }, [], "73086142db5ba22c6ea91ef3a0a7b1946ed3b177"],
+      [{ ".prettierrc.yaml": "printWidth: -.inf\n" }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{ ".prettierrc.toml": "printWidth = inf\n" }, [], "73086142db5ba22c6ea91ef3a0a7b1946ed3b177"],
+      [{ ".prettierrc.toml": "printWidth = -inf\n" }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{ ".prettierrc.json5": "{ printWidth: Infinity }" }, [], "73086142db5ba22c6ea91ef3a0a7b1946ed3b177"],
+      [{ ".prettierrc.json5": "{ printWidth: -Infinity }" }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
       [
         { "prettier.config.mjs": "export default { printWidth: -Infinity };" },
         [],

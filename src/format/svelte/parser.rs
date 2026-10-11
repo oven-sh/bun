@@ -10,6 +10,7 @@ use super::ast::{
 use bun_core::strings;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// What Svelte throws: its code, and where.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -349,6 +350,8 @@ struct Parser<'a, 'j> {
     tree: Tree<'a>,
     /// `stack`, without the root.
     stack: Vec<Id>,
+    /// The first so many of them are known to have no `shadowrootmode`.
+    without_shadowroot: Cell<usize>,
     fragments: Vec<FragmentId>,
     /// `meta_tags`
     seen_meta_tags: Vec<ElementKind>,
@@ -454,7 +457,13 @@ impl<'a> Parser<'a, '_> {
 
     fn pop(&mut self) {
         self.fragments.pop();
+        self.pop_from_stack();
+    }
+
+    fn pop_from_stack(&mut self) {
         self.stack.pop();
+        let known = self.without_shadowroot.get_mut();
+        *known = (*known).min(self.stack.len());
     }
 
     fn element(&self, id: Id) -> Option<&Element<'a>> {
@@ -690,7 +699,8 @@ impl<'a> Parser<'a, '_> {
 
     /// `parent_is_shadowroot_template`
     fn parent_is_shadowroot_template(&self) -> bool {
-        self.stack.iter().any(|&id| {
+        let rest = self.stack.get(self.without_shadowroot.get()..);
+        let is_one = rest.unwrap_or_default().iter().any(|&id| {
             self.element(id).is_some_and(|element| {
                 element.kind == ElementKind::RegularElement
                     && element.attributes.iter().any(|&it| {
@@ -703,7 +713,11 @@ impl<'a> Parser<'a, '_> {
                         )
                     })
             })
-        })
+        });
+        if !is_one {
+            self.without_shadowroot.set(self.stack.len());
+        }
+        is_one
     }
 
     /// `</name>`, from behind the `/` on. `start`: where the `<` is.
@@ -1695,7 +1709,7 @@ impl<'a> Parser<'a, '_> {
             }
         ) {
             self.tree[block].end = self.index as u32;
-            self.stack.pop();
+            self.pop_from_stack();
             match self.current() {
                 Some(outer) => block = outer,
                 None => break,
@@ -2008,6 +2022,7 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
         is_typescript: is_typescript(text),
         tree,
         stack: Vec::new(),
+        without_shadowroot: Cell::new(0),
         fragments: vec![fragment],
         seen_meta_tags: Vec::new(),
         last_auto_closed_tag: None,

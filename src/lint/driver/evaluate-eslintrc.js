@@ -337,4 +337,4 @@ if (rulesdir !== undefined) {
   }
 }
 
-finish(out);
+finish(out, stringify);

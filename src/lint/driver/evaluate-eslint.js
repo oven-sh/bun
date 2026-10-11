@@ -226,4 +226,4 @@ let config = null;
 if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
 else if (exported !== undefined) config = serializeConfigObject(exported, 0);
 
-finish(config);
+finish(config, stringify);

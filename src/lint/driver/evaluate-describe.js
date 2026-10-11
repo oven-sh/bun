@@ -187,7 +187,8 @@ function serialize(value, ancestors = []) {
     case "boolean":
       return value;
     case "number":
-      return Number.isFinite(value) ? value : unserializable("number");
+      // `stringify` keeps what is infinite.
+      return Number.isNaN(value) ? unserializable("number") : value;
     case "undefined":
       return undefined;
     case "object":

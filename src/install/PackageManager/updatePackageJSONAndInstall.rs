@@ -507,7 +507,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     let Ok(node_modules) = bun_sys::Dir::open(b"node_modules") else {
         return;
     };
-    let name_hashes = manager.lockfile.packages.items_name_hash();
+    let dependencies = manager.lockfile.buffers.dependencies.as_slice();
     for request in manager.update_requests.iter() {
         // A path or URL has no name here.
         if request.name.is_empty() {
@@ -518,9 +518,11 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
             Some(placed) => placed
                 .binary_search_by(|name| name.as_ref().cmp(request.name))
                 .is_err(),
-            None => !name_hashes.contains(&bun_semver::semver_string::Builder::string_hash(
-                request.name,
-            )),
+            // A folder has the name of the dependency, which an alias gives to another package.
+            None => {
+                let hash = bun_semver::semver_string::Builder::string_hash(request.name);
+                !dependencies.iter().any(|dep| dep.name_hash == hash)
+            }
         };
         if !left {
             continue;

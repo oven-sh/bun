@@ -712,3 +712,44 @@ it.concurrent("bun remove --recursive is not a workspace-wide remove: the unknow
   expect(await file(join(String(dir), "packages", "web", "package.json")).text()).toBe(WORKSPACE("web"));
   expect(exitCode).toBe(1);
 });
+
+for (const linker of ["hoisted", "isolated"] as const) {
+  it.concurrent(
+    `bun remove keeps the folder another workspace has under that name for an alias (${linker})`,
+    async () => {
+      await using registry = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const name = new URL(req.url).pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
+          const manifest = { name, version: "1.0.0" };
+          if (req.url.endsWith(".tgz")) {
+            const files = { "package/package.json": JSON.stringify(manifest) };
+            return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+          }
+          const versions = { "1.0.0": { ...manifest, dist: { tarball: `${registry.url}${name}-1.0.0.tgz` } } };
+          return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions });
+        },
+      });
+      using dir = tempDir(`bun-remove-alias-${linker}`, {
+        "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": JSON.stringify({ name: "a", dependencies: { foo: "npm:bar@1" } }),
+        "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { foo: "^1" } }),
+      });
+      // What `import "foo"` in packages/a finds.
+      const fooOfA = async () => {
+        for (const from of [join(String(dir), "packages", "a"), String(dir)]) {
+          const manifest = file(join(from, "node_modules", "foo", "package.json"));
+          if (await manifest.exists()) return (await manifest.json()).name;
+        }
+      };
+      expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+      expect(await fooOfA()).toBe("bar");
+
+      const { stderr, exitCode } = await remove(join(String(dir), "packages", "b"), "foo");
+      expect(stderr).not.toContain("error:");
+      expect(await fooOfA()).toBe("bar");
+      expect(exitCode).toBe(0);
+    },
+  );
+}

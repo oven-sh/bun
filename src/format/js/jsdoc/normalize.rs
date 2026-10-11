@@ -358,6 +358,10 @@ fn normalize_type_core(type_str: &[u8], stack: &Stack) -> Vec<u8> {
     while let Some(next) = replace_one_array_pattern(&converted, stack) {
         converted = next;
     }
+    // What is made of it is of no use.
+    if stack.ran_out() {
+        return converted;
+    }
     normalize_type_whitespace(&converted).into_owned()
 }
 
@@ -388,6 +392,9 @@ fn replace_one_array_pattern(type_str: &[u8], stack: &Stack) -> Option<Vec<u8>> 
             continue;
         };
         let inner = normalize_type_inner(&type_str[inner_start..inner_start + end_offset], stack);
+        if stack.ran_out() {
+            return None;
+        }
         let after = &type_str[inner_start + end_offset + 1..];
         return Some(match needs_parens_for_array(&inner) {
             true => [&type_str[..pos], b"(", &inner, b")[]", after].concat(),

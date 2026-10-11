@@ -2502,15 +2502,18 @@ fn get_or_put_resolved_package_with_find_result(
         version: find_result.version,
         url: find_result.package.tarball_url.value,
     }));
-    if let Some(id) = this.lockfile.get_package_id(
-        name_hash,
-        if should_update || suppress_peer_satisfies {
-            None
-        } else {
-            Some(version)
-        },
-        &npm_resolution,
-    ) {
+    let reusable_range = if should_update || suppress_peer_satisfies {
+        None
+    } else {
+        Some(version)
+    };
+    let inside_bundle = this.lockfile.is_row_inside_bundle(dependency_id, behavior);
+    let existing = if inside_bundle {
+        this.lockfile.get_package_id(name_hash, reusable_range, &npm_resolution)
+    } else {
+        this.lockfile.get_package_id_outside_bundles(name_hash, reusable_range, &npm_resolution)
+    };
+    if let Some(id) = existing {
         // The existing entry may come from an abbreviated manifest or a pre-`libc` lockfile.
         if find_result.package.libc != Npm::Libc::NONE {
             let buf = this.lockfile.buffers.string_bytes.as_slice();
@@ -2585,6 +2588,9 @@ fn get_or_put_resolved_package_with_find_result(
             || this.lockfile.is_in_unplaced_subtree(dependency_id));
     if unplaced {
         this.lockfile.mark_unplaced_subtree(package.dependencies);
+        if inside_bundle {
+            this.lockfile.mark_only_bundled(package.meta.id);
+        }
     }
 
     // non-null if the package is in "patchedDependencies"

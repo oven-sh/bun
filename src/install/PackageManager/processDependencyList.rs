@@ -416,8 +416,9 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Sorts `batch` by id and returns indices into it ordered by owner name, owner resolution,
-    /// then dependency name. Ids are handed out in arrival order; these do not depend on it.
+    /// Sorts `batch` by id and returns indices into it: the root's rows, the workspaces', then the
+    /// rest, each ordered by owner name, owner resolution, then dependency name. Ids are handed out
+    /// in arrival order; these do not depend on it.
     fn peer_batch_order(&self, batch: &mut [DependencyID]) -> Vec<u32> {
         let mut order = index_sort::identity(batch.len());
         if batch.len() < 2 {
@@ -437,12 +438,20 @@ impl PackageManager {
         let names = lockfile.packages.items_name();
         let resolutions = lockfile.packages.items_resolution();
         let dependencies = lockfile.buffers.dependencies.as_slice();
+        // The project's own ranges decide first; a package's peer then takes what they resolved to.
+        let rank = |owner: usize| match resolutions[owner].tag {
+            ResolutionTag::Root => 0u8,
+            ResolutionTag::Workspace => 1,
+            _ => 2,
+        };
         index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
             let (a, b) = (a as usize, b as usize);
             let by_owner = match (owners[a] as usize, owners[b] as usize) {
                 (x, y) if x == y => Ordering::Equal,
                 (x, y) if x >= names.len() || y >= names.len() => x.cmp(&y),
-                (x, y) => strings::order(names[x].slice(buf), names[y].slice(buf))
+                (x, y) => rank(x)
+                    .cmp(&rank(y))
+                    .then_with(|| strings::order(names[x].slice(buf), names[y].slice(buf)))
                     .then_with(|| resolutions[x].order(&resolutions[y], buf, buf)),
             };
             by_owner

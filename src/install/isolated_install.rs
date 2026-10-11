@@ -2029,6 +2029,7 @@ pub(crate) fn install_isolated_packages(
                 PackageInstall::supported_method() as u8
             ),
             is_new_bun_modules,
+            staging_lock: Default::default(),
             global_store_path: global_store_path
                 .as_deref()
                 .map(|b: &[u8]| -> &bun_core::ZStr {

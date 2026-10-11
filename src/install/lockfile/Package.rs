@@ -606,14 +606,14 @@ impl Package<u64> {
                 resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
             };
 
-            // Peer slots must not keep their target alive; bound in `Cloner::flush`. A target the
-            // loaded lockfile held through optional peers alone is cloned like a dependency.
-            if old_dependencies[i].behavior.is_optional_peer()
+            // Weak peer slots must not keep their target alive; bound in `Cloner::flush`. A target the
+            // loaded lockfile held through weak peers alone is cloned like a dependency.
+            if old.is_weak_peer(self.dependencies.off + i as u32, *old_resolution)
                 && old
                     .held_at_load
                     .is_set_allow_out_of_bound(*old_resolution as usize, true)
             {
-                cloner.optional_peers.push(pending);
+                cloner.weak_peers.push(pending);
                 continue;
             }
 

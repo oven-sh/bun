@@ -16,6 +16,7 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
+use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager::workspace_selection::{self, RootSelection};
@@ -65,6 +66,8 @@ struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
     checked: usize,
+    /// No install is linking: a `StagingPath` is what one that died left.
+    leftovers: bool,
 }
 
 impl Plan {
@@ -289,7 +292,11 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let workspace_names = collect_workspace_names(manager);
     let selection = select_importers(manager, original_cwd);
 
-    let mut plan = Plan::default();
+    let staging_lock = StagingLock::acquire();
+    let mut plan = Plan {
+        leftovers: !staging_lock.is_busy,
+        ..Default::default()
+    };
     match layout {
         Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
@@ -1599,11 +1606,18 @@ fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
 }
 
 fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
+    read_entries_and_leftovers(dir, false)
+}
+
+/// `leftovers`: also the `StagingPath`s, the only names returned that start with a dot.
+fn read_entries_and_leftovers(dir: &Dir, leftovers: bool) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
-        if name.first() == Some(&b'.') {
+        if name.first() == Some(&b'.')
+            && !(leftovers && name.starts_with(StagingPath::PREFIX.as_bytes()))
+        {
             continue;
         }
         let kind = entry_kind(dir, name, entry.kind);
@@ -1624,14 +1638,22 @@ fn scan_folder(
     let folder_idx = plan.push_folder(folder_path, FolderKind::NodeModules);
     plan.folders[folder_idx].touched = touched;
     let mut alias = Vec::new();
-    for (name, kind) in read_entries(&dir) {
+    for (name, kind) in read_entries_and_leftovers(&dir, plan.leftovers) {
+        if name.first() == Some(&b'.') {
+            plan.remove(folder_idx, &name, kind);
+            continue;
+        }
         if name.first() == Some(&b'@') && kind == EntryKind::Directory {
             let Ok(scope_dir) = dir.open_at(&name) else {
                 continue;
             };
             let scope_path = join(folder_path, &name);
             let scope_idx = plan.push_folder(&scope_path, FolderKind::Scope { parent: folder_idx });
-            for (inner, inner_kind) in read_entries(&scope_dir) {
+            for (inner, inner_kind) in read_entries_and_leftovers(&scope_dir, plan.leftovers) {
+                if inner.first() == Some(&b'.') {
+                    plan.remove(scope_idx, &inner, inner_kind);
+                    continue;
+                }
                 alias.clear();
                 alias.extend_from_slice(&name);
                 alias.push(b'/');

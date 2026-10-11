@@ -70,6 +70,8 @@ pub struct PackageInstaller<'a> {
     pub(crate) skip_delete: bool,
     pub(crate) force_install: bool,
     pub(crate) root_node_modules_folder: Dir,
+    /// Taken for the first package that is linked: an install with nothing to link takes none.
+    pub(crate) staging_lock: Option<package_install::StagingLock>,
     pub(crate) summary: &'a mut package_install::Summary,
     // No `options` backref field — every caller reads via
     // `self.manager().options` so the shared borrow stays a child of the live
@@ -1844,6 +1846,11 @@ impl<'a> PackageInstaller<'a> {
                     installer.install_from_link(self.skip_delete, &destination_dir)
                 }
                 _ => 'result: {
+                    let staging = self
+                        .staging_lock
+                        .get_or_insert_with(package_install::StagingLock::acquire)
+                        .mode;
+
                     if resolution.tag == resolution::Tag::Root
                         || (resolution.tag == resolution::Tag::Folder
                             && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
@@ -1860,6 +1867,7 @@ impl<'a> PackageInstaller<'a> {
                                 || self.lockfile().is_overridden_dependency(dependency_id))
                         {
                             break 'result installer.install(
+                                staging,
                                 self.skip_delete,
                                 &destination_dir,
                                 installer.get_install_method(),
@@ -1901,6 +1909,7 @@ impl<'a> PackageInstaller<'a> {
                             installer.install_from_link(self.skip_delete, &destination_dir)
                         } else {
                             installer.install(
+                                staging,
                                 self.skip_delete,
                                 &destination_dir,
                                 installer.get_install_method(),
@@ -1931,6 +1940,7 @@ impl<'a> PackageInstaller<'a> {
                         installer.get_install_method()
                     };
                     break 'result installer.install(
+                        staging,
                         self.skip_delete,
                         &destination_dir,
                         method,

@@ -380,6 +380,7 @@ pub(crate) fn install_hoisted_packages(
                 resolutions,
                 lockfile: lockfile_ptr,
                 root_node_modules_folder: node_modules_folder,
+                staging_lock: None,
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
@@ -579,6 +580,8 @@ pub(crate) fn install_hoisted_packages(
             // force = true
             installer.install_available_packages::<true>(log_level);
         }
+        // Every package is linked; the scripts still to run need no lock.
+        installer.staging_lock = None;
 
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);

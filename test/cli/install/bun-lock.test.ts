@@ -2105,6 +2105,127 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
       version: "1.0.0",
     });
   });
+
+  // An out-of-range binding is a record of what the dependent was given, not a reason to keep it:
+  // once the row that really held the version leaves package.json, the version goes with it.
+  describe("after package.json changes", () => {
+    const twoPeers = pkg("2-peer-deps-c@1.0.0", { peerDependencies: { "a-dep": "1.0.10", "no-deps": "1.0.0" } });
+    const fixedDep = pkg("one-fixed-dep@2.0.0", { dependencies: { "no-deps": "2.0.0" } });
+    const printed = (lockfile: string) =>
+      Object.fromEntries(Array.from(lockfile.matchAll(/^ {4}"([^"]+)": \["([^"]+)"/gm), m => [m[1], m[2]]));
+
+    // Loads `shape`, saves it for a package.json that now holds `root`, and checks that the result is a fixed point.
+    async function resaveFor(
+      root: Shape["root"],
+      shape: Pick<Shape, "root" | "packages">,
+      expected: Record<string, string>,
+    ) {
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+      const run = makeInstallRunner(packageDir);
+      await writeProject(packageDir, shape);
+      await write(join(packageDir, "package.json"), JSON.stringify({ name: "foo", ...root }));
+
+      await run(["install", "--lockfile-only"]);
+      const saved = await file(join(packageDir, "bun.lock")).text();
+      expect(printed(saved)).toEqual(expected);
+
+      await run(["install", "--lockfile-only"]);
+      await run(["install", "--frozen-lockfile"]);
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
+    }
+
+    // The dependent is laid out before or after one-fixed-dep, which is what places no-deps@2.0.0.
+    it.each([
+      ["2-peer-deps-c", "1.0.0"],
+      ["z-two-peers", "npm:2-peer-deps-c@1.0.0"],
+    ])("the peer of %s does not keep the root's version once the root drops it", async (name, spec) => {
+      const dependencies = { [name]: spec, "one-fixed-dep": "2.0.0" };
+      await resaveFor(
+        { dependencies },
+        {
+          root: { dependencies, devDependencies: { "no-deps": "~1.1.0" } },
+          packages: {
+            [name]: twoPeers,
+            "a-dep": pkg("a-dep@1.0.10"),
+            "no-deps": pkg("no-deps@1.1.0"),
+            "one-fixed-dep": fixedDep,
+            "one-fixed-dep/no-deps": pkg("no-deps@2.0.0"),
+          },
+        },
+        {
+          [name]: "2-peer-deps-c@1.0.0",
+          "a-dep": "a-dep@1.0.10",
+          "no-deps": "no-deps@2.0.0",
+          "one-fixed-dep": "one-fixed-dep@2.0.0",
+        },
+      );
+    });
+
+    it("the peer keeps the root's version while the root keeps it", async () => {
+      const root = {
+        dependencies: { "2-peer-deps-c": "1.0.0", "one-fixed-dep": "2.0.0" },
+        devDependencies: { "no-deps": "~1.1.0" },
+      };
+      await resaveFor(
+        { ...root, dependencies: { ...root.dependencies, "one-dep": "1.0.0" } },
+        {
+          root,
+          packages: {
+            "2-peer-deps-c": twoPeers,
+            "a-dep": pkg("a-dep@1.0.10"),
+            "no-deps": pkg("no-deps@1.1.0"),
+            "one-fixed-dep": fixedDep,
+            "one-fixed-dep/no-deps": pkg("no-deps@2.0.0"),
+          },
+        },
+        {
+          "2-peer-deps-c": "2-peer-deps-c@1.0.0",
+          "a-dep": "a-dep@1.0.10",
+          "no-deps": "no-deps@1.1.0",
+          "one-dep": "one-dep@1.0.0",
+          "one-fixed-dep": "one-fixed-dep@2.0.0",
+          "one-dep/no-deps": "no-deps@1.0.1",
+          "one-fixed-dep/no-deps": "no-deps@2.0.0",
+        },
+      );
+    });
+
+    it("the peer keeps a version nothing else held when the file was loaded", async () => {
+      const dependencies = { "one-dep": "1.0.0", "strict-peer-dep": "1.0.0" };
+      await resaveFor(
+        { dependencies: { ...dependencies, "a-dep": "1.0.1" } },
+        {
+          root: { dependencies },
+          packages: {
+            "no-deps": pkg("no-deps@1.0.1"),
+            "one-dep": oneDep,
+            "strict-peer-dep": strictPeerDep,
+            "strict-peer-dep/no-deps": pkg("no-deps@1.1.0"),
+          },
+        },
+        {
+          "a-dep": "a-dep@1.0.1",
+          "no-deps": "no-deps@1.0.1",
+          "one-dep": "one-dep@1.0.0",
+          "strict-peer-dep": "strict-peer-dep@1.0.0",
+          "strict-peer-dep/no-deps": "no-deps@1.1.0",
+        },
+      );
+    });
+
+    // Nothing resolves an unbound peer again, so dropping the only copy would leave the dependent without one for good.
+    it("the peer keeps the root's version once the root drops it if no other version is left", async () => {
+      const dependencies = { "2-peer-deps-c": "1.0.0" };
+      await resaveFor(
+        { dependencies },
+        {
+          root: { dependencies, devDependencies: { "no-deps": "~1.1.0" } },
+          packages: { "2-peer-deps-c": twoPeers, "a-dep": pkg("a-dep@1.0.10"), "no-deps": pkg("no-deps@1.1.0") },
+        },
+        { "2-peer-deps-c": "2-peer-deps-c@1.0.0", "a-dep": "a-dep@1.0.10", "no-deps": "no-deps@1.1.0" },
+      );
+    });
+  });
 });
 
 it("adding a dependency keeps an optional peer on the package bun.lock bound it to while that package stays next to it", async () => {

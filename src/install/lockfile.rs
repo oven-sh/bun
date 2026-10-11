@@ -205,8 +205,8 @@ pub struct Lockfile {
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
 
-    /// Loaded packages a non-optional-peer row resolved to (`mark_loaded_packages`); an optional peer
-    /// slot alone keeps a package through `clean_with_logger` only if it was already peer-only on load.
+    /// Loaded packages a row other than a weak peer (`is_weak_peer`) resolved to (`mark_loaded_packages`); weak
+    /// peer slots alone keep a package through `clean_with_logger` only if nothing else held it on load either.
     pub(crate) held_at_load: DynamicBitSet,
 
     /// `bit[id] == true` ⇔ package `id` was appended for a dependency whose
@@ -217,6 +217,12 @@ pub struct Lockfile {
     /// happened to land first. Runtime-only — never serialised; sized lazily
     /// in `mark_exact_pin`.
     pub(crate) exact_pinned: DynamicBitSet,
+
+    /// Packages appended for a row inside a bundle (a bundled dependency or anything below one)
+    /// that no row outside a bundle resolves to yet. They ship in the bundling package's tarball,
+    /// so a range outside does not settle for one (`get_package_id_outside_bundles`).
+    /// Runtime-only, sized lazily in `mark_only_bundled`.
+    pub(crate) only_bundled: DynamicBitSet,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -844,6 +850,21 @@ impl Lockfile {
         }
     }
 
+    /// An optional peer, or a peer bound to a version its range rejects (the resolver's "incorrect peer
+    /// dependency"; an overridden peer is bound by the rule, not by its range).
+    pub(crate) fn is_weak_peer(&self, id: DependencyID, target: PackageID) -> bool {
+        let dependency = &self.buffers.dependencies[id as usize];
+        if !dependency.behavior.is_peer() || dependency.behavior.is_optional_peer() {
+            return dependency.behavior.is_peer();
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let range = self.catalogs.resolve_range(buf, dependency);
+        range.try_npm().is_some_and(|npm| {
+            (self.package_version(target))
+                .is_some_and(|version| !npm.version.satisfies(version, buf, buf))
+        }) && !self.is_overridden_dependency(id)
+    }
+
     /// Is this a direct dependency of the workspace the install is taking place in?
     pub(crate) fn is_root_dependency(
         &self,
@@ -1236,7 +1257,7 @@ impl Lockfile {
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
             clone_queue: clone_queue_,
-            optional_peers: PendingResolutions::new(),
+            weak_peers: PendingResolutions::new(),
             log,
             old_preinstall_state,
             manager: &mut *manager,
@@ -1464,7 +1485,7 @@ impl Lockfile {
 pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
     /// Bound in `flush`, once `clone_queue` has decided which targets survive.
-    pub(crate) optional_peers: PendingResolutions,
+    pub(crate) weak_peers: PendingResolutions,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
@@ -1474,9 +1495,24 @@ pub struct Cloner<'a> {
 }
 
 impl<'a> Cloner<'a> {
+    /// A required peer whose dropped target was the last package of its name. Nothing resolves an unbound
+    /// peer again, so it keeps that target; with another copy left, the hoister binds it to the nearest.
+    fn peer_on_last_copy(&mut self) -> Option<PendingResolution> {
+        let name_hashes = self.old.packages.items_name_hash();
+        let dependencies = self.lockfile.buffers.dependencies.as_slice();
+        let index = self.weak_peers.iter().position(|peer| {
+            self.mapping[peer.old_resolution as usize] == invalid_package_id
+                && !dependencies[peer.resolve_id as usize].behavior.is_optional_peer()
+                && (self.lockfile)
+                    .packages_named(name_hashes[peer.old_resolution as usize])
+                    .is_empty()
+        })?;
+        Some(self.weak_peers.swap_remove(index))
+    }
+
     pub(crate) fn flush(&mut self) -> Result<(), BunError> {
         let max_package_id = self.old.packages.len();
-        while let Some(to_clone) = self.clone_queue.pop() {
+        while let Some(to_clone) = (self.clone_queue.pop()).or_else(|| self.peer_on_last_copy()) {
             let mapping = self.mapping[to_clone.old_resolution as usize];
             if (mapping as usize) < max_package_id {
                 self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = mapping;
@@ -1491,7 +1527,7 @@ impl<'a> Cloner<'a> {
         }
 
         // bun.lock.rs binds these before hoisting; the hoist below has to see the same bindings.
-        for pending in self.optional_peers.drain(..) {
+        for pending in self.weak_peers.drain(..) {
             let mapping = self.mapping[pending.old_resolution as usize];
             if (mapping as usize) < max_package_id {
                 self.lockfile.buffers.resolutions[pending.resolve_id as usize] = mapping;
@@ -2285,6 +2321,7 @@ impl Lockfile {
             loaded_package_count: 0,
             held_at_load: DynamicBitSet::default(),
             exact_pinned: DynamicBitSet::default(),
+            only_bundled: DynamicBitSet::default(),
         }
     }
 
@@ -2294,10 +2331,11 @@ impl Lockfile {
         let packages_len = self.packages.len();
         self.loaded_package_count = packages_len as PackageID;
         let mut held = DynamicBitSet::init_empty(packages_len)?;
-        let dependencies = self.buffers.dependencies.as_slice();
-        let resolutions = self.buffers.resolutions.as_slice();
-        for (dependency, &package_id) in dependencies.iter().zip(resolutions) {
-            if !dependency.behavior.is_optional_peer() && (package_id as usize) < packages_len {
+        let rows = self.buffers.dependencies.len();
+        for (id, &package_id) in self.buffers.resolutions.iter().enumerate().take(rows) {
+            if (package_id as usize) < packages_len
+                && !self.is_weak_peer(id as DependencyID, package_id)
+            {
                 held.set(package_id as usize);
             }
         }
@@ -2369,6 +2407,29 @@ impl Lockfile {
         self.exact_pinned.set(i);
     }
 
+    /// See the `only_bundled` field doc.
+    pub(crate) fn mark_only_bundled(&mut self, id: PackageID) {
+        let i = id as usize;
+        if self.only_bundled.bit_length() <= i {
+            bun_core::handle_oom(self.only_bundled.resize(i + 1, false));
+        }
+        self.only_bundled.set(i);
+    }
+
+    /// Is the row a bundled dependency, or owned by a package only bundles hold?
+    pub(crate) fn is_row_inside_bundle(
+        &self,
+        id: DependencyID,
+        behavior: dependency::Behavior,
+    ) -> bool {
+        behavior.is_bundled()
+            || (self.is_in_unplaced_subtree(id)
+                && self.get_parent_pkg_of_dependency(id).is_some_and(|owner| {
+                    self.only_bundled
+                        .is_set_allow_out_of_bound(owner as usize, false)
+                }))
+    }
+
     /// See `Scratch::unplaced_subtree`.
     pub(crate) fn mark_unplaced_subtree(&mut self, dependencies: DependencySlice) {
         let range = bun_collections::bit_set::Range {
@@ -2396,6 +2457,33 @@ impl Lockfile {
         // that satisfies this version range.
         version: Option<&DependencyVersion>,
         resolution: &Resolution,
+    ) -> Option<PackageID> {
+        self.find_package_id(name_hash, version, resolution, false)
+    }
+
+    /// `get_package_id` for a row outside every bundle: `only_bundled` packages are passed over,
+    /// whether or not one has arrived yet, unless `resolution` itself is one. That one is taken.
+    pub(crate) fn get_package_id_outside_bundles(
+        &mut self,
+        name_hash: u64,
+        version: Option<&DependencyVersion>,
+        resolution: &Resolution,
+    ) -> Option<PackageID> {
+        let found = self.find_package_id(name_hash, version, resolution, true);
+        if found.is_some() || self.only_bundled.bit_length() == 0 {
+            return found;
+        }
+        let id = self.find_package_id(name_hash, None, resolution, false)?;
+        self.only_bundled.unset(id as usize);
+        Some(id)
+    }
+
+    fn find_package_id(
+        &self,
+        name_hash: u64,
+        version: Option<&DependencyVersion>,
+        resolution: &Resolution,
+        skip_only_bundled: bool,
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
         let resolutions: &[Resolution] = self.packages.items_resolution();
@@ -2465,10 +2553,20 @@ impl Lockfile {
             }
             true
         };
+        let skipped = |id: PackageID| -> bool {
+            skip_only_bundled
+                && self
+                    .only_bundled
+                    .is_set_allow_out_of_bound(id as usize, false)
+        };
 
         match entry {
             PackageIndexEntry::Id(id) => {
                 debug_assert!((*id as usize) < resolutions.len());
+
+                if skipped(*id) {
+                    return None;
+                }
 
                 if resolutions[*id as usize].eql(resolution, buf, buf) {
                     return Some(*id);
@@ -2481,6 +2579,10 @@ impl Lockfile {
             PackageIndexEntry::Ids(ids) => {
                 for &id in ids.iter() {
                     debug_assert!((id as usize) < resolutions.len());
+
+                    if skipped(id) {
+                        continue;
+                    }
 
                     if resolutions[id as usize].eql(resolution, buf, buf) {
                         return Some(id);

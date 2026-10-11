@@ -141,6 +141,11 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
+    // `collapse_appended` leaves bundles out (`reachable`): a bundled edge neither votes nor holds its target.
+    fn counts(&self, dep: &Dependency) -> bool {
+        self.frozen_below.is_none() || !dep.behavior.is_bundled()
+    }
+
     // Like `placement`, but a version that stays whatever else was resolved (`required`) comes first.
     fn anchored_placement(&self, e: usize) -> Option<usize> {
         let n = self.candidates.len();
@@ -178,7 +183,7 @@ impl<'a> Pass<'a> {
             }
             for dep_id in slice.begin() as usize..slice.end() as usize {
                 let target = cur[dep_id];
-                if target == invalid_package_id {
+                if target == invalid_package_id || !self.counts(&deps[dep_id]) {
                     continue;
                 }
                 let Some(&g) = group_of.get(target as usize) else {
@@ -332,7 +337,7 @@ impl<'a> Pass<'a> {
         let mut best: Option<Vec<PackageID>> = None;
         loop {
             let next = self.vote(cur, live);
-            let after = reachable(self.lockfile, &next);
+            let after = reachable(self.lockfile, &next, self.frozen_below);
             if !after.unmanaged.subset_of(&self.voters.unmanaged) {
                 return best.unwrap_or(next);
             }
@@ -466,7 +471,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
     }
     let max_edges = edge_counts.iter().copied().max().unwrap_or(0) as usize;
 
-    let initial = reachable(lockfile, &lockfile.buffers.resolutions);
+    let initial = reachable(lockfile, &lockfile.buffers.resolutions, frozen_below);
     let patched: Vec<PackageID> = (0..pkg_res.len())
         .filter(|&p| pinned.is_set(p) && initial.is_set(p))
         .map(|p| p as PackageID)
@@ -490,7 +495,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
             );
             loop {
                 cur = pass.settle(&cur, &live);
-                let after = reachable(lockfile, &cur);
+                let after = reachable(lockfile, &cur, frozen_below);
                 if after.unmanaged.eql(&live.unmanaged) {
                     break;
                 }
@@ -504,10 +509,11 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
             if !live.is_set(owner) {
                 continue;
             }
-            let rows = slice.begin() as usize..slice.end() as usize;
-            for &target in &lockfile.buffers.resolutions[rows] {
-                if (target as usize) < pkg_res.len() {
-                    held.set(target as usize);
+            for dep_id in slice.begin() as usize..slice.end() as usize {
+                let target = lockfile.buffers.resolutions[dep_id] as usize;
+                let bundled = lockfile.buffers.dependencies[dep_id].behavior.is_bundled();
+                if target < pkg_res.len() && !(bundled && frozen_below.is_some()) {
+                    held.set(target);
                 }
             }
         }
@@ -704,11 +710,19 @@ pub(crate) fn effective_version(
 
 // Optional-peer edges are followed too: `clean` keeps a target the loaded lockfile held through them alone
 // (`Lockfile::held_at_load`), and a version that survives here keeps every edge it had, so anything else they reach stays held.
-fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
+// `collapse_appended` does not follow bundled edges: what a bundle holds ships in its tarball, so an edge outside that shares the version saves no copy and costs a download.
+fn reachable(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    frozen_below: Option<PackageID>,
+) -> DynamicBitSet {
     crate::lockfile::reachable::packages(
         lockfile,
         resolutions,
-        crate::lockfile::reachable::Options::all(0),
+        crate::lockfile::reachable::Options {
+            bundled: frozen_below.is_none(),
+            ..crate::lockfile::reachable::Options::all(0)
+        },
     )
 }
 

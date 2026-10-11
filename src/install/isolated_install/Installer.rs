@@ -17,7 +17,8 @@ use crate::bin_real;
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
 use crate::package_install::{
-    Method as InstallMethod, StagingPath, Summary as InstallSummary, rename_staging_into_place,
+    Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
+    rename_staging_into_place,
 };
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
@@ -81,6 +82,8 @@ pub struct Installer<'a> {
     pub(crate) installed: Bitset,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
+    /// Taken by the first task that links a project-local package.
+    pub(crate) staging_lock: std::sync::OnceLock<StagingLock>,
 
     /// BACKREF. Raw pointer (not `&'a mut`) because
     /// `Task::run`/`Task::callback` execute concurrently on the thread pool
@@ -460,17 +463,19 @@ impl<'a> Installer<'a> {
             let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
-        } else if matches!(
-            pkg_res.tag,
-            ResolutionTag::Npm
-                | ResolutionTag::Git
-                | ResolutionTag::Github
-                | ResolutionTag::LocalTarball
-                | ResolutionTag::RemoteTarball
-        ) {
+        } else if let Some(lock) = self.staging_lock.get()
+            && matches!(
+                pkg_res.tag,
+                ResolutionTag::Npm
+                    | ResolutionTag::Git
+                    | ResolutionTag::Github
+                    | ResolutionTag::LocalTarball
+                    | ResolutionTag::RemoteTarball
+            )
+        {
             // A staged link that failed only wrote to the staging directory.
             let mut staging = AutoPath::init_top_level_dir();
-            self.append_local_staging_path(&mut staging, entry_id);
+            self.append_local_staging_path(&mut staging, entry_id, lock.mode);
             let _ = Fd::cwd().delete_tree(staging.slice());
         }
 
@@ -1226,6 +1231,14 @@ impl Task {
                         directories::get_cache_directory_and_abs_path(unsafe { &mut *manager_ptr });
 
                     let uses_global_store = installer.entry_uses_global_store(self.entry_id);
+                    let staging = if uses_global_store {
+                        Staging::Off
+                    } else {
+                        installer
+                            .staging_lock
+                            .get_or_init(StagingLock::acquire)
+                            .mode
+                    };
 
                     // A `node_modules/.bun` this install created holds nothing of the entry yet.
                     if !uses_global_store && (!installer.is_new_bun_modules || link_in_place) {
@@ -1244,25 +1257,21 @@ impl Task {
                         // lands in a real project-local directory.
                         let mut local = AutoPath::init_top_level_dir();
                         installer.append_local_store_entry_path(&mut local, self.entry_id);
-                        let is_stale_link: bool = {
+                        // `None`: there is no entry.
+                        let is_stale_link: Option<bool> = {
                             #[cfg(windows)]
                             {
-                                if let Some(a) = sys::get_file_attributes(local.slice_z()) {
-                                    a.is_reparse_point
-                                } else {
-                                    false
-                                }
+                                sys::get_file_attributes(local.slice_z())
+                                    .map(|a| a.is_reparse_point)
                             }
                             #[cfg(not(windows))]
                             {
-                                if let Ok(st) = sys::lstat(local.slice_z()) {
-                                    sys::posix::s_islnk(st.st_mode as u32)
-                                } else {
-                                    false
-                                }
+                                sys::lstat(local.slice_z())
+                                    .ok()
+                                    .map(|st| sys::posix::s_islnk(st.st_mode as u32))
                             }
                         };
-                        if is_stale_link {
+                        if is_stale_link == Some(true) {
                             if let Err(e) = remove_link(local.slice_z()) {
                                 if e.get_errno() != sys::Errno::ENOENT {
                                     // Do NOT proceed: the backend below would
@@ -1273,7 +1282,10 @@ impl Task {
                             }
                         }
 
-                        link_in_place |= !installer.clear_local_store_package(self.entry_id);
+                        if is_stale_link == Some(false) {
+                            link_in_place |=
+                                !installer.clear_local_store_package(self.entry_id, staging);
+                        }
                     }
 
                     if uses_global_store {
@@ -1305,7 +1317,11 @@ impl Task {
                                 Which::Staging,
                             );
                         } else {
-                            installer.append_local_staging_path(&mut dest_subpath, self.entry_id);
+                            installer.append_local_staging_path(
+                                &mut dest_subpath,
+                                self.entry_id,
+                                staging,
+                            );
                         }
                         match backend {
                             InstallMethod::Clonefile => {
@@ -1512,7 +1528,7 @@ impl Task {
 
                     if !uses_global_store
                         && !link_in_place
-                        && !installer.commit_local_store_package(self.entry_id)
+                        && !installer.commit_local_store_package(self.entry_id, staging)
                     {
                         // The rename was refused: run the step again, linking in place.
                         link_in_place = true;
@@ -2729,8 +2745,13 @@ impl<'a> Installer<'a> {
 
     /// The `StagingPath` next to a project-local entry's package directory. Only
     /// `Step::LinkPackage` writes there; nothing is left of it once that step is over.
-    fn append_local_staging_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
-        debug_assert!(!self.entry_uses_global_store(entry_id));
+    fn append_local_staging_path(
+        &self,
+        buf: &mut impl paths::PathLike,
+        entry_id: StoreEntryId,
+        mode: Staging,
+    ) {
+        debug_assert!(!self.entry_uses_global_store(entry_id) && mode != Staging::Off);
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
         let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize];
@@ -2739,30 +2760,44 @@ impl<'a> Installer<'a> {
         buf.append(b"node_modules");
         buf.append_fmt(format_args!(
             "{}",
-            StagingPath(pkg_name.slice(self.lockfile().buffers.string_bytes.as_slice())),
+            StagingPath(
+                pkg_name.slice(self.lockfile().buffers.string_bytes.as_slice()),
+                mode,
+            ),
         ));
     }
 
-    /// Frees a project-local entry's final path. False: link in place.
-    fn clear_local_store_package(&self, entry_id: StoreEntryId) -> bool {
-        let mut staging = AutoPath::init_top_level_dir();
-        self.append_local_staging_path(&mut staging, entry_id);
+    /// Frees a project-local entry's final path, and its staging path of what an install that
+    /// died left there. False: link in place.
+    fn clear_local_store_package(&self, entry_id: StoreEntryId, mode: Staging) -> bool {
         let mut final_ = AutoPath::init_top_level_dir();
         self.append_store_path(&mut final_, entry_id);
+        let mut staging = AutoPath::init_top_level_dir();
+        self.append_local_staging_path(&mut staging, entry_id, mode);
 
         // A delete can be cut short, so an existing package leaves its final path in one step.
-        match sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z()) {
-            sys::Result::Ok(()) => Fd::cwd().delete_tree(staging.slice()).is_ok(),
-            sys::Result::Err(err) if err.get_errno() == sys::Errno::ENOENT => true,
-            sys::Result::Err(_) => Fd::cwd().delete_tree(final_.slice()).is_ok(),
+        let is_refused = |moved: &sys::Result<()>| {
+            moved
+                .as_ref()
+                .is_err_and(|err| err.get_errno() != sys::Errno::ENOENT)
+        };
+        let mut moved = sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
+        if is_refused(&moved) {
+            let _ = Fd::cwd().delete_tree(staging.slice());
+            moved = sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
         }
+        if is_refused(&moved) {
+            let _ = Fd::cwd().delete_tree(final_.slice());
+            return false;
+        }
+        Fd::cwd().delete_tree(staging.slice()).is_ok()
     }
 
     /// Renames a project-local entry's fully linked staging directory onto its final path,
     /// which is what the next install's skip check looks at. False: link in place.
-    fn commit_local_store_package(&self, entry_id: StoreEntryId) -> bool {
+    fn commit_local_store_package(&self, entry_id: StoreEntryId, mode: Staging) -> bool {
         let mut staging = AutoPath::init_top_level_dir();
-        self.append_local_staging_path(&mut staging, entry_id);
+        self.append_local_staging_path(&mut staging, entry_id, mode);
         let mut final_ = AutoPath::init_top_level_dir();
         self.append_store_path(&mut final_, entry_id);
 

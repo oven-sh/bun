@@ -481,6 +481,7 @@ impl PatchTask {
         };
 
         match pkg_install.install(
+            crate::package_install::Staging::Off,
             true,
             sys::Dir::borrow(&system_tmpdir),
             InstallMethod::Copyfile,

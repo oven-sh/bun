@@ -246,21 +246,74 @@ impl Step {
     }
 }
 
+/// Whether, and under which names, an install links packages by way of a `StagingPath`.
+/// Two installs at once must not share a staging directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Staging {
+    /// Link in place.
+    Off,
+    /// This install has the project's lock. The names are fixed, so the next install to link
+    /// a package finds, and removes, what one that died left of it.
+    Locked,
+    /// It has not. The names are its own (the seed), and what is left of them if it dies
+    /// stays until `bun prune`.
+    Unlocked(u64),
+}
+
+/// The project's lock: `flock` on its root `node_modules` directory, which also stands for the
+/// `node_modules` of its workspaces. Gone when this is dropped or the process dies.
+pub(crate) struct StagingLock {
+    pub(crate) mode: Staging,
+    /// Another install has it. Otherwise `Unlocked` means that directories cannot be locked
+    /// here (Windows, NFS).
+    pub(crate) is_busy: bool,
+    _node_modules: Option<Dir>,
+}
+
+impl StagingLock {
+    /// Never waits. The cwd is the project's root.
+    pub(crate) fn acquire() -> StagingLock {
+        let node_modules = if cfg!(windows) {
+            None
+        } else {
+            Dir::open(b"node_modules").ok()
+        };
+        let locked = node_modules
+            .as_ref()
+            .and_then(|dir| sys::flock(dir.fd(), sys::FileLockMode::Exclusive, true).ok());
+        StagingLock {
+            mode: if locked == Some(true) {
+                Staging::Locked
+            } else {
+                Staging::Unlocked(bun_core::fast_random())
+            },
+            is_busy: locked == Some(false),
+            _node_modules: node_modules,
+        }
+    }
+}
+
 /// The sibling `.bun-tmp-<hash>` a package is linked in before it is renamed onto its real path.
-pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
+pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8], pub(crate) Staging);
+
+impl StagingPath<'_> {
+    pub(crate) const PREFIX: &'static str = ".bun-tmp-";
+}
 
 impl core::fmt::Display for StagingPath<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Two installs at once must not share a staging directory.
-        static SEED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-        let seed = *SEED.get_or_init(bun_core::fast_random);
+        let seed = match self.1 {
+            Staging::Unlocked(seed) => seed,
+            Staging::Locked | Staging::Off => 0,
+        };
         let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
         let scope = &self.0[..name_start];
         // A hash, because the name can be NAME_MAX long already.
         write!(
             f,
-            "{}.bun-tmp-{:016x}",
+            "{}{}{:016x}",
             bstr::BStr::new(scope),
+            Self::PREFIX,
             bun_wyhash::hash_with_seed(seed, self.0)
         )
     }
@@ -1189,11 +1242,13 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(not(windows))]
         {
-            // mkdir first: a staging directory never exists yet.
-            let subdir = match destbase
-                .make_path(destpath.as_bytes())
-                .and_then(|()| destbase.open_at(destpath.as_bytes()))
-            {
+            let subdir = match destbase.make_open_path(
+                destpath.as_bytes(),
+                OpenDirOptions {
+                    iterate: true,
+                    ..Default::default()
+                },
+            ) {
                 Ok(d) => d,
                 Err(err) => return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None)),
             };
@@ -2307,8 +2362,42 @@ impl<'a> PackageInstall<'a> {
         !exists
     }
 
+    /// Makes `staging` anew: under `Staging::Locked` an install that died may have left it.
+    fn make_staging_dir(
+        destination_dir: &Dir,
+        staging: &ZStr,
+        method: Method,
+        skip_delete: bool,
+    ) -> sys::Maybe<()> {
+        // `init_install_dir` makes it, and the name is this install's own.
+        if cfg!(windows) {
+            return Ok(());
+        }
+        // clonefile has to make it itself.
+        if cfg!(target_os = "macos") && method == Method::Clonefile {
+            if !skip_delete {
+                destination_dir.delete_tree(staging.as_bytes())?;
+            }
+            return Ok(());
+        }
+        match sys::mkdirat(destination_dir, staging, 0o755) {
+            Err(err) if err.get_errno() == sys::E::EEXIST => {
+                destination_dir.delete_tree(staging.as_bytes())?;
+            }
+            Err(err) if err.get_errno() == sys::E::ENOENT => {
+                let Some(slash) = strings::last_index_of_char(staging.as_bytes(), b'/') else {
+                    return Err(err);
+                };
+                destination_dir.make_path(&staging.as_bytes()[..slash])?;
+            }
+            result => return result,
+        }
+        sys::mkdirat(destination_dir, staging, 0o755)
+    }
+
     pub(crate) fn install(
         &mut self,
+        staging_mode: Staging,
         skip_delete: bool,
         destination_dir: &Dir,
         method_: Method,
@@ -2324,10 +2413,13 @@ impl<'a> PackageInstall<'a> {
 
         let dest = self.destination_dir_subpath;
         let mut staging_buf = path::path_buffer_pool::get();
-        if let Ok(staging) = bun_core::fmt::buf_print_z(
-            &mut staging_buf[..],
-            format_args!("{}", StagingPath(dest.as_bytes())),
-        ) {
+        if staging_mode != Staging::Off
+            && let Ok(staging) = bun_core::fmt::buf_print_z(
+                &mut staging_buf[..],
+                format_args!("{}", StagingPath(dest.as_bytes(), staging_mode)),
+            )
+            && Self::make_staging_dir(destination_dir, staging, method_, skip_delete).is_ok()
+        {
             let staged = PackageInstall {
                 destination_dir_subpath: staging,
                 progress: self.progress.as_deref_mut(),
@@ -2343,7 +2435,7 @@ impl<'a> PackageInstall<'a> {
             }
             let _ = destination_dir.delete_tree(staging.as_bytes());
         }
-        // Staging did not work (`dest` is occupied, the rename is refused): link in place.
+        // No staging (`Staging::Off`, `dest` is occupied, the rename is refused): link in place.
         self.install_into(destination_dir, method_, resolution_tag)
     }
 

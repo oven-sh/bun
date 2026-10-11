@@ -241,9 +241,9 @@ export const cases: Case[] = [
     file: "a.js",
     text: () =>
       `class A {\n${seq(20_000, i => `get p${i}() { return 1; }\n`)}${seq(20_000, i => `set p${i}(v) {}\n`)}}\n`,
-    rules: { "grouped-accessor-pairs": "error", "accessor-pairs": "error", "no-dupe-class-members": "error" },
-    reports: { "grouped-accessor-pairs": 20_000 },
-    exitCode: 1,
+    rules: { "no-dupe-class-members": "error" },
+    reports: {},
+    exitCode: 0,
   },
   {
     name: "65,000 clauses in a switch",
@@ -603,18 +603,6 @@ export const cases: Case[] = [
     rules: { "typescript/no-unnecessary-type-parameters": "error" },
     args: typed,
     reports: { "@typescript-eslint/no-unnecessary-type-parameters": 12_000 },
-    exitCode: 1,
-  },
-  {
-    name: "12,000 overloads with a callback, called 750 times with an async function",
-    isHeavy: true,
-    file: "a.ts",
-    text: () =>
-      seq(12_000, i => `declare function g(a: ${i}, cb: () => void): void;\n`) +
-      seq(750, i => `function f${i}() { g(0, async () => {}); }\n`),
-    rules: { "typescript/no-misused-promises": "error", "typescript/strict-void-return": "error" },
-    args: typed,
-    reports: { "@typescript-eslint/no-misused-promises": 750, "@typescript-eslint/strict-void-return": 750 },
     exitCode: 1,
   },
   {

@@ -114,29 +114,7 @@ fn parse_impl_in(
     }
     let log_mark = (log.errors, log.msgs.len());
     let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
-    let (index_error, first_comment) = (sidx.index_error, sidx.first_comment);
-    settle(
-        source,
-        log,
-        opts,
-        log_mark,
-        result,
-        index_error,
-        first_comment,
-    )
-}
 
-/// What the parse comes to: of what is wrong with a `/`, a comment where there can be none, and what
-/// the parser itself has said, the first in the text counts.
-fn settle(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    opts: JSONOptions,
-    log_mark: (u32, usize),
-    result: crate::Result<ParseOutput>,
-    index_error: Option<IndexError>,
-    first_comment: Option<bun_ast::Range>,
-) -> crate::Result<ParseOutput> {
     let drop_stage2_errors = |log: &mut bun_ast::Log| {
         let mut i = log_mark.1;
         while i < log.msgs.len() {
@@ -155,17 +133,20 @@ fn settle(
             .filter_map(|m| m.data.location.as_ref().map(|l| l.offset))
             .min()
     };
-    let rejected_comment = |before: usize| {
-        !opts.allow_comments && first_comment.is_some_and(|r| (r.loc.start as usize) < before)
+    let rejected_comment = |sidx: &StructuralIndex, before: usize| {
+        !opts.allow_comments
+            && sidx
+                .first_comment
+                .is_some_and(|r| (r.loc.start as usize) < before)
     };
-    if let Some(e) = index_error {
+    if let Some(e) = sidx.index_error {
         let pos = match e {
             IndexError::UnterminatedBlockComment { pos } | IndexError::UnexpectedSlash { pos } => {
                 pos
             }
             IndexError::DocumentTooLarge => 0,
         };
-        if !rejected_comment(pos) {
+        if !rejected_comment(&sidx, pos) {
             let earlier_stage2_err = log.msgs[log_mark.1..]
                 .iter()
                 .filter(|m| m.kind == bun_ast::Kind::Err)
@@ -179,7 +160,7 @@ fn settle(
         }
     }
     if !opts.allow_comments
-        && let Some(range) = first_comment
+        && let Some(range) = sidx.first_comment
         && min_stage2_err(log).is_none_or(|first_err| first_err as i32 >= range.loc.start)
     {
         drop_stage2_errors(log);
@@ -194,7 +175,7 @@ fn settle(
         );
         return Err(crate::Error::SyntaxError);
     }
-    if index_error.is_some() || (result.is_ok() && log.errors > log_mark.0) {
+    if sidx.index_error.is_some() || (result.is_ok() && log.errors > log_mark.0) {
         return Err(crate::Error::SyntaxError);
     }
     result

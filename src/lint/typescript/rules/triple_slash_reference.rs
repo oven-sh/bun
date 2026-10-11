@@ -1,7 +1,5 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Policy {
@@ -38,13 +36,6 @@ pub struct Directive<'a> {
     comment: Token<'a>,
     module: &'a [u8],
     policy: Policy,
-}
-
-#[derive(Default)]
-pub struct State<'a> {
-    directives: Vec<Directive<'a>>,
-    /// If they are many: where those are that an import is preferred to, by their modules.
-    by_module: FxHashMap<&'a [u8], SmallVec<[u32; 1]>>,
 }
 
 impl TripleSlashReference {
@@ -84,19 +75,14 @@ impl TripleSlashReference {
         let report = |directive: &Directive<'a>| {
             cx.report(directive.comment, TRIPLE_SLASH_REFERENCE).data("module", directive.module);
         };
-        let State { directives, by_module } = &cx.state;
-        if by_module.is_empty() {
-            directives.iter().filter(|it| it.policy == Policy::PreferImport && source == it.module).for_each(report);
-        } else if let Some(positions) = by_module.get(source.bytes()) {
-            positions.iter().filter_map(|at| directives.get(*at as usize)).for_each(report);
-        }
+        cx.state.iter().filter(|it| it.policy == Policy::PreferImport && source == it.module).for_each(report);
     }
 }
 
 impl Rule for TripleSlashReference {
     const META: Meta = Meta::typescript("triple-slash-reference", Kind::Suggestion).recommended();
     const ON: On = On::new().stmts(&[StmtTag::Import, StmtTag::ImportEquals]).finish();
-    type State<'a> = State<'a>;
+    type State<'a> = Vec<Directive<'a>>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -107,7 +93,7 @@ impl Rule for TripleSlashReference {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let mut directives = Vec::new();
         let program = file.program_span();
         if !strings::contains(file.slice(Span::before(0, program)), b"<reference") {
@@ -125,16 +111,7 @@ impl Rule for TripleSlashReference {
                 });
             }
         }
-        if directives.is_empty() {
-            return None;
-        }
-        let mut by_module: FxHashMap<&'a [u8], SmallVec<[u32; 1]>> = FxHashMap::default();
-        if directives.len() > 8 {
-            for (at, directive) in directives.iter().enumerate().filter(|it| it.1.policy == Policy::PreferImport) {
-                by_module.entry(directive.module).or_default().push(at as u32);
-            }
-        }
-        Some(State { directives, by_module })
+        (!directives.is_empty()).then_some(directives)
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -142,7 +119,7 @@ impl Rule for TripleSlashReference {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for directive in &cx.state.directives {
+        for directive in &cx.state {
             if directive.policy == Policy::Never {
                 cx.report(directive.comment, TRIPLE_SLASH_REFERENCE)
                     .data("module", directive.module);

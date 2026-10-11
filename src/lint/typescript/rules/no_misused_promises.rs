@@ -6,14 +6,13 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, is_array_method_call_with_predicate, is_promise_like,
     is_rest_parameter_declaration, parse_finally_call,
 };
-use bun_lint::types::{NameOf, SignatureList, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
+use bun_lint::types::{NameOf, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::oxlint::tsgolint_function_head_loc;
 use bun_lint::utils::ts_utils::get_function_head_loc;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::cell::Cell;
-use std::rc::Rc;
 
 /// Disallow Promises in places not designed to handle them.
 pub struct NoMisusedPromises {
@@ -155,7 +154,6 @@ pub struct State<'a> {
     /// Whether what has been passed on the way up from an operand is in a test.
     tests: AncestorMemo<'a, bool>,
     callable_literals: CallableLiterals,
-    parameters: ParametersByType<'a>,
 }
 
 /// Whether an annotated type is maybe a function type, as far as the syntax tells.
@@ -362,42 +360,6 @@ fn add_rest_parameter_type<'a>(expression: TsNode<'a>, index: usize, ty: Type<'a
     }
 }
 
-/// The parameters of all the signatures of a type that has many: to go through them for each call takes long.
-#[derive(Default)]
-struct Parameters<'a> {
-    /// What those at an index accept that are no rest parameters, and the type of one of them.
-    plain: FxHashMap<usize, (Accepted, Type<'a>)>,
-    /// The index and the type of the rest parameters, each once.
-    rest: Vec<(usize, Type<'a>)>,
-}
-
-impl<'a> Parameters<'a> {
-    const MANY_SIGNATURES: usize = 16;
-
-    fn of(signatures: SignatureList<'a>, expression: TsNode<'a>) -> Self {
-        let (mut parameters, mut seen) = (Parameters::default(), FxHashSet::default());
-        for signature in signatures {
-            for (index, parameter) in signature.parameters().iter().enumerate() {
-                let is_rest = parameter.value_declaration().is_some_and(is_rest_parameter_declaration);
-                let ty = parameter.get_type_at_location(expression);
-                if !seen.insert((index, is_rest, ty)) {
-                    continue;
-                }
-                match is_rest {
-                    true => parameters.rest.push((index, ty)),
-                    false => {
-                        let (accepted, _) = parameters.plain.entry(index).or_insert_with(|| (Accepted::default(), ty));
-                        accepted.add_type(expression, ty);
-                    }
-                }
-            }
-        }
-        parameters
-    }
-}
-
-type ParametersByType<'a> = FxHashMap<(Type<'a>, bool), Rc<Parameters<'a>>>;
-
 /// Finds out which of `arguments` are passed for void functions, and not also for thenable
 /// functions. All signatures are looked at: the resolved one would be an early `() => void` where a
 /// later `() => Promise<void>` applies as well.
@@ -405,7 +367,6 @@ fn void_function_arguments<'a>(
     node: Expr<'a>,
     call: Call<'a>,
     arguments: &mut [Argument<'a>],
-    known: &mut ParametersByType<'a>,
 ) {
     let (node, is_new) = (node.ts_node(), node.tag() == ExprTag::New);
     let expression = call.callee().ts_node();
@@ -414,21 +375,6 @@ fn void_function_arguments<'a>(
             true => sub_type.get_construct_signatures(),
             false => sub_type.get_call_signatures(),
         };
-        if signatures.len() > Parameters::MANY_SIGNATURES {
-            let parameters = known.entry((sub_type, is_new));
-            let parameters = Rc::clone(parameters.or_insert_with(|| Rc::new(Parameters::of(signatures, expression))));
-            for argument in arguments.iter_mut() {
-                if let Some(&(accepted, ty)) = parameters.plain.get(&argument.index) {
-                    argument.accepted.thenable_return |= accepted.thenable_return;
-                    argument.accepted.void_return |= accepted.void_return;
-                    argument.parameter_type = Some(ty);
-                }
-            }
-            for &(index, ty) in &parameters.rest {
-                add_rest_parameter_type(expression, index, ty, arguments);
-            }
-            continue;
-        }
         for signature in signatures {
             for (index, parameter) in signature.parameters().iter().enumerate() {
                 if parameter.value_declaration().is_some_and(is_rest_parameter_declaration) {
@@ -660,7 +606,7 @@ impl NoMisusedPromises {
         if arguments.is_empty() || is_promise_finally_method(node) {
             return;
         }
-        void_function_arguments(node, call, &mut arguments, &mut cx.state.parameters);
+        void_function_arguments(node, call, &mut arguments);
         for argument in arguments {
             if argument.accepted.void_return && !argument.accepted.thenable_return {
                 cx.report(place(argument.node), VOID_RETURN_ARGUMENT).labels_with(|labels| {

@@ -82,24 +82,16 @@ struct Signature<'a> {
     block_comment: Option<&'a [u8]>,
 }
 
-/// The type parameters of the class or the interface that the overloads are in.
-struct OuterTypeParameters<'a> {
-    list: Option<List<'a, TypeParam<'a>>>,
-    /// Their names, if they are many.
-    names: Option<FxHashSet<Name<'a>>>,
-}
+/// The names of the type parameters of the class or the interface that the overloads are in.
+struct OuterTypeParameters<'a>(FxHashSet<Name<'a>>);
 
 impl<'a> OuterTypeParameters<'a> {
     fn new(list: Option<List<'a, TypeParam<'a>>>) -> Self {
-        let names = list.filter(|it| it.len() > 8).map(|it| it.iter().map(|it| it.name().name()).collect());
-        OuterTypeParameters { list, names }
+        OuterTypeParameters(list.into_iter().flatten().map(|it| it.name().name()).collect())
     }
 
     fn has(&self, name: Name<'a>) -> bool {
-        match &self.names {
-            Some(names) => names.contains(&name),
-            None => self.list.is_some_and(|it| it.iter().any(|it| it.name().name() == name)),
-        }
+        self.0.contains(&name)
     }
 }
 
@@ -292,7 +284,7 @@ fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: &OuterTypeParam
 
 /// True if any of the outer type parameters are used in a signature.
 fn signature_uses_type_parameter<'a>(parameters: &[Param<'a>], outer: &OuterTypeParameters<'a>) -> bool {
-    outer.list.is_some()
+    !outer.0.is_empty()
         && parameters
             .iter()
             .filter_map(|it| get_parameter_type_annotation(*it))

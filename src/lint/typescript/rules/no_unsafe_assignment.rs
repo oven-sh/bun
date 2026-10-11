@@ -268,15 +268,11 @@ fn check_object_destructure<'a>(
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
-    let properties = sender_type.get_properties();
-    // The first of each name, if they are many.
-    let properties_by_name = (properties.len() > 16).then(|| {
-        let mut by_name = FxHashMap::default();
-        for property in properties {
-            by_name.entry(property.name()).or_insert(property);
-        }
-        by_name
-    });
+    // The first of each name.
+    let mut properties = FxHashMap::default();
+    for property in sender_type.get_properties() {
+        properties.entry(property.name()).or_insert(property);
+    }
     for receiver_property in &receiver_node.elements() {
         let (Some(key), Some(target), false) = (
             receiver_property.key,
@@ -292,11 +288,7 @@ fn check_object_destructure<'a>(
         let Some(key) = key else {
             continue;
         };
-        let property = match &properties_by_name {
-            Some(by_name) => by_name.get(key).copied(),
-            None => properties.iter().find(|it| it.name() == key),
-        };
-        let Some(property) = property else {
+        let Some(&property) = properties.get(key) else {
             continue;
         };
         let sender = Sender::Property(property);

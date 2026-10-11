@@ -3,7 +3,6 @@ use bun_lint::types::tsutils::{intersection_constituents, union_constituents};
 use bun_lint::types::utils::{is_builtin_symbol_like, is_symbol_from_default_library};
 use bun_lint::types::{ModifierFlags, NameOf, SyntaxKind, TsNode, TsSymbol, Type};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Enforce unbound methods are called with their expected scope.
 pub struct UnboundMethod {
@@ -344,9 +343,6 @@ pub struct State<'a> {
     safe_uses: AncestorMemo<'a, bool>,
     /// [`is_node_inside_type_declaration`]
     type_declarations: AncestorMemo<'a, ()>,
-    /// By a type that has many constituents and the name of a property: what is to be said of an access to it. To look
-    /// the property up in each of them for each access takes long.
-    methods_of_many: FxHashMap<(Type<'a>, Box<[u8]>), Option<Message>>,
 }
 
 /// An `ObjectPattern`.
@@ -376,15 +372,9 @@ impl UnboundMethod {
         ty: Type<'a>,
     ) -> bool {
         let is_oxlint = cx.language().is_oxlint;
-        let find_message = || {
-            union_constituents(ty).iter().flat_map(intersection_constituents).find_map(|intersection_part| {
-                message_of(intersection_part.get_property(property_name)?, self.ignore_static, is_oxlint)
-            })
-        };
-        let message = match ty.types().len() > 16 {
-            true => *cx.state.methods_of_many.entry((ty, property_name.into())).or_insert_with(find_message),
-            false => find_message(),
-        };
+        let message = union_constituents(ty).iter().flat_map(intersection_constituents).find_map(|intersection_part| {
+            message_of(intersection_part.get_property(property_name)?, self.ignore_static, is_oxlint)
+        });
         if let Some(message) = message {
             cx.report(report_node, message);
         }

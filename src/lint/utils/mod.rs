@@ -55,7 +55,6 @@ pub mod regular_expressions;
 pub mod sort;
 pub mod string_utils;
 pub mod text;
-pub mod token_key;
 pub mod ts_scope;
 pub mod ts_utils;
 pub mod unicode;

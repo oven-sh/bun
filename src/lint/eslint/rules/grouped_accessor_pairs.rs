@@ -1,4 +1,4 @@
-use super::accessor_pairs::{self, MAX_KEYS_TO_COMPARE_IN_PAIRS, key_groups};
+use super::accessor_pairs;
 use bun_lint::prelude::*;
 use smallvec::SmallVec;
 
@@ -73,33 +73,13 @@ impl GroupedAccessorPairs {
     /// It is compiled once, not for each kind of list.
     #[inline(never)]
     fn check_list<'a>(&self, accessors: &mut dyn Iterator<Item = Accessor<'a>>, cx: &Cx<'a, Self>) {
-        let all: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> = accessors.collect();
+        let all: SmallVec<[Accessor<'a>; 8]> = accessors.collect();
         // Nothing is reported for a name that has several getters or several setters.
-        if all.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
-            for getter in all.iter().filter(|it| it.is_getter) {
-                let mut others =
-                    all.iter().filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
-                if let (Some(setter), None) = (others.next(), others.next()) {
-                    self.check_pair(*getter, *setter, cx);
-                }
-            }
-            return;
-        }
-        let groups = key_groups(cx.file(), all.iter().map(|it| it.key));
-        // The first two of each group, and how many there are.
-        let mut members = vec![(None, None, 0usize); groups.len()];
-        for (&accessor, &group) in all.iter().zip(&groups) {
-            if let Some((first, second, count)) = members.get_mut(group as usize) {
-                let slot = if first.is_none() { first } else { second };
-                slot.get_or_insert(accessor);
-                *count += 1;
-            }
-        }
-        for pair in members {
-            match pair {
-                (Some(getter), Some(setter), 2) if getter.is_getter => self.check_pair(getter, setter, cx),
-                (Some(setter), Some(getter), 2) => self.check_pair(getter, setter, cx),
-                _ => {}
+        for getter in all.iter().filter(|it| it.is_getter) {
+            let mut others =
+                all.iter().filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
+            if let (Some(setter), None) = (others.next(), others.next()) {
+                self.check_pair(*getter, *setter, cx);
             }
         }
     }

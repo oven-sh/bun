@@ -1,5 +1,4 @@
 use bun_lint::prelude::*;
-use rustc_hash::FxHashMap;
 
 /// Enforce the use of `for-of` loop over the standard `for` loop where possible.
 pub struct PreferForOf;
@@ -59,27 +58,9 @@ fn is_increment<'a>(update: Expr<'a>, name: Name<'a>) -> bool {
     }
 }
 
-/// The references to the variables that have many, in the order of the source.
-type References<'a> = FxHashMap<Symbol<'a>, Vec<Reference<'a>>>;
-
-fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, array: Expr<'a>, references: &mut References<'a>) -> bool {
+fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, array: Expr<'a>) -> bool {
     let (body, array_text) = (body.span(), array.text());
-    // A `var` can be the index of many loops.
-    let is_many = index_var.references().len() > 16;
-    let in_body: &[Reference<'a>] = match is_many {
-        true => {
-            let all = references.entry(index_var).or_insert_with(|| {
-                let mut all: Vec<Reference<'a>> = index_var.references().collect();
-                utils::sort::sort_unstable_by_key(&mut all, |it| it.span().start);
-                all
-            });
-            let first = all.partition_point(|it| it.span().start < body.start);
-            &all[first..first + all[first..].partition_point(|it| it.span().start < body.end)]
-        }
-        false => &[],
-    };
-    let few = index_var.references().take(if is_many { 0 } else { usize::MAX });
-    in_body.iter().copied().chain(few).all(|reference| {
+    index_var.references().all(|reference| {
         if !body.contains(reference.span()) {
             return true;
         }
@@ -100,14 +81,10 @@ impl Rule for PreferForOf {
         Meta::typescript("prefer-for-of", Kind::Suggestion).presets(Presets::STYLISTIC)
         .reports_on_exit();
     const ON: On = On::new().stmts(&[StmtTag::For]);
-    type State<'a> = References<'a>;
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferForOf
-    }
-
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<References<'a>> {
-        Some(References::default())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -148,7 +125,7 @@ impl Rule for PreferForOf {
         if is_oxlint && !oxlint_looks_at(array, index_var) {
             return;
         }
-        if is_index_only_used_with_array(body, index_var, array, &mut cx.state) {
+        if is_index_only_used_with_array(body, index_var, array) {
             // oxlint points at what is between the parentheses.
             let place = if is_oxlint { Span::new(init.span().start, update.span().end) } else { stmt.span() };
             cx.report(place, PREFER_FOR_OF);

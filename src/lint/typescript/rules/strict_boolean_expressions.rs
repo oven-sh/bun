@@ -665,8 +665,7 @@ impl StrictBooleanExpressions {
             return;
         }
         let mut flatten_types: SmallVec<[Type<'a>; 8]> = SmallVec::new();
-        // All of them, once they are many.
-        let mut many_flatten_types: FxHashSet<Type<'a>> = FxHashSet::default();
+        let mut seen: FxHashSet<Type<'a>> = FxHashSet::default();
         for signature in predicate_type.get_call_signatures() {
             let ty = signature.get_return_type();
             let ty = match is_type_parameter(ty) {
@@ -677,16 +676,8 @@ impl StrictBooleanExpressions {
                 return;
             }
             for constituent in union_constituents(ty) {
-                let is_new = match flatten_types.spilled() {
-                    true => many_flatten_types.insert(constituent),
-                    false => !flatten_types.contains(&constituent),
-                };
-                if !is_new {
-                    continue;
-                }
-                flatten_types.push(constituent);
-                if flatten_types.spilled() && many_flatten_types.is_empty() {
-                    many_flatten_types.extend(flatten_types.iter().copied());
+                if seen.insert(constituent) {
+                    flatten_types.push(constituent);
                 }
             }
         }

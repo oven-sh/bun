@@ -1,8 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::utils::token_key::push_token_key;
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::borrow::Cow;
 
 /// Enforce getter and setter pairs in objects and classes.
 pub struct AccessorPairs {
@@ -81,44 +78,6 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
     }
 }
 
-/// What two keys have in common exactly if they are equal keys.
-#[derive(PartialEq, Eq, Hash)]
-enum KeyIdentity<'a> {
-    Private(Name<'a>),
-    Static(Cow<'a, [u8]>),
-    /// What [`push_token_key`] makes of it.
-    Tokens(Vec<u8>),
-}
-
-impl<'a> KeyIdentity<'a> {
-    fn of(file: &'a File<'a>, key: Key<'a>) -> Self {
-        if let KeyKind::Private(name) = key.kind() {
-            return KeyIdentity::Private(name);
-        }
-        if let Some(name) = ast_utils::get_static_key_name(key) {
-            return KeyIdentity::Static(name);
-        }
-        let mut tokens = Vec::new();
-        push_token_key(file, key.inner_span(file), &mut tokens);
-        KeyIdentity::Tokens(tokens)
-    }
-}
-
-/// With more keys than this, they are compared by [`key_groups`], not each with each.
-pub(crate) const MAX_KEYS_TO_COMPARE_IN_PAIRS: usize = 8;
-
-/// For each of `keys` a number, less than the number of keys, that it shares with the keys that
-/// are equal to it (ESLint's `areEqualKeys`) and with no other. In time proportional to the text
-/// of the keys.
-pub(crate) fn key_groups<'a>(file: &'a File<'a>, keys: impl Iterator<Item = Key<'a>>) -> Vec<u32> {
-    let mut groups = FxHashMap::default();
-    keys.map(|key| {
-        let next = groups.len() as u32;
-        *groups.entry(KeyIdentity::of(file, key)).or_insert(next)
-    })
-    .collect()
-}
-
 impl AccessorPairs {
     /// It is compiled once, not for each kind of list.
     #[inline(never)]
@@ -129,7 +88,7 @@ impl AccessorPairs {
         missing_setter: Message,
         cx: &Cx<'a, Self>,
     ) {
-        let accessors: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> = accessors.collect();
+        let accessors: SmallVec<[Accessor<'a>; 8]> = accessors.collect();
         let is_checked = |accessor: Accessor<'a>| match accessor.is_getter {
             true => self.get_without_set,
             false => self.set_without_get,
@@ -147,40 +106,17 @@ impl AccessorPairs {
         // Of several getters, or setters, of a name that is known oxlint keeps the last.
         let is_oxlint = cx.language().is_oxlint;
         let keeps_the_last = |accessor: Accessor<'a>| is_oxlint && accessor.key.name().is_some();
-        if accessors.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
-            for (i, &accessor) in accessors.iter().enumerate() {
-                let is_paired = |other: &Accessor<'a>| {
-                    other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
-                };
-                let is_same = |other: &Accessor<'a>| {
-                    other.is_getter == accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
-                };
-                if is_checked(accessor)
-                    && !accessors.iter().any(is_paired)
-                    && !(keeps_the_last(accessor) && accessors.iter().skip(i + 1).any(is_same))
-                {
-                    report(accessor);
-                }
-            }
-            return;
-        }
-        let groups = key_groups(cx.file(), accessors.iter().map(|it| it.key));
-        // Whether the group has a getter, and whether it has a setter.
-        let mut kinds = vec![[false; 2]; groups.len()];
-        // Where the last getter of the group starts, and the last setter.
-        let mut last = vec![[0; 2]; groups.len()];
-        for (accessor, &group) in accessors.iter().zip(&groups) {
-            if let (Some(kinds), Some(last)) = (kinds.get_mut(group as usize), last.get_mut(group as usize)) {
-                kinds[usize::from(accessor.is_getter)] = true;
-                last[usize::from(accessor.is_getter)] = accessor.key.inner_span(cx.file()).start;
-            }
-        }
-        for (&accessor, &group) in accessors.iter().zip(&groups) {
-            let is_paired = kinds.get(group as usize).is_some_and(|it| it[usize::from(!accessor.is_getter)]);
-            let is_last = last
-                .get(group as usize)
-                .is_some_and(|it| it[usize::from(accessor.is_getter)] == accessor.key.inner_span(cx.file()).start);
-            if is_checked(accessor) && !is_paired && (is_last || !keeps_the_last(accessor)) {
+        for (i, &accessor) in accessors.iter().enumerate() {
+            let is_paired = |other: &Accessor<'a>| {
+                other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
+            };
+            let is_same = |other: &Accessor<'a>| {
+                other.is_getter == accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
+            };
+            if is_checked(accessor)
+                && !accessors.iter().any(is_paired)
+                && !(keeps_the_last(accessor) && accessors.iter().skip(i + 1).any(is_same))
+            {
                 report(accessor);
             }
         }

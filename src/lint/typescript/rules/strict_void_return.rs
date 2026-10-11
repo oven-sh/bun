@@ -3,7 +3,6 @@ use bun_lint::types::utils::get_base_types_of_class_member;
 use bun_lint::types::{Signature, Type, TypeFlags, tsutils};
 use bun_lint::utils::eslint_utils::{HasSideEffectOptions, has_side_effect};
 use bun_lint::utils::ts_utils::{WrappingFixerParams, get_function_head_loc, get_wrapping_fixer};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow passing a value-returning function in a position accepting a void function.
@@ -63,10 +62,6 @@ impl ExpectedReturnTypes {
         found
     }
 }
-
-/// By the type of a callee that has many signatures, whether it is called with `new`, and the index of the argument: to
-/// go through the signatures for each call takes long.
-type ExpectedByCallee<'a> = FxHashMap<(Type<'a>, bool, usize), ExpectedReturnTypes>;
 
 /// What stands where a function is expected.
 #[derive(Copy, Clone)]
@@ -232,35 +227,24 @@ impl StrictVoidReturn {
             ExprKind::New(call) => (call, true),
             _ => return,
         };
-        let mut callee: Option<(Type<'a>, SmallVec<[Signature<'a>; 4]>)> = None;
+        let mut callee: Option<SmallVec<[Signature<'a>; 4]>> = None;
         for (arg_idx, arg_node) in call.args().iter().enumerate() {
             if !self.is_candidate(arg_node) {
                 continue;
             }
-            let (callee_type, func_signatures) = callee.get_or_insert_with(|| {
+            let func_signatures = callee.get_or_insert_with(|| {
                 let signatures_of = |ty: Type<'a>| match is_new {
                     true => ty.get_construct_signatures(),
                     false => ty.get_call_signatures(),
                 };
-                let ty = call.callee().ty();
-                (
-                    ty,
-                    tsutils::union_constituents(ty)
-                        .iter()
-                        .flat_map(signatures_of)
-                        .collect(),
-                )
+                tsutils::union_constituents(call.callee().ty())
+                    .iter()
+                    .flat_map(signatures_of)
+                    .collect()
             });
 
             // The types from all of the call signatures.
-            let find_expected = || ExpectedReturnTypes::of(func_signatures, arg_idx, call.callee());
-            let expected = match func_signatures.len() > 16 {
-                true => *cx
-                    .state
-                    .entry((*callee_type, is_new, arg_idx))
-                    .or_insert_with(find_expected),
-                false => find_expected(),
-            };
+            let expected = ExpectedReturnTypes::of(func_signatures, arg_idx, call.callee());
             let has_single_signature = func_signatures.len() == 1;
 
             // The contextual type is that of the first overload, though another one may match the call.
@@ -440,7 +424,7 @@ impl Rule for StrictVoidReturn {
         .props()
         .var_decls()
         .finish();
-    type State<'a> = ExpectedByCallee<'a>;
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let mut allowed_return_type = TypeFlags::VOID | TypeFlags::NEVER | TypeFlags::UNDEFINED;
@@ -450,10 +434,6 @@ impl Rule for StrictVoidReturn {
         StrictVoidReturn {
             allowed_return_type,
         }
-    }
-
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<ExpectedByCallee<'a>> {
-        Some(ExpectedByCallee::default())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

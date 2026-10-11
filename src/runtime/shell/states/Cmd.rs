@@ -1,7 +1,7 @@
 //! A shell primarily runs commands, so this is the main state node.
 //!
-//! Execution proceeds: expand assigns → expand redirect → expand argv atoms
-//! → resolve to builtin or spawn subprocess → await exit.
+//! Execution proceeds: expand argv atoms → expand assigns → expand redirect
+//! (the order of bash) → resolve to builtin or spawn subprocess → await exit.
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
@@ -16,6 +16,7 @@ use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
+use bun_sys::FdExt;
 
 pub(crate) struct Cmd {
     pub(crate) base: Base,
@@ -26,6 +27,8 @@ pub(crate) struct Cmd {
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
+    /// `None` until the exec reports, a stdio error records its errno, or the
+    /// command is aborted. `on_exit` and `has_finished` depend on that.
     pub(crate) exit_code: Option<ExitCode>,
 }
 
@@ -249,13 +252,29 @@ impl Cmd {
             }
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
-                    if !n.assigns.is_empty() {
-                        interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
-                        let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);
-                        return Assigns::start(interp, child);
-                    }
-                    interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                    let me = interp.as_cmd_mut(this);
+                    me.base.shell_mut().last_cmd_subst_status = None;
+                    me.state = CmdState::ExpandingArgs { idx: 0 };
                     continue;
+                }
+                CmdState::ExpandingArgs { idx } => {
+                    let args = n.name_and_args;
+                    if (idx as usize) >= args.len() {
+                        if !n.assigns.is_empty() {
+                            interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
+                            let child =
+                                Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);
+                            return Assigns::start(interp, child);
+                        }
+                        interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                        continue;
+                    }
+                    let assign_ctx = idx > 0
+                        && is_declaration_utility(&args[0])
+                        && is_assignment_word(&args[idx as usize]);
+                    let atom: *const ast::Atom = &raw const args[idx as usize];
+                    let child = Expansion::init(interp, shell, atom, this, assign_ctx);
+                    return Expansion::start(interp, child);
                 }
                 CmdState::ExpandingAssigns => {
                     interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
@@ -272,21 +291,8 @@ impl Cmd {
                         // "already expanded" re-entry (`idx > 0`).
                         _ => {}
                     }
-                    interp.as_cmd_mut(this).state = CmdState::ExpandingArgs { idx: 0 };
+                    interp.as_cmd_mut(this).state = CmdState::Exec;
                     continue;
-                }
-                CmdState::ExpandingArgs { idx } => {
-                    let args = n.name_and_args;
-                    if (idx as usize) >= args.len() {
-                        interp.as_cmd_mut(this).state = CmdState::Exec;
-                        continue;
-                    }
-                    let assign_ctx = idx > 0
-                        && is_declaration_utility(&args[0])
-                        && is_assignment_word(&args[idx as usize]);
-                    let atom: *const ast::Atom = &raw const args[idx as usize];
-                    let child = Expansion::init(interp, shell, atom, this, assign_ctx);
-                    return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
                     return Self::transition_to_exec(interp, this);
@@ -357,28 +363,6 @@ impl Cmd {
             match interp.as_cmd_mut(this).state {
                 CmdState::ExpandingArgs { ref mut idx } => {
                     *idx += 1;
-                    let new_idx = *idx;
-                    // When the sole
-                    // `name_and_args` atom is a `.simple == .cmd_subst`, stash
-                    // `e.out_exit_code` so an empty-argv command consisting
-                    // only of `$(cmd)` propagates `cmd`'s exit code via the
-                    // empty-argv0 branch in `transition_to_exec` (POSIX: "if
-                    // there is no command name, but the command contained a
-                    // command substitution, the command shall complete with
-                    // the exit status of the last command substitution
-                    // performed").
-                    {
-                        let n = interp.as_cmd(this).ast_node();
-                        if new_idx == 1
-                            && n.name_and_args.len() == 1
-                            && matches!(
-                                n.name_and_args[0],
-                                ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
-                            )
-                        {
-                            interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
-                        }
-                    }
                     // `out.bounds` splits the expansion into multiple argv
                     // words (glob/IFS).
                     let me = interp.as_cmd_mut(this);
@@ -424,6 +408,7 @@ impl Cmd {
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
     /// (still gated).
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
+        debug_assert!(interp.as_cmd(this).exit_code.is_none());
         // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
         for a in &mut interp.as_cmd_mut(this).args {
             if a.last() != Some(&0) {
@@ -431,22 +416,16 @@ impl Cmd {
             }
         }
 
-        // Empty/null argv[0] → exit
-        // with the exit code from a sole command-substitution (stashed by
-        // `child_done` from `Expansion::out_exit_code`), else 0.
-        let first_arg: Vec<u8> = {
-            let me = interp.as_cmd(this);
-            match me.args.first() {
-                Some(a) if a.len() > 1 => {
-                    // strip the trailing NUL we just added
-                    a[..a.len() - 1].to_vec()
-                }
-                _ => {
-                    let exit = me.exit_code.unwrap_or(0);
-                    let parent = me.base.parent;
-                    return interp.child_done(parent, this, exit);
-                }
-            }
+        // An empty-string argv[0] is a command name: it reaches `which()` and
+        // fails with "command not found".
+        let Some(first_arg) = interp
+            .as_cmd(this)
+            .args
+            .first()
+            // strip the trailing NUL we just added
+            .map(|a| a[..a.len() - 1].to_vec())
+        else {
+            return Self::finish_without_command(interp, this);
         };
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
@@ -806,50 +785,13 @@ impl Cmd {
                 }
             }
             ast::Redirect::Atom(_) => {
-                if interp.as_cmd(this).redirection_file.is_empty() {
-                    let argv0 = interp
-                        .as_cmd(this)
-                        .args
-                        .first()
-                        .map(|a| &a[..a.len().saturating_sub(1)])
-                        .unwrap_or(b"<unknown>")
-                        .to_vec();
-                    return Ok(Some(Builtin::cmd_write_failing_error(
-                        interp,
-                        this,
-                        format_args!(
-                            "bun: ambiguous redirect: at `{}`\n",
-                            bstr::BStr::new(&argv0)
-                        ),
-                    )));
-                }
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(this).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
-                log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
-                let redirfd = match crate::shell::interpreter::shell_openat(
-                    cwd_fd,
-                    path,
-                    flags.to_flags(),
-                    0o666,
-                ) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        let sys_err = e.to_shell_system_error();
+                let redirfd = match Self::open_redirect_file(interp, this) {
+                    Ok(fd) => fd,
+                    Err(message) => {
                         return Ok(Some(Builtin::cmd_write_failing_error(
                             interp,
                             this,
-                            format_args!(
-                                "bun: {}: {}",
-                                sys_err.message,
-                                bstr::BStr::new(path.as_bytes())
-                            ),
+                            format_args!("{message}"),
                         )));
                     }
                 };
@@ -858,6 +800,66 @@ impl Cmd {
             }
         }
         Ok(None)
+    }
+
+    /// Opens the expanded target of a `> file` / `< file` redirect. `Err` is
+    /// the message that says why it could not be opened.
+    fn open_redirect_file(interp: &Interpreter, this: NodeId) -> Result<bun_sys::Fd, String> {
+        let me = interp.as_cmd(this);
+        if me.redirection_file.is_empty() {
+            return Err(match me.args.first() {
+                Some(argv0) => format!(
+                    "bun: ambiguous redirect: at `{}`\n",
+                    bstr::BStr::new(&argv0[..argv0.len().saturating_sub(1)])
+                ),
+                None => "bun: ambiguous redirect\n".to_owned(),
+            });
+        }
+        let path_buf: Vec<u8> = {
+            let raw = &me.redirection_file;
+            let len = raw.len().saturating_sub(1);
+            let mut v = raw[..len].to_vec();
+            v.push(0);
+            v
+        };
+        let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
+        log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
+        let cwd_fd = me.base.shell().cwd_fd;
+        let flags = me.ast_node().redirect.to_flags();
+        crate::shell::interpreter::shell_openat(cwd_fd, path, flags, 0o666).map_err(|e| {
+            format!(
+                "bun: {}: {}",
+                e.to_shell_system_error().message,
+                bstr::BStr::new(path.as_bytes())
+            )
+        })
+    }
+
+    /// No word is left after expansion, so there is no command name. The
+    /// redirect is still performed. Then the status is that of the last
+    /// `$(...)` this command performed, else 0 (POSIX 2.9.1).
+    fn finish_without_command(interp: &Interpreter, this: NodeId) -> Yield {
+        if matches!(
+            interp.as_cmd(this).ast_node().redirect_file,
+            Some(ast::Redirect::Atom(_))
+        ) {
+            match Self::open_redirect_file(interp, this) {
+                Ok(fd) => fd.close(),
+                Err(message) => {
+                    return Builtin::cmd_write_failing_error(
+                        interp,
+                        this,
+                        format_args!("{message}"),
+                    );
+                }
+            }
+        }
+        let (parent, exit) = {
+            let me = interp.as_cmd(this);
+            let exit = me.base.shell().last_cmd_subst_status.unwrap_or(0);
+            (me.base.parent, exit)
+        };
+        interp.child_done(parent, this, exit)
     }
 
     /// Called by `Builtin::done` / subprocess exit handler.

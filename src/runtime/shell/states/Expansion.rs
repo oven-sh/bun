@@ -49,9 +49,6 @@ pub(crate) struct Expansion {
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
     /// empty arg for unset vars — diverging from POSIX field-splitting.
     pub(crate) has_quoted_empty: bool,
-    /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
-    /// so `$(false)` as argv0 fails.
-    pub(crate) out_exit_code: ExitCode,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -73,11 +70,6 @@ pub(crate) struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
     /// Word boundaries within `buf` (for IFS splitting / glob results).
     pub(crate) bounds: Vec<u32>,
-    /// Set when the atom is a sole `$(…)`
-    /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the
-    /// command's exit code when that substitution was argv0 and argv is
-    /// otherwise empty.
-    pub(crate) out_exit_code: ExitCode,
     /// When `buf`/`bounds` are both
     /// empty, this distinguishes `""` (push one empty arg) from `$unset`
     /// (push no arg). See [`Expansion::has_quoted_empty`].
@@ -109,7 +101,6 @@ impl Expansion {
             cmd_subst_quoted: false,
             assign_ctx,
             has_quoted_empty: false,
-            out_exit_code: 0,
         }))
     }
 
@@ -630,12 +621,14 @@ impl Expansion {
         }
         .clone();
 
-        // Propagate the exit code if the *whole* atom was a single `$(...)`
-        // (so `$(false)` as argv0 fails the command).
-        let sole_cmd_subst = matches!(
-            interp.as_expansion(this).node.get(),
-            ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
-        );
+        // A `$(...)` with an empty body runs no command. It keeps the status
+        // recorded before it, like in bash.
+        let ran_command = interp
+            .as_script(child)
+            .node
+            .stmts
+            .iter()
+            .any(|stmt| !stmt.exprs.is_empty());
 
         let no_split = {
             let me = interp.as_expansion(this);
@@ -643,8 +636,8 @@ impl Expansion {
         };
         {
             let me = interp.as_expansion_mut(this);
-            if exit_code != 0 && sole_cmd_subst {
-                me.out_exit_code = exit_code;
+            if ran_command {
+                me.base.shell_mut().last_cmd_subst_status = Some(exit_code);
             }
             if no_split {
                 let mut hi = stdout.len();
@@ -758,7 +751,6 @@ impl Expansion {
     pub(crate) fn take_out(interp: &Interpreter, this: NodeId) -> ExpansionOut {
         let me = interp.as_expansion_mut(this);
         let mut out = core::mem::take(&mut me.out);
-        out.out_exit_code = me.out_exit_code;
         out.has_quoted_empty = me.has_quoted_empty;
         out
     }

@@ -943,9 +943,10 @@ fn to_message(
 ) -> LintMessage {
     let position = |offset: u32| locator.map_or((0, 0), |it| it.position(offset));
     let details = diagnostic.details.take();
+    let (start, end) = locator.map_or_else(Default::default, |it| it.positions(diagnostic.span));
     let (line, column) = match details.as_deref().and_then(|it| it.start_position) {
         Some(start) => (start.line, start.column.wrapping_add(1)),
-        None => position(diagnostic.span.start),
+        None => start,
     };
     let end_position = details.as_deref().and_then(|it| it.end_position);
     LintMessage {
@@ -958,7 +959,7 @@ fn to_message(
         end: (!diagnostic.has_no_end).then(|| match end_position {
             // A column of -1, which ESLint has, is `u32::MAX`.
             Some(end) => (end.line, end.column.wrapping_add(1)),
-            None => position(diagnostic.span.end),
+            None => end,
         }),
         is_fatal: false,
         fix: diagnostic.fix.take(),

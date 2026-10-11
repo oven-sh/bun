@@ -1,6 +1,8 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::tokens::next_token;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -128,14 +130,22 @@ fn has_empty_line(text: &[u8]) -> bool {
 
 /// oxlint's `lift_property_span`: the property, from the first of the JSDoc comments that oxc attaches to it, which are
 /// those before it that are not on the line of the token before, and up to the end of a `// ..` after its `,` on the
-/// same line. `boundary`: where the next property starts, or where the object ends.
+/// same line. `after`: the property before it, or where the object starts. `boundary`: where the next property starts, or
+/// where the object ends.
 #[cold]
 #[inline(never)]
-fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, boundary: u32) -> Span {
+fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, after: Result<Prop<'a>, u32>, boundary: u32) -> Span {
     let whole = prop.span();
     let mut lifted = whole;
-    let line_before = file.token_before(prop).map(|it| file.line_of(it.end()));
-    let is_on_line_before = |at: u32| line_before == Some(file.line_of(at));
+    // The `{`, or the `,`.
+    let token_before = match after {
+        Ok(previous) => Some(next_token(file.text(), previous.span().end)).filter(|it| file.slice(*it) == b","),
+        Err(start) => Some(Span::new(start, start + 1)),
+    };
+    let token_before = token_before.or_else(|| file.token_before(prop).map(|it| it.span()));
+    let is_on_line_before = |at: u32| {
+        token_before.is_some_and(|it| !strings::contains_js_line_break(file.slice(Span::new(it.end, at))))
+    };
     let follows_on_the_line = is_on_line_before(whole.start);
     for comment in file.comments_before(prop).rev() {
         if !follows_on_the_line && is_on_line_before(comment.start()) {
@@ -176,18 +186,21 @@ impl SortKeys {
         let mut found: Vec<FixableProperty<'a, 'k>> = Vec::with_capacity(props.len());
         // What is before the property, and whether that is a spread.
         let (mut before, mut is_after_spread) = (Span::empty(whole.start), false);
+        let mut after = Err(whole.start);
         for (index, prop) in props.iter().enumerate() {
             let next = props.get(index + 1);
             let span = match is_commented {
-                true => lift_property_span(file, prop, next.map_or(whole.end, |it| it.span().start)),
+                true => lift_property_span(file, prop, after, next.map_or(whole.end, |it| it.span().start)),
                 false => prop.span(),
             };
+            after = Ok(prop);
             // Between two spreads there can be comments.
-            if has_comments(before.between(span)) && !(is_after_spread && prop.key().is_none()) {
+            let key = prop.key();
+            if has_comments(before.between(span)) && !(is_after_spread && key.is_none()) {
                 return None;
             }
-            (before, is_after_spread) = (span, prop.key().is_none());
-            let Some(key) = prop.key() else {
+            (before, is_after_spread) = (span, key.is_none());
+            let Some(key) = key else {
                 has_spread_after = !found.is_empty();
                 continue;
             };
@@ -196,7 +209,7 @@ impl SortKeys {
             }
             is_group_over = self.allows_line_separated_groups
                 && next.is_some_and(|next| has_empty_line(file.slice(prop.span().between(next.span()))));
-            let value = prop.value().filter(|it| !it.is_parenthesized());
+            let value = prop.value().filter(|it| it.tag() == ExprTag::Object && !it.is_parenthesized());
             found.push(FixableProperty {
                 key: get_property_name(key, true)?,
                 span,
@@ -211,9 +224,7 @@ impl SortKeys {
     #[cold]
     #[inline(never)]
     fn build_object_fix<'a>(&self, object: Expr<'a>, known: &Fixes<'a>) -> ObjectFix {
-        let ExprKind::Object(list) = object.kind() else {
-            return None;
-        };
+        let list = object.as_object()?;
         let (file, props) = (object.file(), self.collect_fixable_properties((object.span(), list), known)?);
         let (first, last) = (props.first()?, props.last()?);
         let mut sorted: Vec<&FixableProperty> = props.iter().collect();
@@ -254,13 +265,13 @@ impl SortKeys {
     #[cold]
     #[inline(never)]
     fn fix_as_oxlint<'a>(&self, root: Expr<'a>, known: &mut Fixes<'a>) -> ObjectFix {
-        let mut pending = Vec::new();
+        let mut pending: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
         if !known.contains_key(&root) {
             pending.push(root);
         }
         while let Some(&object) = pending.last() {
             let count = pending.len();
-            if let ExprKind::Object(props) = object.kind() {
+            if let Some(props) = object.as_object() {
                 for value in props.iter().filter_map(Prop::value) {
                     if value.tag() == ExprTag::Object && !value.is_parenthesized() && !known.contains_key(&value) {
                         pending.push(value);

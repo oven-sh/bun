@@ -20,8 +20,8 @@ fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {
     {
         return None;
     }
-    let last_if_token = file.last_token(consequent)?;
     if consequent.as_block().is_none()
+        && let last_if_token = file.last_token(consequent)?
         && !last_if_token.is(";")
         && let Some(after) = file.token_after(block)
         && (file.line_of(consequent.span().end) == file.line_of(after.start())

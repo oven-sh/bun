@@ -87,11 +87,35 @@ impl LineStarts {
     }
 
     /// The line that `offset` is in, counted from 1, and where it starts.
+    #[inline]
     pub fn line_at(&self, offset: u32) -> (u32, u32) {
+        let found = self.line_from(self.last.get(), offset);
+        self.last.set(found.0 - 1);
+        found
+    }
+
+    /// The same, looked for from the line `from`, counted from 0.
+    #[inline]
+    fn line_from(&self, from: u32, offset: u32) -> (u32, u32) {
+        let (starts, mut at) = (&self.starts[..], from as usize);
+        // That line and the next few, one by one.
+        if let Some(mut start) = starts.get(at).copied().filter(|start| *start <= offset) {
+            for _ in 0..4 {
+                match starts.get(at + 1) {
+                    Some(&next) if next <= offset => (at, start) = (at + 1, next),
+                    _ => return (at as u32 + 1, start),
+                }
+            }
+        }
+        self.line_far_from(at, offset)
+    }
+
+    #[inline(never)]
+    fn line_far_from(&self, from: usize, offset: u32) -> (u32, u32) {
         let starts = &self.starts[..];
         let starts_by = |at: usize| starts.get(at).is_some_and(|&start| start <= offset);
-        // The line is one from `low` to before `high`. The steps away from the last double.
-        let (mut low, mut high) = (self.last.get() as usize, starts.len());
+        // The line is one from `low` to before `high`. The steps away from `from` double.
+        let (mut low, mut high) = (from, starts.len());
         let mut step = 1;
         if starts_by(low) {
             while starts_by(low + step) {
@@ -111,7 +135,6 @@ impl LineStarts {
         }
         let between = starts.get(low + 1..high).unwrap_or_default();
         let at = low + between.partition_point(|&start| start <= offset);
-        self.last.set(at as u32);
         (at as u32 + 1, starts.get(at).copied().unwrap_or(0))
     }
 }
@@ -285,16 +308,36 @@ impl<'a> File<'a> {
 
     /// ESLint's `getLocFromIndex`. An offset inside a character of four bytes is the position between its two UTF-16 code units.
     pub fn position(&self, offset: u32) -> Position {
-        let text = self.text();
-        let offset = offset.min(text.len() as u32);
-        let (line, start, is_ascii) = match self.nearby_line(offset) {
-            Some((line, start)) => (line, start, false),
+        let offset = offset.min(self.text().len() as u32);
+        match self.nearby_line(offset) {
+            Some((line, start)) => self.position_in_line(line, start, offset, false),
             None => {
                 let lines = self.lines_index();
                 let (line, start) = lines.starts.line_at(offset);
-                (line, start, lines.is_ascii)
+                self.position_in_line(line, start, offset, lines.is_ascii)
             }
+        }
+    }
+
+    /// [`File::position`] of the start and of the end of `span`. Fast if the spans are asked for in the order of their starts.
+    pub fn positions(&self, span: Span) -> (Position, Position) {
+        let Some(lines) = self.lazy.lines.get() else {
+            return (self.position(span.start), self.position(span.end));
         };
+        let len = self.text().len() as u32;
+        let (from, to) = (span.start.min(len), span.end.min(len));
+        let (line, start) = lines.starts.line_at(from);
+        let (end_line, end_start) = lines.starts.line_from(line - 1, to);
+        (
+            self.position_in_line(line, start, from, lines.is_ascii),
+            self.position_in_line(end_line, end_start, to, lines.is_ascii),
+        )
+    }
+
+    /// The position of `offset`, which is in the line `line`, which starts at `start`. `is_ascii`: the text is known to be.
+    #[inline]
+    fn position_in_line(&self, line: u32, start: u32, offset: u32, is_ascii: bool) -> Position {
+        let text = self.text();
         let start = match start {
             0 => self.start_of_text(),
             start => start,

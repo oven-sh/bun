@@ -581,6 +581,12 @@ impl<'a> Stmt<'a> {
         }
     }
 
+    /// It is a `With`.
+    #[inline]
+    pub fn is_with(self) -> bool {
+        self.file.has_with_statements() && matches!(self.kind(), StmtKind::With { .. })
+    }
+
     /// The expression of an `Expr`.
     #[inline]
     pub fn as_expr(self) -> Option<Expr<'a>> {

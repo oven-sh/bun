@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ast_utils;
+use std::cmp::Reverse;
 
 /// Enforce variables to be declared either together or separately in functions.
 pub struct OneVar {
@@ -101,25 +102,55 @@ struct Seen {
     required: bool,
 }
 
-/// A function or a block of a file: the sort of the node, and its index among those.
-type Scope = (u8, u32);
-
-/// `node` as what ESLint's `startFunction` is called for, or with `of_blocks` its `startBlock` as well. The file is neither.
-fn as_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> Option<Scope> {
+/// Whether ESLint's `startFunction` is called for `node`, or with `of_blocks` its `startBlock` as well.
+fn is_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> bool {
     match node {
         // The block that is the body of a function is not a node: one scope stands for ESLint's
         // two, of which the outer is empty.
-        Node::Func(func) if func.has_body() => Some((1, func.id().0)),
-        Node::Stmt(statement) => {
-            let opens = match statement.tag() {
-                // ESLint does not know namespaces. For oxlint what is declared in one is apart, `var` too.
-                StmtTag::Module => is_oxlint,
-                StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => of_blocks,
-                _ => false,
-            };
-            opens.then(|| (2, statement.id().0))
+        Node::File(_) => true,
+        Node::Func(func) => func.has_body(),
+        Node::Stmt(statement) => match statement.tag() {
+            // ESLint does not know namespaces. For oxlint what is declared in one is apart, `var` too.
+            StmtTag::Module => is_oxlint,
+            StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => of_blocks,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// The scopes of one sort, those of functions or those of blocks, around the current statement in which something has been
+/// declared, the innermost last.
+struct Scopes<'a> {
+    of_blocks: bool,
+    around: AncestorMemo<'a, Node<'a>>,
+    open: Vec<(Node<'a>, Span, [Seen; 5])>,
+}
+
+impl<'a> Scopes<'a> {
+    fn new(of_blocks: bool) -> Self {
+        Scopes {
+            of_blocks,
+            around: AncestorMemo::default(),
+            open: Vec::new(),
         }
-        _ => None,
+    }
+
+    /// What has been declared in the scope of `statement`, by [`index`]. The statements come as they end: after what is in them.
+    fn seen(&mut self, statement: Stmt<'a>) -> Option<&mut [Seen; 5]> {
+        let (of_blocks, is_oxlint) = (self.of_blocks, statement.file().language().is_oxlint);
+        let scope = self.around.find(statement.into(), |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?;
+        if self.open.last().is_none_or(|it| it.0 != scope) {
+            // What ends before the statement, and what is in it.
+            let start = statement.span().start;
+            while self.open.last().is_some_and(|it| it.1.end <= start || it.1.start > start) {
+                self.open.pop();
+            }
+            if self.open.last().is_none_or(|it| it.0 != scope) {
+                self.open.push((scope, scope.span(), Default::default()));
+            }
+        }
+        self.open.last_mut().map(|it| &mut it.2)
     }
 }
 
@@ -163,9 +194,7 @@ fn is_require(declaration: VarDecl<'_>) -> bool {
 
 /// The declarations and the kind of a `VariableDeclaration`.
 fn as_variable_declaration(statement: Stmt<'_>) -> Option<(List<'_, VarDecl<'_>>, VarKind)> {
-    let StmtKind::Var(declarations) = statement.kind() else {
-        return None;
-    };
+    let declarations = statement.as_var()?;
     Some((declarations, declarations.first()?.var_kind()))
 }
 
@@ -332,11 +361,14 @@ impl OneVar {
         true
     }
 
-    /// ESLint's `checkVariableDeclaration`. `seen`: by [`index`], what has been declared in the scope of each kind.
-    fn check_variable_declaration<'a>(&self, statement: Stmt<'a>, seen: &mut [Seen; 5], cx: &Cx<'a, Self>) {
-        let Some((declarations, kind)) = as_variable_declaration(statement) else {
-            return;
-        };
+    /// ESLint's `checkVariableDeclaration`. `seen`: what has been declared in the scope of `statement`, of its `kind`.
+    fn check_variable_declaration<'a>(
+        &self,
+        statement: Stmt<'a>,
+        (declarations, kind): (List<'a, VarDecl<'a>>, VarKind),
+        seen: &mut Seen,
+        cx: &Cx<'a, Self>,
+    ) {
         let options = self.kinds[index(kind)];
         let (always, never, consecutive) =
             (Some(Mode::Always), Some(Mode::Never), Some(Mode::Consecutive));
@@ -381,7 +413,7 @@ impl OneVar {
             }
         }
 
-        if !self.has_only_one_statement(kind, counts, &mut seen[index(kind)]) {
+        if !self.has_only_one_statement(kind, counts, seen) {
             if options.initialized == always && options.uninitialized == always {
                 report_combine(cx, statement, kind, COMBINE);
             } else {
@@ -461,33 +493,30 @@ impl Rule for OneVar {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_variable_declaration(statement, &mut Default::default(), cx);
+        if let Some(declaration) = as_variable_declaration(statement) {
+            self.check_variable_declaration(statement, declaration, &mut Seen::default(), cx);
+        }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let file = cx.file();
-        let is_oxlint = file.language().is_oxlint;
-        let (mut functions, mut blocks) = (AncestorMemo::default(), AncestorMemo::default());
-        let statements = file.stmts_of_kind(StmtTag::Var);
-        let mut found = Vec::with_capacity(statements.size_hint().0);
-        for statement in statements {
-            let Some((_, kind)) = as_variable_declaration(statement) else {
-                continue;
+        let (mut functions, mut blocks) = (Scopes::new(false), Scopes::new(true));
+        let mut check = |statement| {
+            let Some(declaration) = as_variable_declaration(statement) else {
+                return;
             };
-            let scope = match kind {
-                VarKind::Var => functions.find(statement.into(), |_, it| as_scope(it, false, is_oxlint)),
-                _ => blocks.find(statement.into(), |_, it| as_scope(it, true, is_oxlint)),
-            };
-            found.push((scope.unwrap_or_default(), statement.span().start, statement));
-        }
-        // Scope by scope, each in the order of the source.
-        found.sort_unstable_by_key(|it| (it.0, it.1));
-        let (mut scope, mut seen) = (Scope::default(), Default::default());
-        for (its_scope, _, statement) in found {
-            if its_scope != scope {
-                (scope, seen) = (its_scope, Default::default());
+            let scopes = if declaration.1 == VarKind::Var { &mut functions } else { &mut blocks };
+            if let Some(seen) = scopes.seen(statement) {
+                self.check_variable_declaration(statement, declaration, &mut seen[index(declaration.1)], cx);
             }
-            self.check_variable_declaration(statement, &mut seen, cx);
+        };
+        // As they end, which is how the parser leaves them.
+        let place = |it: &Stmt| (it.span().end, Reverse(it.span().start));
+        let all = || cx.file().stmts_of_kind(StmtTag::Var);
+        if all().is_sorted_by_key(|it| place(&it)) {
+            return all().for_each(check);
         }
+        let mut sorted: Vec<Stmt> = all().collect();
+        sorted.sort_unstable_by_key(place);
+        sorted.into_iter().for_each(&mut check);
     }
 }

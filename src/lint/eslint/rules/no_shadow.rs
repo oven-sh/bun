@@ -628,33 +628,37 @@ impl Checker {
             only_types: FxHashMap::default(),
             namespaces_of_types: FxHashMap::default(),
         };
-        // How many variables have a name with the same last bits of its number. One that is alone has a name of its own, and
-        // shadows nothing that the file declares.
-        let places = (file.symbol_key_limit() * 8).next_power_of_two();
-        let place_of = |name: Name<'a>| name.atom().0 as usize & (places - 1);
-        let mut namesakes: SmallVec<[u8; 2048]> = SmallVec::from_elem(0, places);
-        for symbol in file.symbols() {
-            if let Some(count) = namesakes.get_mut(place_of(symbol.name())) {
-                *count = count.saturating_add(1);
-            }
-        }
-        // Those that nothing declares are not among the symbols of the file.
-        if let Some(count) = namesakes.get_mut(place_of(file.name_of("arguments"))) {
-            *count = u8::MAX;
-        }
+        // The scopes around the one that is looked at that declare something, and how many of their variables have a name with
+        // the same last bits of its number: a name that is alone shadows nothing that the file declares.
+        let mut around: SmallVec<[Scope<'a>; 16]> = SmallVec::new();
+        let places = (file.symbol_key_limit() * 4).next_power_of_two();
+        let place_of = |symbol: Symbol<'a>| symbol.name().atom().0 as usize & (places - 1);
+        let mut visible: SmallVec<[u32; 1024]> = SmallVec::from_elem(0, places);
         for scope in file.scopes() {
-            let Some(upper) = scope.parent() else {
+            if scope.symbols().len() == 0 {
                 continue;
-            };
-            for symbol in scope.symbols() {
-                if symbol.is_implicit_arguments() {
-                    continue;
+            }
+            while let Some(&left) = around.last().filter(|it| !it.contains(scope)) {
+                for symbol in left.symbols() {
+                    if let Some(count) = visible.get_mut(place_of(symbol)) {
+                        *count -= 1;
+                    }
                 }
-                let name = symbol.name();
-                let shadowed = match namesakes.get(place_of(name)) {
-                    Some(0 | 1) => None,
-                    _ => upper.resolve_name(name),
+                around.pop();
+            }
+            around.push(scope);
+            let upper = scope.parent();
+            for symbol in scope.symbols() {
+                let Some(count) = visible.get_mut(place_of(symbol)) else {
+                    continue;
                 };
+                let may_shadow = *count != 0;
+                *count += 1;
+                let Some(upper) = upper.filter(|_| !symbol.is_implicit_arguments()) else {
+                    continue;
+                };
+                let name = symbol.name();
+                let shadowed = if may_shadow { upper.resolve_name(name) } else { None };
                 let global = match shadowed {
                     None if self.builtin_globals => file.global(name.bytes()),
                     _ => None,

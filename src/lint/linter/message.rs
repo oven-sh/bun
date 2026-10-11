@@ -261,6 +261,13 @@ impl<'a> Locator<'a> {
         (at.line, at.column + 1)
     }
 
+    /// The same for the start and the end of `span`.
+    #[inline]
+    pub(crate) fn positions(&self, span: Span) -> ((u32, u32), (u32, u32)) {
+        let (start, end) = self.file.positions(span);
+        ((start.line, start.column + 1), (end.line, end.column + 1))
+    }
+
     /// A message of the linter itself at `span`: `createLintingProblem`.
     pub(crate) fn problem(
         &self,

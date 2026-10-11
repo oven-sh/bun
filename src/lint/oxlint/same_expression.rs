@@ -11,17 +11,27 @@ use smallvec::{SmallVec, smallvec};
 /// Pairs that are still to be compared, each without the parentheses around it.
 type Pending<'a> = SmallVec<[(Expr<'a>, Expr<'a>); 8]>;
 
+/// Whether the two are of kinds of which one can be the same as the other.
+#[inline]
+fn are_of_one_kind(left: Expr, right: Expr) -> bool {
+    let kind = |e: Expr| match e.tag() {
+        ExprTag::Index => ExprTag::Dot,
+        ExprTag::Template => ExprTag::String,
+        tag => tag,
+    };
+    kind(left) == kind(right)
+}
+
 /// Compares two expressions to see if they are the same.
+#[inline]
 pub fn is_same_expression<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
-    are_all_same(smallvec![(left, right)])
+    are_of_one_kind(left, right) && are_all_same(smallvec![(left, right)])
 }
 
 /// `is_same_expression(left.get_inner_expression(), right.get_inner_expression(), ctx)`
+#[inline]
 pub fn is_same_inner_expression<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
-    are_all_same(smallvec![(
-        get_inner_expression(left),
-        get_inner_expression(right)
-    )])
+    is_same_expression(get_inner_expression(left), get_inner_expression(right))
 }
 
 /// `left`, `right`: a `Dot` or an `Index`, whether oxlint has a `ChainExpression` around it or not.
@@ -50,6 +60,9 @@ fn is_member_expression(e: Expr) -> bool {
 
 /// Whether `left` and `right` are the same but for what is added to `pending`.
 fn compare_expressions<'a>(left: Expr<'a>, right: Expr<'a>, pending: &mut Pending<'a>) -> bool {
+    if !are_of_one_kind(left, right) {
+        return false;
+    }
     if is_member_expression(left) && is_member_expression(right) {
         return compare_member_expressions(left, right, pending);
     }

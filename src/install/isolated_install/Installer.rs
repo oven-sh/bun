@@ -668,8 +668,7 @@ impl<'a> Installer<'a> {
                 self.delete_local_store_package_in_place(entry_id);
             } else {
                 let staging = self.staging_lock.get_or_init(StagingLock::acquire).mode;
-                // No wait: on Windows a script that is still running keeps its package open.
-                // Either way the final path no longer passes the installed check.
+                // No wait, since a running script holds its package open on Windows. Any error leaves nothing installed.
                 let _ = self.clear_local_store_package(entry_id, staging, false);
             }
         }

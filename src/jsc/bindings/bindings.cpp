@@ -4660,8 +4660,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             }
 
             String propNameStr = pathString.substring(i, j - i);
-            // PropertyName does not own its key, so the Identifier stays a temporary of this call.
-            currProp = getPathStep(vm, globalObject, currProp, Identifier::fromString(vm, propNameStr));
+            // An Identifier, not a PropertyName: PropertyName does not own its key.
+            Identifier propName = Identifier::fromString(vm, propNameStr);
+            currProp = getPathStep(vm, globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4688,7 +4689,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
             JSString* propNameString = item.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
+            Identifier propName = propNameString->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
             currProp = getPathStep(vm, globalObject, currProp, propName);

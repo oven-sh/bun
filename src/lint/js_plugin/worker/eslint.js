@@ -222,7 +222,8 @@ const WITHOUT_FIXES = 1;
 // Whether a message is of one of the rules `aboutLayout`, or says that a comment which disables nothing but them does nothing.
 function isAboutLayout({ ruleId, message }, aboutLayout) {
   if (ruleId !== null) return aboutLayout.has(ruleId);
-  const names = /^Unused eslint-\w+ directive \(.* (?:from|for) ('.*')\)\.$/u.exec(message)?.[1].match(/'[^']+'/gu) ?? [];
+  const names =
+    /^Unused eslint-\w+ directive \(.* (?:from|for) ('.*')\)\.$/u.exec(message)?.[1].match(/'[^']+'/gu) ?? [];
   return names.length > 0 && names.every(it => aboutLayout.has(it.slice(1, -1)));
 }
 

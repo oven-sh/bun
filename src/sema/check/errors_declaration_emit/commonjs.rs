@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::bind::{JsDeclarationKind, assignment_declaration_kind, define_property_call};
+use crate::util::SharedSort;
 
 bun_core::comptime_string_set! {
     /// `textToKeyword`
@@ -53,7 +54,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             .filter(|&(e, _)| bound.expr_parent[e.idx()] != Parent::None)
             .collect();
         // The visitors are pre-order.
-        declarations.sort_by_key(|&(e, _)| hir[e].pos);
+        declarations.shared_sort_by_key(|&(e, _)| hir[e].pos);
         let saved = self.tracker.get_symbol_accessibility_diagnostic;
         for &(e, kind) in &declarations {
             if kind != JsDeclarationKind::ModuleExports {
@@ -473,7 +474,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             .filter(|&e| assignment_declaration_kind(hir, e) == JsDeclarationKind::ThisProperty)
             .filter(|&e| bound.expr_parent[e.idx()] != Parent::None)
             .collect();
-        assignments.sort_by_key(|&e| hir[e].pos);
+        assignments.shared_sort_by_key(|&e| hir[e].pos);
         let has_base =
             hir[c].extends.is_some() && !matches!(hir[hir[c].extends].kind, ExprKind::Null);
         let mut collected = Vec::new();

@@ -6,6 +6,7 @@ use super::*;
 use crate::bind::Decl;
 use crate::bind::Parent;
 use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppercase_unicode_15};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None`: an access that instantiation or a constraint produces. `Other`: a name in a
@@ -358,24 +359,14 @@ impl<'p, 's> Checker<'p, 's> {
                 keys.extend(self.key_type_of_prop(apparent, prop));
             }
         }
-        // `enumNumberIndexInfo`, the reverse mapping from a number to the name of a member, is
-        // omitted.
-        if !matches!(
-            self.data(apparent),
-            TypeData::Anon {
-                origin: Origin::EnumObject(_),
-                ..
-            }
-        ) {
-            for info in &members.shape().index {
-                if self.is_key_type_included(info.key, include) {
-                    // `stringOrNumberType`, one type
-                    keys.push(if info.key == TypeId::STRING {
-                        self.union(&[TypeId::STRING, TypeId::NUMBER])
-                    } else {
-                        info.key
-                    });
-                }
+        for info in self.structured(members).index_infos() {
+            if !info.is_enum_number_index_info && self.is_key_type_included(info.key, include) {
+                // `stringOrNumberType`, one type
+                keys.push(if info.key == TypeId::STRING {
+                    self.union(&[TypeId::STRING, TypeId::NUMBER])
+                } else {
+                    info.key
+                });
             }
         }
         // `getUnionTypeEx`: a list of one type is that type, whatever origin is given.
@@ -831,7 +822,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.members(ty).is_some_and(|m| {
             m.shape().props.is_empty()
                 && matches!(
-                    m.shape().index[..],
+                    m.index_infos()[..],
                     [IndexInfo {
                         key: TypeId::STRING,
                         ..
@@ -860,7 +851,7 @@ impl<'p, 's> Checker<'p, 's> {
                         value: EnumValue::String(value),
                         ..
                     } if c.is_numeric_name(value) => {
-                        crate::atom::parse_number(c.atoms().bytes(value)).unwrap_or(f64::NAN)
+                        bun_core::fmt::parse_f64(c.atoms().bytes(value)).unwrap_or(f64::NAN)
                     }
                     _ => return false,
                 };
@@ -1020,7 +1011,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
             }
             if self.is_numeric_name(name) && self.every_type(object, |c, t| c.is_tuple(t)) {
-                let at = crate::atom::parse_number(self.atoms().bytes(name)).unwrap_or(f64::NAN);
+                let at = bun_core::fmt::parse_f64(self.atoms().bytes(name)).unwrap_or(f64::NAN);
                 let ends = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Tuple { flags, .. } if Self::fixed_length(flags) == flags.len());
                 if access_node != AccessNode::None
                     && !access_flags.contains(AccessFlags::ALLOW_MISSING)
@@ -1052,7 +1043,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if access_expression.is_some() {
                         let is_readonly =
                             self.members_for_index_infos(object).is_some_and(|members| {
-                                let infos = &members.shape().index;
+                                let infos = members.index_infos();
                                 infos
                                     .iter()
                                     .any(|info| info.key == TypeId::NUMBER && info.readonly)
@@ -1249,10 +1240,9 @@ impl<'p, 's> Checker<'p, 's> {
             let infos = self.union_index_infos(parts);
             return Some(infos.iter().find(|info| info.key == key_type)?.value);
         }
-        let members = self.members(ty)?;
+        let members = self.structured_members(ty)?;
         let info = members
-            .shape()
-            .index
+            .index_infos()
             .iter()
             .find(|info| info.key == key_type)?;
         Some(self.instantiate(info.value, members.mapper))
@@ -1264,7 +1254,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut all = Vec::with_capacity(parts.len());
         for &part in parts {
             let apparent = self.apparent_type(part);
-            let Some(members) = self.members(apparent) else {
+            let Some(members) = self.structured_members(apparent) else {
                 return SmallVec::new();
             };
             all.push(members);
@@ -1273,11 +1263,11 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(first) = all.first() else {
             return infos;
         };
-        'infos: for info in &first.shape().index {
+        'infos: for info in first.index_infos() {
             let mut values = Vec::with_capacity(all.len());
             let mut readonly = false;
             for members in &all {
-                let Some(same) = members.shape().index.iter().find(|i| i.key == info.key) else {
+                let Some(same) = members.index_infos().iter().find(|i| i.key == info.key) else {
                     continue 'infos;
                 };
                 values.push(self.instantiate(same.value, members.mapper));
@@ -1318,7 +1308,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }),
             );
         }
-        out.sort_unstable();
+        out.shared_sort_unstable();
     }
 
     /// `getConditionalTypeInstantiation` without an alias.
@@ -2562,7 +2552,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // A property common to all members is declared by name in the first member that has no
             // index signature to cover names.
-            if members.shape().index.is_empty() {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
         }
@@ -2576,14 +2566,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The key types that `resolveMappedTypeMembers` and `getIndexTypeForMappedType` iterate over,
     /// for the mapped type at `node` under `mapper`, whose constraint is `constraint`. Also returns
-    /// the `T` of `keyof T` (`getModifiersTypeFromMappedType`) as an object, with its members.
+    /// the `T` of `keyof T` (`getModifiersTypeFromMappedType`).
     fn mapped_key_types(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
         constraint: TypeId,
-    ) -> (List<'p, TypeId>, Option<(TypeId, Members<'p>)>) {
+    ) -> (List<'p, TypeId>, Option<Modifiers<'p>>) {
         let source = self.mapped_modifiers_source(file, node);
         let over_keyof = matches!(source, Some((_, true)));
         // `getReducedApparentType`: the constraint of a type parameter, and an intersection that
@@ -2602,21 +2592,26 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.create_properties_of_intersection_in_progress(ty);
         }
-        let owner = match modifiers_ty {
-            Some(ty) if self.is_union(ty) => Some(self.union_as_object(ty)),
-            other => other,
-        };
-        let modifiers = match owner {
-            Some(ty) => self.members(ty).map(|members| (ty, members)),
+        let modifiers = match modifiers_ty {
+            Some(ty) if self.is_union(ty) && !over_keyof => Some(Modifiers::Union(ty)),
+            Some(ty) => {
+                let owner = match self.is_union(ty) {
+                    true => self.union_as_object(ty),
+                    false => ty,
+                };
+                (self.members(owner)).map(|members| Modifiers::Object(owner, members))
+            }
             None => None,
         };
         let keys = match modifiers {
             // `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType`. Over `keyof T`, the
             // properties and index signatures of `T` one by one: in the union `keyof T`, `string`
             // has absorbed the names.
-            Some((owner, m)) if over_keyof => {
+            Some(Modifiers::Object(owner, m)) if over_keyof => {
                 let renames = self.mapped_decl(file, node).name_ty.is_some();
-                let mut keys = Vec::with_capacity(m.shape().props.len() + m.shape().index.len());
+                let mut keys = Vec::with_capacity(
+                    m.shape().props.len() + self.structured(m).index_infos().len(),
+                );
                 for prop in &m.shape().props {
                     let is_public = !prop
                         .flags
@@ -2634,7 +2629,7 @@ impl<'p, 's> Checker<'p, 's> {
                         None => {}
                     }
                 }
-                keys.extend(m.shape().index.iter().map(|i| i.key));
+                keys.extend(self.structured(m).index_infos().iter().map(|i| i.key));
                 List::Own(keys)
             }
             // A type that can be anything is iterated as if every string were a property name.
@@ -2864,8 +2859,11 @@ impl<'p, 's> Checker<'p, 's> {
             let key_name = self.property_name_of_type(key);
             // `modifiersProp`: `getPropertyOfType(modifiersType, ..)`
             let source_prop = match (&modifiers, key_name) {
-                (Some((modifiers_type, m)), Some(name)) => self
+                (Some(Modifiers::Object(modifiers_type, m)), Some(name)) => self
                     .property_in_type(*modifiers_type, m, name)
+                    .map(|(prop, _)| prop),
+                (Some(Modifiers::Union(union)), Some(name)) => self
+                    .get_property_of_type(*union, name)
                     .map(|(prop, _)| prop),
                 _ => None,
             };
@@ -2984,9 +2982,20 @@ impl<'p, 's> Checker<'p, 's> {
                         let readonly = match (mapped.readonly, &modifiers) {
                             (MappedModifier::Add, _) => true,
                             // `getApplicableIndexInfo(modifiersType, propNameType)`
-                            (MappedModifier::None, Some((_, m))) => self
-                                .applicable_index_info(m, name_ty)
-                                .is_some_and(|info| info.readonly),
+                            (MappedModifier::None, Some(modifiers)) => {
+                                let members = match *modifiers {
+                                    Modifiers::Object(_, members) => Some(members),
+                                    Modifiers::Union(union) => {
+                                        let object = self.union_as_object(union);
+                                        self.members(object)
+                                    }
+                                };
+                                members.is_some_and(|m| {
+                                    let m = self.structured(m);
+                                    self.applicable_index_info(&m, name_ty)
+                                        .is_some_and(|info| info.readonly)
+                                })
+                            }
                             _ => false,
                         };
                         // `appendIndexInfo`
@@ -3264,4 +3273,15 @@ pub(super) fn combine_surrogate_pairs(text: &mut Vec<u8>) {
         text.splice(at..at + 6, ch.encode_utf8(&mut [0; 4]).bytes());
         at += 4;
     }
+}
+
+/// `getModifiersTypeFromMappedType`, as `Checker::mapped_key_types` returns it.
+#[derive(Clone, Copy)]
+enum Modifiers<'p> {
+    /// As an object, with its members.
+    Object(TypeId, Members<'p>),
+    /// A union whose properties are not what the mapped type iterates over, as in `Pick<A | B, "id">`. A property of a union is
+    /// created with the types of those that it combines, so only those that are asked for by name may be:
+    /// `interface B { id: string; shape?: keyof typeof shapes }`, with a `Pick<A | B, "id">` in the initializer of `shapes`.
+    Union(TypeId),
 }

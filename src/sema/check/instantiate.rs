@@ -653,11 +653,12 @@ impl<'p, 's> Checker<'p, 's> {
                 self.intern_key(TypeKey::Fns { decls, mapper: new })
             }
             TypeData::Synth(shape) => {
-                // `getObjectTypeInstantiation` of an `InstantiationExpressionType`: `newMapper` maps
-                // `links.outerTypeParameters`, and `instantiateAnonymousType` instantiates the
-                // members of `target` with it, whatever else they mention.
+                // `getObjectTypeInstantiation`: `newMapper` maps `links.outerTypeParameters`, and
+                // `instantiateAnonymousType` instantiates the members of `target` with it, whatever
+                // else they mention. Where it maps them to what they are mapped to already, the
+                // type is its own instantiation. See `Shape::mapper`.
                 let (mut shape, mut mapper, mut target) = (shape, mapper, None);
-                if shape.instantiation_expression.is_some() {
+                if shape.instantiation_expression.is_some() || shape.mapper != MapperId::IDENTITY {
                     let new_mapper = self.map_mapper(shape.mapper, mapper);
                     if new_mapper == shape.mapper {
                         return ty;
@@ -711,7 +712,7 @@ impl<'p, 's> Checker<'p, 's> {
                 new.symbol_declared_at = shape.symbol_declared_at;
                 new.symbol = shape.symbol;
                 new.spread_rank = shape.spread_rank;
-                new.spread_of = shape.spread_of.map(|(left, right)| {
+                new.created_from = shape.created_from.map(|(left, right)| {
                     (
                         self.instantiate(left, mapper),
                         self.instantiate(right, mapper),

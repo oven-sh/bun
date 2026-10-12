@@ -139,7 +139,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct Parser<'a> {
+struct Parser<'a, 'tool> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -150,9 +150,11 @@ struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
+    /// Reads `[lint]` and `[format]`.
+    tool: Option<&'a mut crate::ToolReader<'tool>>,
 }
 
-impl<'a> Parser<'a> {
+impl<'a> Parser<'a, '_> {
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -405,6 +407,12 @@ impl<'a> Parser<'a> {
             if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
                 self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
+            }
+        }
+
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(&json) {
+                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
             }
         }
 
@@ -1097,6 +1105,7 @@ impl Bunfig {
         cmd: CommandTag,
         source: &bun_ast::Source,
         ctx: &mut ContextData,
+        tool: Option<&mut crate::ToolReader<'_>>,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1168,6 +1177,7 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            tool,
         };
         parser.parse(cmd)
     }
@@ -1178,7 +1188,7 @@ impl Bunfig {
 // Split into a second `impl` block purely to keep `parse(cmd)` readable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-impl<'a> Parser<'a> {
+impl<'a> Parser<'a, '_> {
     fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
         // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
         // The api `Parser` is generic over log/source and never reads them for

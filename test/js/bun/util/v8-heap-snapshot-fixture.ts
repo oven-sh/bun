@@ -20,7 +20,7 @@ function describeSnapshot(json: any) {
 }
 
 // Runs the snapshot through a third-party parser, then walks every node and edge.
-async function parseAndWalk(json: unknown) {
+async function parseAndWalk(json: object) {
   const v8HeapSnapshot: typeof import("v8-heapsnapshot") = require("v8-heapsnapshot");
   const parsed = await v8HeapSnapshot.parseSnapshot(json);
 
@@ -117,7 +117,7 @@ switch (mode) {
 
     const json = JSON.parse(Bun.generateHeapSnapshot("v8"));
     // Referenced after the snapshot so nothing above is dead before it runs.
-    void (rs, reader, ws, writer, ts, pipePromise);
+    void (rs as unknown, reader, ws, writer, ts, pipePromise);
 
     const meta = json.snapshot.meta;
     const nodeStride = meta.node_fields.length;

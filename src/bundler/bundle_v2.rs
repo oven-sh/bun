@@ -2509,6 +2509,75 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
+        /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
+        /// each file is in the graph.
+        fn type_check(&self) -> Result<(), Error> {
+            let Some(type_check) = self.transpiler.options.type_check else {
+                return Ok(());
+            };
+            let sources = self.graph.input_files.items_source();
+            let loaders = self.graph.input_files.items_loader();
+            let import_records = self.graph.ast.items_import_records();
+            let flags = self.graph.input_files.items_flags();
+            let is_loaded_by_plugin = |index: usize| {
+                flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+            };
+            // What cannot be named stands for what it imports: a page, and what only a plugin can
+            // read, like `App.svelte`. What a plugin makes of that imports the plugin's own runtime,
+            // which is not of the project.
+            let mut named: Vec<usize> = Vec::new();
+            let mut is_named = vec![false; sources.len()];
+            // A page that a server imports is in the graph like one that is an entry point.
+            let pages = (0..sources.len()).filter(|&index| loaders[index] == Loader::Html);
+            let entry_points = self.graph.entry_points.iter();
+            let mut pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
+                .chain(pages)
+                .collect();
+            pending.reverse();
+            while let Some(index) = pending.pop() {
+                if std::mem::replace(&mut is_named[index], true) {
+                    continue;
+                }
+                named.push(index);
+                if loaders[index] == Loader::Html || is_loaded_by_plugin(index) {
+                    let records = import_records[index].as_slice().iter().rev();
+                    pending.extend(
+                        (records.map(|record| record.source_index))
+                            .filter(|imported| imported.is_valid())
+                            .map(|imported| imported.get() as usize)
+                            .filter(|&imported| !sources[imported].path.is_node_module()),
+                    );
+                }
+            }
+            let mut entry_points = (named.iter().copied())
+                .filter(|&index| {
+                    loaders[index].is_javascript_like() && sources[index].path.is_file()
+                })
+                .map(|index| sources[index].path.text);
+            // The types are those of what is written, as in `bun check`, not of what a plugin makes
+            // of it. What only a plugin provides is written nowhere else.
+            let mut sources = (sources.iter().zip(loaders).zip(flags))
+                .filter(|((source, loader), flags)| {
+                    loader.is_javascript_like_or_json()
+                        && source.path.is_file()
+                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                            && bun_sys::exists(source.path.text))
+                })
+                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+            let checked = options::TypeChecked {
+                cwd: self.transpiler.fs().top_level_dir,
+                tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
+                conditions: &self.transpiler.options.custom_conditions,
+                loaders: &self.transpiler.options.loaders,
+                entry_points: &mut entry_points,
+                sources: &mut sources,
+            };
+            if type_check(checked, self.transpiler.log_mut()) {
+                return Ok(());
+            }
+            Err(crate::Error::BuildFailed)
+        }
+
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
         /// idle/busy time since the previous call. No-op when env var unset.
         #[inline]
@@ -4361,6 +4430,7 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
                 this.fail_if_no_entry_points()?;
+                this.type_check()?;
 
                 this.scan_for_secondary_paths();
 
@@ -4951,6 +5021,8 @@ pub mod bv2_impl {
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
+                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
+                        .insert(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN);
                     // For copied assets keep the bytes Owned in `source.contents`
                     // so `process_files_to_copy` can `mem::take` them zero-copy
                     // (it would otherwise clone the whole asset). For everything
@@ -5559,6 +5631,7 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
+            self.type_check()?;
 
             self.scan_for_secondary_paths();
 

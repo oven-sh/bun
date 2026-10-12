@@ -101,7 +101,7 @@ describe("bunshell", () => {
     });
   });
   describe("js_obj_test", async () => {
-    function runTest(name: string, builder: TestBuilder) {
+    function runTest(name: string, builder: InstanceType<typeof TestBuilder>) {
       test(`js_obj_test_name_${name}`, async () => {
         await builder.run();
       });

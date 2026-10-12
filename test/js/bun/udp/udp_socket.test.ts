@@ -445,8 +445,9 @@ describe("udpSocket()", () => {
     expect(res).toBeLessThanOrEqual(count);
   };
 
-  for (const { binaryType, type } of dataTypes) {
-    for (let { label, data, bytes } of dataCases) {
+  type Data = (typeof dataCases)[number]["data"];
+  for (const { binaryType, type } of dataTypes as { binaryType?: Bun.BinaryType; type: Function }[]) {
+    for (let { label, data, bytes } of dataCases as { label: string; data: Data; bytes: Buffer | ArrayBuffer }[]) {
       if (type === ArrayBuffer) {
         bytes = new Uint8Array(bytes).buffer;
       }

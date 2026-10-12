@@ -10,7 +10,7 @@ describe.concurrent("WebKit ccdcb8a026 upgrade", () => {
   test("Array.prototype.toSpliced throws RangeError for a new length of 2^53 - 1 (c8c37314ee)", () => {
     expect(() => Array.prototype.toSpliced.call({ length: Infinity }, 0, 0)).toThrow(RangeError);
     // One past 2^53 - 1 is still the TypeError from step 10 of the spec algorithm.
-    expect(() => Array.prototype.toSpliced.call({ length: 2 ** 53 - 1 }, 0, 0, 1)).toThrow(TypeError);
+    expect(() => (Array.prototype.toSpliced as Function).call({ length: 2 ** 53 - 1 }, 0, 0, 1)).toThrow(TypeError);
   });
 
   test("Atomics.isLockFree uses ToIntegerOrInfinity instead of wrapping to int32 (41294576ac)", () => {

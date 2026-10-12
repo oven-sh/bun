@@ -343,7 +343,7 @@ describe("spawn()", () => {
       ["inherit", ["inherit", "ignore", "ignore"]],
       ["fd 0", [0, "ignore", "ignore"]],
     ] as const)("spawn stdio[0]=%s", async (_, stdio) => {
-      const child = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
+      const child: ChildProcess = spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: stdio as any });
       await once(child, "close");
       expect(child.stdin).toBe(null);
       expect(child.stdout).toBe(null);
@@ -849,7 +849,7 @@ describe("spawnSync()", () => {
     // /proc/self/stat field 5 is pgrp; parse after the last ')' since comm may contain spaces.
     const pgrp = (stat: string) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2];
     const childPgid = (detached: boolean) =>
-      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" }).stdout);
+      pgrp(spawnSync("cat", ["/proc/self/stat"], { detached, encoding: "utf8" } as { encoding: "utf8" }).stdout);
     const parentPgid = pgrp(fs.readFileSync("/proc/self/stat", "utf8"));
 
     expect(parentPgid).toMatch(/^\d+$/);
@@ -1051,14 +1051,14 @@ describe.skipIf(!isLinux)("an exit signal with no name is reported as node repor
 
   it.concurrent.each([40, 64])("spawnSync: signal after signal %d", signal => {
     const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
-    expect({ status, signal: reported }).toEqual({ status: null, signal: "" });
+    expect({ status, signal: reported as string | null }).toEqual({ status: null, signal: "" });
   });
 });
 
 it("spawnSync(does-not-exist)", () => {
   const x = spawnSync("does-not-exist");
-  expect(x.error?.code).toEqual("ENOENT");
-  expect(x.error.path).toEqual("does-not-exist");
+  expect((x.error as NodeJS.ErrnoException | undefined)?.code).toEqual("ENOENT");
+  expect((x.error as NodeJS.ErrnoException).path).toEqual("does-not-exist");
   // The rest of the result is what node returns when the process could not be spawned.
   expect({
     status: x.status,
@@ -1067,7 +1067,7 @@ it("spawnSync(does-not-exist)", () => {
     pid: x.pid,
     stdout: x.stdout,
     stderr: x.stderr,
-  }).toEqual({
+  }).toEqual<unknown>({
     status: null,
     signal: null,
     output: null,
@@ -1094,8 +1094,8 @@ it.if(!isWindows)("spawn with an fd number at Darwin OPEN_MAX in stdio reports E
   expect({
     status: r.status ?? null,
     stdout: r.stdout?.toString() ?? null,
-    error: r.error?.code ?? null,
-  }).toEqual({ status: null, stdout: null, error: "EBADF" });
+    error: (r.error as NodeJS.ErrnoException | undefined)?.code ?? null,
+  }).toEqual<unknown>({ status: null, stdout: null, error: "EBADF" });
 
   // Async spawn throws synchronously: EBADF is not in node's delayed-error
   // list (EACCES/EAGAIN/EMFILE/ENFILE/ENOENT), so node throws here too.
@@ -1369,9 +1369,9 @@ describe("uid/gid options", () => {
     expect(thrown?.syscall).toBe("spawn");
 
     const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
-    expect(r.error?.code).toBe("EPERM");
-    expect(r.error?.errno).toBe(-1);
-    expect(r.error?.syscall).toBe("spawnSync id");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("EPERM");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.errno).toBe(-1);
+    expect((r.error as NodeJS.ErrnoException | undefined)?.syscall).toBe("spawnSync id");
     expect(r.stdout == null).toBe(true);
   });
 
@@ -1416,7 +1416,7 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     expect(thrown?.code).toBe("ENOTSUP");
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
-    expect(r.error?.code).toBe("ENOTSUP");
+    expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOTSUP");
   });
 });
 
@@ -1635,15 +1635,41 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(leaked).toBe(0);
   });
 
-  it("records the failed spawn code on exitCode before close", async () => {
+  it("records the failed spawn code on exitCode before error and close", async () => {
     const child = spawn("/nonexistent-binary-xyz");
-    child.on("error", () => {});
-    const closeCode = await new Promise<number>(resolve => {
+    let errorCode: number | null = null;
+    const closed = new Promise<number>((resolve, reject) => {
+      child.once("error", (error: NodeJS.ErrnoException) => {
+        errorCode = child.exitCode;
+        try {
+          expect(error.code).toBe("ENOENT");
+          expect(errorCode).toBe(error.errno!);
+        } catch (error) {
+          reject(error);
+        }
+      });
       child.once("close", resolve);
     });
+    expect(child.exitCode).toBeNull();
+    const closeCode = await closed;
 
     expect(closeCode).toBeLessThan(0);
+    expect(errorCode).toBe<number | null>(closeCode);
     expect(child.exitCode).toBe(closeCode);
+  });
+
+  it("emits the failed spawn close code with a null signal", async () => {
+    const child = spawn("/nonexistent-binary-xyz");
+    let errno: number | undefined;
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      errno = error.errno;
+    });
+    const closeArgs = await new Promise<unknown[]>(resolve => {
+      child.once("close", (...args) => resolve(args));
+    });
+
+    expect(errno).toBeLessThan(0);
+    expect(closeArgs).toEqual([errno, null]);
   });
 
   it.concurrent("spawn with nonexistent cwd", async () => {

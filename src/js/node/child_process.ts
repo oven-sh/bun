@@ -1543,10 +1543,10 @@ class ChildProcess extends EventEmitter {
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
         (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         const exitCode = (ex as SystemError).errno ?? -1;
-        this.exitCode = exitCode;
         process.nextTick(() => {
+          this.exitCode = exitCode;
           this.emit("error", ex);
-          this.emit("close", exitCode);
+          this.#maybeClose();
         });
         if (exCode === "EMFILE" || exCode === "ENFILE") {
           // emfile/enfile error; in this case node does not initialize stdio streams.
@@ -1588,6 +1588,16 @@ class ChildProcess extends EventEmitter {
         process.nextTick(callback, new TypeError("Process was closed while trying to send message"));
       } else {
         this.emit("error", new TypeError("Process was closed while trying to send message"));
+      }
+      return false;
+    }
+
+    if (!this.connected) {
+      const ex = $ERR_IPC_CHANNEL_CLOSED();
+      if (callback) {
+        process.nextTick(callback, ex);
+      } else {
+        process.nextTick(() => this.emit("error", ex));
       }
       return false;
     }

@@ -390,6 +390,63 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // The two reports are oxlint 1.87's.
+  test(
+    "after runs once for a file, also when another rule's create threw for the file before it",
+    async () => {
+      const hooks = `
+      let calls = 0;
+      export default {
+        meta: { name: "hooks" },
+        rules: {
+          count: {
+            createOnce(context) {
+              return {
+                before() {
+                  calls = 0;
+                },
+                after() {
+                  context.report({ loc: { line: 1, column: 0 }, message: "after, call " + ++calls });
+                },
+              };
+            },
+          },
+        },
+      };`;
+      const throws = `
+      export default {
+        meta: { name: "throws" },
+        rules: {
+          first: {
+            create(context) {
+              if (context.filename.endsWith("a.js")) throw new Error("thrown in create");
+              return {};
+            },
+          },
+        },
+      };`;
+      const { stdout } = await lint(
+        {
+          ".oxlintrc.json": oxlintrc({
+            jsPlugins: ["./hooks.mjs", "./throws.mjs"],
+            rules: { "hooks/count": "error", "throws/first": "error" },
+          }),
+          "hooks.mjs": hooks,
+          "throws.mjs": throws,
+          "a.js": "a;\n",
+          "b.js": "b;\n",
+          "c.js": "c;\n",
+        },
+        ["-f", "unix", "--threads", "1", "a.js", "b.js", "c.js"],
+      );
+      expect(stdout.split("\n").filter(line => line.includes("after, call"))).toEqual([
+        "b.js:1:1: after, call 1 [Error/hooks(count)]",
+        "c.js:1:1: after, call 1 [Error/hooks(count)]",
+      ]);
+    },
+    timeout,
+  );
+
   test(
     "a plugin in TypeScript, one from a package, one with an alias",
     async () => {

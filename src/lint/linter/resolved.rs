@@ -54,6 +54,8 @@ pub struct ConfiguredRule {
     pub severity: Severity,
     /// What follows the severity.
     pub options: Arc<[Json]>,
+    /// `RuleSetting::defaults`: what the options of a comment in a file are merged over. They are part of `options` already.
+    pub(super) defaults: Vec<Json>,
     /// The rule made from `options`, as soon as a linter has linted with it. It is in the table of that linter: a configuration is for
     /// one.
     pub(super) instance: OnceLock<Instance>,
@@ -75,6 +77,7 @@ impl ConfiguredRule {
             entry,
             severity,
             options,
+            defaults: Vec::new(),
             instance: OnceLock::new(),
             refusal: OnceLock::new(),
             reported_as: entry.meta,
@@ -87,6 +90,11 @@ impl ConfiguredRule {
     /// and the extension runs in their place.
     pub fn reported_as(&self) -> &'static Meta {
         self.reported_as
+    }
+
+    pub(crate) fn with_defaults(mut self, defaults: Vec<Json>) -> Self {
+        self.defaults = defaults;
+        self
     }
 
     pub(crate) fn report_as(mut self, meta: &'static Meta) -> Self {

@@ -903,6 +903,7 @@ impl Rc<'_, '_> {
                     options: Vec::new(),
                     has_only_severity: true,
                     yields: false,
+                    defaults: Vec::new(),
                 });
             }
         }

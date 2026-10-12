@@ -97,7 +97,7 @@ fn deep_merge_objects(first: &Json, second: &Json) -> Json {
 }
 
 /// `deepMergeArrays(defaults, options)`
-fn deep_merge_arrays(defaults: &[Json], options: &[Json]) -> Vec<Json> {
+pub(crate) fn deep_merge_arrays(defaults: &[Json], options: &[Json]) -> Vec<Json> {
     let merged = defaults
         .iter()
         .enumerate()

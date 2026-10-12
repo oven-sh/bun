@@ -1412,8 +1412,13 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             };
             // A comment that has only a severity keeps the options of the configuration.
             let keeps_options = inline.len() == 1 && eslint_8.is_none();
+            let over_defaults;
             let options: &[Json] = match existing {
                 Some(existing) if keeps_options => existing.options(),
+                Some(Existing::Native(existing)) if !existing.defaults.is_empty() => {
+                    over_defaults = schema::deep_merge_arrays(&existing.defaults, &inline[1..]);
+                    &over_defaults
+                }
                 _ => &inline[1..],
             };
             if self.config.linter.report_unused_inline_configs != Severity::Off {

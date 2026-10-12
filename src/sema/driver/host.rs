@@ -17,13 +17,13 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::portable::SharedFile;
 use bun_sema::resolve::{
-    Host, Kept, ModuleDetection, ParseOptions, Phase, ScriptKind, Spent, ancestors, inside,
+    Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors, inside,
     is_declaration_file_name, is_same_path, join, root_length, to_file_name_lower_case, to_path,
     typescript_path,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
-use bun_sema::util::{FxHashMap, ShardedMap};
+use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -204,6 +204,10 @@ pub struct Disk {
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub(crate) before_read: Option<BeforeRead>,
+    /// `Host::extended_config`: the projects of a build often extend one file.
+    extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>,
+    /// `Host::shared_paths`
+    paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
@@ -440,6 +444,8 @@ impl Disk {
                     .collect(),
             },
             keeps_byte_order_marks: false,
+            extended_configs: Default::default(),
+            paths: Default::default(),
             shared: Default::default(),
             caches: Default::default(),
             is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
@@ -1326,6 +1332,20 @@ impl Host for Asking<'_> {
 }
 
 impl Host for Disk {
+    fn extended_config(&self, path: &[u8]) -> Option<Kept> {
+        self.extended_configs.lock().get(path).cloned()
+    }
+    fn keep_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+        self.extended_configs.lock().insert(path.to_vec(), parsed());
+    }
+    fn shared_paths(&self, paths: Arc<Paths>) -> Arc<Paths> {
+        let mut kept = self.paths.lock();
+        if let Some(equal) = kept.get(&paths) {
+            return Arc::clone(equal);
+        }
+        kept.insert(Arc::clone(&paths));
+        paths
+    }
     fn spent(&self, phase: Phase, time: Duration) {
         self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);
     }

@@ -98,8 +98,9 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 /// `Reader::without_warnings`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
 /// and the `basePath` `"PROJECT"` with the project's directory, so that a project in `~/test/app` isn't all tests.
 ///
-/// The first `rules` only sets options. A later setting that's just a severity keeps them, whether it comes from a preset
-/// below or from the user, so these are the rules' default options in a project with no config file.
+/// The first `rules` only sets options. With `$defaultOptions` they're the rules' default options in a project with no config file:
+/// a later setting that's just a severity keeps them, and one with options is merged over them key by key, as ESLint does with a
+/// rule's own `meta.defaultOptions`. That goes for the presets below, bunfig.toml, `--rule` and `/* eslint */` comments.
 ///
 /// `react/jsx-uses-react` reports nothing. In a file with JSX it keeps `no-unused-vars` quiet about `React`, or about the `h` of
 /// a `@jsx h` comment. It's an error so that `--quiet` doesn't skip it.
@@ -107,6 +108,7 @@ const BUILT_IN: &[u8] = br#"[
     { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
     {
+        "$defaultOptions": true,
         "rules": {
             "no-constant-binary-expression": ["off", { "allowLiteralToggle": true }],
             "no-empty-pattern": ["off", { "allowObjectPatternsAsParameters": true }],
@@ -116,6 +118,7 @@ const BUILT_IN: &[u8] = br#"[
             }],
             "no-loss-of-precision": ["off", { "ignoreDecimals": true }],
             "no-unused-expressions": ["off", { "allowShortCircuit": true, "allowTernary": true }],
+            "no-unused-vars": ["off", UNUSED_ON_PURPOSE],
             "react/jsx-key": ["off", { "checkArraysOutsideJSX": false }],
             "@typescript-eslint/no-loss-of-precision": ["off", { "ignoreDecimals": true }],
             "@typescript-eslint/no-unused-expressions": ["off", { "allowShortCircuit": true, "allowTernary": true }],
@@ -123,7 +126,8 @@ const BUILT_IN: &[u8] = br#"[
                 "arguments": true, "attributes": false, "inheritedMethods": true,
                 "properties": true, "returns": true, "variables": true
             } }],
-            "@typescript-eslint/no-namespace": ["off", { "allowDeclarations": true }]
+            "@typescript-eslint/no-namespace": ["off", { "allowDeclarations": true }],
+            "@typescript-eslint/no-unused-vars": ["off", UNUSED_ON_PURPOSE]
         }
     },
     {
@@ -145,7 +149,7 @@ const BUILT_IN: &[u8] = br#"[
             "import/parsers": { "@typescript-eslint/parser": [".ts", ".mts", ".cts", ".tsx"] },
             "import/resolver": { "typescript": true }
         },
-        "rules": { "no-unused-vars": ["warn", UNUSED_ON_PURPOSE] }
+        "rules": { "no-unused-vars": "warn" }
     },
     {
         "files": [
@@ -166,7 +170,7 @@ const BUILT_IN: &[u8] = br#"[
         "$severityByKind": true,
         "rules": {
             "@typescript-eslint/no-require-imports": "off",
-            "@typescript-eslint/no-unused-vars": ["warn", UNUSED_ON_PURPOSE]
+            "@typescript-eslint/no-unused-vars": "warn"
         }
     },
     {

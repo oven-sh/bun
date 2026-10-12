@@ -252,7 +252,7 @@ test.concurrent("@typescript-eslint/no-unused-vars", async () => {
 
 test.concurrent.each(["a.js", "a.ts"])("no-unused-vars with options from bunfig.toml, in %s", async file => {
   const rule = file === "a.js" ? "no-unused-vars" : "@typescript-eslint/no-unused-vars";
-  const bunfig = `[lint.rules]\n"${rule}" = ["warn", { args = "all" }]\n`;
+  const bunfig = `[lint.rules]\n"${rule}" = ["warn", { ignoreRestSiblings = false, varsIgnorePattern = "^x" }]\n`;
   const code = `const { a, ...others } = Bun;\nconsole.log(others);\nconst _b = 1;\n`;
   expect(await hints(code, file, { "bunfig.toml": bunfig })).toEqual([
     `${rule} 1: To leave a property out this way, turn on the option ignoreRestSiblings.`,

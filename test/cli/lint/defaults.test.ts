@@ -767,13 +767,99 @@ export const HALF = 9007199254740993.5;
     );
   });
 
-  test("options from bunfig.toml replace them", async () => {
+  describe("an option you don't set keeps its default", () => {
     const files = {
-      "a.js": "// 10\u00a0kg\nexport const weight = `10\u00a0kg`;\n",
-      "bunfig.toml": `[lint.rules]\n"no-irregular-whitespace" = ["error", { skipComments = true }]\n`,
+      "a.js": "const _skip = 1;\nexport function f(unused) {}\n",
+      "b.jsx": "export const b = <i>{false && <b />}</i>;\nexport const c = 1 > 2;\n",
+      "c.js": "// 10\u00a0kg\nexport const weight = `10\u00a0kg`;\nexport const pattern = /10\u00a0kg/;\n",
     };
-    const { reports } = await lint(files, []);
-    expect(reports).toEqual(["a.js:2:26 error no-irregular-whitespace"]);
+    const settings = [
+      [`"no-unused-vars"`, `["warn", { args = "none" }]`],
+      [`"no-constant-binary-expression"`, `["error", { checkRelationalComparisons = true }]`],
+      [`"no-irregular-whitespace"`, `["error", { skipRegExps = false }]`],
+    ];
+    const expected = ["b.jsx:2:18 error no-constant-binary-expression", "c.js:3:27 error no-irregular-whitespace"];
+
+    test("without options", async () => {
+      expect((await lint(files, [])).reports).toEqual(["a.js:2:19 warning no-unused-vars"]);
+    });
+
+    test("[lint.rules]", async () => {
+      const bunfig = `[lint.rules]\n${settings.map(it => it.join(" = ")).join("\n")}\n`;
+      expect((await lint({ ...files, "bunfig.toml": bunfig }, [])).reports).toEqual(expected);
+    });
+
+    test("[[lint.overrides]]", async () => {
+      const bunfig = `[[lint.overrides]]\nfiles = ["*"]\nrules = { ${settings.map(it => it.join(" = ")).join(", ")} }\n`;
+      expect((await lint({ ...files, "bunfig.toml": bunfig }, [])).reports).toEqual(expected);
+    });
+
+    test("--rule", async () => {
+      const rules = [
+        "no-unused-vars: [warn, { args: none }]",
+        "no-constant-binary-expression: [error, { checkRelationalComparisons: true }]",
+        "no-irregular-whitespace: [error, { skipRegExps: false }]",
+      ];
+      expect(
+        (
+          await lint(
+            files,
+            rules.flatMap(rule => ["--rule", rule]),
+          )
+        ).reports,
+      ).toEqual(expected);
+    });
+
+    test("a comment in the file", async () => {
+      const commented = {
+        "a.js": `${files["a.js"]}/* eslint no-unused-vars: ["warn", { "args": "none" }] */\n`,
+        "b.jsx": `${files["b.jsx"]}/* eslint no-constant-binary-expression: ["error", { "checkRelationalComparisons": true }] */\n`,
+        "c.js": `${files["c.js"]}/* eslint no-irregular-whitespace: ["error", { "skipRegExps": false }] */\n`,
+      };
+      expect((await lint(commented, [])).reports).toEqual(expected);
+    });
+
+    test("the options of an override replace those of [lint.rules], not the defaults", async () => {
+      const bunfig = `[lint.rules]
+"no-irregular-whitespace" = ["error", { skipComments = false }]
+[[lint.overrides]]
+files = ["c.js"]
+rules = { "no-irregular-whitespace" = ["error", { skipTemplates = false }] }
+`;
+      const { reports } = await lint({ "c.js": files["c.js"], "d.js": files["c.js"], "bunfig.toml": bunfig }, []);
+      expect(reports).toEqual(["c.js:2:26 error no-irregular-whitespace", "d.js:1:6 error no-irregular-whitespace"]);
+    });
+
+    test("objects merge key by key, anything else replaces", async () => {
+      const bunfig = `[lint.rules]
+"@typescript-eslint/no-misused-promises" = ["off", { checksVoidReturn = { arguments = false } }]
+"no-unused-vars" = ["warn", "local"]
+`;
+      const { json } = await lint({ "a.js": "", "bunfig.toml": bunfig }, ["--print-config", "a.js"]);
+      expect(json.rules["@typescript-eslint/no-misused-promises"]).toEqual([
+        0,
+        {
+          checksVoidReturn: {
+            arguments: false,
+            attributes: false,
+            inheritedMethods: true,
+            properties: true,
+            returns: true,
+            variables: true,
+          },
+        },
+      ]);
+      expect(json.rules["no-unused-vars"]).toEqual([1, "local"]);
+    });
+
+    test("with an ESLint config, options replace options as in ESLint", async () => {
+      const config = `export default [
+  { rules: { "no-irregular-whitespace": ["error", { skipComments: true, skipTemplates: true }] } },
+  { rules: { "no-irregular-whitespace": ["error", { skipRegExps: true }] } },
+];\n`;
+      const { reports } = await lint({ "c.js": files["c.js"], "eslint.config.mjs": config }, ["c.js"]);
+      expect(reports).toEqual(["c.js:1:6 error no-irregular-whitespace", "c.js:2:26 error no-irregular-whitespace"]);
+    });
   });
 });
 
@@ -894,10 +980,48 @@ export {};
     expect(texts["a.mjs"]).toBe("export {};\n");
   });
 
-  test("a line that has something else on it stays", async () => {
-    const code = "const a = 1; // why\nconst b = 2; export {};\n";
+  test.each([
+    [
+      "a line that has something else on it stays",
+      "const a = 1; // why\nconst b = 2; export {};\n",
+      "// why\nexport {};\n",
+    ],
+    ["no space stays at the end of a line", "g(); const a = 1;\nexport {};\n", "g();\nexport {};\n"],
+    [
+      "no doubled space stays",
+      'import { a, used } from "./b.js";\nused();\n',
+      'import { used } from "./b.js";\nused();\n',
+    ],
+    [
+      "no empty first line in a block",
+      "export function f() {\n  const a = 1;\n\n  return 1;\n}\n",
+      "export function f() {\n  return 1;\n}\n",
+    ],
+    [
+      "no empty last line in a block",
+      "export function f() {\n  g();\n\n  const a = 1;\n}\n",
+      "export function f() {\n  g();\n}\n",
+    ],
+    [
+      "no two empty lines in a row",
+      'import x from "./x.js";\n\nconst a = 1;\n\nexport const y = x;\n',
+      'import x from "./x.js";\n\nexport const y = x;\n',
+    ],
+    ["no empty line at the start of the file", "const a = 1;\n\nexport {};\n", "export {};\n"],
+    ["no empty line at the end of the file", "export {};\n\nconst a = 1;\n", "export {};\n"],
+    [
+      "an empty line between two statements stays",
+      "g();\nconst a = 1;\n\nh();\nexport {};\n",
+      "g();\n\nh();\nexport {};\n",
+    ],
+    [
+      "the same with \\r\\n",
+      "export function f() {\r\n  const a = 1;\r\n\r\n  return 1;\r\n}\r\n",
+      "export function f() {\r\n  return 1;\r\n}\r\n",
+    ],
+  ])("%s", async (_, code, expected) => {
     const { texts } = await lint({ "a.mjs": code }, ["--fix-suggestions"]);
-    expect(texts["a.mjs"]).toBe(" // why\n export {};\n");
+    expect(texts["a.mjs"]).toBe(expected);
   });
 
   test("declarations that run other code stay", async () => {
@@ -1004,17 +1128,13 @@ test("a", async () => {
     expect(texts["a.test.ts"]).toBe(files["a.test.ts"].replace("  expect(", "  await expect("));
   });
 
-  test("the fix for hasOwnProperty is what the hint recommends", async () => {
+  // Not `Object.hasOwn`, which is ES2022: it's a type error with an older `target`, and it throws in older browsers.
+  test("the fix for hasOwnProperty works everywhere", async () => {
     const files = { "a.mjs": "export const has = (o, k) => [o.hasOwnProperty(k), o.isPrototypeOf(k)];\n" };
-    const config = { "eslint.config.mjs": `export default [{ rules: { "no-prototype-builtins": "error" } }];\n` };
-    const [native, eslint] = await Promise.all([
-      lint(files, ["--fix-suggestions"]),
-      lint({ ...files, ...config }, ["a.mjs"]),
-    ]);
-    expect(native.texts["a.mjs"]).toBe(
-      "export const has = (o, k) => [Object.hasOwn(o, k), Object.prototype.isPrototypeOf.call(o, k)];\n",
+    const { texts } = await lint(files, ["--fix-suggestions"]);
+    expect(texts["a.mjs"]).toBe(
+      "export const has = (o, k) => [Object.prototype.hasOwnProperty.call(o, k), Object.prototype.isPrototypeOf.call(o, k)];\n",
     );
-    expect(eslint.json[0].messages[0].suggestions[0].desc).toBe("Call Object.prototype.hasOwnProperty explicitly.");
   });
 
   test("with an ESLint config the suggestion is ESLint's", async () => {
@@ -1109,16 +1229,16 @@ const h = 1;
     const [plain, severity, options] = await Promise.all([
       lint({ [name]: code }, []),
       lint(set(`"error"`), []),
-      lint(set(`["warn", { args = "all" }]`), []),
+      lint(set(`["warn", { varsIgnorePattern = "^x" }]`), []),
     ]);
     expect(plain.reports).toEqual([`${name}:2:23 warning ${rule}`, `${name}:11:7 warning ${rule}`]);
     expect(plain.json[0].messages.map((it: { message: string }) => it.message)).toEqual([
       "'c' is defined but never used.",
       "'h' is assigned a value but never used.",
     ]);
-    // Like in ESLint, a severity on its own keeps the default options, and explicit options replace them.
+    // A severity on its own keeps the default options. An option that's set only changes that option.
     expect(severity.reports).toEqual([`${name}:2:23 error ${rule}`, `${name}:11:7 error ${rule}`]);
-    expect(options.reports).toEqual(all.map(at => `${name}:${at} warning ${rule}`));
+    expect(options.reports).toEqual(["1:7", "2:23", "11:7"].map(at => `${name}:${at} warning ${rule}`));
   });
 
   test("doesn't apply with an eslint.config.js", async () => {

@@ -1165,9 +1165,11 @@ impl NoUnusedVars {
                     return handle_fixes(fixer, variable, def, at);
                 }
                 let fix = handle_fixes(fixer, variable, def, at).filter(|_| can_be_removed_unseen(symbol, def))?;
+                if !fix.text.is_empty() {
+                    return Some(fix);
+                }
                 // A statement that had its lines to itself takes them with it.
-                let lines = Around::of(cx.text(), fix.span).whole_lines().filter(|_| fix.text.is_empty());
-                Some(Fix { span: lines.unwrap_or(fix.span), ..fix })
+                Some(Fix { span: Around::of(cx.text(), fix.span).without_leftovers(), ..fix })
             });
     }
 

@@ -101,7 +101,7 @@ export type Settings = typeof defaults;
 
 ## Options
 
-The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config you get ESLint's defaults, which have no patterns and set `ignoreRestSiblings` to `false`.
+An option you don't set keeps its default. With an ESLint config you get ESLint's defaults, which have no patterns and set `ignoreRestSiblings` to `false`.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -132,19 +132,19 @@ export const doubled = [1, 2, 3].map((value, index) => index * 2);
 export const doubled = [1, 2, 3].map((value, index) => index * 2);
 ```
 
-A name that starts with `_` is unused on purpose. If you set your own options, you need to repeat the pattern:
+A name that starts with `_` is unused on purpose. That still applies when you set other options:
 
 {/* good */}
 ```ts
 export function onMessage(_event: string) {}
 ```
 
-{/* bad {"options": [{"args": "all"}]} */}
+{/* good {"options": [{"args": "all"}]} */}
 ```ts
 export function onMessage(_event: string) {}
 ```
 
-{/* good {"options": [{"args": "all", "argsIgnorePattern": "^_"}]} */}
+{/* bad {"options": [{"argsIgnorePattern": "^unused"}]} */}
 ```ts
 export function onMessage(_event: string) {}
 ```

@@ -126,9 +126,9 @@ declare namespace Charts {
 }
 ```
 
-Reported there too if `allowDefinitionFiles` is `false`:
+Reported there too if both options are `false`:
 
-{/* bad {"filename": "charts.d.ts", "options": [{"allowDefinitionFiles": false}]} */}
+{/* bad {"filename": "charts.d.ts", "options": [{"allowDefinitionFiles": false, "allowDeclarations": false}]} */}
 ```ts charts.d.ts
 declare namespace Charts {
   function draw(id: string): void;

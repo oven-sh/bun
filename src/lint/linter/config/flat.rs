@@ -300,7 +300,7 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 _ => expected_object(),
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
-            b"$changesLinter" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
+            b"$changesLinter" | b"$defaultOptions" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
             | b"$jsPlugins" | b"$parser" | b"$processor" | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
@@ -657,6 +657,11 @@ impl Reader<'_> {
         }
         if json.get(b"$severityByKind").is_some() {
             self.grade_by_kind(&mut object.rules);
+        }
+        if json.get(b"$defaultOptions").is_some() {
+            for setting in &mut object.rules {
+                setting.defaults.clone_from(&setting.options);
+            }
         }
         if json.get(b"$withoutWarnings").is_some() {
             object.rules = self.without_warnings();

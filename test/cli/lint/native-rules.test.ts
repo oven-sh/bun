@@ -777,7 +777,7 @@ describe.concurrent("rule options", () => {
   );
 
   test("rules ported from an ESLint plugin take that plugin's options", async () => {
-    const code = "export default [1].map(it => <b>{it}</b>, <></>);\nexport const a = [<></>];\n";
+    const code = "export default [1].map(it => <b>{it}</b>, <></>);\nexport const a = () => [<></>];\n";
     const [plain, checked] = await Promise.all([
       lint({ "a.jsx": code, ...bunfig({ "react/jsx-key": "error" }) }, ["-f", "json"]),
       lint(

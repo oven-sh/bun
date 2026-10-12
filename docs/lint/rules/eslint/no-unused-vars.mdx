@@ -117,10 +117,10 @@ export const App = () => <Button />;
 
 ```toml bunfig.toml
 [lint.rules]
-no-unused-vars = ["error", { args = "all", argsIgnorePattern = "^_" }]
+no-unused-vars = ["error", { args = "all" }]
 ```
 
-The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
+An option you don't set keeps its default. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -138,16 +138,16 @@ The options you set replace all of the defaults, so repeat the patterns you want
 
 You can pass a string instead of the object, `"all"` or `"local"`, to set `vars`.
 
-With `{ "args": "all" }` alone, the `"^_"` patterns are gone and `_item` is reported:
+With `{ "args": "all" }`, an unused parameter before a used one is reported too:
 
 {/* bad {"options": [{"args": "all"}]} */}
 ```js
-export const doubled = items.map((_item, index) => index * 2);
+export const doubled = items.map((item, index) => index * 2);
 ```
 
-With the pattern repeated, it isn't:
+The `"^_"` patterns still apply, so `_item` isn't:
 
-{/* good {"options": [{"args": "all", "argsIgnorePattern": "^_"}]} */}
+{/* good {"options": [{"args": "all"}]} */}
 ```js
 export const doubled = items.map((_item, index) => index * 2);
 ```

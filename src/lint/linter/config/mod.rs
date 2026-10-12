@@ -1323,7 +1323,7 @@ impl Config {
                     continue;
                 }
             };
-            let options: Arc<[Json]> = setting.options.into();
+            let (options, defaults): (Arc<[Json]>, _) = (setting.options.into(), setting.defaults);
             // Many configurations have the same options for a rule. One that has an error, or the rule off, validates nothing.
             let is_validated =
                 !options.is_empty() && config.error.is_none() && setting.severity != Severity::Off;
@@ -1350,6 +1350,7 @@ impl Config {
             config.may_hand_back |= or_else.is_some() && setting.severity != Severity::Off;
             config.rules.push(
                 ConfiguredRule::new(entry, setting.severity, options)
+                    .with_defaults(defaults)
                     .report_as(reported_as)
                     .named(name)
                     .or(or_else),

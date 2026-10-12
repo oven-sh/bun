@@ -261,14 +261,16 @@ test.concurrent.each([
 });
 
 // The answers are minimatch's. A report means that the pattern matched "~(x)/a".
+// On Windows, minimatch 3 turns every `\` of a pattern into `/`, so nothing can be escaped there.
+const escaped = isWindows ? [] : ["a.js:2"];
 test.concurrent.each([
   ["~(x)/**", true, ["a.js:2"]],
   ["~(x)/**", false, ["a.js:2"]],
-  ["~\\(x)/**", true, ["a.js:2"]],
-  ["~\\(x)/**", false, ["a.js:2"]],
+  ["~\\(x)/**", true, escaped],
+  ["~\\(x)/**", false, escaped],
   ["~+(x)/**", true, []],
   ["~?(\\(x\\))/**", true, []],
-  ["~?(\\(x\\))/**", false, ["a.js:2"]],
+  ["~?(\\(x\\))/**", false, escaped],
 ])("import/order: the pattern %j with patternOptions.noext = %p", async (pattern, noext, expected) => {
   const group = `{ pattern = ${JSON.stringify(pattern)}, group = "builtin", position = "before", patternOptions = { noext = ${noext} } }`;
   const files = {

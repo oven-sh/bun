@@ -3,6 +3,7 @@
 use crate::ast::File;
 use crate::context::IntoText;
 use crate::span::{Span, Spanned};
+use bun_core::strings;
 
 /// Replaces `span` by `text`.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -24,7 +25,9 @@ pub enum SuggestionKind {
 }
 
 /// What's left of a line once `span` is removed from `text`.
-pub struct Around {
+pub struct Around<'t> {
+    text: &'t [u8],
+    span: Span,
     /// `span` with the spaces and tabs on both sides of it.
     pub with_blanks: Span,
     /// Nothing comes before it on its first line.
@@ -33,14 +36,21 @@ pub struct Around {
     pub line_break: Option<u32>,
 }
 
-impl Around {
-    pub fn of(text: &[u8], span: Span) -> Around {
+/// Only spaces and tabs, and the `\r` of a `\r\n`.
+fn is_blank_line(line: &[u8]) -> bool {
+    line.iter().all(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
+}
+
+impl<'t> Around<'t> {
+    pub fn of(text: &'t [u8], span: Span) -> Around<'t> {
         let is_blank = |byte: &&u8| matches!(byte, b' ' | b'\t');
         let before = text.get(..span.start as usize).unwrap_or_default();
         let after = text.get(span.end as usize..).unwrap_or_default();
         let start = before.len() - before.iter().rev().take_while(is_blank).count();
         let blank_after = after.iter().take_while(is_blank).count();
         Around {
+            text,
+            span,
             with_blanks: Span::new(start as u32, span.end + blank_after as u32),
             starts_line: matches!(before.get(..start), Some([] | [.., b'\n' | b'\r'])),
             line_break: match after.get(blank_after..) {
@@ -53,13 +63,59 @@ impl Around {
     }
 
     /// The whole lines that `span` is on, with the last line break, if nothing else is on them. Removing that leaves no empty
-    /// line behind, which `bun format --check` would complain about.
+    /// line behind, which `bun format --check` would complain about. An empty line next to them goes too if it would end up
+    /// first or last in a block or in the file, or next to another empty line.
     pub fn whole_lines(&self) -> Option<Span> {
         let line_break = self.line_break.filter(|_| self.starts_line)?;
-        Some(Span::new(
-            self.with_blanks.start,
-            self.with_blanks.end + line_break,
-        ))
+        let lines = Span::new(self.with_blanks.start, self.with_blanks.end + line_break);
+        let (before, after) = (
+            self.text.get(..lines.start as usize)?,
+            self.text.get(lines.end as usize..)?,
+        );
+        // The line before, where it starts, and the line after, where it ends.
+        let previous = before.strip_suffix(b"\n").map(|rest| {
+            let start = strings::last_index_of_char(rest, b'\n').map_or(0, |at| at + 1);
+            (rest.get(start..).unwrap_or_default(), start as u32)
+        });
+        let next_len = strings::index_of_char_usize(after, b'\n').map_or(after.len(), |at| at + 1);
+        let next = after.get(..next_len).unwrap_or_default().trim_ascii();
+        let opens = |line: &[u8]| line.trim_ascii_end().ends_with(b"{");
+        if next.is_empty() && !after.is_empty() {
+            let is_left_over = previous.is_none_or(|(line, _)| is_blank_line(line) || opens(line));
+            return Some(Span::new(
+                lines.start,
+                lines.end + if is_left_over { next_len as u32 } else { 0 },
+            ));
+        }
+        match previous {
+            Some((line, start))
+                if is_blank_line(line) && (after.is_empty() || next.starts_with(b"}")) =>
+            {
+                Some(Span::new(start, lines.end))
+            }
+            _ => Some(lines),
+        }
+    }
+
+    /// What to remove so that `span` leaves no empty line, no space at the end of a line and no doubled space behind.
+    pub fn without_leftovers(&self) -> Span {
+        if let Some(lines) = self.whole_lines() {
+            return lines;
+        }
+        if self.line_break.is_some() {
+            return self.with_blanks;
+        }
+        // The spaces after it go, unless they are all that keeps two words apart.
+        let before = self
+            .text
+            .get(..self.span.start as usize)
+            .and_then(<[u8]>::last);
+        match before.is_some_and(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..)
+        }) {
+            true => self.span,
+            false => Span::new(self.span.start, self.with_blanks.end),
+        }
     }
 }
 

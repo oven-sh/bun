@@ -69,6 +69,8 @@ impl Drop for Spent<'_> {
 /// The file system, and the parser. The bundler has its own of both.
 /// What only who has made it can read.
 pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+/// `Options::paths`
+pub type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
 pub trait Host: Sync {
     /// One thread has spent `time` on `phase`. Only a host whose `times` is queried accumulates it.
@@ -161,6 +163,11 @@ pub trait Host: Sync {
     }
     /// `parsed` is called if the host keeps it.
     fn keep_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> Kept) {}
+    /// A list that is equal to `paths`, of a host through which many configuration files are read:
+    /// the projects of a build that have their `paths` from one file share one.
+    fn shared_paths(&self, paths: std::sync::Arc<Paths>) -> std::sync::Arc<Paths> {
+        paths
+    }
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
     /// A program is loaded, and `parse` is not called again before it is checked: what the threads
@@ -506,8 +513,8 @@ pub struct Options {
     /// The directory of `tsconfig.json`. Absolute, no trailing slash.
     pub base_dir: Vec<u8>,
     /// `compilerOptions.paths`: a pattern with at most one `*`, and the substitutions to try for
-    /// it.
-    pub paths: Vec<(Vec<u8>, Vec<Vec<u8>>)>,
+    /// it. There can be thousands, and a build copies the options of each project.
+    pub paths: std::sync::Arc<Paths>,
     /// `PathsBasePath`: the directory of the configuration file that specifies `paths`, which they
     /// are relative to.
     pub paths_base_dir: Vec<u8>,
@@ -901,11 +908,12 @@ impl Options {
             false => options.base_url.clone(),
         };
         if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
-            for (pattern, targets) in paths {
+            let paths = paths.iter().map(|(pattern, targets)| {
                 let targets = targets.as_array().unwrap_or(&[]).iter();
                 let targets = targets.filter_map(|t| t.as_str().map(<[u8]>::to_vec));
-                options.paths.push((pattern.clone(), targets.collect()));
-            }
+                (pattern.clone(), targets.collect())
+            });
+            options.paths = std::sync::Arc::new(paths.collect());
         }
         options.no_lib = flag(b"noLib");
         options.specifies_lib = list(b"lib").is_some();

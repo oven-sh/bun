@@ -827,6 +827,8 @@ function reset() {
   groupByKey = new Map();
   groups = [];
   currentRule = currentNode = null;
+  // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
+  afterHooks = [];
   resetScopes();
 }
 

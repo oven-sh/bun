@@ -1703,7 +1703,8 @@ describe.concurrent("gzip trailer", () => {
               expect.stringMatching(
                 /^error: Fail extracting tarball for "stream-pkg": (gzip trailer mismatch|Truncated tar archive)/,
               )
-            : "error: Fail extracting tarball from stream-pkg",
+            : // A line of the verbose log, from another thread, can come before the end of this one.
+              expect.stringMatching(/^error: Fail extracting tarball from stream-pkg/),
         streamed: false,
         installed: false,
         cached: 0,

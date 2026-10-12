@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -156,6 +156,140 @@ describe.concurrent("bun pm pkg", () => {
       const { output, code } = await runPmPkg(["get", "name", "nonexistent", "version"], readonlyDir);
       expect(JSON.parse(output)).toEqual({ name: "test-package", version: "1.0.0" });
       expect(code).toBe(0);
+    });
+
+    // Keys that need JSON escapes, string values that hold braces, values that nest, and scalars.
+    const severalKeysPkg = {
+      name: "n",
+      version: "1.0.0",
+      'a"b': 1,
+      "c\\d": 2,
+      "e\nf": 3,
+      "g\th": 4,
+      s: "x}",
+      scripts: { build: "echo ${FOO}" },
+      files: ["dist/**/*.{js,ts}"],
+      arr: [{ q: "}" }, { q: "{}" }],
+      nested: { x: { y: "z}" } },
+      emptyobj: {},
+      multi: [1, 2],
+      flag: true,
+      off: false,
+      nothing: null,
+      ratio: 3.14,
+      neg: -7,
+      port: 10000,
+      big: 2 ** 54 + 8,
+    };
+    const pretty = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
+    const makeSeveralKeysDir = () => tempDir("pm-pkg-get-keys", { "package.json": pretty(severalKeysPkg) });
+
+    it("should escape keys when getting multiple properties", async () => {
+      using dir = makeSeveralKeysDir();
+      expect(await runPmPkg(["get", 'a"b', "c\\d", "e\nf", "g\th", "name"], String(dir))).toEqual({
+        output: pretty({ 'a"b': 1, "c\\d": 2, "e\nf": 3, "g\th": 4, name: "n" }),
+        error: "",
+        code: 0,
+      });
+    });
+
+    it("should not alter values that hold a closing brace when getting multiple properties", async () => {
+      using dir = makeSeveralKeysDir();
+      const keys = ["s", "scripts.build", "scripts[build]", "files", "arr[0].q", "arr", "name"];
+      const [several, everyElement] = await Promise.all([
+        runPmPkg(["get", ...keys], String(dir)),
+        // One key that reads `q` from every element of `arr`.
+        runPmPkg(["get", "arr.q"], String(dir)),
+      ]);
+      expect(several).toEqual({
+        output: pretty({
+          s: "x}",
+          "scripts.build": "echo ${FOO}",
+          "scripts[build]": "echo ${FOO}",
+          files: ["dist/**/*.{js,ts}"],
+          "arr[0].q": "}",
+          arr: [{ q: "}" }, { q: "{}" }],
+          name: "n",
+        }),
+        error: "",
+        code: 0,
+      });
+      expect(everyElement).toEqual({
+        output: pretty({ "arr[0].q": "}", "arr[1].q": "{}" }),
+        error: "",
+        code: 0,
+      });
+    });
+
+    it("should print nested values and scalars of multiple properties as JSON.stringify does", async () => {
+      using dir = makeSeveralKeysDir();
+      const keys = ["nested", "emptyobj", "multi", "flag", "off", "nothing", "ratio", "neg", "port", "big"];
+      expect(await runPmPkg(["get", ...keys], String(dir))).toEqual({
+        output: pretty({
+          nested: { x: { y: "z}" } },
+          emptyobj: {},
+          multi: [1, 2],
+          flag: true,
+          off: false,
+          nothing: null,
+          ratio: 3.14,
+          neg: -7,
+          port: 10000,
+          big: 2 ** 54 + 8,
+        }),
+        error: "",
+        code: 0,
+      });
+    });
+
+    it("should pick the output shape after it resolves every key", async () => {
+      using dir = makeSeveralKeysDir();
+      const ok = (output: string) => ({ output, error: "", code: 0 });
+      const emptyBrackets = {
+        output: "",
+        error: "error: Empty brackets are not valid syntax for retrieving values.\n",
+        code: 1,
+      };
+      // One key found of several asked: bun prints the bare value, npm 11 prints the object.
+      // This test accepts both shapes, with exact bytes.
+      const oneFound = (key: string, value: unknown) => [ok(pretty(value)), ok(pretty({ [key]: value }))];
+      const cases: [keys: string[], accepted: ReturnType<typeof ok>[]][] = [
+        [["s", "missing"], oneFound("s", "x}")],
+        [["missing", "s"], oneFound("s", "x}")],
+        [["s", "s"], oneFound("s", "x}")],
+        [["nested", "missing"], oneFound("nested", { x: { y: "z}" } })],
+        // No key found.
+        [["missing", "other"], [ok("{}\n")]],
+        // A repeated key keeps its first position.
+        [["name", "version", "name"], [ok(pretty({ name: "n", version: "1.0.0" }))]],
+        // Empty brackets in any position fail the command before it prints a value.
+        [["arr[]", "name"], [emptyBrackets]],
+        [["name", "arr[]"], [emptyBrackets]],
+      ];
+      const results = await Promise.all(cases.map(([keys]) => runPmPkg(["get", ...keys], String(dir), false)));
+      for (const [i, [keys, accepted]] of cases.entries()) {
+        expect(accepted, `get ${keys.join(" ")}`).toContainEqual(results[i]);
+      }
+    });
+
+    // argv holds any bytes on POSIX. `printf` builds the key `e`, 0xC3, `z`, which is not UTF-8.
+    it.skipIf(isWindows)("should print U+FFFD for a non-UTF-8 key when getting multiple properties", async () => {
+      using dir = tempDir("pm-pkg-get-bytes", {
+        "package.json": Buffer.concat([Buffer.from('{"e'), Buffer.from([0xc3]), Buffer.from('z":1,"s":"x}"}')]),
+      });
+      await using proc = spawn({
+        cmd: ["sh", "-c", `exec "$0" pm pkg get "$(printf 'e\\303z')" s`, bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: pretty({ "e\uFFFDz": 1, s: "x}" }),
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("should handle boolean values", async () => {

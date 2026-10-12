@@ -204,7 +204,7 @@ impl PmPkgCommand {
         let pkg = Self::load_package_json(ctx, cwd);
 
         if args.is_empty() {
-            let formatted = Self::format_json(pkg.root, None)?;
+            let formatted = Self::format_json(pkg.root)?;
             Output::println(format_args!("{}", bstr::BStr::new(&formatted)));
             return Ok(());
         }
@@ -221,44 +221,30 @@ impl PmPkgCommand {
             }
         }
 
-        let nested = args.len() > 1 || found.count() > 1;
-        let mut results: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
-        for (key, expr) in found.keys().iter().zip(found.values()) {
-            let value = Self::format_json(*expr, Some(if nested { 4 } else { 2 }))?;
-            if nested && let Some(last_index) = strings::last_index_of_char(&value, b'}') {
-                let mut new_value = Vec::with_capacity(value.len() + 2);
-                write!(
-                    &mut new_value,
-                    "{}  {}",
-                    bstr::BStr::new(&value[..last_index]),
-                    bstr::BStr::new(&value[last_index..])
-                )
-                .map_err(|_| crate::Error::WriteFailed)?;
-                results.put(key, new_value.into_boxed_slice())?;
-                continue;
+        let value = match found.values() {
+            [] => {
+                Output::println(format_args!("{{}}"));
+                return Ok(());
             }
-            results.put(key, value)?;
-        }
+            [value] => *value,
+            values => {
+                let mut object = E::Object::default();
+                for (key, value) in found.keys().iter().zip(values) {
+                    // `put` borrows the label. print_json writes ill-formed UTF-8 as `\x00`.
+                    let label: &[u8] = match bstr::ByteSlice::to_str_lossy(&key[..]) {
+                        std::borrow::Cow::Borrowed(valid) => valid.as_bytes(),
+                        std::borrow::Cow::Owned(replaced) => {
+                            cli_arena().alloc_slice_copy(replaced.as_bytes())
+                        }
+                    };
+                    object.put(cli_arena(), label, *value)?;
+                }
+                Expr::init(object, Loc::EMPTY)
+            }
+        };
 
-        if results.count() == 0 {
-            Output::println(format_args!("{{}}"));
-        } else if results.count() == 1 {
-            let value = &results.values()[0];
-            Output::println(format_args!("{}", bstr::BStr::new(value)));
-        } else {
-            Output::println(format_args!("{{"));
-            let count = results.count();
-            for (i, (key, value)) in results.keys().iter().zip(results.values()).enumerate() {
-                let comma = if i == count - 1 { "" } else { "," };
-                Output::println(format_args!(
-                    "  \"{}\": {}{}",
-                    bstr::BStr::new(key),
-                    bstr::BStr::new(value),
-                    comma
-                ));
-            }
-            Output::println(format_args!("}}"));
-        }
+        let formatted = Self::format_json(value)?;
+        Output::println(format_args!("{}", bstr::BStr::new(&formatted)));
         Ok(())
     }
 
@@ -385,7 +371,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    fn format_json(expr: Expr, initial_indent: Option<usize>) -> Result<Box<[u8]>, Error> {
+    fn format_json(expr: Expr) -> Result<Box<[u8]>, Error> {
         let buffer_writer = js_printer::BufferWriter::init();
         let mut printer = js_printer::BufferPrinter::init(buffer_writer);
 
@@ -396,7 +382,7 @@ impl PmPkgCommand {
             js_printer::PrintJsonOptions {
                 mangled_props: None,
                 indent: bun_ast::Indentation {
-                    scalar: initial_indent.unwrap_or(2),
+                    scalar: 2,
                     count: 0,
                     ..Default::default()
                 },

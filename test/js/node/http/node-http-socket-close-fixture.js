@@ -163,6 +163,14 @@ row("client RST", {
     reset(tcp);
   },
 });
+// The error that aborts the request is not the error of its socket.
+row("client FIN, the request has an 'error' listener", {
+  request({ watch, events, client }, req, res) {
+    watch(req.socket, res);
+    req.on("error", err => events.push(`request error: ${what(err)}`));
+    client.end();
+  },
+});
 
 // The 'error' emit of the socket throws. 'close' still comes, after the uncaught exception.
 row("destroy(err), no 'error' listener", {

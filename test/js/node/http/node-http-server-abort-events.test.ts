@@ -1460,6 +1460,10 @@ describe("req.socket emits 'close' with hadError, also when a listener throws", 
     ["client FIN", ["response close", "socket close false"]],
     ["client RST", ["socket error: ECONNRESET", "response close", "socket close true"]],
     [
+      "client FIN, the request has an 'error' listener",
+      ["response close", "socket close false", "request error: ECONNRESET"],
+    ],
+    [
       "destroy(err), no 'error' listener",
       ["socket error: destroyed", "uncaught: destroyed", "response close", "socket close true"],
     ],
@@ -1524,17 +1528,21 @@ describe("req.socket emits 'close' with hadError, also when a listener throws", 
     ],
   ];
 
-  // A debug build needs several seconds to start the fixture.
-  const slowStart = { timeout: process.versions.bun?.includes("debug") ? 90_000 : undefined };
+  // CI has its own time for each test. A local debug build needs several seconds to start one fixture.
+  const timeout = process.versions.bun?.includes("debug") ? 90_000 : undefined;
 
   // Not concurrent: in a debug build the fixture takes the CPU time that the tests above need.
-  test.each(["http", "https"])("%s", slowStart, async protocol => {
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      [path.join(import.meta.dirname, "node-http-socket-close-fixture.js")],
-      { env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", SECURE: protocol === "https" ? "1" : "0" } },
-    );
-    const expected = rows.filter(([, , overTls]) => protocol === "http" || overTls !== false);
-    expect(JSON.parse(stdout)).toEqual(Object.fromEntries(expected.map(([name, events]) => [name, events])));
-  });
+  test.each(["http", "https"])(
+    "%s",
+    async protocol => {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [path.join(import.meta.dirname, "node-http-socket-close-fixture.js")],
+        { env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", SECURE: protocol === "https" ? "1" : "0" } },
+      );
+      const expected = rows.filter(([, , overTls]) => protocol === "http" || overTls !== false);
+      expect(JSON.parse(stdout)).toEqual(Object.fromEntries(expected.map(([name, events]) => [name, events])));
+    },
+    timeout,
+  );
 });

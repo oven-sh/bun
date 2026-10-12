@@ -1818,13 +1818,7 @@ function getNodeHTTPServerSocket() {
       // Once: a queued response's abort can destroy the socket, and run this, before the native close calls it.
       if (this.#closeHandled) return;
       this.#closeHandled = true;
-      const writeFailure = this.errored ?? $ERR_STREAM_DESTROYED("write");
-      // A tunnel write that waited for a drain fails in a tick, like the other write callbacks. The socket is destroyed by then: it settles the callbacks of Writable and emits no 'error'.
-      const pendingCallback = this.#pendingCallback;
-      if (pendingCallback) {
-        this.#pendingCallback = null;
-        process.nextTick(pendingCallback, writeFailure);
-      }
+      const errored = this.errored;
       // freeParser equivalent: runs before 'close' listeners so they observe the
       // released parser (free() invoked, kOnTimeout nulled).
       releaseServerParserShim(this);
@@ -1891,6 +1885,7 @@ function getNodeHTTPServerSocket() {
       const pending = this.#pendingAbortMessage;
       this.#pendingAbortMessage = undefined;
       const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
+      const writeFailure = errored ?? $ERR_STREAM_DESTROYED("write");
       if (message) {
         failPendingWriteCallbacks(message, writeFailure);
       }
@@ -1918,6 +1913,13 @@ function getNodeHTTPServerSocket() {
       // the in-flight response are aborted, like Node.js's socketOnClose
       // (abortIncoming + abortOutgoing).
       abortQueuedPipelinedResponses(this, writeFailure);
+
+      // A tunnel write that waited for a drain fails in a tick, like the other write callbacks. Queued here, before destroy() queues 'error' and 'close': on a destroyed socket the failure settles the callbacks of Writable and emits no 'error'.
+      const pendingCallback = this.#pendingCallback;
+      if (pendingCallback) {
+        this.#pendingCallback = null;
+        process.nextTick(pendingCallback, writeFailure);
+      }
 
       // Node's server connection socket emits 'close' whenever the TCP
       // connection closes, even with no request in flight (this also covers

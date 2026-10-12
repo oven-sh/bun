@@ -1472,10 +1472,11 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     .get(this, group, dep.name)
                     .map(|d| d.version.literal.slice(string_bytes!(this)).to_vec())
             });
-            let literal: &[u8] = catalog_range
-                .as_deref()
-                .or(yarn_range.map(|range| &**range))
-                .unwrap_or(original_literal);
+            let literal: &[u8] = match (&catalog_range, yarn_range) {
+                (Some(range), _) => range.as_slice(),
+                (None, Some(range)) => &**range,
+                (None, None) => original_literal,
+            };
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
             // The migration rewrites `portal:` / `link:` ranges in package.json to

@@ -2160,14 +2160,16 @@ catalogs:
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({ name: "berry-group-catalog", workspaces: ["packages/*"] }),
-        ".yarnrc.yml": `catalog:\n  a-dep: ~1.0.2\n  no-deps: ^1.0.0\n`,
+        ".yarnrc.yml": `catalog:\n  a-dep: ~1.0.2\n  no-deps: ^1.0.0\n  what-bin: ~1.0.0\n`,
         "packages/a/package.json": JSON.stringify({
           name: "a",
           version: "1.0.0",
           // yarn installs the optionalDependencies range over the dependencies one, and devDependencies' over both
           dependencies: { "a-dep": "^1.0.1", "no-deps": "1.x" },
-          devDependencies: { "no-deps": "catalog:" },
+          devDependencies: { "no-deps": "catalog:", "what-bin": "catalog:" },
           optionalDependencies: { "a-dep": "catalog:" },
+          // a peer is not one of yarn's groups for the name: catalog: beside it is looked up as itself
+          peerDependencies: { "what-bin": ">=1.0.0" },
         }),
         // keyed by the catalog's ranges
         "yarn.lock": yarnLock({
@@ -2177,12 +2179,16 @@ catalogs:
             `dependencies:`,
             `  a-dep: "npm:~1.0.2"`,
             `  no-deps: "npm:^1.0.0"`,
+            `  what-bin: "npm:~1.0.0"`,
+            `peerDependencies:`,
+            `  what-bin: ">=1.0.0"`,
             `dependenciesMeta:`,
             `  a-dep:`,
             `    optional: true`,
           ],
           "berry-group-catalog@workspace:.": [`resolution: "berry-group-catalog@workspace:."`],
           "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+          "what-bin@npm:~1.0.0": [`version: 1.0.0`, `resolution: "what-bin@npm:1.0.0"`],
         }),
       },
     });
@@ -2190,7 +2196,12 @@ catalogs:
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     expect(stderr).not.toContain("error:");
-    expect(lockedVersions(await bunLockOf(dir))).toEqual(["a-dep@1.0.3", "a@workspace:packages/a", "no-deps@1.0.0"]);
+    expect(lockedVersions(await bunLockOf(dir))).toEqual([
+      "a-dep@1.0.3",
+      "a@workspace:packages/a",
+      "no-deps@1.0.0",
+      "what-bin@1.0.0",
+    ]);
     expect(exitCode).toBe(0);
     await expectFrozenInstall(dir);
   });

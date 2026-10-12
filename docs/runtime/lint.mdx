@@ -1187,6 +1187,7 @@ These differences are intentional:
 - **`--init` leaves an `.oxlintrc.json` that exists as it is.** oxlint writes over it.
 - **More is accepted:** an argument with `..` in it, `--max-warnings -1`, and a configuration file that starts with a byte order mark. oxlint refuses them.
 - **A pattern in the options of a rule is a JavaScript regular expression.** oxlint compiles it with Rust's `regex`, where `(?x)`, `\z`, and `[[:alpha:]]` mean something else.
+- **`no-useless-assignment` follows ESLint's code paths.** oxlint has an analysis of its own, which answers differently in a few corners. It reports the first `a` of `a = (a = f()) ? a.b : 1`, the `id++` of `class A { x = id++ }`, and assignments in unreachable code. It says nothing about the `0` of `let a = 0; while (true) { a = f(); if (a) break; }`.
 - **`--fix` does not write a file that no longer parses.** `bun lint` leaves the file as it is, reports the problems as not fixed, and names the rules in a warning. oxlint writes the file: `foo(...[,])` becomes `foo(,)`.
 - **The limits on problems and fixes** in [Differences from ESLint](#differences-from-eslint) apply too.
 

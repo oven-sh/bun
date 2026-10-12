@@ -912,8 +912,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseTypeArguments`, at the `<`, and `checkGrammarTypeArguments`.
     pub(crate) fn type_arguments(&mut self) -> IdList<TypeNodeId> {
         let (list, error) = self.type_arguments_unchecked();
-        if let Some(error) = error {
-            self.flag_type_arguments(error);
+        if let Some((at, code)) = error {
+            self.flag_type_arguments(at, code);
         }
         list
     }
@@ -921,7 +921,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// The last argument of `flag` is passed on the stack: not in the frame of `jsx_element`.
     #[cold]
     #[inline(never)]
-    fn flag_type_arguments(&mut self, (at, code): GrammarError) {
+    fn flag_type_arguments(&mut self, at: (u32, u32), code: u32) {
         self.flag(DiagnosticKind::Grammar, code, at, &[]);
     }
 

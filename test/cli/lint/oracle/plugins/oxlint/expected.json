@@ -1387,6 +1387,52 @@
   "a.test.js:3:1+27 jest(max-nested-describe)",
   "a.test.js:8:23+17 jest(max-nested-describe)"
  ],
+ "prefer-const/in-a-namespace": [
+  "a.ts:10:5+1 eslint(prefer-const)",
+  "a.ts:1:19+1 eslint(prefer-const)",
+  "a.ts:2:19+1 eslint(prefer-const)",
+  "a.ts:4:26+1 eslint(prefer-const)",
+  "a.ts:5:19+1 eslint(prefer-const)",
+  "a.ts:5:30+1 eslint(prefer-const)",
+  "a.ts:5:46+1 eslint(prefer-const)",
+  "a.ts:6:16+1 eslint(prefer-const)",
+  "a.ts:7:21+1 eslint(prefer-const)"
+ ],
+ "no-unused-vars/declared-twice-in-an-ambient-namespace": [
+  "a.ts:1:29+1 eslint(no-unused-vars)",
+  "a.ts:3:64+1 eslint(no-unused-vars)",
+  "a.ts:3:89+1 eslint(no-unused-vars)",
+  "a.ts:4:29+1 eslint(no-unused-vars)",
+  "a.ts:4:55+1 eslint(no-unused-vars)",
+  "a.ts:4:71+1 eslint(no-unused-vars)",
+  "a.ts:5:11+1 eslint(no-unused-vars)",
+  "a.ts:5:21+1 eslint(no-unused-vars)",
+  "a.ts:6:28+1 eslint(no-unused-vars)"
+ ],
+ "no-use-before-define/exported-expressions": [
+  "assignment.ts:1:10+1 eslint(no-use-before-define)",
+  "both.ts:1:16+1 eslint(no-use-before-define)",
+  "class.ts:1:16+1 eslint(no-use-before-define)",
+  "enum.ts:1:16+1 eslint(no-use-before-define)",
+  "function.ts:1:16+1 eslint(no-use-before-define)",
+  "named.ts:1:10+1 eslint(no-use-before-define)",
+  "namespace.ts:1:16+1 eslint(no-use-before-define)",
+  "variable.ts:1:17+1 eslint(no-use-before-define)"
+ ],
+ "prefer-ts-expect-error/slashes-and-lines": [
+  "a.ts:10:1+20 typescript(prefer-ts-expect-error)",
+  "a.ts:11:1+19 typescript(prefer-ts-expect-error)",
+  "a.ts:15:1+19 typescript(prefer-ts-expect-error)",
+  "a.ts:17:1+18 typescript(prefer-ts-expect-error)",
+  "a.ts:1:1+13 typescript(prefer-ts-expect-error)",
+  "a.ts:2:1+14 typescript(prefer-ts-expect-error)",
+  "a.ts:3:1+15 typescript(prefer-ts-expect-error)",
+  "a.ts:4:1+17 typescript(prefer-ts-expect-error)",
+  "a.ts:5:1+12 typescript(prefer-ts-expect-error)",
+  "a.ts:6:1+16 typescript(prefer-ts-expect-error)",
+  "a.ts:8:1+16 typescript(prefer-ts-expect-error)",
+  "a.ts:9:1+17 typescript(prefer-ts-expect-error)"
+ ],
  "sort-keys/one-report": [
   "a.js:1:5+20 eslint(sort-keys)",
   "a.js:2:5+32 eslint(sort-keys)",

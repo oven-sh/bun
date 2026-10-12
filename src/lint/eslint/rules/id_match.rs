@@ -273,9 +273,12 @@ impl IdMatch {
     fn check_reference<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(name) = e.as_ident()
             && self.is_invalid(name, cx)
-            && self.checks_reference(e, name, &mut cx.state)
-            // For oxc the `A` of `<A />` and of `<A.b />` is a reference like any other.
-            && (!e.is_jsx_tag_name() || cx.language().is_oxlint)
+            // For oxc the `A` of `<A />` and of `<A.b />` is a reference, and `A.b` is no member expression.
+            && match (e.is_jsx_tag_name(), cx.language().is_oxlint) {
+                (true, true) => !self.only_declarations,
+                (true, false) => false,
+                (false, _) => self.checks_reference(e, name, &mut cx.state),
+            }
             && !is_reference_to_global_variable(e)
         {
             self.report(e.span(), name.bytes(), cx);

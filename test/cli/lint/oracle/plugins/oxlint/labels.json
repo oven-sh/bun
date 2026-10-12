@@ -1,4 +1,25 @@
 {
+ "no-unused-vars/declared-twice-in-an-ambient-namespace": [
+  "a.ts eslint(no-unused-vars) 1:29+1 \"'A' is declared here\"",
+  "a.ts eslint(no-unused-vars) 3:64+1 \"'K' is declared here\"",
+  "a.ts eslint(no-unused-vars) 3:89+1 \"'E' is declared here\"",
+  "a.ts eslint(no-unused-vars) 4:29+1 \"'C' is declared here\"",
+  "a.ts eslint(no-unused-vars) 4:55+1 \"'c' is declared here\"",
+  "a.ts eslint(no-unused-vars) 4:71+1 \"'F' is declared here\"",
+  "a.ts eslint(no-unused-vars) 5:11+1 \"'Z' is declared here\"",
+  "a.ts eslint(no-unused-vars) 5:21+1 \"'A' is declared here\"",
+  "a.ts eslint(no-unused-vars) 6:28+1 \"'A' is declared here\""
+ ],
+ "no-use-before-define/exported-expressions": [
+  "assignment.ts eslint(no-use-before-define) 1:10+1 \"used here\" | 2:7+1 \"defined here\"",
+  "both.ts eslint(no-use-before-define) 1:16+1 \"used here\" | 2:11+1 \"defined here\"",
+  "class.ts eslint(no-use-before-define) 1:16+1 \"used here\" | 2:7+1 \"defined here\"",
+  "enum.ts eslint(no-use-before-define) 1:16+1 \"used here\" | 2:6+1 \"defined here\"",
+  "function.ts eslint(no-use-before-define) 1:16+1 \"used here\" | 2:10+1 \"defined here\"",
+  "named.ts eslint(no-use-before-define) 1:10+1 \"used here\" | 2:7+1 \"defined here\"",
+  "namespace.ts eslint(no-use-before-define) 1:16+1 \"used here\" | 2:11+1 \"defined here\"",
+  "variable.ts eslint(no-use-before-define) 1:17+1 \"used here\" | 2:7+1 \"defined here\""
+ ],
  "scopes/dotted-namespaces": [
   "before.ts eslint(no-unused-vars) 2:11+1 \"'N' is declared here\"",
   "declared.d.ts eslint(no-shadow) 3:13+1 \"'N' is declared here\" | 1:19+1 \"shadowed declaration is here\"",

@@ -19,12 +19,12 @@ const env = {
 type Result = { filePath: string; messages: { line: number; column: number; severity: number; ruleId: string }[] };
 
 /** `reports` has one `a.js:1:1 error no-debugger` string per problem. `texts` has the files' contents after the run. */
-async function lint(files: Record<string, string>, args: string[], stdin?: string) {
+async function lint(files: Record<string, string>, args: string[], stdin?: string, cwd = ".") {
   using dir = tempDir("bun-lint-defaults", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", "-f", "json", ...args],
     env,
-    cwd: String(dir),
+    cwd: join(String(dir), cwd),
     stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
     stdout: "pipe",
     stderr: "pipe",
@@ -98,6 +98,35 @@ describe.concurrent("globals", () => {
       expect(exitCode).toBe(1);
     },
   );
+
+  test.each(["test", "tests", "spec", "__tests__"])(
+    "a project inside a folder named %s isn't all tests",
+    async folder => {
+      const files = {
+        [`${folder}/app/package.json`]: "{}",
+        [`${folder}/app/src/a.js`]: 'describe("a", () => {});\n',
+        [`${folder}/app/test/b.js`]: 'describe("b", () => {});\n',
+      };
+      for (const cwd of [`${folder}/app`, `${folder}/app/src`]) {
+        const { reports } = await lint(files, [], undefined, cwd);
+        expect({ cwd, reports }).toEqual({ cwd, reports: [`${folder}/app/src/a.js:1:1 error no-undef`] });
+      }
+    },
+  );
+
+  test("the test folders count from the closest package.json, also when run from inside one", async () => {
+    const files = {
+      "package.json": "{}",
+      "test/a.js": 'describe("a", () => {});\n',
+      "test/unit/b.js": 'describe("b", () => {});\n',
+      "packages/x/package.json": "{}",
+      "packages/x/test/c.js": 'describe("c", () => {});\n',
+    };
+    for (const cwd of [".", "test", "test/unit", "packages/x", "packages/x/test"]) {
+      const { reports, exitCode } = await lint(files, [], undefined, cwd);
+      expect({ cwd, reports, exitCode }).toEqual({ cwd, reports: [], exitCode: 0 });
+    }
+  });
 });
 
 describe.concurrent("severities", () => {

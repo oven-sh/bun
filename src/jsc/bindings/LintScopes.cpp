@@ -7,6 +7,7 @@
 #include "root.h"
 
 #include "LintHost.h"
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
@@ -388,7 +389,14 @@ Shape shapeIn(JSGlobalObject* globalObject, LintHost* host, bool isEspree, Group
     Vector<uint8_t> program;
     for (StringView key : keys) {
         JSValue constant = constantOf(key);
-        like->putDirect(vm, Identifier::fromString(vm, AtomString(key.span8())), constant ? constant : jsUndefined());
+        Identifier name = Identifier::fromString(vm, AtomString(key.span8()));
+        // To a plugin it's a plain property.
+        if (JSCell* lazy = host->scopes.lazyVariables.get(); lazy && group == Scopes && !index && !isEspree && key == "variables"_s) {
+            like->putDirectCustomAccessor(vm, name, lazy, static_cast<unsigned>(PropertyAttribute::CustomValue));
+            program.append(static_cast<uint8_t>(Field::Copy));
+            continue;
+        }
+        like->putDirect(vm, name, constant ? constant : jsUndefined());
         program.append(constant ? static_cast<uint8_t>(Field::Copy) : fieldOf(key));
     }
     RELEASE_ASSERT(like->structure()->maxOffset() == static_cast<PropertyOffset>(keys.size()) - 1);
@@ -452,6 +460,10 @@ public:
     Structure* weakMapStructure { nullptr };
     // For `set` of the global scope.
     Structure* globalSetStructure { nullptr };
+
+    // After `make`.
+    JSMap* setOfGlobalScope() { return m_setOfGlobalScope; }
+    JSArray* variablesOfGlobalScope() { return array(m_message.scope(0)[6], m_variables); }
 
     // Whether every object of the message has a shape.
     bool hasShapes() const
@@ -879,6 +891,8 @@ private:
                 break;
             case Field::Set:
                 value = mapOf(index ? mapStructure : globalSetStructure, m_message.list(it[6]));
+                if (!index)
+                    m_setOfGlobalScope = value ? uncheckedDowncast<JSMap>(value) : nullptr;
                 break;
             case Field::Taints: {
                 JSMap* taints = JSMap::create(m_vm, mapStructure);
@@ -974,6 +988,7 @@ private:
     JSArray* m_definitions { nullptr };
     JSArray* m_references { nullptr };
     JSWeakMap* m_declaredVariables { nullptr };
+    JSMap* m_setOfGlobalScope { nullptr };
     // Where the last node that was asked for its name has it.
     StructureID m_nameStructure;
     PropertyOffset m_nameOffset { invalidOffset };
@@ -983,7 +998,188 @@ public:
     PropertyOffset m_variableNameOffset { invalidOffset };
 };
 
+// ───────────── what the libraries of TypeScript define ─────────────
+
+// The name with the number `id`. Null: there's none, or an exception was thrown.
+JSString* libName(JSGlobalObject* globalObject, LintHost* host, uint32_t id)
+{
+    constexpr uint32_t askForName = 17;
+    VM& vm = globalObject->vm();
+    auto& names = host->scopes.libNames;
+    if (id >= names.size())
+        return nullptr;
+    if (!names[id]) {
+        LintSpan answer = Bun__Lint__ask(globalObject, askForName, reinterpret_cast<const uint8_t*>(&id), sizeof(id));
+        names[id].set(vm, host, jsOwnedString(vm, AtomString(std::span { byteCast<Latin1Character>(answer.ptr), answer.len })));
+    }
+    return names[id].get();
+}
+
+// A variable that the libraries define, and that nothing in the file or in the configuration mentions. `entry`: see `LIB_VARIABLES` in
+// src/lint/js_plugin/wire.rs. Null: an exception was thrown.
+JSObject* makeQuietLibVariable(JSGlobalObject* globalObject, LintHost* host, const Shape& shape, JSString* name, uint32_t entry)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintScopeState& state = host->scopes;
+    JSFinalObject* variable = JSFinalObject::create(vm, shape.like->structure());
+    for (PropertyOffset offset = 0; offset < static_cast<PropertyOffset>(shape.program.size()); ++offset) {
+        JSValue value;
+        switch (static_cast<Field>(shape.program[offset])) {
+        case Field::Id:
+            value = jsNumber(state.variables->length() + ++state.quietLibVariables);
+            break;
+        case Field::Name:
+            value = name;
+            break;
+        case Field::Defs:
+        case Field::Identifiers:
+        case Field::References:
+            value = constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            break;
+        case Field::Scope:
+            value = state.globalScope.get();
+            break;
+        case Field::EslintUsed:
+        case Field::Writeable:
+            value = jsBoolean(false);
+            break;
+        case Field::EslintImplicitGlobalSetting:
+            value = state.strings->getIndexQuickly(firstSetting);
+            break;
+        case Field::EslintExplicitGlobal:
+            value = jsUndefined();
+            break;
+        case Field::IsTypeVariable:
+            value = jsBoolean(entry & isType);
+            break;
+        case Field::IsValueVariable:
+            value = jsBoolean(entry & isValue);
+            break;
+        default:
+            value = shape.like->getDirect(offset);
+        }
+        variable->putDirectOffset(vm, offset, value);
+    }
+    return variable;
+}
+
+constexpr uint32_t shapeOfLibVariable = 2;
+
+// Makes the rest of them, and puts all into `variables` and `set` of the global scope. typescript-eslint defines what is in the libraries
+// first.
+void addAllLibVariables(JSGlobalObject* globalObject, LintHost* host)
+{
+    constexpr uint32_t askForAll = 16;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintScopeState& state = host->scopes;
+    if (state.hasAllLibVariables)
+        return;
+    state.hasAllLibVariables = true;
+    LintSpan answer = Bun__Lint__ask(globalObject, askForAll, nullptr, 0);
+    std::span<const uint32_t> words { reinterpret_cast<const uint32_t*>(answer.ptr), answer.len / 4 };
+    Shape shape = shapeIn(globalObject, host, false, Variables, shapeOfLibVariable);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (words.size() < 2 || words[1] != words.size() - 2 || reinterpret_cast<uintptr_t>(answer.ptr) % 4 || !shape.like) {
+        throwTypeError(globalObject, scope, "The scopes are not as expected"_s);
+        return;
+    }
+    JSMap* set = state.globalSet.get();
+    JSArray* mentioned = state.mentionedGlobals.get();
+    JSValue prototypeOfLib = shape.like->getPrototypeDirect();
+    auto isOfLib = [&](JSValue variable) { return asObject(variable)->getPrototypeDirect() == prototypeOfLib; };
+
+    MarkedArgumentBuffer all;
+    for (uint32_t entry : words.subspan(2)) {
+        JSString* name = libName(globalObject, host, entry >> 2);
+        if (!name)
+            continue;
+        JSValue variable = set->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (variable.isUndefined()) {
+            variable = makeQuietLibVariable(globalObject, host, shape, name, entry);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        // A name that the file declares as well is only among the others.
+        if (isOfLib(variable))
+            all.append(variable);
+    }
+    for (unsigned i = 0; i < mentioned->length(); ++i) {
+        JSValue variable = mentioned->getIndexQuickly(i);
+        if (!isOfLib(variable))
+            all.append(variable);
+    }
+    JSArray* variables = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), all);
+    RETURN_IF_EXCEPTION(scope, void());
+    PropertyOffset nameOffset = static_cast<PropertyOffset>(std::ranges::find(shape.program, static_cast<uint8_t>(Field::Name)) - shape.program.begin());
+    set->clear(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (size_t i = 0; i < all.size(); ++i) {
+        set->set(globalObject, asObject(all.at(i))->getDirect(nameOffset), all.at(i));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    lintReplaceCustomValue(vm, host, state.globalScope.get(), Identifier::fromString(vm, "variables"_s), variables);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lintLazyVariablesOfGlobalScope, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    JSObject* globalScope = asObject(JSValue::decode(thisValue));
+    // That of a file that is done.
+    if (globalScope != host->scopes.globalScope.get() || host->scopes.hasAllLibVariables)
+        return JSValue::encode(jsUndefined());
+    addAllLibVariables(globalObject, host);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(globalScope->getDirect(vm, name));
+}
+
 } // namespace
+
+// `addLibVariables()`: see `addAllLibVariables`.
+JSC_DEFINE_HOST_FUNCTION(jsLintAddLibVariables, (JSGlobalObject * globalObject, CallFrame*))
+{
+    addAllLibVariables(globalObject, LintHost::from(globalObject));
+    return JSValue::encode(jsUndefined());
+}
+
+// `libVariable(name)`: the variable `name`, which isn't in `set` of the global scope, if the libraries of TypeScript define it. It's put
+// there. If not, `undefined`.
+JSC_DEFINE_HOST_FUNCTION(jsLintLibVariable, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    constexpr uint32_t askForOne = 18;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    LintScopeState& state = host->scopes;
+    JSValue name = callFrame->argument(0);
+    if (state.hasAllLibVariables || !name.isString())
+        return JSValue::encode(jsUndefined());
+    auto text = asString(name)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    // All of the names are ASCII.
+    if (!text->is8Bit() || !text->containsOnlyASCII())
+        return JSValue::encode(jsUndefined());
+    auto bytes = text->span8();
+    LintSpan answer = Bun__Lint__ask(globalObject, askForOne, byteCast<uint8_t>(bytes.data()), bytes.size());
+    if (answer.len != 4)
+        return JSValue::encode(jsUndefined());
+    uint32_t entry;
+    memcpy(&entry, answer.ptr, 4);
+    Shape shape = shapeIn(globalObject, host, false, Variables, shapeOfLibVariable);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSString* known = libName(globalObject, host, entry >> 2);
+    if (!shape.like || !known)
+        return JSValue::encode(jsUndefined());
+    JSObject* variable = makeQuietLibVariable(globalObject, host, shape, known, entry);
+    RETURN_IF_EXCEPTION(scope, {});
+    state.globalSet->set(globalObject, known, variable);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(variable);
+}
 
 // `scopes(classes, names, wantsFlags)` asks Rust for the scopes of the file that's being linted, whose nodes have been made, and returns
 // `[scopeManager.scopes, globalScope, variableCount, nodeToScope, declaredVariables, flags, explicit]`.
@@ -992,6 +1188,8 @@ public:
 // `classes`: `[scopes, Variable, ImplicitLibVariable, definitions, Reference, globalSet]`, those of the scopes by the `ScopeKind` and those
 // of the definitions by the `DeclarationKind`, and an empty `set` for the global scope. It has to be the same array each time.
 // `names`: the configured globals.
+// With a fourth argument that is true, what the libraries of TypeScript define and nothing mentions is made by `libVariable` and
+// `addLibVariables`. It has to be the same each time.
 JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1032,6 +1230,17 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
         return outOfStep();
     LintScopeMaker maker(globalObject, message, nodes, names, strings, text);
 
+    bool makesLibVariables = callFrame->argument(3).isTrue() && !host->isEspree();
+    if (makesLibVariables && !host->scopes.lazyVariables) {
+        constexpr uint32_t askForAll = 16;
+        LintSpan libs = Bun__Lint__ask(globalObject, askForAll, nullptr, 0);
+        if (libs.len < 8 || reinterpret_cast<uintptr_t>(libs.ptr) % 4)
+            return outOfStep();
+        host->scopes.lazyVariables.set(vm, host, CustomGetterSetter::create(vm, lintLazyVariablesOfGlobalScope, nullptr));
+        // The collector can be looking at the host.
+        Locker locker { host->cellLock() };
+        host->scopes.libNames.grow(*reinterpret_cast<const uint32_t*>(libs.ptr));
+    }
     LintScopeLayout& known = host->scopes.layouts[host->isEspree()];
     if (!known.classes)
         known.classes.set(vm, host, layout);
@@ -1065,6 +1274,13 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
     host->scopes.variables.set(vm, host, variables);
     host->scopes.variableWords = message.variables;
     host->scopes.declaredCount = message.declaredCount;
+    if (makesLibVariables) {
+        JSArray* mentioned = maker.variablesOfGlobalScope();
+        RETURN_IF_EXCEPTION(scope, {});
+        host->scopes.mentionedGlobals.set(vm, host, mentioned);
+        host->scopes.globalSet.set(vm, host, maker.setOfGlobalScope());
+        host->scopes.hasAllLibVariables = false;
+    }
 
     // The program needs no more of the objects by their numbers.
     made->setIndexQuickly(vm, 1, globalScope);
@@ -1137,6 +1353,8 @@ void addLintScopeFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
     native->putDirect(vm, Identifier::fromString(vm, "scopes"_s), JSFunction::create(vm, globalObject, 3, "scopes"_s, jsLintScopes, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "libVariable"_s), JSFunction::create(vm, globalObject, 1, "libVariable"_s, jsLintLibVariable, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "addLibVariables"_s), JSFunction::create(vm, globalObject, 0, "addLibVariables"_s, jsLintAddLibVariables, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "usedVariables"_s), JSFunction::create(vm, globalObject, 0, "usedVariables"_s, jsLintUsedVariables, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "setScopeManager"_s), JSFunction::create(vm, globalObject, 1, "setScopeManager"_s, jsLintSetScopeManager, ImplementationVisibility::Public));
 }

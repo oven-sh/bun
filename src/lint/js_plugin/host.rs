@@ -8,6 +8,7 @@ use crate::ast::File;
 use crate::code_path;
 use crate::estree::Dialect;
 use crate::fix::Fix;
+use crate::language::LanguageOptions;
 use crate::linter::write_json;
 use crate::options::Json;
 use crate::rule::Kind;
@@ -618,6 +619,31 @@ impl<'e> Host<'e> {
             ask::SCOPES => {
                 if let Some(numbered) = &nodes {
                     scopes::write(file, &offsets, numbered, &settings.globals, out);
+                }
+            }
+            ask::LIB_VARIABLES => {
+                // typescript-eslint defines the `const` of `x as const` after the libraries.
+                let for_const = LanguageOptions::lib_name_count() as u32;
+                let mut words = vec![for_const + 1, 0];
+                words.extend(file.language().lib_variable_entries());
+                words.push(for_const << 2 | 1);
+                words[1] = words.len() as u32 - 2;
+                wire::words(out, &words);
+            }
+            ask::LIB_VARIABLE => {
+                let entry = match details {
+                    b"const" => Some((LanguageOptions::lib_name_count() as u32) << 2 | 1),
+                    name => file.language().lib_variable_entry(name),
+                };
+                wire::words(out, entry.as_slice());
+            }
+            ask::LIB_NAME => {
+                if let Ok(id) = <[u8; 4]>::try_from(details) {
+                    let id = u32::from_le_bytes(id) as usize;
+                    out.extend_from_slice(match id == LanguageOptions::lib_name_count() {
+                        true => b"const",
+                        false => LanguageOptions::lib_name(id),
+                    });
                 }
             }
             ask::CODE_PATHS => {

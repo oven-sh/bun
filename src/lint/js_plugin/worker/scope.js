@@ -172,17 +172,22 @@ const eslintScopeLayout = once(() => {
 
 // ------------- `@typescript-eslint/scope-manager` -------------
 
+// src/jsc/bindings/LintScopes.cpp makes what the libraries of TypeScript define.
+const hasNativeLibVariables = process.env.BUN_LINT_NATIVE_LIBS === "1";
+
 // The `set` of the global scope. The libraries of TypeScript can define thousands of variables, and most files ask for a few names.
 // The others are made when something goes through all of them.
 class GlobalSet extends Map {
   get(name) {
     const found = super.get(name);
+    if (hasNativeLibVariables) return found ?? native.libVariable(name);
     if (found !== undefined || scopeData.hasAllLibVariables || !Object.hasOwn(fileSettings.libs, name)) return found;
     const variable = libVariable(name);
     super.set(name, variable);
     return variable;
   }
   has(name) {
+    if (hasNativeLibVariables) return this.get(name) !== undefined;
     return super.has(name) || (!scopeData.hasAllLibVariables && Object.hasOwn(fileSettings.libs, name));
   }
   get size() {
@@ -316,8 +321,25 @@ const typescriptLayout = once(() => {
     isStrictModeSupported() {
       return true;
     }
+    // In the order in which typescript-eslint makes them: what the libraries define, what the file declares as the traversal comes to
+    // it, what ESLint adds. A variable is made where its name is, and not before the one that is before it in its scope.
     get variables() {
-      return this.scopes.flatMap(it => it.variables);
+      const isOfLib = it => it instanceof ImplicitLibVariable;
+      const others = [];
+      this.scopes.forEach((scope, scopeIndex) => {
+        const { block } = scope;
+        const unnamed =
+          scopeIndex === 0 ? Infinity : scope.type === "function" && block.id ? block.id.range[1] : block.range[0];
+        let time = -1;
+        for (const variable of scope.variables) {
+          if (isOfLib(variable)) continue;
+          const name = variable.identifiers[0] ?? variable.defs[0]?.name;
+          time = Math.max(time, name ? name.range[0] : unnamed);
+          others.push({ variable, time, scopeIndex });
+        }
+      });
+      others.sort((a, b) => a.time - b.time || a.scopeIndex - b.scopeIndex);
+      return [...this.globalScope.variables.filter(isOfLib), ...others.map(it => it.variable)];
     }
     getDeclaredVariables(node) {
       return this.declaredVariables.get(node) ?? [];
@@ -366,6 +388,7 @@ function libVariable(name) {
 
 // Puts the rest of them into `variables` and `set` of the global scope. typescript-eslint defines what is in the libraries first.
 function addLibVariables() {
+  if (hasNativeLibVariables) return native.addLibVariables();
   if (scopeData.hasAllLibVariables) return;
   scopeData.hasAllLibVariables = true;
   const { globalScope } = scopeData.manager;
@@ -385,14 +408,14 @@ function scopeManager() {
   const layout = fileDialect === 1 ? eslintScopeLayout() : typescriptLayout();
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
-  const made = native.scopes(layout.forNative, names, fileDialect === 0);
+  const made = native.scopes(layout.forNative, names, fileDialect === 0, hasNativeLibVariables);
   const [listed, globalScope, variableCount, nodeToScope, declaredVariables, referenceFlags, explicitGlobals] = made;
   scopeData = {
     manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables),
     variableCount,
     referenceFlags,
     libVariables: new Map(),
-    mentionedGlobals: globalScope.variables,
+    mentionedGlobals: hasNativeLibVariables ? null : globalScope.variables,
     hasAllLibVariables: fileDialect === 1,
   };
   native.setScopeManager(scopeData.manager);
@@ -401,7 +424,7 @@ function scopeManager() {
   for (let i = 0; i < explicitGlobals.length; i += 2) {
     explicitGlobals[i].eslintExplicitGlobalComments = explicitGlobals[i + 1].map(commentAt);
   }
-  if (fileDialect === 0) {
+  if (fileDialect === 0 && !hasNativeLibVariables) {
     Object.defineProperty(globalScope, "variables", {
       get() {
         addLibVariables();

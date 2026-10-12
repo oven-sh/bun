@@ -94,7 +94,8 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 
 /// The config used when there's no config file: which files are linted, and with which rules. For `$severityByKind` see
 /// `Reader::grade_by_kind`, for `$forReact` see `ResolvedConfig::outside_of_react`, for `$withoutWarnings` see
-/// `Reader::without_warnings`. The word `UNUSED_ON_PURPOSE` is replaced with [`UNUSED_ON_PURPOSE`].
+/// `Reader::without_warnings`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
+/// and the `basePath` `"PROJECT"` with the project's directory, so that a project in `~/test/app` isn't all tests.
 const BUILT_IN: &[u8] = br#"[
     { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
@@ -120,14 +121,13 @@ const BUILT_IN: &[u8] = br#"[
         "rules": { "no-unused-vars": ["warn", UNUSED_ON_PURPOSE] }
     },
     {
-        "files": [
-            "**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}",
-            "**/{__tests__,test,tests,spec}/**"
-        ],
-        "languageOptions": {
-            "$env": { "jest": true, "mocha": true },
-            "globals": { "expectTypeOf": "readonly", "vi": "readonly", "fdescribe": "readonly" }
-        }
+        "files": ["**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"],
+        "languageOptions": TEST_GLOBALS
+    },
+    {
+        "basePath": "PROJECT",
+        "files": ["**/{__tests__,test,tests,spec}/**"],
+        "languageOptions": TEST_GLOBALS
     },
     {
         "files": ["**/*.{ts,mts,cts,tsx}"],
@@ -166,20 +166,37 @@ const UNUSED_ON_PURPOSE: &[u8] = br#"{
     "destructuredArrayIgnorePattern": "^_", "ignoreRestSiblings": true
 }"#;
 
+const TEST_GLOBALS: &[u8] = br#"{
+    "$env": { "jest": true, "mocha": true },
+    "globals": { "expectTypeOf": "readonly", "vi": "readonly", "fdescribe": "readonly" }
+}"#;
+
 /// Parses [`BUILT_IN`]. `with_types` also turns on the rules that need types.
-fn built_in_json(with_types: bool) -> Json {
+fn built_in_json(with_types: bool, project: &[u8]) -> Json {
     let preset: &[u8] = match with_types {
         true => b"recommended-type-checked",
         false => b"recommended",
     };
     let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
     let text = strings::replace_owned(&text, b"UNUSED_ON_PURPOSE", UNUSED_ON_PURPOSE);
-    bun_lint::json::parse(&text).unwrap_or(Json::Null)
+    let text = strings::replace_owned(&text, b"TEST_GLOBALS", TEST_GLOBALS);
+    let mut json = bun_lint::json::parse(&text).unwrap_or(Json::Null);
+    // Set here and not in the text, because a path can hold anything.
+    if let Json::Array(objects) = &mut json {
+        for object in objects {
+            if let Json::Object(entries) = object
+                && let Some(base_path) = entries.iter_mut().find(|it| it.0 == b"basePath")
+            {
+                base_path.1 = Json::String(project.to_vec());
+            }
+        }
+    }
+    json
 }
 
 /// [`BUILT_IN`] on its own: the rules that are on when nothing is configured.
 pub(crate) fn defaults(registry: &Registry) -> Option<Config> {
-    Config::without_a_file(registry, b"/", &built_in_json(false)).ok()
+    Config::without_a_file(registry, b"/", &built_in_json(false, b"/")).ok()
 }
 
 /// The files whose `lint` and `fmt` are the configurations of oxlint and oxfmt in a project of Vite+, by priority.
@@ -1118,8 +1135,15 @@ impl<'l> Loader<'l> {
             let _ = self.mistake.set(mistake.print(self.cwd(), colors));
             return Err(Fatal(mistake.message));
         }
+        let has_package = |it: &&[u8]| fs::is_file(&paths::join(it, b"package.json"));
+        let project = paths::ancestors(self.cwd())
+            .find(has_package)
+            .unwrap_or_else(|| self.cwd());
         // Every file is in it, on whatever drive.
-        let mut objects = vec![built_in_json(self.options.type_aware == Some(true))];
+        let mut objects = vec![built_in_json(
+            self.options.type_aware == Some(true),
+            project,
+        )];
         let mut of_user = native::categories(self.linter.registry(), self.options);
         of_user.extend(self.added(b"/"));
         objects.extend(self.split_pairs(of_user));

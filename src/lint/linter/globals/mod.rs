@@ -308,6 +308,34 @@ impl ConfigGlobals {
 }
 
 impl LanguageOptions {
+    /// How many names [`Self::lib_name`] knows.
+    pub fn lib_name_count() -> usize {
+        tables::NAME_ENDS.len()
+    }
+
+    /// The name with the number `id`. Empty if there is none.
+    pub fn lib_name(id: usize) -> &'static [u8] {
+        name_at(id)
+    }
+
+    /// What [`Self::lib_variable_entries`] has for `name`.
+    pub fn lib_variable_entry(&self, name: &[u8]) -> Option<u32> {
+        let id = id_of(name)?;
+        let flags = (self.config_globals().libs[id / 4] >> (id % 4 * 2)) & 3;
+        (flags != 0).then_some((id as u32) << 2 | u32::from(flags))
+    }
+
+    /// [`Self::lib_variables`] as numbers: that of the name `<< 2`, 1 if it is a type, 2 if it is a value.
+    pub fn lib_variable_entries(&self) -> impl Iterator<Item = u32> + '_ {
+        let ConfigGlobals {
+            libs, lib_order, ..
+        } = self.config_globals();
+        lib_order.iter().map(move |&id| {
+            let flags = (libs[usize::from(id) / 4] >> (id % 4 * 2)) & 3;
+            u32::from(id) << 2 | u32::from(flags)
+        })
+    }
+
     /// What the libraries of TypeScript define, in the order in which typescript-eslint defines it: the name, whether it is a type,
     /// whether it is a value.
     pub fn lib_variables(&self) -> impl Iterator<Item = (&'static [u8], bool, bool)> + '_ {

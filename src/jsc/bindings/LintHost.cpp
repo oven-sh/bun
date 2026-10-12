@@ -52,9 +52,9 @@ void LintHost::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_locStructure);
     visitor.append(thisObject->m_text);
     thisObject->report.visit(visitor);
-    thisObject->scopes.visit(visitor);
     thisObject->sourceCode.visit(visitor);
     Locker locker { thisObject->cellLock() };
+    thisObject->scopes.visit(visitor);
     thisObject->nodes.visit(visitor);
     thisObject->tokens.visit(visitor);
 }

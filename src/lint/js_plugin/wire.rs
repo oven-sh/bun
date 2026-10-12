@@ -61,6 +61,14 @@ pub(super) mod ask {
     pub(crate) const WANTS_ALL_EVENTS: u32 = 4;
     /// Which properties the nodes of each type have: see `layouts.rs`. A realm asks once.
     pub(crate) const LAYOUTS: u32 = 15;
+    /// What the libraries of TypeScript define for the file, in the order in which typescript-eslint defines it. Words: one more than
+    /// the highest number of a name, how many variables there are, then for each the number of its name `<< 2`, 1 if it is a type, 2 if it
+    /// is a value.
+    pub(crate) const LIB_VARIABLES: u32 = 16;
+    /// The name with the number that the details are, a word.
+    pub(crate) const LIB_NAME: u32 = 17;
+    /// The word of [`LIB_VARIABLES`] for the name that the details are. Nothing: the libraries don't define it.
+    pub(crate) const LIB_VARIABLE: u32 = 18;
 }
 
 /// Appends `list` to `lists`, its length first, and returns its offset. The empty list is at offset 0, so `lists` has to start

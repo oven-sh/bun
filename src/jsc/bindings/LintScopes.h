@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSWeakMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
@@ -37,11 +38,21 @@ struct LintScopeState {
         variables.clear();
         variableWords = {};
         declaredCount = 0;
+        globalSet.clear();
+        mentionedGlobals.clear();
+        quietLibVariables = 0;
+        hasAllLibVariables = true;
     }
 
+    // The caller holds the host's cell lock: `libNames` grows once.
     template<typename Visitor>
     void visit(Visitor& visitor)
     {
+        visitor.append(globalSet);
+        visitor.append(mentionedGlobals);
+        visitor.append(lazyVariables);
+        for (auto& it : libNames)
+            visitor.append(it);
         visitor.append(manager);
         visitor.append(globalScope);
         visitor.append(nodeToScope);
@@ -73,6 +84,21 @@ struct LintScopeState {
     JSC::WriteBarrier<JSC::JSArray> variables;
     std::span<const uint32_t> variableWords;
     uint32_t declaredCount { 0 };
+
+    // The libraries of TypeScript can define thousands of variables, and most files ask for a few names. So only those that the file or
+    // the configuration mentions are made with the scopes, the others when something asks for them.
+    // `set` of the global scope.
+    JSC::WriteBarrier<JSC::JSMap> globalSet;
+    // The variables of the global scope that were made with the scopes, in their order.
+    JSC::WriteBarrier<JSC::JSArray> mentionedGlobals;
+    // How many of the others have been made.
+    uint32_t quietLibVariables { 0 };
+    // There are no others, or all have been made.
+    bool hasAllLibVariables { true };
+    // What's in `variables` of the global scope until it's read. It's the same for all files.
+    JSC::WriteBarrier<JSC::JSCell> lazyVariables;
+    // The names of what the libraries define, by their numbers. Empty until they are needed. They are the same for all files.
+    WTF::Vector<JSC::WriteBarrier<JSC::JSString>> libNames;
 };
 
 } // namespace Bun

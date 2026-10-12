@@ -13,7 +13,7 @@ use crate::dependency::{self, Behavior, Dependency, DependencyExt as _, VersionT
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, WorkspaceMap};
-use crate::lockfile_real::package_extensions::Kind as ExtensionKind;
+use crate::lockfile_real::package_extensions::{Kind as ExtensionKind, is_supported_specifier};
 use crate::lockfile_real::reachable;
 use crate::migration::{
     as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
@@ -1302,7 +1302,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                                     string_bytes!(this),
                                 )
                             }
-                            (VersionTag::Workspace, ResolutionTag::Workspace) => true,
+                            (VersionTag::Workspace, ResolutionTag::Workspace)
+                            | (VersionTag::DistTag, ResolutionTag::Npm) => true,
                             _ => false,
                         };
                         if !accepted {
@@ -1845,6 +1846,16 @@ fn extensions_of<'a>(
                         shown(dep_name),
                         shown(dep_range),
                         shown(dep_name),
+                    );
+                }
+                // The rule is copied to package.json, where one such range has the whole rule ignored.
+                if !is_supported_specifier(dep_range) {
+                    bail!(
+                        log,
+                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\"; bun's packageExtensions take a version, a tag, a git repository or a tarball URL",
+                        shown(&extension.key),
+                        shown(dep_name),
+                        shown(dep_range),
                     );
                 }
                 to.push((&**dep_name, &**dep_range));

@@ -2429,6 +2429,77 @@ catalogs:
     expect(again.exitCode).toBe(0);
   });
 
+  test.concurrent(
+    "not migrated: a packageExtension adds a range that bun's packageExtensions do not take",
+    async () => {
+      const { packageDir: dir } = await testRegistry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "berry-ext-workspace",
+            workspaces: ["packages/*"],
+            dependencies: { "no-deps": "^1.0.0" },
+          }),
+          "packages/shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+          ".yarnrc.yml": `packageExtensions:\n  no-deps@*:\n    dependencies:\n      shared: "workspace:*"\n`,
+          "yarn.lock": yarnLock({
+            "berry-ext-workspace@workspace:.": [
+              `resolution: "berry-ext-workspace@workspace:."`,
+              `dependencies:`,
+              `  no-deps: "npm:^1.0.0"`,
+            ],
+            "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+            "shared@workspace:*, shared@workspace:packages/shared": [`resolution: "shared@workspace:packages/shared"`],
+          }),
+        },
+      });
+
+      // migrated, the rule in package.json is ignored: the next frozen install fails, a plain one drops the edge
+      const { stderr, exitCode } = await run(dir, "pm", "migrate");
+      expect(stderr).toContain(
+        `error: packageExtensions "no-deps@*" in .yarnrc.yml adds "shared@workspace:*"; bun's packageExtensions take a version, a tag, a git repository or a tarball URL`,
+      );
+      expect(existsSync(join(dir, "bun.lock"))).toBe(false);
+      expect((await Bun.file(join(dir, "package.json")).json()).packageExtensions).toBeUndefined();
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.concurrent("a dist tag in one of two dependency groups accepts what yarn.lock pins", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-group-tag", workspaces: ["packages/*"] }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "latest" },
+          devDependencies: { "no-deps": "^1.0.0" },
+        }),
+        "yarn.lock": yarnLock({
+          "a@workspace:packages/a": [
+            `resolution: "a@workspace:packages/a"`,
+            `dependencies:`,
+            `  no-deps: "npm:^1.0.0"`,
+          ],
+          "berry-group-tag@workspace:.": [`resolution: "berry-group-tag@workspace:."`],
+          "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    const bunLock = await bunLockOf(dir);
+    expect(lockedVersions(bunLock)).toEqual(["a@workspace:packages/a", "no-deps@1.0.0"]);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+    const again = await run(dir, "install");
+    expect(await bunLockOf(dir)).toBe(bunLock);
+    expect(again.exitCode).toBe(0);
+  });
+
   test.concurrent("a workspace keeps a name in every dependency group that lists it", async () => {
     const files = {
       "package.json": JSON.stringify({ name: "berry-groups", workspaces: ["packages/*"] }),

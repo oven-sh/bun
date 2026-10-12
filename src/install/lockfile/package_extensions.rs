@@ -159,7 +159,7 @@ fn semver_range(range: &[u8]) -> Option<semver::query::Group> {
     semver::query::parse_including_prerelease(range, SlicedString::init(range, range)).ok()
 }
 
-fn is_supported_specifier(literal: &[u8]) -> bool {
+pub(crate) fn is_supported_specifier(literal: &[u8]) -> bool {
     let trimmed = dependency::trim_literal(literal);
     let tag = VersionTag::infer(trimmed);
     match tag {

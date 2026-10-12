@@ -924,12 +924,6 @@ extern "C" void bun_initialize_process()
     // A seccomp policy may trap bun_close_range.
     installSIGSYSHandler();
 
-    // Prevent leaking inherited file descriptors on Linux
-    // This is less of an issue for macOS due to posix_spawn
-    // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
-    // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
-    bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
-
     execve_counting_pid = getpid();
 #endif
 
@@ -953,6 +947,31 @@ extern "C" void bun_initialize_process()
 
             if (err == 0) [[likely]] {
                 anyTTYs = true;
+            }
+        }
+    }
+
+    // Node's InitializeOncePerProcessInternal calls uv_disable_stdio_inheritance,
+    // including stdio and IPC: exec/spawn callers must explicitly opt back in.
+#if OS(LINUX) || OS(FREEBSD)
+    if (bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC) != 0)
+#endif
+    {
+        // Scan the descriptor table rather than stopping at a gap between inherited descriptors.
+        struct rlimit limit;
+        int maxFd = 65536;
+        if (getrlimit(RLIMIT_NOFILE, &limit) == 0 && limit.rlim_cur < static_cast<rlim_t>(maxFd))
+            maxFd = static_cast<int>(limit.rlim_cur);
+        for (int fd = 0; fd < maxFd; fd++) {
+            int flags;
+            do {
+                flags = fcntl(fd, F_GETFD);
+            } while (flags == -1 && errno == EINTR);
+            if (flags != -1) {
+                int result;
+                do {
+                    result = fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+                } while (result == -1 && errno == EINTR);
             }
         }
     }

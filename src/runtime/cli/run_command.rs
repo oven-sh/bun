@@ -1824,8 +1824,9 @@ impl RunCommand {
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            const BUN_NODE_FILE_Z: &str =
+                const_format::concatcp!(RunCommand::BUN_NODE_DIR, "/node\0");
+            Ok(ZStr::from_static(BUN_NODE_FILE_Z.as_bytes()))
         }
         #[cfg(windows)]
         {
@@ -1849,15 +1850,8 @@ impl RunCommand {
                 &temp_path_buffer[..len as usize],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            const FILE_NAME: &str =
+                const_format::concatcp!(bun_install::RunCommand::BUN_NODE_DIR_NAME, "\\node.exe");
             let conv_len = converted.len();
             let total = conv_len + FILE_NAME.len();
             target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
@@ -1955,18 +1949,18 @@ impl RunCommand {
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win =
             bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
-        let found_node = env_loader
-            .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
-                if force_using_bun {
-                    bun_node_exe.as_bytes()
-                } else {
-                    b""
-                },
-            )
-            .unwrap_or(false);
+        let found_node = !force_using_bun
+            && env_loader
+                .load_node_js_config(bun_paths::fs::FileSystem::instance(), b"")
+                .unwrap_or(false);
 
-        let mut needs_to_force_bun = force_using_bun || !found_node;
+        // A prior --filter package may have cached our shim as NODE.
+        let found_real_node = found_node
+            && env_loader
+                .get(b"NODE")
+                .is_some_and(|node| node != bun_node_exe.as_bytes());
+
+        let mut needs_to_force_bun = force_using_bun || !found_real_node;
         let mut optional_bun_self_path: &[u8] = b"";
 
         let mut new_path_len: usize = path.len() + 2;
@@ -2008,7 +2002,8 @@ impl RunCommand {
                 ),
             }
 
-            if !force_using_bun {
+            // Only publish the shim after creation has appended its directory.
+            if !new_path.is_empty() {
                 let env_mut = this_transpiler.env_mut();
                 env_mut
                     .map
@@ -2018,10 +2013,12 @@ impl RunCommand {
                     .map
                     .put(b"npm_node_execpath", bun_node_exe.as_bytes())
                     .unwrap_or_oom();
-                env_mut
-                    .map
-                    .put(b"npm_execpath", optional_bun_self_path)
-                    .unwrap_or_oom();
+                if !force_using_bun && !optional_bun_self_path.is_empty() {
+                    env_mut
+                        .map
+                        .put(b"npm_execpath", optional_bun_self_path)
+                        .unwrap_or_oom();
+                }
             }
 
             needs_to_force_bun = false;

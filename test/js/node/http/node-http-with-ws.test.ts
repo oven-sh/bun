@@ -507,6 +507,7 @@ test.concurrent(
     // later: handleUpgrade() runs in a later task, not inside the 'upgrade' event.
     // missingBytes: how much of the declared body the client never sends.
     const scenarios = [
+      // The 'upgrade' event comes behind a body that came with the head, so this one is like the control.
       { later: false, missingBytes: 0 },
       { later: false, missingBytes: 5 },
       // Control: the last chunk arrives before the upgrade and releases the ref.
@@ -869,8 +870,9 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
           req.read();
           return upgrade();
         case "paused, resumed in the upgrade tick":
-          // After a read(), push() emits 'data' at once. While paused, the bytes wait in native code.
-          req.read();
+          // After a read(), push() emits 'data' at once. read(0) calls _read() and takes nothing: the part of
+          // the body that came with the head stays in the buffer of the paused request.
+          req.read(0);
           req.pause();
           return setImmediate(() => {
             listenForData();

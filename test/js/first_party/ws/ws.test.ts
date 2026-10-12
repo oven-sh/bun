@@ -1487,12 +1487,12 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     ["in the same read as the head", upgradeRequest({ body: "hello" }), ""],
     ["in a read of its own", upgradeRequest({ body: "hello" }).slice(0, -"hello".length), "hello"],
   ] as const) {
-    it(`upgrades from the body handler with the body ${where}, and the next connection still pipelines`, async () => {
+    it(`upgrades from req 'end' with the body ${where}, and the next connection still pipelines`, async () => {
       const server = createServer((req, res) => res.end(req.url));
       const wss = new WebSocketServer({ noServer: true });
       const upgraded = Promise.withResolvers<void>();
-      // Registered before the request arrives, so 'end' is armed while the
-      // parser still runs and handleUpgrade() runs from inside it.
+      // A body in a read of its own ends while the parser runs, and handleUpgrade() runs from inside it.
+      // A body in the read of the head is complete at 'upgrade', so 'end' comes on a later tick.
       server.on("upgrade", (req, socket, head) => {
         req.on("end", () => wss.handleUpgrade(req, socket, head, () => upgraded.resolve()));
         req.resume();
@@ -1525,7 +1525,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     ["chunked", "Transfer-Encoding: chunked", "5\r\nhello\r\n0\r\n\r\n"],
   ] as const) {
     for (const where of ["in the same read as the head", "in a read of its own"] as const) {
-      it(`keeps the WebSocket of an upgrade from the body handler open, ${framing} body ${where}`, async () => {
+      it(`keeps the WebSocket of an upgrade from req 'end' open, ${framing} body ${where}`, async () => {
         const server = createServer();
         const wss = new WebSocketServer({ noServer: true });
         server.on("upgrade", (req, socket, head) => {
@@ -1547,6 +1547,32 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
         wss.close();
       });
     }
+
+    // The 'upgrade' event of a request whose body came with its head comes behind that body, like in Node.js.
+    it(`reads the frame behind a ${framing} body after an upgrade in the 'upgrade' event`, async () => {
+      const server = createServer();
+      const wss = new WebSocketServer({ noServer: true });
+      server.on("upgrade", (req, socket, head) => {
+        wss.handleUpgrade(req, socket, head, ws => ws.on("message", message => ws.send(`echo:${message}`)));
+      });
+      const head = upgradeRequest().replace("\r\n\r\n", `\r\n${header}\r\n\r\n`);
+      // FIN + text "ping", masked with a zero key.
+      const frame = Buffer.concat([Buffer.from([0x81, 0x84, 0, 0, 0, 0]), Buffer.from("ping")]);
+      await using upgrade = await receiveUpgrade(Buffer.concat([Buffer.from(head + body), frame]), server);
+      expect(await upgrade.received("echo:ping")).toContain("echo:ping");
+      wss.close();
+    });
+
+    it(`close() in the 'upgrade' event of a request with a ${framing} body ends the connection`, async () => {
+      const server = createServer();
+      const wss = new WebSocketServer({ noServer: true });
+      server.on("upgrade", (req, socket, head) => wss.handleUpgrade(req, socket, head, ws => ws.close(1000)));
+      const head = upgradeRequest().replace("\r\n\r\n", `\r\n${header}\r\n\r\n`);
+      await using upgrade = await receiveUpgrade(head + body, server);
+      // Resolves when the server has closed the connection: the close frame (opcode 8, code 1000), then the FIN.
+      expect((await upgrade.received()).split("\r\n\r\n")[1]).toBe("\x88\x02\x03\xe8");
+      wss.close();
+    });
   }
 
   // The parser of connection A must not take an upgrade of connection B, done
@@ -1656,8 +1682,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       wss.close();
     });
 
-    // node:http on Node reads a body that the upgrade request declares as the
-    // request's body. Here the body is dropped. It is never frames.
+    // node:http reads a body that the upgrade request declares as the request's body. It is never frames.
     it("are not taken from a body of the upgrade request", async () => {
       const server = createServer();
       const wss = new WebSocketServer({ server });

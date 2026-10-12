@@ -31,9 +31,10 @@ describe("an Upgrade request with a body", () => {
   }
 
   const exited = { stderr: "", exitCode: 0, signalCode: null };
-  const ended = ["req data 100", "req end", "req close"];
-  // Node.js v26.3.0 emits 'end' before this 'close': it has parsed the whole body when it emits 'upgrade'.
-  const destroyed = (read: string) => [`req ${read} 100`, "req aborted", "req close", "socket close"];
+  // The second half of the body comes in a read of its own, so the listener lets go inside the chunk that the
+  // parser delivers. A body that came whole with the head is in the buffer of the request before the listener runs.
+  const ended = ["req data 50", "req data 50", "req end", "req close"];
+  const destroyed = (read: string) => [`req ${read} 50`, `req ${read} 50`, "req aborted", "req close", "socket close"];
 
   describe("gets its EOF once when the listener lets go inside the last chunk", () => {
     const rows: [name: string, options: Record<string, unknown>, expected: { events: string[]; eofs: number }][] = [
@@ -48,7 +49,15 @@ describe("an Upgrade request with a body", () => {
         "req.destroy(err)",
         { act: "req.destroy(err)" },
         {
-          events: ["req data 100", "req aborted", "req error: stop", "req close", "socket error: stop", "socket close"],
+          events: [
+            "req data 50",
+            "req data 50",
+            "req aborted",
+            "req error: stop",
+            "req close",
+            "socket error: stop",
+            "socket close",
+          ],
           eofs: 1,
         },
       ],
@@ -61,15 +70,17 @@ describe("an Upgrade request with a body", () => {
         "req.destroy(), then a throw",
         { act: "req.destroy() then throw" },
         {
-          events: ["req data 100", "req aborted", "uncaughtException: listener threw", "req close", "socket close"],
+          events: [
+            "req data 50",
+            "req data 50",
+            "req aborted",
+            "uncaughtException: listener threw",
+            "req close",
+            "socket close",
+          ],
           // The throw leaves the callback before it gives the request its EOF.
           eofs: 0,
         },
-      ],
-      [
-        "req.destroy() at the end of a body that took two reads",
-        { act: "req.destroy()", split: true },
-        { events: ["req data 50", "req data 50", "req aborted", "req close", "socket close"], eofs: 1 },
       ],
       ["socket.destroy()", { act: "socket.destroy()" }, { events: [...ended, "socket close"], eofs: 1 }],
       [
@@ -90,7 +101,37 @@ describe("an Upgrade request with a body", () => {
     ];
     for (const [name, options, expected] of rows) {
       test.concurrent(name, async () => {
-        expect(await run(options)).toMatchObject({ ...expected, ...exited });
+        expect(await run({ ...options, split: true })).toMatchObject({ ...expected, ...exited });
+      });
+    }
+  });
+
+  // Like Node.js, the parser has read the whole body, and pushed its EOF, before 'upgrade' is emitted. Node.js v26.3.0
+  // prints the same events for each row.
+  describe("is complete before the listener runs when its whole body came with the head", () => {
+    const whole = ["req data 100", "req end", "req close"];
+    const rows: [name: string, options: Record<string, unknown>, events: string[]][] = [
+      [
+        "req.destroy() in 'data'",
+        { act: "req.destroy()" },
+        ["req data 100", "req aborted", "req end", "req close", "socket close"],
+      ],
+      [
+        "req.destroy(), then a throw",
+        { act: "req.destroy() then throw" },
+        ["req data 100", "req aborted", "uncaughtException: listener threw", "req end", "req close", "socket close"],
+      ],
+      ["socket.destroy()", { act: "socket.destroy()" }, [...whole, "socket close"]],
+      [
+        "socket.end(), then bytes of the tunnel",
+        { act: "socket.end()", tunnelBytes: "0123456789" },
+        [...whole, "socket data 10", "socket end", "socket close"],
+      ],
+    ];
+    for (const [name, options, events] of rows) {
+      test.concurrent(name, async () => {
+        // The listener wraps push() too late to count the EOF.
+        expect(await run(options)).toMatchObject({ events, eofs: 0, ...exited });
       });
     }
   });
@@ -109,12 +150,15 @@ describe("an Upgrade request with a body", () => {
     for (const [name, options, events] of rows) {
       test.concurrent(name, async () => {
         // A BUN_DEBUG from the shell of the developer sends the log to a file. An empty one keeps it on stdout.
-        const result = await run(options, { ...bunEnv, BUN_DEBUG: "", BUN_DEBUG_NodeHTTPResponse: "1" });
+        const result = await run(
+          { ...options, split: true },
+          { ...bunEnv, BUN_DEBUG: "", BUN_DEBUG_NodeHTTPResponse: "1" },
+        );
         const native = result.native.filter(line => line.startsWith("onData("));
         expect({ ...result, native }).toMatchObject({
           events,
           eofs: 1,
-          native: ["onData(100 bytes, is_last = 1)"],
+          native: ["onData(50 bytes, is_last = 0)", "onData(50 bytes, is_last = 1)"],
           ...exited,
         });
       });

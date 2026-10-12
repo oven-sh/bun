@@ -169,10 +169,6 @@ export default [
         fn: "pauseSocketReads",
         length: 0,
       },
-      notifyWhenReadParsed: {
-        fn: "notifyWhenReadParsed",
-        length: 0,
-      },
       takeRequestTrailers: {
         fn: "takeRequestTrailers",
         length: 0,

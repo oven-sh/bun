@@ -508,7 +508,7 @@ it("reading a request body does not reopen the read gate that queued pipelined r
   }
 });
 
-describe("upgrade request whose whole body arrived with its head", () => {
+describe("upgrade request with a body", () => {
   const upgradeHeaders = "Upgrade: test\r\nConnection: Upgrade\r\n";
   const switchingProtocols = `HTTP/1.1 101 Switching Protocols\r\n${upgradeHeaders}\r\n`;
   const body = Buffer.alloc(100, "y").toString();
@@ -550,11 +550,13 @@ describe("upgrade request whose whole body arrived with its head", () => {
   }
 
   it.each([
-    { when: "in", readInListener: true },
-    { when: "after", readInListener: false },
+    { when: "in", readInListener: true, split: false },
+    { when: "after", readInListener: false, split: false },
+    // The body is complete when the socket is read, so the read has no request to resume.
+    { when: "after the rest of the body and", readInListener: false, split: true },
   ])(
     "a paused request keeps its body when the upgrade socket is read $when the listener",
-    async ({ readInListener }) => {
+    async ({ readInListener, split }) => {
       const tunnel = tunnelReader();
       const { watch, orFail } = failureWatcher();
       const { promise: handedOff, resolve: onUpgrade } = Promise.withResolvers<[IncomingMessage, Duplex]>();
@@ -570,10 +572,14 @@ describe("upgrade request whose whole body arrived with its head", () => {
       try {
         client = await connectTo(server);
         watch("the client socket", client.socket);
-        client.socket.write(fixedLengthPost);
+        client.socket.write(split ? fixedLengthPost.slice(0, -body.length / 2) : fixedLengthPost);
         const [req, socket] = await orFail(handedOff);
         // The 101 is a round trip: the server has parsed the whole first read.
         await orFail(client.receive("101 Switching Protocols"));
+        if (split) {
+          client.socket.write(body.slice(body.length / 2));
+          while (!req.complete) await orFail(new Promise(resolve => setImmediate(resolve)));
+        }
         client.socket.write("ping-1;");
         if (!readInListener) socket.on("data", tunnel.onData);
         // The read of the socket does not resume the request, at once or a turn later.
@@ -666,9 +672,10 @@ describe("upgrade request whose whole body arrived with its head", () => {
   });
 
   it("a read of the upgrade socket still resumes a request that is not paused", async () => {
-    // Inside the listener req.complete is still false here (Node.js has true), so a listener
-    // that waits for the end of the message depends on this resume.
+    // The second half of the body comes in a later read, so req.complete is false inside the
+    // listener. A listener that waits for the end of the message depends on this resume.
     const { watch, orFail } = failureWatcher();
+    const { promise: completeInListener, resolve: onUpgrade } = Promise.withResolvers<boolean>();
     const { promise: completeWhenAccepted, resolve: onAccept } = Promise.withResolvers<boolean>();
     const server = createServer();
     server.on("upgrade", (req, socket) => {
@@ -678,6 +685,7 @@ describe("upgrade request whose whole body arrived with its head", () => {
         socket.write(switchingProtocols);
         onAccept(req.complete);
       };
+      onUpgrade(req.complete);
       if (req.complete) accept();
       else req.once("end", accept);
     });
@@ -685,7 +693,9 @@ describe("upgrade request whose whole body arrived with its head", () => {
     try {
       client = await connectTo(server);
       watch("the client socket", client.socket);
-      client.socket.write(fixedLengthPost);
+      client.socket.write(fixedLengthPost.slice(0, -body.length / 2));
+      expect(await orFail(completeInListener)).toBe(false);
+      client.socket.write(body.slice(body.length / 2));
       expect(await orFail(completeWhenAccepted)).toBe(true);
       await orFail(client.receive("101 Switching Protocols"));
     } finally {

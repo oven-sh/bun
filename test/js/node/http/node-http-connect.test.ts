@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isDebug, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import http from "http";
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
@@ -1787,20 +1788,35 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
 
 // The socket is half-open after the peer's FIN (an http.Server socket has allowHalfOpen) and has
 // nothing to send. In Node.js such a handle is not active, so it does not keep the process alive.
+// With a body in the read of the head, the tunnel starts in the middle of that read (libuv: its unref).
 test.concurrent.each([
   [
+    "connect",
     "connect",
     "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
     "HTTP/1.1 200 Connection Established\r\n\r\n",
   ],
   [
     "upgrade",
+    "upgrade",
     "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+  ],
+  [
+    "upgrade with a Content-Length body",
+    "upgrade",
+    "POST / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nContent-Length: 5\r\n\r\nhello",
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+  ],
+  [
+    "upgrade with a chunked body",
+    "upgrade",
+    "POST / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
     "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
   ],
 ])(
   "'%s': the process exits after server.close() when the peer closed a tunnel that the listener never reads or ends",
-  async (event, request, response) => {
+  async (_, event, request, response) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2183,6 +2199,52 @@ test("destroy() of the unused response of an 'upgrade' request writes nothing in
     server.close();
   }
 });
+
+// While the 'upgrade' event of a request with a body waits for its read, only a GC-visited slot of the native
+// socket holds the handoff. Both collections below run in that window.
+test.each(["http", "https"] as const)(
+  "%s: the 'upgrade' event that waits for the read of its request survives a GC",
+  async proto => {
+    const storage = new AsyncLocalStorage<string>();
+    const upgrades: object[] = [];
+    const options = {
+      shouldUpgradeCallback(req: http.IncomingMessage) {
+        process.nextTick(() => Bun.gc(true));
+        req.on("data", () => Bun.gc(true));
+        return true;
+      },
+    };
+    const server =
+      proto === "https"
+        ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert, ...options })
+        : http.createServer(options);
+    server.on("upgrade", (req, socket, head) => {
+      upgrades.push({ complete: req.complete, head: head.toString("latin1"), store: storage.getStore() });
+      socket.destroy();
+    });
+    storage.run("the store of listen()", () => server.listen(0, "127.0.0.1"));
+    await once(server, "listening");
+    const to = { port: (server.address() as AddressInfo).port, host: "127.0.0.1" };
+    // A full collection per request: few rounds where the collector is slow.
+    const rounds = isDebug || isASAN ? 5 : 30;
+    try {
+      for (let i = 0; i < rounds; i++) {
+        const client = proto === "https" ? tls.connect({ ...to, rejectUnauthorized: false }) : net.connect(to);
+        client.on("error", () => {});
+        client.write(
+          "POST / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\nContent-Length: 5\r\n\r\nhelloAFTER",
+        );
+        await once(client, "close");
+      }
+      expect(upgrades).toEqual(
+        Array.from({ length: rounds }, () => ({ complete: true, head: "AFTER", store: "the store of listen()" })),
+      );
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  },
+);
 
 test("a tunnel write that waits for a drain settles its callbacks when the client goes away", async () => {
   const events: string[] = [];

@@ -141,6 +141,9 @@ public:
      * until the request body has been fully parsed (Upgrade requests with a
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response);
+    /* `callback(head, complete)` runs once when uWS has parsed the read it is in, or at close. False, and nothing stored, outside a parse. */
+    bool notifyWhenReadParsed(JSC::VM& vm, JSC::JSObject* callback);
+    void onReadParsed(std::span<const uint8_t> head, bool complete);
 
     /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
     void readStop();
@@ -173,6 +176,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnClose;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnDrain;
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnData;
+    mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnReadParsed;
     mutable JSC::WriteBarrier<JSC::JSObject> m_remoteAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_localAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_duplex;

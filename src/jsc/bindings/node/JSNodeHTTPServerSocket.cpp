@@ -17,7 +17,6 @@
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
-extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
@@ -554,6 +553,7 @@ JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* stru
 
 void JSNodeHTTPServerSocket::detach()
 {
+    this->functionToCallOnReadParsed.clear();
     this->m_duplex.clear();
     this->m_currentResponse.clear();
     {
@@ -632,13 +632,40 @@ static bool notifyWhenNodeHttpReadParsed(us_socket_t* socket)
     return true;
 }
 
-// False when no read of this socket is being parsed: its body state is already exact.
-extern "C" bool Bun__NodeHTTP__notifyWhenReadParsed(int ssl, us_socket_t* socket)
+bool JSNodeHTTPServerSocket::notifyWhenReadParsed(JSC::VM& vm, JSC::JSObject* callback)
 {
-    if (!socket || us_socket_is_closed(socket)) {
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
         return false;
     }
-    return ssl ? notifyWhenNodeHttpReadParsed<true>(socket) : notifyWhenNodeHttpReadParsed<false>(socket);
+    if (!(is_ssl ? notifyWhenNodeHttpReadParsed<true>(socket) : notifyWhenNodeHttpReadParsed<false>(socket))) {
+        return false;
+    }
+    functionToCallOnReadParsed.set(vm, this, callback);
+    return true;
+}
+
+void JSNodeHTTPServerSocket::onReadParsed(std::span<const uint8_t> head, bool complete)
+{
+    auto* callback = functionToCallOnReadParsed.get();
+    if (!callback) {
+        return;
+    }
+    functionToCallOnReadParsed.clear();
+    auto* globalObject = defaultGlobalObject(this->globalObject());
+    EnsureStillAliveScope ensureCallbackStillAlive(callback);
+    EnsureStillAliveScope ensureStillAlive(this);
+    JSValue headBuffer = jsUndefined();
+    if (!head.empty()) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        headBuffer = WebCore::createBuffer(globalObject, head);
+        if (auto* exception = scope.exception()) {
+            (void)scope.tryClearException();
+            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            headBuffer = jsUndefined();
+        }
+    }
+    // Through the event loop, so that the jobs of the callback run before uWS continues.
+    Bun__EventLoop__runCallback2(globalObject, JSValue::encode(callback), JSValue::encode(this), JSValue::encode(headBuffer), JSValue::encode(jsBoolean(complete)));
 }
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
@@ -827,6 +854,8 @@ void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
             // termination arriving meanwhile), and nothing is entered on top of one.
             auto& vm = JSC::getVM(globalObject);
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            // The socket closed inside the read that the callback of notifyWhenReadParsed() waits for.
+            thisObject->onReadParsed({}, false);
             notifyResponsesOnClose(thisObject);
             if (!scope.exception()) {
                 callStoredCallback(globalObject, callbackObject, thisObject, args);
@@ -1032,6 +1061,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->functionToCallOnClose);
     visitor.append(fn->functionToCallOnDrain);
     visitor.append(fn->functionToCallOnData);
+    visitor.append(fn->functionToCallOnReadParsed);
     visitor.append(fn->m_remoteAddress);
     visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);
@@ -1078,17 +1108,10 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
 }
 
-extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
+extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket, const char* head, unsigned int length, bool complete)
 {
-    if (us_socket_is_closed(socket)) {
-        return;
-    }
-    auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
-    if (!serverSocket) {
-        return;
-    }
-    if (auto* res = serverSocket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
-        Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
+    if (auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket)) {
+        serverSocket->onReadParsed({ reinterpret_cast<const uint8_t*>(head), length }, complete);
     }
 }
 

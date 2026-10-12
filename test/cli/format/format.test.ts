@@ -3998,8 +3998,24 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     };
     const result = await bytesAfter(files);
     expect(result.files).toEqual(files);
-    expect(result.errors.map(line => line.split(":")[0]).sort()).toEqual(["[error] a.html", "[error] a.vue"]);
+    expect(result.errors.sort()).toEqual([
+      "[error] a.html: SyntaxError: What follows this NUL would be lost (2:5)",
+      "[error] a.vue: SyntaxError: What follows this NUL would be lost (2:5)",
+    ]);
     expect(result.exitCode).toBe(2);
+  });
+
+  // Prettier 3.9.9 and oxfmt 0.72 fail here too, with these words.
+  test.each([
+    ["the name of a tag", "<a\0b   >x</a\0b>\n", "a"],
+    ["the name of an attribute", '<p   a\0b="c">x</p>\n', "p"],
+    ["the value of an attribute without quotes", "<p   title=a\0b>x</p>\n", "p"],
+  ])("a NUL in %s", async (_, text, name) => {
+    expect(await bytesAfter({ "a.html": text })).toEqual({
+      errors: [`[error] a.html: SyntaxError: Opening tag "${name}" not terminated. (1:1)`],
+      exitCode: 2,
+      files: { "a.html": text },
+    });
   });
 
   test("a NUL where the text of HTML does not end with it stays", async () => {

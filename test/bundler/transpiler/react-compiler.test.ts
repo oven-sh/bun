@@ -4013,7 +4013,7 @@ test("react-compiler sorts the dependencies and the declarations of a scope as J
   const name = `(${outside}|${inside})`;
   expect({
     dependencies: out.match(new RegExp(String.raw`\$\[\d+\] !== ${name} \|\| \$\[\d+\] !== ${name}`, "u"))?.slice(1),
-    declarations: out.match(new RegExp(String.raw`\$\[\d+\] = ${name};\s*\$\[\d+\] = ${name};`, "u"))?.slice(1),
+    declarations: out.match(new RegExp(String.raw`\$\[\d+\] = ${name}[;,]\s*\$\[\d+\] = ${name};`, "u"))?.slice(1),
   }).toEqual({
     dependencies: [outside, inside],
     declarations: [outside, inside],

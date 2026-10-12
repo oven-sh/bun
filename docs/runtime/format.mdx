@@ -365,6 +365,7 @@ These differences are intentional:
 - **HTML is checked too.** If what is about to be written does not have the same elements, attributes, and text as the file, `bun format` leaves the file as it is, reports it, and exits with 2.
 - **Templates keep their expressions.** Prettier closes `` html`<${Tag}>` `` with a second `${Tag}`. If a template would end up with more or fewer `${}` than it has, `bun format` leaves the file as it is, reports it, and exits with 2.
 - **A Handlebars template that Prettier would damage is left as it is.** Prettier deletes `<!DOCTYPE html>`, joins the lines of an inline `<script>`, and turns `{{this/name}}` into `{{name}}`. `bun format` reports such a file and exits with 2.
+- **What follows a NUL in HTML is not deleted.** For Prettier, a NUL between the tags of an HTML or Vue file is the end of the file: it deletes the rest. `bun format` leaves such a file as it is, reports it, and exits with 2.
 - **Bytes that are not UTF-8 stay as they are.** Prettier reads each of them as U+FFFD. When it writes a Latin-1 file, those characters are lost.
 - **Nothing is written through a link that leads out of the repository**, or out of the working directory if that is in no repository. Prettier writes there. The run fails and names the file.
 - **A configuration file that leaves a timer or a server running does not keep the run alive.** Prettier does its work and never exits.
@@ -384,6 +385,7 @@ These differences are intentional:
 - **Errors and warnings are in the words of Bun**, with `[error]` or `[warn]` before each line. What else is printed about a run is what oxfmt prints, on the same stream.
 - **A TOML file that is not valid is left as it is**, with a warning. oxfmt rewrites the rest of the file.
 - **A file that is not UTF-8 is formatted**, and the bytes that are not UTF-8 stay as they are. oxfmt does not read such a file, and exits with 2.
+- **What follows a NUL in HTML is not deleted**, as in [Differences from Prettier](#differences-from-prettier).
 - **A file is checked before it is written**, as in [Differences from Prettier](#differences-from-prettier).
 
 ## CLI usage

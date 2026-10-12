@@ -18,6 +18,9 @@ pub(crate) enum ErrorKind {
     LetWithoutValue,
     LetNotTerminated,
     IncompleteLet,
+    /// None of the parser's, for which `$EOF` is 0: a NUL between tags ends the text, and Prettier prints nothing of what
+    /// follows.
+    TextBehindNul,
     /// None of the parser's: Prettier fails over what has been parsed.
     Other,
 }
@@ -121,6 +124,7 @@ impl<'a> SyntaxError<'a> {
                 "Incomplete @let declaration \"",
                 "\". @let declarations must be written as `@let <name> = <value>;`",
             ),
+            TextBehindNul => ("What follows this NUL would be lost", ""),
             Other => ("Unexpected token", ""),
         };
         let name: &[u8] = match (self.kind, &name[..]) {

@@ -1,7 +1,7 @@
 //! A bridge: files in a language that only a plugin of Prettier reads are handed to the project's own Prettier.
 //!
 //! `bun format` has no Svelte, no Astro, no PHP. Where the configuration of Prettier names the plugin for such a
-//! language, and both are installed, the file goes whole to `prettier.format`, in the engines that run the plugins of
+//! language, and both are installed, the file goes whole to `prettier.format`, in the VMs that run the plugins of
 //! `bun lint`. What comes back is checked or written like what the formatter prints. It is as exact as it is slow.
 
 use super::cli::{Options, Precedence};
@@ -30,14 +30,15 @@ pub(crate) struct Prettier<'e> {
 }
 
 impl<'e> Prettier<'e> {
-    /// `files`, `size`: how many files are going to be handed over, and how large they are together.
+    /// `files`, `size`: how many files are going to be handed over, and how large they are together. `threads`: `--threads`.
     pub(crate) fn new(
         environment: &'e Environment,
         options: &Options,
         (files, size): (usize, u64),
+        threads: usize,
     ) -> Prettier<'e> {
         let host = Host::with_engine(environment.js_engine, &environment.cwd);
-        host.expect(files, size, host.most_realms());
+        host.expect(files, size, threads);
         // A string is written without its quotes.
         let value = |text: &[u8]| match bun_lint::json::parse(text) {
             Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
@@ -70,6 +71,16 @@ impl<'e> Prettier<'e> {
             cwd: environment.cwd.clone(),
             run,
         }
+    }
+
+    /// [`Host::for_each`]
+    pub(crate) fn for_each(
+        &self,
+        count: usize,
+        is_heavy: &dyn Fn(usize) -> bool,
+        work: &(dyn Fn(usize) + Sync),
+    ) {
+        self.host.for_each(count, is_heavy, work);
     }
 
     /// Formats the file at `path`. `shown`: its name for the user. `writes`: it is written if it changes. Returns whether it

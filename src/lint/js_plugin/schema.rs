@@ -12,17 +12,8 @@ pub const PROGRAM: &[(&str, &str)] = &[
     ("eslint_patch.js", ESLINT_PATCH),
     ("paths.js", include_str!("worker/paths.js")),
     ("ast.js", include_str!("worker/ast.js")),
-    ("tokens.js", include_str!("worker/tokens.js")),
     ("scope.js", include_str!("worker/scope.js")),
-    ("", "const scopeCells = (() => {\n"),
-    ("scope_cells.js", include_str!("worker/scope_cells.js")),
-    (
-        "",
-        "return { scopeManager, resetScopes, usedVariables };\n})();\n\
-         ({ scopeManager, resetScopes, usedVariables } = scopeCells);\n",
-    ),
     ("source_code.js", include_str!("worker/source_code.js")),
-    ("report.js", include_str!("worker/report.js")),
     ("processor.js", include_str!("worker/processor.js")),
     ("eslint.js", include_str!("worker/eslint.js")),
     ("prettier.js", include_str!("worker/prettier.js")),

@@ -3,16 +3,14 @@
 //! A VM belongs to one thread for good. Every VM loads all the plugins itself, so there are fewer VMs than lint threads:
 //! [`Demand`] and [`Memory`] decide how many.
 //!
-//! With `BUN_LINT_SAME_THREAD=1` ([`Crew`]), a thread that has a VM is a lint thread. It reads, parses and lints whole files, and
-//! what the program asks about a file is a plain function call. Files that need JavaScript are given to these threads
-//! ([`Engine::work_off`]). A thread without a VM that turns out to need one posts a job and waits ([`Engine::with_vm`]).
+//! A thread that has a VM is a lint thread ([`Crew`]). It reads, parses and lints whole files, and what the program asks about a
+//! file is a plain function call. Files that need JavaScript are given to these threads ([`Engine::work_off`]). A thread
+//! without a VM that turns out to need one posts a job and waits ([`Engine::with_vm`]).
 //!
-//! The rule that keeps this free of deadlocks: **a thread with a VM never waits for another thread. Other threads may wait for
-//! it.** So it never joins a parallel region of the pool (`keep_regions_on_this_thread`), and it never posts a job. It only
-//! waits for its own JavaScript, which can need Bun's pool, on which nothing of `bun lint` runs.
-//!
-//! Without the switch ([`Lending`]), VMs are on extra threads. A lint thread borrows one for a file, and answers what the program
-//! asks while it waits for the result.
+//! The rule that keeps this free of deadlocks: **a thread with a VM never waits for something that can itself wait for a VM.
+//! Other threads may wait for it.** So it never joins a parallel region of the pool (`keep_regions_on_this_thread`), and it
+//! never posts a job. And nobody posts a job while holding a lock that linting a file takes. A thread with a VM does wait for
+//! its own JavaScript, which can need Bun's pool, on which nothing of `bun lint` runs.
 //!
 //! The program is `bun_lint::js_plugin::PROGRAM`: the body of a function that is given [`request`],
 //! [`again`] and [`decode`], and returns the function that [`ThreadVm::call`] calls.
@@ -34,15 +32,15 @@ use std::thread::ThreadId;
 
 bun_core::declare_scope!(lint_js, hidden);
 
-/// The message that the program is called with, and what answers its questions meanwhile.
+/// One call into the program: its message, and the callback that answers what the program asks while it runs.
 struct Call<'c, 's> {
     content: &'c [u8],
     serve: &'c mut Serve<'s>,
 }
 
-/// What the VM of a thread has for `bun lint`: `RuntimeState::lint`.
+/// Per-VM state of `bun lint`. Lives in `RuntimeState::lint`.
 pub(crate) struct LintVm {
-    /// What the program returns.
+    /// The function that the program returned.
     handle: Strong,
     /// Set while `handle` runs.
     call: Cell<Option<NonNull<Call<'static, 'static>>>>,
@@ -63,7 +61,7 @@ struct Kept {
     is_lent: bool,
 }
 
-/// Takes the call out of the VM when it is over.
+/// Clears `LintVm::call` when the call is over.
 struct Lent<'v>(&'v LintVm, &'v JSGlobalObject);
 
 impl Drop for Lent<'_> {
@@ -114,7 +112,7 @@ fn copy_answer(global: &JSGlobalObject, state: &LintVm, into: JSValue) -> JsResu
     Ok(JSValue::js_number_from_uint64(answer.len() as u64))
 }
 
-/// Asks the thread that lints for `kind`. The answer is in `answer` of what this returns. `None`: no file is being linted.
+/// Answers `kind` into `LintVm::answer`. Returns `None` if no file is being linted.
 fn ask(kind: u32, details: &[u8]) -> Option<&'static LintVm> {
     let state = crate::jsc_hooks::lint_vm().get()?;
     let mut call = state.call.get()?;
@@ -232,7 +230,7 @@ fn decode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 }
 
-/// Runs the program in the VM of this thread, which is new.
+/// Runs the program in this thread's new VM.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
     let mut source = b"(function (request, again, decode, native) {\n\
@@ -298,12 +296,12 @@ fn start_vm() -> Result<(), Vec<u8>> {
     .map_err(|error| failed(error.name()))?;
     debug_assert!(core::ptr::eq(vm, VirtualMachine::get_mut_ptr()));
     let vm = VirtualMachine::get().as_mut();
-    // This thread has nothing else to do meanwhile.
+    // Transpile on this thread. It would only wait for the result anyway.
     vm.transpiler_store.enabled = false;
     vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
     vm.transpiler.options.env.behavior =
         bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
-    // As for a configuration: `run_script` in `lint_command.rs`.
+    // Same as for config files: see `run_script` in `lint_command.rs`.
     vm.transpiler.options.env.disable_default_env_files = true;
     vm.transpiler
         .configure_defines()
@@ -314,7 +312,8 @@ fn start_vm() -> Result<(), Vec<u8>> {
     Ok(())
 }
 
-/// What `vm`, which is that of this thread and whose lock is held, has for `bun lint`. The first time the program runs.
+/// Returns the `LintVm` of `vm`, and runs the program first if it hasn't run yet. `vm` is this thread's, and the caller holds its
+/// lock.
 fn program_of(vm: &VirtualMachine) -> Result<&'static LintVm, Vec<u8>> {
     let slot = crate::jsc_hooks::lint_vm();
     match slot.get() {
@@ -343,13 +342,14 @@ impl Vm for ThreadVm {
             let mut returned = (state.handle.get().call(global, JSValue::UNDEFINED, &[kind]))
                 .map_err(|error| message_of(global, global.take_exception(error)))?;
             if let Some(promise) = returned.as_any_promise() {
-                // As `wait_for_promise`, which waits for ever for a promise that nothing is going to settle. Node.js ends then.
+                // Like `wait_for_promise`, but gives up on a promise that nothing can settle any more. Node.js exits in that case.
                 while promise.status() == jsc::js_promise::Status::Pending {
                     vm.as_mut().event_loop_mut().tick();
                     if promise.status() != jsc::js_promise::Status::Pending {
                         break;
                     }
-                    // A rejection that nobody handles is printed and counted, and no loop is alive with one that is counted.
+                    // An unhandled rejection is printed and counted, and the loop doesn't count as alive while that count
+                    // isn't 0.
                     vm.as_mut().unhandled_error_counter = 0;
                     if !vm.is_event_loop_alive() {
                         return Err(
@@ -371,8 +371,8 @@ impl Vm for ThreadVm {
     }
 }
 
-/// What a line of `/proc/self/cgroup` names: a directory, under which other one it is, and the file in it and in those above it
-/// that has a limit. `0::/a/b` with one hierarchy, `9:memory:/a/b` with one for each controller.
+/// Parses one line of `/proc/self/cgroup` into (group, mount point, name of the limit file). That file exists in the group's
+/// directory and in every directory above it. A cgroup v2 line looks like `0::/a/b`, a v1 line like `9:memory:/a/b`.
 #[cfg_attr(not(any(target_os = "linux", test)), expect(dead_code))]
 fn group_in(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
     let (_, rest) = strings::split_once_char(line, b':')?;
@@ -387,12 +387,12 @@ fn group_in(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
     ))
 }
 
-/// What such a file says. `max`: there is no limit.
+/// Parses a limit file. `max` means no limit.
 fn limit_in(text: &[u8]) -> Option<usize> {
     core::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()
 }
 
-/// The least that the control groups of this process allow it: a container's limit.
+/// The lowest memory limit among this process's control groups. That's how a container limits it.
 #[cfg(target_os = "linux")]
 fn limit_of_the_groups() -> Option<usize> {
     use bun_sys::{Fd, File};
@@ -415,10 +415,10 @@ fn limit_of_the_groups() -> Option<usize> {
     None
 }
 
-/// What all engines together may take: half of the memory that is to be had, in the machine and in the container. A linter does
-/// not take the machine.
+/// The memory budget for all VMs together: half of what's available on the machine or in the container. A linter shouldn't take
+/// over the machine.
 fn memory_for_engines() -> usize {
-    // On macOS next to nothing is ever free.
+    // macOS always reports next to nothing as free.
     let free = match cfg!(any(target_os = "linux", windows)) {
         true => crate::node::os::freemem() as usize,
         false => 0,
@@ -430,7 +430,7 @@ fn memory_for_engines() -> usize {
     }) / 2
 }
 
-/// The memory of the machine, or of the container. `BUN_LINT_MEMORY`: for tests.
+/// Total memory of the machine or the container. Tests override it with `BUN_LINT_MEMORY`.
 pub(super) fn memory() -> usize {
     let said = bun_core::getenv_z(bun_core::zstr!("BUN_LINT_MEMORY"));
     said.and_then(limit_in).unwrap_or_else(|| {
@@ -439,8 +439,7 @@ pub(super) fn memory() -> usize {
     })
 }
 
-/// Runs the `exit` handlers of the VM of this thread, if it has one. If it `frees`, and with
-/// `BUN_DESTRUCT_VM_ON_EXIT`, the VM is freed too.
+/// Runs the `exit` handlers of this thread's VM, if it has one. Also frees the VM if `frees` or `BUN_DESTRUCT_VM_ON_EXIT` is set.
 fn end_vm(frees: bool) {
     if !VirtualMachine::is_loaded() {
         return;
@@ -450,7 +449,7 @@ fn end_vm(frees: bool) {
         let _lock = vm.global().vm().get_api_lock();
         return vm.as_mut().on_exit();
     }
-    // Never released: `exit_and_free` frees the VM that it is the lock of.
+    // Never released: `exit_and_free` frees the VM, and the lock with it.
     let _lock = core::mem::ManuallyDrop::new(vm.global().vm().get_api_lock());
     drop(crate::jsc_hooks::take_lint_vm());
     drop(core::mem::take(&mut vm.as_mut().argv));
@@ -458,11 +457,11 @@ fn end_vm(frees: bool) {
     unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
 }
 
-/// What all VMs share.
+/// Startup state that all VMs share.
 #[derive(Default)]
 struct Start {
     initialize: std::sync::Once,
-    /// Whether there can be more than a few VMs. Nobody knows if a VM is needed to find out.
+    /// Set if the run won't have more than a few VMs. Stays unset if a VM starts before the files are known.
     is_for_few: AtomicBool,
     memory: std::sync::OnceLock<usize>,
 }
@@ -477,13 +476,13 @@ impl Start {
     fn start_vm(&self) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
-            // The first regular expression of a configuration has started it as well (`bun_yarr`).
+            // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
             jsc::initialize(jsc::InitializeOptions::default());
             if !self.is_for_few.load(Ordering::Relaxed) {
                 jsc::expect_vm_per_thread();
             }
-            // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
-            // several threads at a time.
+            // The first VM also creates process-wide singletons like `FileSystem::instance()`, which isn't safe from several
+            // threads at once. So the others wait here until it's up.
             first = Some(start_vm().and_then(|()| {
                 let vm = VirtualMachine::get();
                 vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
@@ -495,10 +494,10 @@ impl Start {
     /// [`Engine::expect`]
     fn expect(&self, demand: &Demand, size: u64, most: usize) {
         demand.expect(size, most);
-        // As many as the files are worth.
-        let is_enough = |&vms: &usize| !demand.is_worth_another(vms);
+        // How many VMs the files are worth.
+        let is_enough = |&vms: &usize| !demand.is_worth_another(vms, 0);
         let vms = (1..most).find(is_enough).unwrap_or(most);
-        // Cores are left to compile on while the VMs run.
+        // With few VMs, cores are left for JSC's compiler threads.
         let is_for_few = vms <= usize::from(bun_core::get_thread_count()) / 2;
         self.is_for_few.store(is_for_few, Ordering::Relaxed);
     }
@@ -511,8 +510,8 @@ fn name_this_thread(number: usize) {
     ));
 }
 
-/// What a VM counts for until the run has shown how its VMs grow: none that was seen took much more. So where 16 GB are to be
-/// had four VMs start at once, and with less, or for a fifth, that is waited for.
+/// Assumed size of a VM until the run has shown how its VMs grow. No project we looked at needed much more. So with 16 GB available
+/// (a budget of 8 GB) four VMs can start at once, and a fifth waits for real numbers.
 const NOT_LOADED_YET: usize = 2 << 30;
 
 /// How many VMs there are, and how many of them have loaded what they need.
@@ -522,27 +521,27 @@ struct Vms {
     loaded: usize,
 }
 
-/// What the VMs of a run take.
+/// Tracks how much memory the VMs of a run use.
 #[derive(Default)]
 struct Memory {
-    /// What the process took before the first VM was started.
+    /// RSS of the process before the first VM started.
     before: usize,
-    /// By how much more it took when that was last looked at: the VMs, with the workers that their plugins start and all that
-    /// is not in a heap of JavaScript. And the most that it was, in all and for each VM that had loaded what it needs.
+    /// How much RSS had grown since then at the last look. That covers the VMs, the workers their plugins start, and everything
+    /// outside the JS heaps. `most` is its peak, and `most_for_one` the peak per VM that had loaded its plugins.
     taken: usize,
     most: usize,
     most_for_one: usize,
-    /// What it took, and how many bytes were still to be linted, when `grows_by` was last computed: by how many bytes it has
-    /// grown since then for each byte that was linted.
+    /// `taken` and the bytes still to lint when `grows_by` was last computed. `grows_by` is how many bytes RSS grew per linted
+    /// byte.
     looked_at: (usize, u64),
     grows_by: Option<f64>,
-    /// How many files VMs are done with, and what that was when a VM was last freed.
+    /// How many files the VMs have finished, and what that count was when a VM was last freed.
     given_back: u32,
     freed_at: u32,
 }
 
 impl Memory {
-    /// Before the first VM starts. `left`: [`Demand::left`]
+    /// Call this before the first VM starts. `left`: [`Demand::left`]
     fn begin(&mut self, left: u64) {
         self.before = bun_sys::self_process_memory_usage().unwrap_or(0);
         self.looked_at = (0, left);
@@ -553,7 +552,7 @@ impl Memory {
         let now = bun_sys::self_process_memory_usage().unwrap_or(0);
         self.taken = now.saturating_sub(self.before);
         self.most = self.most.max(self.taken);
-        // Over a 32nd of what was left: less says little.
+        // Only after 1/32 of the remaining bytes. A smaller sample says little.
         let (taken, left_then) = self.looked_at;
         let done = left_then.saturating_sub(left);
         if done > 0 && done >= left_then / 32 {
@@ -565,7 +564,7 @@ impl Memory {
         }
     }
 
-    /// A VM has loaded what it needs. How the VMs grow is seen from here on: not by what a load takes.
+    /// A VM has loaded its plugins. Growth is measured from here on, so that loading doesn't count as growth.
     fn note_a_load(&mut self, left: u64, loaded: usize) {
         self.measure(left, loaded);
         if self.grows_by.is_none() {
@@ -573,8 +572,8 @@ impl Memory {
         }
     }
 
-    /// A VM is done with a file. They have grown since they were started. Looking costs a system call: every time only until
-    /// it is known how they grow, and once they have what was `planned`.
+    /// A VM has finished a file. Measuring costs a system call, so it happens every 16th time, or every time while the growth rate
+    /// isn't known yet or the VMs have used up what was `planned`.
     fn note_a_file(&mut self, planned: usize, demand: &Demand, loaded: usize) {
         self.given_back = self.given_back.wrapping_add(1);
         if self.given_back.is_multiple_of(16) || self.grows_by.is_none() || self.taken >= planned {
@@ -582,21 +581,20 @@ impl Memory {
         }
     }
 
-    /// Whether to free a VM. What it has built is lost with it. So not before half of what the plan has left is gone too, and
-    /// what the last one gave back is seen a while after it is gone.
+    /// Whether to free a VM. That throws away everything it has loaded and compiled, so only at 1.5 times what was `planned`. And
+    /// not within 16 files of the last time, because freed memory takes a while to show.
     fn is_too_much(&self, planned: usize) -> bool {
         self.taken > planned / 2 * 3 && self.given_back.wrapping_sub(self.freed_at) >= 16
     }
 
-    /// Whether one more VM fits in the memory that is `planned` for them: if those that have loaded go on growing with each
-    /// byte as they have in this run, until all is linted, and it and those that have not loaded yet get as large as one of
-    /// these.
+    /// Whether one more VM fits into what was `planned`. Assumes that the loaded VMs keep growing per byte as they have so far,
+    /// until everything is linted, and that the new VM and those still loading end up as large as one of them.
     fn has_room_for_another(&self, planned: usize, left: u64, vms: Vms) -> bool {
         let one = match self.grows_by {
             Some(grows_by) if vms.loaded > 0 => {
                 (self.taken as f64 + grows_by * left as f64) / vms.loaded as f64
             }
-            // What a VM has after its load says little about what it is going to have.
+            // The size right after loading says little about the final size.
             _ => NOT_LOADED_YET as f64,
         };
         let all = one.max(self.most_for_one as f64) * (vms.count + 1) as f64;
@@ -716,7 +714,7 @@ impl CrewState {
         }
     }
 
-    /// How many VMs are busy with files by which the others aren't counted.
+    /// How many VMs are busy with heavy files. They don't count towards how many VMs the other files are worth.
     fn kept(&self) -> usize {
         usize::from(self.shared.is_some() && !self.is_done_with_heavy)
     }
@@ -736,7 +734,7 @@ struct Crew {
     start: Start,
     demand: Demand,
     state: Guarded<CrewState>,
-    /// `CrewState::pending`, for those who only look.
+    /// A copy of `CrewState::pending` that can be read without the lock.
     busy: AtomicUsize,
     /// There may be something to do for a member.
     is_posted: Condition,
@@ -785,7 +783,7 @@ impl Crew {
             let planned = crew.start.memory();
             if !is_needed
                 || !(state.memory).has_room_for_another(planned, crew.demand.left(), vms)
-                || !(crew.demand).is_worth_another(vms.count - state.kept().min(vms.count))
+                || !crew.demand.is_worth_another(vms.count, state.kept())
             {
                 return Ok(());
             }
@@ -832,7 +830,7 @@ impl Crew {
                 self.leave_the_work(&mut state, at);
                 return Next::End { frees };
             }
-            // What is heavy is for the first. It leaves the rest to the others as long as one of them is free.
+            // Heavy jobs go to the first member. It leaves the other jobs alone as long as another member is free.
             let others_are_free = (state.all.iter().skip(1)).any(|it| it.is_idle && !it.is_freed);
             let found = match at {
                 0 => (state.posted.iter().position(|it| it.size >= HEAVY))
@@ -903,7 +901,7 @@ impl Crew {
         }
     }
 
-    /// To its first call a VM answers what it has to load. After the second that is loaded.
+    /// Counts the calls a VM has answered. The first one only reports what it has to load, so it's loaded after the second.
     fn note_a_call(crew: &Arc<Crew>, at: usize) {
         let mut state = crew.state.lock();
         let calls = &mut state.all[at].calls;
@@ -932,7 +930,7 @@ impl Crew {
         state.all[at].is_in_use = false;
         let (planned, vms) = (crew.start.memory(), state.vms());
         (state.memory).note_a_file(planned, &crew.demand, vms.loaded);
-        // The first has the heavy files, and one is left beside it.
+        // Never the first member, which has the heavy files, and never the last one besides it.
         if at != 0
             && state.memory.is_too_much(planned)
             && vms.count - state.kept() > 1
@@ -941,7 +939,7 @@ impl Crew {
             state.memory.freed_at = state.memory.given_back;
             state.all[at].is_freed = true;
         }
-        // What is heavy is not counted.
+        // `Demand` doesn't count heavy files.
         if size < HEAVY {
             crew.demand.note(size);
         }
@@ -980,6 +978,7 @@ impl Crew {
         meanwhile: &mut dyn FnMut(),
     ) -> Result<(), Vec<u8>> {
         let mut state = crew.state.lock();
+        debug_assert!(state.shared.is_none());
         state.calls += 1;
         state.shared = Some(Shared {
             work: NonNull::from(&work).cast(),
@@ -1022,356 +1021,26 @@ impl Crew {
     }
 }
 
-/// What an engine and the thread that has borrowed it say to each other, in turns.
-#[derive(Default)]
-enum Turn {
-    /// It has been heard.
-    #[default]
-    Nothing,
-    /// To the engine: [`Vm::call`].
-    Call { kind: u32, content: Vec<u8> },
-    /// From the engine: what the program asks for. The answer is appended to `answer`.
-    Asked {
-        kind: u32,
-        details: Vec<u8>,
-        answer: Vec<u8>,
-    },
-    /// To the engine.
-    Answered(Vec<u8>),
-    /// From the engine: what the call returns.
-    Returned(Result<Vec<u8>, Vec<u8>>),
-    /// To the engine: nothing is going to be asked of it any more. It returns nothing.
-    End,
-    /// To the engine: it ends now, and frees its VM. The others need the memory.
-    Free,
-}
-
-/// Where the two meet. Only one of them waits at a time.
-#[derive(Default)]
-struct Desk {
-    turn: Guarded<Turn>,
-    is_said: Condition,
-    /// The engine was told to free its VM, and has.
-    is_gone: AtomicBool,
-}
-
-impl Desk {
-    fn say(&self, turn: Turn) {
-        *self.turn.lock() = turn;
-        self.is_said.notify_one();
-    }
-
-    /// Waits for what `is_for_me`.
-    fn hear(&self, is_for_me: fn(&Turn) -> bool) -> Turn {
-        let mut turn = self.turn.lock();
-        while !is_for_me(&turn) {
-            self.is_said.wait_guarded(&mut turn);
-        }
-        core::mem::take(&mut *turn)
-    }
-}
-
-/// What the thread of an engine does. Nobody joins it: once its VM is freed it waits for a turn that never comes, until the
-/// process exits.
-fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
-    name_this_thread(number);
-    let started = start.start_vm();
-    loop {
-        let heard = desk.hear(|turn| matches!(turn, Turn::Call { .. } | Turn::End | Turn::Free));
-        let Turn::Call { kind, content } = heard else {
-            end_vm(matches!(heard, Turn::Free));
-            desk.is_gone.store(true, Ordering::Relaxed);
-            desk.say(Turn::Returned(Ok(Vec::new())));
-            continue;
-        };
-        let mut ask = |kind: u32, details: &[u8], answer: &mut Vec<u8>| {
-            desk.say(Turn::Asked {
-                kind,
-                details: details.to_vec(),
-                answer: core::mem::take(answer),
-            });
-            if let Turn::Answered(answered) = desk.hear(|turn| matches!(turn, Turn::Answered(_))) {
-                *answer = answered;
-            }
-        };
-        desk.say(Turn::Returned(
-            started
-                .clone()
-                .and_then(|()| ThreadVm.call(kind, &content, &mut ask)),
-        ));
-    }
-}
-
-/// An engine that is borrowed.
-struct Borrowed<'e> {
-    engines: &'e Lending,
-    at: usize,
-    desk: Arc<Desk>,
-    /// The size of the file that it is borrowed for. `None`: a caller further up has borrowed it, and gives it back.
-    size: Option<usize>,
-}
-
-impl Vm for Borrowed<'_> {
-    fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>> {
-        self.desk.say(Turn::Call {
-            kind,
-            content: content.to_vec(),
-        });
-        loop {
-            match self
-                .desk
-                .hear(|turn| matches!(turn, Turn::Asked { .. } | Turn::Returned(_)))
-            {
-                Turn::Asked {
-                    kind,
-                    details,
-                    mut answer,
-                } => {
-                    serve(kind, &details, &mut answer);
-                    self.desk.say(Turn::Answered(answer));
-                }
-                Turn::Returned(returned) => {
-                    self.note_a_call();
-                    return returned;
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-impl Borrowed<'_> {
-    /// To its first call an engine answers what it has to load. After the second that is loaded.
-    fn note_a_call(&self) {
-        let mut state = self.engines.state.lock();
-        let calls = &mut state.all[self.at].calls;
-        *calls = calls.saturating_add(1);
-        if *calls != 2 {
-            return;
-        }
-        let loaded = state.vms().loaded;
-        (state.memory).note_a_load(self.engines.demand.left(), loaded);
-        drop(state);
-        // Those that wait may start another one by now.
-        self.engines.is_idle.notify_all();
-    }
-}
-
-impl Drop for Borrowed<'_> {
-    fn drop(&mut self) {
-        let Some(size) = self.size else {
-            return;
-        };
-        let mut state = self.engines.state.lock();
-        state.borrowed.retain(|it| it.1 != self.at);
-        let (planned, vms) = (self.engines.start.memory(), state.vms());
-        (state.memory).note_a_file(planned, &self.engines.demand, vms.loaded);
-        // The first has the heavy files, and one is left beside those that are kept.
-        if self.at != 0
-            && state.memory.is_too_much(planned)
-            && vms.count - state.kept > 1
-            && !state.all.iter().any(Known::is_being_freed)
-        {
-            state.memory.freed_at = state.memory.given_back;
-            state.all[self.at].is_freed = true;
-            self.desk.say(Turn::Free);
-        } else {
-            state.idle.push(self.at);
-        }
-        drop(state);
-        // What is heavy is not counted.
-        if size < HEAVY {
-            self.engines.demand.note(size);
-        }
-        // Each of those that wait may wait for another one.
-        self.engines.is_idle.notify_all();
-    }
-}
-
-/// An engine.
-struct Known {
-    desk: Arc<Desk>,
-    /// Who has borrowed it last.
-    by: ThreadId,
-    /// How many calls it has answered.
-    calls: u8,
-    /// It was told to free its VM, and is not lent any more.
-    is_freed: bool,
-}
-
-impl Known {
-    fn is_loaded(&self) -> bool {
-        !self.is_freed && self.calls >= 2
-    }
-
-    fn is_being_freed(&self) -> bool {
-        self.is_freed && !self.desk.is_gone.load(Ordering::Relaxed)
-    }
-}
-
-#[derive(Default)]
-struct State {
-    all: Vec<Known>,
-    /// Which of them nobody has borrowed. The last one was given back last.
-    idle: Vec<usize>,
-    /// Who has borrowed which.
-    borrowed: Vec<(ThreadId, usize)>,
-    /// How many are kept: [`Engine::keep_vm`]. They are not there for the files by which the others are counted.
-    kept: usize,
-    memory: Memory,
-}
-
-impl State {
-    fn vms(&self) -> Vms {
-        Vms {
-            count: self.all.iter().filter(|it| !it.is_freed).count(),
-            loaded: self.all.iter().filter(|it| it.is_loaded()).count(),
-        }
-    }
-}
-
-/// VMs on threads of their own, which lint threads borrow. None is started before it is needed.
-#[derive(Default)]
-struct Lending {
-    start: Arc<Start>,
-    demand: Demand,
-    state: Guarded<State>,
-    is_idle: Condition,
-}
-
-impl Lending {
-    /// Ends every engine. Nothing is being linted any more.
-    fn end_all(&self) {
-        for Known { desk, is_freed, .. } in core::mem::take(&mut self.state.lock().all) {
-            if !is_freed {
-                desk.say(Turn::End);
-            }
-            desk.hear(|turn| matches!(turn, Turn::Returned(_)));
-        }
-    }
-
-    /// Waits for an engine.
-    fn borrow(&self, size: usize, is_heavy: bool) -> Result<Borrowed<'_>, Vec<u8>> {
-        let me = std::thread::current().id();
-        let mut state = self.state.lock();
-        // Nothing is asked of it at the moment: this thread would be waiting for the answer.
-        if let Some(&(_, at)) = state.borrowed.iter().find(|it| it.0 == me) {
-            return Ok(Borrowed {
-                engines: self,
-                at,
-                desk: Arc::clone(&state.all[at].desk),
-                size: None,
-            });
-        }
-        let at = loop {
-            // What is heavy is for the first. Else the one that it had, which has grown by what this thread has given it, and the
-            // first one last.
-            let find = |is_it: &dyn Fn(usize) -> bool| state.idle.iter().rposition(|&at| is_it(at));
-            let found = match is_heavy {
-                true => find(&|at| at == 0),
-                false => find(&|at| state.all[at].by == me)
-                    .or_else(|| find(&|at| at != 0))
-                    .or_else(|| find(&|_| true)),
-            };
-            if let Some(found) = found {
-                let at = state.idle.remove(found);
-                state.all[at].by = me;
-                break at;
-            }
-            let vms = state.vms();
-            let can_start = (!is_heavy || state.all.is_empty())
-                && (state.memory).has_room_for_another(
-                    self.start.memory(),
-                    self.demand.left(),
-                    vms,
-                );
-            if can_start && (self.demand).is_worth_another(vms.count - state.kept) {
-                let (at, desk) = (state.all.len(), Arc::<Desk>::default());
-                let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
-                // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
-                // thread has no VM. The new one makes its own, and frees it itself before `end_all` returns.
-                std::thread::Builder::new()
-                    .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
-                    .spawn(move || run_engine(at, &start, &for_thread))
-                    .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
-                if state.all.is_empty() {
-                    state.memory.begin(self.demand.left());
-                }
-                state.all.push(Known {
-                    desk,
-                    by: me,
-                    calls: 0,
-                    is_freed: false,
-                });
-                break at;
-            }
-            self.is_idle.wait_guarded(&mut state);
-        };
-        state.borrowed.push((me, at));
-        Ok(Borrowed {
-            engines: self,
-            at,
-            desk: Arc::clone(&state.all[at].desk),
-            size: Some(size),
-        })
-    }
-}
-
-enum Threads {
-    Lent(Box<Lending>),
-    OnLintThreads(Arc<Crew>),
-}
-
 /// The VMs of a run.
-pub(crate) struct Engines(Threads);
-
-impl Default for Engines {
-    fn default() -> Engines {
-        Engines(
-            match bun_core::getenv_z(bun_core::zstr!("BUN_LINT_SAME_THREAD")) {
-                Some(b"1") => Threads::OnLintThreads(Arc::default()),
-                _ => Threads::Lent(Box::default()),
-            },
-        )
-    }
-}
+#[derive(Default)]
+pub(crate) struct Engines(Arc<Crew>);
 
 impl Engines {
     /// Runs the `exit` handlers of every VM. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
-        match &self.0 {
-            Threads::Lent(lending) => lending.end_all(),
-            Threads::OnLintThreads(crew) => crew.end_all(),
-        }
-    }
-
-    fn demand(&self) -> &Demand {
-        match &self.0 {
-            Threads::Lent(lending) => &lending.demand,
-            Threads::OnLintThreads(crew) => &crew.demand,
-        }
+        self.0.end_all();
     }
 }
 
 impl Engine for Engines {
-    fn lints(&self) -> bool {
-        matches!(self.0, Threads::OnLintThreads(_))
-    }
-
     fn is_here(&self) -> bool {
-        match &self.0 {
-            Threads::Lent(_) => true,
-            Threads::OnLintThreads(crew) => crew.here().is_some(),
-        }
+        self.0.here().is_some()
     }
 
     fn with_vm_here(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
-        match &self.0 {
-            Threads::Lent(lending) => then(&mut lending.borrow(size, size >= HEAVY)?),
-            Threads::OnLintThreads(crew) => match crew.here() {
-                Some(at) => Crew::with_vm_of(crew, at, size, then),
-                None => return Err(b"This thread cannot run the plugins.".to_vec()),
-            },
+        match self.0.here() {
+            Some(at) => Crew::with_vm_of(&self.0, at, size, then),
+            None => return Err(b"This thread cannot run the plugins.".to_vec()),
         }
         Ok(())
     }
@@ -1381,72 +1050,40 @@ impl Engine for Engines {
         size: usize,
         then: &mut (dyn FnMut(&mut dyn Vm) + Send),
     ) -> Result<(), Vec<u8>> {
-        match &self.0 {
-            Threads::OnLintThreads(crew) if crew.here().is_none() => Crew::post(crew, size, then),
-            _ => self.with_vm_here(size, then),
+        match self.0.here() {
+            Some(at) => Crew::with_vm_of(&self.0, at, size, then),
+            None => return Crew::post(&self.0, size, then),
         }
-    }
-
-    fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        match &self.0 {
-            Threads::Lent(_) => {
-                meanwhile();
-                Ok(())
-            }
-            Threads::OnLintThreads(crew) => Crew::work_off(crew, work, meanwhile),
-        }
-    }
-
-    fn busy(&self) -> usize {
-        match &self.0 {
-            Threads::Lent(_) => 0,
-            Threads::OnLintThreads(crew) => crew.busy.load(Ordering::Relaxed),
-        }
-    }
-
-    fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        let Threads::Lent(lending) = &self.0 else {
-            return self.with_vm_here(0, &mut |_| then());
-        };
-        let borrowed = lending.borrow(0, true)?;
-        lending.state.lock().kept += 1;
-        lending.is_idle.notify_all();
-        then();
-        lending.state.lock().kept -= 1;
-        drop(borrowed);
         Ok(())
     }
 
+    fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        Crew::work_off(&self.0, work, meanwhile)
+    }
+
+    fn busy(&self) -> usize {
+        self.0.busy.load(Ordering::Relaxed)
+    }
+
     fn sizes(&self) -> (usize, usize) {
-        match &self.0 {
-            Threads::Lent(lending) => {
-                let state = lending.state.lock();
-                (state.memory.most, state.all.len() - state.vms().count)
-            }
-            Threads::OnLintThreads(crew) => {
-                let state = crew.state.lock();
-                (state.memory.most, state.all.len() - state.vms().count)
-            }
-        }
+        let state = self.0.state.lock();
+        (state.memory.most, state.all.len() - state.vms().count)
     }
 
     fn may_come(&self, size: u64) {
-        self.demand().may_come(size);
+        self.0.demand.may_come(size);
     }
 
     fn comes(&self, size: u64) {
-        self.demand().comes(size);
+        self.0.demand.comes(size);
     }
 
     fn has_shown(&self, size: u64, has_come: bool) {
-        self.demand().has_shown(size, has_come);
+        self.0.demand.has_shown(size, has_come);
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {
-        match &self.0 {
-            Threads::Lent(lending) => lending.start.expect(&lending.demand, size, most),
-            Threads::OnLintThreads(crew) => crew.start.expect(&crew.demand, size, most),
-        }
+        self.0.start.expect(&self.0.demand, size, most);
     }
 }
 

@@ -7,6 +7,7 @@
 
 #include "root.h"
 
+#include "LintHost.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -164,7 +165,7 @@ struct LintScopes {
             auto it = scope(i);
             if (it[1] >= nodeCount || !isIndexOrNone(it[2], scopeCount) || it[3] >= scopeCount)
                 return false;
-            if (!isListOf(it[5], scopeCount) || !isListOf(it[6], variableCount) || !isListOf(it[7], referenceCount) || !isListOf(it[8], referenceCount))
+            if (!isListOf(it[4], variableCount) || !isListOf(it[5], scopeCount) || !isListOf(it[6], variableCount) || !isListOf(it[7], referenceCount) || !isListOf(it[8], referenceCount))
                 return false;
         }
         for (uint32_t i = 0; i < variableCount; ++i) {
@@ -686,10 +687,9 @@ private:
                 value = taints;
                 if (it[0] & hasArguments)
                     taints->set(m_globalObject, string(argumentsString), jsBoolean(true));
-                for (uint32_t variable : m_message.list(it[6])) {
+                for (uint32_t variable : m_message.list(it[4])) {
                     RETURN_IF_EXCEPTION(scope, void());
-                    if (m_message.variable(variable)[2] & isTaintedVariable) [[unlikely]]
-                        taints->set(m_globalObject, asObject(m_variables->getIndexQuickly(variable))->getDirect(m_variableNameOffset), jsBoolean(true));
+                    taints->set(m_globalObject, asObject(m_variables->getIndexQuickly(variable))->getDirect(m_variableNameOffset), jsBoolean(true));
                 }
                 break;
             }
@@ -875,7 +875,22 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
 
     JSValue result = maker.make();
     RETURN_IF_EXCEPTION(scope, {});
+    LintHost* host = LintHost::from(globalObject);
+    JSArray* made = asArray(result);
+    host->scopes.globalScope.set(vm, host, asObject(asArray(made->getIndexQuickly(1))->getIndexQuickly(0)));
+    host->scopes.nodeToScope.set(vm, host, uncheckedDowncast<JSWeakMap>(made->getIndexQuickly(3)));
+    host->scopes.declaredVariables.set(vm, host, uncheckedDowncast<JSWeakMap>(made->getIndexQuickly(4)));
     return JSValue::encode(result);
+}
+
+// `setScopeManager(manager)` keeps `sourceCode.scopeManager` of the file, which scope.js makes around what `scopes` returns.
+JSC_DEFINE_HOST_FUNCTION(jsLintSetScopeManager, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    LintHost* host = LintHost::from(globalObject);
+    if (JSObject* manager = callFrame->argument(0).getObject())
+        host->scopes.manager.set(vm, host, manager);
+    return JSValue::encode(jsUndefined());
 }
 
 // Adds what the program in src/lint/js_plugin/worker calls to its `native` object.
@@ -883,6 +898,7 @@ void addLintScopeFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
     native->putDirect(vm, Identifier::fromString(vm, "scopes"_s), JSFunction::create(vm, globalObject, 6, "scopes"_s, jsLintScopes, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "setScopeManager"_s), JSFunction::create(vm, globalObject, 1, "setScopeManager"_s, jsLintSetScopeManager, ImplementationVisibility::Public));
 }
 
 } // namespace Bun

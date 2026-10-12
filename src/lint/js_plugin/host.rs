@@ -12,7 +12,6 @@ use crate::linter::write_json;
 use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
-use crate::span::Span;
 use bun_collections::ByteSet;
 use bun_core::printer::json_stringify;
 use bun_core::strings::Utf16OffsetTable;
@@ -20,7 +19,7 @@ use bun_threading::Guarded;
 use core::cell::RefCell;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// ESLint's `context.report()`.
 #[derive(Clone, Debug)]
@@ -45,9 +44,8 @@ pub struct Suggested {
     pub message_id: Option<Box<str>>,
     /// `desc`
     pub message: Vec<u8>,
-    pub data: Vec<(Box<str>, Vec<u8>)>,
-    /// The rule gave `data`, which can be empty: ESLint has it in the message then.
-    pub has_data: bool,
+    /// `data` as JSON, if the rule gave any.
+    pub data: Option<Vec<u8>>,
     pub fix: Fix,
 }
 
@@ -148,59 +146,42 @@ pub(super) fn number(json: Option<&Json>) -> Option<u32> {
     }
 }
 
-fn text_of(json: Option<&Json>) -> Option<Box<str>> {
-    Some(std::str::from_utf8(json?.as_str()?).ok()?.into())
+/// [`Host::for_each`]
+struct Each<'e> {
+    /// The heavy ones, and the others.
+    lists: [Vec<usize>; 2],
+    /// How many of each are taken.
+    next: [AtomicUsize; 2],
+    work: &'e (dyn Fn(usize) + Sync),
 }
 
-/// `[start, end, text]`
-fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
-    let [start, end, text] = json?.as_array()? else {
-        return None;
-    };
-    // The byte order mark is at -1.
-    let at = |it: &Json| match it {
-        Json::Number(n) if *n < 0.0 => Some(0),
-        it => Some(offsets.to_bytes(number(Some(it))?)),
-    };
-    Some(Fix {
-        span: Span::new(at(start)?, at(end)?),
-        text: text.as_str()?.to_vec(),
-    })
+impl Each<'_> {
+    fn is_left(&self, list: usize) -> bool {
+        self.next[list].load(Ordering::Relaxed) < self.lists[list].len()
+    }
+
+    fn take(&self, list: usize) -> bool {
+        let next = self.lists[list].get(self.next[list].fetch_add(1, Ordering::Relaxed));
+        next.map(|&it| (self.work)(it)).is_some()
+    }
 }
 
-/// `[rule, message, messageId, line, column, endLine, endColumn, fix, suggestions]`
-fn report_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Report> {
-    let parts = json.as_array()?;
-    let suggestions = parts.get(8).and_then(Json::as_array).unwrap_or_default();
-    // `[messageId, desc, data, fix]`
-    let suggested = |it: &Json| {
-        let parts = it.as_array()?;
-        let data = parts.get(2).and_then(Json::as_object);
-        let has_data = data.is_some();
-        let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
-            Some((
-                std::str::from_utf8(key).ok()?.into(),
-                value.as_str()?.to_vec(),
-            ))
-        });
-        Some(Suggested {
-            message_id: text_of(parts.first()),
-            message: parts.get(1)?.as_str()?.to_vec(),
-            data: data.collect(),
-            has_data,
-            fix: fix_of(parts.get(3), offsets)?,
-        })
-    };
-    Some(Report {
-        rule: number(parts.first())?,
-        message: parts.get(1)?.as_str()?.to_vec(),
-        message_id: text_of(parts.get(2)),
-        line: number(parts.get(3)),
-        column: number(parts.get(4)),
-        end: number(parts.get(5)).zip(number(parts.get(6))),
-        fix: fix_of(parts.get(7), offsets),
-        suggestions: suggestions.iter().filter_map(suggested).collect(),
-    })
+impl Work for Each<'_> {
+    fn has_heavy(&self) -> bool {
+        self.is_left(0)
+    }
+
+    fn heavy(&self) -> bool {
+        self.take(0)
+    }
+
+    fn light(&self, _realm: usize) -> bool {
+        self.take(1)
+    }
+
+    fn needs_realms(&self) -> bool {
+        self.is_left(1)
+    }
 }
 
 /// What [`Host::run_on_block`] is given besides the file.
@@ -292,21 +273,6 @@ impl<'e> Host<'e> {
         self.engine.has_shown(size, has_come);
     }
 
-    /// [`Engine::keep_vm`]
-    pub fn keep_a_realm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        self.engine.keep_vm(then)
-    }
-
-    /// [`Engine::most_realms`]
-    pub fn most_realms(&self) -> usize {
-        self.engine.most_realms()
-    }
-
-    /// [`Engine::lints`]
-    pub fn lints(&self) -> bool {
-        self.engine.lints()
-    }
-
     /// [`Engine::work_off`]
     pub fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
         self.engine.work_off(work, meanwhile)
@@ -315,6 +281,26 @@ impl<'e> Host<'e> {
     /// [`Engine::busy`]
     pub fn busy(&self) -> usize {
         self.engine.busy()
+    }
+
+    /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy`: whether the file with that number
+    /// is [`HEAVY`](super::HEAVY).
+    pub fn for_each(
+        &self,
+        count: usize,
+        is_heavy: &dyn Fn(usize) -> bool,
+        work: &(dyn Fn(usize) + Sync),
+    ) {
+        let (heavy, light) = (0..count).partition(|&it| is_heavy(it));
+        let each = Each {
+            lists: [heavy, light],
+            next: Default::default(),
+            work,
+        };
+        // Without a realm each fails, and says why.
+        if self.engine.work_off(&each, &mut || ()).is_err() {
+            each.finish_here();
+        }
     }
 
     /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
@@ -582,7 +568,8 @@ impl<'e> Host<'e> {
         let flags = u32::from(wants_fixes)
             | (u32::from(has_mark) << 1)
             | (u32::from(is_espree) << 2)
-            | (u32::from(settings.sources.is_some()) << 3);
+            | (u32::from(settings.sources.is_some()) << 3)
+            | (u32::from(file.language().is_oxlint) << 4);
         wire::words(
             &mut message,
             &[
@@ -680,11 +667,8 @@ impl<'e> Host<'e> {
             };
             match kind {
                 result::DONE => {
-                    let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
-                    let mut reports = reported.take();
-                    reports.extend(part(0).iter().filter_map(|it| report_of(it, &offsets)));
-                    let used = part(1).iter().filter_map(|it| number(Some(it)));
-                    return Ok((reports, used.collect()));
+                    let used = parts.iter().filter_map(|it| number(Some(it)));
+                    return Ok((reported.take(), used.collect()));
                 }
                 result::FAILED => {
                     return Err(Failure {

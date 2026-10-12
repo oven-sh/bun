@@ -53,7 +53,7 @@ pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
 pub use message::{
-    Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
+    Data, Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
     Utf16Offsets, write_json, write_json_indented,
 };
 pub(crate) use per_file::PerFile;
@@ -1037,8 +1037,7 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
         let suggestion = Suggestion {
             message_id: Cow::Borrowed(""),
             message: message.message.clone(),
-            data: Vec::new(),
-            has_data: false,
+            data: Data::None,
             fix,
             kind,
         };

@@ -9,7 +9,7 @@
 //! - Names are separated by commas or by white space. A name means the rule whatever plugin it is written with.
 
 use super::directives::{ConfigComment, Label};
-use super::message::{LintMessage, Locator, RuleId, Suggestion, Suppression};
+use super::message::{Data, LintMessage, Locator, RuleId, Suggestion, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
@@ -459,8 +459,7 @@ pub(crate) fn apply<'a>(
             problem.suggestions.push(Suggestion {
                 message_id: Cow::Borrowed(""),
                 message: b"remove unused disable directive".to_vec(),
-                data: Vec::new(),
-                has_data: false,
+                data: Data::None,
                 fix: Fix {
                     span,
                     text: Vec::new(),

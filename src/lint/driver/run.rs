@@ -180,9 +180,9 @@ struct Files<'f> {
     plain: &'f [&'f Target],
     next_heavy: AtomicUsize,
     /// How many of `with_engine` are taken, and how many of those from the start and from the end.
-    taken: &'f AtomicUsize,
-    ends: [&'f AtomicUsize; 2],
-    next_plain: &'f AtomicUsize,
+    taken: AtomicUsize,
+    ends: [AtomicUsize; 2],
+    next_plain: AtomicUsize,
     lint: &'f (dyn Fn(&Target) + Sync),
 }
 
@@ -190,12 +190,6 @@ impl Files<'_> {
     fn lint_plain(&self) -> bool {
         let next = (self.plain).get(self.next_plain.fetch_add(1, Ordering::Relaxed));
         next.map(|target| (self.lint)(target)).is_some()
-    }
-
-    /// On the calling thread.
-    fn lint_the_rest(&self) {
-        while self.heavy() {}
-        while self.light(0) {}
     }
 }
 
@@ -215,7 +209,7 @@ impl Work for Files<'_> {
         }
         // A VM keeps the memory that its largest file took. So few of them start with the largest files and the others with
         // the smallest, until they meet.
-        let [first, last] = self.ends;
+        let [first, last] = &self.ends;
         let at = match realm % 4 {
             0 => Some(first.fetch_add(1, Ordering::Relaxed)),
             _ => (self.with_engine.len() - 1).checked_sub(last.fetch_add(1, Ordering::Relaxed)),
@@ -797,14 +791,13 @@ impl Run<'_> {
             loader.warn(&[b"Skipped ", &count, rules, way_out, them]);
         }
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
-        let most_engines = (pool.threads()).min(context.js_plugins.most_realms());
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
         // Those that a rule may hand back to the rule of its package.
         let may_come =
             (supported.iter()).filter(|it| may_be_handed_back(it) && it.size < HEAVY as u64);
         let count = with_engine.count() + may_come.clone().count();
-        (context.js_plugins).expect(count, size, most_engines);
+        (context.js_plugins).expect(count, size, pool.threads());
         (context.js_plugins).may_come(may_come.map(|it| it.size).sum());
         if !with_types.is_empty() {
             if !is_oxlint {
@@ -831,12 +824,6 @@ impl Run<'_> {
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
         let (heavy, with_engine) = with_engine.split_at(count(Needs::Heavy));
-        let (taken, first, last) = (
-            AtomicUsize::new(0),
-            AtomicUsize::new(0),
-            AtomicUsize::new(0),
-        );
-        let next_plain = AtomicUsize::new(0);
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
@@ -845,78 +832,39 @@ impl Run<'_> {
                 failure.lock().get_or_insert(error);
             }
         };
-        if context.js_plugins.lints() {
-            let files = Files {
-                heavy,
-                with_engine,
-                plain,
-                next_heavy: AtomicUsize::new(0),
-                taken: &taken,
-                ends: [&first, &last],
-                next_plain: &next_plain,
-                lint: &lint,
-            };
-            let mut lint_plain = || {
-                pool.for_each(pool.threads(), 1, &|worker| {
-                    if worker + 1 == pool.threads()
-                        && let Some(inferred) = context.inferred
-                    {
-                        inferred.begin();
-                    }
-                    // A thread with a VM that's busy counts as one of `--threads`. It goes on with these files once it's free.
-                    while worker + context.js_plugins.busy() < pool.threads() && files.lint_plain()
-                    {
-                    }
-                });
-            };
-            let needs_vm = !heavy.is_empty() || !with_engine.is_empty();
-            match needs_vm {
-                true if (context.js_plugins)
-                    .work_off(&files, &mut lint_plain)
-                    .is_ok() => {}
-                true => files.lint_the_rest(),
-                false => lint_plain(),
-            }
-        }
-        let threads = match context.js_plugins.lints() {
-            true => 0,
-            false => pool.threads(),
+        let files = Files {
+            heavy,
+            with_engine,
+            plain,
+            next_heavy: AtomicUsize::new(0),
+            taken: AtomicUsize::new(0),
+            ends: Default::default(),
+            next_plain: AtomicUsize::new(0),
+            lint: &lint,
         };
-        pool.for_each(threads, 1, &|worker| {
-            if worker + 1 == pool.threads()
-                && let Some(inferred) = context.inferred
+        let mut lint_plain = || {
+            pool.for_each(pool.threads(), 1, &|worker| {
+                if worker + 1 == pool.threads()
+                    && let Some(inferred) = context.inferred
+                {
+                    inferred.begin();
+                }
+                // A thread with a VM that's busy counts as one of `--threads`. It goes on with these files once it's free.
+                while worker + context.js_plugins.busy() < pool.threads() && files.lint_plain() {}
+            });
+        };
+        match heavy.is_empty() && with_engine.is_empty() {
+            true => lint_plain(),
+            // Without a VM each fails, and says why.
+            false
+                if (context.js_plugins)
+                    .work_off(&files, &mut lint_plain)
+                    .is_err() =>
             {
-                inferred.begin();
+                files.finish_here();
             }
-            // An engine keeps the memory that its largest file took, and a thread the engine that it had. So few threads begin
-            // with the largest, and the others with the smallest, until they meet.
-            let lint_with_engine = || {
-                while taken.fetch_add(1, Ordering::Relaxed) < with_engine.len() {
-                    let at = match worker % 4 {
-                        0 => Some(first.fetch_add(1, Ordering::Relaxed)),
-                        _ => (with_engine.len() - 1)
-                            .checked_sub(last.fetch_add(1, Ordering::Relaxed)),
-                    };
-                    if let Some(target) = at.and_then(|at| with_engine.get(at)) {
-                        lint(target);
-                    }
-                }
-            };
-            if worker == 0 && !heavy.is_empty() {
-                let mut lint_all = || heavy.iter().for_each(|target| lint(target));
-                if context.js_plugins.keep_a_realm(&mut lint_all).is_err() {
-                    lint_all();
-                }
-            }
-            // A thread can have to wait for an engine, so every other one begins with what needs none.
-            if worker % 2 == 0 {
-                lint_with_engine();
-            }
-            while let Some(target) = plain.get(next_plain.fetch_add(1, Ordering::Relaxed)) {
-                lint(target);
-            }
-            lint_with_engine();
-        });
+            false => {}
+        }
         phases.linting = started.elapsed().as_secs_f64();
         if let Some(error) = failure.get_mut().take() {
             return Err(error);
@@ -1345,7 +1293,10 @@ impl Run<'_> {
             results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
         }
         phases.linting += started.elapsed().as_secs_f64();
-        if let Some(thrown) = results.iter().find_map(|it| it.thrown.as_ref()) {
+        // ESLint lints one file after the other, so it stops at the first path. Which thread was first here is up to the clock.
+        let thrown = results.iter().filter(|it| it.thrown.is_some());
+        let first = thrown.min_by(|a, b| strings::order_utf16(&a.path, &b.path));
+        if let Some(thrown) = first.and_then(|it| it.thrown.as_ref()) {
             return self.fail(thrown);
         }
 

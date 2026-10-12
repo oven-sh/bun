@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include "LintReport.h"
+#include "LintScopes.h"
 #include "LintSourceCode.h"
 #include "LintTokens.h"
 #include "ZigGlobalObject.h"
@@ -59,6 +60,8 @@ public:
     bool hasBOM() const { return m_flags & 2; }
     // typescript-estree's tree and tokens if not.
     bool isEspree() const { return m_flags & 4; }
+    // The configuration is oxlint's, so plugins get what oxlint would give them.
+    bool isOxlint() const { return m_flags & 16; }
 
     // The index where each line starts. The first is 0.
     const WTF::Vector<uint32_t>& lineStarts()
@@ -78,11 +81,14 @@ public:
     JSC::JSObject* createPosition(JSC::VM&, double index);
     // `{ start: { line, column }, end: { line, column } }`
     JSC::JSObject* createLoc(JSC::VM&, double start, double end);
+    JSC::Structure* positionStructure() const { return m_positionStructure.get(); }
+    JSC::Structure* locStructure() const { return m_locStructure.get(); }
     // Whether `value` is an object with the Structure of what these two make, so that its properties are at the offsets 0 and 1.
     bool isPosition(JSC::JSValue value) const { return value.isCell() && value.asCell()->structure() == m_positionStructure.get(); }
     bool isLoc(JSC::JSValue value) const { return value.isCell() && value.asCell()->structure() == m_locStructure.get(); }
 
     LintReportState report;
+    LintScopeState scopes;
     LintSourceCodeState sourceCode;
     LintTokenState tokens;
 

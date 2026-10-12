@@ -11,6 +11,7 @@
 
 #include "LintHost.h"
 #include <JavaScriptCore/ArrayConstructor.h>
+#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -18,9 +19,10 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectInitializationScope.h>
 #include <JavaScriptCore/ParseInt.h>
-#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/PrivateName.h>
 #include <JavaScriptCore/StableSort.h>
 #include <JavaScriptCore/StringObject.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <array>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
@@ -411,8 +413,10 @@ Fix normalizeFixes(JSGlobalObject* globalObject, LintHost* host, JSValue owner, 
     if (callData.type == CallData::Type::None)
         return {};
     JSObject* fixer = state.fixer.get();
-    if (!fixer)
+    if (!fixer) {
         fixer = createFixer(globalObject, state, host);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     MarkedArgumentBuffer arguments;
     arguments.append(fixer);
     JSValue fix = call(globalObject, function, callData, owner, arguments);
@@ -574,42 +578,16 @@ void validateSuggestion(JSGlobalObject* globalObject, const LintReportState& nam
     kept.append(fix);
 }
 
-// Writes `Object.entries(data).map(([key, value]) => [key, String(value)])`. `data` is truthy.
-void writeData(JSGlobalObject* globalObject, JSValue data, Writer& writer)
+// `JSON.stringify(data)`, which is what ESLint's `json` formatter makes of it. Null if that throws or there's nothing to say.
+String stringifyData(JSGlobalObject* globalObject, JSValue data)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* object = data.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
-    PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, );
-    Vector<Identifier, 8> names;
-    MarkedArgumentBuffer values;
-    for (auto& key : keys) {
-        PropertyDescriptor descriptor;
-        bool exists = object->getOwnPropertyDescriptor(globalObject, key, descriptor);
-        RETURN_IF_EXCEPTION(scope, );
-        if (!exists || !descriptor.enumerable())
-            continue;
-        JSValue value = object->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, );
-        names.append(key);
-        values.append(value);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    String json = JSONStringify(globalObject, data, 0);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return {};
     }
-    if (values.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return;
-    }
-    writer.word(names.size());
-    for (unsigned i = 0; i < names.size(); ++i) {
-        JSString* string = toStringOrDescription(globalObject, values.at(i));
-        RETURN_IF_EXCEPTION(scope, );
-        auto view = string->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, );
-        writer.string(names[i].string());
-        writer.string(view);
-    }
+    return json;
 }
 
 // ESLint's `validateSuggestions` and `mapSuggestions`. `suggest` is an array. `beforeFixes` runs between the two. Writes the
@@ -623,10 +601,22 @@ NEVER_INLINE Mapped mapSuggestions(JSGlobalObject* globalObject, LintHost* host,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintReportState& state = host->report;
     MarkedArgumentBuffer suggested;
-    forEachInIterable(globalObject, suggest, [&](VM&, JSGlobalObject*, JSValue suggestion) {
-        validateSuggestion(globalObject, state, suggestion, messages, suggested);
-    });
+    // `suggest.forEach(..)`, which skips holes.
+    JSObject* list = asObject(suggest);
+    JSValue lengthValue = list->get(globalObject, globalObject->vm().propertyNames->length);
     RETURN_IF_EXCEPTION(scope, {});
+    uint64_t length = lengthValue.toLength(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    for (uint64_t i = 0; i < length; ++i) {
+        bool exists = list->hasProperty(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!exists)
+            continue;
+        JSValue suggestion = list->get(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        validateSuggestion(globalObject, state, suggestion, messages, suggested);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     if (suggested.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -647,32 +637,27 @@ NEVER_INLINE Mapped mapSuggestions(JSGlobalObject* globalObject, LintHost* host,
         if (!fix.exists)
             continue;
         ++mapped.withFix;
-        // The data is turned into strings even if nobody gets to see it.
-        bool isSent = desc.isString() && fix.canBeSent();
-        Vector<uint8_t> unseen;
-        Writer unseenWriter(unseen);
-        Writer& out = isSent ? writer : unseenWriter;
+        if (!desc.isString() || !fix.canBeSent())
+            continue;
         JSValue id = suggested.at(i + suggestionMessageId);
-        bool givesData = data.toBoolean(globalObject);
-        out.word((id.isString() ? hasId : 0) | (givesData ? hasData : 0));
-        if (isSent) {
-            auto view = asString(desc)->view(globalObject);
+        String json;
+        if (!data.isUndefined()) {
+            json = stringifyData(globalObject, data);
             RETURN_IF_EXCEPTION(scope, {});
-            out.string(view);
         }
+        writer.word((id.isString() ? hasId : 0) | (json.isNull() ? 0 : hasData));
+        auto view = asString(desc)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        writer.string(view);
         if (id.isString()) {
-            auto view = asString(id)->view(globalObject);
+            auto idView = asString(id)->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            out.string(view);
+            writer.string(idView);
         }
-        if (givesData) {
-            writeData(globalObject, data, out);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        if (isSent) {
-            fix.write(out);
-            ++mapped.written;
-        }
+        if (!json.isNull())
+            writer.string(json);
+        fix.write(writer);
+        ++mapped.written;
     }
     return mapped;
 }
@@ -737,7 +722,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
 
     // ESLint's `normalizeMultiArgReportCall`
     JSValue argument = callFrame->argument(0);
-    if (callFrame->argumentCount() > 1) [[unlikely]] {
+    if (callFrame->argumentCount() != 1) [[unlikely]] {
         unsigned at = 0;
         JSObject* made = constructEmptyObject(globalObject);
         made->putDirect(vm, state.name(Descriptor::Node), callFrame->argument(at++));
@@ -782,17 +767,23 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // Where it is, and the fix. With suggestions this runs after they are checked and before their fixes are asked for.
-    // `start` and `end` are read when the report is made.
-    JSValue start, end, line, column, endLine, endColumn;
+    // The message, where it is, and the fix. With suggestions this runs after they are checked and before their fixes are asked
+    // for. The lines and columns are read when the report is made.
+    JSValue start, line, column, endLine, endColumn;
+    bool hasEnd = false;
     Fix fix;
     auto locateAndFix = [&] {
         auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue data = descriptor.get(globalObject, Descriptor::Data);
+        RETURN_IF_EXCEPTION(scope, );
+        message = interpolate(globalObject, state, message, data);
+        RETURN_IF_EXCEPTION(scope, );
         if (!loc) {
             loc = descriptor.get(globalObject, Descriptor::Loc);
             RETURN_IF_EXCEPTION(scope, );
         }
-        if (loc.isUndefinedOrNull()) {
+        bool isOfNode = !loc.toBoolean(globalObject);
+        if (isOfNode) {
             loc = lintLocOf(globalObject, host, node);
             RETURN_IF_EXCEPTION(scope, );
         }
@@ -810,14 +801,13 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
                 (i ? endColumn : column) = jsNumber(found.column + 1);
             }
         } else {
-            // `start = loc.start ?? loc` and `end = loc.start ? loc.end : null`
+            // ESLint's `normalizeReportLoc`: a `loc` without a `start` is the start. The `loc` of a node is taken as it is.
             bool isPlain = host->isLoc(loc);
             start = isPlain ? asObject(loc)->getDirect(0) : loc.get(globalObject, state.start);
             RETURN_IF_EXCEPTION(scope, );
-            if (start.toBoolean(globalObject)) [[likely]] {
-                end = isPlain ? asObject(loc)->getDirect(1) : loc.get(globalObject, state.end);
-                RETURN_IF_EXCEPTION(scope, );
-            } else if (start.isUndefinedOrNull())
+            if (isOfNode || start.toBoolean(globalObject)) [[likely]]
+                hasEnd = true;
+            else
                 start = loc;
         }
         if (!host->wantsFixes())
@@ -845,10 +835,6 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSValue data = descriptor.get(globalObject, Descriptor::Data);
-    RETURN_IF_EXCEPTION(scope, {});
-    message = interpolate(globalObject, state, message, data);
-    RETURN_IF_EXCEPTION(scope, {});
     JSString* messageString = toStringOrDescription(globalObject, message);
     RETURN_IF_EXCEPTION(scope, {});
     // `position.line` and `position.column + 1`
@@ -869,9 +855,13 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
     if (start) [[likely]] {
         read(start, line, column);
         RETURN_IF_EXCEPTION(scope, {});
-        if (end && end.toBoolean(globalObject)) {
-            read(end, endLine, endColumn);
+        if (hasEnd) [[likely]] {
+            JSValue end = host->isLoc(loc) ? asObject(loc)->getDirect(1) : loc.get(globalObject, state.end);
             RETURN_IF_EXCEPTION(scope, {});
+            if (end.toBoolean(globalObject)) {
+                read(end, endLine, endColumn);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
     }
     auto messageView = messageString->view(globalObject);
@@ -960,100 +950,162 @@ JSArray* createPair(JSGlobalObject* globalObject, JSValue value)
     return pair;
 }
 
+bool checkText(JSGlobalObject* globalObject, ThrowScope& scope, FixKind kind, JSValue text)
+{
+    if (kind == FixKind::Remove || text.isString()) [[likely]]
+        return true;
+    throwTypeError(globalObject, scope, "'text' must be a string"_s);
+    return false;
+}
+
 // `insertTextAfterRange(range, text)` and the like.
-template<FixKind kind>
-JSValue fixRange(JSGlobalObject* globalObject, const LintReportState& state, JSValue range, JSValue text)
+EncodedJSValue fixRange(JSGlobalObject* globalObject, FixKind kind, JSValue range, JSValue text)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if constexpr (kind == FixKind::Remove)
-        text = jsEmptyString(vm);
-    else if (!text.isString()) {
-        throwTypeError(globalObject, scope, "'text' must be a string"_s);
+    if (!checkText(globalObject, scope, kind, text))
         return {};
-    }
-    if constexpr (kind == FixKind::InsertAfter || kind == FixKind::InsertBefore) {
+    if (kind == FixKind::Remove)
+        text = jsEmptyString(vm);
+    if (kind == FixKind::InsertAfter || kind == FixKind::InsertBefore) {
         JSValue index = lintGetIndex(globalObject, range, kind == FixKind::InsertAfter ? 1 : 0);
         RETURN_IF_EXCEPTION(scope, {});
         range = createPair(globalObject, index);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    JSFinalObject* fix = JSFinalObject::create(vm, state.fixStructure.get());
+    JSFinalObject* fix = JSFinalObject::create(vm, LintHost::from(globalObject)->report.fixStructure.get());
     fix->putDirectOffset(vm, 0, range);
     fix->putDirectOffset(vm, 1, text);
-    return fix;
+    return JSValue::encode(fix);
 }
 
-template<FixKind kind>
-EncodedJSValue fixRangeFunction(JSGlobalObject* globalObject, CallFrame* callFrame)
-{
-    return JSValue::encode(fixRange<kind>(globalObject, LintHost::from(globalObject)->report, callFrame->argument(0), callFrame->argument(1)));
-}
-
-// `insertTextAfter(nodeOrToken, text) { return this.insertTextAfterRange(nodeOrToken.range, text); }` and the like.
-template<FixKind kind>
-EncodedJSValue fixNodeFunction(JSGlobalObject* globalObject, CallFrame* callFrame)
+// `insertTextAfter(nodeOrToken, text)` and the like: `this.insertTextAfterRange(this.#sourceCode.getRange(nodeOrToken), text)`.
+EncodedJSValue fixNode(JSGlobalObject* globalObject, CallFrame* callFrame, FixKind kind)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    const LintReportState& state = LintHost::from(globalObject)->report;
-    JSValue thisValue = callFrame->thisValue();
-    // It's frozen.
-    bool isFixer = thisValue.isCell() && thisValue.asCell() == state.fixer.get();
-    JSValue method;
-    if (!isFixer) [[unlikely]] {
-        const Identifier& name = kind == FixKind::InsertAfter ? state.insertTextAfterRange
-            : kind == FixKind::InsertBefore                   ? state.insertTextBeforeRange
-            : kind == FixKind::Replace                        ? state.replaceTextRange
-                                                              : state.removeRange;
-        method = thisValue.get(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    JSValue range = lintGet(globalObject, callFrame->argument(0), state.range);
+    LintHost* host = LintHost::from(globalObject);
+    const LintReportState& state = host->report;
+    JSValue thisValue = callFrame->thisValue(), text = callFrame->argument(1);
+    if (!checkText(globalObject, scope, kind, text))
+        return {};
+    bool isUntouched = thisValue.isCell() && thisValue.asCell()->structure() == state.fixerStructure.get();
+    if (!isUntouched && (!thisValue.isObject() || !asObject(thisValue)->getDirect(vm, state.fixerBrand)))
+        return throwVMTypeError(globalObject, scope, "Cannot access invalid private field"_s);
+    JSValue range = host->sourceCode.range.get(globalObject, host, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
-    if (isFixer) [[likely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(fixRange<kind>(globalObject, state, range, callFrame->argument(1))));
-    auto callData = getCallData(method);
+
+    // Nobody has replaced the method.
+    auto& method = state.rangeMethods[static_cast<size_t>(kind)];
+    JSObject* prototype = state.fixerPrototype.get();
+    if (isUntouched && prototype->structure() == state.fixerPrototypeStructure.get() && prototype->getDirect(method.offset) == method.function.get()) [[likely]]
+        RELEASE_AND_RETURN(scope, fixRange(globalObject, kind, range, text));
+    JSValue function = thisValue.get(globalObject, method.name);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = getCallData(function);
     if (callData.type == CallData::Type::None) {
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, method));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, function));
         return {};
     }
     MarkedArgumentBuffer arguments;
     arguments.append(range);
-    if constexpr (kind != FixKind::Remove)
-        arguments.append(callFrame->argument(1));
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, method, callData, thisValue, arguments)));
+    if (kind != FixKind::Remove)
+        arguments.append(text);
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, function, callData, thisValue, arguments)));
 }
 
 } // namespace
 
-JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextAfter, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNodeFunction<FixKind::InsertAfter>(globalObject, callFrame); }
-JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextAfterRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRangeFunction<FixKind::InsertAfter>(globalObject, callFrame); }
-JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextBefore, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNodeFunction<FixKind::InsertBefore>(globalObject, callFrame); }
-JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextBeforeRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRangeFunction<FixKind::InsertBefore>(globalObject, callFrame); }
-JSC_DEFINE_HOST_FUNCTION(jsLintReplaceText, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNodeFunction<FixKind::Replace>(globalObject, callFrame); }
-JSC_DEFINE_HOST_FUNCTION(jsLintReplaceTextRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRangeFunction<FixKind::Replace>(globalObject, callFrame); }
-JSC_DEFINE_HOST_FUNCTION(jsLintRemove, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNodeFunction<FixKind::Remove>(globalObject, callFrame); }
-JSC_DEFINE_HOST_FUNCTION(jsLintRemoveRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRangeFunction<FixKind::Remove>(globalObject, callFrame); }
+JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextAfter, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNode(globalObject, callFrame, FixKind::InsertAfter); }
+JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextAfterRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRange(globalObject, FixKind::InsertAfter, callFrame->argument(0), callFrame->argument(1)); }
+JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextBefore, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNode(globalObject, callFrame, FixKind::InsertBefore); }
+JSC_DEFINE_HOST_FUNCTION(jsLintInsertTextBeforeRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRange(globalObject, FixKind::InsertBefore, callFrame->argument(0), callFrame->argument(1)); }
+JSC_DEFINE_HOST_FUNCTION(jsLintReplaceText, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNode(globalObject, callFrame, FixKind::Replace); }
+JSC_DEFINE_HOST_FUNCTION(jsLintReplaceTextRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRange(globalObject, FixKind::Replace, callFrame->argument(0), callFrame->argument(1)); }
+JSC_DEFINE_HOST_FUNCTION(jsLintRemove, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixNode(globalObject, callFrame, FixKind::Remove); }
+JSC_DEFINE_HOST_FUNCTION(jsLintRemoveRange, (JSGlobalObject * globalObject, CallFrame* callFrame)) { return fixRange(globalObject, FixKind::Remove, callFrame->argument(0), jsUndefined()); }
+
+JSC_DEFINE_HOST_FUNCTION(callRuleFixer, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMTypeError(globalObject, scope, "Cannot call a class constructor RuleFixer without |new|"_s);
+}
+
+// `constructor({ sourceCode })`. There's only one `sourceCode` here.
+JSC_DEFINE_HOST_FUNCTION(constructRuleFixer, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintReportState& state = LintHost::from(globalObject)->report;
+    callFrame->argument(0).get(globalObject, Identifier::fromString(vm, "sourceCode"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    if (newTarget == state.fixerConstructor.get()) {
+        JSObject* fixer = constructEmptyObject(vm, state.fixerStructure.get());
+        fixer->putDirectOffset(vm, 0, jsNull());
+        return JSValue::encode(fixer);
+    }
+    Structure* structure = InternalFunction::createSubclassStructure(globalObject, newTarget, globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, state.fixerPrototype.get(), JSFinalObject::defaultInlineCapacity));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* fixer = constructEmptyObject(vm, structure);
+    fixer->putDirect(vm, state.fixerBrand, jsNull(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return JSValue::encode(fixer);
+}
 
 namespace {
 
+// `class RuleFixer`
+void createFixerClass(JSGlobalObject* globalObject, LintReportState& state, LintHost* host)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* prototype = constructEmptyObject(globalObject);
+    JSFunction* constructor = JSFunction::create(vm, globalObject, 1, "RuleFixer"_s, callRuleFixer, ImplementationVisibility::Public, NoIntrinsic, constructRuleFixer);
+    // `length` and `name` come first. A function makes them when they're first asked for.
+    constructor->get(globalObject, vm.propertyNames->length);
+    RETURN_IF_EXCEPTION(scope, );
+    constructor->get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, );
+    constructor->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    prototype->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    auto add = [&](ASCIILiteral name, unsigned length, NativeFunction function) {
+        JSFunction* method = JSFunction::create(vm, globalObject, length, name, function, ImplementationVisibility::Public);
+        prototype->putDirect(vm, Identifier::fromString(vm, name), method, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        return method;
+    };
+    std::array<JSFunction*, 4> methods;
+    add("insertTextAfter"_s, 2, jsLintInsertTextAfter);
+    methods[0] = add("insertTextAfterRange"_s, 2, jsLintInsertTextAfterRange);
+    add("insertTextBefore"_s, 2, jsLintInsertTextBefore);
+    methods[1] = add("insertTextBeforeRange"_s, 2, jsLintInsertTextBeforeRange);
+    add("replaceText"_s, 2, jsLintReplaceText);
+    methods[2] = add("replaceTextRange"_s, 2, jsLintReplaceTextRange);
+    add("remove"_s, 1, jsLintRemove);
+    methods[3] = add("removeRange"_s, 1, jsLintRemoveRange);
+    for (size_t i = 0; i < methods.size(); ++i) {
+        state.rangeMethods[i].function.set(vm, host, methods[i]);
+        state.rangeMethods[i].offset = prototype->structure()->get(vm, state.rangeMethods[i].name);
+    }
+    // `#sourceCode`, which tells a fixer from other objects. Nothing lists a property with a private name.
+    PropertyOffset offset;
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, 1);
+    state.fixerStructure.set(vm, host, Structure::addPropertyTransition(vm, structure, state.fixerBrand, static_cast<unsigned>(PropertyAttribute::DontEnum), offset));
+    state.fixerPrototypeStructure.set(vm, host, prototype->structure());
+    state.fixerPrototype.set(vm, host, prototype);
+    state.fixerConstructor.set(vm, host, constructor);
+}
+
+// ESLint makes one for each file.
 JSObject* createFixer(JSGlobalObject* globalObject, LintReportState& state, LintHost* host)
 {
     VM& vm = globalObject->vm();
-    JSObject* fixer = constructEmptyObject(globalObject);
-    auto add = [&](ASCIILiteral name, unsigned length, NativeFunction function) {
-        fixer->putDirect(vm, Identifier::fromString(vm, name), JSFunction::create(vm, globalObject, length, name, function, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
-    };
-    add("insertTextAfter"_s, 2, jsLintInsertTextAfter);
-    add("insertTextAfterRange"_s, 2, jsLintInsertTextAfterRange);
-    add("insertTextBefore"_s, 2, jsLintInsertTextBefore);
-    add("insertTextBeforeRange"_s, 2, jsLintInsertTextBeforeRange);
-    add("replaceText"_s, 2, jsLintReplaceText);
-    add("replaceTextRange"_s, 2, jsLintReplaceTextRange);
-    add("remove"_s, 1, jsLintRemove);
-    add("removeRange"_s, 1, jsLintRemoveRange);
-    fixer->methodTable()->preventExtensions(fixer, globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!state.fixerStructure) {
+        createFixerClass(globalObject, state, host);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    JSObject* fixer = constructEmptyObject(vm, state.fixerStructure.get());
+    fixer->putDirectOffset(vm, 0, jsNull());
     state.fixer.set(vm, host, fixer);
     return fixer;
 }
@@ -1117,10 +1169,10 @@ void LintReportState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintH
     set(docs, "docs"_s);
     set(suggestion, "suggestion"_s);
     set(includes, "includes"_s);
-    set(insertTextAfterRange, "insertTextAfterRange"_s);
-    set(insertTextBeforeRange, "insertTextBeforeRange"_s);
-    set(replaceTextRange, "replaceTextRange"_s);
-    set(removeRange, "removeRange"_s);
+    constexpr std::array<ASCIILiteral, 4> methods { "insertTextAfterRange"_s, "insertTextBeforeRange"_s, "replaceTextRange"_s, "removeRange"_s };
+    for (size_t i = 0; i < methods.size(); ++i)
+        set(rangeMethods[i].name, methods[i]);
+    fixerBrand = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "sourceCode"_s));
     JSObject* objectPrototype = globalObject->objectPrototype();
     ruleStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "position"_s, "meta"_s, "report"_s })));
     fixStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "range"_s, "text"_s })));

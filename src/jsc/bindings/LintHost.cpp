@@ -52,6 +52,7 @@ void LintHost::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_locStructure);
     visitor.append(thisObject->m_text);
     thisObject->report.visit(visitor);
+    thisObject->scopes.visit(visitor);
     thisObject->sourceCode.visit(visitor);
     Locker locker { thisObject->cellLock() };
     thisObject->tokens.visit(visitor);
@@ -80,9 +81,11 @@ void LintHost::beginFile(VM& vm, JSString* text, uint32_t flags)
     m_lineStarts.clear();
     // Also what a plugin has asked for or reported between two files, from a promise or a timer.
     report.endFile();
+    scopes.endFile();
     sourceCode.endFile();
     Locker locker { cellLock() };
     tokens.reset();
+    tokens.searchesEverywhere = isOxlint();
 }
 
 void LintHost::endFile(VM& vm)

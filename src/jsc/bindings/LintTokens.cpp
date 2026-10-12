@@ -3,20 +3,22 @@
 // Rust says where the tokens and comments of the file are (src/lint/js_plugin/tokens.rs). A method searches these tables, and
 // an object is made for a token the first time a plugin gets it.
 //
-// Portions of this file are ported from ESLint, which is under the MIT License. The notice is in
-// src/lint/js_plugin/worker/report.js.
+// Ported from lib/languages/js/source-code/token-store in ESLint, which is under the MIT License. See LICENSE.md.
 
 #include "LintTokens.h"
 
 #include "LintHost.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectInitializationScope.h>
+#include <JavaScriptCore/Operations.h>
 #include <JavaScriptCore/ParseInt.h>
 #include <wtf/text/MakeString.h>
 
@@ -71,21 +73,19 @@ bool readDecodedValues(std::span<const uint32_t> words, size_t at, LintTokenStat
     return true;
 }
 
-// Copies the answer, and points the lists at the copy. Returns false if it's cut short.
+// Points the lists at the answer, which is Rust's and stays until `endFile`. Returns false if it's cut short.
 bool readAnswer(LintHost* host, uint32_t kind, LintSpan answer)
 {
     LintTokenState& state = host->tokens;
     Locker locker { host->cellLock() };
-    auto& message = kind == askForTokens ? state.tokenMessage : state.commentMessage;
-    message.resize(answer.len / 4);
-    memcpy(message.mutableSpan().data(), answer.ptr, message.size() * 4);
+    std::span message { reinterpret_cast<const uint32_t*>(answer.ptr), answer.len / 4 };
     size_t at = 0;
     if (kind == askForComments)
-        return readList(message.span(), at, &state.comments);
+        return readList(message, at, &state.comments);
     // The comments may be there already, and plugins may have objects for them.
-    return readList(message.span(), at, &state.tokens)
-        && readList(message.span(), at, state.comments.isLoaded ? nullptr : &state.comments)
-        && readDecodedValues(message.span(), at, state);
+    return readList(message, at, &state.tokens)
+        && readList(message, at, state.comments.isLoaded ? nullptr : &state.comments)
+        && readDecodedValues(message, at, state);
 }
 
 void load(JSGlobalObject* globalObject, LintHost* host, uint32_t kind)
@@ -162,13 +162,28 @@ JSObject* createToken(JSGlobalObject* globalObject, LintHost* host, LintTokenLis
     }
     auto kind = static_cast<LintTokenKind>(kindByte);
     bool isRegex = kind == LintTokenKind::RegularExpression;
+    bool isComment = &list == &state.comments;
+    LintTokenShape::Kind shapeKind;
+    if (host->isOxlint())
+        shapeKind = isComment ? LintTokenShape::OxlintComment : LintTokenShape::OxlintToken;
+    else if (!host->isEspree())
+        shapeKind = isRegex ? LintTokenShape::TypeScriptRegex : LintTokenShape::TypeScriptToken;
+    else if (isComment)
+        shapeKind = LintTokenShape::EspreeComment;
+    else
+        shapeKind = isRegex ? LintTokenShape::EspreeRegex : kind == LintTokenKind::Template ? LintTokenShape::EspreeTemplate
+                                                                                            : LintTokenShape::EspreeToken;
+    const LintTokenShape& shape = state.shapes[shapeKind];
 
-    JSFinalObject* token = JSFinalObject::create(vm, (isRegex ? state.regexTokenStructure : state.tokenStructure).get());
-    token->putDirectOffset(vm, 0, state.typeNames[kindByte].get());
-    token->putDirectOffset(vm, 2, jsNumber(start));
-    token->putDirectOffset(vm, 3, jsNumber(end));
+    JSFinalObject* token = JSFinalObject::create(vm, shape.structure.get());
+    token->putDirectOffset(vm, shape.typeOffset, state.typeNames[kindByte].get());
+    token->putDirectOffset(vm, shape.locOffset, shape.loc.get());
+    if (shape.startOffset != invalidOffset) {
+        token->putDirectOffset(vm, shape.startOffset, jsNumber(start));
+        token->putDirectOffset(vm, shape.endOffset, jsNumber(end));
+    }
 
-    const String* decoded = &list == &state.tokens && !state.decodedValues.isEmpty() ? decodedValue(state, index) : nullptr;
+    const String* decoded = !isComment && !state.decodedValues.isEmpty() ? decodedValue(state, index) : nullptr;
     JSString* value;
     if (decoded) [[unlikely]]
         value = jsString(vm, *decoded);
@@ -195,24 +210,28 @@ JSObject* createToken(JSGlobalObject* globalObject, LintHost* host, LintTokenLis
             value = slice(vm, host, start, end);
         }
     }
-    token->putDirectOffset(vm, 1, value);
+    token->putDirectOffset(vm, shape.valueOffset, value);
 
     JSArray* range = createRange(globalObject, start, end);
     if (!range) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    token->putDirectOffset(vm, 4, range);
+    token->putDirectOffset(vm, shape.rangeOffset, range);
 
     if (isRegex) {
         uint32_t slash = std::min(end, host->textString().length());
         while (slash > start + 1 && host->textString().codeUnitAt(slash - 1) != '/')
             --slash;
-        JSFinalObject* regex = JSFinalObject::create(vm, state.regexStructure.get());
-        token->putDirectOffset(vm, 5, regex);
-        regex->putDirectOffset(vm, 0, slice(vm, host, start + 1, slash - 1));
-        regex->putDirectOffset(vm, 1, slice(vm, host, slash, end));
-    }
+        bool isPatternFirst = host->isOxlint();
+        JSFinalObject* regex = JSFinalObject::create(vm, (isPatternFirst ? state.oxlintRegexStructure : state.regexStructure).get());
+        token->putDirectOffset(vm, shape.regexOffset, regex);
+        regex->putDirectOffset(vm, isPatternFirst ? 0 : 1, slice(vm, host, start + 1, slash - 1));
+        regex->putDirectOffset(vm, isPatternFirst ? 1 : 0, slice(vm, host, slash, end));
+    } else if (shape.regexOffset != invalidOffset)
+        token->putDirectOffset(vm, shape.regexOffset, jsUndefined());
+    if (shape.cachedLocOffset != invalidOffset)
+        token->putDirectOffset(vm, shape.cachedLocOffset, jsUndefined());
     list.objects[index].set(vm, host, token);
     return token;
 }
@@ -279,6 +298,11 @@ JSArray* createArray(JSGlobalObject* globalObject, LintHost* host, LintTokenList
 // ───────────── searching ─────────────
 
 // The index of the first of the sorted `numbers` that is not less than `number`.
+uint32_t lowerBound(std::span<const uint32_t> numbers, uint32_t number)
+{
+    return static_cast<uint32_t>(std::lower_bound(numbers.begin(), numbers.end(), number) - numbers.begin());
+}
+
 uint32_t lowerBound(std::span<const uint32_t> numbers, double number)
 {
     // Also if it's NaN.
@@ -286,20 +310,70 @@ uint32_t lowerBound(std::span<const uint32_t> numbers, double number)
         return 0;
     if (number > std::numeric_limits<uint32_t>::max())
         return static_cast<uint32_t>(numbers.size());
-    auto least = static_cast<uint32_t>(std::ceil(number));
-    return static_cast<uint32_t>(std::lower_bound(numbers.begin(), numbers.end(), least) - numbers.begin());
+    return lowerBound(numbers, static_cast<uint32_t>(std::ceil(number)));
+}
+
+// ESLint's `search`: the index of the first of `list` that starts at `location` or later.
+uint32_t search(const LintTokenList& list, double location)
+{
+    return std::isnan(location) ? list.count() : lowerBound(list.starts, location);
+}
+
+// ESLint's `indexMap[location]`. The map has the first and the last character of each token, with the index of the token, and
+// those of each comment, with the index of the token after it. All other places aren't in it.
+std::optional<uint32_t> indexAt(const LintTokenState& state, double location)
+{
+    if (!(location >= 0 && location <= std::numeric_limits<uint32_t>::max()) || location != std::floor(location))
+        return std::nullopt;
+    auto at = static_cast<uint32_t>(location);
+    auto& tokens = state.tokens;
+    uint32_t index = lowerBound(tokens.starts, at);
+    if (index < tokens.count() && tokens.starts[index] == at)
+        return index;
+    if (index && tokens.ends[index - 1] - 1 == at)
+        return index - 1;
+    auto& comments = state.comments;
+    uint32_t comment = lowerBound(comments.starts, at);
+    if ((comment < comments.count() && comments.starts[comment] == at) || (comment && comments.ends[comment - 1] - 1 == at))
+        return index;
+    return std::nullopt;
 }
 
 // The index of the first token that starts at `location` or later. -1 is the start of the file.
-int64_t firstIndex(const LintTokenList& list, double location)
+// This is ESLint's `getFirstIndex`, which only finds it if a token or a comment starts or ends at `location`. oxlint always does.
+int64_t firstIndex(const LintTokenState& state, double location)
 {
-    return location == -1 ? 0 : lowerBound(list.starts, location);
+    auto& tokens = state.tokens;
+    if (location == -1)
+        return 0;
+    if (state.searchesEverywhere)
+        return lowerBound(tokens.starts, location);
+    if (auto index = indexAt(state, location))
+        return *index;
+    if (auto index = indexAt(state, location - 1)) {
+        if (*index >= tokens.count())
+            return tokens.count();
+        return tokens.starts[*index] >= location ? *index : *index + 1;
+    }
+    return location == 0 ? 0 : tokens.count();
 }
 
-// The index of the last token that ends at `location` or before. -1 is the end of the file.
-int64_t lastIndex(const LintTokenList& list, double location)
+// The index of the last token that ends at `location` or before. -1 is the end of the file. ESLint's `getLastIndex`.
+int64_t lastIndex(const LintTokenState& state, double location)
 {
-    return location == -1 ? int64_t(list.count()) - 1 : int64_t(lowerBound(list.ends, location + 1)) - 1;
+    auto& tokens = state.tokens;
+    if (location == -1)
+        return int64_t(tokens.count()) - 1;
+    if (state.searchesEverywhere)
+        return int64_t(lowerBound(tokens.ends, location + 1)) - 1;
+    if (auto index = indexAt(state, location))
+        return int64_t(*index) - 1;
+    if (auto index = indexAt(state, location - 1)) {
+        if (*index >= tokens.count())
+            return int64_t(tokens.count()) - 1;
+        return tokens.ends[*index] > location ? int64_t(*index) - 1 : *index;
+    }
+    return location == 0 ? -1 : int64_t(tokens.count()) - 1;
 }
 
 // From `start` to `end` of the text. -1 is where the file starts or ends.
@@ -318,13 +392,11 @@ public:
         , m_includeComments(includeComments)
         , m_span(span)
     {
-        m_token = isForward ? firstIndex(state.tokens, span.start) : lastIndex(state.tokens, span.end);
+        m_token = isForward ? firstIndex(state, span.start) : lastIndex(state, span.end);
         if (!includeComments)
-            m_last = isForward ? lastIndex(state.tokens, span.end) : firstIndex(state.tokens, span.start);
-        else if (isForward)
-            m_comment = firstIndex(state.comments, span.start);
+            m_last = isForward ? lastIndex(state, span.end) : firstIndex(state, span.start);
         else
-            m_comment = (span.end == -1 ? int64_t(state.comments.count()) : int64_t(lowerBound(state.comments.starts, span.end))) - 1;
+            m_comment = isForward ? search(state.comments, span.start) : int64_t(search(state.comments, span.end)) - 1;
     }
 
     bool next(TokenRef& ref)
@@ -373,32 +445,15 @@ void throwNotAnObject(JSGlobalObject* globalObject, ThrowScope& scope, JSValue v
 // `target.range`. `parameter` is what ESLint calls `target`.
 JSValue rangeOf(JSGlobalObject* globalObject, LintHost* host, JSValue target, ASCIILiteral parameter)
 {
-    VM& vm = globalObject->vm();
-    LintTokenState& state = host->tokens;
-    if (target.isObject()) [[likely]] {
-        JSObject* object = asObject(target);
-        Structure* structure = object->structure();
-        auto bits = reinterpret_cast<uintptr_t>(structure);
-        auto& entry = state.rangeOffsets[((bits >> 7) ^ (bits >> 13)) % state.rangeOffsets.size()];
-        if (entry.structure.get() == structure) [[likely]]
-            return object->getDirect(entry.offset);
-        // The offsets of a dictionary change, and others answer for themselves.
-        if (!structure->isDictionary() && !structure->typeInfo().overridesGetOwnPropertySlot()) {
-            unsigned attributes;
-            PropertyOffset offset = structure->get(vm, state.rangeName, attributes);
-            if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                entry.structure.set(vm, host, structure);
-                entry.offset = offset;
-                return object->getDirect(offset);
-            }
-        }
-    }
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintPropertyCache& range = host->sourceCode.range;
+    if (JSValue value = range.getOwnData(globalObject->vm(), host, target)) [[likely]]
+        return value;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (target.isUndefinedOrNull()) {
         throwNotAnObject(globalObject, scope, target, parameter, ".range"_s);
         return {};
     }
-    RELEASE_AND_RETURN(scope, target.get(globalObject, state.rangeName));
+    RELEASE_AND_RETURN(scope, target.get(globalObject, range.name()));
 }
 
 // `range[index]`
@@ -441,6 +496,7 @@ Span toSpanSlow(JSGlobalObject* globalObject, Locations locations)
     span.start = locations.start.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, span);
     span.end = locations.end.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, span);
     return span;
 }
 
@@ -459,32 +515,32 @@ enum class Where {
     Between,
 };
 
-template<Where where>
-void readLocations(JSGlobalObject* globalObject, LintHost* host, CallFrame* callFrame, Locations& locations, ASCIILiteral parameter = "node"_s)
+// `first` and `second` are the first two arguments of the method. Only `Between` looks at `second`.
+void readLocations(JSGlobalObject* globalObject, LintHost* host, JSValue first, JSValue second, Where where, Locations& locations, ASCIILiteral parameter = "node"_s)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue range = rangeOf(globalObject, host, callFrame->argument(0), where == Where::Between ? "left"_s : parameter);
+    if (where == Where::Between)
+        parameter = "left"_s;
+    JSValue range = rangeOf(globalObject, host, first, parameter);
     RETURN_IF_EXCEPTION(scope, void());
-    if constexpr (where == Where::Inside) {
-        locations.start = elementOf(globalObject, range, 0, parameter);
+    if (where == Where::Inside || where == Where::Before) {
+        (where == Where::Inside ? locations.start : locations.end) = elementOf(globalObject, range, 0, parameter);
         RETURN_IF_EXCEPTION(scope, void());
+        if (where == Where::Before)
+            return;
         RELEASE_AND_RETURN(scope, void(locations.end = elementOf(globalObject, range, 1, parameter)));
-    } else if constexpr (where == Where::Before)
-        RELEASE_AND_RETURN(scope, void(locations.end = elementOf(globalObject, range, 0, parameter)));
-    else if constexpr (where == Where::After)
-        RELEASE_AND_RETURN(scope, void(locations.start = elementOf(globalObject, range, 1, parameter)));
-    else {
-        locations.start = elementOf(globalObject, range, 1, "left"_s);
-        RETURN_IF_EXCEPTION(scope, void());
-        range = rangeOf(globalObject, host, callFrame->argument(1), "right"_s);
-        RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, void(locations.end = elementOf(globalObject, range, 0, "right"_s)));
     }
+    locations.start = elementOf(globalObject, range, 1, parameter);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (where == Where::After)
+        return;
+    range = rangeOf(globalObject, host, second, "right"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, void(locations.end = elementOf(globalObject, range, 0, "right"_s)));
 }
 
-template<Where where>
-ALWAYS_INLINE JSValue optionsOf(CallFrame* callFrame)
+JSValue optionsOf(CallFrame* callFrame, Where where)
 {
     return callFrame->argument(where == Where::Between ? 2 : 1);
 }
@@ -564,7 +620,7 @@ void readCountOptions(JSGlobalObject* globalObject, LintHost* host, JSValue valu
     bool isValid = true;
     if (value.isNumber()) {
         options.number = toInt32(value.asNumber());
-        isValid = options.number >= -1;
+        isValid = options.number >= 0;
     } else if (value.isCallable())
         options.filter = value;
     else if (value.toBoolean(globalObject)) {
@@ -592,6 +648,89 @@ bool passesFilter(JSGlobalObject* globalObject, const Options& options, JSObject
     JSValue result = call(globalObject, options.filter, options.callData, jsUndefined(), arguments);
     RETURN_IF_EXCEPTION(scope, false);
     return result.toBoolean(globalObject);
+}
+
+// ───────────── `loc` ─────────────
+
+JSObject* createLoc(VM& vm, LintHost* host, LintLocShape::Kind kind, double start, double end)
+{
+    const LintLocShape& shape = host->tokens.locShapes[kind];
+    JSFinalObject* loc = JSFinalObject::create(vm, shape.structure.get());
+    for (unsigned i = 0; i < 2; ++i) {
+        auto [line, column] = host->positionOf(i ? end : start);
+        JSFinalObject* position = JSFinalObject::create(vm, shape.positionStructure.get());
+        position->putDirectOffset(vm, shape.isReversed ? 1 : 0, jsNumber(line));
+        position->putDirectOffset(vm, shape.isReversed ? 0 : 1, jsNumber(column));
+        loc->putDirectOffset(vm, shape.isReversed ? 1 - i : i, position);
+    }
+    return loc;
+}
+
+// From the `range` of `token`, and the lines of the current file. So it's wrong for a token of an earlier file.
+JSObject* locOf(JSGlobalObject* globalObject, LintHost* host, JSObject* token, LintLocShape::Kind kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue range = rangeOf(globalObject, host, token, "token"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    double start = numberIn(globalObject, range, 0, "token"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    double end = numberIn(globalObject, range, 1, "token"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return createLoc(vm, host, kind, start, end);
+}
+
+// Makes the property `name`, which has been computed just now, the plain data property that it has looked like all along.
+void replaceCustomValue(VM& vm, JSObject* object, PropertyName name, JSValue value)
+{
+    unsigned attributes;
+    if (object->getDirectOffset(vm, name, attributes) != invalidOffset && (attributes & PropertyAttribute::CustomValue))
+        object->putDirect(vm, name, value, attributes & ~PropertyAttribute::CustomValue);
+}
+
+// To a plugin `loc` is a plain data property, as with ESLint. It's computed when it's first read.
+EncodedJSValue computeLoc(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName name, LintLocShape::Kind kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* token = asObject(JSValue::decode(thisValue));
+    JSObject* loc = locOf(globalObject, LintHost::from(globalObject), token, kind);
+    RETURN_IF_EXCEPTION(scope, {});
+    replaceCustomValue(vm, token, name, loc);
+    return JSValue::encode(loc);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lintEspreeTokenLoc, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    return computeLoc(globalObject, thisValue, name, LintLocShape::EspreeToken);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lintEspreeOtherLoc, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    return computeLoc(globalObject, thisValue, name, LintLocShape::EspreeOther);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lintTypeScriptLoc, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    return computeLoc(globalObject, thisValue, name, LintLocShape::TypeScript);
+}
+
+// oxlint's `get loc()`, which returns the same object each time.
+JSC_DEFINE_HOST_FUNCTION(jsLintOxlintLoc, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    auto* token = dynamicDowncast<JSFinalObject>(callFrame->thisValue());
+    if (!token)
+        return throwVMTypeError(globalObject, scope, "Expected a token or a comment"_s);
+    JSValue cached = token->getDirect(vm, host->tokens.cachedLocName);
+    if (cached && cached.isObject())
+        return JSValue::encode(cached);
+    JSObject* loc = locOf(globalObject, host, token, LintLocShape::Oxlint);
+    RETURN_IF_EXCEPTION(scope, {});
+    token->putDirect(vm, host->tokens.cachedLocName, loc, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return JSValue::encode(loc);
 }
 
 // ───────────── what the methods do ─────────────
@@ -674,7 +813,12 @@ EncodedJSValue paddedTokens(JSGlobalObject* globalObject, LintHost* host, Locati
     loadTokens(globalObject, host);
     RETURN_IF_EXCEPTION(scope, {});
     auto& tokens = host->tokens.tokens;
-    RELEASE_AND_RETURN(scope, JSValue::encode(createArray(globalObject, host, tokens, firstIndex(tokens, span.start) - beforeCount, lastIndex(tokens, span.end) + afterCount + 1)));
+    int64_t from = std::max<int64_t>(0, firstIndex(host->tokens, span.start) - beforeCount);
+    int64_t to = std::min<int64_t>(int64_t(tokens.count()) - 1, lastIndex(host->tokens, span.end) + afterCount) + 1;
+    // ESLint ends with `tokens.slice(from, to)`, which counts a negative `to` from the end.
+    if (to < 0)
+        to += tokens.count();
+    RELEASE_AND_RETURN(scope, JSValue::encode(createArray(globalObject, host, tokens, from, to)));
 }
 
 // The comments from where `cursor` is up to the first token.
@@ -696,43 +840,40 @@ EncodedJSValue adjacentComments(JSGlobalObject* globalObject, LintHost* host, bo
     RELEASE_AND_RETURN(scope, JSValue::encode(createArray(globalObject, found, !isForward)));
 }
 
-template<Where where>
-ALWAYS_INLINE EncodedJSValue oneTokenMethod(JSGlobalObject* globalObject, CallFrame* callFrame, bool isForward)
+EncodedJSValue oneTokenMethod(JSGlobalObject* globalObject, CallFrame* callFrame, Where where, bool isForward)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<where>(globalObject, host, callFrame, locations);
+    readLocations(globalObject, host, callFrame->argument(0), callFrame->argument(1), where, locations);
     RETURN_IF_EXCEPTION(scope, {});
     Options options;
-    readSkipOptions(globalObject, host, optionsOf<where>(callFrame), options);
+    readSkipOptions(globalObject, host, optionsOf(callFrame, where), options);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, oneToken(globalObject, host, isForward, locations, options));
 }
 
-template<Where where>
-ALWAYS_INLINE EncodedJSValue someTokensMethod(JSGlobalObject* globalObject, CallFrame* callFrame, bool isForward)
+EncodedJSValue someTokensMethod(JSGlobalObject* globalObject, CallFrame* callFrame, Where where, bool isForward)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<where>(globalObject, host, callFrame, locations);
+    readLocations(globalObject, host, callFrame->argument(0), callFrame->argument(1), where, locations);
     RETURN_IF_EXCEPTION(scope, {});
     Options options;
-    readCountOptions(globalObject, host, optionsOf<where>(callFrame), options);
+    readCountOptions(globalObject, host, optionsOf(callFrame, where), options);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, someTokens(globalObject, host, isForward, locations, options));
 }
 
 // Until ESLint 8: `getTokenBefore(node, { includeComments: true, skip })`, and the same with `getTokenAfter`.
-template<Where where>
-ALWAYS_INLINE EncodedJSValue tokenOrCommentMethod(JSGlobalObject* globalObject, CallFrame* callFrame, bool isForward)
+EncodedJSValue tokenOrCommentMethod(JSGlobalObject* globalObject, CallFrame* callFrame, Where where, bool isForward)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<where>(globalObject, host, callFrame, locations);
+    readLocations(globalObject, host, callFrame->argument(0), callFrame->argument(1), where, locations);
     RETURN_IF_EXCEPTION(scope, {});
     Options options;
     options.includeComments = true;
@@ -831,7 +972,7 @@ EncodedJSValue isSpaceBetween(JSGlobalObject* globalObject, CallFrame* callFrame
     while (true) {
         TokenRef next;
         if (!Cursor(state, true, { currentEnd, -1 }, true).next(next)) {
-            throwNotAnObject(globalObject, scope, jsNull(), "next"_s, ".range"_s);
+            throwNotAnObject(globalObject, scope, jsNull(), "nextToken"_s, ".range"_s);
             return {};
         }
         auto& list = listOf(state, next);
@@ -854,6 +995,11 @@ EncodedJSValue allOf(JSGlobalObject* globalObject, LintHost* host, LintTokenList
         return JSValue::encode(all);
     JSArray* all = createArray(globalObject, host, list, 0, list.count());
     RETURN_IF_EXCEPTION(scope, {});
+    // oxlint has one frozen array for every file without comments.
+    if (host->isOxlint() && &list == &host->tokens.comments && !list.count()) {
+        objectConstructorFreeze(globalObject, all);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     list.all.set(vm, host, all);
     return JSValue::encode(all);
 }
@@ -877,8 +1023,14 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetTokenByRangeStart, (JSGlobalObject * globalObj
     }
     loadTokens(globalObject, host);
     RETURN_IF_EXCEPTION(scope, {});
+    // Nothing but a number is equal to where a token starts. ESLint still computes with it.
+    if (!offset.isNumber()) {
+        offset.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNull());
+    }
     TokenRef ref;
-    if (!offset.isNumber() || !Cursor(host->tokens, true, { offset.asNumber(), -1 }, includeComments).next(ref))
+    if (!Cursor(host->tokens, true, { offset.asNumber(), -1 }, includeComments).next(ref))
         return JSValue::encode(jsNull());
     if (listOf(host->tokens, ref).starts[ref.index] != offset.asNumber())
         return JSValue::encode(jsNull());
@@ -888,7 +1040,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetTokenByRangeStart, (JSGlobalObject * globalObj
 #define LINT_TOKEN_METHOD(name, implementation, where, isForward)                          \
     JSC_DEFINE_HOST_FUNCTION(name, (JSGlobalObject * globalObject, CallFrame * callFrame)) \
     {                                                                                      \
-        return implementation<Where::where>(globalObject, callFrame, isForward);           \
+        return implementation(globalObject, callFrame, Where::where, isForward);           \
     }
 
 LINT_TOKEN_METHOD(jsLintGetFirstToken, oneTokenMethod, Inside, true)
@@ -913,7 +1065,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetTokens, (JSGlobalObject * globalObject, CallFr
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<Where::Inside>(globalObject, host, callFrame, locations);
+    readLocations(globalObject, host, callFrame->argument(0), callFrame->argument(1), Where::Inside, locations);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, paddedTokens(globalObject, host, locations, callFrame->argument(1), callFrame->argument(2)));
 }
@@ -923,7 +1075,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetTokensBetween, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<Where::Between>(globalObject, host, callFrame, locations);
+    readLocations(globalObject, host, callFrame->argument(0), callFrame->argument(1), Where::Between, locations);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, paddedTokens(globalObject, host, locations, callFrame->argument(2), callFrame->argument(2)));
 }
@@ -939,7 +1091,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCommentsExistBetween, (JSGlobalObject * globalObj
     loadComments(globalObject, host);
     RETURN_IF_EXCEPTION(scope, {});
     auto& comments = host->tokens.comments;
-    uint32_t index = lowerBound(comments.starts, start);
+    uint32_t index = search(comments, start);
     // ESLint doesn't look at `right` if no comment is left.
     if (index >= comments.count())
         return JSValue::encode(jsBoolean(false));
@@ -950,32 +1102,34 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCommentsExistBetween, (JSGlobalObject * globalObj
     return JSValue::encode(jsBoolean(index < comments.count() && comments.ends[index] <= end));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintGetCommentsBefore, (JSGlobalObject * globalObject, CallFrame* callFrame))
+EncodedJSValue lintTokenOrCommentNextTo(JSGlobalObject* globalObject, JSValue nodeOrToken, bool isAfter)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<Where::Before>(globalObject, host, callFrame, locations, "nodeOrToken"_s);
+    readLocations(globalObject, host, nodeOrToken, {}, isAfter ? Where::After : Where::Before, locations);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, adjacentComments(globalObject, host, false, locations));
+    Options options;
+    options.includeComments = true;
+    RELEASE_AND_RETURN(scope, oneToken(globalObject, host, isAfter, locations, options));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintGetCommentsAfter, (JSGlobalObject * globalObject, CallFrame* callFrame))
+EncodedJSValue lintCommentsNextTo(JSGlobalObject* globalObject, JSValue nodeOrToken, bool isAfter)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<Where::After>(globalObject, host, callFrame, locations, "nodeOrToken"_s);
+    readLocations(globalObject, host, nodeOrToken, {}, isAfter ? Where::After : Where::Before, locations, "nodeOrToken"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, adjacentComments(globalObject, host, true, locations));
+    RELEASE_AND_RETURN(scope, adjacentComments(globalObject, host, isAfter, locations));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintGetCommentsInside, (JSGlobalObject * globalObject, CallFrame* callFrame))
+EncodedJSValue lintCommentsInside(JSGlobalObject* globalObject, JSValue node)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintHost* host = LintHost::from(globalObject);
     Locations locations;
-    readLocations<Where::Inside>(globalObject, host, callFrame, locations);
+    readLocations(globalObject, host, node, {}, Where::Inside, locations);
     RETURN_IF_EXCEPTION(scope, {});
     Options options;
     options.includeComments = true;
@@ -983,9 +1137,24 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetCommentsInside, (JSGlobalObject * globalObject
     RELEASE_AND_RETURN(scope, someTokens(globalObject, host, true, locations, options, true));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsLintGetCommentsBefore, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return lintCommentsNextTo(globalObject, callFrame->argument(0), false);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsLintGetCommentsAfter, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return lintCommentsNextTo(globalObject, callFrame->argument(0), true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsLintGetCommentsInside, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return lintCommentsInside(globalObject, callFrame->argument(0));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsLintIsSpaceBetween, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return isSpaceBetween(globalObject, callFrame, callFrame->argument(2).toBoolean(globalObject));
+    return isSpaceBetween(globalObject, callFrame, false);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsLintIsSpaceBetweenTokens, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -993,28 +1162,80 @@ JSC_DEFINE_HOST_FUNCTION(jsLintIsSpaceBetweenTokens, (JSGlobalObject * globalObj
     return isSpaceBetween(globalObject, callFrame, true);
 }
 
-// `tokens()` is `ast.tokens`.
+namespace {
+
+// `ast.tokens` or `ast.comments`
+EncodedJSValue listOfProgram(JSGlobalObject* globalObject, bool isComments)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    LintHost* host = LintHost::from(globalObject);
+    if (isComments)
+        loadComments(globalObject, host);
+    else
+        loadTokens(globalObject, host);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, allOf(globalObject, host, isComments ? host->tokens.comments : host->tokens.tokens));
+}
+
+// With ESLint the two are plain data properties. Like `loc` they're computed when they're first read.
+EncodedJSValue computeListOfProgram(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName name, bool isComments)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    EncodedJSValue list = listOfProgram(globalObject, isComments);
+    RETURN_IF_EXCEPTION(scope, {});
+    replaceCustomValue(vm, asObject(JSValue::decode(thisValue)), name, JSValue::decode(list));
+    return list;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lintProgramTokens, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    return computeListOfProgram(globalObject, thisValue, name, false);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(lintProgramComments, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    return computeListOfProgram(globalObject, thisValue, name, true);
+}
+
+} // namespace
+
+EncodedJSValue lintComments(JSGlobalObject* globalObject)
+{
+    return listOfProgram(globalObject, true);
+}
+
+// oxlint's `get tokens()`
 JSC_DEFINE_HOST_FUNCTION(jsLintTokens, (JSGlobalObject * globalObject, CallFrame*))
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    LintHost* host = LintHost::from(globalObject);
-    loadTokens(globalObject, host);
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, allOf(globalObject, host, host->tokens.tokens));
+    return listOfProgram(globalObject, false);
 }
 
-// `comments()` is `ast.comments`.
+// `comments()` is `ast.comments`, and oxlint's `get comments()`.
 JSC_DEFINE_HOST_FUNCTION(jsLintComments, (JSGlobalObject * globalObject, CallFrame*))
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    LintHost* host = LintHost::from(globalObject);
-    loadComments(globalObject, host);
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, allOf(globalObject, host, host->tokens.comments));
+    return listOfProgram(globalObject, true);
 }
 
-// `tokensAndComments()` is `sourceCode.tokensAndComments`.
-JSC_DEFINE_HOST_FUNCTION(jsLintTokensAndComments, (JSGlobalObject * globalObject, CallFrame*))
+// `defineTokenLists(program)` adds `comments` and `tokens` to the `Program`.
+JSC_DEFINE_HOST_FUNCTION(jsLintDefineTokenLists, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* program = callFrame->argument(0).getObject();
+    if (!program)
+        return throwVMTypeError(globalObject, scope, "Expected a node"_s);
+    LintHost* host = LintHost::from(globalObject);
+    for (auto& list : host->tokens.listsOfProgram) {
+        if (host->isOxlint())
+            program->putDirectNonIndexAccessor(vm, list.name, list.getter.get(), static_cast<unsigned>(PropertyAttribute::Accessor));
+        else
+            program->putDirectCustomAccessor(vm, list.name, list.customValue.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+EncodedJSValue lintTokensAndComments(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1028,6 +1249,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintTokensAndComments, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
     host->tokens.tokensAndComments.set(vm, host, asArray(all));
     return JSValue::encode(all);
+}
+
+// `tokensAndComments()`
+JSC_DEFINE_HOST_FUNCTION(jsLintTokensAndComments, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return lintTokensAndComments(globalObject);
 }
 
 // ───────────── the class ─────────────
@@ -1089,7 +1316,7 @@ struct Method {
     NativeFunction function;
 };
 
-// In the order of ESLint's class, then what ESLint has elsewhere or doesn't have any more.
+// As in ESLint's class.
 const Method methods[] = {
     { "getTokenByRangeStart"_s, 2, jsLintGetTokenByRangeStart },
     { "getFirstToken"_s, 2, jsLintGetFirstToken },
@@ -1110,10 +1337,6 @@ const Method methods[] = {
     { "getCommentsBefore"_s, 1, jsLintGetCommentsBefore },
     { "getCommentsAfter"_s, 1, jsLintGetCommentsAfter },
     { "getCommentsInside"_s, 1, jsLintGetCommentsInside },
-    { "getTokenOrCommentBefore"_s, 2, jsLintGetTokenOrCommentBefore },
-    { "getTokenOrCommentAfter"_s, 2, jsLintGetTokenOrCommentAfter },
-    { "isSpaceBetween"_s, 2, jsLintIsSpaceBetween },
-    { "isSpaceBetweenTokens"_s, 2, jsLintIsSpaceBetweenTokens },
 };
 
 constexpr ASCIILiteral tokenTypeNames[lintTokenKindCount] = {
@@ -1136,9 +1359,132 @@ constexpr ASCIILiteral tokenTypeNames[lintTokenKindCount] = {
 
 } // namespace
 
+namespace {
+
+JSC_DEFINE_HOST_FUNCTION(illegalConstructor, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMTypeError(globalObject, scope, "Illegal constructor"_s);
+}
+
+// acorn's `new Position(line, col)`
+JSC_DEFINE_HOST_FUNCTION(constructPosition, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    JSFinalObject* position = JSFinalObject::create(vm, LintHost::from(globalObject)->tokens.locShapes[LintLocShape::EspreeToken].positionStructure.get());
+    position->putDirectOffset(vm, 0, callFrame->argument(0));
+    position->putDirectOffset(vm, 1, callFrame->argument(1));
+    return JSValue::encode(position);
+}
+
+// acorn's `position.offset(n)`
+JSC_DEFINE_HOST_FUNCTION(positionOffset, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue line = callFrame->thisValue().get(globalObject, vm.propertyNames->line);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue column = callFrame->thisValue().get(globalObject, vm.propertyNames->column);
+    RETURN_IF_EXCEPTION(scope, {});
+    column = jsAdd(globalObject, column, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSFinalObject* position = JSFinalObject::create(vm, LintHost::from(globalObject)->tokens.locShapes[LintLocShape::EspreeToken].positionStructure.get());
+    position->putDirectOffset(vm, 0, line);
+    position->putDirectOffset(vm, 1, column);
+    return JSValue::encode(position);
+}
+
+// A class of a parser, for `constructor.name` and `instanceof`. Returns its prototype.
+JSObject* createClass(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, unsigned length, NativeFunction construct = illegalConstructor)
+{
+    JSObject* prototype = constructEmptyObject(globalObject);
+    JSFunction* constructor = JSFunction::create(vm, globalObject, length, name, illegalConstructor, ImplementationVisibility::Public, NoIntrinsic, construct);
+    constructor->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    prototype->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return prototype;
+}
+
+struct Key {
+    ASCIILiteral name;
+    PropertyOffset LintTokenShape::* offset;
+};
+constexpr Key typeKey { "type"_s, &LintTokenShape::typeOffset };
+constexpr Key valueKey { "value"_s, &LintTokenShape::valueOffset };
+constexpr Key startKey { "start"_s, &LintTokenShape::startOffset };
+constexpr Key endKey { "end"_s, &LintTokenShape::endOffset };
+constexpr Key locKey { "loc"_s, &LintTokenShape::locOffset };
+constexpr Key rangeKey { "range"_s, &LintTokenShape::rangeOffset };
+constexpr Key regexKey { "regex"_s, &LintTokenShape::regexOffset };
+
+// Makes an object with `keys` the way a plugin could, and takes its Structure.
+void initializeShape(VM& vm, JSGlobalObject* globalObject, LintHost* host, LintTokenShape::Kind kind, JSObject* prototype, JSCell* loc, std::initializer_list<Key> keys)
+{
+    LintTokenShape& shape = host->tokens.shapes[kind];
+    auto* getter = dynamicDowncast<GetterSetter>(loc);
+    JSFinalObject* object = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, prototype, keys.size() + (getter ? 1 : 0)));
+    for (auto& key : keys) {
+        Identifier name = Identifier::fromString(vm, key.name);
+        if (key.offset != &LintTokenShape::locOffset)
+            object->putDirect(vm, name, jsUndefined());
+        else if (getter)
+            object->putDirectNonIndexAccessor(vm, name, getter, static_cast<unsigned>(PropertyAttribute::Accessor));
+        else
+            object->putDirectCustomAccessor(vm, name, loc, static_cast<unsigned>(PropertyAttribute::CustomValue));
+        shape.*key.offset = object->structure()->get(vm, name);
+    }
+    if (getter) {
+        object->putDirect(vm, host->tokens.cachedLocName, jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        shape.cachedLocOffset = object->structure()->get(vm, host->tokens.cachedLocName);
+    }
+    shape.structure.set(vm, host, object->structure());
+    shape.loc.set(vm, host, loc);
+}
+
+void initializeShapes(VM& vm, JSGlobalObject* globalObject, LintHost* host)
+{
+    LintTokenState& state = host->tokens;
+    JSObject* objectPrototype = globalObject->objectPrototype();
+    auto startAndEnd = std::to_array<ASCIILiteral>({ "start"_s, "end"_s });
+    auto lineAndColumn = std::to_array<ASCIILiteral>({ "line"_s, "column"_s });
+    auto initializeLoc = [&](LintLocShape::Kind kind, Structure* structure, Structure* positionStructure, bool isReversed = false) {
+        state.locShapes[kind].structure.set(vm, host, structure);
+        state.locShapes[kind].positionStructure.set(vm, host, positionStructure);
+        state.locShapes[kind].isReversed = isReversed;
+    };
+
+    JSObject* positionPrototype = createClass(vm, globalObject, "Position"_s, 2, constructPosition);
+    positionPrototype->putDirect(vm, Identifier::fromString(vm, "offset"_s), JSFunction::create(vm, globalObject, 1, "offset"_s, positionOffset, ImplementationVisibility::Public));
+    Structure* position = LintHost::createShape(vm, globalObject, positionPrototype, lineAndColumn);
+    Structure* plainLoc = host->locStructure();
+    initializeLoc(LintLocShape::EspreeToken, LintHost::createShape(vm, globalObject, createClass(vm, globalObject, "SourceLocation"_s, 3), startAndEnd), position);
+    initializeLoc(LintLocShape::EspreeOther, plainLoc, position);
+    initializeLoc(LintLocShape::TypeScript, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "end"_s, "start"_s })), LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "column"_s, "line"_s })), true);
+    initializeLoc(LintLocShape::Oxlint, plainLoc, host->positionStructure());
+    state.regexStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "flags"_s, "pattern"_s })));
+    state.oxlintRegexStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "pattern"_s, "flags"_s })));
+
+    JSObject* tokenPrototype = createClass(vm, globalObject, "Token"_s, 1);
+    JSCell* tokenLoc = CustomGetterSetter::create(vm, lintEspreeTokenLoc, nullptr);
+    JSCell* otherLoc = CustomGetterSetter::create(vm, lintEspreeOtherLoc, nullptr);
+    initializeShape(vm, globalObject, host, LintTokenShape::EspreeToken, tokenPrototype, tokenLoc, { typeKey, valueKey, startKey, endKey, locKey, rangeKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::EspreeRegex, tokenPrototype, tokenLoc, { typeKey, valueKey, startKey, endKey, locKey, rangeKey, regexKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::EspreeTemplate, objectPrototype, otherLoc, { typeKey, valueKey, locKey, startKey, endKey, rangeKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::EspreeComment, objectPrototype, otherLoc, { typeKey, valueKey, startKey, endKey, rangeKey, locKey });
+
+    JSCell* typeScriptLoc = CustomGetterSetter::create(vm, lintTypeScriptLoc, nullptr);
+    initializeShape(vm, globalObject, host, LintTokenShape::TypeScriptToken, objectPrototype, typeScriptLoc, { typeKey, locKey, rangeKey, valueKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::TypeScriptRegex, objectPrototype, typeScriptLoc, { typeKey, locKey, rangeKey, regexKey, valueKey });
+
+    JSCell* oxlintLoc = GetterSetter::create(vm, globalObject, JSFunction::create(vm, globalObject, 0, "get loc"_s, jsLintOxlintLoc, ImplementationVisibility::Public), nullptr);
+    initializeShape(vm, globalObject, host, LintTokenShape::OxlintToken, createClass(vm, globalObject, "Token"_s, 0), oxlintLoc, { typeKey, valueKey, regexKey, startKey, endKey, rangeKey, locKey });
+    initializeShape(vm, globalObject, host, LintTokenShape::OxlintComment, createClass(vm, globalObject, "Comment"_s, 0), oxlintLoc, { typeKey, valueKey, startKey, endKey, rangeKey, locKey });
+}
+
+} // namespace
+
 void LintTokenState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintHost* host)
 {
-    rangeName = Identifier::fromString(vm, "range"_s);
+    cachedLocName = Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "loc"_s));
     includeCommentsName = Identifier::fromString(vm, "includeComments"_s);
     skipName = Identifier::fromString(vm, "skip"_s);
     countName = Identifier::fromString(vm, "count"_s);
@@ -1146,7 +1492,14 @@ void LintTokenState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintHo
     // Rules compare them with literals, which are atoms too.
     for (size_t i = 0; i < lintTokenKindCount; ++i)
         typeNames[i].set(vm, host, jsNontrivialString(vm, Identifier::fromString(vm, tokenTypeNames[i]).string()));
-    regexStructure.set(vm, host, LintHost::createShape(vm, globalObject, globalObject->objectPrototype(), std::to_array<ASCIILiteral>({ "pattern"_s, "flags"_s })));
+    initializeShapes(vm, globalObject, host);
+    auto initializeList = [&](size_t index, ASCIILiteral name, ASCIILiteral getterName, NativeFunction getter, GetValueFunc customValue) {
+        listsOfProgram[index].name = Identifier::fromString(vm, name);
+        listsOfProgram[index].getter.set(vm, host, GetterSetter::create(vm, globalObject, JSFunction::create(vm, globalObject, 0, getterName, getter, ImplementationVisibility::Public), nullptr));
+        listsOfProgram[index].customValue.set(vm, host, CustomGetterSetter::create(vm, customValue, nullptr));
+    };
+    initializeList(0, "comments"_s, "get comments"_s, jsLintComments, lintProgramComments);
+    initializeList(1, "tokens"_s, "get tokens"_s, jsLintTokens, lintProgramTokens);
 
     JSObject* prototype = constructEmptyObject(globalObject);
     auto* store = LintTokenStoreConstructor::create(vm, globalObject, prototype);
@@ -1167,31 +1520,15 @@ void LintTokenState::reset()
         list->objects.clear();
         list->all.clear();
     }
-    tokenMessage.clear();
-    commentMessage.clear();
     decodedValues.clear();
     tokensAndComments.clear();
-}
-
-// `tokenStore(prototype)` returns the class. `prototype` is what the tokens and comments inherit from.
-JSC_DEFINE_HOST_FUNCTION(jsLintTokenStore, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* prototype = callFrame->argument(0).getObject();
-    if (!prototype)
-        return throwVMTypeError(globalObject, scope, "Expected a prototype"_s);
-    LintHost* host = LintHost::from(globalObject);
-    host->tokens.tokenStructure.set(vm, host, LintHost::createShape(vm, globalObject, prototype, std::to_array<ASCIILiteral>({ "type"_s, "value"_s, "start"_s, "end"_s, "range"_s })));
-    host->tokens.regexTokenStructure.set(vm, host, LintHost::createShape(vm, globalObject, prototype, std::to_array<ASCIILiteral>({ "type"_s, "value"_s, "start"_s, "end"_s, "range"_s, "regex"_s })));
-    return JSValue::encode(host->tokens.constructor.get());
 }
 
 void addLintTokenFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "tokenStore"_s), JSFunction::create(vm, globalObject, 1, "tokenStore"_s, jsLintTokenStore, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "tokens"_s), JSFunction::create(vm, globalObject, 0, "tokens"_s, jsLintTokens, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "TokenStore"_s), LintHost::from(globalObject)->tokens.constructor.get());
+    native->putDirect(vm, Identifier::fromString(vm, "defineTokenLists"_s), JSFunction::create(vm, globalObject, 1, "defineTokenLists"_s, jsLintDefineTokenLists, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "comments"_s), JSFunction::create(vm, globalObject, 0, "comments"_s, jsLintComments, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "tokensAndComments"_s), JSFunction::create(vm, globalObject, 0, "tokensAndComments"_s, jsLintTokensAndComments, ImplementationVisibility::Public));
 }

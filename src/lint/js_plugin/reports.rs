@@ -6,8 +6,7 @@
 //! - A report: `u32` rule, `u32` flags, `f64` line, column, endLine and endColumn, `u32` number of suggestions, the message, the
 //!   `messageId` if [`HAS_ID`], the fix if [`HAS_FIX`], the suggestions.
 //! - A fix: `f64` start and end, the text.
-//! - A suggestion: `u32` flags, `desc`, the `messageId` if [`HAS_ID`], the data if [`HAS_DATA`], the fix.
-//! - Data: `u32` number of entries, then a key and a value for each.
+//! - A suggestion: `u32` flags, `desc`, the `messageId` if [`HAS_ID`], `data` as JSON if [`HAS_DATA`], the fix.
 
 use super::host::{Report, Suggested};
 use crate::fix::Fix;
@@ -68,17 +67,14 @@ impl<'a> Reader<'a> {
             0 => None,
             _ => self.name()?,
         };
-        let has_data = flags & HAS_DATA != 0;
-        let mut data = Vec::new();
-        for _ in 0..if has_data { self.word()? } else { 0 } {
-            let (key, value) = (self.name()?, self.string()?);
-            data.extend(key.map(|key| (key, value.to_vec())));
-        }
+        let data = match flags & HAS_DATA {
+            0 => None,
+            _ => Some(self.string()?.to_vec()),
+        };
         Some(self.fix(offsets)?.map(|fix| Suggested {
             message_id,
             message,
             data,
-            has_data,
             fix,
         }))
     }

@@ -6,6 +6,7 @@
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSWeakMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <span>
 #include <wtf/Vector.h>
@@ -30,6 +31,7 @@ struct LintSourceCodeState {
         parent.visit(visitor);
         type.visit(visitor);
         visitor.append(locGetter);
+        visitor.append(scopeCache);
         visitor.append(constructor);
         visitor.append(instanceStructure);
         visitor.append(servicesStructure);
@@ -37,17 +39,10 @@ struct LintSourceCodeState {
         visitor.append(directiveStructure);
         visitor.append(directivesStructure);
         visitor.append(commentsStructure);
-        visitor.append(includeComments);
-        visitor.append(getTokenBefore);
-        visitor.append(getTokenAfter);
-        visitor.append(getCommentsBefore);
-        visitor.append(getCommentsInside);
         visitor.append(inlineConfigNodes);
         visitor.append(disableDirectives);
         visitor.append(program);
         visitor.append(scopeManager);
-        visitor.append(comments);
-        visitor.append(tokensAndComments);
         visitor.append(parserOptions);
         visitor.append(visitorKeys);
         visitor.append(lines);
@@ -60,9 +55,12 @@ struct LintSourceCodeState {
     // Built once.
     LintPropertyCache range, loc, parent, type;
     JSC::Identifier line, column, start, end, value, body, properties, elements, cases, commentsName;
+    JSC::Identifier functionExpressionScope, childScopes, upper, block, variables, set, get, defs, references, identifier, eslintUsed;
     JSC::Identifier emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations;
     // The getter of `loc` that nodes and tokens inherit.
     JSC::WriteBarrier<JSC::JSObject> locGetter;
+    // By node: what `getScope` has found.
+    JSC::WriteBarrier<JSC::JSWeakMap> scopeCache;
     JSC::WriteBarrier<JSC::JSObject> constructor;
     JSC::WriteBarrier<JSC::Structure> instanceStructure;
     JSC::WriteBarrier<JSC::Structure> servicesStructure;
@@ -72,19 +70,10 @@ struct LintSourceCodeState {
     JSC::WriteBarrier<JSC::Structure> directivesStructure;
     // `{ leading, trailing }`
     JSC::WriteBarrier<JSC::Structure> commentsStructure;
-    // `{ includeComments: true }`
-    JSC::WriteBarrier<JSC::JSObject> includeComments;
-    // Methods of `TokenStore`.
-    JSC::WriteBarrier<JSC::JSObject> getTokenBefore;
-    JSC::WriteBarrier<JSC::JSObject> getTokenAfter;
-    JSC::WriteBarrier<JSC::JSObject> getCommentsBefore;
-    JSC::WriteBarrier<JSC::JSObject> getCommentsInside;
 
     // Functions of the program in src/lint/js_plugin/worker, for the parts of a file that it still makes.
     JSC::WriteBarrier<JSC::JSObject> program;
     JSC::WriteBarrier<JSC::JSObject> scopeManager;
-    JSC::WriteBarrier<JSC::JSObject> comments;
-    JSC::WriteBarrier<JSC::JSObject> tokensAndComments;
     JSC::WriteBarrier<JSC::JSObject> parserOptions;
     // ESLint's `visitorKeys`, for typescript-estree and for espree.
     JSC::WriteBarrier<JSC::JSArray> visitorKeys;

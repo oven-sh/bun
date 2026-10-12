@@ -1,4 +1,24 @@
-// Portions of this file are copied from ESLint, which is under the MIT License. The notice is in report.js.
+// Portions of this file are copied from ESLint, which is under the MIT License:
+//
+// Copyright OpenJS Foundation and other contributors, <www.openjsf.org>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
 
 // ───────────── the program ─────────────
 //
@@ -24,6 +44,10 @@ const { statSync } = require("node:fs");
   const { isBuiltin } = nodeModule;
   nodeModule.builtinModules = nodeModule.builtinModules.filter(name => !isOfBun(name));
   nodeModule.isBuiltin = name => !isOfBun(name) && isBuiltin(name);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
 }
 
 const LOAD = 1;
@@ -289,8 +313,6 @@ let fileSettings = null;
 const allSettings = new Map();
 // By id: a rule with its options. `own`: what its contexts have of their own.
 const configured = new Map();
-// `context.report` is the one in src/jsc/bindings/LintReport.cpp.
-const usesNativeReport = process.env.BUN_LINT_NATIVE_REPORT !== "0";
 
 const isNonArrayObject = value => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -455,18 +477,14 @@ function configure(id, position) {
   // A function is a rule without `meta`, as for ESLint until version 8.
   const rule = typeof found === "function" ? { create: found } : found;
   // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
-  // `reporter`: what `native.reporter` has made.
-  const entry = { rule, ruleId, own: null, position: 0, once: null, reporter: null };
-  const meta = rule.meta;
+  // `reporter`: `{ position, meta, report }`, where `report` is `context.report`. See src/jsc/bindings/LintReport.cpp.
+  const entry = { rule, ruleId, own: null, position: 0, once: null, reporter: native.reporter(rule.meta) };
   entry.own = {
     id: ruleId,
     // ESLint leaves them as they are, and rules add to them.
     options: fileSettings.freezes ? deepFreeze(options) : options,
-    report(...args) {
-      report(entry.position, meta, args);
-    },
+    report: entry.reporter.report,
   };
-  if (usesNativeReport) entry.own.report = (entry.reporter = native.reporter(meta)).report;
   configured.set(id, entry);
   return entry;
 }
@@ -580,8 +598,7 @@ function program() {
     if (isTraversing) matches = tree.matches;
     makeNodes();
     const root = nodes[0];
-    Object.defineProperty(root, "comments", { get: comments, enumerable: true, configurable: true });
-    Object.defineProperty(root, "tokens", { get: tokens, enumerable: true, configurable: true });
+    native.defineTokenLists(root);
   }
   return nodes[0];
 }
@@ -889,7 +906,6 @@ function traverse() {
 function reset() {
   native.endFile();
   text = "";
-  lineStarts = lines = inlineConfigNodes = disableDirectives = parserServices = null;
   sourceCode = new SourceCode();
   tree = null;
   nodes = [];
@@ -900,8 +916,6 @@ function reset() {
   codePathCalls = null;
   hasListeners = hasExitListeners = isTraversing = isWithoutListened = false;
   currentRule = currentNode = null;
-  reports = [];
-  resetTokens();
   resetScopes();
 }
 
@@ -926,8 +940,6 @@ function lint() {
   const unloaded = new Set(entries.filter(it => typeof it === "number"));
   if (unloaded.size > 0) return [...unloaded];
   const pathStart = 24 + 4 * (plugins + count);
-  wantsFixes = (flags & 1) !== 0;
-  hasBOM = (flags & 2) !== 0;
   fileDialect = (flags >> 2) & 1;
   filename = nativePath(decode(buffer, pathStart, pathStart + pathLength), nodePath);
   physicalFilename =
@@ -938,8 +950,7 @@ function lint() {
   native.beginFile(text, flags);
   for (let position = 0; position < count; position++) {
     const entry = entries[position];
-    entry.position = position;
-    if (entry.reporter !== null) entry.reporter.position = position;
+    entry.position = entry.reporter.position = position;
     currentRule = entry;
     // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
     // under one of them.
@@ -1060,8 +1071,8 @@ function respond(kind) {
     if (missing === NEEDS_SETTINGS) return `${NEEDS_SETTINGS}[]`;
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
     const used = usedVariables();
-    if (usesNativeReport) native.sendReports();
-    return reports.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([reports, used]);
+    native.sendReports();
+    return used.length === 0 ? DONE : DONE + JSON.stringify(used);
   } catch (error) {
     const line = currentNode === null ? null : currentNode.loc.start.line;
     return FAILED + JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]);

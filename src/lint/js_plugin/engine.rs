@@ -6,7 +6,7 @@ use bun_threading::Guarded;
 /// the details, appends the answer.
 pub type Serve<'s> = dyn FnMut(u32, &[u8], &mut Vec<u8>) + 's;
 
-/// A JavaScript realm in which the [`PROGRAM`](super::PROGRAM) runs.
+/// A JavaScript realm in which the [`PROGRAM`](super::PROGRAM) runs. It belongs to one thread.
 pub trait Vm {
     /// Calls the program with a message: what it is, one of [`wire::call`](super::wire::call), and its content. Returns what
     /// the program returns, if that is a promise what it resolves to. `Err`: the realm is of no more use.
@@ -27,19 +27,18 @@ pub trait Work: Sync {
 
     /// Whether one of the other files that needs a realm hasn't been taken yet.
     fn needs_realms(&self) -> bool;
+
+    /// Does all that is left on the calling thread.
+    fn finish_here(&self) {
+        while self.heavy() {}
+        while self.light(0) {}
+    }
 }
 
 /// Has the realms.
 pub trait Engine: Sync {
-    /// Whether a realm belongs to a thread that lints. If so, files that need one go through [`Engine::work_off`].
-    fn lints(&self) -> bool {
-        false
-    }
-
-    /// Whether [`Engine::with_vm_here`] works on the calling thread.
-    fn is_here(&self) -> bool {
-        true
-    }
+    /// Whether the calling thread has a realm.
+    fn is_here(&self) -> bool;
 
     /// Calls `then` on the calling thread with a realm, which nothing else uses meanwhile. `then` can ask for one itself, and
     /// isn't kept waiting. `size`: that of the file which the realm is for, 0 if it is for none. `Err`: there is none, and
@@ -51,28 +50,15 @@ pub trait Engine: Sync {
         &self,
         size: usize,
         then: &mut (dyn FnMut(&mut dyn Vm) + Send),
-    ) -> Result<(), Vec<u8>> {
-        self.with_vm_here(size, then)
-    }
+    ) -> Result<(), Vec<u8>>;
 
     /// Has every thread with a realm work on `work` until nothing is left, and starts as many of them as the files are worth.
     /// Calls `meanwhile` on the calling thread, and returns when both are done. `Err`: no such thread could be started, so
     /// only `meanwhile` has run.
-    fn work_off(&self, _work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        meanwhile();
-        Ok(())
-    }
+    fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>>;
 
     /// How many threads are busy with [`Engine::work_off`].
-    fn busy(&self) -> usize {
-        0
-    }
-
-    /// Calls `then`. Whatever asks for a realm meanwhile, on this thread, has the same one: that for [`HEAVY`] files. `Err`: as of
-    /// [`Engine::with_vm_here`].
-    fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        self.with_vm_here(0, &mut |_| then())
-    }
+    fn busy(&self) -> usize;
 
     /// Says how many files are going to need a realm, how large they are together, and how many realms there can be at most.
     /// Nobody says so if a realm is needed to find out.
@@ -91,11 +77,6 @@ pub trait Engine: Sync {
     /// For `--timing`: the most that all realms together have taken, in bytes, and how many were freed because that was too much.
     fn sizes(&self) -> (usize, usize) {
         (0, 0)
-    }
-
-    /// How many realms there can be at a time.
-    fn most_realms(&self) -> usize {
-        usize::MAX
     }
 }
 
@@ -178,10 +159,16 @@ impl Demand {
     /// Whether to start another realm beside the `realms` that there are, all of which are in use: by how much sooner a run with
     /// these files ends with it, against what it costs. By all the files of the run, not by those that are left: how many are
     /// left when a thread happens to ask is up to the clock.
-    pub fn is_worth_another(&self, realms: usize) -> bool {
+    ///
+    /// `kept`: how many of the `realms` are busy with [`HEAVY`] files, which aren't among these files.
+    pub fn is_worth_another(&self, realms: usize, kept: usize) -> bool {
         let left = self.0.lock();
         if realms == 0 || realms >= left.most {
             return realms == 0;
+        }
+        let realms = realms.saturating_sub(kept);
+        if realms == 0 {
+            return true;
         }
         // Until it is of use the others go on. Then they are one more.
         let (all, realms) = (left.all() / BYTES_IN_THE_COST, realms as f64);

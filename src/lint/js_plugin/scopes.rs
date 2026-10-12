@@ -2,7 +2,7 @@
 //!
 //! [`crate::semantic`] does the analysis. This module turns the result into what `eslint-scope` or
 //! `@typescript-eslint/scope-manager` report under ESLint, in their order, with ESTree nodes by number.
-//! `worker/scope.js` only builds objects from the arrays.
+//! `src/jsc/bindings/LintScopes.cpp` only builds objects from the arrays.
 //!
 //! # The message
 //!
@@ -13,7 +13,7 @@
 //! | Part | Words |
 //! | --- | --- |
 //! | header | counts of scopes, declared variables, all variables, definitions, references and implicit globals, the length of the lists, the list `scopeManager.scopes`, two maps, from a block to its scopes and from a node to the variables it declares, then how many of the implicit globals are in `globalScope.implicit` |
-//! | scopes | 9 each: [`ScopeKind`] with flags from bit 8 on, block, upper scope, variable scope, last scope inside it, then the lists `childScopes`, `variables`, `references`, `through` |
+//! | scopes | 9 each: [`ScopeKind`] with flags from bit 8 on, block, upper scope, variable scope, then the lists of the variables in `taints`, `childScopes`, `variables`, `references`, `through` |
 //! | variables | 8 each: name, scope, flags, the lists `defs`, `references` and `identifiers`, what ESLint sets on a global with the shape above bit 8, the list of where the `/* global */` comments start |
 //! | definitions | 7 each: [`DeclarationKind`], name, node, parent, index, flags, `kind` |
 //! | references | 5 each: identifier, flags, written expression, resolved variable, scope |
@@ -35,6 +35,7 @@ use crate::semantic::{Declaration, DeclarationKind, Reference, ReferenceFlags, S
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 
 const HEADER: usize = 11;
 const NONE: u32 = u32::MAX;
@@ -243,6 +244,8 @@ struct DefinitionRecord {
 #[derive(Copy, Clone)]
 struct ReferenceRecord<'t> {
     identifier: u32,
+    /// The node at which the scope manager makes it. It's the identifier but for the use that JSX makes of `React`.
+    made_at: u32,
     flags: u32,
     written: u32,
     variable: u32,
@@ -343,6 +346,44 @@ impl<'t, 'a> Tree<'t, 'a> {
             (Value::Nodes(list), Some(&item)) => list.index_of(item).map_or(NONE, |it| it as u32),
             _ => NONE,
         }
+    }
+
+    /// The first `JSXOpeningElement` or `JSXFragment` after `id`, or `id` if there is none.
+    fn first_jsx_after(&self, id: u32) -> u32 {
+        let (element, fragment) = (
+            NodeType::JSXOpeningElement as u8,
+            NodeType::JSXFragment as u8,
+        );
+        (self.types.iter().zip(0..))
+            .skip(id as usize + 1)
+            .find(|it| *it.0 == element || *it.0 == fragment)
+            .map_or(id, |it| it.1)
+    }
+
+    /// The members such as `a[b]` that a pattern or a `for-in` or `for-of` loop assigns to. Both scope managers visit `b` first.
+    fn computed_members_in_patterns(&self) -> Vec<u32> {
+        let member = NodeType::MemberExpression as u8;
+        (self.types.iter().zip(0..))
+            .filter(|it| *it.0 == member)
+            .map(|it| it.1)
+            .filter(|&member| {
+                let parent = self.parent(member);
+                let is_target = match self.node_type(parent) {
+                    Some(NodeType::ArrayPattern | NodeType::RestElement) => true,
+                    Some(
+                        NodeType::AssignmentPattern
+                        | NodeType::ForInStatement
+                        | NodeType::ForOfStatement,
+                    ) => self.is_field(parent, Field::Left, member),
+                    Some(NodeType::Property) => {
+                        self.is(self.parent(parent), NodeType::ObjectPattern)
+                            && self.is_field(parent, Field::Value, member)
+                    }
+                    _ => false,
+                };
+                is_target && matches!(self.field(member, Field::Computed), Value::Bool(true))
+            })
+            .collect()
     }
 
     fn is_field(&self, id: u32, field: Field, item: u32) -> bool {
@@ -688,7 +729,29 @@ impl TypeScriptOrder<'_, '_, '_> {
                         self.swap(arguments, tree.last(arguments), tree.last(id));
                     }
                 }
-                NodeType::TSTypeAssertion => self.swap(id + 1, tree.last(id + 1), tree.last(id)),
+                // The type comes last, but first where the expression is assigned to.
+                NodeType::TSTypeAssertion | NodeType::TSAsExpression => {
+                    let parent = tree.parent(id);
+                    let is_target = parent.wrapping_add(1) == id
+                        && (tree.is(parent, NodeType::AssignmentExpression)
+                            || tree.is(parent, NodeType::UpdateExpression));
+                    let first = Run {
+                        first: id + 1,
+                        last: tree.last(id + 1),
+                    };
+                    let second = Run {
+                        first: tree.after(id + 1),
+                        last: tree.last(id),
+                    };
+                    let (expression, annotation) = match node_type {
+                        NodeType::TSAsExpression => (first, second),
+                        _ => (second, first),
+                    };
+                    match is_target {
+                        true => self.exchange(&[expression], &[annotation]),
+                        false => self.exchange(&[annotation], &[expression]),
+                    }
+                }
                 _ => {}
             }
         }
@@ -735,6 +798,8 @@ struct Builder<'t, 'a> {
     referred: Vec<(u32, u32)>,
     /// By the index of a class scope: the second variable for the name of the class.
     inner_class_names: FxHashMap<u32, u32>,
+    /// For each scope: the list of the variables in `scope.taints`.
+    taints: Vec<u32>,
     lists: Vec<u32>,
 }
 
@@ -809,7 +874,8 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
         }
 
-        let mut to_const = self.references_to_const().into_iter().peekable();
+        // What is still to be added, sorted by `made_at`.
+        let mut late = VecDeque::from(self.references_to_const());
         let mut is_first_to_const = true;
         let mut seen = FxHashSet::default();
         for reference in file.references_as_visited() {
@@ -818,8 +884,8 @@ impl<'t, 'a> Builder<'t, 'a> {
             if identifier == NONE {
                 continue;
             }
-            while let Some(it) = to_const.next_if(|it| it.identifier < identifier) {
-                self.add_reference_to_const(it, std::mem::take(&mut is_first_to_const));
+            while let Some(it) = late.pop_front_if(|it| it.made_at < identifier) {
+                self.add_late(it, &mut is_first_to_const);
             }
             let global = reference.global();
             if let Some(global) = global
@@ -837,8 +903,12 @@ impl<'t, 'a> Builder<'t, 'a> {
             let is_partial = self.is_espree
                 && reference.flags().contains(ReferenceFlags::WRITE)
                 && self.tree.is_partial_write(identifier, written);
-            self.references.push(ReferenceRecord {
+            let record = ReferenceRecord {
                 identifier,
+                made_at: match reference.is_jsx_pragma() {
+                    true => self.tree.first_jsx_after(identifier),
+                    false => identifier,
+                },
                 flags: u32::from(reference.flags().bits())
                     | (u32::from(global.is_some()) * TO_GLOBAL)
                     | (u32::from(is_partial) * IS_PARTIAL),
@@ -849,10 +919,19 @@ impl<'t, 'a> Builder<'t, 'a> {
                     .unwrap_or(NONE),
                 from: reference.scope().id().0,
                 name: reference.name().bytes(),
-            });
+            };
+            match record.made_at == identifier {
+                true => self.references.push(record),
+                false => {
+                    late.insert(
+                        late.partition_point(|it| it.made_at < record.made_at),
+                        record,
+                    );
+                }
+            }
         }
-        for it in to_const {
-            self.add_reference_to_const(it, std::mem::take(&mut is_first_to_const));
+        for it in late {
+            self.add_late(it, &mut is_first_to_const);
         }
     }
 
@@ -882,6 +961,7 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
             found.push(ReferenceRecord {
                 identifier,
+                made_at: identifier,
                 flags: u32::from((ReferenceFlags::READ | ReferenceFlags::TYPE).bits()) | TO_GLOBAL,
                 written: NONE,
                 variable: NONE,
@@ -892,23 +972,33 @@ impl<'t, 'a> Builder<'t, 'a> {
         found
     }
 
-    fn add_reference_to_const(&mut self, reference: ReferenceRecord<'t>, is_first: bool) {
-        if is_first {
+    fn add_late(&mut self, reference: ReferenceRecord<'t>, is_first_to_const: &mut bool) {
+        let is_to_const = reference.flags & TO_GLOBAL != 0;
+        if is_to_const && std::mem::take(is_first_to_const) {
             let flags = IS_TYPE | IS_IN_LIB;
             self.referred.push((self.references.len() as u32, flags));
         }
         self.references.push(reference);
     }
 
-    /// Puts the references in typescript-eslint's order. Returns `scopeManager.scopes` in that order.
-    fn order_as_typescript_eslint(&mut self) -> Vec<u32> {
-        let mut references = Order::new(self.references.iter().map(|it| it.identifier).collect());
+    /// Puts the references in the order in which the scope manager makes them. Returns `scopeManager.scopes` in its order.
+    fn order_as_visited(&mut self) -> Vec<u32> {
+        let members = self.tree.computed_members_in_patterns();
+        if self.is_espree && members.is_empty() {
+            return (0..self.scopes.len() as u32).collect();
+        }
+        let mut references = Order::new(self.references.iter().map(|it| it.made_at).collect());
         let mut scopes = Order::new(self.scopes.iter().map(|it| it.block).collect());
-        TypeScriptOrder {
+        let mut order = TypeScriptOrder {
             tree: &self.tree,
             orders: [&mut references, &mut scopes],
+        };
+        for id in members {
+            order.swap(id + 1, self.tree.last(id + 1), self.tree.last(id));
         }
-        .run();
+        if !self.is_espree {
+            order.run();
+        }
         if references.has_moved {
             let moved = references.order.iter();
             self.references = moved.map(|&it| self.references[it as usize]).collect();
@@ -1316,6 +1406,42 @@ impl<'t, 'a> Builder<'t, 'a> {
             )
             .collect();
         let mut values: Vec<u32> = (0..keys.len() as u32).collect();
+        // A scope resolves its references when it ends, in the order in which it got them. It gets those of a scope inside it
+        // when that one ends. The use that JSX makes of `React` goes straight to the scope that declares `React`, so it's there
+        // before the references of the scopes that are still open.
+        let for_jsx: Vec<(u32, u32)> = (self.references.iter())
+            .filter(|it| it.made_at != it.identifier)
+            .map(|it| (it.variable, it.from))
+            .collect();
+        // For each scope: the last reference that is made before it ends.
+        let mut last_in = vec![0; self.scopes.len() * usize::from(!for_jsx.is_empty())];
+        if !for_jsx.is_empty() {
+            for (reference, index) in self.references.iter().zip(0..) {
+                last_in[reference.from as usize] = index;
+            }
+            for index in (1..self.scopes.len()).rev() {
+                if let Some(upper) = self.scopes[index].upper {
+                    last_in[upper as usize] = last_in[upper as usize].max(last_in[index]);
+                }
+            }
+        }
+        for (variable, home) in for_jsx {
+            values.sort_by_key(|&it| {
+                let reference = &self.references[it as usize];
+                if reference.variable != variable {
+                    return 0;
+                }
+                let mut scope = reference.from;
+                while let Some(upper) = self.scopes[scope as usize].upper.filter(|_| scope != home)
+                {
+                    if upper == home {
+                        return 2 * last_in[scope as usize] + 1;
+                    }
+                    scope = upper;
+                }
+                2 * it
+            });
+        }
         if !self.is_espree {
             // typescript-eslint resolves what the libraries say a name can be. `Promise` is only a type in the first library
             // that has it. ESLint resolves the rest afterwards.
@@ -1362,16 +1488,23 @@ impl<'t, 'a> Builder<'t, 'a> {
                 next = self.scopes[scope as usize].upper;
             }
         }
+        // `eslint-scope` adds a variable to `taints` when it resolves the first such reference to it.
+        let (mut homes, mut tainted_variables) = (Vec::new(), Vec::new());
         for index in tainted {
             let reference = &mut self.references[index as usize];
             reference.flags |= IS_TAINTED;
             if reference.flags & TO_GLOBAL == 0
                 && let Some(variable) = self.variables.get_mut(reference.variable as usize)
+                && variable.flags & IS_TAINTED_VARIABLE == 0
             {
                 variable.flags |= IS_TAINTED_VARIABLE;
+                homes.push(variable.scope);
+                tainted_variables.push(reference.variable);
             }
         }
-        group(&keys, &values, self.scopes.len(), &mut self.lists)
+        let scope_count = self.scopes.len();
+        self.taints = group(&homes, &tainted_variables, scope_count, &mut self.lists);
+        group(&keys, &values, scope_count, &mut self.lists)
     }
 
     /// The variables that an assignment in sloppy mode creates: for each a list of pairs, the identifier that is assigned to and
@@ -1569,13 +1702,11 @@ pub(super) fn write<'t, 'a>(
         references: Vec::new(),
         referred: Vec::new(),
         inner_class_names: FxHashMap::default(),
+        taints: Vec::new(),
         lists: vec![0],
     };
     builder.collect(file);
-    let listed = match builder.is_espree {
-        true => (0..builder.scopes.len() as u32).collect(),
-        false => builder.order_as_typescript_eslint(),
-    };
+    let listed = builder.order_as_visited();
     builder.add_inner_class_names();
     builder.complete_definitions();
 
@@ -1630,7 +1761,7 @@ pub(super) fn write<'t, 'a>(
             scope.block,
             scope.upper.unwrap_or(NONE),
             scope.variable_scope,
-            scope.last,
+            builder.taints[at],
             child_scopes[at],
             variables_by_scope[at],
             references_by_scope[at],

@@ -10,7 +10,7 @@ use super::wire::{self, result};
 use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
 use crate::linter::{
-    LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
+    Data, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
     write_json,
 };
 use crate::options::Json;
@@ -114,19 +114,15 @@ fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
 }
 
 fn suggestion_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Suggestion> {
-    let data = json.get(b"data").and_then(Json::as_object);
-    let has_data = data.is_some();
-    let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
-        Some((
-            Cow::Owned(std::str::from_utf8(key).ok()?.to_owned()),
-            value.as_str()?.to_vec(),
-        ))
+    let data = json.get(b"data").map_or(Data::None, |data| {
+        let mut written = Vec::new();
+        write_json(&mut written, data);
+        Data::Json(written)
     });
     Some(Suggestion {
         message_id: text_of(json.get(b"messageId")).map_or(Cow::Borrowed(""), Cow::Owned),
         message: json.get(b"desc")?.as_str()?.to_vec(),
-        data: data.collect(),
-        has_data,
+        data,
         fix: fix_of(json.get(b"fix"), offsets)?,
         kind: SuggestionKind::Suggestion,
     })

@@ -112,17 +112,6 @@ bool isText(JSGlobalObject* globalObject, JSValue value, ASCIILiteral text)
     return value.isString() && asString(value)->view(globalObject) == text;
 }
 
-// Calls a method of `TokenStore`. None of them looks at `this`.
-JSValue callTokenMethod(JSGlobalObject* globalObject, const WriteBarrier<JSObject>& method, JSValue nodeOrToken, JSValue options = {})
-{
-    JSObject* function = method.get();
-    MarkedArgumentBuffer arguments;
-    arguments.append(nodeOrToken);
-    if (options)
-        arguments.append(options);
-    return call(globalObject, function, getCallData(function), jsUndefined(), arguments);
-}
-
 // `value.length`, which is 0 for what has none.
 double lengthOf(JSGlobalObject* globalObject, JSValue value)
 {
@@ -142,7 +131,7 @@ JSArray* inlineConfigNodesOf(JSGlobalObject* globalObject, LintHost* host)
     LintSourceCodeState& state = host->sourceCode;
     if (JSArray* nodes = state.inlineConfigNodes.get())
         return nodes;
-    JSValue comments = callHook(globalObject, state.comments);
+    JSValue comments = JSValue::decode(lintComments(globalObject));
     RETURN_IF_EXCEPTION(scope, nullptr);
     // `ask::CONFIG_COMMENTS` in src/lint/js_plugin/wire.rs
     constexpr uint32_t configComments = 13;
@@ -162,6 +151,98 @@ JSArray* inlineConfigNodesOf(JSGlobalObject* globalObject, LintHost* host)
     RETURN_IF_EXCEPTION(scope, nullptr);
     state.inlineConfigNodes.set(vm, host, result);
     return result;
+}
+
+// Has the program make the scopes of the file, if no rule has asked for them yet.
+void ensureScopes(JSGlobalObject* globalObject, LintHost* host)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (host->scopes.manager) [[likely]]
+        return;
+    callHook(globalObject, host->sourceCode.scopeManager);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!host->scopes.manager || !host->scopes.globalScope || !host->scopes.nodeToScope || !host->scopes.declaredVariables)
+        throwTypeError(globalObject, scope, "The scopes are not as expected"_s);
+}
+
+// `scopeManager.acquire(node, inner)`, or nothing.
+JSValue acquireScope(JSGlobalObject* globalObject, LintHost* host, JSValue node, bool inner)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    LintSourceCodeState& state = host->sourceCode;
+    if (!node.isCell())
+        return {};
+    auto* scopes = dynamicDowncast<JSArray>(host->scopes.nodeToScope->get(node.asCell()));
+    if (!scopes) [[likely]]
+        return {};
+    unsigned length = scopes->length();
+    for (unsigned i = 0; i < length; ++i) {
+        JSValue candidate = lintGetIndex(globalObject, scopes, inner ? length - 1 - i : i);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (length == 1)
+            return candidate;
+        // Not the scope of a function expression that has a scope for its name around it.
+        JSValue type = state.type.get(globalObject, host, candidate);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool isFunction = isText(globalObject, type, "function"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isFunction) {
+            JSValue hasNameScope = lintGet(globalObject, candidate, state.functionExpressionScope);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (hasNameScope.toBoolean(globalObject))
+                continue;
+        }
+        return candidate;
+    }
+    return {};
+}
+
+// `getScope(node)`. `currentNode` is truthy.
+JSValue scopeOf(JSGlobalObject* globalObject, LintHost* host, JSValue currentNode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintSourceCodeState& state = host->sourceCode;
+    if (currentNode.isObject()) [[likely]] {
+        JSValue cached = state.scopeCache->get(asObject(currentNode));
+        if (!cached.isUndefined())
+            return cached;
+    }
+    ensureScopes(globalObject, host);
+    RETURN_IF_EXCEPTION(scope, {});
+    // For the `Program` the outermost scope, not that of a module or of a CommonJS module.
+    JSValue type = state.type.get(globalObject, host, currentNode);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool inner = !isText(globalObject, type, "Program"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue found = host->scopes.globalScope.get();
+    for (JSValue node = currentNode; node.toBoolean(globalObject);) {
+        JSValue acquired = acquireScope(globalObject, host, node, inner);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (acquired && acquired.toBoolean(globalObject)) {
+            found = acquired;
+            JSValue scopeType = state.type.get(globalObject, host, acquired);
+            RETURN_IF_EXCEPTION(scope, {});
+            bool isName = isText(globalObject, scopeType, "function-expression-name"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (isName) {
+                JSValue children = lintGet(globalObject, acquired, state.childScopes);
+                RETURN_IF_EXCEPTION(scope, {});
+                found = lintGetIndex(globalObject, children, 0);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            break;
+        }
+        node = state.parent.get(globalObject, host, node);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    // `cache.set(currentNode, found)`
+    if (!currentNode.isObject()) {
+        throwTypeError(globalObject, scope, "Attempted to set a non-object key in a WeakMap"_s);
+        return {};
+    }
+    state.scopeCache->set(vm, asObject(currentNode), found);
+    return found;
 }
 
 const Vector<uint32_t>& lastDescendantsOf(LintSourceCodeState& state)
@@ -233,7 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeLineStartIndices, (JSGlobalObject * glo
 
 JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeTokensAndComments, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return JSValue::encode(callHook(globalObject, LintHost::from(globalObject)->sourceCode.tokensAndComments));
+    return lintTokensAndComments(globalObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeVisitorKeys, (JSGlobalObject * globalObject, CallFrame*))
@@ -275,7 +356,10 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeParserServices, (JSGlobalObject * globa
 
 JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeScopeManager, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return JSValue::encode(callHook(globalObject, LintHost::from(globalObject)->sourceCode.scopeManager));
+    LintHost* host = LintHost::from(globalObject);
+    if (JSObject* manager = host->scopes.manager.get()) [[likely]]
+        return JSValue::encode(manager);
+    return JSValue::encode(callHook(globalObject, host->sourceCode.scopeManager));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeIsESTree, (JSGlobalObject*, CallFrame*))
@@ -389,7 +473,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetText, (JSGlobalObject * globalObject, CallFram
 
 JSC_DEFINE_HOST_FUNCTION(jsLintGetAllComments, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return JSValue::encode(callHook(globalObject, LintHost::from(globalObject)->sourceCode.comments));
+    return lintComments(globalObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsLintGetInlineConfigNodes, (JSGlobalObject * globalObject, CallFrame*))
@@ -525,7 +609,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetComments, (JSGlobalObject * globalObject, Call
         bool isEmpty = hasNone(*list);
         RETURN_IF_EXCEPTION(scope, {});
         if (isEmpty) {
-            JSValue inside = callTokenMethod(globalObject, state.getCommentsInside, node);
+            JSValue inside = JSValue::decode(lintCommentsInside(globalObject, node));
             RETURN_IF_EXCEPTION(scope, {});
             double count = lengthOf(globalObject, inside);
             RETURN_IF_EXCEPTION(scope, {});
@@ -549,11 +633,10 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetComments, (JSGlobalObject * globalObject, Call
     // The comments next to the node, as far as they are in its parent.
     auto collect = [&](bool isBefore, MarkedArgumentBuffer& found) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto& next = isBefore ? state.getTokenBefore : state.getTokenAfter;
         auto& edge = isBefore ? state.start : state.end;
         JSValue token = node;
         while (true) {
-            token = callTokenMethod(globalObject, next, token, state.includeComments.get());
+            token = JSValue::decode(lintTokenOrCommentNextTo(globalObject, token, !isBefore));
             RETURN_IF_EXCEPTION(scope, );
             if (!token.toBoolean(globalObject))
                 return;
@@ -634,7 +717,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetJSDocComment, (JSGlobalObject * globalObject, 
     // The block comment that starts with `*` right before `astNode`, or null.
     auto before = [&](JSValue astNode) -> EncodedJSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue token = callTokenMethod(globalObject, state.getTokenBefore, astNode, state.includeComments.get());
+        JSValue token = JSValue::decode(lintTokenOrCommentNextTo(globalObject, astNode, false));
         RETURN_IF_EXCEPTION(scope, {});
         if (!token.toBoolean(globalObject))
             return JSValue::encode(jsNull());
@@ -674,7 +757,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetJSDocComment, (JSGlobalObject * globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
     if (parentType != "CallExpression"_s && parentType != "NewExpression"_s) {
         while (parent.toBoolean(globalObject)) {
-            JSValue comments = callTokenMethod(globalObject, state.getCommentsBefore, parent);
+            JSValue comments = JSValue::decode(lintCommentsNextTo(globalObject, parent, false));
             RETURN_IF_EXCEPTION(scope, {});
             double count = lengthOf(globalObject, comments);
             RETURN_IF_EXCEPTION(scope, {});
@@ -882,6 +965,154 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetAncestors, (JSGlobalObject * globalObject, Cal
     return JSValue::encode(result);
 }
 
+// `getScope(node)`
+JSC_DEFINE_HOST_FUNCTION(jsLintGetScope, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue node = callFrame->argument(0);
+    if (!requireNode(globalObject, scope, node))
+        return {};
+    RELEASE_AND_RETURN(scope, JSValue::encode(scopeOf(globalObject, LintHost::from(globalObject), node)));
+}
+
+// `getDeclaredVariables(node)`
+JSC_DEFINE_HOST_FUNCTION(jsLintGetDeclaredVariables, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    LintHost* host = LintHost::from(globalObject);
+    ensureScopes(globalObject, host);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue node = callFrame->argument(0);
+    JSValue variables = node.isCell() ? host->scopes.declaredVariables->get(node.asCell()) : jsUndefined();
+    if (!variables.isUndefined())
+        return JSValue::encode(variables);
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr)));
+}
+
+// `isGlobalReference(node)`
+JSC_DEFINE_HOST_FUNCTION(jsLintIsGlobalReference, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    LintSourceCodeState& state = host->sourceCode;
+    JSValue node = callFrame->argument(0);
+    if (!requireNode(globalObject, scope, node))
+        return {};
+    JSValue type = state.type.get(globalObject, host, node);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isIdentifier = isText(globalObject, type, "Identifier"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isIdentifier)
+        return JSValue::encode(jsBoolean(false));
+
+    // `scopeManager.scopes[0].set.get(node.name)`. With typescript-eslint's scopes `get` makes the variables of a `lib` on demand.
+    ensureScopes(globalObject, host);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue set = lintGet(globalObject, host->scopes.globalScope.get(), state.set);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue get = set.get(globalObject, state.get);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue name = lintGet(globalObject, node, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = getCallData(get);
+    if (callData.type == CallData::Type::None) {
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, get));
+        return {};
+    }
+    MarkedArgumentBuffer arguments;
+    arguments.append(name);
+    JSValue variable = call(globalObject, get, callData, set, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!variable.toBoolean(globalObject))
+        return JSValue::encode(jsBoolean(false));
+    JSValue defs = lintGet(globalObject, variable, state.defs);
+    RETURN_IF_EXCEPTION(scope, {});
+    double defCount = lengthOf(globalObject, defs);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (defCount > 0)
+        return JSValue::encode(jsBoolean(false));
+
+    // `variable.references.some(({ identifier }) => identifier === node)`
+    JSValue references = lintGet(globalObject, variable, state.references);
+    RETURN_IF_EXCEPTION(scope, {});
+    double count = lengthOf(globalObject, references);
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned i = 0; i < count; ++i) {
+        JSValue reference = lintGetIndex(globalObject, references, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue identifier = lintGet(globalObject, reference, state.identifier);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (identifier == node)
+            return JSValue::encode(jsBoolean(true));
+    }
+    return JSValue::encode(jsBoolean(false));
+}
+
+// `markVariableAsUsed(name, refNode = this.ast)`
+JSC_DEFINE_HOST_FUNCTION(jsLintMarkVariableAsUsed, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    LintSourceCodeState& state = host->sourceCode;
+    JSValue name = callFrame->argument(0);
+    JSValue refNode = callFrame->argument(1);
+    JSValue program = callHook(globalObject, state.program);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (refNode.isUndefined())
+        refNode = program;
+    if (!requireNode(globalObject, scope, refNode))
+        return {};
+    JSValue current = scopeOf(globalObject, host, refNode);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // The scope of a module, or of a CommonJS module, is in the global scope and has the same block.
+    JSValue type = state.type.get(globalObject, host, current);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isGlobal = isText(globalObject, type, "global"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isGlobal) {
+        JSValue children = lintGet(globalObject, current, state.childScopes);
+        RETURN_IF_EXCEPTION(scope, {});
+        double count = lengthOf(globalObject, children);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (count > 0) {
+            JSValue first = lintGetIndex(globalObject, children, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue block = lintGet(globalObject, first, state.block);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (block == program)
+                current = first;
+        }
+    }
+
+    while (current.toBoolean(globalObject)) {
+        // `scope.variables.find(it => it.name === name)`
+        JSValue variables = lintGet(globalObject, current, state.variables);
+        RETURN_IF_EXCEPTION(scope, {});
+        double count = lengthOf(globalObject, variables);
+        RETURN_IF_EXCEPTION(scope, {});
+        for (unsigned i = 0; i < count; ++i) {
+            JSValue variable = lintGetIndex(globalObject, variables, i);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue variableName = lintGet(globalObject, variable, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, {});
+            bool isIt = JSValue::strictEqual(globalObject, variableName, name);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!isIt)
+                continue;
+            PutPropertySlot slot(variable, true);
+            variable.put(globalObject, state.eslintUsed, jsBoolean(true), slot);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsBoolean(true));
+        }
+        current = lintGet(globalObject, current, state.upper);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(jsBoolean(false));
+}
+
 // ───────────── `loc` of nodes and tokens ─────────────
 
 namespace {
@@ -1024,7 +1255,6 @@ struct Member {
     ASCIILiteral name;
     // Of a method. A getter has none.
     int length;
-    // Null: the program still has it.
     NativeFunction function;
 };
 
@@ -1047,6 +1277,7 @@ const Member members[] = {
     { "getInlineConfigNodes"_s, 0, jsLintGetInlineConfigNodes },
     { "getDisableDirectives"_s, 0, jsLintGetDisableDirectives },
     { "getNodeByRangeIndex"_s, 1, jsLintGetNodeByRangeIndex },
+    { "isSpaceBetween"_s, 2, jsLintIsSpaceBetween },
     { "getComments"_s, 1, jsLintGetComments },
     { "getJSDocComment"_s, 1, jsLintGetJSDocComment },
     { "getLocFromIndex"_s, 1, jsLintGetLocFromIndex },
@@ -1055,16 +1286,19 @@ const Member members[] = {
     { "getRange"_s, 1, jsLintGetRange },
     { "getParent"_s, 1, jsLintGetParent },
     { "getAncestors"_s, 1, jsLintGetAncestors },
-    { "getScope"_s, 1, nullptr },
-    { "getDeclaredVariables"_s, 1, nullptr },
-    { "isGlobalReference"_s, 1, nullptr },
-    { "markVariableAsUsed"_s, 1, nullptr },
+    { "getScope"_s, 1, jsLintGetScope },
+    { "getDeclaredVariables"_s, 1, jsLintGetDeclaredVariables },
+    { "isGlobalReference"_s, 1, jsLintIsGlobalReference },
+    { "markVariableAsUsed"_s, 1, jsLintMarkVariableAsUsed },
+    { "isSpaceBetweenTokens"_s, 2, jsLintIsSpaceBetweenTokens },
+    { "getTokenOrCommentBefore"_s, 2, jsLintGetTokenOrCommentBefore },
+    { "getTokenOrCommentAfter"_s, 2, jsLintGetTokenOrCommentAfter },
 };
 
 } // namespace
 
-// `sourceCode(TokenStore, scripted, hooks)` returns the class. `scripted` is the prototype of the class that the program has, for
-// the methods that aren't here yet. `hooks` is `[program, scopeManager, comments, tokensAndComments, parserOptions, visitorKeys]`.
+// `sourceCode(TokenStore, hooks, scripted)` returns the class. `hooks` is `[program, scopeManager, parserOptions, visitorKeys]`.
+// The methods that `scripted` has, if it's an object, are taken from it.
 JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1072,12 +1306,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallF
     LintHost* host = LintHost::from(globalObject);
     LintSourceCodeState& state = host->sourceCode;
     JSObject* tokenStore = callFrame->argument(0).getObject();
-    JSObject* scripted = callFrame->argument(1).getObject();
-    JSArray* hooks = dynamicDowncast<JSArray>(callFrame->argument(2));
-    if (!tokenStore || !scripted || !hooks)
-        return throwVMTypeError(globalObject, scope, "Expected a class, a prototype and hooks"_s);
+    JSArray* hooks = dynamicDowncast<JSArray>(callFrame->argument(1));
+    JSObject* scripted = callFrame->argument(2).getObject();
+    if (!tokenStore || !hooks)
+        return throwVMTypeError(globalObject, scope, "Expected a class and hooks"_s);
     unsigned at = 0;
-    for (auto* hook : { &state.program, &state.scopeManager, &state.comments, &state.tokensAndComments, &state.parserOptions }) {
+    for (auto* hook : { &state.program, &state.scopeManager, &state.parserOptions }) {
         JSValue function = hooks->getIndex(globalObject, at++);
         RETURN_IF_EXCEPTION(scope, {});
         if (!function.isCallable())
@@ -1094,24 +1328,20 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallF
     RETURN_IF_EXCEPTION(scope, {});
     if (!parent.isObject())
         return throwVMTypeError(globalObject, scope, "Expected a class"_s);
-    for (auto [name, method] : std::initializer_list<std::pair<ASCIILiteral, WriteBarrier<JSObject>*>> { { "getTokenBefore"_s, &state.getTokenBefore }, { "getTokenAfter"_s, &state.getTokenAfter }, { "getCommentsBefore"_s, &state.getCommentsBefore }, { "getCommentsInside"_s, &state.getCommentsInside } }) {
-        JSValue function = parent.get(globalObject, Identifier::fromString(vm, name));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!function.isCallable())
-            return throwVMTypeError(globalObject, scope, "Expected a method"_s);
-        method->set(vm, host, asObject(function));
-    }
     JSObject* prototype = constructEmptyObject(globalObject, asObject(parent));
     auto* constructor = LintSourceCodeConstructor::create(vm, globalObject, tokenStore, prototype);
     constructor->putDirect(vm, Identifier::fromString(vm, "splitLines"_s), JSFunction::create(vm, globalObject, 1, "splitLines"_s, jsLintSplitLines, ImplementationVisibility::Public), static_cast<unsigned>(PropertyAttribute::DontEnum));
     prototype->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     for (auto& member : members) {
         Identifier name = Identifier::fromString(vm, member.name);
-        if (!member.function) {
-            JSValue method = scripted->get(globalObject, name);
+        JSValue method;
+        if (scripted) {
+            method = scripted->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (method && !method.isUndefined())
             prototype->putDirect(vm, name, method, static_cast<unsigned>(PropertyAttribute::DontEnum));
-        } else if (member.length == getter) {
+        else if (member.length == getter) {
             JSFunction* function = JSFunction::create(vm, globalObject, 0, makeString("get "_s, member.name), member.function, ImplementationVisibility::Public);
             prototype->putDirectAccessor(globalObject, name, GetterSetter::create(vm, globalObject, function, nullptr), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
         } else
@@ -1139,6 +1369,18 @@ void LintSourceCodeState::finishCreation(VM& vm, JSGlobalObject* globalObject, L
     set(elements, "elements"_s);
     set(cases, "cases"_s);
     set(commentsName, "comments"_s);
+    set(functionExpressionScope, "functionExpressionScope"_s);
+    set(childScopes, "childScopes"_s);
+    set(upper, "upper"_s);
+    set(block, "block"_s);
+    set(variables, "variables"_s);
+    set(this->set, "set"_s);
+    set(get, "get"_s);
+    set(defs, "defs"_s);
+    set(references, "references"_s);
+    set(identifier, "identifier"_s);
+    set(eslintUsed, "eslintUsed"_s);
+    scopeCache.set(vm, host, JSWeakMap::create(vm, globalObject->weakMapStructure()));
     set(emitDecoratorMetadata, "emitDecoratorMetadata"_s);
     set(experimentalDecorators, "experimentalDecorators"_s);
     set(isolatedDeclarations, "isolatedDeclarations"_s);
@@ -1147,9 +1389,6 @@ void LintSourceCodeState::finishCreation(VM& vm, JSGlobalObject* globalObject, L
     directiveStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "type"_s, "node"_s, "value"_s, "justification"_s })));
     directivesStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "problems"_s, "directives"_s })));
     commentsStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "leading"_s, "trailing"_s })));
-    JSObject* options = constructEmptyObject(globalObject);
-    options->putDirect(vm, Identifier::fromString(vm, "includeComments"_s), jsBoolean(true));
-    includeComments.set(vm, host, options);
     servicesStructure.set(vm, host, LintHost::createShape(vm, globalObject, globalObject->objectPrototype(), std::to_array<ASCIILiteral>({ "emitDecoratorMetadata"_s, "experimentalDecorators"_s, "isolatedDeclarations"_s, "program"_s, "esTreeNodeToTSNodeMap"_s, "tsNodeToESTreeNodeMap"_s })));
 }
 

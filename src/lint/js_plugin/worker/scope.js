@@ -1,55 +1,10 @@
 // ───────────── scopes ─────────────
 //
-// ESLint's `sourceCode.scopeManager`: the objects of `eslint-scope`, and for the tree of
-// typescript-estree those of `@typescript-eslint/scope-manager`, after ESLint has added the global
-// variables. Nothing is analyzed or put in order here. `scopes.rs` sends the final answer as arrays of numbers and describes
-// them. The objects are made when they are asked for.
+// ESLint's `sourceCode.scopeManager`. `scopes.rs` sends the final answer as arrays of numbers, and `native.scopes`
+// (src/jsc/bindings/LintScopes.cpp) builds all the objects of a file in one call. What is here are the classes of `eslint-scope` and
+// of `@typescript-eslint/scope-manager` with their public methods, and which property goes where.
 
-// In the order of `ScopeKind` and `DeclarationKind`.
-const scopeTypes = [
-  "global",
-  "module",
-  "function",
-  "function-expression-name",
-  "block",
-  "switch",
-  "catch",
-  "with",
-  "for",
-  "class",
-  "class-field-initializer",
-  "class-static-block",
-  "tsModule",
-  "tsEnum",
-  "type",
-  "conditionalType",
-  "functionType",
-  "mappedType",
-];
-const definitionTypes = [
-  "Variable",
-  "Parameter",
-  "FunctionName",
-  "ClassName",
-  "CatchClause",
-  "ImportBinding",
-  "TSEnumName",
-  "TSEnumMemberName",
-  "TSModuleName",
-  "Type",
-];
-
-const NO_INDEX = 0xffffffff;
-const IS_TYPE = 1;
-const IS_VALUE = 2;
-const IS_USED = 4;
-const IS_EXPORTED = 8;
-const IS_ARGUMENTS = 16;
-const IS_IN_LIB = 64;
-const TO_GLOBAL = 256;
-const IS_PARTIAL = 512;
-
-// What is known of the scopes of the file. `null`: not asked for yet.
+// `{ manager, variables, words }` of the file. `null`: nobody has asked for the scopes yet.
 let scopeData = null;
 
 function resetScopes() {
@@ -60,543 +15,526 @@ function resetScopes() {
 function usedVariables() {
   const used = [];
   if (scopeData === null) return used;
-  const { variableObjects, declaredCount } = scopeData;
+  const { variables, words, declaredCount } = scopeData;
   for (let index = 0; index < declaredCount; index++) {
-    const variable = variableObjects[index];
-    if (variable !== undefined && variable.eslintUsed && !(variable.flags & IS_USED)) used.push(index);
+    if (variables[index].eslintUsed && !(words[8 * index + 2] & 4)) used.push(index);
   }
   return used;
 }
 
-// Defines a property that is computed the first time it is read.
-function lazy(prototype, name, compute) {
-  Object.defineProperty(prototype, name, {
-    get() {
-      const value = compute.call(this);
-      Object.defineProperty(this, name, { value, writable: true, enumerable: true, configurable: true });
-      return value;
-    },
-    set(value) {
-      Object.defineProperty(this, name, { value, writable: true, enumerable: true, configurable: true });
-    },
-    enumerable: true,
-    configurable: true,
+const namesIn = text => text.split(/\s+/u);
+
+// The numbers of `Field` in LintScopes.cpp, by the name of the property. Any other property has the value of the template.
+const scopeFields = Object.fromEntries(
+  [
+    "",
+    ...namesIn(`$id set taints block through variables references variableScope upper isStrict thisFound childScopes
+    __declaredVariables implicit name identifiers defs stack scope eslintUsed eslintExported
+    eslintImplicitGlobalSetting eslintExplicitGlobal writeable isTypeVariable isValueVariable node parent index
+    kind rest identifier from resolved flag writeExpr partial init tainted`),
+  ].map((name, field) => [name, field]),
+);
+
+// A template and its program for objects of `type` with the properties `keys`. `constants`: the values of those that are the same
+// in all of them. `fields`: other names for a field.
+function scopeShape(type, keys, constants = {}, fields = {}) {
+  const template = native.shape(type.prototype, keys, undefined);
+  for (const key of keys) if (key in constants) template[key] = constants[key];
+  const fieldOf = key => (key in constants ? 0 : (scopeFields[fields[key] ?? key] ?? 0));
+  return [template, Uint8Array.from(keys, fieldOf)];
+}
+
+// In the order of `ScopeKind` and `DeclarationKind`.
+const scopeTypes =
+  namesIn(`global module function function-expression-name block switch catch with for class class-field-initializer
+    class-static-block tsModule tsEnum type conditionalType functionType mappedType`);
+const definitionTypes =
+  namesIn(`Variable Parameter FunctionName ClassName CatchClause ImportBinding TSEnumName TSEnumMemberName TSModuleName
+    Type ImplicitGlobalVariable`);
+const scopeStrings = ["arguments", "readonly", "writable", "off", "var", "let", "const", "using", "await using"];
+
+// The shapes of a variable, by which properties it has besides `base`: see `SHAPE_GLOBAL` in `scopes.rs`.
+function variableShapes(type, libType, base, libKeys, constants) {
+  const ofESLint = ["eslintImplicitGlobalSetting", "eslintExplicitGlobal", "eslintExplicitGlobalComments", "writeable"];
+  return Array.from({ length: 16 }, (_, shape) => {
+    const isPossible =
+      (shape & 3) !== 3 && !(shape & 2 && libType === null) && !(shape & 4 && base.includes("eslintUsed"));
+    if (!isPossible) return [undefined, undefined];
+    const keys = [...base, ...(shape & 1 ? ofESLint : []), ...(shape & 2 ? libKeys : [])];
+    if (shape & 4) keys.push("eslintUsed");
+    if (shape & 8) keys.push("eslintExported");
+    return scopeShape(shape & 2 ? libType : type, keys, constants);
+  }).flat();
+}
+
+// ───────────── `eslint-scope` ─────────────
+
+const eslintScopeLayout = (() => {
+  class Scope {
+    resolve(ident) {
+      assert(ident.type === "Identifier", "Target should be identifier.");
+      return this.references.find(it => it.identifier === ident) ?? null;
+    }
+    isStatic() {
+      return !this.dynamic;
+    }
+    isArgumentsMaterialized() {
+      return true;
+    }
+    isThisMaterialized() {
+      return true;
+    }
+    isUsedName(name) {
+      return this.set.has(name) || this.through.some(it => it.identifier.name === name);
+    }
+  }
+  class FunctionScope extends Scope {
+    isArgumentsMaterialized() {
+      if (this.block.type === "ArrowFunctionExpression") return false;
+      if (!this.isStatic()) return true;
+      const variable = this.set.get("arguments");
+      return variable.tainted || variable.references.length !== 0;
+    }
+    isThisMaterialized() {
+      return !this.isStatic() || this.thisFound;
+    }
+  }
+  const types = [
+    class GlobalScope extends Scope {},
+    class ModuleScope extends Scope {},
+    FunctionScope,
+    class FunctionExpressionNameScope extends Scope {},
+    class BlockScope extends Scope {},
+    class SwitchScope extends Scope {},
+    class CatchScope extends Scope {},
+    class WithScope extends Scope {},
+    class ForScope extends Scope {},
+    class ClassScope extends Scope {},
+    class ClassFieldInitializerScope extends Scope {},
+    class ClassStaticBlockScope extends Scope {},
+  ];
+  const keys = namesIn(`type set taints dynamic block through variables references variableScope functionExpressionScope
+    directCallToEvalScope thisFound __left upper isStrict childScopes __declaredVariables`);
+  const scopes = types.flatMap((type, kind) =>
+    scopeShape(type, kind === 0 ? [...keys, "implicit"] : keys, {
+      type: scopeTypes[kind],
+      dynamic: kind === 0 || scopeTypes[kind] === "with",
+      functionExpressionScope: scopeTypes[kind] === "function-expression-name",
+      directCallToEvalScope: false,
+      __left: null,
+    }),
+  );
+
+  class Variable {}
+  Object.assign(Variable, {
+    CatchClause: "CatchClause",
+    Parameter: "Parameter",
+    FunctionName: "FunctionName",
+    ClassName: "ClassName",
+    Variable: "Variable",
+    ImportBinding: "ImportBinding",
+    ImplicitGlobalVariable: "ImplicitGlobalVariable",
   });
-}
+  const variableKeys = ["name", "identifiers", "references", "defs", "tainted", "stack", "scope"];
 
-class Definition {
-  constructor(index) {
-    const { definitions } = scopeData;
-    const at = 7 * index;
-    const nodeAt = id => (id === NO_INDEX ? null : nodes[id]);
-    const type = definitionTypes[definitions[at]];
-    const flags = definitions[at + 5];
-    this.type = type;
-    this.name = nodes[definitions[at + 1]];
-    this.node = nodeAt(definitions[at + 2]);
-    this.parent = nodeAt(definitions[at + 3]);
-    if (tree.dialect === 1) {
-      this.index = definitions[at + 4] === NO_INDEX ? null : definitions[at + 4];
-      this.kind = type === "Variable" ? this.parent.kind : null;
+  class Definition {}
+  class ParameterDefinition extends Definition {}
+  const definitionKeys = ["type", "name", "node", "parent", "index", "kind"];
+  const definitions = definitionTypes.flatMap(type => {
+    if (type === "Parameter")
+      return scopeShape(ParameterDefinition, [...definitionKeys, "rest"], { type, parent: null, kind: null });
+    if (type === "ImplicitGlobalVariable")
+      return scopeShape(Definition, definitionKeys, { type, parent: null, index: null, kind: null });
+    return scopeShape(Definition, definitionKeys, { type });
+  });
+
+  class Reference {
+    isStatic() {
+      return !this.tainted && !!this.resolved && this.resolved.scope.isStatic();
     }
-    if (type === "Parameter") this.rest = (flags & 1) !== 0;
-    // `eslint-scope` says less about the name of a class in the scope of the class.
-    if (flags & 2) this.parent = this.index = this.kind = undefined;
-  }
-}
-
-// What only `@typescript-eslint/scope-manager` has is in classes of their own: rules ask whether it is there.
-class TypeScriptDefinition extends Definition {
-  get isTypeDefinition() {
-    switch (this.type) {
-      case "ClassName":
-      case "ImportBinding":
-      case "TSEnumName":
-      case "TSEnumMemberName":
-      case "TSModuleName":
-      case "Type":
-        return true;
-      default:
-        return false;
+    isWrite() {
+      return !!(this.flag & 2);
+    }
+    isRead() {
+      return !!(this.flag & 1);
+    }
+    isReadOnly() {
+      return this.flag === 1;
+    }
+    isWriteOnly() {
+      return this.flag === 2;
+    }
+    isReadWrite() {
+      return this.flag === 3;
     }
   }
-  get isVariableDefinition() {
-    return this.type !== "Type";
-  }
-}
+  Object.assign(Reference, { READ: 1, WRITE: 2, RW: 3 });
+  const referenceKeys = written => [
+    "identifier",
+    "from",
+    "tainted",
+    "resolved",
+    "flag",
+    ...written,
+    "__maybeImplicitGlobal",
+  ];
+  const references = [[], ["writeExpr", "partial", "init"]].flatMap(written =>
+    scopeShape(Reference, referenceKeys(written)),
+  );
 
-function newDefinition(index) {
-  return tree.dialect === 0 ? new TypeScriptDefinition(index) : new Definition(index);
-}
-
-function newVariable(name, scope, index, flags) {
-  return tree.dialect === 0
-    ? new TypeScriptVariable(name, scope, index, flags)
-    : new Variable(name, scope, index, flags);
-}
-
-class Variable {
-  // `index`: in the arrays. `NO_INDEX` for one that isn't there.
-  constructor(name, scope, index, flags) {
-    this.name = name;
-    this.scope = scope;
-    this.index = index;
-    this.flags = flags;
-    this.tainted = false;
-    if (flags & IS_USED || tree.dialect === 0) this.eslintUsed = (flags & IS_USED) !== 0;
-    if (flags & IS_EXPORTED) this.eslintExported = true;
-  }
-  get stack() {
-    return this.references.every(it => it.from.variableScope === this.scope.variableScope);
-  }
-}
-
-class TypeScriptVariable extends Variable {
-  get $id() {
-    return this.index + 1;
-  }
-  get isTypeVariable() {
-    return this.defs.length === 0 && !(this.flags & IS_IN_LIB) ? true : (this.flags & IS_TYPE) !== 0;
-  }
-  get isValueVariable() {
-    return this.defs.length === 0 && !(this.flags & IS_IN_LIB) ? true : (this.flags & IS_VALUE) !== 0;
-  }
-}
-for (const hidden of ["index", "flags"]) Object.defineProperty(Variable.prototype, hidden, { writable: true });
-lazy(Variable.prototype, "defs", function () {
-  return listAt(scopeData.variables[8 * this.index + 3], newDefinition);
-});
-lazy(Variable.prototype, "identifiers", function () {
-  return this.defs.map(it => it.name).filter(it => it.type !== "Literal");
-});
-lazy(Variable.prototype, "references", function () {
-  return listAt(scopeData.variables[8 * this.index + 4], referenceAt);
-});
-
-class Reference {
-  constructor(index) {
-    const { references } = scopeData;
-    const at = 5 * index;
-    this.identifier = nodes[references[at]];
-    this.from = scopeData.scopes[references[at + 4]];
-    this.tainted = false;
-    this.flag = references[at + 1] & 3;
-    this.index = index;
-    if (this.flag & 2) {
-      const written = references[at + 2];
-      this.writeExpr = written === NO_INDEX ? null : nodes[written];
-      this.init = (references[at + 1] & 8) !== 0;
-      if (tree.dialect === 1) this.partial = (references[at + 1] & IS_PARTIAL) !== 0;
+  class ScopeManager {
+    constructor(scopes, nodeToScope, declaredVariables) {
+      const { ecmaVersion, sourceType, parserOptions } = fileSettings.languageOptions;
+      this.scopes = scopes;
+      this.globalScope = scopes[0];
+      this.__nodeToScope = nodeToScope;
+      this.__currentScope = null;
+      this.__options = {
+        optimistic: false,
+        nodejsScope: parserOptions.ecmaFeatures?.globalReturn,
+        impliedStrict: parserOptions.ecmaFeatures?.impliedStrict,
+        sourceType,
+        ecmaVersion,
+        childVisitorKeys: visitorKeys[1],
+        fallback: node =>
+          Object.keys(node).filter(key => key !== "parent" && key !== "leadingComments" && key !== "trailingComments"),
+        ignoreEval: true,
+        jsx: parserOptions.ecmaFeatures?.jsx,
+      };
+      this.__declaredVariables = declaredVariables;
     }
-  }
-  isStatic() {
-    return !this.tainted && !!this.resolved && this.resolved.scope.isStatic();
-  }
-  isWrite() {
-    return (this.flag & 2) !== 0;
-  }
-  isRead() {
-    return (this.flag & 1) !== 0;
-  }
-  isReadOnly() {
-    return this.flag === 1;
-  }
-  isWriteOnly() {
-    return this.flag === 2;
-  }
-  isReadWrite() {
-    return this.flag === 3;
-  }
-}
-
-class TypeScriptReference extends Reference {
-  get $id() {
-    return this.index + 1;
-  }
-  get isTypeReference() {
-    return (scopeData.references[5 * this.index + 1] & 4) !== 0;
-  }
-  get isValueReference() {
-    return (scopeData.references[5 * this.index + 1] & 16) !== 0;
-  }
-}
-
-Reference.READ = 1;
-Reference.WRITE = 2;
-Reference.RW = 3;
-Object.defineProperty(Reference.prototype, "index", { writable: true });
-lazy(Reference.prototype, "resolved", function () {
-  const variable = scopeData.references[5 * this.index + 3];
-  if (variable !== NO_INDEX) return variableAt(variable);
-  if (!(scopeData.references[5 * this.index + 1] & TO_GLOBAL)) return null;
-  return scopeData.scopes[0].set.get(this.identifier.name) ?? null;
-});
-
-function referenceAt(index) {
-  return (scopeData.referenceObjects[index] ??=
-    tree.dialect === 0 ? new TypeScriptReference(index) : new Reference(index));
-}
-
-// What `make` returns for each item of the list at `at`.
-function listAt(at, make) {
-  const { lists } = scopeData;
-  const length = lists[at];
-  const list = new Array(length);
-  for (let i = 0; i < length; i++) list[i] = make(lists[at + 1 + i]);
-  return list;
-}
-
-// See `Name` in `scopes.rs`.
-function nameOf(word) {
-  const number = word >>> 2;
-  switch (word & 3) {
-    case 0: {
-      const node = nodes[number];
-      return node.type === "Literal" ? String(node.value) : node.name;
+    isGlobalReturn() {
+      return this.__options.nodejsScope || this.__options.sourceType === "commonjs";
     }
-    case 1:
-      return "arguments";
-    case 2:
-      return (scopeData.globalNames ??= Object.keys(fileSettings.globals))[number];
-    default:
-      return text.slice(scopeData.lists[number + 1], scopeData.lists[number + 2]);
-  }
-}
-
-function variableAt(index) {
-  const existing = scopeData.variableObjects[index];
-  if (existing !== undefined) return existing;
-  const { variables, scopes, declaredCount } = scopeData;
-  const at = 8 * index;
-  const scope = scopes[variables[at + 1]];
-  const variable = newVariable(nameOf(variables[at]), scope, index, variables[at + 2]);
-  scopeData.variableObjects[index] = variable;
-  // One that the file doesn't declare, which ESLint has added to the global scope.
-  if (index >= declaredCount && scope.index === 0) {
-    variable.defs = [];
-    variable.identifiers = [];
-    Object.defineProperty(variable, "references", {
-      get() {
-        const found = listAt(variables[at + 4], referenceAt);
-        Object.defineProperty(this, "references", { value: found, writable: true, enumerable: true });
-        return found;
-      },
-      enumerable: true,
-      configurable: true,
-    });
-  }
-  return variable;
-}
-
-class Scope {
-  constructor(index, type, block, upper, isStrict) {
-    this.type = type;
-    this.block = block;
-    this.upper = upper;
-    this.isStrict = isStrict;
-    this.childScopes = [];
-    this.variableScope = this;
-    this.functionExpressionScope = type === "function-expression-name";
-    this.dynamic = type === "global" || type === "with";
-    this.directCallToEvalScope = false;
-    this.thisFound = false;
-    this.taints = new Map();
-    this.index = index;
-    // The index of the last scope that is in it, or its own.
-    this.last = index;
-  }
-  get $id() {
-    return this.index + 1;
-  }
-  resolve(identifier) {
-    return this.references.find(it => it.identifier === identifier) ?? null;
-  }
-  isStatic() {
-    return !this.dynamic;
-  }
-  isArgumentsMaterialized() {
-    if (this.type !== "function") return true;
-    if (this.block.type === "ArrowFunctionExpression") return false;
-    return this.set.get("arguments").references.length !== 0;
-  }
-  isThisMaterialized() {
-    return true;
-  }
-  isUsedName(name) {
-    return this.set.has(name) || this.through.some(it => it.identifier.name === name);
-  }
-  // Whether `scope` is this scope or in it.
-  contains(scope) {
-    return this.index <= scope.index && scope.index <= this.last;
-  }
-}
-for (const hidden of ["index", "last"]) Object.defineProperty(Scope.prototype, hidden, { writable: true });
-lazy(Scope.prototype, "variables", function () {
-  if (this.index === 0) {
-    const mentioned = mentionedGlobals();
-    if (tree.dialect === 1) return mentioned;
-    const known = new Set(mentioned.map(it => it.name));
-    return [
-      ...mentioned,
-      ...Object.keys(fileSettings.libs)
-        .filter(it => !known.has(it))
-        .map(it => libVariable(this, it)),
-    ];
-  }
-  return listAt(scopeData.scopeWords[9 * this.index + 6], variableAt);
-});
-lazy(Scope.prototype, "set", function () {
-  if (this.index !== 0 || tree.dialect === 1 || Object.hasOwn(this, "variables"))
-    return new Map(this.variables.map(it => [it.name, it]));
-  return new GlobalSet(this, mentionedGlobals());
-});
-
-// The variables of the global scope that the file declares, refers to or has a comment about, and those of the configuration,
-// with what ESLint's `addDeclaredGlobals` sets on them.
-function mentionedGlobals() {
-  if (scopeData.mentionedGlobals !== null) return scopeData.mentionedGlobals;
-  const { scopeWords, variables } = scopeData;
-  scopeData.mentionedGlobals = listAt(scopeWords[6], variableAt);
-  const commentAt = start => sourceCode.getTokenByRangeStart(start, { includeComments: true });
-  for (const variable of scopeData.mentionedGlobals) {
-    const bits = variables[8 * variable.index + 6];
-    if (!(bits & 32)) continue;
-    // Only a library of TypeScript defines it.
-    if (!(bits & 8)) {
-      variable.writeable = false;
-      variable.eslintImplicitGlobalSetting = "readonly";
-      continue;
+    isModule() {
+      return this.__options.sourceType === "module";
     }
-    variable.eslintImplicitGlobalSetting = ["readonly", "writable", "off", undefined][bits & 3];
-    variable.eslintExplicitGlobal = (bits & 16) !== 0;
-    variable.eslintExplicitGlobalComments =
-      bits & 16 ? listAt(variables[8 * variable.index + 7], commentAt) : undefined;
-    variable.writeable = (bits & 4) !== 0;
+    isImpliedStrict() {
+      return !!this.__options.impliedStrict;
+    }
+    isStrictModeSupported() {
+      return this.__options.ecmaVersion >= 5;
+    }
+    getDeclaredVariables(node) {
+      return this.__declaredVariables.get(node) || [];
+    }
+    acquire(node, inner) {
+      const scopes = this.__nodeToScope.get(node);
+      if (!scopes || scopes.length === 0) return null;
+      if (scopes.length === 1) return scopes[0];
+      const isIt = scope => !(scope.type === "function" && scope.functionExpressionScope);
+      return (inner ? scopes.findLast(isIt) : scopes.find(isIt)) ?? null;
+    }
+    acquireAll(node) {
+      return this.__nodeToScope.get(node);
+    }
+    release(node, inner) {
+      const scopes = this.__nodeToScope.get(node);
+      if (!scopes || !scopes.length) return null;
+      const scope = scopes[0].upper;
+      return scope ? this.acquire(scope.block, inner) : null;
+    }
+    attach() {}
+    detach() {}
   }
-  return scopeData.mentionedGlobals;
-}
 
-// A variable that the libraries of TypeScript define, and that nothing in the file or in the configuration mentions.
-function libVariable(scope, name) {
-  let variable = scopeData.libVariables.get(name);
-  if (variable === undefined) {
-    variable = newVariable(name, scope, NO_INDEX, fileSettings.libs[name] | IS_IN_LIB);
-    variable.defs = [];
-    variable.identifiers = [];
-    variable.references = [];
-    variable.writeable = false;
-    variable.eslintImplicitGlobalSetting = "readonly";
-    scopeData.libVariables.set(name, variable);
-  }
-  return variable;
-}
+  return {
+    ScopeManager,
+    forNative: [
+      scopes,
+      variableShapes(Variable, null, variableKeys, [], { eslintExplicitGlobalComments: undefined }),
+      definitions,
+      references,
+      scopeShape(Object, ["set", "variables", "left"], {}, { left: "through" }),
+      [new Map(), new WeakMap(), new Map()],
+    ],
+  };
+})();
 
-// The `set` of the global scope with typescript-eslint's parser, which has more than a thousand variables of the libraries of
-// TypeScript. Most files ask for a few names. The others are made when something goes through all of them.
+// ───────────── `@typescript-eslint/scope-manager` ─────────────
+
+// The `set` of the global scope. The libraries of TypeScript can define thousands of variables, and most files ask for a few names.
+// The others are made when something goes through all of them.
 class GlobalSet extends Map {
-  #scope;
-  #isComplete = false;
-  constructor(scope, variables) {
-    super();
-    this.#scope = scope;
-    for (const it of variables) super.set(it.name, it);
-  }
-  #complete() {
-    if (this.#isComplete) return;
-    this.#isComplete = true;
-    for (const it of this.#scope.variables) if (!super.has(it.name)) super.set(it.name, it);
-  }
   get(name) {
     const found = super.get(name);
-    if (found !== undefined || this.#isComplete || !Object.hasOwn(fileSettings.libs, name)) return found;
-    const variable = libVariable(this.#scope, name);
+    if (found !== undefined || scopeData.hasAllLibVariables || !Object.hasOwn(fileSettings.libs, name)) return found;
+    const variable = libVariable(name);
     super.set(name, variable);
     return variable;
   }
   has(name) {
-    return super.has(name) || (!this.#isComplete && Object.hasOwn(fileSettings.libs, name));
+    return super.has(name) || (!scopeData.hasAllLibVariables && Object.hasOwn(fileSettings.libs, name));
   }
   get size() {
-    this.#complete();
+    addLibVariables();
     return super.size;
   }
   keys() {
-    this.#complete();
+    addLibVariables();
     return super.keys();
   }
   values() {
-    this.#complete();
+    addLibVariables();
     return super.values();
   }
   entries() {
-    this.#complete();
+    addLibVariables();
     return super.entries();
   }
   forEach(callback, thisArg) {
-    this.#complete();
+    addLibVariables();
     return super.forEach(callback, thisArg);
   }
   [Symbol.iterator]() {
     return this.entries();
   }
 }
-lazy(Scope.prototype, "references", function () {
-  return listAt(scopeData.scopeWords[9 * this.index + 7], referenceAt);
-});
-lazy(Scope.prototype, "through", function () {
-  return listAt(scopeData.scopeWords[9 * this.index + 8], referenceAt);
-});
-// Of the global scope.
-lazy(Scope.prototype, "implicit", function () {
-  if (this.index !== 0) return undefined;
-  const implicit = {
-    set: new Map(),
-    variables: [],
-    [tree.dialect === 1 ? "left" : "leftToBeResolved"]: [...this.through],
-  };
-  for (const list of scopeData.implicitGlobals) {
-    const pairs = listAt(list, it => it);
-    const variable = newVariable(nodes[pairs[0]].name, this, NO_INDEX, 0);
-    variable.defs = [];
-    variable.identifiers = [];
-    variable.references = [];
-    implicit.set.set(variable.name, variable);
-    implicit.variables.push(variable);
-    for (let at = 0; at < pairs.length; at += 2) {
-      const definition = Object.create((tree.dialect === 0 ? TypeScriptDefinition : Definition).prototype);
-      Object.assign(definition, {
-        type: "ImplicitGlobalVariable",
-        name: nodes[pairs[at]],
-        node: pairs[at + 1] === NO_INDEX ? null : nodes[pairs[at + 1]],
-        parent: null,
-      });
-      if (tree.dialect === 1) Object.assign(definition, { index: null, kind: null });
-      variable.defs.push(definition);
-      variable.identifiers.push(nodes[pairs[at]]);
-    }
-  }
-  return implicit;
-});
 
-class ScopeManager {
-  constructor(scopes) {
-    this.scopes = scopes;
-    this.globalScope = scopes[0];
-    this.currentScope = null;
-  }
-  get variables() {
-    return this.scopes.flatMap(it => it.variables);
-  }
-  isES6() {
-    return tree.dialect === 0 || fileSettings.languageOptions.ecmaVersion >= 6;
-  }
-  isGlobalReturn() {
-    const { sourceType, parserOptions } = fileSettings.languageOptions;
-    return parserOptions.ecmaFeatures?.globalReturn === true || (tree.dialect === 1 && sourceType === "commonjs");
-  }
-  isImpliedStrict() {
-    return fileSettings.languageOptions.parserOptions.ecmaFeatures?.impliedStrict === true;
-  }
-  isModule() {
-    const { sourceType, parserOptions } = fileSettings.languageOptions;
-    return ((tree.dialect === 0 && parserOptions.sourceType) || sourceType) === "module";
-  }
-  isStrictModeSupported() {
-    return tree.dialect === 0 || fileSettings.languageOptions.ecmaVersion >= 5;
-  }
-  getDeclaredVariables(node) {
-    return this.declaredVariables.get(node) ?? [];
-  }
-  acquire(node, inner = false) {
-    const scopes = this.nodeToScope.get(node);
-    if (scopes === undefined) return null;
-    if (scopes.length === 1) return scopes[0];
-    return (inner ? scopes.at(-1) : scopes[0]) ?? null;
-  }
-  acquireAll(node) {
-    return this.nodeToScope.get(node);
-  }
-  release(node, inner) {
-    const upper = this.nodeToScope.get(node)?.[0].upper;
-    return upper ? this.acquire(upper.block, inner) : null;
-  }
-  attach() {}
-  detach() {}
-}
-lazy(ScopeManager.prototype, "nodeToScope", function () {
-  const byNode = new Map();
-  for (const scope of this.scopes) {
-    const scopes = byNode.get(scope.block);
-    if (scopes === undefined) byNode.set(scope.block, [scope]);
-    else scopes.push(scope);
-  }
-  return byNode;
-});
-lazy(ScopeManager.prototype, "declaredVariables", function () {
-  const byNode = new Map();
-  const add = (node, variable) => {
-    if (node === null || node === undefined) return;
-    const variables = byNode.get(node);
-    if (variables === undefined) byNode.set(node, [variable]);
-    else if (!variables.includes(variable)) variables.push(variable);
-  };
-  for (const scope of this.scopes) {
-    for (const variable of scope.index === 0 ? [...scope.variables, ...scope.implicit.variables] : scope.variables) {
-      for (const definition of variable.defs) {
-        add(definition.node, variable);
-        add(definition.parent, variable);
-      }
+const typescriptLayout = (() => {
+  class ScopeBase {
+    isVariableScope() {
+      return this.variableScope === this;
     }
   }
-  return byNode;
-});
+  const names =
+    namesIn(`GlobalScope ModuleScope FunctionScope FunctionExpressionNameScope BlockScope SwitchScope CatchScope WithScope
+    ForScope ClassScope ClassFieldInitializerScope ClassStaticBlockScope TSModuleScope TSEnumScope TypeScope
+    ConditionalTypeScope FunctionTypeScope MappedTypeScope`);
+  // A class called `name`.
+  const subclass = (name, base) => ({ [name]: class extends base {} })[name];
+  const keys =
+    namesIn(`$id block childScopes functionExpressionScope isStrict leftToResolve references set through type upper
+    variables variableScope`);
+  const scopes = names.flatMap((name, kind) =>
+    scopeShape(subclass(name, ScopeBase), kind === 0 ? [...keys, "implicit"] : keys, {
+      functionExpressionScope: scopeTypes[kind] === "function-expression-name",
+      leftToResolve: null,
+      type: scopeTypes[kind],
+    }),
+  );
+
+  class VariableBase {}
+  class Variable extends VariableBase {
+    get isTypeVariable() {
+      return this.defs.length === 0 || this.defs.some(def => def.isTypeDefinition);
+    }
+    get isValueVariable() {
+      return this.defs.length === 0 || this.defs.some(def => def.isVariableDefinition);
+    }
+  }
+  class ESLintScopeVariable extends VariableBase {}
+  class ImplicitLibVariable extends ESLintScopeVariable {}
+  const variableKeys = ["$id", "defs", "eslintUsed", "identifiers", "name", "references", "scope"];
+  const libKeys =
+    namesIn(`writeable eslintExplicitGlobal eslintImplicitGlobalSetting eslintExplicitGlobalComments isTypeVariable
+    isValueVariable`);
+
+  class DefinitionBase {}
+  const definitionKeys = ["$id", "type", "name", "node", "parent", "isTypeDefinition", "isVariableDefinition"];
+  const typeDefinitions = ["ClassName", "ImportBinding", "TSEnumName", "TSEnumMemberName", "TSModuleName", "Type"];
+  const definitions = definitionTypes.flatMap(type => {
+    const name = `${type === "TSEnumMemberName" ? "TSEnumMember" : type}Definition`;
+    const constants = { type, isTypeDefinition: typeDefinitions.includes(type), isVariableDefinition: type !== "Type" };
+    if (type === "ImplicitGlobalVariable") constants.parent = null;
+    return scopeShape(
+      subclass(name, DefinitionBase),
+      type === "Parameter" ? [...definitionKeys, "rest"] : definitionKeys,
+      constants,
+    );
+  });
+
+  // The flags of a reference, which the real one has in private fields, are in the message.
+  const flagsOf = reference => scopeData.references[5 * (reference.$id - 1) + 1];
+  class Reference {
+    get isTypeReference() {
+      return (flagsOf(this) & 4) !== 0;
+    }
+    get isValueReference() {
+      return (flagsOf(this) & 16) !== 0;
+    }
+    isWrite() {
+      return (flagsOf(this) & 2) !== 0;
+    }
+    isRead() {
+      return (flagsOf(this) & 1) !== 0;
+    }
+    isReadOnly() {
+      return (flagsOf(this) & 3) === 1;
+    }
+    isWriteOnly() {
+      return (flagsOf(this) & 3) === 2;
+    }
+    isReadWrite() {
+      return (flagsOf(this) & 3) === 3;
+    }
+  }
+  const reference = scopeShape(Reference, [
+    "$id",
+    "from",
+    "identifier",
+    "init",
+    "maybeImplicitGlobal",
+    "resolved",
+    "writeExpr",
+  ]);
+
+  class ScopeManager {
+    constructor(scopes, nodeToScope, declaredVariables) {
+      this.currentScope = null;
+      this.declaredVariables = declaredVariables;
+      this.globalScope = scopes[0];
+      this.nodeToScope = nodeToScope;
+      this.scopes = scopes;
+    }
+    isES6() {
+      return true;
+    }
+    isGlobalReturn() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures?.globalReturn === true;
+    }
+    isImpliedStrict() {
+      return fileSettings.languageOptions.parserOptions.ecmaFeatures?.impliedStrict === true;
+    }
+    isModule() {
+      const { sourceType, parserOptions } = fileSettings.languageOptions;
+      return (parserOptions.sourceType || sourceType) === "module";
+    }
+    isStrictModeSupported() {
+      return true;
+    }
+    get variables() {
+      return this.scopes.flatMap(it => it.variables);
+    }
+    getDeclaredVariables(node) {
+      return this.declaredVariables.get(node) ?? [];
+    }
+    acquire(node, inner = false) {
+      const scopes = this.nodeToScope.get(node);
+      if (!scopes || scopes.length === 0) return null;
+      if (scopes.length === 1) return scopes[0];
+      const isIt = scope => !(scope.type === "function" && scope.functionExpressionScope);
+      return (inner ? scopes.findLast(isIt) : scopes.find(isIt)) ?? null;
+    }
+  }
+
+  return {
+    ScopeManager,
+    ImplicitLibVariable,
+    forNative: [
+      scopes,
+      variableShapes(Variable, ImplicitLibVariable, variableKeys, libKeys, { eslintExplicitGlobalComments: undefined }),
+      definitions,
+      [...reference, ...reference],
+      scopeShape(Object, ["leftToBeResolved", "set", "variables"], {}, { leftToBeResolved: "through" }),
+      [new Map(), new WeakMap(), new GlobalSet()],
+    ],
+  };
+})();
+
+// A variable that the libraries of TypeScript define, and that nothing in the file or in the configuration mentions.
+function libVariable(name) {
+  let variable = scopeData.libVariables.get(name);
+  if (variable === undefined) {
+    const flags = fileSettings.libs[name];
+    variable = {
+      __proto__: typescriptLayout.ImplicitLibVariable.prototype,
+      $id: scopeData.variables.length + scopeData.libVariables.size + 1,
+      defs: [],
+      eslintUsed: false,
+      identifiers: [],
+      name,
+      references: [],
+      scope: scopeData.manager.globalScope,
+      writeable: false,
+      eslintExplicitGlobal: undefined,
+      eslintImplicitGlobalSetting: "readonly",
+      eslintExplicitGlobalComments: undefined,
+      isTypeVariable: (flags & 1) !== 0,
+      isValueVariable: (flags & 2) !== 0,
+    };
+    scopeData.libVariables.set(name, variable);
+  }
+  return variable;
+}
+
+// Puts the rest of them into `variables` and `set` of the global scope. typescript-eslint defines what is in the libraries first.
+function addLibVariables() {
+  if (scopeData.hasAllLibVariables) return;
+  scopeData.hasAllLibVariables = true;
+  const { globalScope } = scopeData.manager;
+  const isOfLib = it => it instanceof typescriptLayout.ImplicitLibVariable;
+  const mentioned = new Map(scopeData.mentionedGlobals.map(it => [it.name, it]));
+  // A name that the file declares as well is only among the others.
+  const ofLibs = Object.keys(fileSettings.libs).map(name => mentioned.get(name) ?? libVariable(name));
+  const value = [...ofLibs.filter(isOfLib), ...scopeData.mentionedGlobals.filter(it => !isOfLib(it))];
+  Map.prototype.clear.call(globalScope.set);
+  for (const variable of value) Map.prototype.set.call(globalScope.set, variable.name, variable);
+  Object.defineProperty(globalScope, "variables", { value, writable: true, enumerable: true, configurable: true });
+}
 
 function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
   program();
   ask(SCOPES);
   const buffer = buffers[SCOPES];
-  const [scopeCount, declaredCount, variableCount, definitionCount, referenceCount, implicitCount, listLength, listed] =
-    new Uint32Array(buffer, 0, 8);
-  let at = 44;
-  const words = length => {
-    const part = new Uint32Array(buffer, at, length);
-    at += 4 * length;
-    return part;
-  };
-  const scopeWords = words(9 * scopeCount);
-  const scopes = [];
+  const [scopeCount, declaredCount, variableCount, definitionCount, referenceCount] = new Uint32Array(buffer, 0, 5);
+  const layout = tree.dialect === 1 ? eslintScopeLayout : typescriptLayout;
+  const names =
+    globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
+  const [listed, scopes, variables, nodeToScope, declaredVariables] = native.scopes(
+    layout.forNative,
+    buffer,
+    nodes,
+    names,
+    scopeStrings,
+    text,
+  );
+  const words = new Uint32Array(buffer, 44 + 36 * scopeCount, 8 * variableCount);
   scopeData = {
-    manager: null,
-    scopes,
-    scopeWords,
+    manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables),
+    variables,
+    words,
     declaredCount,
-    variables: words(8 * variableCount),
-    definitions: words(7 * definitionCount),
-    references: words(5 * referenceCount),
-    implicitGlobals: words(implicitCount).subarray(0, new Uint32Array(buffer, 40, 1)[0]),
-    lists: words(listLength),
-    variableObjects: new Array(variableCount),
-    referenceObjects: new Array(referenceCount),
+    references: new Uint32Array(
+      buffer,
+      44 + 36 * scopeCount + 32 * variableCount + 28 * definitionCount,
+      5 * referenceCount,
+    ),
     libVariables: new Map(),
-    mentionedGlobals: null,
-    globalNames: null,
+    mentionedGlobals: scopes[0].variables,
+    hasAllLibVariables: tree.dialect === 1,
   };
-  for (let index = 0; index < scopeCount; index++) {
-    const kind = scopeWords[9 * index];
-    const upper = scopeWords[9 * index + 2];
-    const scope = new Scope(
-      index,
-      scopeTypes[kind & 255],
-      nodes[scopeWords[9 * index + 1]],
-      upper === NO_INDEX ? null : scopes[upper],
-      (kind & 256) !== 0,
-    );
-    scope.variableScope = scopes[scopeWords[9 * index + 3]] ?? scope;
-    scope.last = scopeWords[9 * index + 4];
-    scopes.push(scope);
+  native.setScopeManager(scopeData.manager);
+  // The comments are tokens, which are made here.
+  const lists = new Uint32Array(buffer);
+  const commentAt = start => sourceCode.getTokenByRangeStart(start, { includeComments: true });
+  for (const variable of scopes[0].variables) {
+    if (!variable.eslintExplicitGlobal) continue;
+    const index = variables.indexOf(variable);
+    const at = listsStart(lists) + words[8 * index + 7];
+    variable.eslintExplicitGlobalComments = Array.from(lists.subarray(at + 1, at + 1 + lists[at]), commentAt);
   }
-  for (const scope of scopes) scope.childScopes = listAt(scopeWords[9 * scope.index + 5], index => scopes[index]);
-  scopeData.manager = new ScopeManager(listAt(listed, index => scopes[index]));
+  if (tree.dialect === 0) {
+    Object.defineProperty(scopes[0], "variables", {
+      get() {
+        addLibVariables();
+        return this.variables;
+      },
+      set(value) {
+        Object.defineProperty(this, "variables", { value, writable: true, enumerable: true, configurable: true });
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
   return scopeData.manager;
+}
+
+// By the settings of a file: the names of the configured globals.
+const globalNames = new WeakMap();
+
+// Where the lists start in the words of the message.
+function listsStart(words) {
+  return 11 + 9 * words[0] + 8 * words[2] + 7 * words[3] + 5 * words[4] + words[5];
 }

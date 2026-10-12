@@ -5,8 +5,8 @@ pub(super) mod call {
     /// JSON: `[where the plugin is, its position among the plugins, the number of its first rule]`, the latter two `null` for
     /// a plugin that is loaded for the first time. The result is JSON: what the plugin consists of.
     pub(crate) const LOAD: u32 = 1;
-    /// A file to lint: see `lint` in `worker/main.js`. The result is JSON:
-    /// `[reports, the indices of the variables that rules have marked as used]`, or nothing if there are none.
+    /// A file to lint: see `lint` in `worker/main.js`. The result is JSON: the indices of the variables that rules have marked as
+    /// used, or nothing if there are none. The reports come before that, with [`REPORTS`](super::ask::REPORTS).
     pub(crate) const LINT: u32 = 2;
     /// JSON: `[id, settings, sources]`: the settings of a file, of which `settings.settings` is to be taken from the objects
     /// `sources` of a configuration file.

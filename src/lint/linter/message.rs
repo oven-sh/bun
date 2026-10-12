@@ -116,6 +116,18 @@ impl Suppression {
     }
 }
 
+/// The `data` of a suggestion, which ESLint passes on.
+#[derive(Clone, Debug, Default)]
+pub enum Data {
+    /// The rule gave none.
+    #[default]
+    None,
+    /// What the placeholders in the message of a built-in rule stand for.
+    Texts(Vec<(&'static str, Vec<u8>)>),
+    /// What a rule written in JavaScript gave, as JSON.
+    Json(Vec<u8>),
+}
+
 /// An element of ESLint's `suggestions`.
 #[derive(Clone, Debug)]
 pub struct Suggestion {
@@ -123,25 +135,21 @@ pub struct Suggestion {
     pub message_id: Cow<'static, str>,
     /// `desc`
     pub message: Vec<u8>,
-    /// What the placeholders of the message stand for.
-    pub data: Vec<(Cow<'static, str>, Vec<u8>)>,
-    /// The rule gave `data`, which can be empty: ESLint has it in the message then.
-    pub has_data: bool,
+    pub data: Data,
     pub fix: Fix,
     pub kind: SuggestionKind,
 }
 
 impl From<crate::context::Suggestion> for Suggestion {
     fn from(it: crate::context::Suggestion) -> Suggestion {
-        let has_data = !it.data.is_empty();
-        let data = it.data.into_iter();
         Suggestion {
             message_id: Cow::Borrowed(it.message_id),
             message: it.message,
-            data: data
-                .map(|(name, value)| (Cow::Borrowed(name), value))
-                .collect(),
-            has_data,
+            // A built-in rule whose upstream writes `desc` itself fills a template of its own. That data isn't upstream's.
+            data: match it.data.is_empty() || it.message_id.is_empty() {
+                true => Data::None,
+                false => Data::Texts(it.data),
+            },
             fix: it.fix,
             kind: it.kind,
         }
@@ -150,16 +158,12 @@ impl From<crate::context::Suggestion> for Suggestion {
 
 impl From<js_plugin::Suggested> for Suggestion {
     fn from(it: js_plugin::Suggested) -> Suggestion {
-        let data = it.data.into_iter();
         Suggestion {
             message_id: it
                 .message_id
                 .map_or(Cow::Borrowed(""), |id| Cow::Owned(id.into())),
             message: it.message,
-            data: data
-                .map(|(name, value)| (Cow::Owned(name.into()), value))
-                .collect(),
-            has_data: it.has_data,
+            data: it.data.map_or(Data::None, Data::Json),
             fix: it.fix,
             kind: SuggestionKind::Suggestion,
         }
@@ -473,11 +477,16 @@ fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
 
 /// `,"data":{..}`, if the rule gave any.
 fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
-    if !suggestion.has_data {
-        return;
-    }
+    let texts = match &suggestion.data {
+        Data::None => return,
+        Data::Json(json) => {
+            out.extend_from_slice(b",\"data\":");
+            return out.extend_from_slice(json);
+        }
+        Data::Texts(texts) => texts,
+    };
     out.extend_from_slice(b",\"data\":{");
-    for (i, (name, value)) in suggestion.data.iter().enumerate() {
+    for (i, (name, value)) in texts.iter().enumerate() {
         if i > 0 {
             out.push(b',');
         }

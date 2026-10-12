@@ -11,11 +11,15 @@
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectInitializationScope.h>
+#include <JavaScriptCore/RegExp.h>
+#include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/YarrFlags.h>
 #include <array>
 
 namespace Bun {
@@ -75,6 +79,8 @@ struct LintTree {
     std::span<const uint8_t> numbers;
     std::span<const uint32_t> starts, ends, parents, fields, lists, strings;
     std::span<const uint8_t> types;
+    // UTF-8. The strings that aren't in the text of the file.
+    std::span<const uint8_t> extra;
 
     bool read(std::span<const uint8_t> bytes)
     {
@@ -86,8 +92,8 @@ struct LintTree {
         fieldCount = words[1];
         listCount = words[2];
         stringCount = words[3];
-        uint64_t twice = words[4], matches = words[5], numberCount = words[6], extra = words[7];
-        uint64_t size = header * 4 + numberCount * 8 + (uint64_t(count) * 3 + fieldCount + listCount + stringCount + twice + matches) * 4 + count + extra;
+        uint64_t twice = words[4], matches = words[5], numberCount = words[6], extraLength = words[7];
+        uint64_t size = header * 4 + numberCount * 8 + (uint64_t(count) * 3 + fieldCount + listCount + stringCount + twice + matches) * 4 + count + extraLength;
         if (size > bytes.size())
             return false;
         const uint8_t* at = bytes.data() + header * 4;
@@ -107,13 +113,14 @@ struct LintTree {
         part(twice);
         part(matches);
         types = { at, count };
+        extra = { at + count, static_cast<size_t>(extraLength) };
         return true;
     }
 };
 
 class LintNodeMaker {
 public:
-    LintNodeMaker(JSGlobalObject* globalObject, const LintTree& tree, JSArray* nodes, JSString* text, JSArray* knownStrings, JSObject* slow)
+    LintNodeMaker(JSGlobalObject* globalObject, const LintTree& tree, JSArray* nodes, JSString* text, JSArray* knownStrings)
         : m_globalObject(globalObject)
         , m_vm(globalObject->vm())
         , m_tree(tree)
@@ -121,11 +128,15 @@ public:
         , m_text(text)
         , m_textLength(text->length())
         , m_knownStrings(knownStrings)
-        , m_slow(slow)
+        , m_pattern(Identifier::fromString(m_vm, "pattern"_s))
+        , m_flags(Identifier::fromString(m_vm, "flags"_s))
+        , m_cooked(Identifier::fromString(m_vm, "cooked"_s))
+        , m_raw(Identifier::fromString(m_vm, "raw"_s))
     {
     }
 
-    // What a word stands for, in a node from `start` to `end`: `value` in ast.js. Empty: an exception, or out of step.
+    // What a word stands for, in a node from `start` to `end`. src/lint/js_plugin/ast.rs writes the words. Empty: an exception, or
+    // out of step.
     JSValue value(uint32_t word, uint32_t start, uint32_t end)
     {
         uint32_t number = word >> 4;
@@ -152,11 +163,8 @@ public:
         case 3: {
             if (uint64_t(number) * 2 + 1 >= m_tree.strings.size())
                 return {};
-            uint32_t from = m_tree.strings[2 * number];
-            // In the text that comes with the tree, which is rare.
-            if (from >= 0x80000000)
-                break;
-            return slice(from, m_tree.strings[2 * number + 1]);
+            uint32_t from = m_tree.strings[2 * number], to = m_tree.strings[2 * number + 1];
+            return from < 0x80000000 ? slice(from, to) : sliceOfExtra(from - 0x80000000, to);
         }
         case 4:
             return m_knownStrings->tryGetIndexQuickly(number);
@@ -169,17 +177,11 @@ public:
             memcpy(&result, m_tree.numbers.data() + size_t(number) * 8, 8);
             return jsNumber(purifyNaN(result));
         }
+        case 7:
+            return units(number);
         default:
-            break;
+            return made(word & 15, number, start, end);
         }
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsNumber(word));
-        arguments.append(jsNumber(start));
-        arguments.append(jsNumber(end));
-        JSValue result = call(m_globalObject, m_slow, arguments, "Expected a function"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        return result;
     }
 
 private:
@@ -194,6 +196,66 @@ private:
         end = std::min(end, m_textLength);
         start = std::min(start, end);
         return jsSubstringOfResolved(m_vm, m_text, start, end - start);
+    }
+
+    // The same of the text that comes with the tree, which is rare.
+    JSValue sliceOfExtra(uint32_t start, uint32_t end)
+    {
+        if (!m_extraText)
+            m_extraText = jsString(m_vm, String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(m_tree.extra)));
+        end = std::min(end, m_extraText->length());
+        start = std::min(start, end);
+        return jsSubstringOfResolved(m_vm, m_extraText, start, end - start);
+    }
+
+    // A string from the list of its UTF-16 code units: it has half of a surrogate pair.
+    JSValue units(uint32_t at)
+    {
+        if (at >= m_tree.lists.size() || m_tree.lists[at] >= m_tree.lists.size() - at)
+            return {};
+        auto list = m_tree.lists.subspan(at + 1, m_tree.lists[at]);
+        Vector<char16_t, 64> units(list.size(), [&](size_t i) { return static_cast<char16_t>(list[i]); });
+        return jsString(m_vm, String(units.span()));
+    }
+
+    // What is made of the one or two words at `at` in the lists.
+    JSValue made(uint32_t tag, uint32_t at, uint32_t start, uint32_t end)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        bool isBigInt = tag > 10;
+        if (uint64_t(at) + (isBigInt ? 0 : 1) >= m_tree.lists.size())
+            return {};
+        JSValue first = value(m_tree.lists[at], start, end);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue second = isBigInt ? jsUndefined() : value(m_tree.lists[at + 1], start, end);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!first || !second)
+            return {};
+        if (tag == 9 || tag == 10) {
+            JSObject* object = constructEmptyObject(m_globalObject);
+            object->putDirect(m_vm, tag == 9 ? m_pattern : m_cooked, first);
+            object->putDirect(m_vm, tag == 9 ? m_flags : m_raw, second);
+            return object;
+        }
+        if (!first.isString() || !(isBigInt || second.isString()))
+            return {};
+        auto text = asString(first)->value(m_globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isBigInt) {
+            JSValue result = JSBigInt::stringToBigInt(m_globalObject, text.data);
+            RETURN_IF_EXCEPTION(scope, {});
+            return result;
+        }
+        // `value` of a regular expression is `null` where the engine can't make it.
+        auto flagsText = asString(second)->value(m_globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto flags = Yarr::parseFlags(flagsText.data);
+        if (!flags)
+            return jsNull();
+        RegExp* regExp = RegExp::create(m_vm, text.data, *flags);
+        if (!regExp->isValid())
+            return jsNull();
+        return RegExpObject::create(m_vm, m_globalObject->regExpStructure(), regExp);
     }
 
     JSValue list(uint32_t at)
@@ -227,15 +289,15 @@ private:
     JSString* m_text;
     uint32_t m_textLength;
     JSArray* m_knownStrings;
-    JSObject* m_slow;
+    JSString* m_extraText { nullptr };
+    Identifier m_pattern, m_flags, m_cooked, m_raw;
 };
 
 } // namespace
 
-// `nodes(shapes, leftOut, buffer, text, knownStrings, slow)`: the nodes of the tree in `buffer`, by their number.
+// `nodes(shapes, leftOut, buffer, text, knownStrings)`: the nodes of the tree in `buffer`, by their number.
 // `shapes`: by the number of a type what `shape` has made, or a list of these if fields of the type can be left out: by
 // which of them are there, the first being the lowest bit. `leftOut`: by the number of a type, a bit for each such field.
-// `slow(word, start, end)`: `value` of ast.js, for what is rare.
 JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -247,8 +309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame*
     auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(2));
     JSValue textValue = callFrame->argument(3);
     JSArray* knownStrings = dynamicDowncast<JSArray>(callFrame->argument(4));
-    JSObject* slow = callFrame->argument(5).getObject();
-    if (!shapes || !leftOut || leftOut->isDetached() || !buffer || !textValue.isString() || !knownStrings || !slow)
+    if (!shapes || !leftOut || leftOut->isDetached() || !buffer || !textValue.isString() || !knownStrings)
         return outOfStep();
     JSString* text = asString(textValue);
     text->value(globalObject);
@@ -309,7 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame*
         return {};
     }
     Structure* rangeStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32);
-    LintNodeMaker maker(globalObject, tree, nodes, text, knownStrings, slow);
+    LintNodeMaker maker(globalObject, tree, nodes, text, knownStrings);
 
     // What is in a node has a higher number.
     for (uint32_t id = count; id--;) {
@@ -551,7 +612,7 @@ extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 4, "shape"_s, jsLintShape, ImplementationVisibility::Public));
-    object->putDirect(vm, Identifier::fromString(vm, "nodes"_s), JSFunction::create(vm, globalObject, 6, "nodes"_s, jsLintNodes, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "nodes"_s), JSFunction::create(vm, globalObject, 5, "nodes"_s, jsLintNodes, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "codePaths"_s), JSFunction::create(vm, globalObject, 3, "codePaths"_s, jsLintCodePaths, ImplementationVisibility::Public));
     addLintHostFunctions(globalObject, object);
     addLintScopeFunctions(globalObject, object);

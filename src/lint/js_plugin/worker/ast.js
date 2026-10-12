@@ -10,10 +10,8 @@ let typeNames = [];
 const typeIds = new Map();
 // ESLint's `visitorKeys`, for typescript-estree and for espree.
 const visitorKeys = [{}, {}];
-// By dialect and type: `{ name, fields, leftOut, prototype }`. `leftOut`: a bit for each field that a node does not have at all if
-// there is nothing to say.
-const kinds = [[], []];
-// For `native.nodes`, by dialect and type: what `native.shape` has made, and `leftOut`.
+// For `native.nodes`, by dialect and type: what `native.shape` has made, and a bit for each field that a node does not have at all
+// if there is nothing to say.
 const shapes = [[], []];
 const leftOutBits = [new Uint32Array(256), new Uint32Array(256)];
 let knownStrings = [];
@@ -23,22 +21,9 @@ let tree = null;
 // The nodes of the file, by their number.
 let nodes = [];
 
-// `loc` here and `SourceCode` in source_code.js are also in src/jsc/bindings/LintSourceCode.cpp, which this turns on.
-const usesNativeSourceCode = process.env.BUN_LINT_NATIVE_SOURCE_CODE !== "0";
-
-class Node {
-  get loc() {
-    const loc = { start: locationOf(this.range[0]), end: locationOf(this.range[1]) };
-    Object.defineProperty(this, "loc", { value: loc, writable: true, enumerable: true, configurable: true });
-    return loc;
-  }
-  set loc(loc) {
-    Object.defineProperty(this, "loc", { value: loc, writable: true, enumerable: true, configurable: true });
-  }
-}
-if (usesNativeSourceCode) {
-  Object.defineProperty(Node.prototype, "loc", { get: native.locGetter, set: native.locSetter, configurable: true });
-}
+// `loc` becomes an own property the first time it is asked for: src/jsc/bindings/LintSourceCode.cpp.
+class Node {}
+Object.defineProperty(Node.prototype, "loc", { get: native.locGetter, set: native.locSetter, configurable: true });
 
 // The fields that a node does not have at all, where the others are `undefined`: rules ask whether a `Literal` has a `regex`.
 // espree also leaves out the `directive` of a statement that is none.
@@ -89,21 +74,17 @@ function defineTypes(types, strings) {
       const canBeLeftOut = field => leftOut.has(`${name}.${field}`) || (dialect === 1 && field === "directive");
       const some = names.filter(canBeLeftOut);
       // All nodes of a type have the same shape, but for these.
-      const kind = { name, fields: names, leftOut: 0, prototype: Object.create(Node.prototype) };
-      for (const field of some) kind.leftOut |= 1 << names.indexOf(field);
-      kinds[dialect][id] = kind;
-      if (native !== undefined) {
-        const shapeWith = which => {
-          const has = field => !some.includes(field) || ((which >> some.indexOf(field)) & 1) === 1;
-          return native.shape(kind.prototype, ["type", ...names.filter(has), "start", "end", "range", "parent"], name);
-        };
-        shapes[dialect][id] =
-          some.length === 0 ? shapeWith(0) : Array.from({ length: 1 << some.length }, (_, it) => shapeWith(it));
-        leftOutBits[dialect][id] = kind.leftOut;
-      }
+      const prototype = Object.create(Node.prototype);
+      const shapeWith = which => {
+        const has = field => !some.includes(field) || ((which >> some.indexOf(field)) & 1) === 1;
+        return native.shape(prototype, ["type", ...names.filter(has), "start", "end", "range", "parent"], name);
+      };
+      shapes[dialect][id] =
+        some.length === 0 ? shapeWith(0) : Array.from({ length: 1 << some.length }, (_, it) => shapeWith(it));
+      for (const field of some) leftOutBits[dialect][id] |= 1 << names.indexOf(field);
       if (dialect === 1) continue;
       for (const [key, get] of Object.entries(deprecated[name] ?? {})) {
-        Object.defineProperty(kind.prototype, key, {
+        Object.defineProperty(prototype, key, {
           get() {
             return get(this, this);
           },
@@ -117,97 +98,22 @@ function defineTypes(types, strings) {
   });
 }
 
-function stringAt(index) {
-  const start = tree.strings[2 * index];
-  const end = tree.strings[2 * index + 1];
-  if (start >= 0x80000000) {
-    tree.extraText ??= decode(tree.extra.buffer, tree.extra.byteOffset, tree.extra.byteOffset + tree.extra.byteLength);
-    return tree.extraText.slice(start - 0x80000000, end);
-  }
-  return text.slice(start, end);
-}
-
-// What a word stands for, in a node from `start` to `end`.
-function value(word, start, end) {
-  const number = word >>> 4;
-  switch (word & 15) {
-    case 0:
-      switch (number) {
-        case 0:
-          return undefined;
-        case 1:
-          return null;
-        case 2:
-          return false;
-        case 3:
-          return true;
-        case 4:
-          return text.slice(start, end);
-        default:
-          return text.slice(start + 1, end - 1);
-      }
-    case 1:
-      return nodes[number];
-    case 2: {
-      const lists = tree.lists;
-      const length = lists[number];
-      const list = new Array(length);
-      for (let i = 0; i < length; i++) {
-        const id = lists[number + 1 + i];
-        list[i] = id === 0 ? null : nodes[id];
-      }
-      return list;
-    }
-    case 3:
-      return stringAt(number);
-    case 4:
-      return knownStrings[number];
-    case 5:
-      return number;
-    case 6:
-      return tree.numbers[number];
-    case 7: {
-      let string = "";
-      for (let i = 1; i <= tree.lists[number]; i++) string += String.fromCharCode(tree.lists[number + i]);
-      return string;
-    }
-    case 8:
-      try {
-        return new RegExp(value(tree.lists[number], start, end), value(tree.lists[number + 1], start, end));
-      } catch {
-        return null;
-      }
-    case 9:
-      return { pattern: value(tree.lists[number], start, end), flags: value(tree.lists[number + 1], start, end) };
-    case 10:
-      return { cooked: value(tree.lists[number], start, end), raw: value(tree.lists[number + 1], start, end) };
-    default:
-      return BigInt(value(tree.lists[number], start, end));
-  }
-}
-
-// Takes apart the message that `ast.rs` writes. `selectors`: how many were to be matched.
+// The parts of the message that `ast.rs` writes that the traversal needs. `selectors`: how many were to be matched.
 function readTree(buffer, selectors) {
   const header = new Uint32Array(buffer, 0, 10);
-  const [count, fields, lists, strings, twice, matches, numbers, extra, dialect] = header;
+  const [count, fields, lists, strings, twice, matches, numbers, , dialect] = header;
   let at = 40;
   const words = length => {
     const part = new Uint32Array(buffer, at, length);
     at += 4 * length;
     return part;
   };
-  const parts = { count, dialect, numbers: new Float64Array(buffer, at, numbers), extraText: undefined };
-  at += 8 * numbers;
-  parts.starts = words(count);
-  parts.ends = words(count);
-  parts.parents = words(count);
-  parts.fields = words(fields);
-  parts.lists = words(lists);
-  parts.strings = words(strings);
+  at += 8 * numbers + 8 * count;
+  const parts = { count, dialect, parents: words(count) };
+  at += 4 * (fields + lists + strings);
   parts.twice = words(twice);
   parts.matches = readMatches(words(matches), selectors);
   parts.types = new Uint8Array(buffer, at, count);
-  parts.extra = new Uint8Array(buffer, at + count, extra);
   return parts;
 }
 
@@ -221,32 +127,7 @@ function readMatches(words, selectors) {
   return matches;
 }
 
-// Makes all the nodes of `tree`.
+// Makes all the nodes of `tree`: src/jsc/bindings/LintNodes.cpp.
 function makeNodes() {
-  const { count, types, starts, ends, parents, fields, dialect } = tree;
-  if (native !== undefined) {
-    nodes = native.nodes(shapes[dialect], leftOutBits[dialect], buffers[AST], text, knownStrings, value);
-    return;
-  }
-  // The same, where that is not there: src/jsc/bindings/LintNodes.cpp.
-  const byType = kinds[dialect];
-  // Where the words of each node start.
-  const offsets = new Uint32Array(count);
-  for (let id = 0, at = 0; id < count; id++) {
-    offsets[id] = at;
-    at += byType[types[id]].fields.length;
-  }
-  nodes = new Array(count);
-  // What is in a node has a higher number.
-  for (let id = count - 1; id >= 0; id--) {
-    const kind = byType[types[id]];
-    const [at, start, end] = [offsets[id], starts[id], ends[id]];
-    const node = Object.create(kind.prototype);
-    node.type = kind.name;
-    kind.fields.forEach((field, i) => {
-      if (fields[at + i] !== 0 || ((kind.leftOut >> i) & 1) === 0) node[field] = value(fields[at + i], start, end);
-    });
-    nodes[id] = Object.assign(node, { start, end, range: [start, end], parent: null });
-  }
-  for (let id = 1; id < count; id++) nodes[id].parent = nodes[parents[id]];
+  nodes = native.nodes(shapes[tree.dialect], leftOutBits[tree.dialect], buffers[AST], text, knownStrings);
 }

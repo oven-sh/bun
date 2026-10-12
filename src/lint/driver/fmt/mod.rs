@@ -26,7 +26,7 @@ use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
-use bun_lint::js_plugin::Unformatted;
+use bun_lint::js_plugin::{HEAVY, Unformatted};
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
@@ -1068,7 +1068,7 @@ impl Run<'_> {
         // The language of a plugin: see `prettier.rs`.
         if language == Language::Other && !is_ignored && is_of_plugin && not_installed.is_empty() {
             let size = (1, text.len() as u64);
-            let bridge = prettier::Prettier::new(self.environment, self.options, size);
+            let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
             match bridge.format(&path, configs.path_of_config(&scope), &text) {
                 Err(Unformatted::Message(message)) if forgives => {
                     self.error(&message);
@@ -1372,12 +1372,12 @@ impl Run<'_> {
         let started = Instant::now();
         // Before any other thread runs: this starts JavaScriptCore, and so would the first pattern of a configuration that one
         // of them compiles. The thread that starts it is its main thread.
-        // Its threads have the stack for what walks a tree that is as deep as a parser lets it be. And those that hand files over
-        // wait for a VM, which loads its modules and reads files on Bun's pool: with all of that pool's threads waiting, for ever.
+        // Its threads have the stack for what walks a tree that is as deep as a parser lets it be.
         bun_sema_driver::use_a_pool_of_their_own("Bun Format");
         let bridge = (!handed_over.is_empty()).then(|| {
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
-            prettier::Prettier::new(self.environment, options, (handed_over.len(), size))
+            let size = (handed_over.len(), size);
+            prettier::Prettier::new(self.environment, options, size, pool.threads())
         });
         let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
         let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
@@ -1484,7 +1484,8 @@ impl Run<'_> {
             }
         }
         if let Some(bridge) = &bridge {
-            pool.for_each(handed_over.len(), 1, &|at| {
+            let is_heavy = |at: usize| handed_over[at].1.size >= HEAVY as u64;
+            bridge.for_each(handed_over.len(), &is_heavy, &|at| {
                 let (index, target) = handed_over[at];
                 let began = Instant::now();
                 let shown = paths::relative(cwd, &target.path);

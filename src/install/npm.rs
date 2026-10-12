@@ -367,6 +367,24 @@ pub mod registry {
             let mut user: &mut [u8] = &mut [];
             let mut needs_normalize = false;
 
+            // `NpmRegistry::from_url` takes the credentials out of a URL that is
+            // written in the configuration. One that comes from an environment
+            // variable is only known here; left in the URL, the credentials are
+            // sent with no request and are written to bun.lock and to messages.
+            if registry.token.is_empty()
+                && registry.username.is_empty()
+                && registry.password.is_empty()
+                && !url.password.is_empty()
+            {
+                if url.username.is_empty() {
+                    registry.token = Box::from(url.password);
+                } else {
+                    registry.username = Box::from(url.username);
+                    registry.password = Box::from(url.password);
+                }
+                needs_normalize = true;
+            }
+
             // Backing storage for `user`/`auth` when synthesized from
             // username:password.
             let mut output_buf_owned: Box<[u8]> = Box::default();

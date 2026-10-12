@@ -584,6 +584,8 @@ function connectionListenerHTTP1(server, socket, options) {
       req._addHeaderLines(rawTrailers, rawTrailers.length);
       req.push(null);
     }
+    // Node's readStart(): a socket that the listener paused reads the next request.
+    if (!socket._paused && socket.readable) socket.resume();
   };
 
   function onHttp1SocketError(err, rawPacket) {

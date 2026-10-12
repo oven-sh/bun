@@ -26,6 +26,15 @@ To run your tests in `--watch` mode:
 bun --watch test
 ```
 
+To run a `package.json` script in `--watch` mode, put the flag before the script name:
+
+```bash terminal icon="terminal"
+# package.json: "scripts": { "dev": "bun server.ts" }
+bun --watch run dev   # runs `bun --watch server.ts`
+```
+
+Bun forwards `--watch` (or `--hot`) to the script when the script is a single `bun` command. For any other script, such as `vite dev` or `bun run build && bun server.ts`, Bun prints a warning and runs the script without the flag. Put the flag inside the script in that case.
+
 To type check before every restart, add [`--check`](/runtime/check#watch-mode). After a type error, Bun waits for your next change instead of running the file.
 
 ```bash terminal icon="terminal"

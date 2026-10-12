@@ -1,8 +1,18 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { afterEach, describe, expect, it } from "bun:test";
+import {
+  bunEnv,
+  bunExe,
+  type DirectoryTree,
+  isBroken,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+} from "harness";
+import { chmodSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -648,5 +658,193 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     "/": [O_CLOEXEC],
     "/dep.ts": [O_CLOEXEC],
     "/main.ts": [O_CLOEXEC],
+  });
+});
+
+// `bun --watch run <script>`: the process that runs a package.json script only
+// waits on a shell, so it hands --watch / --hot to the `bun` the script starts
+// (when the script is a single bun command) instead of dropping the flag.
+describe.concurrent("--watch / --hot with a package.json script", () => {
+  // One line per (re)start: `RUNNING <V> <pid> <execArgv> <argv>`.
+  const serverFiles = {
+    "dep.mjs": `export const V = "v0";`,
+    "server.mjs": `import { V } from "./dep.mjs";
+console.log("RUNNING " + V + " " + process.pid + " " + JSON.stringify(process.execArgv) + " " + JSON.stringify(process.argv.slice(2)));
+setInterval(() => {}, 1e6);`,
+    "pre.mjs": `console.log("PRE " + JSON.stringify(process.execArgv));`,
+  };
+  const packageJson = (name: string, dev: string) =>
+    JSON.stringify({ name, scripts: { predev: `${bunExe()} pre.mjs`, dev } });
+
+  function lineWaiter(stream: ReadableStream<Uint8Array>) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    return {
+      // Resolves with the first complete line that contains `needle`.
+      waitForLine: async (needle: string) => {
+        for (;;) {
+          for (const line of output.split("\n").slice(0, -1)) {
+            if (line.includes(needle)) return line;
+          }
+          const { value, done } = await reader.read();
+          if (done) throw new Error(`stream closed before ${JSON.stringify(needle)}: ${JSON.stringify(output)}`);
+          output += decoder.decode(value, { stream: true });
+        }
+      },
+      // Resolves once every process that holds the write end has exited.
+      end: async () => {
+        while (!(await reader.read()).done);
+      },
+      output: () => output,
+    };
+  }
+
+  function parseRunning(line: string) {
+    const [, pid, execArgv, argv] = line.match(/RUNNING \S+ (\d+) (\S+) (\S+)/)!;
+    return { pid: Number(pid), execArgv: JSON.parse(execArgv), argv: JSON.parse(argv) };
+  }
+
+  async function expectForwardedAndReloads(opts: {
+    files: DirectoryTree;
+    // Where `dep.mjs` lives, relative to the temp directory.
+    serverDir?: string;
+    args: string[];
+    execArgv: string[];
+    argv?: string[];
+    // The `$ <command>` line that `bun run` prints before it runs a script.
+    echo?: string;
+  }) {
+    using dir = tempDir("watch-run-script", opts.files);
+    const proc = spawn({
+      cmd: [bunExe(), ...opts.args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stdout = lineWaiter(proc.stdout);
+    const stderr = lineWaiter(proc.stderr);
+    const pids = new Set<number>();
+    try {
+      const first = parseRunning(await stdout.waitForLine("RUNNING v0 "));
+      pids.add(first.pid);
+      expect({ execArgv: first.execArgv, argv: first.argv }).toEqual({
+        execArgv: opts.execArgv,
+        argv: opts.argv ?? [],
+      });
+      if (opts.echo !== undefined) {
+        expect(await stderr.waitForLine("server.mjs")).toBe(opts.echo);
+      }
+      // The pre-script ran once, to completion, without the flag.
+      expect(stdout.output().match(/PRE \S+/g)).toEqual(["PRE []"]);
+
+      // On Windows a `bun --watch` that a watched `bun` starts inherits
+      // `_BUN_WATCHER_CHILD` and exits on its first reload (#42926).
+      if (!isWindows) {
+        await Bun.write(join(String(dir), opts.serverDir ?? ".", "dep.mjs"), `export const V = "v1";`);
+        pids.add(parseRunning(await stdout.waitForLine("RUNNING v1 ")).pid);
+      }
+    } finally {
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+      proc.kill("SIGKILL");
+      await proc.exited;
+      // Windows cannot remove a directory that is still a process's cwd.
+      await Promise.all([stdout.end(), stderr.end()]);
+    }
+  }
+
+  it.each([
+    { args: ["--watch", "run", "dev"], flags: ["--watch"] },
+    { args: ["run", "--watch", "dev", "extra-arg"], flags: ["--watch"], argv: ["extra-arg"] },
+    { args: ["--watch", "dev"], flags: ["--watch"] },
+    { args: ["--hot", "--no-clear-screen", "run", "dev"], flags: ["--hot", "--no-clear-screen"] },
+    { args: ["--watch", "--watch-kill-signal=SIGINT", "run", "dev"], flags: ["--watch", "--watch-kill-signal=SIGINT"] },
+  ])(
+    "bun $args forwards the flags to the script's bun and it reloads",
+    async ({ args, flags, argv = [] }) => {
+      await expectForwardedAndReloads({
+        files: { ...serverFiles, "package.json": packageJson("app", `${bunExe()} server.mjs`) },
+        args,
+        execArgv: flags,
+        argv,
+        echo: [`$ ${bunExe()}`, ...flags, "server.mjs", ...argv].join(" "),
+      });
+    },
+    30000,
+  );
+
+  it("variable assignments before bun do not stop the forward", async () => {
+    await expectForwardedAndReloads({
+      files: { ...serverFiles, "package.json": packageJson("app", `A=1 B=2 ${bunExe()} server.mjs`) },
+      args: ["--watch", "run", "dev"],
+      execArgv: ["--watch"],
+      echo: `$ A=1 B=2 ${bunExe()} --watch server.mjs`,
+    });
+  }, 30000);
+
+  it("bun --watch run --filter forwards the flag", async () => {
+    await expectForwardedAndReloads({
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["pkgs/*"] }),
+        pkgs: { a: { ...serverFiles, "package.json": packageJson("a", `${bunExe()} server.mjs`) } },
+      },
+      serverDir: "pkgs/a",
+      args: ["--watch", "run", "--filter", "a", "dev"],
+      execArgv: ["--watch"],
+    });
+  }, 30000);
+
+  it("bun --watch run --parallel forwards the flag", async () => {
+    await expectForwardedAndReloads({
+      files: { ...serverFiles, "package.json": packageJson("app", `${bunExe()} server.mjs`) },
+      args: ["--watch", "run", "--parallel", "dev"],
+      execArgv: ["--watch"],
+    });
+  }, 30000);
+
+  it.each(["--watch", "--hot"])("bun %s run says when a script cannot take the flag", async flag => {
+    using dir = tempDir("watch-run-script-warn", {
+      "package.json": JSON.stringify({ name: "app", scripts: { dev: "echo first && echo second" } }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), flag, "run", "dev"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split(/\r?\n/)).toEqual(["first", "second", ""]);
+    expect(stderr).toContain(`warn: ${flag} was not applied to script "dev".`);
+    expect(stderr).toContain("$ echo first && echo second");
+    expect(exitCode).toBe(0);
+  });
+
+  // The executable is a `#!/bin/sh` script.
+  it.skipIf(isWindows)("bun --watch run <bin> says the flag was not applied", async () => {
+    using dir = tempDir("watch-run-bin-warn", {
+      "package.json": JSON.stringify({ name: "app" }),
+      "node_modules/.bin/hello": "#!/bin/sh\necho HELLO\n",
+    });
+    chmodSync(join(String(dir), "node_modules/.bin/hello"), 0o755);
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "run", "hello"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("HELLO\n");
+    expect(stderr).toContain(`warn: --watch was not applied: "hello" is an executable.`);
+    expect(exitCode).toBe(0);
   });
 });

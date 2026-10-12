@@ -232,6 +232,143 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .map_err(Into::into)
     }
 
+    /// `bun --watch run <script>` / `bun --hot run <script>`: this process only
+    /// waits on a shell, so the reload flags belong to the `bun` that the
+    /// script starts. When the script body is one `bun …` command, splice the
+    /// flags in after `bun` (the echoed `$ …` line then shows what ran). For
+    /// any other shape (another program, `a && b`, pipes, substitutions) say
+    /// that the flag was not applied instead of dropping it silently.
+    pub(crate) fn forward_hot_reload_to_script_or_warn(
+        ctx: &ContextData,
+        script_name: &[u8],
+        script: &mut Vec<u8>,
+    ) {
+        let Some(flags) = Self::hot_reload_flags(ctx) else {
+            return;
+        };
+        let Some(at) = Self::single_bun_command_end(script) else {
+            if !ctx.debug.silent {
+                bun_core::warn!(
+                    "{} was not applied to script \"{}\". It is forwarded only when the script is a single bun command; add the flag inside the script instead.",
+                    Self::hot_reload_flag_name(ctx),
+                    bstr::BStr::new(script_name),
+                );
+                Output::flush();
+            }
+            return;
+        };
+        script.splice(at..at, flags);
+    }
+
+    fn hot_reload_flag_name(ctx: &ContextData) -> &'static str {
+        match ctx.debug.hot_reload {
+            cli::command::HotReload::Hot => "--hot",
+            _ => "--watch",
+        }
+    }
+
+    /// The `--watch` / `--hot` flags this process was started with, spelled
+    /// for a child `bun` command line (leading space included), or `None`.
+    pub(crate) fn hot_reload_flags(ctx: &ContextData) -> Option<Vec<u8>> {
+        let mut flags: Vec<u8> = match ctx.debug.hot_reload {
+            cli::command::HotReload::None => return None,
+            cli::command::HotReload::Hot => b" --hot".to_vec(),
+            cli::command::HotReload::Watch => b" --watch".to_vec(),
+        };
+        if bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.get().copied() == Some(true) {
+            flags.extend_from_slice(b" --no-clear-screen");
+        }
+        if ctx.debug.hot_reload == cli::command::HotReload::Watch
+            && ctx.debug.watch_kill_signal != bun_core::SignalCode::DEFAULT
+        {
+            flags.extend_from_slice(b" --watch-kill-signal=");
+            flags.extend_from_slice(ctx.debug.watch_kill_signal.name().as_bytes());
+        }
+        Some(flags)
+    }
+
+    /// If `script` is a single simple shell command whose program is `bun`
+    /// (optionally preceded by `NAME=value` words), returns the offset just
+    /// past the `bun` word.
+    fn single_bun_command_end(script: &[u8]) -> Option<usize> {
+        // Anything the shell would sequence, pipe, redirect, expand or
+        // continue makes this more than "one bun command".
+        if strings::index_of_any(script, b";&|<>()`$\\\r\n").is_some() {
+            return None;
+        }
+        let mut i: usize = 0;
+        loop {
+            while i < script.len() && matches!(script[i], b' ' | b'\t') {
+                i += 1;
+            }
+            let start = i;
+            while i < script.len() && !matches!(script[i], b' ' | b'\t') {
+                i += 1;
+            }
+            if start == i {
+                return None;
+            }
+            let word = &script[start..i];
+            if Self::is_env_assignment_word(word) {
+                continue;
+            }
+            return Self::is_bun_program_word(word).then_some(i);
+        }
+    }
+
+    fn is_env_assignment_word(word: &[u8]) -> bool {
+        let Some(eq) = strings::index_of_char_usize(word, b'=') else {
+            return false;
+        };
+        eq > 0
+            && (word[0].is_ascii_alphabetic() || word[0] == b'_')
+            && word[..eq]
+                .iter()
+                .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
+    }
+
+    fn is_bun_program_word(word: &[u8]) -> bool {
+        if strings::index_of_any(word, b"\"'").is_some() {
+            return false;
+        }
+        if let Ok(self_exe) = bun_core::self_exe_path() {
+            if Self::is_same_exe_path(word, self_exe.as_bytes()) {
+                return true;
+            }
+        }
+        let base = paths::basename(word);
+        #[cfg(windows)]
+        let base = {
+            const EXE: &[u8] = b".exe";
+            if base.len() > EXE.len()
+                && strings::eql_case_insensitive_ascii_check_length(
+                    &base[base.len() - EXE.len()..],
+                    EXE,
+                )
+            {
+                &base[..base.len() - EXE.len()]
+            } else {
+                base
+            }
+        };
+        base == b"bun" || (bun_core::env::IS_DEBUG && base == b"bun-debug")
+    }
+
+    #[cfg(not(windows))]
+    fn is_same_exe_path(a: &[u8], b: &[u8]) -> bool {
+        a == b
+    }
+
+    /// A script names the executable with either separator and in any case.
+    #[cfg(windows)]
+    fn is_same_exe_path(a: &[u8], b: &[u8]) -> bool {
+        let is_sep = |c: u8| c == b'/' || c == b'\\';
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(&x, &y)| (is_sep(x) && is_sep(y)) || x.eq_ignore_ascii_case(&y))
+    }
+
     /// Spawns the script body via the bun-shell or system shell and exits on
     /// non-zero.
     ///
@@ -256,11 +393,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             silent,
             use_system_shell,
             None,
+            false,
         )
     }
 
     /// Like [`Self::run_package_script_foreground`], but resolves the shell
     /// interpreter from `shell_path` instead of the loader's `PATH`.
+    /// `forward_hot_reload` hands this process's `--watch` / `--hot` to the
+    /// script (see [`Self::forward_hot_reload_to_script_or_warn`]).
     pub(crate) fn run_package_script_foreground_with_shell_path(
         ctx: &mut ContextData,
         original_script: &[u8],
@@ -271,6 +411,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         silent: bool,
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
+        forward_hot_reload: bool,
     ) -> crate::Result<()> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
@@ -293,6 +434,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Find exact matches of yarn, pnpm, npm
 
         Self::replace_package_manager_run(&mut copy_script, original_script)?;
+
+        if forward_hot_reload {
+            Self::forward_hot_reload_to_script_or_warn(ctx, name, &mut copy_script);
+        }
 
         for part in passthrough {
             copy_script.push(b' ');
@@ -2152,6 +2297,15 @@ impl RunCommand {
 
         let silent = ctx.debug.silent;
 
+        if ctx.debug.hot_reload != cli::command::HotReload::None && !silent {
+            bun_core::warn!(
+                "{} was not applied: \"{}\" is an executable. It applies to a module that bun runs, or to a package.json script that is a single bun command.",
+                Self::hot_reload_flag_name(ctx),
+                bstr::BStr::new(Self::basename_or_bun(executable)),
+            );
+            Output::flush();
+        }
+
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
@@ -2528,6 +2682,7 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
+                                false,
                             )?;
                         }
 
@@ -2541,6 +2696,7 @@ impl RunCommand {
                             silent,
                             use_system_shell,
                             Some(original_path.as_slice()),
+                            true,
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
@@ -2556,6 +2712,7 @@ impl RunCommand {
                                 silent,
                                 use_system_shell,
                                 Some(original_path.as_slice()),
+                                false,
                             )?;
                         }
 

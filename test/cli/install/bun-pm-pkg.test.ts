@@ -250,25 +250,23 @@ describe.concurrent("bun pm pkg", () => {
         error: "error: Empty brackets are not valid syntax for retrieving values.\n",
         code: 1,
       };
-      // One key found of several asked: bun prints the bare value, npm 11 prints the object.
-      // This test accepts both shapes, with exact bytes.
-      const oneFound = (key: string, value: unknown) => [ok(pretty(value)), ok(pretty({ [key]: value }))];
-      const cases: [keys: string[], accepted: ReturnType<typeof ok>[]][] = [
-        [["s", "missing"], oneFound("s", "x}")],
-        [["missing", "s"], oneFound("s", "x}")],
-        [["s", "s"], oneFound("s", "x}")],
-        [["nested", "missing"], oneFound("nested", { x: { y: "z}" } })],
+      const cases: [keys: string[], expected: ReturnType<typeof ok>][] = [
+        // One key found of several asked: the bare value. npm 11 prints the object.
+        [["s", "missing"], ok(pretty("x}"))],
+        [["missing", "s"], ok(pretty("x}"))],
+        [["s", "s"], ok(pretty("x}"))],
+        [["nested", "missing"], ok(pretty({ x: { y: "z}" } }))],
         // No key found.
-        [["missing", "other"], [ok("{}\n")]],
+        [["missing", "other"], ok("{}\n")],
         // A repeated key keeps its first position.
-        [["name", "version", "name"], [ok(pretty({ name: "n", version: "1.0.0" }))]],
+        [["name", "version", "name"], ok(pretty({ name: "n", version: "1.0.0" }))],
         // Empty brackets in any position fail the command before it prints a value.
-        [["arr[]", "name"], [emptyBrackets]],
-        [["name", "arr[]"], [emptyBrackets]],
+        [["arr[]", "name"], emptyBrackets],
+        [["name", "arr[]"], emptyBrackets],
       ];
       const results = await Promise.all(cases.map(([keys]) => runPmPkg(["get", ...keys], String(dir), false)));
-      for (const [i, [keys, accepted]] of cases.entries()) {
-        expect(accepted, `get ${keys.join(" ")}`).toContainEqual(results[i]);
+      for (const [i, [keys, expected]] of cases.entries()) {
+        expect(results[i], `get ${keys.join(" ")}`).toEqual(expected);
       }
     });
 

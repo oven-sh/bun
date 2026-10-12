@@ -1625,7 +1625,8 @@ async function installStreamPkg(path: ExtractPath, tgz: Buffer, { installs = 1, 
       ...(path === "buffered" ? { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" } : {}),
     });
     results.push({
-      error: stderr.match(/^error: .*$/m)?.[0],
+      // A line of the verbose log, from another thread, can come before the end of this one.
+      error: stderr.match(/^error: .*$/m)?.[0].replace(/\[stream-pkg\] Extract .*$/, ""),
       streamed: stderr.includes("Streamed "),
       installed: existsSync(join(String(dir), "node_modules", "stream-pkg")),
       cached: readdirSync(join(String(dir), ".cache")).filter(name => /^(stream-pkg@|@T@)/.test(name)).length,
@@ -1703,8 +1704,7 @@ describe.concurrent("gzip trailer", () => {
               expect.stringMatching(
                 /^error: Fail extracting tarball for "stream-pkg": (gzip trailer mismatch|Truncated tar archive)/,
               )
-            : // A line of the verbose log, from another thread, can come before the end of this one.
-              expect.stringMatching(/^error: Fail extracting tarball from stream-pkg/),
+            : "error: Fail extracting tarball from stream-pkg",
         streamed: false,
         installed: false,
         cached: 0,

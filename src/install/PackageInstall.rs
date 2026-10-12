@@ -841,8 +841,12 @@ impl LinkBatch {
         let _ = job.result.set(result);
     }
 
-    /// Meanwhile `while_linking` runs on this thread; it is to return when `remaining` is 0.
-    pub(crate) fn run(&self, while_linking: &mut dyn FnMut()) {
+    fn next_job(&self) -> Option<&LinkJob> {
+        self.jobs.get(self.next.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// `run_tasks(until)` runs on this thread meanwhile; it is to return when `until` is 0.
+    pub(crate) fn run(&self, run_tasks: &mut dyn FnMut(&AtomicUsize)) {
         // The kernel lets one thread at a time into a `node_modules`: more threads are slower.
         const MAX_THREADS: usize = 8;
 
@@ -860,7 +864,7 @@ impl LinkBatch {
         pool.each_while(
             self,
             |batch, (), _| {
-                while let Some(job) = batch.jobs.get(batch.next.fetch_add(1, Ordering::Relaxed)) {
+                while let Some(job) = batch.next_job() {
                     batch.link(job);
                 }
                 if batch.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
@@ -868,7 +872,16 @@ impl LinkBatch {
                 }
             },
             &mut vec![(); threads],
-            while_linking,
+            || {
+                // The threads wait for the disk much of the time: with few of them this one is missed.
+                if self.jobs.len() > threads {
+                    while let Some(job) = self.next_job() {
+                        self.link(job);
+                        run_tasks(&AtomicUsize::new(0));
+                    }
+                }
+                run_tasks(&self.remaining);
+            },
         );
     }
 }

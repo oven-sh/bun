@@ -157,8 +157,10 @@ fn link_deferred(
     while let Some((links, events)) = installer.take_deferred_links() {
         // What was started before goes on while the pool links.
         let mut ran_tasks = Ok(());
-        links.run(&mut || {
-            ran_tasks = run_tasks_until_done(mgr, installer, Some(&links.remaining));
+        links.run(&mut |until| {
+            if ran_tasks.is_ok() {
+                ran_tasks = run_tasks_until_done(mgr, installer, Some(until));
+            }
         });
         ran_tasks?;
         if !installer.manager().options.do_.install_packages() {

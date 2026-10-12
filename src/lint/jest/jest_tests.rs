@@ -4,9 +4,9 @@
 use crate::jest::{
     Arguments, Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
     ParsedGeneralJestFnCall, PossibleJestNode, Runner, Scopes, for_each_call_named_like,
-    is_in_call_or_member, is_type_of_jest_fn_call, is_vitest, iter_possible_jest_call_node,
-    iter_possible_jest_call_node_with_scope, mentions_jest_method, parent_expression,
-    parse_general_jest_fn_call, parse_jest_fn_call, tests_as_written,
+    get_node_name_vec, is_in_call_or_member, is_type_of_jest_fn_call, is_vitest,
+    iter_possible_jest_call_node, iter_possible_jest_call_node_with_scope, mentions_jest_method,
+    parent_expression, parse_general_jest_fn_call, parse_jest_fn_call, tests_as_written,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -382,8 +382,13 @@ pub(crate) mod valid_title {
                 .first()
                 .is_some_and(|member| member.is_name_equal("extend"))
                 || self.allow_arguments && arg.tag() == ExprTag::Ident && !arg.is_parenthesized()
-                // `test(() => {})`
-                || ctx.runner == Runner::Bun && arg.tag() == ExprTag::Fn
+                // `test(() => {})`, `test(callback)`
+                || ctx.runner == Runner::Bun
+                    && (arg.tag() == ExprTag::Fn
+                        || possible_jest_fn_node.node.as_call().is_some_and(|it| {
+                            it.args().len() == 1
+                                && !matches!(arg.tag(), ExprTag::String | ExprTag::Template)
+                        }))
             {
                 return;
             }
@@ -1301,7 +1306,12 @@ pub(crate) mod prefer_todo {
         };
         let is_filtered = match callee.as_ident() {
             Some(name) => matches!(name.bytes().first(), Some(b'x' | b'f')),
-            None => static_property_name(callee).is_some_and(|it| it.is("todo")),
+            None => {
+                static_property_name(callee).is_some_and(|it| it.is("todo"))
+                    // `test.todoIf(a)("b")`
+                    || ctx.runner == Runner::Bun
+                        && get_node_name_vec(callee).iter().any(|it| it.starts_with(b"todo"))
+            }
         };
         let is_empty_function = |it: Expr| {
             !it.is_parenthesized()

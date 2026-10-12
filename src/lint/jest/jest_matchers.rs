@@ -306,6 +306,7 @@ pub(crate) mod prefer_called_with {
         "",
         "Suggest using `toBeCalledWith()` or `toHaveBeenCalledWith()`.",
     );
+    const USE: Message = Message::new("", "Use `{{code}}`");
 
     pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
@@ -322,9 +323,10 @@ pub(crate) mod prefer_called_with {
             Some(b"toHaveBeenCalled") => "toHaveBeenCalledWith",
             _ => return,
         };
-        ctx.report(matcher_property.span, USE_CALLED_WITH)
-            .data("replacement", replacement)
-            .fix(|fixer| fixer.replace(matcher_property.span, replacement));
+        let report = ctx
+            .report(matcher_property.span, USE_CALLED_WITH)
+            .data("replacement", replacement);
+        ctx.risky_fix(report, USE, matcher_property.span, replacement.to_owned());
     }
 }
 

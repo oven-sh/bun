@@ -791,6 +791,9 @@ fn promote_interposed_operands(
     consts: &IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
+    if !env.has_stack() {
+        return Effect::None;
+    }
     operands.sort_by_key(|place| {
         let declaration_id = env.identifiers[place.identifier.0 as usize].declaration_id;
         std::cmp::Reverse(

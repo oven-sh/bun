@@ -37,7 +37,15 @@ pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environ
 
     let nodes = name_anonymous_functions_impl(func, env);
 
-    fn visit(node: &Node, prefix: &str, updates: &mut Vec<(FunctionId, String)>) {
+    fn visit(
+        env: &Environment,
+        node: &Node,
+        prefix: &str,
+        updates: &mut Vec<(FunctionId, String)>,
+    ) {
+        if !env.has_stack() {
+            return;
+        }
         if node.generated_name.is_some() && node.existing_name_hint.is_none() {
             // Only add the prefix to anonymous functions regardless of nesting depth
             let name = format!("{}{}]", prefix, node.generated_name.as_ref().unwrap());
@@ -54,14 +62,14 @@ pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environ
         };
         let next_prefix = format!("{}{} > ", prefix, bstr(label));
         for inner in &node.inner {
-            visit(inner, &next_prefix, updates);
+            visit(env, inner, &next_prefix, updates);
         }
     }
 
     let mut updates: Vec<(FunctionId, String)> = Vec::new();
     let prefix = format!("{}[", bstr(fn_id.slice()));
     for node in &nodes {
-        visit(node, &prefix, &mut updates);
+        visit(env, node, &prefix, &mut updates);
     }
 
     if updates.is_empty() {

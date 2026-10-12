@@ -7,7 +7,7 @@
 use super::cli::{Options, Precedence};
 use crate::run::Environment;
 use crate::{fs, paths};
-use bun_lint::js_plugin::{Host, Refusal};
+use bun_lint::js_plugin::{Host, Unformatted};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 
@@ -54,7 +54,10 @@ impl<'e> Prettier<'e> {
             Precedence::FileOverride => b"file-override",
             Precedence::PreferFile => b"prefer-file",
         };
+        let looks_at_stdin =
+            options.stdin_filepath.is_some() && (options.check || options.list_different);
         let run = vec![
+            (b"looksAtStdin".to_vec(), Json::Bool(looks_at_stdin)),
             (b"usesConfig".to_vec(), Json::Bool(options.config_lookup)),
             (b"editorconfig".to_vec(), Json::Bool(options.editorconfig)),
             (b"flags".to_vec(), Json::Object(flags)),
@@ -78,8 +81,8 @@ impl<'e> Prettier<'e> {
         let fail = |what: &[u8], why: &[u8]| [what, b" file \"", shown, b"\":\n", why].concat();
         let text =
             fs::read(path).map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
-        let formatted =
-            (self.format(path, config, &text)).map_err(|why| [shown, b": ", &why].concat())?;
+        let formatted = (self.format(path, config, &text))
+            .map_err(|why| [shown, b": ", &describe(why)].concat())?;
         if formatted == text {
             return Ok(false);
         }
@@ -90,14 +93,13 @@ impl<'e> Prettier<'e> {
         Ok(true)
     }
 
-    /// What Prettier makes of `text`, which is the file at `path`. `config`: its configuration file. `Err`: for the user, behind
-    /// the name of the file.
+    /// What Prettier makes of `text`, which is the file at `path`. `config`: its configuration file.
     pub(crate) fn format(
         &self,
         path: &[u8],
         config: Option<&[u8]>,
         text: &[u8],
-    ) -> Result<Vec<u8>, Vec<u8>> {
+    ) -> Result<Vec<u8>, Unformatted> {
         let mut how = self.run.clone();
         how.push((b"path".to_vec(), Json::String(path.to_vec())));
         let config = config.map_or(Json::Null, |it| Json::String(it.to_vec()));
@@ -109,10 +111,15 @@ impl<'e> Prettier<'e> {
             Some(text) => (BOM, text),
             None => (&b""[..], text),
         };
-        match self.host.format_with_prettier(&json, text) {
-            Ok(formatted) => Ok([mark, &formatted].concat()),
-            Err(Refusal::NotInstalled) => Err(b"The package prettier is not installed.".to_vec()),
-            Err(Refusal::Thrown(why)) => Err(why),
-        }
+        let formatted = self.host.format_with_prettier(&json, text)?;
+        Ok([mark, &formatted].concat())
+    }
+}
+
+/// For the user, behind the name of the file.
+pub(crate) fn describe(why: Unformatted) -> Vec<u8> {
+    match why {
+        Unformatted::NotInstalled => b"The package prettier is not installed.".to_vec(),
+        Unformatted::Message(why) | Unformatted::Thrown(why) => why,
     }
 }

@@ -394,6 +394,9 @@ fn record_temporaries(instr: &ReactiveInstruction, state: &mut VisitorState) {
 /// Record dependencies from a reactive value.
 /// TS: `recordDepsInValue`
 fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
+    if !state.env.has_stack() {
+        return;
+    }
     match value {
         ReactiveValue::SequenceExpression {
             instructions,

@@ -14,6 +14,7 @@ use smallvec::SmallVec;
 
 use crate::collections::FxHashMap as HashMap;
 
+use crate::hir::environment::Environment;
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
 use super::expr::lower_reorderable_expression;
@@ -78,7 +79,7 @@ fn lower_block_statement_inner(
                     _ => continue,
                 };
                 for d in local.decls.iter() {
-                    collect_binding_refs(&d.binding, &mut |r, loc| {
+                    collect_binding_refs(builder.environment(), &d.binding, &mut |r, loc| {
                         decls.push((i, builder.resolve_ref(r), loc, kind));
                     });
                 }
@@ -206,17 +207,20 @@ fn lower_block_statement_inner(
     Ok(())
 }
 
-fn collect_binding_refs(binding: &Binding, f: &mut impl FnMut(Ref, ast::Loc)) {
+fn collect_binding_refs(env: &Environment, binding: &Binding, f: &mut impl FnMut(Ref, ast::Loc)) {
+    if !env.has_stack() {
+        return;
+    }
     match &binding.data {
         b::B::BIdentifier(id) => f(id.r#ref, binding.loc),
         b::B::BArray(arr) => {
             for item in arr.items().iter() {
-                collect_binding_refs(&item.binding, f);
+                collect_binding_refs(env, &item.binding, f);
             }
         }
         b::B::BObject(obj) => {
             for p in obj.properties().iter() {
-                collect_binding_refs(&p.value, f);
+                collect_binding_refs(env, &p.value, f);
             }
         }
         b::B::BMissing(_) => {}
@@ -1351,28 +1355,32 @@ fn lower_statement(
                 if is_destructuring {
                     // Iterate the pattern to find all identifier locs for error reporting
                     fn collect_identifier_locs(
+                        env: &Environment,
                         pat: &Binding,
                         locs: &mut Vec<Option<SourceLocation>>,
                     ) {
+                        if !env.has_stack() {
+                            return;
+                        }
                         match pat.data {
                             b::B::BIdentifier(_) => {
                                 locs.push(convert_loc(pat.loc));
                             }
                             b::B::BObject(obj) => {
                                 for prop in obj.properties() {
-                                    collect_identifier_locs(&prop.value, locs);
+                                    collect_identifier_locs(env, &prop.value, locs);
                                 }
                             }
                             b::B::BArray(arr) => {
                                 for elem in arr.items() {
-                                    collect_identifier_locs(&elem.binding, locs);
+                                    collect_identifier_locs(env, &elem.binding, locs);
                                 }
                             }
                             b::B::BMissing(_) => {}
                         }
                     }
                     let mut id_locs = Vec::new();
-                    collect_identifier_locs(param, &mut id_locs);
+                    collect_identifier_locs(builder.environment(), param, &mut id_locs);
                     for id_loc in id_locs {
                         builder.record_error(CompilerErrorDetail {
                                 reason: "(BuildHIR::lowerAssignment) Could not find binding for declaration.".to_string(),

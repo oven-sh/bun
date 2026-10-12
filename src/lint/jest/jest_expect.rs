@@ -112,7 +112,15 @@ pub(crate) mod valid_expect {
                 return;
             };
             if let Some(expect_error) = jest_fn_call.expect_error {
-                let reporting_span = find_top_most_member_expression(node).unwrap_or(node).span();
+                let whole = find_top_most_member_expression(node).unwrap_or(node);
+                // `(expect(1) as any).toBeOne()`, `const one = expect(1)`: the matcher can be called elsewhere.
+                if ctx.runner == Runner::Bun
+                    && expect_error != ExpectError::ModifierUnknown
+                    && !is_discarded(whole)
+                {
+                    return;
+                }
+                let reporting_span = whole.span();
                 ctx.report(
                     reporting_span,
                     match expect_error {
@@ -181,6 +189,10 @@ pub(crate) mod valid_expect {
             if is_acceptable_return_node(parent, !self.always_await) {
                 return;
             }
+            // `const later = expect(a).resolves.toBe(1)`, `all.push(expect(a).resolves.toBe(1))`: it can be awaited elsewhere.
+            if ctx.runner == Runner::Bun && !self.always_await && !is_discarded(final_node) {
+                return;
+            }
             let message = match target_node == final_node {
                 true => ASYNC_MUST_BE_AWAITED,
                 false => PROMISES_WITH_ASYNC_ASSERTIONS_MUST_BE_AWAITED,
@@ -232,6 +244,17 @@ pub(crate) mod valid_expect {
                 },
             );
         }
+    }
+
+    /// Whether `e`, or what it is awaited for, is a statement.
+    fn is_discarded(e: Expr) -> bool {
+        let is_passed = |it: &AstKind| match it {
+            AstKind::ParenthesizedExpression(..) | AstKind::ChainExpression(_) => true,
+            AstKind::Expr(e) => e.tag() == ExprTag::Await,
+            _ => false,
+        };
+        let mut around = AstKind::Expr(e).ancestors().skip_while(is_passed);
+        matches!(around.next(), Some(AstKind::Stmt(it)) if it.tag() == StmtTag::Expr)
     }
 
     /// The last member of `node.a.b().c`.
@@ -776,6 +799,14 @@ pub(crate) mod expect_expect {
                     it.is("todo")
                         || it.is("skip") && (use_vitest_assertions || ctx.runner == Runner::Bun)
                 })
+            {
+                return;
+            }
+            // `test.todoIf(a)("b")`
+            if ctx.runner == Runner::Bun
+                && Arguments::of(call_expr.args(), ctx.runner)
+                    .callback
+                    .is_none()
             {
                 return;
             }

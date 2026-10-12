@@ -5,6 +5,9 @@
 
 const FORMAT_WITH_PRETTIER = 30;
 
+// `error.message` of what `prettier.format` has thrown.
+const MESSAGE_OF_PRETTIER = "7";
+
 // By the directory that it is looked for from: the package, or `null` if it is not installed.
 const prettierPackages = new Map();
 
@@ -25,12 +28,15 @@ function prettierFrom(directory) {
 
 // `getOptionsForFile` of Prettier's command line, and `format`. The message: the length of what follows as JSON, that, the text.
 // The JSON: `path`, `config`: the configuration file, or `null`, `usesConfig`: not `--no-config`, `editorconfig`, `flags`: the options
-// that the command line sets, `precedence`: `--config-precedence`.
+// that the command line sets, `precedence`: `--config-precedence`, `looksAtStdin`: the text is standard input, with `--check` or
+// `--list-different`.
 async function formatWithPrettier() {
   const length = ask(MESSAGE);
   const buffer = buffers[MESSAGE];
   const [headLength] = new Uint32Array(buffer, 0, 1);
-  const { path, config, usesConfig, editorconfig, flags, precedence } = JSON.parse(decode(buffer, 4, 4 + headLength));
+  const { path, config, usesConfig, editorconfig, flags, precedence, looksAtStdin } = JSON.parse(
+    decode(buffer, 4, 4 + headLength),
+  );
   const text = decode(buffer, 4 + headLength, length);
   const prettier = prettierFrom(cwd);
   if (prettier === null) return NOT_INSTALLED;
@@ -41,7 +47,13 @@ async function formatWithPrettier() {
   let options = { ...ofFiles, ...flags };
   if (precedence === "file-override") options = { ...flags, ...ofFiles };
   if (precedence === "prefer-file") options = ofFiles ?? flags;
-  return DONE + (await prettier.format(text, { ...options, filepath }));
+  try {
+    return DONE + (await prettier.format(text, { ...options, filepath }));
+  } catch (error) {
+    if (!looksAtStdin) throw error;
+    // As `listDifferent` of Prettier's command line shows it.
+    return MESSAGE_OF_PRETTIER + error.message;
+  }
 }
 
 // What `handle` does with the kinds of calls from `FORMAT_WITH_PRETTIER` on.

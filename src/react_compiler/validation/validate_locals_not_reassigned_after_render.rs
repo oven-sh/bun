@@ -97,6 +97,9 @@ fn get_context_reassignment(
     nesting: Nesting,
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) -> Option<Place> {
+    if !env.has_stack() {
+        return None;
+    }
     let (is_function_expression, is_async) = match nesting {
         Nesting::Outer => (false, false),
         Nesting::FunctionExpression { is_async } => (true, is_async),

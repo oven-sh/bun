@@ -38,6 +38,19 @@ impl<'a> Ctx<'a, '_> {
     pub(crate) fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
         (self.report)(at.span(), message)
     }
+
+    /// The fix of a rule with [`meta_with_risky_fix`]. `message`: what the suggestion says.
+    pub(crate) fn risky_fix(&self, report: Report<'a>, message: Message, at: Span, text: String) {
+        match self.runner {
+            Runner::Jest | Runner::Vitest => report.fix(|fixer| fixer.replace(at, text)),
+            Runner::Bun => {
+                let said = text.clone();
+                report.suggest_with(message, &[("code", said.as_bytes())], |fixer| {
+                    fixer.replace(at, text)
+                })
+            }
+        };
+    }
 }
 
 /// `RUNNER` of a rule of `jest`, of `vitest`, of `bun:test`.
@@ -71,6 +84,14 @@ pub(crate) const fn meta(runner: u8, name: &'static str, kind: Kind) -> Meta {
         Runner::Jest => Meta::oxlint(Plugin::Jest, name, kind),
         Runner::Vitest => Meta::oxlint(Plugin::Vitest, name, kind),
         Runner::Bun => Meta::plugin(Plugin::BunTest, name, kind),
+    }
+}
+
+/// The same for a rule whose fix can make a test fail that passes: oxlint applies it, for `bun:test` it is a suggestion.
+pub(crate) const fn meta_with_risky_fix(runner: u8, name: &'static str, kind: Kind) -> Meta {
+    match Runner::of(runner) {
+        Runner::Jest | Runner::Vitest => meta(runner, name, kind).fixable(Fixable::Code),
+        Runner::Bun => meta(runner, name, kind).has_suggestions(),
     }
 }
 
@@ -663,7 +684,7 @@ impl PossibleJestNodes {
             .originals
             .get(original as usize)
             .map_or(local, |it| &**it);
-        let mut kind = JestFnKind::from(name);
+        let kind = JestFnKind::from(name);
         let is_valid = local != b"each"
             && match kind {
                 JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
@@ -688,15 +709,6 @@ impl PossibleJestNodes {
                     });
                 }
                 ExprTag::Dot if !parent.is_private_member() => {}
-                // From the `b` of `a[b]` on oxlint goes by the `a`, unless `b` is imported by name.
-                ExprTag::Index
-                    if parent.object() != Some(at)
-                        && !frameworks.is_bun
-                        && original as usize >= self.originals.len() =>
-                {
-                    let first = first_identifier_of_chain(parent);
-                    kind = first.map_or(kind, |it| JestFnKind::from(it.bytes()));
-                }
                 ExprTag::Index | ExprTag::TaggedTemplate => {}
                 _ => return,
             }

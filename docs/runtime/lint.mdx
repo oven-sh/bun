@@ -797,7 +797,7 @@ A name that the file imports from `"vitest"`, `"@jest/globals"`, or another modu
 | `bun:test/no-focused-tests`        | `.only`                                                                            |
 | `bun:test/no-disabled-tests`       | `.skip`, `xit`, `xtest`, `xdescribe`, and a test without a function. Not `.skipIf` |
 | `bun:test/no-export`               | An `export` in a file with tests that is named like a test, such as `a.test.ts`    |
-| `bun:test/valid-describe-callback` | A `describe` whose callback is missing, takes parameters, or returns something     |
+| `bun:test/valid-describe-callback` | A `describe` whose callback is missing, is no function, or takes parameters        |
 | `bun:test/valid-expect`            | An `expect` without a matcher, and `.resolves` or `.rejects` that nothing awaits   |
 | `bun:test/valid-expect-in-promise` | An `expect` in a `.then()` that the test neither awaits nor returns                |
 
@@ -822,11 +822,14 @@ The other 59 rules are off until a configuration turns them on:
 
 Where Bun differs from Jest and Vitest, so do the rules:
 
-- `expect(value, message)` takes a message, and `expect().pass()` and `expect().fail()` take no value.
-- The callback of `describe` can be `async`, and `describe(() => {})` needs no title. The title can be a function, a class, or a number.
+- `expect(value, message)` takes a message, and `expect().pass()` and `expect().fail()` take no value. A fix keeps the message.
+- `.not`, `.resolves`, and `.rejects` come in any order. `expect.resolvesTo` and `expect.rejectsTo` are modifiers too.
+- `test` and `describe` need no title, and take options or a timeout before or after the callback.
+- The callback of `describe` can be `async` and can return something. The title can be a function, a class, or a number.
+- `prefer-called-with` and `prefer-strict-boolean-matchers` suggest their change. `--fix` does not apply it, because a passing test can fail afterwards.
 - `test.if(a)("b", ..)` and `test.if(!a)("b", ..)` are not identical titles.
 - `expect-expect` counts `expect` and `expectTypeOf`.
-- `require-test-timeout` takes the options as the second or the third argument, and knows `setDefaultTimeout()` and `jest.setTimeout()`.
+- `require-test-timeout` knows `setDefaultTimeout()` and `jest.setTimeout()`.
 - `require-hook` allows `setDefaultTimeout()`, `mock.module()`, and `expect.extend()` outside hooks.
 - `no-restricted-jest-methods` and `require-mock-type-parameters` are about both `jest` and `vi`.
 - `require-mock-type-parameters` has no `checkImportFunctions`, and `no-large-snapshots` has no `allowedSnapshots`.
@@ -876,7 +879,7 @@ Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
 bun lint -c eslint.ci.config.js
 ```
 
-Bun runs `eslint.config.js` in a separate process, where `process.argv` is the command line of `bun lint`. A TypeScript configuration file needs no extra package.
+Bun runs `eslint.config.js` in a separate process. A TypeScript configuration file needs no extra package.
 
 ### `bunfig.toml`
 

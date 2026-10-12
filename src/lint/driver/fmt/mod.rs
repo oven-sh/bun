@@ -24,6 +24,7 @@ use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
+use bun_lint::js_plugin::Unformatted;
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
@@ -65,6 +66,13 @@ enum Failure {
     /// TOML that cannot be read, with what is wrong with it. oxfmt passes over such a file without a word, so it is no
     /// error.
     Unread(Vec<u8>),
+}
+
+/// `error.message` of what is in a [`Failure::Syntax`].
+fn message_of(error: &[u8]) -> &[u8] {
+    (error.strip_prefix(b"SyntaxError: "))
+        .or_else(|| error.strip_prefix(b"RangeError: "))
+        .unwrap_or(error)
 }
 
 /// Prettier's message for a parser that it does not have.
@@ -945,6 +953,9 @@ impl Run<'_> {
             }
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
+        let only_looks = self.options.check || self.options.list_different;
+        // Prettier's `listDifferent` says `error.message` of what `check` throws, and that is all.
+        let forgives = configs.flavor == Flavor::Prettier && only_looks;
         // The configuration of a file that is ignored is not even read.
         let is_of_a_package =
             configs.flavor == Flavor::Prettier && ignored.is_in_node_modules(&path);
@@ -965,8 +976,12 @@ impl Run<'_> {
             let size = (1, text.len() as u64);
             let bridge = prettier::Prettier::new(self.environment, self.options, size);
             match bridge.format(&path, configs.path_of_config(&scope), &text) {
-                Err(why) => self.error(&[name, b": ", &why].concat()),
-                Ok(formatted) if self.options.check || self.options.list_different => {
+                Err(Unformatted::Message(message)) if forgives => {
+                    self.error(&message);
+                    self.out.exit_code = 0;
+                }
+                Err(why) => self.error(&[name, b": ", &prettier::describe(why)].concat()),
+                Ok(formatted) if only_looks => {
                     if formatted != text && !self.options.write {
                         self.log(b"(stdin)");
                         self.out.exit_code = 1;
@@ -1003,7 +1018,6 @@ impl Run<'_> {
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
         if Kind::with_options(&path, &options.options).is_none() {
-            let only_looks = self.options.check || self.options.list_different;
             // `handleError` has nothing to say then. `listDifferent` has said it before.
             if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
                 return self.out;
@@ -1017,8 +1031,7 @@ impl Run<'_> {
                 ]
                 .concat(),
             );
-            // As Prettier's `handleError`.
-            if configs.flavor == Flavor::Prettier && only_looks {
+            if forgives {
                 out.exit_code = 0;
             }
             return out;
@@ -1058,13 +1071,17 @@ impl Run<'_> {
         match formatted {
             Err(failure @ Failure::Unread(_)) => {
                 self.warn(&Self::describe(name, failure));
-                if !self.options.check && !self.options.list_different {
+                if !only_looks {
                     self.out.stdout = text;
                 }
             }
+            Err(Failure::Syntax(error)) if forgives => {
+                self.error(message_of(&error));
+                self.out.exit_code = 0;
+            }
             Err(failure) => self.error(&Self::describe(name, failure)),
             // Prettier's `listDifferent`: with `--write` it has nothing to say, and nothing is printed either.
-            Ok((formatted, _)) if self.options.check || self.options.list_different => {
+            Ok((formatted, _)) if only_looks => {
                 if formatted != text && !self.options.write {
                     self.log(b"(stdin)");
                     self.out.exit_code = 1;

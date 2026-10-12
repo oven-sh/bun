@@ -5,9 +5,10 @@ use bun_lint::prelude::*;
 pub struct PreferStrictBooleanMatchers<const RUNNER: u8 = { jest::VITEST }>;
 
 const PREFER_STRICT_BOOLEAN_MATCHERS: Message = Message::new("", "Use `toBe({{value}})` instead of `{{matcher_name}}`.");
+const USE: Message = Message::new("", "Use `{{code}}`");
 
 impl<const RUNNER: u8> Rule for PreferStrictBooleanMatchers<RUNNER> {
-    const META: Meta = jest::meta(RUNNER, "prefer-strict-boolean-matchers", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = jest::meta_with_risky_fix(RUNNER, "prefer-strict-boolean-matchers", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -41,8 +42,7 @@ fn run<'a>(possible_vitest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         return;
     };
     let span = Span::new(matcher.span.start, possible_vitest_node.node.span().end);
-    ctx.report(span, PREFER_STRICT_BOOLEAN_MATCHERS).data("value", value).data("matcher_name", matcher_name).fix(|fixer| {
-        let call_name = if parent.tag() == ExprTag::Index { "\"toBe\"]" } else { "toBe" };
-        fixer.replace(span, format!("{call_name}({value})"))
-    });
+    let report = ctx.report(span, PREFER_STRICT_BOOLEAN_MATCHERS).data("value", value).data("matcher_name", matcher_name);
+    let call_name = if parent.tag() == ExprTag::Index { "\"toBe\"]" } else { "toBe" };
+    ctx.risky_fix(report, USE, span, format!("{call_name}({value})"));
 }

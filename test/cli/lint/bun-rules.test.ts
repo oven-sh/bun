@@ -1663,6 +1663,8 @@ const testRules: Record<string, Case[]> = {
   "valid-expect": [
     inTest(`«expect(1)»;`),
     inTest(`«expect(1).toBe»;`),
+    inTest(`(«expect(1)»);`),
+    inTest(`await «expect(1)»;`),
     inTest(`«expect(1).never.toBe(1)»;`),
     inTest(`expect(a).toEqual({ b: «expect.resolvesSo.stringContaining("c")» });`),
     inTest(`«expect()».toBe(1);`),
@@ -1676,6 +1678,15 @@ const testRules: Record<string, Case[]> = {
     inTest(`expect().fail();`),
     inTest(`expect.unreachable();`),
     inTest(`expect(1)[matcher]();`),
+    // The matcher can be called elsewhere.
+    inTest(`(expect(1) as any).toBeOne();`),
+    inTest(`expect(1)!.toBe(1);`),
+    inTest(`const one = expect(1);\n  one.toBe(1);`),
+    inTest(`return expect(1);`),
+    inTest(`check(expect(1).toBe);`),
+    // So can the promise be awaited.
+    inTest(`const later = expect(a).resolves.toBe(1);\n  await later;`),
+    inTest(`all.push(expect(a).resolves.toBe(1));`),
     inTest(`await expect(a).resolves.not.toBe(1);`),
     inTest(`await expect(a).not.resolves.toBe(1);`),
     inTest(`expect(1).not.not.toBe(1);`),
@@ -1698,6 +1709,7 @@ const testRules: Record<string, Case[]> = {
 
     `test("a", () => {});`,
     `test(() => {});`,
+    `test(callback);`,
     `describe(() => {});`,
     `describe(add, () => {});`,
     `describe(Adder, () => {});`,
@@ -1716,6 +1728,7 @@ const testRules: Record<string, Case[]> = {
     `test("a", () => {\n  expectTypeOf(1).toBeNumber();\n});`,
     `test.skip("a", () => {});`,
     `test.todo("a", () => {});`,
+    `test.todoIf(a)("b");`,
   ].map(inBunTest),
 
   "no-done-callback": [
@@ -1724,6 +1737,8 @@ const testRules: Record<string, Case[]> = {
     `test("a", «done» => {}, 1000);`,
     `test("a", { retry: 1 }, «done» => {});`,
     `test("a", () => {});`,
+    `test.each([1])("a", b => {});`,
+    `test.each([1]).if(c)("a", b => {});`,
   ].map(inBunTest),
 
   "valid-expect-in-promise": [
@@ -1748,6 +1763,8 @@ const testRules: Record<string, Case[]> = {
     `«test.each([1])»("a", () => {});`,
     `test(() => {});`,
     `test("a", { retry: 1 }, () => {});`,
+    `test.todoIf(a)("b");`,
+    `test.todo("a");`,
   ].map(inBunTest),
 
   "no-identical-title": [
@@ -1832,6 +1849,16 @@ const testRules: Record<string, Case[]> = {
 
   "prefer-comparison-matcher": [
     { code: inTest(`expect(a < 1, "why").«toBe»(true);`), output: inTest(`expect(a, "why").toBeLessThan(1);`) },
+  ].map(inBunTest),
+
+  // oxlint applies these. A test that passes can fail afterwards.
+  "prefer-called-with": [
+    { code: inTest(`expect(a).«toHaveBeenCalled»();`), suggestions: [inTest(`expect(a).toHaveBeenCalledWith();`)] },
+  ].map(inBunTest),
+
+  "prefer-strict-boolean-matchers": [
+    { code: inTest(`expect(1).«toBeTruthy()»;`), suggestions: [inTest(`expect(1).toBe(true);`)] },
+    { code: inTest(`expect(0, "why").«toBeFalsy()»;`), suggestions: [inTest(`expect(0, "why").toBe(false);`)] },
   ].map(inBunTest),
 
   "require-hook": [
@@ -2880,5 +2907,461 @@ test("c", () => {
         undefined,
       ],
     ]);
+  });
+});
+
+/** Made-up tests that use what `bun:test` has, in every shape that `bun test` takes. All of them pass. */
+const valid = {
+  "shapes.test.ts": `import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, test } from "bun:test";
+
+const yes = true;
+const no = false;
+function add(a: number, b: number) {
+  return a + b;
+}
+class Adder {}
+const callback = () => {
+  expect(add(1, 2)).toBe(3);
+};
+
+// Every shape and order of the arguments.
+test("title, callback", () => {
+  expect(1).toBe(1);
+});
+test("title, callback, timeout", () => {
+  expect(1).toBe(1);
+}, 1000);
+test("title, callback, options", () => {
+  expect(1).toBe(1);
+}, { timeout: 1000, retry: 1 });
+test("title, options, callback", { timeout: 1000, repeats: 1 }, () => {
+  expect(1).toBe(1);
+});
+test("title, timeout, callback", 1000, () => {
+  expect(1).toBe(1);
+});
+test(() => {
+  expect(1).toBe(1);
+});
+test(async () => {
+  await expect(Promise.resolve(1)).resolves.toBe(1);
+});
+test(() => {
+  expect(1).toBe(1);
+}, 1000);
+test(() => {
+  expect(1).toBe(1);
+}, { timeout: 1000 });
+test(function named() {
+  expect(1).toBe(1);
+});
+test("a name for the callback", callback);
+test("a name for the callback and a timeout", callback, 1000);
+test(callback);
+test(\`a template\`, callback);
+test("done", done => {
+  done();
+});
+it("it", callback);
+
+// Every modifier.
+test.if(yes)("if", callback);
+test.if(no)("if not", callback);
+test.skipIf(no)("skipIf", callback);
+test.todoIf(no)("todoIf", callback);
+test.todoIf(yes)("todoIf without a callback");
+test.failing("failing", () => {
+  expect(1).toBe(2);
+});
+test.failingIf(yes)("failingIf", () => {
+  expect(1).toBe(2);
+});
+test.concurrent("concurrent", async () => {
+  expect(1).toBe(1);
+});
+test.concurrentIf(yes)("concurrentIf", async () => {
+  expect(1).toBe(1);
+});
+test.serial("serial", callback);
+test.serialIf(yes)("serialIf", callback);
+test.todo("todo");
+test.todo("todo with a callback", callback);
+test.each([1, 2])("each %d", n => {
+  expect(n).toBeGreaterThan(0);
+});
+test.each([
+  [1, 2, 3],
+  [2, 3, 5],
+])("each %d + %d", (a, b, sum) => {
+  expect(add(a, b)).toBe(sum);
+});
+test.each([{ a: 1 }])("each $a", ({ a }) => {
+  expect(a).toBe(1);
+});
+test.each([1])("each with a timeout %d", n => {
+  expect(n).toBe(1);
+}, 1000);
+test.skipIf(no).each([1])("skipIf.each %d", n => {
+  expect(n).toBe(1);
+});
+test.each([1]).if(yes)("each.if %d", n => {
+  expect(n).toBe(1);
+});
+test.concurrent.each([1])("concurrent.each %d", async n => {
+  expect(n).toBe(1);
+});
+test.serial.failing("serial.failing", () => {
+  expect(1).toBe(2);
+});
+const onThisSystem = test.skipIf(no);
+onThisSystem("kept in a variable", callback);
+const maybe = yes ? test : test.todo;
+maybe("chosen", callback);
+
+// \`describe\` takes the same.
+describe("title, callback", () => {
+  test("a", callback);
+});
+describe("async", async () => {
+  await Promise.resolve();
+  test("a", callback);
+});
+describe("returns something", () => tests());
+function tests() {
+  test("a", callback);
+}
+describe(() => {
+  test("in a describe without a title", callback);
+});
+describe(add, () => {
+  test("a function as the title", callback);
+});
+describe(Adder, () => {
+  test("a class as the title", callback);
+});
+describe(1, () => {
+  test("a number as the title", callback);
+});
+describe("a name for the callback", tests);
+describe.if(yes)("if", tests);
+describe.skipIf(no)("skipIf", tests);
+describe.todoIf(no)("todoIf", tests);
+describe.concurrent("concurrent", () => {
+  test("a", async () => {
+    expect(1).toBe(1);
+  });
+});
+describe.serial("serial", tests);
+describe.todo("todo");
+describe.todo("todo with a callback", tests);
+describe.each([1, 2])("each %d", n => {
+  test("a", () => {
+    expect(n).toBeGreaterThan(0);
+  });
+});
+describe.each([[1, 2]])("each %d %d", (a, b) => {
+  test("a", () => {
+    expect(a).toBeLessThan(b);
+  });
+});
+
+// Hooks.
+beforeAll(() => {});
+beforeAll(async () => {}, 1000);
+beforeEach(() => {}, { timeout: 1000 });
+afterEach(done => {
+  done();
+});
+afterAll(callback);
+test("onTestFinished", () => {
+  onTestFinished(() => {});
+  expect(1).toBe(1);
+});
+`,
+  "expect.test.ts": `import { expect, expectTypeOf, test } from "bun:test";
+
+const why = "why";
+const matcher = "toBe" as const;
+
+test("the arguments of expect", () => {
+  expect(1).toBe(1);
+  expect(1, "why").toBe(1);
+  expect(1, why).toBe(1);
+  expect(1, \`\${why}\`).toBe(1);
+  expect().pass();
+  expect().pass("why");
+  expect(() => expect().fail()).toThrow();
+  expect(() => expect().fail("why")).toThrow("why");
+  expect(() => expect.unreachable()).toThrow();
+  expect(() => expect.unreachable("why")).toThrow("why");
+  expect(1)[matcher](1);
+  expect(1)["toBe"](1);
+  expect(1).not["toBe"](2);
+});
+
+test("modifiers", async () => {
+  expect(1).not.toBe(2);
+  expect(1).not.not.toBe(1);
+  await expect(Promise.resolve(1)).resolves.toBe(1);
+  await expect(Promise.resolve(1)).resolves.not.toBe(2);
+  await expect(Promise.resolve(1)).not.resolves.toBe(2);
+  await expect(Promise.reject(new Error("a"))).rejects.toThrow("a");
+  await expect(Promise.reject(1)).rejects.not.toBe(2);
+  await expect(Promise.reject(1), "why").rejects.toBe(1);
+  await Promise.all([expect(Promise.resolve(1)).resolves.toBe(1), expect(Promise.resolve(2)).resolves.toBe(2)]);
+  return expect(Promise.resolve(1)).resolves.toBe(1);
+});
+
+test("what is of expect itself", async () => {
+  expect.hasAssertions();
+  expect.assertions(16);
+  expect(1).toEqual(expect.anything());
+  expect(1).toEqual(expect.any(Number));
+  expect([1, 2]).toEqual(expect.arrayContaining([1]));
+  expect({ a: 1, b: 2 }).toEqual(expect.objectContaining({ a: 1 }));
+  expect("abc").toEqual(expect.stringContaining("b"));
+  expect("abc").toEqual(expect.stringMatching(/b/));
+  expect(0.1 + 0.2).toEqual(expect.closeTo(0.3));
+  expect([1]).toEqual(expect.not.arrayContaining([2]));
+  expect({ a: 1 }).toEqual(expect.not.objectContaining({ b: 1 }));
+  expect("a").toEqual(expect.not.stringContaining("b"));
+  expect("a").toEqual(expect.not.stringMatching(/b/));
+  expect({ a: Promise.resolve("1") }).toEqual({ a: expect.resolvesTo.stringContaining("1") });
+  expect({ a: Promise.reject("1") }).toEqual({ a: expect.rejectsTo.stringContaining("1") });
+  expect([Promise.resolve(1)]).toEqual([expect.resolvesTo.any(Number)]);
+  expect(Promise.resolve(1)).toEqual(expect.resolvesTo.anything());
+  const containsOne = expect.resolvesTo.stringContaining("1");
+  expect({ a: Promise.resolve("1") }).toEqual({ a: containsOne });
+});
+
+expect.extend({
+  toBeOne(received: unknown) {
+    return { pass: received === 1, message: () => "not one" };
+  },
+});
+
+test("a matcher of one's own", () => {
+  (expect(1) as unknown as { toBeOne(): void }).toBeOne();
+  expect(1).toEqual((expect as unknown as { toBeOne(): unknown }).toBeOne());
+});
+
+test("matchers that Jest has not", () => {
+  expect(1).toBeOdd();
+  expect(2).toBeEven();
+  expect(1).toBeOneOf([1, 2]);
+  expect({ a: 1 }).toContainKey("a");
+  expect({ a: 1 }).toContainKeys(["a"]);
+  expect({ a: 1 }).toContainAllKeys(["a"]);
+  expect({ a: 1 }).toContainAnyKeys(["a", "b"]);
+  expect({ a: 1 }).toContainValue(1);
+  expect({ a: 1 }).toContainValues([1]);
+  expect({ a: 1 }).toContainAllValues([1]);
+  expect({ a: 1 }).toContainAnyValues([1, 2]);
+  expect([]).toBeEmpty();
+  expect({}).toBeEmptyObject();
+  expect(null).toBeNil();
+  expect([]).toBeArray();
+  expect([1]).toBeArrayOfSize(1);
+  expect(true).toBeBoolean();
+  expect(true).toBeTrue();
+  expect(false).toBeFalse();
+  expect(1).toBeTypeOf("number");
+  expect(1).toBeNumber();
+  expect(1).toBeInteger();
+  expect({}).toBeObject();
+  expect(1).toBeFinite();
+  expect(1).toBePositive();
+  expect(-1).toBeNegative();
+  expect(1).toBeWithin(0, 2);
+  expect("a b").toEqualIgnoringWhitespace("ab");
+  expect(Symbol()).toBeSymbol();
+  expect(() => {}).toBeFunction();
+  expect(new Date()).toBeDate();
+  expect(new Date()).toBeValidDate();
+  expect("a").toBeString();
+  expect("abc").toInclude("b");
+  expect("aa").toIncludeRepeated("a", 2);
+  expect(1).toSatisfy(it => it === 1);
+  expect("abc").toStartWith("a");
+  expect("abc").toEndWith("c");
+});
+
+test("errors", () => {
+  const fails = () => {
+    throw new TypeError("a");
+  };
+  expect(fails).toThrow();
+  expect(fails).toThrow("a");
+  expect(fails).toThrow(/a/);
+  expect(fails).toThrow(TypeError);
+  expect(fails).toThrowError("a");
+  expect(() => {}).not.toThrow();
+});
+
+test("snapshots", () => {
+  expect(1).toMatchInlineSnapshot(\`1\`);
+  expect({ a: 1, b: "c" }).toMatchInlineSnapshot(
+    { a: expect.any(Number) },
+    \`
+{
+  "a": Any<Number>,
+  "b": "c",
+}
+\`,
+  );
+  expect(() => {
+    throw new Error("a");
+  }).toThrowErrorMatchingInlineSnapshot(\`"a"\`);
+});
+
+test("types", () => {
+  expectTypeOf(1).toBeNumber();
+  expectTypeOf<string>().toEqualTypeOf<string>();
+  expectTypeOf({ a: 1 }).toHaveProperty("a");
+  expectTypeOf(1).not.toBeString();
+});
+
+test("promises that are awaited elsewhere", async () => {
+  const later = expect(Promise.resolve(1)).resolves.toBe(1);
+  await later;
+  const all: Promise<void>[] = [];
+  all.push(expect(Promise.resolve(1)).resolves.toBe(1));
+  await Promise.all(all);
+  await Promise.allSettled([expect(Promise.resolve(1)).resolves.toBe(1)]);
+  const one = expect(1);
+  one.toBe(1);
+});
+
+test("returned by an arrow function", () => expect(Promise.resolve(1)).resolves.toBe(1));
+`,
+  "mocks.test.ts": `import { afterEach, expect, jest, mock, setSystemTime, spyOn, test, vi } from "bun:test";
+
+afterEach(() => {
+  mock.restore();
+  mock.clearAllMocks();
+  jest.restoreAllMocks();
+  jest.clearAllMocks();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
+
+test("mock", async () => {
+  const one = mock(() => 1);
+  expect(one()).toBe(1);
+  expect(one, "it ran").toHaveBeenCalled();
+  expect(one, "it ran once").toHaveBeenCalledOnce();
+  expect(one, "it ran once").toHaveBeenCalledTimes(1);
+  expect(one.mock.calls, "it ran once").toHaveLength(1);
+  expect(one).toHaveBeenCalledWith();
+  expect(one).toHaveBeenLastCalledWith();
+  expect(one).toHaveBeenNthCalledWith(1);
+  expect(one).toHaveReturned();
+  expect(one).toHaveReturnedTimes(1);
+  expect(one).toHaveReturnedWith(1);
+  expect(one).toHaveLastReturnedWith(1);
+  expect(one).toHaveNthReturnedWith(1, 1);
+  expect(one).toBeCalled();
+  expect(one).toBeCalledTimes(1);
+  expect(one).toBeCalledWith();
+  expect(one).lastCalledWith();
+  expect(one).nthCalledWith(1);
+  const never = mock();
+  expect(never, "it did not run").toHaveBeenCalledTimes(0);
+  expect(never).not.toHaveBeenCalled();
+  const later = mock(async () => 1);
+  expect(await later(), "later").toBe(1);
+  later.mockResolvedValue(2);
+  expect(await later()).toBe(2);
+  later.mockImplementation(() => Promise.resolve(3));
+  expect(await later()).toBe(3);
+  one.mockImplementation(() => 2);
+  expect(one()).toBe(2);
+  one.mockReturnValue(3);
+  expect(one()).toBe(3);
+});
+
+test("jest.fn, vi.fn and spies", () => {
+  const a = jest.fn();
+  const b = vi.fn(() => 1);
+  const c = jest.fn<() => number>(() => 1);
+  a();
+  expect(a).toHaveBeenCalled();
+  expect(b()).toBe(1);
+  expect(c()).toBe(1);
+  const object = { method: () => 1, other: () => 2 };
+  const spy = spyOn(object, "method").mockReturnValue(2);
+  expect(object.method()).toBe(2);
+  expect(spy).toHaveBeenCalledTimes(1);
+  jest.spyOn(object, "other").mockImplementation(() => 3);
+  expect(object.other()).toBe(3);
+  vi.spyOn(object, "other");
+  object.other = jest.fn(() => 4);
+  expect(object.other()).toBe(4);
+});
+
+test("time", () => {
+  setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+  expect(new Date().getFullYear(), "the year").toBe(2020);
+  setSystemTime();
+  jest.useFakeTimers();
+  const ran = mock();
+  setTimeout(ran, 1000);
+  jest.advanceTimersByTime(1000);
+  expect(ran).toHaveBeenCalledTimes(1);
+  jest.useRealTimers();
+});
+
+test("lengths, members and comparisons with a message", () => {
+  const list = [1, 2];
+  expect(list.length, "two").toBe(2);
+  expect(list.includes(1), "has one").toBe(true);
+  expect(list.length > 1, "more than one").toBe(true);
+  expect(list.length === 2, "two").toBe(true);
+  expect(typeof list, "an object").toBe("object");
+  expect(list[0], "one").toEqual(1);
+  expect(undefined, "nothing").toBe(undefined);
+  expect(null, "null").toEqual(null);
+  expect(true, "true").toBe(true);
+  expect(false, "false").toBe(false);
+  expect(1, "truthy").toBeTruthy();
+  expect(0, "falsy").toBeFalsy();
+});
+`,
+};
+
+describe("code that bun test passes", () => {
+  async function run(cwd: string, ...cmd: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  /** "68 pass", "1 skip", .. */
+  const counts = (stderr: string) => stderr.match(/^ *\d+ (pass|skip|todo|fail)$/gm)?.map(it => it.trim());
+
+  test("gets no report without a configuration file", async () => {
+    using dir = tempDir("bun-rules", valid);
+    const [tests, found] = await Promise.all([run(String(dir), "test"), run(String(dir), "lint", "-f", "unix", ".")]);
+    expect(counts(tests.stderr)).toContain("0 fail");
+    expect(tests.exitCode).toBe(0);
+    expect(found.stdout.trim().split("\n")).toEqual([""]);
+    expect(found.exitCode).toBe(0);
+  });
+
+  test("still passes after --fix with every rule on, and nothing that was written is gone", async () => {
+    using dir = tempDir("bun-rules", valid);
+    const before = await run(String(dir), "test");
+    const rules = Object.keys(twins).flatMap(it => ["--rule", `bun:test/${it}: error`]);
+    await run(String(dir), "lint", "--fix", ...rules, ".");
+    const after = await run(String(dir), "test");
+    expect(counts(after.stderr)).toEqual(counts(before.stderr));
+    expect(after.exitCode).toBe(0);
+    for (const [name, text] of Object.entries(valid)) {
+      const fixed = await Bun.file(`${dir}/${name}`).text();
+      expect(fixed).not.toBe(text);
+      // The messages of `expect`, the titles, the timeouts and the options.
+      const kept = (text: string) =>
+        (text.match(/"[^"\n]*"|\b1000\b|\{ (timeout|retry|repeats)[^}]*\}/g) ?? []).toSorted();
+      expect(kept(fixed)).toEqual(kept(text));
+    }
   });
 });

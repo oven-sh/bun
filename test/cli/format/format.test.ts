@@ -1216,6 +1216,20 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    // As Prettier 3.9.9 with a plugin that throws this.
+    test.each<[string[], string, number]>([
+      [[], "[error] c.svelte: SyntaxError: Unexpected token (1:2)", 2],
+      [["--check"], "[error] Unexpected token (1:2)", 0],
+      [["--list-different"], "[error] Unexpected token (1:2)", 0],
+    ])(
+      "from standard input, and it does not parse: %j",
+      async (flags, stderr, exitCode) => {
+        const result = await format(files, [...flags, "--stdin-filepath", "c.svelte"], { stdin: "<p>broken</p>\n" });
+        expect(result).toMatchObject({ raw: "", stderr, exitCode });
+      },
+      timeout,
+    );
+
     // Each thread that hands a file over waits for the answer, and Prettier reads files on threads too.
     test(
       "more files than there are threads",
@@ -2565,6 +2579,50 @@ try {
     expect(result.raw).toBe("");
     expect(result.stderr.includes("[error] No parser could be inferred for file")).toBe(isSaid);
     expect(result.exitCode).toBe(exitCode);
+  });
+
+  // By runs of Prettier 3.9.9, whose `listDifferent` says `error.message` and leaves the exit code as it is, and of oxfmt 0.72.0.
+  test.each<[Record<string, string>, string[], number, string]>([
+    [{}, [], 2, "a.ts: SyntaxError: "],
+    [{}, ["--write"], 2, "a.ts: SyntaxError: "],
+    [{}, ["--check"], 0, ""],
+    [{}, ["--list-different"], 0, ""],
+    [{}, ["--check", "--write"], 0, ""],
+    [{}, ["-l", "--write"], 0, ""],
+    [{ ".prettierrc": "{}" }, ["--check"], 0, ""],
+    [{ ".oxfmtrc.json": "{}" }, [], 2, "a.ts: SyntaxError: "],
+  ])("standard input that does not parse: %j %j", async (configuration, flags, exitCode, before) => {
+    const result = await format(configuration, [...flags, "--stdin-filepath", "a.ts"], { stdin: "let a: = 1;\n" });
+    expect(result.raw).toBe("");
+    expect(result.stderr.split("\n")).toEqual([
+      `[error] ${before}Type expected. (1:8)`,
+      "[error] > 1 | let a: = 1;",
+      "[error]     |        ^",
+      "[error]   2 |",
+    ]);
+    expect(result.exitCode).toBe(exitCode);
+  });
+
+  test.each([
+    ["a.css", "a {\n"],
+    ["a.json", '{ "a": \n'],
+    ["a.yaml", "a: [\n"],
+    ["a.html", "<div></p>\n"],
+    ["a.vue", "<template><div></template>\n"],
+    ["a.graphql", "query {\n"],
+    ["a.hbs", "{{#if a}}\n"],
+  ])("standard input that does not parse, with --check: %s", async (name, stdin) => {
+    const result = await format({}, ["--check", "--stdin-filepath", name], { stdin });
+    expect(result.raw).toBe("");
+    expect(result.stderr).toStartWith("[error] ");
+    expect(result.stderr).not.toContain(name);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each(["--check", "--list-different"])("a file that does not parse, with %s", async flag => {
+    const result = await format({ "a.ts": "let a: = 1;\n" }, [flag, "a.ts"]);
+    expect(result.stderr).toStartWith("[error] a.ts: SyntaxError: Type expected. (1:8)\n");
+    expect(result.exitCode).toBe(2);
   });
 
   test("JSX in a block of MDX in Markdown is formatted, though what is printed of it is no program", async () => {

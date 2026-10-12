@@ -364,19 +364,12 @@ describe("structuredClone with Blob and File", () => {
   });
 
   describe("S3File structured clone", () => {
-    // An S3 store is bound to the credentials and options of the client that
-    // made it, and the Blob wire record has no form for those, so serializing
-    // one is refused up front with a DataCloneError. Before that, the record
-    // went out under the Bytes tag with the body of a File record. Most
-    // readers failed with "Unable to deserialize data.", postMessage() lost
-    // the message instead of throwing, and a 5-byte slice parsed as a Blob of
-    // 5 wrong bytes. Each attempt also set the size of the source to 0.
-    // Nothing here performs S3 I/O; the endpoint is never contacted.
+    // An S3 store carries credentials that the clone record has no field for, so the clone is refused.
     const credentials = {
       accessKeyId: "test-access-key",
       secretAccessKey: "test-secret-key",
       bucket: "bucket",
-      endpoint: "http://127.0.0.1:1",
+      endpoint: "http://127.0.0.1:1", // never contacted: no test here does S3 I/O
     };
 
     const dataCloneError = {
@@ -402,9 +395,8 @@ describe("structuredClone with Blob and File", () => {
       ["new Bun.S3Client(options).file(key)", () => new Bun.S3Client(credentials).file("key.txt"), NaN],
       ["Bun.S3Client.file(key, options)", () => Bun.S3Client.file("key.txt", credentials), NaN],
       ["Bun.file(s3:// url)", () => Bun.file("s3://bucket/key.txt"), NaN],
-      ["S3File.slice()", () => new Bun.S3Client(credentials).file("key.txt").slice(1, 3), 2],
-      // Without the refusal, this window cloned with no error into a Blob of the bytes 00 00 00 00 01.
-      ["S3File.slice() of 5 bytes", () => new Bun.S3Client(credentials).file("key.txt").slice(0, 5), 5],
+      ["S3File.slice(1, 3)", () => new Bun.S3Client(credentials).file("key.txt").slice(1, 3), 2],
+      ["S3File.slice(0, 5)", () => new Bun.S3Client(credentials).file("key.txt").slice(0, 5), 5],
     ])("structuredClone() of %s throws a DataCloneError", (_name, make, size) => {
       const file = make();
       const nameBefore = file.name;

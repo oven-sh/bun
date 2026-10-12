@@ -1151,7 +1151,17 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             }
             let version = parsed.version.min();
             let url = match param(&params, b"__archiveUrl") {
-                Some(url) => sbuf!(this).append(url)?,
+                Some(url) => {
+                    let configured = lockfile::bun_lock::registry_without_auth(
+                        manager.scope_for_package_name(name).url.href(),
+                    );
+                    if !lockfile::bun_lock::url_is_under_registry(url, &configured) {
+                        // the integrity comes from bun's registry, so this fails below;
+                        // when yarn names another registry, say that
+                        registry_for(manager, log, &yarnrc, name)?;
+                    }
+                    sbuf!(this).append(url)?
+                }
                 None => {
                     let registry = registry_for(manager, log, &yarnrc, name)?;
                     let url = crate::extract_tarball::build_url(
@@ -1246,6 +1256,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // patch entries -> same package as the locator they patch (+ patchedDependencies).
     // A patch can wrap another patch (yarn's builtin compat patch around a user
     // patch), so repeat until every chain reached a package.
+    // (bun.lock key, files, the first file) of a package with several patch files
+    let mut stacked: Vec<(Vec<u8>, usize, Vec<u8>)> = Vec::new();
     let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
     // In yarn the patched package is a second package next to its source; here it
     // is the same one.
@@ -1313,15 +1325,10 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 ));
             };
             if paths.len() > 1 {
-                return Err(invalid_lockfile(
-                    log,
-                    format_args!(
-                        "yarn.lock patches \"{}\" with {} files (\"{}\", ...); bun applies one patch per package — merge them into one file",
-                        bstr::BStr::new(&key),
-                        paths.len(),
-                        bstr::BStr::new(&paths[0]),
-                    ),
-                ));
+                if !stacked.iter().any(|(k, _, _)| *k == key) {
+                    stacked.push((key, paths.len(), paths.swap_remove(0)));
+                }
+                continue;
             }
             // several descriptors / `resolutions` selectors can point at one patch entry
             let path = paths.swap_remove(0);
@@ -1345,6 +1352,38 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             break;
         }
         pending = still_pending;
+    }
+    match stacked.as_slice() {
+        [] => {}
+        [(key, count, first)] => {
+            return Err(invalid_lockfile(
+                log,
+                format_args!(
+                    "yarn.lock patches \"{}\" with {} files (\"{}\", ...); bun applies one patch per package — merge them into one file",
+                    bstr::BStr::new(key),
+                    count,
+                    bstr::BStr::new(first),
+                ),
+            ));
+        }
+        several => {
+            let mut names = Vec::new();
+            for (key, count, _) in several {
+                if !names.is_empty() {
+                    names.extend_from_slice(b", ");
+                }
+                write!(&mut names, "\"{}\" with {}", bstr::BStr::new(key), count)
+                    .map_err(|_| AllocError)?;
+            }
+            return Err(invalid_lockfile(
+                log,
+                format_args!(
+                    "yarn.lock patches {} packages with several files each ({}); bun applies one patch per package — merge the files of each into one",
+                    several.len(),
+                    bstr::BStr::new(&names),
+                ),
+            ));
+        }
     }
 
     // -- 4. bind dependency edges ---------------------------------------------
@@ -1666,11 +1705,28 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     ),
                 ));
             }
+            let name = this.packages.items_name()[pid].slice(string_bytes!(this));
+            let url = res.npm().url.slice(string_bytes!(this));
+            let configured = lockfile::bun_lock::registry_without_auth(
+                manager.scope_for_package_name(name).url.href(),
+            );
+            if !url.is_empty() && !lockfile::bun_lock::url_is_under_registry(url, &configured) {
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock fetches \"{}@{}\" from {}, which is not under the registry bun is configured with ({}); the integrity of a package comes from that registry",
+                        bstr::BStr::new(name),
+                        res.fmt(string_bytes!(this), bun_core::fmt::PathSep::Posix),
+                        bstr::BStr::new(url),
+                        bun_core::fmt::redacted_npm_url(&configured),
+                    ),
+                ));
+            }
             return Err(invalid_lockfile(
                 log,
                 format_args!(
                     "could not get the integrity of \"{}@{}\" from the registry",
-                    bstr::BStr::new(this.packages.items_name()[pid].slice(string_bytes!(this))),
+                    bstr::BStr::new(name),
                     res.fmt(string_bytes!(this), bun_core::fmt::PathSep::Posix),
                 ),
             ));
@@ -1970,8 +2026,11 @@ fn resolution_pattern_matches(
     let Some(range) = rest.strip_prefix(b"@") else {
         return false;
     };
-    let range = range.strip_prefix(b"npm:").unwrap_or(range);
-    range == strip_npm_protocol(original_literal) || range == strip_npm_protocol(literal)
+    // `name@npm:other@^1` names an alias as written; `name@npm:^1` and `name@^1` are one range
+    let plain = range.strip_prefix(b"npm:").unwrap_or(range);
+    [original_literal, literal]
+        .iter()
+        .any(|literal| range == *literal || plain == strip_npm_protocol(literal))
 }
 
 /// The entry a matched `resolutions` rule sends an edge to. Yarn replaces the
@@ -2187,6 +2246,26 @@ fn extensions_for<'a>(
             if extended.dependencies.iter().any(|(n, _)| *n == dep_name) {
                 continue;
             }
+            // `catalog:` / `catalog:<name>`: the range the catalog has for the name. A
+            // package of the registry has no catalog to read it from.
+            let dep_range = match dep_range.strip_prefix(b"catalog:") {
+                None => dep_range,
+                Some(group) => match yarnrc.catalogs.get(group).and_then(|g| g.get(dep_name)) {
+                    Some(range) => &**range,
+                    None => {
+                        return Err(invalid_lockfile(
+                            log,
+                            format_args!(
+                                "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\", and the catalog has no \"{}\"",
+                                bstr::BStr::new(extension_key),
+                                bstr::BStr::new(dep_name),
+                                bstr::BStr::new(dep_range),
+                                bstr::BStr::new(dep_name),
+                            ),
+                        ));
+                    }
+                },
+            };
             if !from_yarnrc {
                 key.clear();
                 key.extend_from_slice(dep_name);
@@ -2390,7 +2469,7 @@ fn yarn_only_range_for_bun(
 ) -> Option<Vec<u8>> {
     if spec.starts_with(b"patch:") {
         // the patched range may itself be yarn-only (`patch:` of a `portal:` package)
-        let inner = patch_inner_range(spec);
+        let inner = patch_inner_range(name, spec);
         return Some(
             yarn_only_range_for_bun(name, inner, yarn_links).unwrap_or_else(|| inner.to_vec()),
         );
@@ -2410,15 +2489,22 @@ fn yarn_only_range_for_bun(
         .map(|path| [b"file:".as_slice(), path].concat())
 }
 
-/// `patch:<locator>#<source>` -> the range of the locator being patched
-/// (`patch:ms@npm%3A2.1.3#~/.yarn/patches/ms.patch` -> `2.1.3`).
-fn patch_inner_range(spec: &[u8]) -> &'static [u8] {
+/// `patch:<locator>#<source>` -> the range of the locator being patched, as a
+/// dependency called `name` has to write it
+/// (`patch:ms@npm%3A2.1.3#~/.yarn/patches/ms.patch` -> `2.1.3`, and under
+/// another name `npm:ms@2.1.3`: a plain range would name another package).
+fn patch_inner_range(name: &[u8], spec: &[u8]) -> &'static [u8] {
     let rest = spec.strip_prefix(b"patch:").unwrap_or(spec);
     let (patch, _) = decode_patch_spec(rest);
-    let inner_ref: &[u8] = split_locator(&patch.inner).map_or(&patch.inner[..], |(_, r)| r);
+    let (inner_name, inner_ref): (&[u8], &[u8]) =
+        split_locator(&patch.inner).unwrap_or((name, &patch.inner[..]));
     let (range, _) = split_reference_params(inner_ref);
+    let plain = strip_npm_protocol(range);
     // interned: dependency literals and rewritten package.json nodes point at it
-    bun_ast::data_store_dupe_str(strip_npm_protocol(range))
+    if inner_name != name && !has_protocol(plain) {
+        return bun_ast::data_store_dupe_str(&[b"npm:", inner_name, b"@", plain].concat());
+    }
+    bun_ast::data_store_dupe_str(plain)
 }
 
 fn append_dependency(

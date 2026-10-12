@@ -61,12 +61,13 @@ pub(crate) fn parse_selector(key: &[u8]) -> Result<Selector<'_>, SelectorError> 
 }
 
 /// pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` not preceded by a space, `|` or `@`.
+/// Nor by `:`, which is a range after yarn's protocol (`name@npm:>=1.0.0`); no name has a `:`.
 fn pnpm_delimiter(key: &[u8]) -> Option<usize> {
     let mut from = 1;
     while from < key.len() {
         let i = from + strings::index_of_char_usize(&key[from..], b'>')?;
         match key[i - 1] {
-            b' ' | b'|' | b'@' => from = i + 1,
+            b' ' | b'|' | b'@' | b':' => from = i + 1,
             _ => return Some(i),
         }
     }

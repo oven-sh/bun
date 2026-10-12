@@ -2,6 +2,7 @@ import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
 const {
+  InvalidIdentifier,
   Query,
   SQLQueryFlags,
   symbols: { _strings, _values },
@@ -400,6 +401,9 @@ function normalizeQuery(
   }
 
   if (!$isArray(strings)) {
+    if (strings instanceof InvalidIdentifier) {
+      throw strings.error;
+    }
     // we should not hit this path
     throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
   }

@@ -20,8 +20,19 @@ export interface BaseQueryHandle<Connection> {
   run(connection: Connection, query: Query<any, any>): void | Promise<void>;
 }
 
-export type { Query, SQLQueryResultMode };
-export type QueryStrings = string | TemplateStringsArray | SQLHelper<any> | Query<any, any>;
+export type { InvalidIdentifier, Query, SQLQueryResultMode };
+export type QueryStrings = string | TemplateStringsArray | SQLHelper<any> | Query<any, any> | InvalidIdentifier;
+
+// Not a class declaration: one that the Query constructor captures adds a scope to every lookup in Query's methods.
+const InvalidIdentifier = class {
+  declare readonly error: unknown;
+
+  constructor(error: unknown) {
+    this.error = error;
+  }
+};
+type InvalidIdentifier = InstanceType<typeof InvalidIdentifier>;
+
 class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_resolve]: (value: T) => void;
   public [_reject]: (reason?: Error) => void;
@@ -81,8 +92,13 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     if (typeof strings === "string") {
       if (!(flags & SQLQueryFlags.unsafe)) {
         // identifier (cannot be executed in safe mode)
-        flags |= SQLQueryFlags.notTagged;
-        strings = adapter.escapeIdentifier(strings);
+        try {
+          strings = adapter.escapeIdentifier(strings);
+          flags |= SQLQueryFlags.notTagged;
+        } catch (err) {
+          // normalizeQuery throws this into the query that uses it.
+          strings = new InvalidIdentifier(err);
+        }
       }
     }
 
@@ -352,6 +368,7 @@ const enum SQLQueryStatus {
 }
 
 export default {
+  InvalidIdentifier,
   Query,
   SQLQueryFlags,
   SQLQueryResultMode,

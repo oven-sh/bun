@@ -2375,6 +2375,27 @@ if (isDockerEnabled()) {
       expect(Object.keys(result[0])[0]).toBe("!not_valid");
     });
 
+    // The statement is never sent, so the connection and the transaction stay usable.
+    test("dynamic name with a NUL byte rejects the statement that uses it", async () => {
+      await using db = postgres({ ...options, max: 1 });
+      const onPool = await db`select * from ${db("te\0st")}`.catch(e => e.code);
+      const inTransaction = await db.begin(async tx => {
+        const code = await tx`select * from ${tx("te\0st")}`.catch(e => e.code);
+        const [{ x }] = await tx`select 1 as ${tx("x")}`;
+        return { code, x };
+      });
+      using reserved = await db.reserve();
+      const onReserved = await reserved`select * from ${reserved("te\0st")}`.catch(e => e.code);
+      const afterReserved = await reserved`select 1 as ${reserved("x")}`;
+
+      expect({ onPool, inTransaction, onReserved, afterReserved }).toEqual({
+        onPool: "ERR_INVALID_ARG_VALUE",
+        inTransaction: { code: "ERR_INVALID_ARG_VALUE", x: 1 },
+        onReserved: "ERR_INVALID_ARG_VALUE",
+        afterReserved: [{ x: 1 }],
+      });
+    });
+
     // t('dynamic select as', async() => {
     //   return ['2', (await sql`select ${ sql({ a: 1, b: 2 }) }`)[0].b]
     // })

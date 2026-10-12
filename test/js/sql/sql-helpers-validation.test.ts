@@ -9,6 +9,7 @@
 // https://github.com/oven-sh/bun/issues/32155
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 const adapters: [string, () => SQL][] = [
   ["sqlite", () => new SQL("sqlite://:memory:")],
@@ -142,6 +143,190 @@ describe.each(identifierAdapters)("%s dynamic identifier validation", (_adapter,
     expect(err).toBeInstanceOf(TypeError);
     expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
     expect(err.message).toStartWith("The argument 'name' must not contain null bytes. Received ");
+  });
+});
+
+// sql("name") is a fragment for another statement, so nothing awaits it. A name
+// that cannot be escaped is reported by what uses it, and by nothing when it is only made.
+describe.each(adapters)("%s identifier with a NUL byte", (adapter, makeSql) => {
+  const nulName = {
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'name' must not contain null bytes. Received 'col\\x00umn'",
+  };
+  const failure = (promise: PromiseLike<unknown>) =>
+    promise.then(
+      () => null,
+      err => ({ code: err.code, message: err.message }),
+    );
+
+  test("fails each statement that uses it", async () => {
+    await using sql = makeSql();
+    await using other = makeSql();
+    const name = sql("col\0umn");
+    expect(name.constructor.name).toBe("Query");
+
+    const errors = await Promise.all([
+      sql`SELECT ${name} FROM t`.catch(e => e),
+      sql`SELECT 1 FROM ${name}`.catch(e => e),
+      // made by one client, used by another
+      other`SELECT ${name} FROM t`.catch(e => e),
+      // extra arguments do not make it a statement
+      sql`SELECT ${(sql as any)("col\0umn", 1)} FROM t`.catch(e => e),
+    ]);
+    expect(errors.map(err => ({ type: err.constructor, code: err.code, message: err.message }))).toEqual(
+      errors.map(() => ({ type: TypeError, ...nulName })),
+    );
+    // The stack shows where the identifier was made.
+    expect(errors[0].stack).toContain(import.meta.filename);
+  });
+
+  test("fails when it is used as a statement", async () => {
+    await using sql = makeSql();
+    const make = () => sql("col\0umn") as any;
+    expect({
+      await: await failure(make()),
+      then: await failure(make().then(() => {})),
+      catch: await make().catch((err: any) => ({ code: err.code, message: err.message })),
+      finally: await failure(make().finally(() => {})),
+      execute: await failure(make().execute()),
+      run: await failure(make().run()),
+      values: await failure(make().values()),
+      raw: await failure(make().raw()),
+    }).toEqual({
+      await: nulName,
+      then: nulName,
+      catch: nulName,
+      finally: nulName,
+      execute: nulName,
+      run: nulName,
+      values: nulName,
+      raw: nulName,
+    });
+  });
+
+  test("a valid identifier used as a statement still fails as not tagged", async () => {
+    await using sql = makeSql();
+    const make = () => sql("column") as any;
+    const thrown = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (err: any) {
+        return err.code;
+      }
+      return null;
+    };
+    const notTagged = `ERR_${adapter.toUpperCase()}_NOT_TAGGED_CALL`;
+    expect({
+      await: (await failure(make()))?.code,
+      then: (await failure(make().then(() => {})))?.code,
+      execute: (await failure(make().execute()))?.code,
+      run: (await failure(make().run()))?.code,
+      catch: thrown(() => make().catch(() => {})),
+      finally: thrown(() => make().finally(() => {})),
+    }).toEqual({
+      await: notTagged,
+      then: notTagged,
+      execute: notTagged,
+      run: notTagged,
+      catch: notTagged,
+      finally: notTagged,
+    });
+  });
+});
+
+describe("sqlite identifier with a NUL byte in a transaction", () => {
+  test("a statement that catches the name error leaves the transaction intact", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (a INT)`;
+    const codes = await sql.begin(async tx => {
+      const inTransaction = await tx`SELECT ${tx("a\0b")} FROM t`.catch(e => e.code);
+      const inSavepoint = await tx.savepoint(async sp => await sp`SELECT ${sp("a\0b")} FROM t`.catch(e => e.code));
+      const madeOnThePool = await tx`SELECT ${sql("a\0b")} FROM t`.catch(e => e.code);
+      await tx`INSERT INTO ${tx("t")} (a) VALUES (1)`;
+      return { inTransaction, inSavepoint, madeOnThePool };
+    });
+    expect(codes).toEqual({
+      inTransaction: "ERR_INVALID_ARG_VALUE",
+      inSavepoint: "ERR_INVALID_ARG_VALUE",
+      madeOnThePool: "ERR_INVALID_ARG_VALUE",
+    });
+    expect(await sql`SELECT a FROM t`).toEqual([{ a: 1 }]);
+  });
+
+  test("a statement that does not catch it rejects begin() and rolls back", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (a INT)`;
+    const begun = await sql
+      .begin(async tx => {
+        await tx`INSERT INTO t (a) VALUES (1)`;
+        await tx`SELECT ${tx("a\0b")} FROM t`;
+      })
+      .catch(e => e.code);
+    expect(begun).toBe("ERR_INVALID_ARG_VALUE");
+    expect(await sql`SELECT a FROM t`).toEqual([]);
+
+    const saved = await sql.begin(async tx => {
+      await tx`INSERT INTO t (a) VALUES (1)`;
+      return await tx
+        .savepoint(async sp => {
+          await sp`INSERT INTO t (a) VALUES (2)`;
+          await sp`SELECT ${sp("a\0b")} FROM t`;
+        })
+        .catch(e => e.code);
+    });
+    expect(saved).toBe("ERR_INVALID_ARG_VALUE");
+    expect(await sql`SELECT a FROM t`).toEqual([{ a: 1 }]);
+  });
+});
+
+// Runs in a child process: the contract is what the process reports. An
+// unhandled rejection prints to stderr and sets exit code 1.
+test("an identifier with a NUL byte reports nothing unless something uses it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const clients = {
+        sqlite: new Bun.SQL("sqlite://:memory:"),
+        postgres: new Bun.SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 }),
+        mysql: new Bun.SQL("mysql://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 }),
+      };
+      const report = {};
+      for (const [adapter, sql] of Object.entries(clients)) {
+        // made, never used
+        const made = sql("a\\0b").constructor.name;
+        // used: the caller handles the error where it uses the identifier
+        let caught;
+        try {
+          await sql\`SELECT \${sql("a\\0b")} FROM t\`;
+        } catch (err) {
+          caught = err.code;
+        }
+        report[adapter] = { made, caught };
+      }
+      report.transaction = await clients.sqlite.begin(async tx => {
+        const made = tx("a\\0b").constructor.name;
+        const inSavepoint = await tx.savepoint(async sp => sp("a\\0b").constructor.name);
+        return { made, inSavepoint };
+      });
+      console.log(JSON.stringify(report));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    stdout: {
+      sqlite: { made: "Query", caught: "ERR_INVALID_ARG_VALUE" },
+      postgres: { made: "Query", caught: "ERR_INVALID_ARG_VALUE" },
+      mysql: { made: "Query", caught: "ERR_INVALID_ARG_VALUE" },
+      transaction: { made: "Query", inSavepoint: "Query" },
+    },
+    stderr: "",
+    exitCode: 0,
   });
 });
 

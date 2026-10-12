@@ -1264,8 +1264,7 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// node's `_handleQueue !== null`: a handle send the peer has not acked yet, still queued or already written.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L864
+    /// node's `_handleQueue !== null`, a handle send the peer has not acked yet, still queued or already written: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L864
     fn has_unacked_handle(&self) -> bool {
         self.waiting_for_ack.get().is_some()
             || self.queue.get().iter().any(|item| item.handle.is_some())

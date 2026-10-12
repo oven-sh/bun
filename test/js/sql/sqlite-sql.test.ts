@@ -1380,7 +1380,7 @@ describe("Transactions", () => {
   test("a failed COMMIT does not roll back the transaction of an overlapping begin()", async () => {
     // The first callback ends its own transaction. The second begin() starts `hops` microtasks later,
     // so it opens its transaction before or after the COMMIT of the first runner fails.
-    const outcomes: string[][] = [];
+    const outcomes: { first: string; second: string; balance: number }[] = [];
     for (let hops = 0; hops <= 8; hops++) {
       const second = Promise.withResolvers<string>();
       const first = await sql
@@ -1406,12 +1406,15 @@ describe("Transactions", () => {
           () => "committed",
           e => e.message,
         );
-      outcomes.push([first, await second.promise]);
+      const settled = await second.promise;
+      const [{ balance }] = await sql`SELECT balance FROM accounts WHERE id = 2`;
+      outcomes.push({ first, second: settled, balance });
     }
 
     // One COMMIT ends the second transaction: its own, or the one of the first runner when that comes later.
-    const lost = outcomes.filter(([first, second]) => first !== "committed" && second !== "committed");
-    expect(lost).toEqual([]);
+    expect(outcomes.filter(({ first, second }) => first !== "committed" && second !== "committed")).toEqual([]);
+    // Both updates of every second transaction are kept.
+    expect(outcomes.map(({ balance }) => balance)).toEqual(outcomes.map((_, hops) => 500 + 2 * (hops + 1)));
   });
 });
 

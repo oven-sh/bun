@@ -503,7 +503,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     try {
       connection.run("ROLLBACK");
     } catch {
-      // The failed COMMIT left no transaction open. The caller gets the COMMIT error.
+      // No transaction is open, or the database is closed. Whatever ROLLBACK throws, the caller gets the COMMIT error.
     }
   }
   array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {

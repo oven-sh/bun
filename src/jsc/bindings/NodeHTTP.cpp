@@ -475,19 +475,6 @@ static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
 // Node's _storeHeader emits chunked Transfer-Encoding after Connection/Keep-Alive, so it
 // cannot ride in the flat array (written first). Carry as an auto-header bit, rendered last.
 static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
-// What the NUL-named pairs of the flat array say, for a head that is a block from renderRawHead() and has no array to put them in.
-static constexpr uint32_t kAutoHeaderNoBody = 1 << 7;
-static constexpr uint32_t kAutoHeaderCloseDelimited = 1 << 8;
-
-// The facts of a block from renderRawHead(), which are its first character (RAW_HEAD_* in src/js/node/_http_server.ts and src/js/internal/http1_server_fallback.ts - keep in sync).
-static constexpr uint8_t kRawHeadContentLength = 1 << 0;
-static constexpr uint8_t kRawHeadTransferEncoding = 1 << 1;
-static constexpr uint8_t kRawHeadChunked = 1 << 2;
-static constexpr uint8_t kRawHeadDate = 1 << 3;
-static constexpr uint8_t kRawHeadKeepAlive = 1 << 4;
-static constexpr uint8_t kRawHeadClose = 1 << 5;
-static constexpr uint8_t kRawHeadPersist = 1 << 6;
-static constexpr uint8_t kRawHeadTrailer = 1 << 7;
 
 // "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled
 // (not strftime) so the day/month names are locale-independent.
@@ -530,10 +517,6 @@ static std::string_view keepAliveHeaderBlob(uint32_t timeoutSecs)
 template<bool isSSL>
 static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs)
 {
-    if (autoHeaderBits & kAutoHeaderNoBody)
-        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
-    if (autoHeaderBits & kAutoHeaderCloseDelimited)
-        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_CLOSE_DELIMITED;
     if (autoHeaderBits & kAutoHeaderDate) {
         auto line = cachedDateHeaderLine();
         response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());
@@ -559,25 +542,6 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     }
 }
 
-// Writes the lines of a block from renderRawHead(). A write of more than CORK_COPY_MAX bytes leaves the cork, so a longer block goes out in pieces that end with a line.
-template<bool isSSL>
-static void writeRawHeadLines(uWS::HttpResponse<isSSL>* response, std::span<const Latin1Character> lines)
-{
-    std::string_view rest(reinterpret_cast<const char*>(lines.data()), lines.size());
-    while (!rest.empty()) {
-        size_t length = rest.size();
-        if (length > uWS::LoopData::CORK_COPY_MAX) {
-            size_t end = rest.rfind('\n', uWS::LoopData::CORK_COPY_MAX - 1);
-            if (end == std::string_view::npos)
-                end = rest.find('\n', uWS::LoopData::CORK_COPY_MAX);
-            if (end != std::string_view::npos)
-                length = end + 1;
-        }
-        response->uWS::template AsyncSocket<isSSL>::write(rest.data(), static_cast<int>(length));
-        rest.remove_prefix(length);
-    }
-}
-
 template<bool isSSL>
 static void NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,
@@ -590,17 +554,6 @@ static void NodeHTTPServer__writeHead(
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // A block from renderRawHead(). It is read before the status goes out, so that a string that is not such a block leaves the response as it is.
-    String rawHead;
-    if (headersObjectValue.isString()) {
-        rawHead = asString(headersObjectValue)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!rawHead.is8Bit()) [[unlikely]] {
-            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "headers"_s, headersObjectValue);
-            return;
-        }
-    }
 
     JSObject* headersObject = headersObjectValue.getObject();
     if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
@@ -621,17 +574,14 @@ static void NodeHTTPServer__writeHead(
         response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_NO_BODY_STATUS;
     }
 
-    if (headersObjectValue.isString()) {
-        auto block = rawHead.span8();
-        if (!block.empty()) {
-            auto* httpResponseData = response->getHttpResponseData();
-            if (block[0] & kRawHeadContentLength)
-                httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-            if (block[0] & kRawHeadTransferEncoding)
-                httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
-            writeRawHeadLines<isSSL>(response, block.subspan(1));
+    if (headersObject) {
+        if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
+            writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
+            return;
         }
-    } else if (headersObject) {
+
         // A flat [name, value, name, value, ...] array. Used by node:http's
         // ServerResponse so that repeated header names (multiple Set-Cookie or
         // duplicate Content-Length values, etc.) are written as separate
@@ -683,8 +633,52 @@ static void NodeHTTPServer__writeHead(
             if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
             return;
         }
+
+        if (headersObject->hasNonReifiedStaticProperties()) [[unlikely]] {
+            headersObject->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+
+        auto* structure = headersObject->structure();
+
+        if (structure->canPerformFastPropertyEnumeration()) {
+            structure->forEachProperty(vm, [&](const auto& entry) {
+                JSValue headerValue = headersObject->getDirect(entry.offset());
+                if (!headerValue.isString()) {
+
+                    return true;
+                }
+
+                String key = entry.key();
+                String value = headerValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, false);
+
+                writeResponseHeader<isSSL>(response, key, value);
+
+                return true;
+            });
+        } else {
+            PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, void());
+
+            for (unsigned i = 0; i < propertyNames.size(); ++i) {
+                JSValue headerValue = headersObject->getIfPropertyExists(globalObject, propertyNames[i]);
+                RETURN_IF_EXCEPTION(scope, void());
+                if (!headerValue.isString()) {
+                    continue;
+                }
+
+                String key = propertyNames[i].string();
+                String value = headerValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+
+                writeResponseHeader<isSSL>(response, key, value);
+            }
+        }
     }
 
+    RETURN_IF_EXCEPTION(scope, void());
     if (autoHeaderBits) writeAutoHeaders<isSSL>(response, autoHeaderBits, keepAliveTimeoutSecs);
 }
 
@@ -844,15 +838,24 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObjec
     return JSValue::encode(jsUndefined());
 }
 
-// The walk of renderRawHead(): the checked name and text of each line, and what Node's matchHeader() notes about them.
+// What the lines of flattenRawHeaders() name (NodeHTTPRawHead in src/js/internal/http.ts - keep in sync).
+static constexpr uint32_t kRawHeadContentLength = 1 << 0;
+static constexpr uint32_t kRawHeadTransferEncoding = 1 << 1;
+static constexpr uint32_t kRawHeadChunked = 1 << 2;
+static constexpr uint32_t kRawHeadDate = 1 << 3;
+static constexpr uint32_t kRawHeadKeepAlive = 1 << 4;
+static constexpr uint32_t kRawHeadClose = 1 << 5;
+static constexpr uint32_t kRawHeadPersist = 1 << 6;
+static constexpr uint32_t kRawHeadTrailer = 1 << 7;
+
+// The walk of flattenRawHeaders(): the checked name and value of each line, and what Node's matchHeader() notes about them.
 struct RawHeadWalk {
     JSGlobalObject* globalObject;
     JSSet* uniqueHeaders;
     bool lenient;
-    uint8_t facts { 0 };
+    uint32_t facts { 0 };
     double contentLength { 0 };
-    CheckedUint32 length { 1 };
-    Vector<String, 32> parts;
+    MarkedArgumentBuffer lines;
 };
 
 // checkInvalidHeaderChar() of node:_http_common: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L214-L227
@@ -866,9 +869,27 @@ static bool hasInvalidHeaderChar(std::span<const CharacterType> text, bool lenie
     return false;
 }
 
-static bool hasInvalidHeaderChar(const String& text, bool lenient)
+static bool hasInvalidHeaderChar(StringView text, bool lenient)
 {
     return text.is8Bit() ? hasInvalidHeaderChar(text.span8(), lenient) : hasInvalidHeaderChar(text.span16(), lenient);
+}
+
+// The test of node:http's /(?:^|\W)token(?:$|\W)/i. `lowerToken` is lowercase ASCII letters.
+static bool rawHeadValueHasToken(StringView value, ASCIILiteral lowerToken)
+{
+    const size_t n = value.length(), m = lowerToken.length();
+    for (size_t i = 0; i + m <= n; i++) {
+        size_t matched = 0;
+        while (matched < m && toASCIILower(value[i + matched]) == lowerToken[matched])
+            matched++;
+        if (matched != m)
+            continue;
+        bool leftOk = i == 0 || !(isASCIIAlphanumeric(value[i - 1]) || value[i - 1] == '_');
+        bool rightOk = i + m == n || !(isASCIIAlphanumeric(value[i + m]) || value[i + m] == '_');
+        if (leftOk && rightOk)
+            return true;
+    }
+    return false;
 }
 
 // `list.length`, as the `i < list.length` of Node's loops reads it on each turn.
@@ -883,69 +904,73 @@ static double rawHeadListLength(JSGlobalObject* globalObject, JSObject* list)
     RELEASE_AND_RETURN(scope, length.toNumber(globalObject));
 }
 
+// `list[index]`. An entry that is in the storage of an array is read from there.
+static ALWAYS_INLINE JSValue rawHeadListEntry(JSGlobalObject* globalObject, JSObject* list, uint64_t index)
+{
+    if (index <= MAX_ARRAY_INDEX) [[likely]] {
+        if (JSValue entry = list->tryGetIndexQuickly(static_cast<unsigned>(index)))
+            return entry;
+    }
+    return list->get(globalObject, index);
+}
+
 // The line and matchHeader() of Node's storeHeader(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L608-L650
-static void appendRawHeadLine(RawHeadWalk& walk, const String& name, String&& text, JSValue number)
+static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView nameView, JSString* value, StringView text, JSValue number)
 {
     auto* globalObject = walk.globalObject;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!text.is8Bit())
-        text = String::make8Bit(text.span16());
-    auto bytes = text.span8();
-    std::string_view value(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-
-    switch (name.length()) {
+    switch (nameView.length()) {
     case 4:
-        if (equalLettersIgnoringASCIICase(name, "date"_s))
+        if (equalLettersIgnoringASCIICase(nameView, "date"_s))
             walk.facts |= kRawHeadDate;
         break;
     case 7:
-        if (equalLettersIgnoringASCIICase(name, "trailer"_s))
+        if (equalLettersIgnoringASCIICase(nameView, "trailer"_s))
             walk.facts |= kRawHeadTrailer;
         break;
     case 10:
-        if (equalLettersIgnoringASCIICase(name, "connection"_s))
-            walk.facts |= svValueHasToken(value, "close") ? kRawHeadClose : kRawHeadPersist;
-        else if (equalLettersIgnoringASCIICase(name, "keep-alive"_s))
+        if (equalLettersIgnoringASCIICase(nameView, "connection"_s))
+            walk.facts |= rawHeadValueHasToken(text, "close"_s) ? kRawHeadClose : kRawHeadPersist;
+        else if (equalLettersIgnoringASCIICase(nameView, "keep-alive"_s))
             walk.facts |= kRawHeadKeepAlive;
         break;
     case 14:
-        if (equalLettersIgnoringASCIICase(name, "content-length"_s)) {
-            double contentLength = number ? number.toNumber(globalObject) : jsToNumber(text);
+        if (equalLettersIgnoringASCIICase(nameView, "content-length"_s)) {
+            double contentLength = number.toNumber(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
             walk.contentLength = contentLength;
             walk.facts |= kRawHeadContentLength;
         }
         break;
     case 17:
-        if (equalLettersIgnoringASCIICase(name, "transfer-encoding"_s))
-            walk.facts |= svValueHasToken(value, "chunked") ? kRawHeadTransferEncoding | kRawHeadChunked : kRawHeadTransferEncoding;
+        if (equalLettersIgnoringASCIICase(nameView, "transfer-encoding"_s))
+            walk.facts |= rawHeadValueHasToken(text, "chunked"_s) ? kRawHeadTransferEncoding | kRawHeadChunked : kRawHeadTransferEncoding;
         break;
     }
 
-    walk.length += name.length();
-    walk.length += text.length();
-    walk.length += 4;
-    walk.parts.append(name);
-    walk.parts.append(WTF::move(text));
+    walk.lines.append(name);
+    walk.lines.append(value);
 }
 
 // validateHeaderValue() and storeHeader() for one value.
-static void appendRawHeadValue(RawHeadWalk& walk, const String& name, JSValue value)
+static void appendRawHeadValue(RawHeadWalk& walk, JSString* name, StringView nameView, JSValue value)
 {
     auto* globalObject = walk.globalObject;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (value.isUndefined()) {
-        Bun::ERR::HTTP_INVALID_HEADER_VALUE(scope, globalObject, value, name);
+        Bun::ERR::HTTP_INVALID_HEADER_VALUE(scope, globalObject, value, nameView.toString());
         return;
     }
-    String text = value.toWTFString(globalObject);
+    JSString* line = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto text = line->view(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     if (hasInvalidHeaderChar(text, walk.lenient)) {
-        Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, name);
+        Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, nameView.toString());
         return;
     }
     JSValue number = value;
@@ -953,44 +978,46 @@ static void appendRawHeadValue(RawHeadWalk& walk, const String& name, JSValue va
         // Node checks String(value) and sends `name + ": " + value`, which asks valueOf() first. A text that differs is checked too.
         number = value.toPrimitive(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        String sent = number.toWTFString(globalObject);
+        JSString* sent = number.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        if (sent != text) {
-            if (hasInvalidHeaderChar(sent, walk.lenient)) {
-                Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, name);
+        auto sentText = sent->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (sentText.data != text.data) {
+            if (hasInvalidHeaderChar(sentText, walk.lenient)) {
+                Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, nameView.toString());
                 return;
             }
-            text = WTF::move(sent);
+            RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, sent, sentText, number));
         }
     }
-    RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, WTF::move(text), number));
+    RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, line, text, number));
 }
 
 // processHeader() of Node's _http_outgoing.js, without its Content-Disposition step: that step is for a head that Node writes as UTF-8, and a handle writes one byte for each character.
-static void appendRawHeader(RawHeadWalk& walk, String&& name, JSValue value)
+static void appendRawHeader(RawHeadWalk& walk, JSString* name, JSValue value)
 {
     auto* globalObject = walk.globalObject;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!WebCore::isValidHTTPToken(name)) {
-        Bun::ERR::INVALID_HTTP_TOKEN(scope, globalObject, "Header name"_s, jsString(vm, name));
+    auto nameView = name->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!WebCore::isValidHTTPToken(nameView)) {
+        Bun::ERR::INVALID_HTTP_TOKEN(scope, globalObject, "Header name"_s, name);
         return;
     }
-    if (!name.is8Bit())
-        name = String::make8Bit(name.span16());
 
     bool valueIsArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, void());
     if (!valueIsArray)
-        RELEASE_AND_RETURN(scope, appendRawHeadValue(walk, name, value));
+        RELEASE_AND_RETURN(scope, appendRawHeadValue(walk, name, nameView, value));
 
     JSObject* list = asObject(value);
     double length = rawHeadListLength(globalObject, list);
     RETURN_IF_EXCEPTION(scope, void());
-    bool joined = length >= 2 && equalLettersIgnoringASCIICase(name, "cookie"_s);
+    bool joined = length >= 2 && equalLettersIgnoringASCIICase(nameView, "cookie"_s);
     if (!joined && walk.uniqueHeaders) {
-        joined = walk.uniqueHeaders->has(globalObject, jsString(vm, name.convertToASCIILowercase()));
+        joined = walk.uniqueHeaders->has(globalObject, jsString(vm, nameView->convertToASCIILowercase()));
         RETURN_IF_EXCEPTION(scope, void());
     }
     if (!joined) {
@@ -999,9 +1026,9 @@ static void appendRawHeader(RawHeadWalk& walk, String&& name, JSValue value)
             RETURN_IF_EXCEPTION(scope, void());
             if (!(static_cast<double>(i) < length))
                 return;
-            JSValue element = list->get(globalObject, i);
+            JSValue element = rawHeadListEntry(globalObject, list, i);
             RETURN_IF_EXCEPTION(scope, void());
-            appendRawHeadValue(walk, name, element);
+            appendRawHeadValue(walk, name, nameView, element);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
@@ -1015,7 +1042,7 @@ static void appendRawHeader(RawHeadWalk& walk, String&& name, JSValue value)
     for (uint64_t i = 0; i < count; i++) {
         if (i)
             text.append("; "_s);
-        JSValue element = list->get(globalObject, i);
+        JSValue element = rawHeadListEntry(globalObject, list, i);
         RETURN_IF_EXCEPTION(scope, void());
         if (element.isUndefinedOrNull())
             continue;
@@ -1029,26 +1056,11 @@ static void appendRawHeader(RawHeadWalk& walk, String&& name, JSValue value)
     }
     String line = text.toString();
     if (hasInvalidHeaderChar(line, walk.lenient)) {
-        Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, name);
+        Bun::ERR::INVALID_CHAR(scope, globalObject, "header content"_s, nameView->toString());
         return;
     }
-    RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, WTF::move(line), JSValue()));
-}
-
-// validateHeaderName() for a name that is an entry of a list.
-static void appendRawHeader(RawHeadWalk& walk, JSValue name, JSValue value)
-{
-    auto* globalObject = walk.globalObject;
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!name.isString()) {
-        Bun::ERR::INVALID_HTTP_TOKEN(scope, globalObject, "Header name"_s, name);
-        return;
-    }
-    String string = name.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    RELEASE_AND_RETURN(scope, appendRawHeader(walk, WTF::move(string), value));
+    JSString* joinedValue = jsString(vm, line);
+    RELEASE_AND_RETURN(scope, appendRawHeadLine(walk, name, nameView, joinedValue, line, joinedValue));
 }
 
 // One own property of the headers object, as `ObjectHasOwn(headers, key)` and then `headers[key]` read it.
@@ -1065,7 +1077,7 @@ static void appendRawHeaderOfObject(RawHeadWalk& walk, JSObject* object, Propert
         return;
     JSValue value = object->type() == ProxyObjectType ? object->get(globalObject, name) : slot.getValue(globalObject, name);
     RETURN_IF_EXCEPTION(scope, void());
-    RELEASE_AND_RETURN(scope, appendRawHeader(walk, String(name.uid()), value));
+    RELEASE_AND_RETURN(scope, appendRawHeader(walk, jsString(vm, String(name.uid())), value));
 }
 
 // The three raw arms of Node's _storeHeader(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L450-L472
@@ -1083,12 +1095,12 @@ static void walkRawHead(RawHeadWalk& walk, JSValue headers)
         RETURN_IF_EXCEPTION(scope, void());
         bool isPairs = false;
         if (length) {
-            JSValue first = list->get(globalObject, 0u);
+            JSValue first = rawHeadListEntry(globalObject, list, 0);
             RETURN_IF_EXCEPTION(scope, void());
             isPairs = JSC::isArray(globalObject, first);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!isPairs && std::fmod(length, 2) != 0) {
+        if (!isPairs && (isJSArray(list) ? static_cast<uint64_t>(length) & 1 : std::fmod(length, 2) != 0)) {
             Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "headers"_s, headers);
             return;
         }
@@ -1097,19 +1109,24 @@ static void walkRawHead(RawHeadWalk& walk, JSValue headers)
             RETURN_IF_EXCEPTION(scope, void());
             if (!(static_cast<double>(i) < length))
                 return;
-            JSValue name = list->get(globalObject, i);
+            JSValue name = rawHeadListEntry(globalObject, list, i);
             RETURN_IF_EXCEPTION(scope, void());
             JSValue value;
             if (isPairs) {
                 JSValue pair = name;
-                name = pair.get(globalObject, 0u);
+                name = pair.isObject() ? rawHeadListEntry(globalObject, asObject(pair), 0) : pair.get(globalObject, 0u);
                 RETURN_IF_EXCEPTION(scope, void());
-                value = pair.get(globalObject, 1u);
+                value = pair.isObject() ? rawHeadListEntry(globalObject, asObject(pair), 1) : pair.get(globalObject, 1u);
             } else {
-                value = list->get(globalObject, i + 1);
+                value = rawHeadListEntry(globalObject, list, i + 1);
             }
             RETURN_IF_EXCEPTION(scope, void());
-            appendRawHeader(walk, name, value);
+            // validateHeaderName(): a name is a string.
+            if (!name.isString()) {
+                Bun::ERR::INVALID_HTTP_TOKEN(scope, globalObject, "Header name"_s, name);
+                return;
+            }
+            appendRawHeader(walk, asString(name), value);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
@@ -1128,7 +1145,7 @@ static void walkRawHead(RawHeadWalk& walk, JSValue headers)
         });
         for (auto& property : properties) {
             if (object->structure() == structure) [[likely]]
-                appendRawHeader(walk, String(property.first.get()), object->getDirect(property.second));
+                appendRawHeader(walk, jsString(vm, String(property.first.get())), object->getDirect(property.second));
             else
                 appendRawHeaderOfObject(walk, object, Identifier::fromUid(vm, property.first.get()));
             RETURN_IF_EXCEPTION(scope, void());
@@ -1146,8 +1163,8 @@ static void walkRawHead(RawHeadWalk& walk, JSValue headers)
     }
 }
 
-// renderRawHead(headers, lenient, uniqueHeaders, out): the lines of a writeHead() with no header set before, as one Latin-1 string behind a character of kRawHead* bits. `out` gets those bits and the Content-Length number, also when the walk throws.
-JSC_DEFINE_HOST_FUNCTION(jsHTTPRenderRawHead, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// flattenRawHeaders(headers, lenient, uniqueHeaders, out): the headers of a writeHead() with no header set before, checked in Node's order, as the [name, value, ...] list that the handles take. `out` gets the kRawHead* bits and the Content-Length number, also when the walk throws.
+JSC_DEFINE_HOST_FUNCTION(jsHTTPFlattenRawHeaders, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1163,23 +1180,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPRenderRawHead, (JSGlobalObject * globalObject, Ca
     out->typedVector()[1] = walk.contentLength;
     RETURN_IF_EXCEPTION(scope, {});
 
-    std::span<Latin1Character> block;
-    String string = walk.length.hasOverflowed() ? String() : String::tryCreateUninitialized(walk.length.value(), block);
-    if (string.isNull()) [[unlikely]] {
+    if (walk.lines.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    block[0] = walk.facts;
-    size_t at = 1;
-    for (size_t i = 0; i < walk.parts.size(); i++) {
-        auto bytes = walk.parts[i].span8();
-        memcpySpan(block.subspan(at), bytes);
-        at += bytes.size();
-        block[at++] = i % 2 ? '\r' : ':';
-        block[at++] = i % 2 ? '\n' : ' ';
-    }
-    ASSERT(at == block.size());
-    return JSValue::encode(jsString(vm, WTF::move(string)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), walk.lines)));
 }
 
 JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
@@ -1196,8 +1201,8 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerMaxHeadersCount"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "setServerMaxHeadersCount"_s, jsHTTPSetMaxHeadersCount, ImplementationVisibility::Public), 0);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "renderRawHead"_s)),
-        JSC::JSFunction::create(vm, globalObject, 4, "renderRawHead"_s, jsHTTPRenderRawHead, ImplementationVisibility::Public), 0);
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "flattenRawHeaders"_s)),
+        JSC::JSFunction::create(vm, globalObject, 4, "flattenRawHeaders"_s, jsHTTPFlattenRawHeaders, ImplementationVisibility::Public), 0);
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
         0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);

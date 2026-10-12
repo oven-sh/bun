@@ -41,7 +41,7 @@ interface Http1FallbackRequest extends IncomingMessage {
 interface Http1FallbackResponseHead {
   statusCode: number;
   statusMessage: string | undefined;
-  headers: string[] | string;
+  headers: string[];
   autoHeaderBits: number;
   keepAliveTimeoutSecs: number;
 }
@@ -72,17 +72,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let hasConnection = false;
     let hasKeepAlive = false;
     const headers = head?.headers;
-    if (typeof headers === "string") {
-      // The head of a writeHead() with no header set before: a character of RAW_HEAD_* bits (src/js/node/_http_server.ts), then the lines.
-      const facts = headers.charCodeAt(0);
-      hasContentLength = (facts & 1) !== 0;
-      hasTransferEncoding = (facts & 2) !== 0;
-      if (facts & 4) chunked = true;
-      hasDate = (facts & 8) !== 0;
-      hasKeepAlive = (facts & 16) !== 0;
-      hasConnection = (facts & 96) !== 0;
-      out += headers.slice(1);
-    } else if (headers) {
+    if (headers) {
       // ServerResponse drives this handle with renderNativeHeaders(): a flat
       // [name, value, name, value, ...] array with original-case names.
       for (let i = 0, end = headers.length - 1; i < end; i += 2) {
@@ -120,9 +110,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
     // NodeHTTP.cpp) rather than the flat array.
     const autoBits = head?.autoHeaderBits ?? 0;
-    // AUTO_HEADER_NO_BODY and AUTO_HEADER_CLOSE_DELIMITED: what the NUL-named pairs say, for a head that is a string.
-    if ((autoBits & 128) !== 0) noBody = true;
-    if ((autoBits & 256) !== 0) closeDelimited = true;
     // Framing decided here but Transfer-Encoding rendered after Connection (Node _storeHeader
     // order); suppress the Content-Length it would otherwise invent (RFC 9112 §6.1 smuggling).
     const chunkedFromAutoBits = (autoBits & 16) !== 0;

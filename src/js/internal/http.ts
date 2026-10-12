@@ -1,35 +1,33 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, renderRawHead, drainMicrotasks } = $cpp(
-  "NodeHTTP.cpp",
-  "createNodeHTTPInternalBinding",
-) as {
-  setServerCustomOptions: (
-    server: any,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    maxHeaderSize: number,
-    onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
-    onConnection?: (socketHandle: any) => undefined,
-  ) => void;
-  setServerAppFlags: (
-    server: any,
-    requireHostHeader: boolean,
-    useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    httpAllowHalfOpen: boolean,
-  ) => void;
-  setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
-  // The lines of writeHead(status, headers) behind one character of RAW_HEAD_* bits. `out` gets the bits and the Content-Length number, also when it throws.
-  renderRawHead: (
-    headers: unknown,
-    lenient: boolean,
-    uniqueHeaders: Set<string> | null | undefined,
-    out: Float64Array,
-  ) => string;
-  drainMicrotasks: () => void;
-};
+const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, flattenRawHeaders, drainMicrotasks } =
+  $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
+    setServerCustomOptions: (
+      server: any,
+      requireHostHeader: boolean,
+      useStrictMethodValidation: boolean,
+      lenientHttpFlags: number,
+      maxHeaderSize: number,
+      onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+      onConnection?: (socketHandle: any) => undefined,
+    ) => void;
+    setServerAppFlags: (
+      server: any,
+      requireHostHeader: boolean,
+      useStrictMethodValidation: boolean,
+      lenientHttpFlags: number,
+      httpAllowHalfOpen: boolean,
+    ) => void;
+    setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
+    // The headers of writeHead(status, headers), checked in Node's order, as a [name, value, ...] list. `out` gets the NodeHTTPRawHead bits and the Content-Length number, also when it throws.
+    flattenRawHeaders: (
+      headers: unknown,
+      lenient: boolean,
+      uniqueHeaders: Set<string> | null | undefined,
+      out: Float64Array,
+    ) => string[];
+    drainMicrotasks: () => void;
+  };
 
 const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
@@ -96,6 +94,20 @@ export const enum NodeHTTPHeaderState {
   none,
   assigned,
   sent,
+}
+
+// What the lines of flattenRawHeaders() name. Must be kept in sync with kRawHead* in src/jsc/bindings/NodeHTTP.cpp.
+export const enum NodeHTTPRawHead {
+  contentLength = 1 << 0,
+  transferEncoding = 1 << 1,
+  chunked = 1 << 2,
+  date = 1 << 3,
+  keepAlive = 1 << 4,
+  /** `close` in a Connection line. */
+  close = 1 << 5,
+  /** A Connection line with no `close`. */
+  persist = 1 << 6,
+  trailer = 1 << 7,
 }
 
 function emitErrorNextTickIfErrorListenerNT(self, err, cb) {
@@ -540,6 +552,7 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
+  flattenRawHeaders,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -565,7 +578,6 @@ export {
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,
-  renderRawHead,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

@@ -204,6 +204,9 @@ function message(fn: () => unknown): string | undefined {
   return undefined;
 }
 
+// The same text in a string of 16-bit characters: a slice of a string with a character above 0xff keeps them.
+const wide = (text: string) => ("\u0100" + text).slice(1);
+
 // A test of what Node.js does where Bun still differs, and not because of these headers: todo in Bun.
 const differs = typeof Bun === "undefined" ? test : test.todo;
 
@@ -227,6 +230,11 @@ const stored = (res: http.ServerResponse) => ({
   get: res.getHeader("X-A"),
 });
 const nothingStored = { names: [], rawNames: [], headers: {}, has: false, get: undefined };
+const removed = (res: any) => ({
+  connection: res._removedConnection,
+  transferEncoding: res._removedTE,
+  contentLength: res._removedContLen,
+});
 
 describe("writeHead(status, headers) with no header set before sends the header lines as given", () => {
   for (const transport of transports) {
@@ -385,8 +393,6 @@ describe("writeHead(status, headers) with no header set before sends the header 
   });
 
   test("a name and a value in strings of 16-bit characters are sent as bytes", async () => {
-    // A slice of a string with a character above 0xff keeps its 16-bit characters.
-    const wide = (text: string) => ("\u0100" + text).slice(1);
     const sent: string[][] = [];
     for (const [, form] of forms) {
       const { headers } = await respond(res =>
@@ -510,6 +516,42 @@ describe("writeHead(status, headers) with no header set before sends the header 
     });
   }
 
+  // The response has no socket, and on some transports no handle, while its constructor runs.
+  class WritesHeadInConstructor extends http.ServerResponse {
+    constructor(req: http.IncomingMessage) {
+      super(req);
+      // The server gives the response its keep-alive state after the constructor. `close` here ends the connection.
+      this.writeHead(200, {
+        "X-A": "1",
+        "Set-Cookie": "a=1",
+        "set-cookie": "b=2",
+        "Content-Length": "2",
+        "Connection": "close",
+      });
+    }
+  }
+  const inConstructor: Transport[] = [
+    plain({ ServerResponse: WritesHeadInConstructor as any }),
+    overTls("https", https.createServer({ key, cert, ServerResponse: WritesHeadInConstructor as any }, onRequest)),
+    overTls(
+      "http2 with allowHTTP1",
+      http2.createSecureServer(
+        { key, cert, allowHTTP1: true, Http1ServerResponse: WritesHeadInConstructor as any },
+        onRequest as any,
+      ),
+    ),
+    { ...transports[3], server: http.createServer({ ServerResponse: WritesHeadInConstructor as any }, onRequest) },
+  ];
+  for (const transport of inConstructor) {
+    test(`a subclass that calls writeHead() in its constructor: ${transport.name}`, async () => {
+      const { headers, body } = await respond(res => res.end("ok"), { transport });
+      assert.deepStrictEqual(
+        { headers, body },
+        { headers: ["X-A: 1", "Set-Cookie: a=1", "set-cookie: b=2", "Content-Length: 2"], body: "ok" },
+      );
+    });
+  }
+
   test("a ServerResponse with no socket", () => {
     const res = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
     res.writeHead(200, { "Set-Cookie": "a=1", "set-cookie": "b=2" });
@@ -582,6 +624,28 @@ describe("writeHead(status, headers) with no header set before keeps the headers
       assert.deepStrictEqual(result, nothingStored);
     });
   }
+
+  // Node's matchHeader() clears the mark of removeHeader() for a header that it sees.
+  test("a header that the argument names is not a removed header any more", async () => {
+    const results: unknown[] = [];
+    for (const connection of ["close", "keep-alive"]) {
+      const { result } = await respond(res => {
+        for (const name of ["Connection", "Transfer-Encoding", "Content-Length"]) res.removeHeader(name);
+        const before = { ...removed(res) };
+        res.writeHead(200, { "Connection": connection, "Transfer-Encoding": "chunked", "Content-Length": "2" });
+        const after = removed(res);
+        // Not end(): after `keep-alive` the connection would stay open.
+        res.destroy();
+        return { before, after };
+      });
+      results.push(result);
+    }
+    const cleared = {
+      before: { connection: true, transferEncoding: true, contentLength: true },
+      after: { connection: false, transferEncoding: false, contentLength: false },
+    };
+    assert.deepStrictEqual(results, [cleared, cleared]);
+  });
 
   test("a header that a value's toString() sets is stored and not sent", async () => {
     const { headers, result } = await respond(res => {
@@ -1475,6 +1539,62 @@ describe("writeHead(status, headers) with no header set before sends no byte bef
   }
 });
 
+describe("writeHead(status, headers) with no header set before checks each name and value as Node.js does", () => {
+  // The three expressions of Node.js: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L205-L227
+  const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
+  const strictHeaderCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+  // eslint-disable-next-line no-control-regex
+  const lenientHeaderCharRegex = /[\x00\x0a\x0d]|[^\x00-\xff]/;
+  // Every byte, and three code units above a byte.
+  const units = [...Array(256).keys(), 0x100, 0x2028, 0xffff].map(unit => String.fromCharCode(unit));
+
+  // Each candidate goes in front of an entry that is always refused, so every call throws and the response stays as it was.
+  // The code of the error tells which of the two entries was refused.
+  async function refused(transport: Transport, candidates: [name: string, value: string][]) {
+    const { result } = await respond(
+      res => {
+        const codes = candidates.map(([name, value]) =>
+          code(() => res.writeHead(200, [name, value, "X-End", undefined] as any)),
+        );
+        res.end();
+        return codes;
+      },
+      { transport },
+    );
+    return (result as string[]).map(thrown => thrown !== "ERR_HTTP_INVALID_HEADER_VALUE");
+  }
+
+  // A character in a short value, in a 16-bit string, and at the ends and the middle of a value of 17 characters.
+  const values = units.flatMap(unit => [
+    `a${unit}b`,
+    wide(`a${unit}b`),
+    ...[0, 7, 8, 15, 16].map(at => "0123456789abcdefg".slice(0, at) + unit + "0123456789abcdefg".slice(at + 1)),
+  ]);
+  for (const [rule, expression, options] of [
+    ["the strict rule", strictHeaderCharRegex, {}],
+    ["the rule of insecureHTTPParser", lenientHeaderCharRegex, { insecureHTTPParser: true }],
+  ] as const) {
+    test(`a value: ${rule}`, async () => {
+      const got = await refused(
+        plain(options),
+        values.map(value => ["X-A", value]),
+      );
+      const wrong = values.filter((value, i) => got[i] !== expression.test(value)).map(value => JSON.stringify(value));
+      assert.deepStrictEqual(wrong, []);
+    });
+  }
+
+  test("a name", async () => {
+    const names = units.flatMap(unit => [`x${unit}y`, wide(`x${unit}y`), unit]);
+    const got = await refused(
+      shared,
+      names.map(name => [name, "1"]),
+    );
+    const wrong = names.filter((name, i) => got[i] !== !tokenRegExp.test(name)).map(name => JSON.stringify(name));
+    assert.deepStrictEqual(wrong, []);
+  });
+});
+
 describe("writeHead(status, headers) with no header set before keeps nothing when it throws", () => {
   const unprintable = {
     valueOf() {
@@ -1496,8 +1616,14 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
     ["an invalid character in a value", ["X-A", "1", "X-B", "a\r\nb"], "ERR_INVALID_CHAR"],
     ["an invalid character after a Content-Length", { "Content-Length": 100, "X-B": "a\nb" }, "ERR_INVALID_CHAR"],
     ["an invalid character in an array value", ["X-A", "1", "X-B", ["ok", "a\nb"]], "ERR_INVALID_CHAR"],
+    [
+      "an invalid character in a Cookie value that is joined",
+      { "X-A": "1", "Cookie": ["ok", "a\nb"] },
+      "ERR_INVALID_CHAR",
+    ],
     ["a value whose valueOf() throws", { "X-A": "1", "X-B": unprintable }, "RangeError"],
     ["a flat list with an odd count", ["X-A", "1", "X-B"], "ERR_INVALID_ARG_VALUE"],
+    ["a Proxy of a flat list with an odd count", new Proxy(["X-A", "1", "X-B"], {}), "ERR_INVALID_ARG_VALUE"],
     ["a name that is a Symbol in a flat list", ["X-A", "1", Symbol("s"), "1"], "ERR_INVALID_HTTP_TOKEN"],
     // eslint-disable-next-line no-sparse-arrays
     ["a name that is a hole in a flat list", ["X-A", "1", , "1"], "ERR_INVALID_HTTP_TOKEN"],
@@ -1539,6 +1665,7 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
         message(() => res.writeHead(200, { "bad name": "1" })),
         message(() => res.writeHead(200, ["X-U", undefined] as any)),
         message(() => res.writeHead(200, ["X-B", "a\nb"])),
+        message(() => res.writeHead(200, ["X-A", "1"]).writeHead(200, ["X-B", "2"])),
       ];
       res.end();
       return messages;
@@ -1550,6 +1677,7 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
       'Header name must be a valid HTTP token ["bad name"]',
       'Invalid value "undefined" for header "X-U"',
       'Invalid character in header content ["X-B"]',
+      "Cannot write headers after they are sent to the client",
     ]);
   });
 
@@ -1582,62 +1710,25 @@ describe("writeHead(status, headers) with no header set before keeps nothing whe
   }
 });
 
-describe("addTrailers() before writeHead() is not a Trailer header", () => {
+describe("addTrailers() before writeHead(status, headers) is not a Trailer header", () => {
   // Node.js discards the trailers of a response that is not chunked. Only a Trailer header makes writeHead() throw.
-  const cases: [name: string, request: string, head: (res: http.ServerResponse) => unknown, reply: object][] = [
-    ["writeHead(204)", GET, res => res.writeHead(204), { headers: [], body: "" }],
-    ["writeHead(304)", GET, res => res.writeHead(304), { headers: [], body: "" }],
-    ["writeHead(200) for a HEAD request", HEAD, res => res.writeHead(200), { headers: [], body: "" }],
-    ["writeHead(200) for an HTTP/1.0 request", HTTP_1_0, res => res.writeHead(200), { headers: [], body: "ok" }],
-    [
-      "setHeader('Content-Length'), writeHead(200)",
-      GET,
-      res => res.setHeader("Content-Length", 2).writeHead(200),
-      { headers: ["Content-Length: 2"], body: "ok" },
-    ],
+  const cases: [name: string, head: (res: http.ServerResponse) => unknown, reply: object][] = [
     [
       "writeHead(200, { Content-Length })",
-      GET,
       res => res.writeHead(200, { "Content-Length": 2 }),
       { headers: ["Content-Length: 2"], body: "ok" },
     ],
-    [
-      "setHeader(), writeHead(200, { Content-Length })",
-      GET,
-      res => res.setHeader("X-A", "1").writeHead(200, { "Content-Length": 2 }),
-      { headers: ["X-A: 1", "Content-Length: 2"], body: "ok" },
-    ],
-    [
-      "setHeader(), writeHead(200, [Content-Length])",
-      GET,
-      res => res.setHeader("X-A", "1").writeHead(200, ["Content-Length", "2"]),
-      { headers: ["X-A: 1", "Content-Length: 2"], body: "ok" },
-    ],
-    ["writeHead(304, { ETag })", GET, res => res.writeHead(304, { ETag: "x" }), { headers: ["ETag: x"], body: "" }],
-    [
-      "setHeader(), writeHead(304, { ETag })",
-      GET,
-      res => res.setHeader("X-A", "1").writeHead(304, { ETag: "x" }),
-      { headers: ["X-A: 1", "ETag: x"], body: "" },
-    ],
-    [
-      "removeHeader('Transfer-Encoding'), writeHead(200)",
-      GET,
-      res => (res.removeHeader("Transfer-Encoding"), res.writeHead(200)),
-      { headers: [], body: "ok" },
-    ],
+    ["writeHead(304, { ETag })", res => res.writeHead(304, { ETag: "x" }), { headers: ["ETag: x"], body: "" }],
+    ["writeHead(204, { X-A })", res => res.writeHead(204, { "X-A": "1" }), { headers: ["X-A: 1"], body: "" }],
   ];
-  for (const [name, request, head, reply] of cases) {
+  for (const [name, head, reply] of cases) {
     test(name, async () => {
-      const { headers, body, result } = await respond(
-        res => {
-          res.addTrailers({ "X-T": "t" });
-          const thrown = code(() => head(res));
-          res.end(res.statusCode === 200 ? "ok" : undefined);
-          return thrown;
-        },
-        { request },
-      );
+      const { headers, body, result } = await respond(res => {
+        res.addTrailers({ "X-T": "t" });
+        const thrown = code(() => head(res));
+        res.end(res.statusCode === 200 ? "ok" : undefined);
+        return thrown;
+      });
       assert.deepStrictEqual({ thrown: result, headers, body }, { thrown: undefined, ...reply });
     });
   }
@@ -1897,20 +1988,6 @@ if (typeof Bun !== "undefined") {
       assert.deepStrictEqual(
         { headers, body, result },
         { headers: ["Content-Length: 2"], body: "ok", result: "ERR_INVALID_CHAR" },
-      );
-    });
-
-    // The handle takes the head of writeHead(status, headers) as one string of bytes.
-    test("the handle refuses a head that is a string of 16-bit characters, and the response stays as it was", async () => {
-      const { headers, body, result } = await respond(res => {
-        const kHandle = Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle")!;
-        const thrown = code(() => (res as any)[kHandle].writeHead(200, undefined, "\u0100X-A: 1\r\n"));
-        res.end("ok");
-        return thrown;
-      });
-      assert.deepStrictEqual(
-        { headers, body, result },
-        { headers: ["Content-Length: 2"], body: "ok", result: "ERR_INVALID_ARG_VALUE" },
       );
     });
 

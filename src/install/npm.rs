@@ -373,18 +373,23 @@ pub mod registry {
             // sent with no request and are written to bun.lock and to messages.
             // Credentials that are set beside the URL win; the URL loses its own
             // either way.
-            if !url.password.is_empty() {
-                if registry.token.is_empty()
-                    && registry.username.is_empty()
-                    && registry.password.is_empty()
-                {
-                    if url.username.is_empty() {
-                        registry.token = Box::from(url.password);
-                    } else {
-                        registry.username = Box::from(url.username);
-                        registry.password = Box::from(url.password);
-                    }
+            let has_userinfo = !url.username.is_empty() || !url.password.is_empty();
+            // `https://user@host/` is `user:`, as curl and node's `http.get` send it
+            let mut username_only = false;
+            if has_userinfo
+                && registry.token.is_empty()
+                && registry.username.is_empty()
+                && registry.password.is_empty()
+            {
+                if url.username.is_empty() {
+                    registry.token = Box::from(url.password);
+                } else {
+                    registry.username = Box::from(url.username);
+                    registry.password = Box::from(url.password);
+                    username_only = url.password.is_empty();
                 }
+            }
+            if !url.password.is_empty() {
                 needs_normalize = true;
             }
 
@@ -498,7 +503,7 @@ pub mod registry {
                     registry.password = env.get_auto(&registry.password).into();
 
                     if !registry.username.is_empty()
-                        && !registry.password.is_empty()
+                        && (!registry.password.is_empty() || username_only)
                         && auth.is_empty()
                     {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
@@ -528,6 +533,9 @@ pub mod registry {
 
             let final_href: Box<[u8]> = if needs_normalize {
                 url.href_without_auth()
+            } else if has_userinfo {
+                // only a username: the rest of the URL stays as written
+                url.href_without_userinfo().into_owned().into_boxed_slice()
             } else {
                 // reshaped for borrowck — `url` (borrowing
                 // `registry_url`) is dead on this branch (every path that

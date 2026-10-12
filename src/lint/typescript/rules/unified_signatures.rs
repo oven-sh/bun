@@ -588,7 +588,7 @@ impl Rule for UnifiedSignatures {
                 self.check_scope(overloads, Some(interface.type_params()), cx);
             }
             StmtKind::Module(module) => {
-                self.check_scope(module.body().iter().filter_map(overload_of_statement), None, cx);
+                self.check_scope(module.innermost().body().iter().filter_map(overload_of_statement), None, cx);
             }
             _ => {}
         }

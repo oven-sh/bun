@@ -1206,6 +1206,16 @@
   "a.ts:8:10+1 typescript(adjacent-overload-signatures)",
   "a.ts:9:10+1 typescript(adjacent-overload-signatures)"
  ],
+ "adjacent-overload-signatures/dotted-namespace": [
+  "a.ts:13:21+1 typescript(adjacent-overload-signatures)",
+  "a.ts:15:23+9 typescript(unified-signatures)",
+  "a.ts:21:16+9 typescript(unified-signatures)",
+  "a.ts:24:14+9 typescript(unified-signatures)",
+  "a.ts:2:19+1 typescript(adjacent-overload-signatures)",
+  "a.ts:4:21+9 typescript(unified-signatures)",
+  "a.ts:7:12+1 typescript(adjacent-overload-signatures)",
+  "a.ts:9:14+9 typescript(unified-signatures)"
+ ],
  "max-statements/place": [
   "a.js:1:8+26 eslint(max-statements)",
   "a.js:2:29+19 eslint(max-statements)",

@@ -414,6 +414,16 @@
   "a.ts typescript(adjacent-overload-signatures) 8:10+1 | 10:10+1",
   "a.ts typescript(adjacent-overload-signatures) 9:10+1 | 11:10+1"
  ],
+ "adjacent-overload-signatures/dotted-namespace": [
+  "a.ts typescript(adjacent-overload-signatures) 13:21+1 | 15:21+1",
+  "a.ts typescript(adjacent-overload-signatures) 2:19+1 | 4:19+1",
+  "a.ts typescript(adjacent-overload-signatures) 7:12+1 | 9:12+1",
+  "a.ts typescript(unified-signatures) 15:23+9 \"this parameter can be unified\" | 13:23+9 \"with this overload parameter\"",
+  "a.ts typescript(unified-signatures) 21:16+9 \"this parameter can be unified\" | 20:16+9 \"with this overload parameter\"",
+  "a.ts typescript(unified-signatures) 24:14+9 \"this parameter can be unified\" | 23:14+9 \"with this overload parameter\"",
+  "a.ts typescript(unified-signatures) 4:21+9 \"this parameter can be unified\" | 2:21+9 \"with this overload parameter\"",
+  "a.ts typescript(unified-signatures) 9:14+9 \"this parameter can be unified\" | 7:14+9 \"with this overload parameter\""
+ ],
  "new-cap/names": [
   "a.js eslint(new-cap) 3:5+3 \"This should be called with `new`\"",
   "a.js eslint(new-cap) 4:12+3 \"This should be called with `new`\"",

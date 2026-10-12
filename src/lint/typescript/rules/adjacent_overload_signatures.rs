@@ -188,7 +188,7 @@ impl Rule for AdjacentOverloadSignatures {
             let statements = match parent {
                 Node::File(file) => Some(file.body()),
                 Node::Func(func) if func.kind() != FnKind::StaticBlock => func.body_statements(),
-                Node::Stmt(statement) => statement.as_block().or_else(|| Some(statement.as_module()?.body())),
+                Node::Stmt(statement) => statement.as_block().or_else(|| Some(statement.as_module()?.innermost().body())),
                 _ => None,
             };
             if let Some(statements) = statements {

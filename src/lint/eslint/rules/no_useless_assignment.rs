@@ -657,7 +657,14 @@ impl<'a> Uses<'a> {
     /// From `start` to `end`, both in one expression or list of declarators. ESLint's code path follows the order of the
     /// source there, but for what is not evaluated: the `c` of `a ? b : c` after something in `b`, which `after` is if it is
     /// given, and what [`Uses::way_around`] leaves out.
-    fn part(&mut self, mut after: Option<Node<'a>>, start: u32, end: u32) -> Flow<'a> {
+    ///
+    /// `counts_in_type`: whether a name in a type that starts there, which is not evaluated, is taken for a read.
+    fn part(
+        &mut self,
+        mut after: Option<Node<'a>>,
+        (start, end): (u32, u32),
+        counts_in_type: &dyn Fn(u32) -> bool,
+    ) -> Flow<'a> {
         let condition_around = |child: Node<'a>, parent: Node<'a>| match parent {
             Node::Expr(it) => it.as_cond().filter(|it| Node::Expr(it.1) == child).map(|_| Some(it)),
             Node::Stmt(_) | Node::Func(_) | Node::Member(_) | Node::File(_) => Some(None),
@@ -681,9 +688,8 @@ impl<'a> Uses<'a> {
                 }
             }
             if next.is_read() {
-                // What is in a type is not evaluated.
                 let is_in_type = next.symbol().is_some_and(|it| is_type_only_reference(it, next));
-                return if is_in_type { Flow::Unknown } else { Flow::Read };
+                return if is_in_type && !counts_in_type(start_of(&next)) { Flow::Unknown } else { Flow::Read };
             }
             // `x = f(x)`
             let evaluated_first = written_by(next, &mut self.writers).and_then(|it| it.expression);
@@ -760,7 +766,7 @@ impl<'a> Uses<'a> {
     }
 
     fn expression(&mut self, e: Expr<'a>) -> Flow<'a> {
-        self.part(None, e.span().start, e.span().end)
+        self.part(None, (e.span().start, e.span().end), &|_| true)
     }
 
     fn optional_expression(&mut self, e: Option<Expr<'a>>) -> Flow<'a> {
@@ -769,7 +775,10 @@ impl<'a> Uses<'a> {
 
     fn declarations(&mut self, declarators: List<'a, VarDecl<'a>>) -> Flow<'a> {
         match (declarators.first(), declarators.last()) {
-            (Some(first), Some(last)) => self.part(None, first.span().start, last.span().end),
+            // Not in the annotation of a declarator.
+            (Some(first), Some(last)) => self.part(None, (first.span().start, last.span().end), &|at| {
+                (declarators.around(at).and_then(VarDecl::init)).is_some_and(|it| it.span().contains_offset(at))
+            }),
             _ => Flow::Through,
         }
     }
@@ -1261,7 +1270,7 @@ impl<'a> Uses<'a> {
         if !self.is_alone_in(written, written.node.span()) {
             return false;
         }
-        match self.part(Some(written.node), written.node.span().end, part.end) {
+        match self.part(Some(written.node), (written.node.span().end, part.end), &|_| false) {
             Flow::Read => return true,
             Flow::Through => {}
             _ => return false,

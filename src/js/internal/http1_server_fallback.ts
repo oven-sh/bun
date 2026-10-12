@@ -499,15 +499,12 @@ function connectionListenerHTTP1(server, socket, options) {
     handle.onflushed = function () {
       finishDrainedResponse(res);
     };
-    // Like the native dispatcher, the constructor of a subclass gets the handle: a writeHead() there fixes the head in that
-    // call. Not for a response that waits: this handle writes to the socket, whoever has the turn.
+    // Like the native dispatcher, the constructor gets the handle. Not for a response that waits: this handle writes at once.
     const res =
       isResponseSubclass && !socket._httpMessage
         ? new ServerResponseClass(req, { [kHttp1ResponseHandle]: handle })
         : new ServerResponseClass(req);
-    // The native dispatcher seeds these from the server; renderNativeHeaders
-    // reads them to decide the Keep-Alive auto-header bits, so the fallback
-    // path must carry them too or keep-alive responses lose their timeout line.
+    // renderNativeHeaders reads these for the Keep-Alive line. The native dispatcher seeds them from the server too.
     res._keepAliveTimeout = keepAliveTimeout;
     const { maxRequestsPerSocket } = server;
     res._maxRequestsPerSocket = maxRequestsPerSocket;

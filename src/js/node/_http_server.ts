@@ -2268,8 +2268,8 @@ function willBeChunked(response) {
 }
 
 // A non-chunked message is terminated by the first empty line after the header
-// fields, so it can carry neither a body nor trailers. Like Node, only a `Trailer`
-// header is refused: end() drops the trailers of addTrailers().
+// fields, so it can carry neither a body nor trailers.
+// Like Node, only a `Trailer` header is refused: end() drops the trailers of addTrailers().
 function hasInvalidTrailer(response) {
   if (willBeChunked(response)) return false;
   const outHeaders = response[kOutHeaders];
@@ -2397,12 +2397,11 @@ function ServerResponse(req, options): void {
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
 // ServerResponse stores its outgoing headers the same way Node.js does (the
-// kOutHeaders map inherited from OutgoingMessage). They are rendered into a flat
+// kOutHeaders map inherited from OutgoingMessage). Right before the headers
+// are fixed (writeHead(), or the first write()/end()) they are rendered into a flat
 // [name, value, name, value, ...] array so that array values / repeated
 // header names become separate header lines on the wire, exactly like
-// Node.js's _storeHeader(), and by the call that runs it there: writeHead(), or
-// the first write()/end() for an implicit head:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L496
+// Node.js's _storeHeader().
 //
 // Node.js's server also adds Date, Connection and Keep-Alive response headers
 // by default (unless the user set/removed them, or res.sendDate is false);
@@ -2410,11 +2409,12 @@ $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 // Like Node.js's _storeHeader(), the defaults never touch kOutHeaders, so
 // getHeaders()/getHeaderNames()/hasHeader() keep reporting only the headers
 // the user actually set, even after the headers have been flushed.
-// Reusable backing array for renderNativeHeaders. A handle must be done with
-// the array when writeHead()/writeHeadAndEnd() returns or throws: it is emptied
-// then, and the next render fills it for another response. A head fixed before
-// its flush keeps the array (still busy), and a render that finds it busy makes
-// a new scratch, so nothing is copied and no module variable refers to a response.
+// Reusable backing array for renderNativeHeaders. The native writeHead
+// consumes the array synchronously, so it can be reused across requests;
+// the busy flag covers re-entrancy (a user toString() on a header value
+// dispatching another response) and exception paths by degrading to a
+// fresh array, which is exactly the previous behavior.
+// A head that fixResponseHead holds keeps the array: the next render then makes a new scratch.
 let scratchFlatHeaders: string[] = [];
 let scratchFlatHeadersBusy = false;
 
@@ -2593,9 +2593,9 @@ function renderNativeHeaders(res, frozenChunked) {
           autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
         }
       } else {
-        // Like Node's shouldSendKeepAlive/_last handling: a shouldKeepAlive
-        // that was cleared before the head was fixed (graceful-shutdown
-        // helpers do that) must also end the socket after 'finish'.
+        // Like Node's shouldSendKeepAlive/_last handling: a user-cleared
+        // shouldKeepAlive (graceful-shutdown helpers set it on in-flight
+        // responses) must also end the socket after 'finish'.
         if (res.shouldKeepAlive === false || !canPersist) {
           res[kMustCloseConnection] = true;
         }
@@ -3143,9 +3143,9 @@ function emitPipelinedDrainNT(res) {
 // mark so 'drain' semantics match.
 // Node's _storeHeader pushes the serialized header block through outputData, so a
 // queued response's outputSize - and the connection's outgoingData that gates
-// pipelined reads - counts header bytes, not just body chunks. Bun hands the
-// block to the handle at replay, so account its size when the first buffered op
-// fixes the head. Without it every queued response contributes only its chunk
+// pipelined reads - counts header bytes, not just body chunks. Bun renders the
+// block natively at replay, so account its size when the first buffered op fixes
+// the headers. Without it every queued response contributes only its chunk
 // length; power-of-two chunks can then land outgoingData exactly on
 // writableHighWaterMark and pause reads one request earlier than Node would,
 // deadlocking clients that pipeline the unblocking request behind the crossing
@@ -3197,8 +3197,7 @@ function accountQueuedHeaderBytes(res, queued, endLength) {
   addPipelineOutgoingData(queued, bytes);
 }
 
-// Node's _implicitHeader() is writeHead(statusCode), also with no socket yet: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L974-L981
-// Like an implicit head that is written at once, this one has no Trailer check.
+// Node's _implicitHeader() with no socket yet. Like an implicit head that is written at once, it has no Trailer check.
 function fixQueuedImplicitHead(res, frozenChunked) {
   _writeHead(res.statusCode, undefined, undefined, res);
   fixResponseHead(res, frozenChunked);
@@ -3261,6 +3260,8 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
 }
 
 const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
+// The first line of the head that writeHead() stores as text (res._header) for a response with no handle.
+const RE_STORED_STATUS_LINE = /^HTTP\/1\.1 (\d{3}) ([^\r]*)\r\n/;
 
 // Native dispatch bitfield: presence/token bits for the request headers the
 // dispatcher consults, computed in one native pass over the raw headers
@@ -3662,8 +3663,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   let draining = false;
   if (headerState !== sentState) {
     {
-      // One native crossing for cork + writeHead + end (writeHeadAndEnd
-      // corks natively around both phases).
+      // One native crossing for cork + writeHead + end: writeHeadAndEnd corks natively around both phases.
       let contentLength;
       const heldHead = this[kHeldHead];
       if (heldHead !== undefined) {
@@ -3692,11 +3692,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           );
         } catch (e) {
           releaseRenderedHeaders(renderedHeaders);
-          // Mirror the old two-call flow's headersSent semantics: errors from
-          // the write-head phase (the batch's upfront gate, status validation,
-          // headers-already-sent) leave the state unset; anything after that
-          // point threw with headers already on the wire, exactly like
-          // handle.end throwing after handle.writeHead succeeded.
+          // As in the old two-call flow: an error from the write-head phase leaves the state unset.
           if (!threwBeforeHead(e)) this[headerStateSymbol] = sentState;
           throw e;
         }
@@ -4066,8 +4062,7 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   }
   _writeHead(statusCode, statusMessage, headers, this);
   if (hasInvalidTrailer(this)) {
-    // The message is not chunk-framed, so `Trailer` is the offending header; drop it
-    // so a caller that swallows the throw cannot put it on the wire.
+    // `Trailer` is the offending header: drop it, so a caller that swallows the throw cannot put it on the wire.
     this.removeHeader("trailer");
     throw $ERR_HTTP_TRAILER_INVALID();
   }
@@ -4106,8 +4101,8 @@ ServerResponse.prototype.assignSocket = function (socket) {
 // Backed by real storage (the native response handle exposes no such flag):
 // the standalone _storeHeader path's 204/304 handling assigns it, graceful
 // shutdown helpers clear it on in-flight responses, and renderNativeHeaders
-// consults it for the Connection header and close-on-finish when the head is
-// fixed. As in Node.js, a later assignment changes nothing.
+// consults it for the Connection header and close-on-finish.
+// As in Node.js, an assignment after the head is fixed changes nothing.
 Object.defineProperty(ServerResponse.prototype, "shouldKeepAlive", {
   get() {
     return this[kShouldKeepAlive] ?? true;
@@ -4367,9 +4362,7 @@ http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
-// A ServerResponse subclass can call writeHead() in its constructor, before the fallback attaches the handle. That call
-// stored the head as text, like Node.js: "HTTP/1.1 201 Created\r\n" and the header lines.
-const RE_STORED_STATUS_LINE = /^HTTP\/1\.1 (\d{3}) ([^\r]*)\r\n/;
+// A ServerResponse subclass can call writeHead() in its constructor, before the fallback attaches the handle.
 http1ServerPipeline.fixHeadForLateHandle = function (res) {
   if (res[headerStateSymbol] !== NodeHTTPHeaderState.assigned || res[kHeldHead] !== undefined) return;
   fixResponseHead(res, true);

@@ -391,7 +391,7 @@ fn search(
                     let cwd = &loader.environment().cwd[..];
                     let is_hidden = is_hidden
                         || within.is_directory_ignored(&path, dotfiles)
-                        || lacks_file && path != cwd && paths::inside(cwd, &path).is_none();
+                        || lacks_file && !paths::is_at_or_inside(cwd, &path);
                     if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
                         // ESLint 8 goes round until the system has had enough.
                         if is_loop {
@@ -541,6 +541,15 @@ pub(crate) fn find_files(
             });
         searches[at].patterns.push(wanted);
     };
+    // Before any configuration is looked for.
+    for pattern in patterns {
+        let path = paths::resolve(cwd, &paths::from_native(pattern));
+        match fs::kind(&path) {
+            Some(fs::Kind::File) => loader.name(paths::dirname(&path)),
+            Some(fs::Kind::Directory) => loader.name(&path),
+            None => {}
+        }
+    }
     let mut missing = None;
     for pattern in patterns {
         let pattern = paths::from_native(pattern);

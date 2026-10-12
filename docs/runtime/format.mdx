@@ -205,6 +205,8 @@ For each file, `bun format` uses the nearest configuration file: it looks in the
 }
 ```
 
+A configuration file can be a program. So where the working directory has none, in it or above it, a configuration file counts only for what is in or below the working directory, and for a file or a directory that you name. What a pattern such as `"../**/*.js"` finds elsewhere is formatted with the defaults. Prettier runs every configuration file that a pattern leads to.
+
 See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load. The three that sort imports are built in: see [Sort imports](#sort-imports). For any other, see [Differences from Prettier](#differences-from-prettier).
 
 A flag overrides the configuration file:

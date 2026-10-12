@@ -480,6 +480,7 @@ impl Run<'_> {
             cwd,
             &paths::from_native(name.unwrap_or(b"__placeholder__.js")),
         );
+        loader.name(paths::dirname(&path));
         let loaded = loader.for_directory(paths::dirname(&path))?;
         let status: Status = loaded.config.get(loader.linter.registry(), &path).into();
         let Status::Matched(config) = &status else {
@@ -991,6 +992,7 @@ impl Run<'_> {
                 false => file,
             };
             let path = paths::resolve(&environment.cwd, &paths::from_native(named));
+            loader.name(paths::dirname(&path));
             let config = match loader.for_directory(paths::dirname(&path)) {
                 Ok(loaded) if loaded.flavor == Flavor::Oxlint => {
                     let printed = loaded.config.printed_for_oxlint();

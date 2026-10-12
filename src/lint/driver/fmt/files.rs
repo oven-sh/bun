@@ -675,9 +675,11 @@ pub(crate) fn expand(
                 }
             }
             Some((fs::LinkKind::File, size)) => {
+                configs.name(paths::dirname(&path));
                 entries.push((Entry::File(path, size), pattern, &written[..]))
             }
             Some((fs::LinkKind::Directory, _)) => {
+                configs.name(&path);
                 entries.push((Entry::Directory(path), pattern, &written[..]))
             }
             None => match pattern.strip_prefix(b"!") {
@@ -737,8 +739,10 @@ pub(crate) fn expand(
                 if parent != b"." {
                     written_base = (parent, base.clone());
                 }
-                // `fast-glob` matches a path as the pattern writes where it starts: what an absolute pattern finds is absolute.
-                let is_absolute = paths::is_absolute(pattern);
+                // `fast-glob` matches a path as the pattern writes where it starts: what an absolute pattern finds is absolute, and
+                // what `../**` finds in the working directory starts with `../` and the name of that.
+                let is_absolute =
+                    paths::is_absolute(pattern) || paths::is_external(&written_base.0);
                 let absolute = |relative: &[u8]| {
                     let from_base = paths::relative(&base, &paths::resolve(&cwd, relative));
                     paths::join(&written_base.0, &from_base)
@@ -860,6 +864,12 @@ pub(crate) fn expand_as_oxfmt(
         directories().count() == 1
             || gitignore::are_all_in_repositories(searched, std::iter::empty())
     });
+    for (path, kind, _) in &targets {
+        configs.name(match kind {
+            fs::Kind::Directory => path,
+            fs::Kind::File => paths::dirname(path),
+        });
+    }
     let mut found: Vec<Target> = Vec::new();
     for (path, kind, size) in &targets {
         if *kind == fs::Kind::Directory {

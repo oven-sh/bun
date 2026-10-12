@@ -962,6 +962,8 @@ error: --import-plugin is a flag of oxlint. It means nothing with /app/eslint.co
 
 Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`. Such a flag does not leave out a configuration file in a directory further down.
 
+A configuration file is a program, or names programs. So where the working directory has none, in it or above it, a configuration file counts only for what is in or below the working directory, and for a file or a directory that you name. What a pattern such as `"../**/*.js"` or `"/**/*.js"` finds elsewhere is linted with the defaults, and nothing of its project is loaded.
+
 ## Choose what to lint
 
 Pass files, directories, or glob patterns. Without arguments, `bun lint` lints the current directory.

@@ -3204,6 +3204,90 @@ try {
     });
   });
 
+  // What Prettier 3.9.9 lists.
+  test("a pattern that starts above the working directory finds what is in that too", async () => {
+    const files = { ".prettierrc": "{}", "x.js": ugly, "here/x.js": ugly, "here/in/x.js": ugly, "there/x.js": ugly };
+    const inHere = (pattern: string) => different(files, [pattern], { cwd: "here" });
+    expect(await inHere("../**/x.js")).toEqual(["in/x.js", "x.js", "../there/x.js", "../x.js"]);
+    expect(await inHere("../here/**/x.js")).toEqual(["in/x.js", "x.js"]);
+    expect(await inHere("../*/x.js")).toEqual(["x.js", "../there/x.js"]);
+  });
+
+  // A configuration file can be a program. Prettier 3.9.9 runs every one that a pattern leads to. oxfmt 0.72.0 takes no `..`, and
+  // looks for what a pattern matches in the working directory only.
+  describe("a pattern that leaves a working directory without a configuration file", () => {
+    const noSemi = `{ semi: false }`;
+    const kinds: Record<string, (says: string) => string> = {
+      "prettier.config.js": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
+      "prettier.config.cjs": says => `const fs = require("fs");\n${says}\nmodule.exports = ${noSemi};\n`,
+      ".prettierrc.mjs": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
+      ".prettierrc.ts": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
+      "oxfmt.config.ts": says => `import fs from "node:fs";\n${says}\nexport default ${noSemi};\n`,
+    };
+    /** The directory that has the file called `name`. */
+    const of = (name: string) => name.replaceAll(".", "-");
+    const all = (where: string) =>
+      Object.keys(kinds)
+        .map(it => `${where}/${of(it)}`)
+        .sort();
+
+    /** The programs that ran, and the files that are not as their configuration has them: `a;` is as the defaults have it. */
+    const run = async (args: string[], more: Record<string, string> = {}) => {
+      using logs = tempDir("bun-format-ran", {});
+      const log = join(String(logs), "ran.log");
+      const files: Record<string, string> = { "w/empty/x.js": "a;\n", ...more };
+      for (const where of ["beside", "empty/below"]) {
+        for (const [name, text] of Object.entries(kinds)) {
+          const says = `fs.appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(`${where}/${of(name)}\n`)});`;
+          Object.assign(files, {
+            [`w/${where}/${of(name)}/x.js`]: "a;\n",
+            [`w/${where}/${of(name)}/${name}`]: text(says),
+          });
+        }
+      }
+      const { stdout, exitCode } = await format(files, ["-l", ...args], { cwd: "w/empty" });
+      const ran = existsSync(log) ? [...new Set(readFileSync(log, "utf8").split("\n").filter(Boolean))].sort() : [];
+      return { ran, different: stdout.split("\n").filter(it => it.endsWith("x.js")).length, exitCode };
+    };
+
+    test.each(["../**/x.js", "../beside/*/x.js", "../*/*/x.js"])(
+      "nothing runs of what %s merely leads to",
+      async pattern => {
+        const { ran, different } = await run([pattern]);
+        expect(ran.filter(it => it.startsWith("beside/"))).toEqual([]);
+        // Those below the working directory are not as their own configuration has them.
+        expect(different).toBe(pattern === "../**/x.js" ? Object.keys(kinds).length : 0);
+      },
+    );
+
+    test("in and below the working directory each directory tells", async () => {
+      for (const args of [[], ["."], ["**/x.js"]]) {
+        expect(await run(args)).toEqual({ ran: all("empty/below"), different: Object.keys(kinds).length, exitCode: 1 });
+      }
+    });
+
+    test.each(Object.keys(kinds))("what is named tells: %s", async name => {
+      const named = { ran: [`beside/${of(name)}`], different: 1, exitCode: 1 };
+      expect(await run([`../beside/${of(name)}`])).toEqual(named);
+      expect(await run([`../beside/${of(name)}/x.js`])).toEqual(named);
+      expect(await run([`../beside/${of(name)}`, "../beside/*/x.js"])).toEqual(named);
+    });
+
+    test("what is named is all that is in it", async () => {
+      expect(await run(["../beside"])).toEqual({
+        ran: all("beside"),
+        different: Object.keys(kinds).length,
+        exitCode: 1,
+      });
+    });
+
+    // As Prettier.
+    test("with a configuration file in the working directory every directory tells", async () => {
+      const { ran } = await run(["../beside/*/x.js"], { "w/empty/.prettierrc": "{}" });
+      expect(ran).toEqual(all("beside"));
+    });
+  });
+
   describe("configuration", () => {
     const noSemi = formatted.replaceAll(";", "");
     const configs: [string, string][] = [

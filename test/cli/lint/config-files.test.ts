@@ -4979,6 +4979,117 @@ describe.concurrent("a search that leaves the project of an eslint.config.js", (
   });
 });
 
+// A configuration file is a program, or names programs. ESLint stops in such a working directory, so there is no tool to follow.
+describe.concurrent("a pattern that leaves a working directory without a configuration file", () => {
+  const off = `{ rules: { "no-debugger": "off" } }`;
+  /** The files of a directory with a configuration of each kind. `says`: a statement that writes down that it ran. */
+  const kinds: Record<string, (says: string) => Record<string, string>> = {
+    "flat-js": says => ({ "eslint.config.js": `import fs from "node:fs";\n${says}\nexport default [${off}];\n` }),
+    "flat-cts": says => ({ "eslint.config.cts": `const fs = require("fs");\n${says}\nmodule.exports = [${off}];\n` }),
+    "rc-cjs": says => ({
+      ".eslintrc.cjs": `const fs = require("fs");\n${says}\nmodule.exports = { root: true, ...${off} };\n`,
+    }),
+    "rc-json-extends": says => ({
+      ".eslintrc.json": `{ "root": true, "extends": "./program.js" }`,
+      "program.js": `const fs = require("fs");\n${says}\nmodule.exports = ${off};\n`,
+    }),
+    "rc-yaml-plugin": says => ({
+      ".eslintrc.yaml": `root: true\nplugins: [local]\nrules: { no-debugger: off }\n`,
+      "node_modules/eslint-plugin-local/package.json": `{ "name": "eslint-plugin-local", "version": "1.0.0", "main": "index.js" }`,
+      "node_modules/eslint-plugin-local/index.js": `const fs = require("fs");\n${says}\nmodule.exports = { rules: {} };\n`,
+    }),
+    "package-json-extends": says => ({
+      "package.json": `{ "name": "a", "eslintConfig": { "root": true, "extends": "./program.js" } }`,
+      "program.js": `const fs = require("fs");\n${says}\nmodule.exports = ${off};\n`,
+    }),
+    "ox-ts": says => ({ "oxlint.config.ts": `import fs from "node:fs";\n${says}\nexport default ${off};\n` }),
+    "ox-json-plugin": says => ({
+      ".oxlintrc.json": `{ "jsPlugins": ["./plugin.js"], "rules": { "no-debugger": "off" } }`,
+      "plugin.js": `import fs from "node:fs";\n${says}\nexport default { meta: { name: "local" }, rules: {} };\n`,
+    }),
+  };
+  const all = (where: string) =>
+    Object.keys(kinds)
+      .map(it => `${where}/${it}`)
+      .sort();
+  const scripts = (where: string) => all(where).map(it => `${it}/x.js`);
+
+  /** The programs that ran, and the files with problems: those that have the defaults, and not their own configuration. */
+  const run = async (args: string[], cwd = "empty") => {
+    using logs = tempDir("bun-lint-config-files-ran", {});
+    const log = join(String(logs), "ran.log");
+    const files: Record<string, string> = { "w/empty/x.js": "debugger;\n", "w/empty/plain/x.js": "debugger;\n" };
+    for (const where of ["beside", "empty/below"]) {
+      for (const [kind, of] of Object.entries(kinds)) {
+        const says = `fs.appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(`${where}/${kind}\n`)});`;
+        files[`w/${where}/${kind}/x.js`] = "debugger;\n";
+        for (const [name, text] of Object.entries(of(says))) files[`w/${where}/${kind}/${name}`] = text;
+      }
+    }
+    const result = await lint(files, [], {
+      cwd: `w/${cwd}`,
+      args: dir => args.map(it => it.replace("<w>", `${dir.replaceAll("\\", "/")}/w`)),
+    });
+    const ran = existsSync(log) ? [...new Set(readFileSync(log, "utf8").split("\n").filter(Boolean))].sort() : [];
+    const found = [...new Set(result.problems.map(it => it.split(":")[0].replace("w/", "")))];
+    return { ran, files: found.filter(it => it.endsWith("/x.js")) };
+  };
+  const own = ["empty/plain/x.js", "empty/x.js"];
+
+  test.each([["<w>/**/x.js"], ["../**/x.js"]])(
+    "nothing runs of what %s merely leads to, which has the defaults",
+    async pattern => {
+      expect(await run([pattern])).toMatchObject({ ran: all("empty/below"), files: [...scripts("beside"), ...own] });
+    },
+  );
+
+  test.each([["../beside/*/x.js"], ["<w>/beside/**/x.js"], ["../*/*/x.js"]])("nor of what %s does", async pattern => {
+    const { ran, files } = await run([pattern]);
+    expect({ ran, beside: files.filter(it => it.startsWith("beside/")) }).toEqual({
+      ran: [],
+      beside: scripts("beside"),
+    });
+  });
+
+  test.each(["--flavor=oxlint", "--flavor=eslint"])("nor with %s", async flavor => {
+    const { ran, files } = await run([flavor, "<w>/**/x.js"]);
+    expect(ran.filter(it => it.startsWith("beside/"))).toEqual([]);
+    expect(files.filter(it => it.startsWith("beside/"))).toEqual(scripts("beside"));
+  });
+
+  test("not even beside the working directory, in the directory that it is in", async () => {
+    expect(await run(["../**/x.js"], "empty/plain")).toMatchObject({
+      ran: [],
+      files: [...scripts("empty/below"), ...own],
+    });
+  });
+
+  test("in and below the working directory each directory tells", async () => {
+    for (const args of [[], ["."], ["**/x.js"], ["./below/../**/x.js"]]) {
+      expect(await run(args)).toMatchObject({ ran: all("empty/below"), files: own });
+    }
+  });
+
+  test.each(Object.keys(kinds))(
+    "a directory that is named tells, and so does that of a file that is: %s",
+    async kind => {
+      const ran = [`beside/${kind}`];
+      expect(await run([`../beside/${kind}`])).toEqual({ ran, files: [] });
+      expect(await run([`../beside/${kind}/x.js`])).toEqual({ ran, files: [] });
+    },
+  );
+
+  test("what is named is all that is in it", async () => {
+    expect(await run(["../beside"])).toEqual({ ran: all("beside"), files: [] });
+    expect(await run([".."])).toMatchObject({ ran: [...all("beside"), ...all("empty/below")], files: own });
+    // Also for a pattern that leads there too.
+    expect(await run(["../beside/flat-js", "../beside/*/x.js"])).toMatchObject({
+      ran: ["beside/flat-js"],
+      files: scripts("beside").filter(it => it !== "beside/flat-js/x.js"),
+    });
+  });
+});
+
 // With a file of mode 000, as somebody who is not root.
 describe.skipIf(isWindows || process.getuid?.() === 0).concurrent("a file that cannot be opened", () => {
   const files = { "a.js": code, "locked.js": code, "sub/b.js": code };

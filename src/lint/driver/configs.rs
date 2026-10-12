@@ -263,6 +263,10 @@ pub(crate) struct Loader<'l> {
     undecided: OnceLock<(Vec<u8>, Vec<u8>)>,
     /// The working directory has an `eslint.config.*`, in it or above it, and that is what the run is for.
     has_file_of_eslint: OnceLock<bool>,
+    /// [`Loader::lacks_file`]
+    lacks_file: OnceLock<bool>,
+    /// [`Loader::name`]
+    named: Guarded<Vec<Vec<u8>>>,
     /// [`Loader::refused`]
     refused: OnceLock<Vec<u8>>,
     /// `options.typeAware` of the configuration of the working directory, if that is one of oxlint.
@@ -474,6 +478,8 @@ impl<'l> Loader<'l> {
             tool: OnceLock::new(),
             undecided: OnceLock::new(),
             has_file_of_eslint: OnceLock::new(),
+            lacks_file: OnceLock::new(),
+            named: Default::default(),
             refused: OnceLock::new(),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
@@ -1557,8 +1563,44 @@ impl<'l> Loader<'l> {
         self.load(&paths::join(directory, name), directory)
     }
 
+    /// What the files have that no configuration file is found for.
+    fn without_a_file(&self) -> Found {
+        match self.is_command_line_of_eslint_8() {
+            true => self.legacy(None),
+            false => self.load(b"", self.cwd()),
+        }
+    }
+
+    /// Whether the working directory has no configuration file, in it or above it, and every directory tells for itself.
+    fn lacks_file(&self) -> bool {
+        *self.lacks_file.get_or_init(|| {
+            let (own, none) = (self.for_directory(self.cwd()), self.without_a_file());
+            matches!((own, none), (Ok(own), Ok(none)) if Arc::ptr_eq(&own, &none))
+        })
+    }
+
+    /// Says that `directory` is an argument, or that a file in it is one.
+    pub(crate) fn name(&self, directory: &[u8]) {
+        let mut named = self.named.lock();
+        if !named.iter().any(|it| it == directory) {
+            named.push(directory.to_vec());
+        }
+    }
+
+    /// Whether a configuration file counts for what is in `directory`. A configuration file is a program, or names programs. So in
+    /// a run whose working directory has none, those count that are in or below the working directory, and those of what is
+    /// [named](Loader::name): not those of what a pattern merely leads to.
+    fn counts_in(&self, directory: &[u8]) -> bool {
+        paths::is_at_or_inside(self.cwd(), directory)
+            || !self.lacks_file()
+            || (self.named.lock().iter()).any(|it| paths::is_at_or_inside(it, directory))
+    }
+
     /// The configuration of the files that are in `directory`: ESLint's `loadConfigArrayForFile`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
+        if !self.counts_in(directory) {
+            return self.without_a_file();
+        }
         if self.is_command_line_of_eslint_8() {
             if let Some((directory, name)) = self.found(directory) {
                 self.check_flags_of_eslint_8(directory, name)?;
@@ -1638,8 +1680,12 @@ impl<'l> Loader<'l> {
         inherited: &Arc<Loaded>,
     ) -> Found {
         let has_one = self.has_one_configuration() && !self.is_command_line_of_eslint_8();
-        if has_one || self.options.disable_nested_config {
+        if has_one || self.options.disable_nested_config || !self.counts_in(directory) {
             return Ok(Arc::clone(inherited));
+        }
+        // From here on they count, also those above it.
+        if !self.counts_in(paths::dirname(directory)) {
+            return self.for_directory(directory);
         }
         let picked = self.pick(directory, names);
         if let (Some(name), _) = picked

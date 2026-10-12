@@ -24,7 +24,7 @@ use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// The names of configuration files, by priority: oxfmt's, then Prettier's `CONFIG_FILES`.
 const NAMES: [&[u8]; 24] = [
@@ -719,6 +719,12 @@ pub(crate) struct Configs<'c> {
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
+    /// [`Configs::name`]
+    arguments: Guarded<Vec<Vec<u8>>>,
+    /// [`Configs::lacks_file`]
+    lacks_file: OnceLock<bool>,
+    /// Who asks has seen to it that the configuration files of a file count.
+    counts_everywhere: bool,
     pub(crate) flavor: Flavor,
     /// By directory: see [`Configs::tsconfig_of`].
     tsconfigs: Guarded<FxHashMap<Vec<u8>, Arc<Settings>>>,
@@ -736,15 +742,19 @@ pub(crate) struct Configs<'c> {
 
 impl<'c> Configs<'c> {
     pub(crate) fn new(options: &'c Options, environment: &'c Environment<'c>) -> Configs<'c> {
-        Configs::with(Cow::Borrowed(options), environment)
+        Configs::with(Cow::Borrowed(options), environment, false)
     }
 
-    /// The same, for options that nobody else keeps.
+    /// The same for a rule of the linter, with options that nobody else keeps. The linter says whose configuration counts.
     pub(crate) fn owning(options: Options, environment: &'c Environment<'c>) -> Configs<'c> {
-        Configs::with(Cow::Owned(options), environment)
+        Configs::with(Cow::Owned(options), environment, true)
     }
 
-    fn with(options: Cow<'c, Options>, environment: &'c Environment<'c>) -> Configs<'c> {
+    fn with(
+        options: Cow<'c, Options>,
+        environment: &'c Environment<'c>,
+        counts_everywhere: bool,
+    ) -> Configs<'c> {
         let (is_like_oxfmt, reads_editorconfig) = (options.is_like_oxfmt, options.editorconfig);
         let named = options.config.clone();
         let mut configs = Configs {
@@ -752,6 +762,9 @@ impl<'c> Configs<'c> {
             environment,
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
+            arguments: Default::default(),
+            lacks_file: OnceLock::new(),
+            counts_everywhere,
             flavor: Flavor::Prettier,
             tsconfigs: Guarded::new(FxHashMap::default()),
             sort_imports: Guarded::new(Vec::new()),
@@ -1057,7 +1070,7 @@ impl<'c> Configs<'c> {
             is_project_root,
         } = listed;
         let mut config = above.and_then(|it| it.config.clone());
-        if self.named.is_none() && self.options.config_lookup {
+        if self.named.is_none() && self.options.config_lookup && self.counts_in(directory) {
             // One after the other: a `package.json` need not have a configuration.
             sort_slice(&mut candidates[..]);
             candidates.dedup();
@@ -1108,6 +1121,36 @@ impl<'c> Configs<'c> {
             config,
             editorconfigs,
         }))
+    }
+
+    /// Whether the working directory has no configuration file, in it or above it.
+    fn lacks_file(&self) -> bool {
+        let has_none = || {
+            let own = self.for_directory(&self.environment.cwd);
+            own.is_ok_and(|it| it.config.is_none())
+        };
+        *self.lacks_file.get_or_init(has_none)
+    }
+
+    /// Says that `directory` is an argument, or that a file in it is one.
+    pub(crate) fn name(&self, directory: &[u8]) {
+        let mut arguments = self.arguments.lock();
+        if !arguments.iter().any(|it| it == directory) {
+            arguments.push(directory.to_vec());
+        }
+    }
+
+    /// Whether a configuration file in `directory` counts. It can be a program. So in a run whose working directory has none,
+    /// those count that are on the way to the working directory or below it, and the same for what is [named](Configs::name):
+    /// not those of what a pattern merely leads to.
+    fn counts_in(&self, directory: &[u8]) -> bool {
+        let is_for = |it: &[u8]| {
+            paths::is_at_or_inside(it, directory) || paths::is_at_or_inside(directory, it)
+        };
+        self.counts_everywhere
+            || is_for(&self.environment.cwd)
+            || !self.lacks_file()
+            || self.arguments.lock().iter().any(|it| is_for(it))
     }
 
     /// What counts for the files in `directory`.

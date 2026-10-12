@@ -975,6 +975,7 @@ impl Run<'_> {
             self.out.stdout = text;
             return self.out;
         }
+        configs.name(paths::dirname(&path));
         let scope = match configs.for_directory(paths::dirname(&path)) {
             Ok(scope) => scope,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
@@ -1654,6 +1655,7 @@ impl Run<'_> {
         }
         if let Some(file) = &options.find_config_path {
             let path = paths::resolve(&environment.cwd, &paths::from_native(file));
+            configs.name(paths::dirname(&path));
             let scope = match configs.for_directory(paths::dirname(&path)) {
                 Ok(scope) => scope,
                 Err(Fatal(error)) => return self.fail(&error),

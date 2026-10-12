@@ -166,8 +166,8 @@ struct SSABuilder {
     tops: Vec<Option<BlockId>>,
     /// Indexed by the `IdentifierId.0` of the variable.
     written_below: Vec<WrittenBelow>,
-    /// Indexed by `BlockId.0`.
-    unsealed_preds: Vec<Option<u32>>,
+    /// Indexed by `BlockId.0`: how many, and the predecessor that was counted last.
+    unsealed_preds: Vec<Option<(u32, BlockId)>>,
     /// Indexed by `BlockId.0`: from where to where in `preds`. Empty = no preds / not registered.
     block_preds: Vec<(u32, u32)>,
     preds: Vec<BlockId>,
@@ -219,7 +219,7 @@ impl SSABuilder {
     #[inline]
     fn passes_on(&self, block_id: BlockId) -> bool {
         self.preds(block_id).len() == 1
-            && self.unsealed_preds[block_id.0 as usize].unwrap_or(0) == 0
+            && self.unsealed_preds[block_id.0 as usize].is_none_or(|it| it.0 == 0)
     }
 
     /// The block itself, or the nearest above it that does not pass on.
@@ -455,7 +455,7 @@ impl SSABuilder {
             return Ok(old_place.identifier);
         }
 
-        let unsealed = self.unsealed_preds[block_id.0 as usize].unwrap_or(0);
+        let unsealed = self.unsealed_preds[block_id.0 as usize].map_or(0, |it| it.0);
         if unsealed > 0 {
             let new_id = self.make_id(old_place.identifier, env);
             let new_place = Place {
@@ -775,10 +775,17 @@ fn enter_ssa_impl(
             let output_preds_len = builder.preds(output_id).len() as u32;
 
             let count = match builder.unsealed_preds[output_id.0 as usize] {
-                Some(prev) => prev - 1,
-                None => output_preds_len - 1,
+                // The predecessors are a set: this block is one of them, however often its
+                // terminal names the other. Upstream counts it each time.
+                Some((_, counted)) if counted == block_id => continue,
+                Some((prev, _)) => prev.checked_sub(1),
+                None => output_preds_len.checked_sub(1),
             };
-            builder.unsealed_preds[output_id.0 as usize] = Some(count);
+            // Upstream's count goes below zero, which it takes for sealed.
+            let Some(count) = count else {
+                continue;
+            };
+            builder.unsealed_preds[output_id.0 as usize] = Some((count, block_id));
 
             if count == 0 && builder.is_started(output_id) {
                 builder.fix_incomplete_phis(output_id, env);

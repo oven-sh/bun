@@ -3977,6 +3977,38 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(exitCode).toBe(0);
 });
 
+// EnterSSA counts down the predecessors of a block that are not visited yet, once for each
+// successor that a terminal names, from the size of a set. Branches that have nothing in them
+// still have a block each, so no terminal names a block twice.
+test("react-compiler compiles branches that have nothing in them", async () => {
+  const bodies = [
+    "if (p.a) {} else {}",
+    "if (p.a);",
+    "switch (p.a) {}",
+    "switch (p.a) { case 1: case 2: default: }",
+    "switch (p.a) { case 1: case 2: }",
+    "for (const x of p.l);",
+    "try {} catch (e) {}",
+    "l: if (p.a) break l; else break l;",
+  ];
+  using dir = tempDir("react-compiler-empty-branches", {
+    "entry.jsx": bodies.map((body, i) => `export function C${i}(p) { ${body} return <div>{p.b}</div>; }`).join("\n"),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.match(/\b_c\(\d+\)/g)).toHaveLength(bodies.length);
+  expect(exitCode).toBe(0);
+});
+
 // The parser has a stack check. The lowering, which takes more of the stack for a
 // level of the source than the parser does, had none: `bun build --react-compiler`
 // died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800

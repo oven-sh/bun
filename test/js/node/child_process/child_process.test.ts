@@ -1800,3 +1800,38 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
 });
+
+describe("child output drain after exit", () => {
+  it.each(["stdout", "stderr"] as const)("leaves %s paused through exit listeners and their nextTicks", async name => {
+    using child = spawn(bunExe(), ["-e", `process.${name}.write("final tail")`], { env: bunEnv });
+    const observations: boolean[] = [];
+    let tail = "";
+    child[name]!.on("data", chunk => {
+      tail += chunk;
+    });
+    child[name]!.pause();
+    child.on("exit", () => {
+      observations.push(child[name]!.isPaused());
+      process.nextTick(() => observations.push(child[name]!.isPaused()));
+    });
+    await once(child, "close");
+    expect(observations).toEqual([true, true]);
+    expect(tail).toBe("final tail");
+    expect(child[name]!.readableEnded).toBe(true);
+  });
+
+  it.each([[[]], [["ignore"]], [["ignore", "pipe"]]] as [StdioOptions][])(
+    "drains shorthand stdio %j before emitting close once",
+    async stdio => {
+      using child = spawn(bunExe(), ["-e", 'process.stdout.write("out"); process.stderr.write("err")'], {
+        stdio,
+        env: bunEnv,
+      });
+      const observations: unknown[] = [];
+      child.on("close", () => observations.push([child.stdout?.readableEnded, child.stderr?.readableEnded]));
+      await once(child, "close");
+      await new Promise(resolve => setImmediate(resolve));
+      expect(observations).toEqual([[true, true]]);
+    },
+  );
+});

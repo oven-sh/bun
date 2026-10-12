@@ -6465,26 +6465,13 @@ impl NodeFS {
             // `create()` and outlives every `enqueue` call below.
             unsafe { bun_ptr::detach_lifetime(&path[..path.len() - 1]) }
         };
-        #[cfg(not(windows))]
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let atfd = if is_root {
             FD::cwd()
         } else {
             async_task.root_fd
         };
-        #[cfg(not(windows))]
         let open_res = Syscall::openat(atfd, basename, flags, 0);
-        #[cfg(windows)]
-        // the plain Windows open wrapper does not pass iterable=true
-        let open_res = sys::open_dir_at_windows_a(
-            atfd,
-            basename.as_bytes(),
-            sys::WindowsOpenDirOptions {
-                no_follow: true,
-                iterable: true,
-                ..Default::default()
-            },
-        );
         let fd = match open_res {
             Err(err) => {
                 if !is_root {

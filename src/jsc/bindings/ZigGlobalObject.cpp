@@ -3511,9 +3511,7 @@ extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
 
-// The referrer of a static import is the importing module's key: `<path>?<query>` when it was
-// imported with a query. A path separator in that query is not one of the path's, so the module's
-// directory comes from the path the loader read it from. Any other referrer is read whole.
+// A static import's referrer is the importer's key `<path>?<query>`: its directory is the loader's `<path>`, not a `/` of the query.
 static void useLoadedPathOfImporter(JSC::JSGlobalObject* globalObject, JSC::JSModuleLoader* loader, JSC::JSString* referrer, WTF::String& referrerString)
 {
     size_t queryStart = referrerString.find('?');

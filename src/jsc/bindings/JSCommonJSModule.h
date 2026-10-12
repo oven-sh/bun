@@ -87,8 +87,7 @@ public:
     bool ignoreESModuleAnnotation { false };
 
 private:
-    // Where `<path>` ends in m_filename, when that is the loader's key `<path>?<query>` and the
-    // query holds a path separator. 0: m_filename is read whole. Fills padding, see the static_assert.
+    // Length of `<path>` in m_filename when that is the loader's key `<path>?<query>` with a separator in the query, else 0.
     uint32_t m_filenamePathLength { 0 };
     JSValue loadedPath(JSC::VM&);
 
@@ -147,8 +146,7 @@ public:
         m_filename.set(vm, this, filename);
         m_filenamePathLength = 0;
     }
-    // filename() without the `?query` of the loader's key. A directory is taken from this, never
-    // from filename(): a `/` in the query is not a path separator.
+    // filename() without the `?query` of the loader's key: a directory is taken from this, never from filename().
     JSValue filenamePath(JSC::VM& vm) { return m_filenamePathLength ? loadedPath(vm) : m_filename.get(); }
     // Same for a `filename` that JS read from the module: only the module's own filename() is a key.
     JSValue filenamePath(JSC::VM& vm, JSValue filename) { return m_filenamePathLength && filename == m_filename.get() ? loadedPath(vm) : filename; }

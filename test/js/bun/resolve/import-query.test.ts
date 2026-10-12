@@ -348,6 +348,60 @@ test("a ?query with .. in it does not move a module's imports to another directo
   expect(exitCode).toBe(0);
 });
 
+// A `Module._extensions` hook that wraps `module._compile` (pirates, @babel/register) gets the
+// source from Bun's loader, so the loader knows the path of that module too.
+test("a module that a Module._extensions hook compiles resolves from its own directory", async () => {
+  using dir = tempDir("import-query-extensions-hook", {
+    "app/dep.js": `module.exports = "app";`,
+    "app/dep.mjs": `export default "app";`,
+    "app/a.js": `
+      const path = require("node:path");
+      module.exports = import("./dep.mjs").then(imported => ({
+        required: require("./dep.js"),
+        imported: imported.default,
+        dirname: path.basename(__dirname),
+        modulePath: path.basename(module.path),
+        paths0: path.basename(path.dirname(module.paths[0])),
+      }));
+    `,
+    "decoy/dep.js": `module.exports = "decoy";`,
+    "decoy/dep.mjs": `export default "decoy";`,
+    "entry.cjs": `
+      const Module = require("node:module");
+      const load = Module._extensions[".js"];
+      let compiled = 0;
+      Module._extensions[".js"] = (module, filename) => {
+        const compile = module._compile;
+        module._compile = function (code, file) {
+          compiled++;
+          return compile.call(this, code, file);
+        };
+        return load(module, filename);
+      };
+      // A hook is chosen by the extension at the end of the key.
+      require("./app/a.js?next=/../../decoy/x.js").then(result => console.log(JSON.stringify({ compiled, ...result })));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    compiled: 2,
+    required: "app",
+    imported: "app",
+    dirname: "app",
+    modulePath: "app",
+    paths0: "app",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // The loader records where the path ends in its key, in code units of the key. The directory name
 // is not ASCII, so a count of bytes would end at another place. The parent has the same file names.
 test("a module loaded with a ?query in a non-ASCII directory resolves from that directory", async () => {

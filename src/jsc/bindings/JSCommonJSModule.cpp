@@ -843,6 +843,9 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     JSValue filenameValue = callframe->argument(1);
     String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue pathValue = moduleObject->filenamePath(vm, filenameValue);
+    String pathString = pathValue == filenameValue ? filenameString : pathValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString;
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
@@ -857,13 +860,13 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     moduleObject->sourceCode = makeSource(
         WTF::move(wrappedString),
-        SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
+        SourceOrigin(URL::fileURLWithFileSystemPath(pathString)),
         JSC::SourceTaintedOrigin::Untainted,
         filenameString,
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
+    EncodedJSValue encodedFilename = JSValue::encode(pathValue);
 #if OS(WINDOWS)
     JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
 #else
@@ -1601,6 +1604,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
         }
+        setLoadedPath(vm, source.source_url.toWTFString());
         WTF::String sourceString = source.source_code.transferToWTFString();
         // Remove the wrapper from the source string, since the transpiler has added it.
         auto trimStart = sourceString.find('\n');

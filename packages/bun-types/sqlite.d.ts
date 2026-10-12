@@ -33,21 +33,21 @@ declare module "bun:sqlite" {
      *
      * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
      */
-    readonly?: boolean;
+    readonly?: boolean | undefined;
 
     /**
      * Allow creating a new database
      *
      * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
      */
-    create?: boolean;
+    create?: boolean | undefined;
 
     /**
      * Open the database as read-write
      *
      * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
      */
-    readwrite?: boolean;
+    readwrite?: boolean | undefined;
 
     /**
      * When `true`, integers are returned as `bigint`.
@@ -57,7 +57,7 @@ declare module "bun:sqlite" {
      * @default false
      * @since v1.1.14
      */
-    safeIntegers?: boolean;
+    safeIntegers?: boolean | undefined;
 
     /**
      * When set to `false` or `undefined`:
@@ -81,7 +81,7 @@ declare module "bun:sqlite" {
      * ```
      * @since v1.1.14
      */
-    strict?: boolean;
+    strict?: boolean | undefined;
   }
 
   /**

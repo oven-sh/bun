@@ -1598,13 +1598,18 @@ function parseSQLiteOptions(
   // Empty filename defaults to :memory:
   sqliteOptions.filename = filename || ":memory:";
 
-  // Only `mode` is read from the query, with `ro`, `rw` and `rwc` of https://www.sqlite.org/uri.html#urimode
+  // Only `mode` is read from the query, with the values of https://www.sqlite.org/uri.html#urimode
   if (queryString) {
-    const params = new URLSearchParams(queryString);
+    const modes = new URLSearchParams(queryString).getAll("mode");
     let access = SQLiteAccess.unset;
-    let mode = params.get("mode");
-    while (mode !== null) {
-      let next: SQLiteAccess;
+    for (let i = 0, length = modes.length; i < length; i++) {
+      let mode = modes[i];
+      // A fragment is not a part of the mode.
+      const fragmentIndex = mode.indexOf("#");
+      if (fragmentIndex !== -1) {
+        mode = mode.slice(0, fragmentIndex);
+      }
+      let next = access;
       switch (mode) {
         case "ro":
           next = SQLiteAccess.readonly;
@@ -1615,16 +1620,16 @@ function parseSQLiteOptions(
         case "rwc":
           next = SQLiteAccess.readwriteCreate;
           break;
+        case "memory":
+          // Not an access mode. The file name decides where the database is.
+          break;
         default:
-          throw $ERR_INVALID_ARG_VALUE("mode", mode, "must be one of: ro, rw, rwc");
+          throw $ERR_INVALID_ARG_VALUE("mode", mode, "must be one of: ro, rw, rwc, memory");
       }
       // When `mode` repeats, the most restrictive one applies.
       if (access === SQLiteAccess.unset || next < access) {
         access = next;
       }
-      // Drops every pair with this value, so the next get() returns the next distinct value.
-      params.delete("mode", mode);
-      mode = params.get("mode");
     }
 
     switch (access) {
@@ -1642,7 +1647,7 @@ function parseSQLiteOptions(
     }
   }
 
-  // An option that is given takes priority over `mode`. `undefined` is not given.
+  // `readonly` and `create` take priority over `mode` when they are given. `undefined` is not given.
   const readonly = options.readonly;
   if (readonly !== undefined) {
     sqliteOptions.readonly = readonly;

@@ -844,6 +844,38 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("SQLite open mode options", () => {
+    typeTest("accept a value that is not set with exactOptionalPropertyTypes", {
+      options: { exactOptionalPropertyTypes: true },
+      files: {
+        "sqlite-open-mode-options.ts": `
+          import { SQL } from "bun";
+          import { Database, type DatabaseOptions } from "bun:sqlite";
+
+          declare const settings: { readonly?: boolean; create?: boolean; readwrite?: boolean };
+          const options: SQL.SQLiteOptions = {
+            adapter: "sqlite",
+            filename: ":memory:",
+            readonly: settings.readonly,
+            create: settings.create,
+            readwrite: settings.readwrite,
+          };
+          new SQL(options);
+
+          // The options of Bun.SQL and of bun:sqlite stay assignable to each other.
+          new Database(":memory:", options);
+          declare const databaseOptions: DatabaseOptions;
+          const sqliteOptions: SQL.SQLiteOptions = databaseOptions;
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("sqlite-open-mode-options.ts"));
+        expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

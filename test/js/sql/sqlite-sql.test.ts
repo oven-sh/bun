@@ -526,7 +526,7 @@ describe("Connection & Initialization", () => {
       [{ readwrite: 0 }, readOnly],
     ];
 
-    test.each(optionRows.map(([options, mode]) => [show(options), options, mode] as const))(
+    test.concurrent.each(optionRows.map(([options, mode]) => [show(options), options, mode] as const))(
       "%s",
       async (_title, options, mode) => {
         const open = (filename: string) => new SQL({ adapter: "sqlite", filename, ...options } as SQL.Options);
@@ -557,9 +557,13 @@ describe("Connection & Initialization", () => {
       ["?mode=rw&mode=rwc", {}, readWrite],
       ["?mode=rwc&mode=rw&mode=ro", {}, readOnly],
       ["?cache=shared&mode=ro", {}, readOnly],
+      ["?mode=memory&mode=ro", {}, readOnly],
+      // A fragment is not a part of the mode, and a mode after a fragment still applies.
+      ["?mode=ro#fragment", {}, readOnly],
+      ["?cache=shared#fragment&mode=ro", {}, readOnly],
     ];
 
-    test.each(urlRows.map(([query, options, mode]) => [query, show(options), options, mode] as const))(
+    test.concurrent.each(urlRows.map(([query, options, mode]) => [query, show(options), options, mode] as const))(
       "%s with %s",
       async (query, _title, options, mode) => {
         const open = (filename: string) => new SQL(`sqlite://${filename}${query}`, options as SQL.Options);
@@ -568,7 +572,7 @@ describe("Connection & Initialization", () => {
     );
 
     const unset: { readonly?: boolean; strict?: boolean } = { strict: true };
-    test.each([
+    test.concurrent.each([
       ["readonly: undefined", { readonly: undefined }],
       ["a wrapper that forwards a setting its caller did not set", { readonly: unset.readonly, strict: unset.strict }],
     ])("?mode=ro in a filename that is a file: URL holds with %s", async (_title, options) => {
@@ -614,7 +618,7 @@ describe("Connection & Initialization", () => {
       return { error, createdMissing: existsSync(missing) };
     }
 
-    test.each([
+    test.concurrent.each([
       [
         "{ readOnly: true }",
         (filename: string) => new SQL({ adapter: "sqlite", filename, readOnly: true } as SQL.Options),
@@ -642,12 +646,11 @@ describe("Connection & Initialization", () => {
       expect(createdMissing).toBe(false);
     });
 
-    test.each([
-      ["?mode=RO", "The argument 'mode' must be one of: ro, rw, rwc. Received 'RO'"],
-      ["?mode=readonly", "The argument 'mode' must be one of: ro, rw, rwc. Received 'readonly'"],
-      ["?mode=", "The argument 'mode' must be one of: ro, rw, rwc. Received ''"],
-      ["?mode=rwc&mode=bogus", "The argument 'mode' must be one of: ro, rw, rwc. Received 'bogus'"],
-      ["?mode=memory", "The argument 'mode' must be one of: ro, rw, rwc. Received 'memory'"],
+    test.concurrent.each([
+      ["?mode=RO", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received 'RO'"],
+      ["?mode=readonly", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received 'readonly'"],
+      ["?mode=", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received ''"],
+      ["?mode=rwc&mode=bogus", "The argument 'mode' must be one of: ro, rw, rwc, memory. Received 'bogus'"],
     ])("%s throws and creates no file", async (query, message) => {
       const { error, createdMissing } = await constructionError(filename => new SQL(`sqlite://${filename}${query}`));
       expect(error).toBeInstanceOf(TypeError);

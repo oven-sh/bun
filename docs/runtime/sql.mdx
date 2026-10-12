@@ -248,9 +248,9 @@ Bun parses query parameters in the URL to set these options:
 - `?mode=rw` → `readonly: false, create: false`
 - `?mode=rwc` → `readonly: false, create: true` (default)
 
-Bun throws an error for any other `mode`. When a URL repeats `mode`, the most restrictive one applies.
+The `memory` mode of SQLite has no effect. Bun throws an error for any other `mode`. When a URL repeats `mode`, the most restrictive one applies.
 
-An option that you set in the options object takes priority over `mode`:
+`readonly` and `create` in the options object take priority over `mode`. `readwrite: false` opens in read-only mode for every `mode`, and `readwrite: true` does not change the `mode`.
 
 ```ts
 // Opens in read-only mode

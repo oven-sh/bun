@@ -113,7 +113,7 @@ fn file_of(
     let mut file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
     let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);
-    let may_be_script = html_opens.first.is_some() || scratch.has_top_level_await;
+    let may_be_script = html_opens.first.is_some() || scratch.has_only_ambiguous_awaits;
     if !how.dialect.oxc || how.dialect.script || !was_refused && !may_be_script {
         return file;
     }

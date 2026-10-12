@@ -1999,6 +1999,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => self.full_start().saturating_sub(1),
         };
         let (this_param, params) = self.parameters(0);
+        self.note_parameters_of_accessor(kind, params);
         // `shouldParseReturnType`: "This is easy to get backward, especially in type contexts, so
         // parse the type anyway"
         if self.token() == T::EqualsGreaterThan

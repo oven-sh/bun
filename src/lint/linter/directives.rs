@@ -1,6 +1,6 @@
 //! Finds the comments of a file that configure the linter.
 
-use super::comment::parse_directive;
+use super::comment::{Space, parse_directive};
 use crate::ast::File;
 use crate::span::Span;
 use crate::tokens::TokenKind;
@@ -81,6 +81,10 @@ fn range_in(outer: &[u8], inner: &[u8]) -> Span {
 /// ESLint's `getInlineConfigNodes`.
 pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
     let text = file.text();
+    let space = match file.language().is_oxlint {
+        true => Space::Unicode,
+        false => Space::Js,
+    };
     let mut comments = Vec::new();
     for comment in file.comments() {
         let (span, is_line) = match comment.kind() {
@@ -92,7 +96,7 @@ pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
         if !may_start_with_label(value) {
             continue;
         }
-        let Some(directive) = parse_directive(value) else {
+        let Some(directive) = parse_directive(value, space) else {
             continue;
         };
         let Some(label) = Label::of(directive.label) else {

@@ -16,7 +16,7 @@ use crate::tokens::skip_trivia;
 use crate::utils::ancestor_memo::AncestorMemo;
 use bun_core::strings;
 use bun_sema::bind::Parent;
-use bun_sema::hir::{self, DiagnosticKind, Flags, ModifierKind};
+use bun_sema::hir::{self, DiagnosticKind, Flags, ModifierKind, rare};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::collections::hash_map::Entry;
@@ -101,6 +101,20 @@ impl<'a> Checks<'a, '_> {
         self.defaults_that_suspend(true);
         self.jumps();
         self.labels();
+        // Nothing in a declaration file runs.
+        if self.file.is_declaration_file() {
+            return;
+        }
+        self.strict_mode();
+        self.octals_in_strict_code();
+        self.statement_positions();
+        self.deleted_private_fields();
+        self.new_targets();
+        self.functions();
+        self.supers();
+        self.private_names();
+        self.classes();
+        self.object_literals();
     }
 
     /// Those of them that its parser reports, not the pass that builds the scopes.
@@ -629,6 +643,9 @@ impl<'a> Checks<'a, '_> {
     /// `parseStatement` with a `context`: what cannot be the body of an `if`, a loop, a `with` or a label.
     fn statement_positions(&mut self) {
         let file = self.file;
+        if self.lacks(rare::DECLARATION_AS_BODY) {
+            return;
+        }
         for tag in [StmtTag::Var, StmtTag::Fn, StmtTag::Class] {
             for it in file.stmts_of_kind(tag) {
                 let Node::Stmt(parent) = it.parent() else {
@@ -683,8 +700,11 @@ impl<'a> Checks<'a, '_> {
                 // `let` is a name there, unless a `[` follows.
                 Some(VarKind::Let) => {
                     let next = self.after_token(start);
+                    let between = self.file.slice(crate::span::Span::new(start, next));
                     match self.token_at(next) {
                         b"[" => self.unexpected(start),
+                        // A semicolon is inserted after the name. TypeScript's parser reads a declaration.
+                        _ if strings::contains_js_line_break(between) => {}
                         _ => self.unexpected(next),
                     }
                 }
@@ -766,6 +786,9 @@ impl<'a> Checks<'a, '_> {
 
     /// `isPrivateFieldAccess`
     fn deleted_private_fields(&mut self) {
+        if self.lacks(rare::PRIVATE_NAME) {
+            return;
+        }
         for it in self.exprs_of(ExprTag::Unary) {
             let ExprKind::Unary {
                 op: UnOp::Delete,
@@ -846,6 +869,12 @@ impl<'a> Checks<'a, '_> {
                 _ => {}
             }
         }
+        self.new_targets();
+    }
+
+    fn new_targets(&mut self) {
+        let file = self.file;
+        let of_new = "The only valid meta property for new is 'new.target'";
         for it in self.exprs_of(ExprTag::NewTarget) {
             // acorn throws the first of its three complaints about one `new.target`, wherever the others are.
             let name = self.after_token(self.after_token(it.span().start));
@@ -866,8 +895,8 @@ impl<'a> Checks<'a, '_> {
             }
             // `allowNewDotTarget`: in a function that is not an arrow function, in the initializer of a field, in a static block.
             let is_allowed = Self::this_scope(&mut self.tops, Node::Expr(it)).is_some();
-            // For acorn the top level of a CommonJS file is a function.
-            if !is_allowed && file.language().source_type != SourceType::CommonJs {
+            // The top level of a CommonJS file is a function.
+            if !is_allowed && self.source_type() != SourceType::CommonJs {
                 self.fail(
                     it.span().start,
                     "'new.target' can only be used in functions and class static block",
@@ -1055,7 +1084,14 @@ impl<'a> Checks<'a, '_> {
 
     fn functions(&mut self) {
         let file = self.file;
+        let may_have_directive = file.mentions("use strict");
+        if !may_have_directive && self.lacks(rare::ODD_ACCESSOR) {
+            return;
+        }
         for it in file.funcs() {
+            if !may_have_directive && !matches!(it.kind(), FnKind::Getter | FnKind::Setter) {
+                continue;
+            }
             let params = it.params();
             let wrong = match it.kind() {
                 FnKind::Getter if !params.is_empty() => {
@@ -1098,6 +1134,9 @@ impl<'a> Checks<'a, '_> {
     /// `checkYieldAwaitInDefaultParams`. `of_oxc`: in oxc's words. It labels the whole expression, and has the error for a
     /// computed key in a parameter's type too.
     fn defaults_that_suspend(&mut self, of_oxc: bool) {
+        if self.lacks(rare::SUSPENDS_IN_PARAMETERS) {
+            return;
+        }
         let words = [
             (ExprTag::Yield, "Yield", "yield"),
             (ExprTag::Await, "Await", "await"),
@@ -1191,7 +1230,7 @@ impl<'a> Checks<'a, '_> {
     /// A `#a` has to be declared by a class around it.
     fn private_names(&mut self) {
         let file = self.file;
-        if !strings::contains_char(file.text(), b'#') {
+        if self.lacks(rare::PRIVATE_NAME) || !strings::contains_char(file.text(), b'#') {
             return;
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
@@ -1266,12 +1305,24 @@ impl<'a> Checks<'a, '_> {
     /// `parseClass`, `parseClassElement`
     fn classes(&mut self) {
         let file = self.file;
+        if self.lacks(rare::NOTABLE_CLASS_MEMBER) {
+            return;
+        }
         // The private names of the class so far, each with the accessor that another can complete.
         let mut private: FxHashMap<&'a [u8], Option<(bool, MemberKind)>> = FxHashMap::default();
+        // oxc lets what is only declared be called anything: `declare class A { static prototype: A }`.
+        let is_oxc = self.is_oxc;
+        let is_only_declared = |flags: Flags| is_oxc && flags.contains(Flags::AMBIENT);
         for class in file.classes() {
+            if is_only_declared(class.flags()) {
+                continue;
+            }
             let mut has_constructor = false;
             private.clear();
             for member in class.members() {
+                if is_only_declared(member.flags()) {
+                    continue;
+                }
                 self.class_element(member);
                 if member.is_constructor() && member.func().is_some_and(Func::has_body) {
                     if has_constructor {
@@ -1286,6 +1337,10 @@ impl<'a> Checks<'a, '_> {
                 else {
                     continue;
                 };
+                // An overload in TypeScript: `#m(): void; #m() {}`.
+                if member.func().is_some_and(|it| !it.has_body()) {
+                    continue;
+                }
                 let half = matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
                     .then(|| (member.is_static(), member.kind()));
                 match private.entry(name.bytes()) {
@@ -1422,7 +1477,11 @@ impl<'a> Checks<'a, '_> {
 
     fn object_literals(&mut self) {
         let file = self.file;
-        let may_have_proto = strings::contains(file.text(), b"__proto__");
+        let may_have_proto = file.mentions("__proto__");
+        // The rest is about private names as keys, which the parser of oxc stumbles over, and `accessor`, which it knows.
+        if !may_have_proto && self.lacks(rare::DEFAULT_IN_OBJECT) {
+            return;
+        }
         for (i, raw) in file.hir.props.iter().enumerate() {
             let is_default = raw.kind == PropKind::Shorthand
                 && matches!(
@@ -1480,11 +1539,12 @@ impl<'a> Checks<'a, '_> {
             }
         }
         // acorn has no `accessor`: it is the name of a field.
+        let has_accessors = self.is_oxc;
         for raw in file
             .hir
             .members
             .iter()
-            .filter(|it| it.flags.contains(Flags::ACCESSOR))
+            .filter(|it| it.flags.contains(Flags::ACCESSOR) && !has_accessors)
         {
             self.unexpected(raw.name_pos);
         }

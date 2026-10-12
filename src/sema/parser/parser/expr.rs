@@ -187,6 +187,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     pub(crate) fn note_await(&mut self) {
         if self.has_context(ctx::TOP_LEVEL) {
             self.has_top_level_await = true;
+            self.has_plain_top_level_await = true;
             self.has_await_in_statement = true;
         }
     }
@@ -451,6 +452,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             star = self.eat(T::Asterisk);
             value = self.assignment_expression();
         }
+        self.suspensions += 1;
         self.finish_expr(ExprKind::Yield { value, star }, start)
     }
 
@@ -809,20 +811,31 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::LessThan if !self.options.is_jsx => return self.type_assertion(),
             T::LessThan if !self.is_ecmascript => return self.jsx_elements(true),
             T::Await if self.is_await_expression() => {
+                let had_plain = self.has_plain_top_level_await;
                 self.note_await();
                 // Outside the context it is a name, but before a word or a literal.
                 if self.has_context(ctx::TOP_LEVEL) && !self.next_is_word_or_literal_on_same_line()
                 {
                     self.has_await_identifier = true;
+                    self.has_plain_top_level_await = had_plain;
                 }
                 self.next();
                 let operand = self.simple_unary_expression();
+                self.suspensions += 1;
                 return self.finish_expr(ExprKind::Await(operand), start);
             }
             _ => return self.update_expression(),
         };
         self.next();
         let operand = self.simple_unary_expression();
+        if op == UnOp::Delete
+            && let Some(Expr {
+                kind: ExprKind::Ident(_),
+                ..
+            }) = self.f.exprs.get(operand.idx())
+        {
+            self.f.rare_syntax |= rare::DELETES_A_NAME;
+        }
         self.finish_expr(ExprKind::Unary { op, operand }, start)
     }
 
@@ -2369,6 +2382,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 // `{ a = 1 }`, which only a destructuring assignment can have.
                 T::Equals => {
                     self.next();
+                    self.f.rare_syntax |= rare::DEFAULT_IN_OBJECT;
                     let value = self.assignment_expression_allowing_in();
                     let kind = ExprKind::Assign {
                         op: None,

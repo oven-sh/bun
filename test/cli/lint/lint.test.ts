@@ -385,9 +385,14 @@ describe.concurrent("bun lint", () => {
       "b.ts": 'import source x from "m";\ndebugger;\n',
       "c.js": 'import.source("m");\ndebugger;\n',
       "d.tsx": "<>\n<\n/>;\ndebugger;\n",
+      // The attributes of a re-export on the next line, where TypeScript reads a `with` statement. In JavaScript espree reads these.
+      "e.ts": 'export * from "m"\nwith { type: "json" }\ndebugger;\n',
+      "f.ts": 'export * as ns from "m"\nwith { type: "json" }\ndebugger;\n',
+      "g.ts": 'export { a } from "m"\nwith { type: "json" }\ndebugger;\n',
+      "h.ts": 'export { default as k } from "m"\nwith { type: "json" }\ndebugger;\n',
     };
     const names = Object.keys(files);
-    const lines = (stdout: string) => stdout.split("\n").filter(line => /^\S*[a-d]\.\w+:\d/.test(line));
+    const lines = (stdout: string) => stdout.split("\n").filter(line => /^\S*[a-h]\.\w+:\d/.test(line));
     const rules = { "no-debugger": "error" };
     const ofOxlint = JSON.stringify({ categories: { correctness: "off" }, rules });
     const ofEslint = `export default [{ files: ["**/*.{js,ts,tsx}"], rules: ${JSON.stringify(rules)} }];\n`;
@@ -395,8 +400,63 @@ describe.concurrent("bun lint", () => {
       lint({ ".oxlintrc.json": ofOxlint, ...files }, ["-f", "unix", ...names]),
       lint({ "eslint.config.js": ofEslint, ...files }, ["-f", "unix", ...names]),
     ]);
-    expect(lines(oxlint.stdout).map(line => /no-debugger/.test(line))).toEqual([true, true, true, true]);
-    expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual([true, true, true, true]);
+    expect(lines(oxlint.stdout).map(line => /no-debugger/.test(line))).toEqual(names.map(() => true));
+    expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual(names.map(() => true));
+  });
+
+  // Each row is what oxlint 1.87 prints, by position. tsc, typescript-estree, espree and Babel reject an escape in a name of JSX.
+  test("with .oxlintrc.json a name of JSX with a unicode escape is the text as written", async () => {
+    const rows: [extension: string, code: string, found: string[]][] = [
+      ["tsx", 'const X = () => null;\nexport const a = <X d\\u0065nsity="comfortable" />;', []],
+      ["jsx", "export const a = <d\\u0069v></d\\u0069v>;", []],
+      ["jsx", 'export const a = <a:\\u0059 b:\\u0059="1" />;', []],
+      ["tsx", 'export const a = <\\u0061-b c-\\u0064="1" />;', []],
+      ["tsx", "const X = { Y: () => null };\nexport const a = <X.\\u0059 />;", []],
+      // It isn't the variable `Xe`.
+      [
+        "tsx",
+        "const Xe = () => null;\nexport const a = <X\\u0065 />;",
+        [
+          "eslint(no-unused-vars): Variable 'Xe' is declared but never used. Unused variables should start with a '_'. @6+2",
+          "eslint(no-undef): 'X\\u0065' is not defined. @41+7",
+        ],
+      ],
+      // A rule gets the whole name.
+      [
+        "jsx",
+        'export const a = <div d\\u{65}nsity="x" />;',
+        ["react(no-unknown-property): Unknown property found @22+12"],
+      ],
+      [
+        "jsx",
+        "export const a = <d\\u0069v></div>;",
+        ["error: Expected corresponding JSX closing tag for 'd\\u0069v'. @29+3"],
+      ],
+    ];
+    const rules = { "no-undef": "error", "no-unused-vars": "warn", "react/no-unknown-property": "error" };
+    const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+    const { raw } = await lint(
+      { ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, plugins: ["react"], rules }), ...files },
+      ["-f", "json"],
+    );
+    type Diagnostic = { filename: string; code?: string; message: string; labels: { span: Record<string, number> }[] };
+    const found: Record<string, string[]> = Object.fromEntries(Object.keys(files).map(name => [name, []]));
+    for (const { filename, code, message, labels } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      const { offset, length } = labels[0].span;
+      found[filename].push(`${code ?? "error"}: ${message} @${offset}+${length}`);
+    }
+    expect(found).toEqual(
+      Object.fromEntries(rows.map(([extension, , expected], i) => [`a${i}.${extension}`, expected])),
+    );
+  });
+
+  // tsc reports TS17021 and ESLint 10.12 "Unexpected token \\u0059".
+  test("an escape in a member of a JSX tag name is a parsing error with eslint.config.js", async () => {
+    const config = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
+    const code = "const X = { Y: () => null };\nexport const a = <X.\\u0059 />;\n";
+    const { raw, exitCode } = await lint({ "eslint.config.js": config, "a.jsx": code }, ["-f", "unix"]);
+    expect(raw).toContain("a.jsx:2:21: Parsing error: Unexpected token \\u0059 [Error]");
+    expect(exitCode).toBe(1);
   });
 
   // oxlint 1.87 lints all of these, and ESLint 10.12 with espree lints the .jsx files. tsc 6 and typescript-estree scan a

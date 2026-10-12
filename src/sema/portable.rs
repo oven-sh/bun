@@ -28,7 +28,7 @@ macro_rules! file_fields {
         $with! {
             plain: [
                 kind is_js is_flow check_directive is_module_by_decree has_module_syntax
-                has_errors ran_out_of_stack legacy_decorators may_bind_a_parameter_twice
+                has_errors ran_out_of_stack legacy_decorators may_bind_a_parameter_twice rare_syntax
                 has_parse_diagnostics
                 syntax_errors error_pos source_len body jsx_pragmas bases
             ]

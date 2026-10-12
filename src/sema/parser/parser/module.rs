@@ -189,8 +189,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline]
     pub(super) fn import_attributes_of_declaration(&mut self, is_export: bool) -> ResolutionMode {
         // After an import, `with` can be on the next line. After an export it starts a statement
-        // there.
-        if self.token() == T::With && !(is_export && self.newline_before() && !self.is_ecmascript) {
+        // there for TypeScript, and for nobody else.
+        let is_statement =
+            is_export && self.newline_before() && !self.is_ecmascript && !self.options.dialect.oxc;
+        if self.token() == T::With && !is_statement {
             return self.import_attributes_after_specifier(is_export);
         }
         if self.token() == T::Assert && !self.newline_before() {

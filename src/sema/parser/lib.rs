@@ -161,8 +161,8 @@ pub struct Scratch {
     jsdoc_wanted: u8,
     /// Of the text that was parsed last.
     html_opens: lexer::HtmlOpens,
-    /// [`Parsed::has_top_level_await`] of the text that was parsed last.
-    has_top_level_await: bool,
+    /// The text that was parsed last has an `await` at its top level, and each of them can be a name: `await (a)`.
+    has_only_ambiguous_awaits: bool,
 }
 
 impl Scratch {

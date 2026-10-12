@@ -228,6 +228,7 @@ pub struct File<'a> {
     hides_casts: bool,
     has_parse_errors: bool,
     may_bind_a_parameter_twice: bool,
+    rare_syntax: u8,
 }
 
 impl<'a> File<'a> {
@@ -259,6 +260,7 @@ impl<'a> File<'a> {
             },
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             may_bind_a_parameter_twice: hir.may_bind_a_parameter_twice,
+            rare_syntax: hir.rare_syntax,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
             atoms,
@@ -315,6 +317,12 @@ impl<'a> File<'a> {
     #[inline]
     pub fn is_javascript(&self) -> bool {
         self.is_js
+    }
+
+    /// Whether `hir::File::rare_syntax` has `bit`, which is one of `hir::rare`.
+    #[inline]
+    pub(crate) fn has_rare_syntax(&self, bit: u8) -> bool {
+        self.rare_syntax & bit != 0
     }
 
     /// `hir::File::may_bind_a_parameter_twice`

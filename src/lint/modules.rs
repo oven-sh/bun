@@ -246,7 +246,8 @@ pub trait Modules: Sync {
     /// Whether there is a file or a directory at `path`. It can be asked at any time.
     fn exists(&self, path: &[u8]) -> bool;
 
-    /// The file at `path`, as it is on the disk. It can be asked at any time.
+    /// The text of the file at `path`, decoded by its byte order mark: UTF-16 comes as UTF-8, and the mark itself is dropped.
+    /// It can be asked at any time.
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;
 
     /// `Array.from(new FileEnumerator({ extensions }).iterateFiles(patterns))` of ESLint 8 and 9, from the working
@@ -254,7 +255,7 @@ pub trait Modules: Sync {
     /// throws. It can be asked at any time.
     fn list_files(&self, patterns: &[&[u8]], extensions: &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>>;
 
-    /// What `reader` makes of the file at `path` as it is on the disk, parsed as `language` says. It is made the first
+    /// What `reader` makes of the file at `path`, read like [`Modules::read`] and parsed as `language` says. It is made the first
     /// time that it is asked for, and kept by the path and by what of `language` the parser looks at. All who ask have
     /// the same `reader`. `None`: the file cannot be read, `reader.wants` says no, or the code is nested too deeply.
     /// It can be asked at any time.

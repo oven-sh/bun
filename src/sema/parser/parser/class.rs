@@ -645,6 +645,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.options.is_javascript {
             self.check_js_member(&member, question);
         }
+        let before = self.s.members.get(base..).unwrap_or_default();
+        let is_notable = match (member.kind, member.key) {
+            (MemberKind::Constructor, _) => {
+                flags.contains(Flags::ASYNC)
+                    || before.iter().any(|it| it.kind == MemberKind::Constructor)
+            }
+            (_, PropKey::Private(_)) => true,
+            (_, PropKey::Name(name)) => name == known::constructor || name == known::prototype,
+            _ => false,
+        };
+        if is_notable {
+            self.f.rare_syntax |= rare::NOTABLE_CLASS_MEMBER;
+        }
         self.s.members.push(member);
     }
 

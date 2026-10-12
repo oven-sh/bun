@@ -192,7 +192,11 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// `TypeExcludesFlags`: the contexts that a type, the members of an enum and a namespace at the top level leave. oxc
     /// stays in the await and yield context of the code around them.
     pub(crate) cleared_in_types: u32,
+    /// How many `await` and `yield` expressions have been made.
+    pub(crate) suspensions: u32,
     pub(crate) has_top_level_await: bool,
+    /// One of them can be nothing else: `await a`, `for await`, `await using`. Not `await (a)`, which calls `await` in a script.
+    pub(crate) has_plain_top_level_await: bool,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
     /// A computed name in the top-level statement that is being parsed has an `await`, which was read outside the await
@@ -278,6 +282,7 @@ struct Harvest<'a> {
     lx: Lexer<'a>,
     stacks: Stacks,
     has_top_level_await: bool,
+    has_plain_top_level_await: bool,
 }
 
 pub(crate) fn run<'a>(
@@ -321,6 +326,7 @@ pub(crate) fn run<'a>(
         lx,
         stacks,
         has_top_level_await,
+        has_plain_top_level_await,
     } = match is_general {
         true => Parser::<true>::new(seed).parse_into(&mut f),
         false => Parser::<false>::new(seed).parse_into(&mut f),
@@ -330,7 +336,10 @@ pub(crate) fn run<'a>(
     f.comments = lx.comments;
     scratch.stacks = stacks;
     scratch.html_opens = lx.html_opens;
-    scratch.has_top_level_await = has_top_level_await;
+    if lx.has_private_names {
+        f.rare_syntax |= rare::PRIVATE_NAME;
+    }
+    scratch.has_only_ambiguous_awaits = has_top_level_await && !has_plain_top_level_await;
     if let Some(why) = refusal {
         scratch.recycled = Some(f);
         return Err(Refused {
@@ -414,7 +423,9 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
                 true => 0,
                 false => ctx::YIELD | ctx::AWAIT,
             },
+            suspensions: 0,
             has_top_level_await: false,
+            has_plain_top_level_await: false,
             has_await_in_statement: false,
             has_await_in_name: false,
             has_await_identifier: false,
@@ -446,6 +457,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             lx: self.lx,
             stacks: self.s,
             has_top_level_await: self.has_top_level_await,
+            has_plain_top_level_await: self.has_plain_top_level_await,
         }
     }
 

@@ -55,6 +55,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_oxc: bool,
     /// [`HtmlOpens`], with `is_oxc`.
     pub(crate) html_opens: HtmlOpens,
+    /// `hir::rare::PRIVATE_NAME`
+    pub(crate) has_private_names: bool,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,
     /// `hir::File::comment_directives`
@@ -318,6 +320,7 @@ impl<'a> Lexer<'a> {
             is_babel: false,
             is_oxc: false,
             html_opens: HtmlOpens::default(),
+            has_private_names: false,
             atoms,
             names,
             comment_directives: Vec::new(),
@@ -1073,6 +1076,7 @@ impl<'a> Lexer<'a> {
         let mut kind = crate::token::keyword(&text);
         self.buffer = text;
         if is_private {
+            self.has_private_names = true;
             return self.set(T::PrivateIdentifier, start, pos);
         }
         if self.has_escape && kind != T::Identifier {
@@ -1143,6 +1147,7 @@ impl<'a> Lexer<'a> {
         }
         self.has_escape = false;
         self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
+        self.has_private_names = true;
         self.set(T::PrivateIdentifier, start, end);
     }
 

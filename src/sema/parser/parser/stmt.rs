@@ -194,13 +194,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.reads_jsdoc() {
             self.statement_jsdoc(statement);
         }
-        // The other parser takes these for statements of the file if no block is around them.
-        if let Some(Stmt {
-            kind: StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
-            ..
-        }) = self.f.stmts.get(statement.idx())
-        {
-            self.f.has_module_syntax = true;
+        match self.f.stmts.get(statement.idx()).map(|it| it.kind) {
+            // The other parser takes these for statements of the file if no block is around them.
+            Some(StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. }) => {
+                self.f.has_module_syntax = true;
+            }
+            Some(StmtKind::Var(_) | StmtKind::Fn(_) | StmtKind::Class(_)) => {
+                self.f.rare_syntax |= rare::DECLARATION_AS_BODY;
+            }
+            _ => {}
         }
         statement
     }

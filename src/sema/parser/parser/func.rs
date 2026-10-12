@@ -147,6 +147,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => self.full_start().saturating_sub(1),
         };
         let (this_param, params) = self.parameters(signature_context(flags));
+        self.note_parameters_of_accessor(kind, params);
         let ret = match self.token() {
             T::Colon => {
                 self.next();
@@ -378,6 +379,22 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         })
     }
 
+    /// `rare::ODD_ACCESSOR`, after the parameters of a function.
+    #[inline]
+    pub(crate) fn note_parameters_of_accessor(&mut self, kind: FnKind, params: Span<ParamId>) {
+        let first = self.f.params.get(params.start as usize);
+        let is_odd = match kind {
+            FnKind::Getter => !params.is_empty(),
+            FnKind::Setter => {
+                params.len != 1 || first.is_some_and(|it| it.flags.contains(Flags::REST))
+            }
+            _ => false,
+        };
+        if is_odd {
+            self.f.rare_syntax |= rare::ODD_ACCESSOR;
+        }
+    }
+
     /// `parseParametersWorker`
     pub(crate) fn parameter_list(&mut self, context: u32, close: T) -> Span<ParamId> {
         self.parameter_list_if(context, close, Ambiguity::Allowed)
@@ -424,6 +441,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
+        let suspensions = self.suspensions;
         let base = self.s.params.len();
         let modifiers = self.s.param_modifiers.len();
         let decorators = self.s.decorators.len();
@@ -439,6 +457,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.leave_list(lists);
         self.context = saved;
+        if self.suspensions != suspensions {
+            self.f.rare_syntax |= rare::SUSPENDS_IN_PARAMETERS;
+        }
         if self.s.params.len() > base + 1 {
             self.note_names_of_parameters(base);
         }

@@ -7,6 +7,7 @@
 //! - A comment that enables ends what was disabled in the same words: all rules, or a rule by its name as it is written. All
 //!   rules stay disabled after `enable a`, and `a` stays disabled after `enable`.
 //! - Names are separated by commas or by white space. A name means the rule whatever plugin it is written with.
+//! - White space is what `char::is_whitespace` of Rust says: U+0085 is, U+FEFF is not.
 
 use super::directives::{ConfigComment, Label};
 use super::message::{Data, LintMessage, Locator, RuleId, Suggestion, Suppression};
@@ -64,6 +65,11 @@ struct Range<'a> {
 
 type Names<'a> = SmallVec<[(&'a [u8], Span); 4]>;
 
+/// How many bytes of white space `text` starts with.
+fn space_len(text: &[u8]) -> usize {
+    text.len() - strings::trim_unicode_whitespace_start(text).len()
+}
+
 /// `collect_rule_names`. `offset`: where `text` starts.
 fn names(text: &[u8], offset: u32) -> Names<'_> {
     let mut found = Names::new();
@@ -74,13 +80,10 @@ fn names(text: &[u8], offset: u32) -> Names<'_> {
     let (mut start, mut end) = (None, text.len());
     let (mut at, mut is_after_space) = (0, false);
     while let Some(&byte) = text.get(at) {
-        let space = strings::js_whitespace_len(&text[at..]);
+        let space = space_len(&text[at..]);
         // ` -- why`, ` - why`
         let next = &text[at + 1..];
-        if byte == b'-'
-            && (next.first() == Some(&b'-')
-                || is_after_space && strings::js_whitespace_len(next) > 0)
-        {
+        if byte == b'-' && (next.first() == Some(&b'-') || is_after_space && space_len(next) > 0) {
             end = at;
             break;
         }
@@ -122,8 +125,8 @@ fn removal_of(text: &[u8], comment: Span) -> Span {
     let line_start = strings::last_index_of_char(&text[..start], b'\n').map_or(0, |it| it + 1);
     let line_end =
         strings::index_of_char_usize(&text[end..], b'\n').map_or(text.len(), |it| end + it + 1);
-    let is_alone = strings::trim_js_whitespace_end(&text[line_start..start]).is_empty()
-        && strings::trim_js_whitespace_end(&text[end..line_end]).is_empty();
+    let is_alone = strings::trim_unicode_whitespace_end(&text[line_start..start]).is_empty()
+        && strings::trim_unicode_whitespace_end(&text[end..line_end]).is_empty();
     match is_alone {
         true => Span::new(line_start as u32, line_end as u32),
         false => comment,
@@ -133,7 +136,7 @@ fn removal_of(text: &[u8], comment: Span) -> Span {
 /// `RuleCommentRule::create_fix`: removes one name of several.
 fn removal_from_list(text: &[u8], comment: Span, name: Span, prefix: Prefix) -> Option<Span> {
     let before = text.get(comment.start as usize..name.start as usize)?;
-    let before_trimmed = strings::trim_js_whitespace_end(before);
+    let before_trimmed = strings::trim_unicode_whitespace_end(before);
     if before_trimmed.ends_with(b",") {
         return Some(Span::new(
             comment.start + before_trimmed.len() as u32 - 1,
@@ -141,11 +144,11 @@ fn removal_from_list(text: &[u8], comment: Span, name: Span, prefix: Prefix) -> 
         ));
     }
     let after = text.get(name.end as usize..comment.end as usize)?;
-    let after_trimmed = strings::trim_js_whitespace_start(after);
+    let after_trimmed = strings::trim_unicode_whitespace_start(after);
     let space_after = (after.len() - after_trimmed.len()) as u32;
     if let Some(after_comma) = after_trimmed.strip_prefix(b",") {
         let space_after_comma =
-            (after_comma.len() - strings::trim_js_whitespace_start(after_comma).len()) as u32;
+            (after_comma.len() - strings::trim_unicode_whitespace_start(after_comma).len()) as u32;
         return Some(Span::new(
             name.start,
             name.end + space_after + 1 + space_after_comma,
@@ -158,9 +161,7 @@ fn removal_from_list(text: &[u8], comment: Span, name: Span, prefix: Prefix) -> 
     let space_before = (before.len() - before_trimmed.len()) as u32;
     let word_start = (0..before_trimmed.len())
         .rev()
-        .find(|&i| {
-            before_trimmed[i] == b',' || strings::js_whitespace_len(&before_trimmed[i..]) > 0
-        })
+        .find(|&i| before_trimmed[i] == b',' || space_len(&before_trimmed[i..]) > 0)
         .map_or(0, |it| it + 1);
     let rest = (before_trimmed[word_start..].strip_prefix(prefix))
         .and_then(|it| it.strip_prefix(b"-disable"));

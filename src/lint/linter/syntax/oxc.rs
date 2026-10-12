@@ -22,12 +22,32 @@ fn is_keyword(modifier: &Modifier, flag: Flags) -> bool {
     modifier.kind == ModifierKind::Keyword(flag)
 }
 
-/// The first of the errors that TypeScript's parser logs for the checker to report and that OXC has too. It has few of them.
+/// The first of the errors that TypeScript's parser logs for the checker to report and that OXC has too, for the same code. Each
+/// was tried. It takes `let a: unique number` (1005), `A<T,>` (1009) and `import.source("a")` (18061).
 fn error_of_grammar<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let of_grammar = file.hir.diagnostics.iter().filter(|it| {
         it.kind == DiagnosticKind::Grammar
-            // "JSDoc types can only be used inside documentation comments."
-            && it.code == 8020
+            && matches!(
+                it.code,
+                1013 | 1047
+                    | 1051
+                    | 1092
+                    | 1096
+                    | 1097
+                    | 1098
+                    | 1113
+                    | 1172
+                    | 1174
+                    | 1183
+                    | 1235
+                    | 1326
+                    | 5085
+                    | 5086
+                    | 5087
+                    | 7061
+                    | 8020
+                    | 17012
+            )
             && !file.is_in_jsdoc(it.start)
     });
     let first = of_grammar.min_by_key(|it| it.start)?;
@@ -321,14 +341,15 @@ pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         note(declaration_without_initializer(file));
         note(declaration_list(file));
         note(class_without_name(file));
-        note(error_of_grammar(file));
     }
+    note(error_of_grammar(file));
     note(espree::first_error_of_oxc(file));
     note(espree::using_in_script(file));
     note(espree::with_in_strict_code(file));
     note(deferred_import(file));
     note(espree::for_await_where_nothing_waits(file));
     note(reserved_word(file));
+    note(espree::keywords_as_names_of_oxc(file));
     note(duplicate_parameter(file));
     first
 }

@@ -1027,6 +1027,25 @@ pub struct VarDecl {
     pub loc: TextRange,
 }
 
+/// [`FileIn::rare_syntax`]
+pub mod rare {
+    /// An `await` or a `yield` is between the parentheses of a parameter list.
+    pub const SUSPENDS_IN_PARAMETERS: u8 = 1 << 0;
+    /// A variable statement, a function or a class is the body of an `if`, a loop, a `with` or a label.
+    pub const DECLARATION_AS_BODY: u8 = 1 << 1;
+    /// A getter has parameters, or a setter has none, several, or a rest parameter.
+    pub const ODD_ACCESSOR: u8 = 1 << 2;
+    /// `{ a = 1 }` where an expression can be.
+    pub const DEFAULT_IN_OBJECT: u8 = 1 << 3;
+    /// A class has a second constructor or an `async` one, a member that is called `prototype`, one that is called
+    /// `constructor` and is not its constructor, or one with a private name.
+    pub const NOTABLE_CLASS_MEMBER: u8 = 1 << 4;
+    /// There is a private name: `#a`.
+    pub const PRIVATE_NAME: u8 = 1 << 5;
+    /// `delete a`
+    pub const DELETES_A_NAME: u8 = 1 << 6;
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ModifierKind {
     /// Exactly one flag (`ModifierToFlag`).
@@ -2004,6 +2023,9 @@ pub struct FileIn<S: Storage> {
     /// Two of the parameters of a function or a signature may bind one name. Only `bun_sema_parser` says so, and it may say
     /// so of what a speculative parse has given up.
     pub may_bind_a_parameter_twice: bool,
+    /// Bits of [`rare`]: syntax that nearly no file has, which the parser notices on its way. Only `bun_sema_parser` sets
+    /// them, also for what a speculative parse has given up.
+    pub rare_syntax: u8,
     /// Diagnostics produced while parsing the file.
     pub diagnostics: S::Kept<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
@@ -2537,6 +2559,7 @@ macro_rules! file_in_arena {
             decorators: $few!($this.decorators),
             legacy_decorators: $this.legacy_decorators,
             may_bind_a_parameter_twice: $this.may_bind_a_parameter_twice,
+            rare_syntax: $this.rare_syntax,
             diagnostics: $kept!($this.diagnostics),
             has_parse_diagnostics: $this.has_parse_diagnostics,
             syntax_errors: $this.syntax_errors,

@@ -73,9 +73,11 @@ pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
         }
         let separated = out.len();
         match entry {
-            Entry::Native(rule) if rule.severity != Severity::Off => {
+            Entry::Native(rule)
+                if rule.severity != Severity::Off && rule.entry.meta.is_deprecated =>
+            {
                 let id = RuleId::Known(rule.entry.meta).to_vec();
-                let deprecated = deprecated_rule(&id).filter(|_| rule.entry.meta.is_deprecated);
+                let deprecated = deprecated_rule(&id);
                 deprecated.into_iter().for_each(|it| write(out, it));
             }
             Entry::Js(rule) if rule.severity != Severity::Off => {

@@ -16,18 +16,46 @@ pub(crate) struct DirectiveComment<'t> {
     pub(crate) justification: &'t [u8],
 }
 
-/// Where the first `\s-{2,}\s` starts and ends.
-fn find_justification_separator(text: &[u8]) -> Option<(usize, usize)> {
+/// What is white space in a directive comment. oxlint is written in Rust, whose `char::is_whitespace` has U+0085 and not U+FEFF.
+#[derive(Copy, Clone)]
+pub(crate) enum Space {
+    /// What `\s` matches.
+    Js,
+    /// The property `White_Space`.
+    Unicode,
+}
+
+impl Space {
+    fn trim_start(self, text: &[u8]) -> &[u8] {
+        match self {
+            Space::Js => strings::trim_js_whitespace_start(text),
+            Space::Unicode => strings::trim_unicode_whitespace_start(text),
+        }
+    }
+
+    fn trim_end(self, text: &[u8]) -> &[u8] {
+        match self {
+            Space::Js => strings::trim_js_whitespace_end(text),
+            Space::Unicode => strings::trim_unicode_whitespace_end(text),
+        }
+    }
+
+    fn trim(self, text: &[u8]) -> &[u8] {
+        self.trim_end(self.trim_start(text))
+    }
+}
+
+/// Where the dashes of the first `\s-{2,}\s` start and end.
+fn find_justification_separator(text: &[u8], space: Space) -> Option<(usize, usize)> {
     let mut from = 0;
     while let Some(found) = strings::index_of(&text[from..], b"--") {
         let dashes = from + found;
         let after = dashes + text[dashes..].iter().take_while(|b| **b == b'-').count();
-        let (before, following) = (
-            strings::js_whitespace_len_back(&text[..dashes]),
-            strings::js_whitespace_len(&text[after..]),
-        );
-        if before > 0 && following > 0 {
-            return Some((dashes - before, after + following));
+        let (before, following) = (&text[..dashes], &text[after..]);
+        if space.trim_end(before).len() < before.len()
+            && space.trim_start(following).len() < following.len()
+        {
+            return Some((dashes, after));
         }
         from = after;
     }
@@ -35,13 +63,10 @@ fn find_justification_separator(text: &[u8]) -> Option<(usize, usize)> {
 }
 
 /// `parseDirective`. `text`: the comment without its delimiters.
-pub(crate) fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
-    let (directive, justification) = match find_justification_separator(text) {
-        Some((start, end)) => (
-            strings::trim_js_whitespace(&text[..start]),
-            strings::trim_js_whitespace(&text[end..]),
-        ),
-        None => (strings::trim_js_whitespace(text), &text[text.len()..]),
+pub(crate) fn parse_directive(text: &[u8], space: Space) -> Option<DirectiveComment<'_>> {
+    let (directive, justification) = match find_justification_separator(text, space) {
+        Some((start, end)) => (space.trim(&text[..start]), space.trim(&text[end..])),
+        None => (space.trim(text), &text[text.len()..]),
     };
     // `^([a-z]+(?:-[a-z]+)*)(?:\s|$)`
     let mut end = 0;
@@ -56,13 +81,15 @@ pub(crate) fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
         end += word;
         match directive.get(end) {
             Some(b'-') => end += 1,
-            Some(_) if strings::js_whitespace_len(&directive[end..]) == 0 => return None,
+            Some(_) if space.trim_start(&directive[end..]).len() == directive.len() - end => {
+                return None;
+            }
             _ => break,
         }
     }
     Some(DirectiveComment {
         label: &directive[..end],
-        value: strings::trim_js_whitespace(&directive[end..]),
+        value: space.trim(&directive[end..]),
         justification,
     })
 }

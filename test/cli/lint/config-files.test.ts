@@ -2721,6 +2721,128 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(found.sort()).toEqual(expected.sort());
   });
 
+  // oxlint 1.87 rejects this config: "Rule 'no-debuger' not found in plugin 'eslint'", "Plugin 'foo' not found". The rules here are
+  // those of one oxlint version, and a config for a later one can name a rule that is new, so it's a warning.
+  test("an unknown rule that an .oxlintrc.json turns off is a warning, once for each name", async () => {
+    const config = {
+      categories: { correctness: "off" },
+      rules: {
+        "no-debugger": "error",
+        "no-debuger": "off",
+        "foo/bar": "off",
+        "unicorn/no-nul": "allow",
+        "typescript/no-explicit-an": 0,
+        // There is no list of the rules of this plugin.
+        "jsdoc/whatever": "off",
+      },
+      overrides: [{ files: ["*.ts"], rules: { "no-debuger": "off", "react/jsx-kye": "off" } }],
+    };
+    const files = { ".oxlintrc.json": JSON.stringify(config), "a.js": "debugger;\n", "b.js": "debugger;\n" };
+    const { problems, stderr, exitCode } = await lint(files);
+    expect(problems).toEqual(["a.js:1:1 no-debugger", "b.js:1:1 no-debugger"]);
+    expect(stderr.trim().split("\n")).toEqual([
+      'warn: Unknown rule "no-debuger" is turned off in the oxlint config',
+      '  Did you mean "no-debugger"?',
+      'warn: Unknown rule "foo/bar" is turned off in the oxlint config',
+      "  It has no effect. Fix the name or remove it.",
+      'warn: Unknown rule "unicorn/no-nul" is turned off in the oxlint config',
+      '  Did you mean "unicorn/no-null"?',
+      'warn: Unknown rule "typescript/no-explicit-an" is turned off in the oxlint config',
+      '  Did you mean "typescript/no-explicit-any"?',
+      'warn: Unknown rule "react/jsx-kye" is turned off in the oxlint config',
+      '  Did you mean "react/jsx-key"?',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // oxlint 1.87 fails with this text for each of the first three, before it lints.
+  test("the options of a JS plugin's rule are checked for every entry of an .oxlintrc.json", async () => {
+    const plugin = `export default { meta: { name: "pl" }, rules: { opt: { meta: { schema: [{ enum: ["a", "b"] }] }, create: () => ({}) } } };\n`;
+    const run = async (config: object) => {
+      const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, jsPlugins: ["./plugin.js"], ...config });
+      const { stdout, stderr, exitCode } = await lint(
+        { ".oxlintrc.json": oxlintrc, "plugin.js": plugin, "a.js": "a;\n" },
+        ["a.js"],
+      );
+      const said = (stdout + stderr).includes(
+        `Failed to setup JS plugin options:\nError: Options validation failed for rule 'pl/opt':\nOptions:\n[\n  "zzz"\n]\nErrors:\n\tValue "zzz" should be equal to one of the allowed values.`,
+      );
+      return [said, exitCode];
+    };
+    expect(
+      await Promise.all([
+        run({ rules: { "pl/opt": ["error", "zzz"] } }),
+        run({ rules: { "pl/opt": ["off", "zzz"] } }),
+        run({ overrides: [{ files: ["*.nothing"], rules: { "pl/opt": ["error", "zzz"] } }] }),
+        run({ rules: { "pl/opt": ["off", "a"] } }),
+      ]),
+    ).toEqual([
+      [true, 1],
+      [true, 1],
+      [true, 1],
+      [false, 0],
+    ]);
+  });
+
+  // oxlint 1.87 says so for each of the first five, before it lints.
+  test("options for a JS plugin's rule that takes none are refused, also where the rule is off", async () => {
+    const plugin = `const create = () => ({});
+      export default { meta: { name: "pl" }, rules: { none: { create }, meta: { meta: { type: "problem" }, create }, empty: { meta: { schema: [] }, create }, any: { meta: { schema: false }, create } } };\n`;
+    const run = async (rule: string, entry: unknown) => {
+      const config = {
+        categories: { correctness: "off" },
+        jsPlugins: ["./plugin.js"],
+        rules: { [`pl/${rule}`]: entry },
+      };
+      const files = { ".oxlintrc.json": JSON.stringify(config), "plugin.js": plugin, "a.js": "a;\n" };
+      const { stdout, stderr, exitCode } = await lint(files, ["a.js"]);
+      const text = `Failed to setup JS plugin options:\nError: Rule 'pl/${rule}' does not accept options`;
+      return [(stdout + stderr).includes(text), exitCode];
+    };
+    expect(
+      await Promise.all([
+        run("none", ["off", {}]),
+        run("none", ["error", {}]),
+        run("none", ["off", null]),
+        run("meta", ["off", {}]),
+        run("empty", ["off", {}]),
+        run("any", ["off", {}]),
+        run("none", ["off"]),
+        run("none", "off"),
+      ]),
+    ).toEqual([
+      [true, 1],
+      [true, 1],
+      [true, 1],
+      [true, 1],
+      [true, 1],
+      [false, 0],
+      [false, 0],
+      [false, 0],
+    ]);
+  });
+
+  // What oxlint 1.87 and ESLint 10.12 do. oxlint goes by `char::is_whitespace` of Rust, ESLint by `\s`.
+  test("white space beside the label of a disable comment: U+0085 for oxlint, U+FEFF for ESLint", async () => {
+    const codes = [0x20, 0x85, 0xa0, 0x1680, 0x2003, 0x3000, 0xfeff, 0x180e, 0x200b];
+    const files = (tool: string) =>
+      Object.fromEntries(
+        codes.flatMap(code => [
+          [`a${code.toString(16)}.js`, `debugger; //${String.fromCodePoint(code)}${tool}-disable-line no-debugger\n`],
+          [`b${code.toString(16)}.js`, `debugger; // ${tool}-disable-line${String.fromCodePoint(code)}no-debugger\n`],
+        ]),
+      );
+    const rules = { "no-debugger": "error" };
+    const [oxlint, eslint] = await Promise.all([
+      lint({ ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules }), ...files("oxlint") }),
+      lint({ "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n`, ...files("eslint") }),
+    ]);
+    const notSilenced = (...names: string[]) =>
+      names.flatMap(it => [`a${it}.js:1:1 no-debugger`, `b${it}.js:1:1 no-debugger`]).sort();
+    expect(oxlint.problems).toEqual(notSilenced("feff", "180e", "200b"));
+    expect(eslint.problems).toEqual(notSilenced("85", "180e", "200b"));
+  });
+
   // Each count is what oxlint 1.87 prints.
   test("number_of_rules is there for a file outside the working directory, unless it has another configuration", async () => {
     const rc = (rules: object) => JSON.stringify({ categories: { correctness: "off" }, rules });

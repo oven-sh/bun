@@ -6,7 +6,7 @@ use super::rc::strings_of;
 use super::{Config, ConfigObject, Pattern, presets};
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::linter::registry::{Deprecated, Registry, parse_rule_id};
+use crate::linter::registry::{Deprecated, Missing, Registry, parse_rule_id};
 use crate::linter::resolved::{find_formatting_rule, find_js_rule, needs_resolver};
 use crate::options::Json;
 use crate::paths::{self, package_of};
@@ -336,6 +336,24 @@ impl Reader<'_> {
         }
     }
 
+    /// Warns that an oxlint config turns off `id`, which isn't a rule. oxlint rejects such a config. The rules here are those of
+    /// one version of oxlint, so a config for a later one can name a rule that isn't known here.
+    fn note_unknown_rule_that_is_off(&mut self, id: &[u8]) {
+        let hint = match self.registry.why_missing(id) {
+            Missing::OfPluginWithoutRules(_) => return,
+            Missing::Unknown(Some(close)) => [b"Did you mean \"", &close[..], b"\"?"].concat(),
+            Missing::Unknown(None) | Missing::Formatting => {
+                b"It has no effect. Fix the name or remove it.".to_vec()
+            }
+        };
+        self.note(&[
+            b"Unknown rule \"",
+            id,
+            b"\" is turned off in the oxlint config\n  ",
+            &hint,
+        ]);
+    }
+
     /// Says so if the rules here, which answer for the plugin with the prefix `prefix`, are those of a later version than the one
     /// that is installed. `name`: what the plugin says it is: `<package>@<version>`.
     pub(super) fn advise_about_version(&mut self, prefix: &[u8], name: &[u8]) {
@@ -429,7 +447,7 @@ impl Reader<'_> {
             let is_about_layout = self.formatting_rule(id).is_some();
             if !is_about_layout && let Some(found) = find_js_rule(&self.js_plugins, id) {
                 // Also for a rule that is off, as in oxlint.
-                if found.is_none() {
+                let Some(rule) = found else {
                     return Err(ConfigError::new(&[
                         b"Rule '",
                         name,
@@ -437,6 +455,14 @@ impl Reader<'_> {
                         prefix,
                         b"'",
                     ]));
+                };
+                // oxlint checks the options of every entry before it lints, also of one that is off or in an override that
+                // matches no file. ESLint checks them for the files that the rule is on for.
+                if self.prefers_typescript_rules
+                    && let Err(lines) = crate::linter::schema::validate_js(rule, &setting.options)
+                {
+                    let message = super::js_options_error_of_oxlint(rule, &setting.options, &lines);
+                    return Err(ConfigError { message });
                 }
                 // A worker reads JSON.
                 let kind = setting
@@ -483,6 +509,9 @@ impl Reader<'_> {
                     let is_new = !self.unknown_rules.iter().any(|it| **it == *id);
                     if setting.severity != Severity::Off && is_new {
                         self.unknown_rules.push(id.into());
+                    }
+                    if setting.severity == Severity::Off && self.prefers_typescript_rules {
+                        self.note_unknown_rule_that_is_off(id);
                     }
                 }
             }

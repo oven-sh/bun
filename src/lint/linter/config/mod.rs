@@ -611,6 +611,32 @@ pub struct InJavaScript<'c> {
     pub others: usize,
 }
 
+/// What oxlint says about options that the schema of a JavaScript plugin's rule doesn't allow. `lines`: of [`schema::validate_js`].
+fn js_options_error_of_oxlint(rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
+    let start: &[u8] = b"Failed to setup JS plugin options:\nError: ";
+    let takes_none = match &rule.schema {
+        js_plugin::Schema::None => true,
+        js_plugin::Schema::Json(Json::Array(items)) => items.is_empty(),
+        _ => false,
+    };
+    if takes_none {
+        return [start, b"Rule '", &rule.id, b"' does not accept options"].concat();
+    }
+    let mut printed = Vec::new();
+    let options = Json::Array(schema::with_js_defaults(rule, options));
+    super::message::write_json_indented(&mut printed, &options, 0);
+    [
+        start,
+        b"Options validation failed for rule '",
+        &rule.id,
+        b"':\nOptions:\n",
+        &printed,
+        b"\nErrors:\n",
+        bun_core::strings::trim_js_whitespace_end(lines),
+    ]
+    .concat()
+}
+
 impl Config {
     /// What could not be taken over from the configuration, for the user to read.
     pub fn notes(&self) -> &[Vec<u8>] {
@@ -1006,26 +1032,10 @@ impl Config {
     /// What ESLint, or oxlint, says about options that the schema of a rule of a JavaScript plugin does not allow.
     /// `lines`: of [`schema::validate_js`].
     fn js_options_error(&self, rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
-        if !self.prefers_typescript_rules {
-            return [b"Key \"rules\": Key \"", &rule.id[..], b"\":\n", lines].concat();
+        match self.prefers_typescript_rules {
+            true => js_options_error_of_oxlint(rule, options, lines),
+            false => [b"Key \"rules\": Key \"", &rule.id[..], b"\":\n", lines].concat(),
         }
-        let start: &[u8] = b"Failed to setup JS plugin options:\nError: ";
-        if rule.schema == js_plugin::Schema::None {
-            return [start, b"Rule '", &rule.id, b"' does not accept options"].concat();
-        }
-        let mut printed = Vec::new();
-        let options = Json::Array(schema::with_js_defaults(rule, options));
-        super::message::write_json_indented(&mut printed, &options, 0);
-        [
-            start,
-            b"Options validation failed for rule '",
-            &rule.id,
-            b"':\nOptions:\n",
-            &printed,
-            b"\nErrors:\n",
-            bun_core::strings::trim_js_whitespace_end(lines),
-        ]
-        .concat()
     }
 
     /// What `options` make of `rule`, which is of a JavaScript plugin. `config` keeps the first error.

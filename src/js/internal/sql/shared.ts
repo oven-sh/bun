@@ -2259,8 +2259,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   supportsReservedConnections?(): boolean;
   cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
-  /// For a database that runs COMMIT inside `handle.run()` and can keep the transaction open when COMMIT fails.
-  /// Called in that handler after the COMMIT of `sql.begin()` failed: rolls back a transaction that is still open.
+  /// For a database that keeps the transaction open when COMMIT fails. Called in the `handle.run()` where it failed.
   rollbackFailedCommit?(connection: Connection): void;
   attachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;

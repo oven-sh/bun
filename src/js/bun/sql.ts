@@ -208,6 +208,13 @@ const SQL = function SQL(
     }
   }
 
+  // Rolls back in the call where COMMIT failed: the runner resumes after other statements of the connection ran.
+  function commitFromTransactionHandler(transactionQueries, query, handle, err) {
+    if (queryFromTransactionHandler.$call(this, transactionQueries, query, handle, err)) {
+      pool.rollbackFailedCommit!(this);
+    }
+  }
+
   function queryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
@@ -886,18 +893,9 @@ const SQL = function SQL(
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }
-      // SQLite keeps the transaction open when COMMIT fails with SQLITE_BUSY or for a deferred
-      // foreign key. It runs COMMIT inside the handler, and the adapter rolls back in that same
-      // call: after it, other statements of the connection run, and a write between the failed
-      // COMMIT and a later ROLLBACK would be lost.
       const commit_result = await run_internal_transaction_sql(
         COMMIT_COMMAND,
-        pool.rollbackFailedCommit &&
-          ((query, handle, err) => {
-            if (queryFromTransactionHandler.$call(pooledConnection, state.queries, query, handle, err)) {
-              pool.rollbackFailedCommit!(pooledConnection);
-            }
-          }),
+        pool.rollbackFailedCommit && commitFromTransactionHandler.bind(pooledConnection, state.queries),
       );
       // PostgreSQL answers COMMIT on an aborted transaction with a
       // CommandComplete tag of "ROLLBACK" (the session is already in the

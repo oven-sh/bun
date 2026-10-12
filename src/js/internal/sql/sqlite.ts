@@ -501,9 +501,9 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
   rollbackFailedCommit(connection: BunSQLiteModule.Database): void {
     try {
-      if (connection.inTransaction) connection.run("ROLLBACK");
+      connection.run("ROLLBACK");
     } catch {
-      // The database is closed, or ROLLBACK failed too. The caller gets the COMMIT error.
+      // The failed COMMIT left no transaction open. The caller gets the COMMIT error.
     }
   }
   array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {

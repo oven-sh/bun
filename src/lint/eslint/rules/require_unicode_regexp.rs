@@ -2,6 +2,9 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap, get_string_if_constant, is_comma_token};
 use bun_lint::utils::regular_expressions::{UnicodeFlag, is_valid_with_unicode_flag};
+use bun_lint_oxlint::ast_util::{get_const_variable_initializer, get_inner_expression, static_string};
+use bun_lint_oxlint::regex_flags::is_regexp_callee;
+use smallvec::SmallVec;
 
 /// Enforce the use of `u` or `v` flag on regular expressions.
 pub struct RequireUnicodeRegexp {
@@ -22,6 +25,58 @@ fn replace_first(text: &[u8], start: usize, from: u8, to: u8) -> Option<Vec<u8>>
     let mut replaced = text.to_vec();
     *replaced.get_mut(at)? = to;
     Some(replaced)
+}
+
+/// oxlint's `resolve_flags`: those of the characters `u` and `v` that are in the flags that `e` is. `None` if it does not know
+/// them. `seen` has the identifiers on the way.
+fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<SmallVec<[u8; 2]>> {
+    let of_text = |text: &[u8]| -> SmallVec<[u8; 2]> {
+        b"uv".iter().copied().filter(|it| strings::contains_char(text, *it)).collect()
+    };
+    let e = get_inner_expression(e);
+    match e.kind() {
+        ExprKind::Ident(_) => {
+            if seen.contains(&e) {
+                return None;
+            }
+            seen.push(e);
+            resolve_flags(get_const_variable_initializer(e)?, seen)
+        }
+        ExprKind::String(value) => Some(of_text(value.bytes())),
+        ExprKind::Template(template) => {
+            let mut flags: SmallVec<[u8; 2]> = SmallVec::new();
+            for i in 0..template.quasi_count() {
+                flags.extend(of_text(template.cooked(i)?.bytes()));
+                if let Some(substitution) = template.exprs().get(i) {
+                    flags.extend(resolve_flags(substitution, seen)?);
+                }
+            }
+            Some(flags)
+        }
+        ExprKind::True | ExprKind::Null => Some(of_text(b"u")),
+        ExprKind::False | ExprKind::Number(_) => Some(SmallVec::new()),
+        ExprKind::Binary { op: BinOp::Add, left, right } => {
+            let mut flags = resolve_flags(left, seen)?;
+            flags.extend(resolve_flags(right, seen)?);
+            Some(flags)
+        }
+        ExprKind::Index { obj, index, chain: Chain::No } => {
+            let object = get_inner_expression(obj);
+            let object = match object.tag() {
+                ExprTag::Ident => get_inner_expression(get_const_variable_initializer(object)?),
+                _ => object,
+            };
+            let ExprKind::Number(index) = get_inner_expression(index).kind() else {
+                return None;
+            };
+            let is_index = index.is_finite() && index >= 0.0 && index.fract() == 0.0;
+            let (_, character) = strings::wtf8_codepoints(static_string(object)?.bytes()).nth(index as usize)?;
+            is_index.then(|| of_text(&[u8::try_from(character).unwrap_or(0)]))
+        }
+        ExprKind::Binary { op: BinOp::Comma, right, .. } => resolve_flags(right, seen),
+        ExprKind::Assign { op: None, value, .. } => resolve_flags(value, seen),
+        _ => None,
+    }
 }
 
 impl RequireUnicodeRegexp {
@@ -65,7 +120,7 @@ impl RequireUnicodeRegexp {
 
 impl Rule for RequireUnicodeRegexp {
     const META: Meta = Meta::eslint("require-unicode-regexp", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
+    const ON: On = On::new().exprs(&[ExprTag::Regex, ExprTag::New]).calls_named(&["RegExp"]).finish();
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -78,7 +133,31 @@ impl Rule for RequireUnicodeRegexp {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Regex]);
+        match file.language().is_oxlint {
+            true if file.mentions("RegExp") => on.exprs(&[ExprTag::New]).calls_named(&["RegExp"]),
+            true => on,
+            false => on.finish(),
+        }
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // oxlint looks at what is called, not at what the variable is that is called.
+        if let ExprKind::Call(call) | ExprKind::New(call) = e.kind() {
+            let args = call.args();
+            if !is_regexp_callee(call.callee()) || args.iter().any(|it| it.tag() == ExprTag::Spread) {
+                return;
+            }
+            let flags = match args.get(1) {
+                Some(flags) => resolve_flags(flags, &mut SmallVec::new()),
+                None => Some(SmallVec::new()),
+            };
+            if flags.is_some_and(|it| self.is_missing_flag(&it)) {
+                cx.report(e, self.require_message());
+            }
+            return;
+        }
         let Some(regex) = e.as_regex() else {
             return;
         };

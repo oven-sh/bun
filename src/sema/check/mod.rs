@@ -2076,14 +2076,16 @@ impl<'p, 's> Checker<'p, 's> {
         };
         self.unwind_work = self.work + 1;
         self.work_trap = self.work + 1;
-        match (outermost, innermost) {
-            (Some(outermost), Some(innermost))
-                if is_without_context && self.stack[outermost] != innermost =>
-            {
+        let declarations = (outermost.zip(innermost))
+            .filter(|&(outermost, innermost)| self.stack[outermost] != innermost);
+        let starts_over = (declarations.or_else(|| self.expressions_that_start_over(q)))
+            .filter(|_| is_without_context);
+        match starts_over {
+            Some((outermost, innermost)) => {
                 self.unwind_to = outermost;
                 self.restart_with = Some(innermost);
             }
-            _ => {
+            None => {
                 self.unwind_to = 0;
                 self.restart_with = None;
                 self.ran_out_of_stack.set(true);
@@ -2094,12 +2096,33 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// After the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
+    /// `refuse_as_too_deep` for expressions in each other. The top of `stack` is nothing but expressions and properties of
+    /// object literals, each checked once and for every caller: what an expression expects of a part of it follows from
+    /// the tree and from what is in progress below them, which stays. Returns the index of the outermost and the innermost.
+    fn expressions_that_start_over(&self, q: Query) -> Option<(usize, Query)> {
+        if !self.contextual.iter().all(|info| info.is_cache)
+            || self.rechecks_at != usize::MAX
+            || self.pulls_contextual_types_at != usize::MAX
+        {
+            return None;
+        }
+        let is_expression = |q: &Query| matches!(q, Query::Expr(..));
+        let is_part = |q: &Query| matches!(q, Query::Expr(..) | Query::LiteralProp(..));
+        let below = self.stack.iter().rposition(|q| !is_part(q));
+        let from = below
+            .map_or(0, |below| below + 1)
+            .max(self.resolution_start);
+        let outermost = from + self.stack[from..].iter().position(is_expression)?;
+        let mut above = self.stack[outermost + 1..].iter().chain([&q]);
+        Some((outermost, *above.rfind(|q| is_expression(q))?))
+    }
+
+    /// After the `leave` of `left`, a `Query::Symbol`, a `Query::Return`, a `Query::Declared` or a `Query::Expr`, if
     /// `stack.len() == unwind_to`.
     /// Returns whether the caller is to start over: what `refuse_as_too_deep` refused has a result.
     #[cold]
     #[inline(never)]
-    fn resolve_what_was_too_deep(&mut self) -> bool {
+    fn resolve_what_was_too_deep(&mut self, left: Query) -> bool {
         // Every `enter` since the refusal was refused in turn.
         let is_unwinding = self.unwind_work == self.work + 1;
         let restart_with = self.restart_with.take().filter(|_| is_unwinding);
@@ -2123,10 +2146,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let key = (file, func);
                 self.p.fn_return_types.get(&self.task, &key).is_some()
             }
+            Some(Query::Expr(file, e)) => {
+                self.type_of_expr(file, e);
+                self.cached_type_of_expr(file, e).is_some()
+            }
             _ => return false,
         };
         if !is_resolved {
             self.ran_out_of_stack.set(true);
+            self.refuse_outermost_in_flight(left);
+            self.work_trap = self.work + 1;
             self.bailed_out();
         }
         is_resolved

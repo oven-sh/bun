@@ -28,17 +28,33 @@ fn is_looped<'a>(node: Node<'a>, parent: Node<'a>) -> bool {
     if !parent.is_loop() {
         return false;
     }
-    let is = |e: Option<Expr<'a>>| e.is_some_and(|e| Node::Expr(e) == node);
+    // oxlint knows a body that is a block or an expression, and no test that is a member or has a type around it.
+    let is_oxlint = parent.file().language().is_oxlint;
+    let is_known = |e: Expr<'a>| {
+        let tags = [
+            ExprTag::Dot,
+            ExprTag::Index,
+            ExprTag::As,
+            ExprTag::AsConst,
+            ExprTag::Satisfies,
+            ExprTag::NonNull,
+            ExprTag::Instantiation,
+            ExprTag::Jsx,
+        ];
+        !is_oxlint || e.is_parenthesized() || e.is_chain_root() || !tags.contains(&e.tag())
+    };
+    let is = |e: Option<Expr<'a>>| e.is_some_and(|e| Node::Expr(e) == node && is_known(e));
+    let is_body = |body: Stmt<'a>| {
+        Node::Stmt(body) == node && (!is_oxlint || body.as_block().is_some() || body.tag() == StmtTag::Expr)
+    };
     match parent.kind() {
         StmtKind::For {
             test, update, body, ..
-        } => is(test) || is(update) || Node::Stmt(body) == node,
+        } => is(test) || is(update) || is_body(body),
         StmtKind::ForOf { left, body, .. } | StmtKind::ForIn { left, body, .. } => {
-            Node::Stmt(body) == node || (Node::Stmt(left) == node && is_await_using(left))
+            is_body(body) || (Node::Stmt(left) == node && is_await_using(left))
         }
-        StmtKind::While { test, body } | StmtKind::DoWhile { body, test } => {
-            is(Some(test)) || Node::Stmt(body) == node
-        }
+        StmtKind::While { test, body } | StmtKind::DoWhile { body, test } => is(Some(test)) || is_body(body),
         _ => false,
     }
 }

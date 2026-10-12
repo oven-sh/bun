@@ -68,9 +68,13 @@ fn oxlint_place<'a>(func: Func<'a>, file: &File<'a>) -> Span {
         return func.estree_span();
     }
     let key = match func.owner() {
+        // `static async constructor() {}`
+        Node::Member(member) if member.key().is_none() => {
+            return member.constructor_keyword().map_or_else(|| func.estree_span(), |it| it.span());
+        }
         Node::Member(member) => Some(member.key()),
         Node::Expr(e) => match e.parent() {
-            Node::Prop(prop) if prop.value() == Some(e) => Some(prop.key()),
+            Node::Prop(prop) if prop.value() == Some(e) && !prop.is_jsx_attribute() => Some(prop.key()),
             _ => None,
         },
         _ => None,

@@ -2277,7 +2277,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_declared_type(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_declared_type_once(sym);
-            if self.unwind_to != self.stack.len() || !self.resolve_what_was_too_deep() {
+            if self.unwind_to != self.stack.len()
+                || !self.resolve_what_was_too_deep(Query::Declared(sym))
+            {
                 return ty;
             }
             if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {

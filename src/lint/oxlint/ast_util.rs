@@ -290,6 +290,19 @@ pub fn get_declaration_of_variable(ident: Expr<'_>) -> Option<Declaration<'_>> {
     symbol_of(ident)?.declarations().next()
 }
 
+/// What the `const` that the identifier `ident` refers to is initialized with.
+pub fn get_const_variable_initializer(ident: Expr<'_>) -> Option<Expr<'_>> {
+    let Declaration::Var(pat) = get_declaration_of_variable(ident)? else {
+        return None;
+    };
+    let Node::VarDecl(declarator) = pat.parent() else {
+        return None;
+    };
+    declarator
+        .init()
+        .filter(|_| declarator.var_kind() == VarKind::Const)
+}
+
 /// `iter_outer_expressions`: what it is part of, from the inside, without what [`get_inner_expression`] skips.
 pub fn iter_outer_expressions(e: Expr<'_>) -> impl Iterator<Item = Node<'_>> {
     Node::Expr(e).ancestors().filter(|it| {

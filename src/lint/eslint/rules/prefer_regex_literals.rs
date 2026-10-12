@@ -5,6 +5,8 @@ use bun_lint::regex::{self, Ignore, Mode, parse_pattern, validate_flags, validat
 use bun_lint::utils::ast_utils::{TokenOrText, can_tokens_be_adjacent};
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap};
 use bun_lint::utils::regular_expressions::REGEXPP_LATEST_ECMA_VERSION;
+use bun_lint_oxlint::ast_util::get_inner_expression;
+use bun_lint_oxlint::regex_flags::is_regexp_callee;
 use std::borrow::Cow;
 
 /// Disallow use of the `RegExp` constructor in favor of regular expression literals.
@@ -263,7 +265,7 @@ fn replace_with_equivalent_literal<'a>(
 
 impl Rule for PreferRegexLiterals {
     const META: Meta = Meta::eslint("prefer-regex-literals", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().finish();
+    const ON: On = On::new().exprs(&[ExprTag::New]).calls_named(&["RegExp"]).finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -278,55 +280,77 @@ impl Rule for PreferRegexLiterals {
         (file.mentions("RegExp") || !file.language().is_oxlint && may_be_computed()).then_some(())
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().is_oxlint {
+            true => On::new().exprs(&[ExprTag::New]).calls_named(&["RegExp"]),
+            false => On::new().finish(),
+        }
+    }
+
+    /// oxlint looks at what is called, not at what the variable is that is called, and through `as` around an argument.
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Call(call) | ExprKind::New(call) = e.kind()
+            && is_regexp_callee(call.callee())
+        {
+            self.check(e, call, get_inner_expression, cx);
+        }
+    }
+
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         for reference in ReferenceTracker::new(cx.file()).iterate_global_references(&TRACE_MAP) {
-            let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
-                continue;
-            };
-            let arguments = call.args();
-            let (Some(first), second) = (arguments.first(), arguments.get(1)) else {
-                continue;
-            };
-            if arguments.len() > 2 {
-                continue;
+            if let (Some(node), Some(call)) = (reference.expr(), reference.call()) {
+                self.check(node, call, |argument| argument, cx);
             }
-            // Those of a second argument that is a static string.
-            let flags = match second {
-                Some(second) => match get_string_value(second) {
-                    Some(flags) => flags,
-                    None => continue,
-                },
-                None => Cow::Borrowed(&b""[..]),
-            };
-            if let Some(literal) = first.as_regex() {
-                if !self.disallow_redundant_wrapping {
-                    continue;
-                }
-                let pattern = literal.pattern();
-                if second.is_none() {
-                    cx.report(node, UNEXPECTED_REDUNDANT_REGEXP).suggest(REPLACE_WITH_LITERAL, |fixer| {
-                        replace_with_literal(fixer, node, pattern, literal.flags())
-                    });
-                    continue;
-                }
-                let report = cx.report(node, UNEXPECTED_REDUNDANT_REGEXP_WITH_FLAGS).suggest_with(
-                    REPLACE_WITH_LITERAL_AND_FLAGS,
-                    &[("flags", &*flags)],
-                    |fixer| replace_with_literal(fixer, node, pattern, &flags),
-                );
-                let merged_flags = merge_regex_flags(literal.flags(), &flags);
-                if !are_flags_equal(&merged_flags, &flags) {
-                    report.suggest_with(
-                        REPLACE_WITH_INTENDED_LITERAL_AND_FLAGS,
-                        &[("flags", &merged_flags[..])],
-                        |fixer| replace_with_literal(fixer, node, pattern, &merged_flags),
-                    );
-                }
-            } else if let Some(content) = get_string_value(first) {
-                cx.report(node, UNEXPECTED_REGEXP).suggest(REPLACE_WITH_LITERAL, |fixer| {
-                    replace_with_equivalent_literal(fixer, node, &content, &flags)
+        }
+    }
+}
+
+impl PreferRegexLiterals {
+    /// `node` calls `RegExp`. `inner` is what counts of an argument.
+    fn check<'a>(&self, node: Expr<'a>, call: Call<'a>, inner: fn(Expr<'a>) -> Expr<'a>, cx: &Cx<'a, Self>) {
+        let arguments = call.args();
+        let (Some(first), second) = (arguments.first().map(inner), arguments.get(1).map(inner)) else {
+            return;
+        };
+        if arguments.len() > 2 {
+            return;
+        }
+        // Those of a second argument that is a static string.
+        let flags = match second {
+            Some(second) => match get_string_value(second) {
+                Some(flags) => flags,
+                None => return,
+            },
+            None => Cow::Borrowed(&b""[..]),
+        };
+        if let Some(literal) = first.as_regex() {
+            if !self.disallow_redundant_wrapping {
+                return;
+            }
+            let pattern = literal.pattern();
+            if second.is_none() {
+                cx.report(node, UNEXPECTED_REDUNDANT_REGEXP).suggest(REPLACE_WITH_LITERAL, |fixer| {
+                    replace_with_literal(fixer, node, pattern, literal.flags())
                 });
+                return;
             }
+            let report = cx.report(node, UNEXPECTED_REDUNDANT_REGEXP_WITH_FLAGS).suggest_with(
+                REPLACE_WITH_LITERAL_AND_FLAGS,
+                &[("flags", &*flags)],
+                |fixer| replace_with_literal(fixer, node, pattern, &flags),
+            );
+            let merged_flags = merge_regex_flags(literal.flags(), &flags);
+            if !are_flags_equal(&merged_flags, &flags) {
+                report.suggest_with(
+                    REPLACE_WITH_INTENDED_LITERAL_AND_FLAGS,
+                    &[("flags", &merged_flags[..])],
+                    |fixer| replace_with_literal(fixer, node, pattern, &merged_flags),
+                );
+            }
+        } else if let Some(content) = get_string_value(first) {
+            cx.report(node, UNEXPECTED_REGEXP).suggest(REPLACE_WITH_LITERAL, |fixer| {
+                replace_with_equivalent_literal(fixer, node, &content, &flags)
+            });
         }
     }
 }

@@ -40,7 +40,15 @@ enum Owner<'a> {
 }
 
 impl<'a> Owner<'a> {
-    fn of(rhs: Expr<'a>) -> Option<Owner<'a>> {
+    fn of(mut rhs: Expr<'a>) -> Option<Owner<'a>> {
+        let is_oxlint = rhs.file().language().is_oxlint;
+        // oxlint looks through `as`, `satisfies` and `!`.
+        while is_oxlint
+            && let Node::Expr(parent) = rhs.parent()
+            && parent.skip_type_wrappers() != parent
+        {
+            rhs = parent;
+        }
         match rhs.parent() {
             Node::VarDecl(decl) if decl.init() == Some(rhs) => Some(Owner::Var(decl)),
             Node::Member(member)
@@ -53,7 +61,7 @@ impl<'a> Owner<'a> {
             Node::Param(param)
                 if param.default() == Some(rhs)
                     // oxlint looks at every parameter.
-                    && (rhs.file().language().is_oxlint
+                    && (is_oxlint
                         || !param.is_parameter_property()
                             && param.func().is_some_and(|func| !func.is_arrow() && func.has_body())) =>
             {
@@ -157,6 +165,10 @@ impl Rule for ConsistentGenericConstructors {
         let TypeKind::Ref { name, args } = lhs.kind() else {
             return;
         };
+        // For oxlint `(A<B>)` is no reference.
+        if lhs.is_parenthesized() && cx.language().is_oxlint {
+            return;
+        }
         let Some(type_name) = name.as_ident().map(Ident::name) else {
             return;
         };

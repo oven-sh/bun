@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_declaration_of_variable, get_inner_expression, get_member_expr, is_method_call};
+use bun_lint_oxlint::ast_util::{get_const_variable_initializer, get_inner_expression, get_member_expr, is_method_call};
 use bun_lint_oxlint::regex_flags::is_regexp_callee;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -14,17 +14,6 @@ fn is_reference_expression(fill_value: Expr) -> bool {
         ExprKind::New(new) => !is_regexp_callee(get_inner_expression(new.callee())),
         _ => false,
     }
-}
-
-/// What the `const` that `fill_value` refers to is initialized with.
-fn get_const_variable_initializer(fill_value: Expr<'_>) -> Option<Expr<'_>> {
-    let Declaration::Var(pat) = get_declaration_of_variable(get_inner_expression(fill_value))? else {
-        return None;
-    };
-    let Node::VarDecl(declarator) = pat.parent() else {
-        return None;
-    };
-    declarator.init().filter(|_| declarator.var_kind() == VarKind::Const)
 }
 
 impl Rule for NoArrayFillWithReferenceType {
@@ -53,7 +42,7 @@ impl Rule for NoArrayFillWithReferenceType {
             return;
         };
         if is_reference_expression(fill_value)
-            || get_const_variable_initializer(fill_value).is_some_and(is_reference_expression)
+            || get_const_variable_initializer(get_inner_expression(fill_value)).is_some_and(is_reference_expression)
         {
             cx.report(fill_value.outer_span(), NO_REFERENCE_FILL_VALUE);
         }

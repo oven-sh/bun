@@ -435,6 +435,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
                 let left = self.leave(Query::Expr(file, e));
+                if left.is_err()
+                    && self.unwind_to == self.stack.len()
+                    && self.resolve_what_was_too_deep(Query::Expr(file, e))
+                {
+                    return self.type_of_expr_on_cache_miss(file, e, is_rechecked);
+                }
                 if let Err(open) = left
                     && !afresh
                 {

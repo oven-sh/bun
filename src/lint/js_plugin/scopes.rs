@@ -12,8 +12,8 @@
 //!
 //! | Part | Words |
 //! | --- | --- |
-//! | header | counts of scopes, declared variables, all variables, definitions, references and implicit globals, the length of the lists, the list `scopeManager.scopes`, then two maps, from a block to its scopes and from a node to the variables it declares |
-//! | scopes | 9 each: [`ScopeKind`] with bit 8 for strict, block, upper scope, variable scope, last scope inside it, then the lists `childScopes`, `variables`, `references`, `through` |
+//! | header | counts of scopes, declared variables, all variables, definitions, references and implicit globals, the length of the lists, the list `scopeManager.scopes`, two maps, from a block to its scopes and from a node to the variables it declares, then how many of the implicit globals are in `globalScope.implicit` |
+//! | scopes | 9 each: [`ScopeKind`] with flags from bit 8 on, block, upper scope, variable scope, last scope inside it, then the lists `childScopes`, `variables`, `references`, `through` |
 //! | variables | 8 each: name, scope, flags, the lists `defs`, `references` and `identifiers`, what ESLint sets on a global with the shape above bit 8, the list of where the `/* global */` comments start |
 //! | definitions | 7 each: [`DeclarationKind`], name, node, parent, index, flags, `kind` |
 //! | references | 5 each: identifier, flags, written expression, resolved variable, scope |
@@ -52,12 +52,23 @@ const IS_IN_LIB: u32 = 1 << 6;
 const IS_CONFIGURED: u32 = 1 << 7;
 /// `variable.stack` of `eslint-scope`.
 const IS_STACK: u32 = 1 << 8;
+/// `variable.tainted` of `eslint-scope`.
+const IS_TAINTED_VARIABLE: u32 = 1 << 9;
+
+/// In the kind of a scope.
+const IS_STRICT: u32 = 1 << 8;
+/// `scope.thisFound` of `eslint-scope`.
+const HAS_THIS: u32 = 1 << 9;
+/// It's the scope of a function that has `arguments`, which `eslint-scope` has in `scope.taints`.
+const HAS_ARGUMENTS: u32 = 1 << 10;
 
 /// In the flags of a reference, above its [`ReferenceFlags`]. It refers to a global variable that the
 /// file doesn't declare.
 const TO_GLOBAL: u32 = 1 << 8;
 /// `reference.partial` of `eslint-scope`.
 const IS_PARTIAL: u32 = 1 << 9;
+/// `reference.tainted` of `eslint-scope`.
+const IS_TAINTED: u32 = 1 << 10;
 
 /// In the flags of a definition. `definition.rest`.
 const IS_REST: u32 = 1 << 0;
@@ -180,7 +191,7 @@ impl Name {
 }
 
 struct ScopeRecord {
-    /// [`ScopeKind`], and bit 8 for strict.
+    /// [`ScopeKind`], and flags from [`IS_STRICT`] on.
     kind: u32,
     block: u32,
     upper: Option<u32>,
@@ -197,7 +208,7 @@ impl ScopeRecord {
     }
 
     fn is_strict(&self) -> bool {
-        self.kind & 256 != 0
+        self.kind & IS_STRICT != 0
     }
 }
 
@@ -331,6 +342,38 @@ impl<'t, 'a> Tree<'t, 'a> {
         }
     }
 
+    fn is_field(&self, id: u32, field: Field, item: u32) -> bool {
+        matches!(
+            (self.field(id, field), self.nodes.get(item as usize)),
+            (Value::Node(node), Some(&item)) if node == item
+        )
+    }
+
+    /// `reference.partial` of `eslint-scope`: `written` isn't what `identifier` has afterwards, only something that it's taken from.
+    fn is_partial_write(&self, identifier: u32, written: u32) -> bool {
+        let (around, writer) = (self.parent(identifier), self.parent(written));
+        match self.node_type(writer) {
+            // A default value is written to the whole left side.
+            Some(NodeType::AssignmentPattern) if self.is_field(writer, Field::Right, written) => {
+                around != writer
+            }
+            Some(NodeType::ForInStatement | NodeType::ForOfStatement)
+                if self.is_field(writer, Field::Right, written) =>
+            {
+                true
+            }
+            _ => matches!(
+                self.node_type(around),
+                Some(
+                    NodeType::Property
+                        | NodeType::ArrayPattern
+                        | NodeType::RestElement
+                        | NodeType::AssignmentPattern
+                )
+            ),
+        }
+    }
+
     /// Fills in `node`, `parent`, `index` and the flags of a definition from its kind and its name.
     fn complete(&self, definition: &mut DefinitionRecord, is_espree: bool) {
         let name = definition.name;
@@ -373,11 +416,9 @@ impl<'t, 'a> Tree<'t, 'a> {
                 }
                 definition.index = self.index_in(node, Field::Params, parameter);
             }
-            let is_argument = matches!(
-                (self.field(around, Field::Argument), self.nodes.get(name as usize)),
-                (Value::Node(argument), Some(&name)) if argument == name
-            );
-            if self.is(around, NodeType::RestElement) && is_argument {
+            if self.is(around, NodeType::RestElement)
+                && self.is_field(around, Field::Argument, name)
+            {
                 definition.flags |= IS_REST;
             }
         }
@@ -706,7 +747,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         for scope in file.scopes() {
             let index = self.scopes.len() as u32;
             self.scopes.push(ScopeRecord {
-                kind: scope.kind() as u32 | u32::from(scope.is_strict()) << 8,
+                kind: scope.kind() as u32 | (u32::from(scope.is_strict()) * IS_STRICT),
                 block: id(block(scope)),
                 upper: scope.parent().map(|it| it.id().0),
                 variable_scope: scope.variable_scope().id().0,
@@ -784,23 +825,16 @@ impl<'t, 'a> Builder<'t, 'a> {
                     | (u32::from(!global.is_only_in_lib) * IS_CONFIGURED);
                 self.referred.push((self.references.len() as u32, flags));
             }
+            let written = id(reference.write_expr().and_then(expression));
             let is_partial = self.is_espree
                 && reference.flags().contains(ReferenceFlags::WRITE)
-                && matches!(
-                    self.tree.node_type(self.tree.parent(identifier)),
-                    Some(
-                        NodeType::Property
-                            | NodeType::ArrayPattern
-                            | NodeType::RestElement
-                            | NodeType::AssignmentPattern
-                    )
-                );
+                && self.tree.is_partial_write(identifier, written);
             self.references.push(ReferenceRecord {
                 identifier,
                 flags: u32::from(reference.flags().bits())
                     | (u32::from(global.is_some()) * TO_GLOBAL)
                     | (u32::from(is_partial) * IS_PARTIAL),
-                written: id(reference.write_expr().and_then(expression)),
+                written,
                 variable: (reference.symbol())
                     .and_then(|it| index_of.get(it.key()))
                     .copied()
@@ -1205,6 +1239,8 @@ impl<'t, 'a> Builder<'t, 'a> {
     /// `scope.through` of every scope.
     fn through(&mut self) -> Vec<u32> {
         let (mut keys, mut values) = (Vec::new(), Vec::new());
+        // The references that leave a `with` statement, where nobody knows what a name means.
+        let mut tainted = Vec::new();
         for (reference, index) in self.references.iter().zip(0..) {
             let is_to_global = reference.flags & TO_GLOBAL != 0;
             // Where it resolves. It goes through every scope from its own up to there.
@@ -1223,20 +1259,47 @@ impl<'t, 'a> Builder<'t, 'a> {
                     keys.push(scope);
                     values.push(index);
                 }
+                if self.scopes[scope as usize].is(ScopeKind::With) && tainted.last() != Some(&index)
+                {
+                    tainted.push(index);
+                }
                 next = self.scopes[scope as usize].upper;
+            }
+        }
+        for index in tainted {
+            let reference = &mut self.references[index as usize];
+            reference.flags |= IS_TAINTED;
+            if reference.flags & TO_GLOBAL == 0
+                && let Some(variable) = self.variables.get_mut(reference.variable as usize)
+            {
+                variable.flags |= IS_TAINTED_VARIABLE;
             }
         }
         group(&keys, &values, self.scopes.len(), &mut self.lists)
     }
 
-    /// `globalScope.implicit.variables`: for each a list of pairs, the identifier that is assigned to and the node that
-    /// assigns. `through`: that of the global scope.
-    fn implicit_globals(&mut self, through: u32) -> Vec<u32> {
+    /// The variables that an assignment in sloppy mode creates: for each a list of pairs, the identifier that is assigned to and
+    /// the node that assigns. `through`: that of the global scope.
+    fn implicit_globals(&mut self, through: u32) -> ImplicitGlobals {
         let length = self.lists[through as usize] as usize;
         let through = self.lists[through as usize + 1..][..length].to_vec();
+        let kept = self.implicit_globals_among(through.into_iter());
+        // `eslint-scope` has made one for a global of the configuration too. ESLint takes it out of `globalScope.implicit`
+        // again, and `getDeclaredVariables()` still finds it.
+        let to_globals = (0..self.references.len() as u32)
+            .filter(|&it| self.references[it as usize].flags & TO_GLOBAL != 0)
+            .collect::<Vec<u32>>();
+        let removed = self.implicit_globals_among(to_globals.into_iter());
+        ImplicitGlobals {
+            kept: kept.len() as u32,
+            lists: kept.into_iter().chain(removed).collect(),
+        }
+    }
+
+    fn implicit_globals_among(&mut self, references: impl Iterator<Item = u32>) -> Vec<u32> {
         let mut by_name: FxHashMap<&[u8], usize> = FxHashMap::default();
         let mut variables: Vec<Vec<u32>> = Vec::new();
-        for reference in through.iter().map(|&it| &self.references[it as usize]) {
+        for reference in references.map(|it| &self.references[it as usize]) {
             let only_writes = reference.flags & 3 == u32::from(ReferenceFlags::WRITE.bits());
             let is_init = reference.flags & u32::from(ReferenceFlags::INIT.bits()) != 0;
             if !only_writes || is_init || self.scopes[reference.from as usize].is_strict() {
@@ -1262,6 +1325,13 @@ impl<'t, 'a> Builder<'t, 'a> {
     }
 }
 
+/// See [`Builder::implicit_globals`].
+struct ImplicitGlobals {
+    lists: Vec<u32>,
+    /// How many of them are in `globalScope.implicit`. They come first.
+    kept: u32,
+}
+
 impl Builder<'_, '_> {
     /// `variable.stack`: every reference that `eslint-scope` itself has resolved comes from the function that declares the
     /// variable. ESLint resolves the references to the globals that it adds, and leaves `stack` alone.
@@ -1279,6 +1349,33 @@ impl Builder<'_, '_> {
                 && function_of(reference.from) != function_of(variable.scope)
             {
                 variable.flags &= !IS_STACK;
+            }
+        }
+    }
+
+    /// Sets [`HAS_THIS`] and [`HAS_ARGUMENTS`].
+    fn find_this_and_arguments(&mut self) {
+        // By its block: the innermost scope that `this` can belong to.
+        let mut by_block: FxHashMap<u32, usize> = FxHashMap::default();
+        for (index, scope) in self.scopes.iter_mut().enumerate() {
+            if scope.variable_scope as usize == index {
+                by_block.insert(scope.block, index);
+            }
+            if scope.is(ScopeKind::Function)
+                && !self.tree.is(scope.block, NodeType::ArrowFunctionExpression)
+            {
+                scope.kind |= HAS_ARGUMENTS;
+            }
+        }
+        let this = NodeType::ThisExpression as u8;
+        for (_, id) in (self.tree.types.iter().zip(0..)).filter(|it| *it.0 == this) {
+            let mut node = id;
+            while node != NONE {
+                if let Some(&scope) = by_block.get(&node) {
+                    self.scopes[scope].kind |= HAS_THIS;
+                    break;
+                }
+                node = self.tree.parent(node);
             }
         }
     }
@@ -1336,17 +1433,22 @@ impl Builder<'_, '_> {
                     add(definition.parent, variable);
                 }
             }
-            if scope != 0 {
-                continue;
-            }
-            for (&pairs, variable) in implicit.iter().zip(self.variables.len() as u32..) {
-                let at = pairs as usize;
-                let pairs = self.lists[at + 1..][..self.lists[at] as usize]
-                    .as_chunks::<2>()
-                    .0;
-                for &[_, node] in pairs {
-                    add(node, variable);
-                }
+        }
+        // `eslint-scope` makes the implicit globals last, one definition at a time, in the order of the assignments.
+        let mut assignments = Vec::new();
+        for (&pairs, variable) in implicit.iter().zip(self.variables.len() as u32..) {
+            let at = pairs as usize;
+            let pairs = self.lists[at + 1..][..self.lists[at] as usize]
+                .as_chunks::<2>()
+                .0;
+            assignments.extend(pairs.iter().map(|&[name, node]| (name, node, variable)));
+        }
+        assignments.sort_unstable();
+        let mut seen = FxHashSet::default();
+        for (_, node, variable) in assignments {
+            if node != NONE && seen.insert((node, variable)) {
+                keys.push(node);
+                values.push(variable);
             }
         }
         self.map_of(&keys, &values)
@@ -1388,6 +1490,9 @@ pub(super) fn write<'t, 'a>(
     let mut global_variables: Vec<u32> = (0..end_of_global).collect();
     builder.add_globals(file, offsets, configured, &mut global_variables);
     builder.set_stack();
+    if builder.is_espree {
+        builder.find_this_and_arguments();
+    }
 
     let uppers: Vec<u32> = (listed.iter())
         .map(|&it| builder.scopes[it as usize].upper.unwrap_or(NONE))
@@ -1412,7 +1517,8 @@ pub(super) fn write<'t, 'a>(
         })
         .collect();
     let node_to_scope = builder.node_to_scope(&listed);
-    let declared_variables = builder.declared_variables(&listed, &variables_by_scope, &implicit);
+    let declared_variables =
+        builder.declared_variables(&listed, &variables_by_scope, &implicit.lists);
     let listed = push_list(&mut builder.lists, &listed);
 
     let mut words = Vec::with_capacity(
@@ -1420,7 +1526,7 @@ pub(super) fn write<'t, 'a>(
             + 8 * builder.variables.len()
             + 7 * builder.definitions.len()
             + 5 * builder.references.len()
-            + implicit.len(),
+            + implicit.lists.len(),
     );
     for (scope, at) in builder.scopes.iter().zip(0..) {
         words.extend_from_slice(&[
@@ -1470,7 +1576,7 @@ pub(super) fn write<'t, 'a>(
     for it in &builder.references {
         words.extend_from_slice(&[it.identifier, it.flags, it.written, it.variable, it.from]);
     }
-    words.extend_from_slice(&implicit);
+    words.extend_from_slice(&implicit.lists);
 
     let header: [u32; HEADER] = [
         scope_count as u32,
@@ -1478,12 +1584,12 @@ pub(super) fn write<'t, 'a>(
         builder.variables.len() as u32,
         builder.definitions.len() as u32,
         builder.references.len() as u32,
-        implicit.len() as u32,
+        implicit.lists.len() as u32,
         builder.lists.len() as u32,
         listed,
         node_to_scope,
         declared_variables,
-        0,
+        implicit.kept,
     ];
     wire::words(out, &header);
     wire::words(out, &words);

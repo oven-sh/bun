@@ -574,7 +574,7 @@ function scopeManager() {
     variables: words(8 * variableCount),
     definitions: words(7 * definitionCount),
     references: words(5 * referenceCount),
-    implicitGlobals: words(implicitCount),
+    implicitGlobals: words(implicitCount).subarray(0, new Uint32Array(buffer, 40, 1)[0]),
     lists: words(listLength),
     variableObjects: new Array(variableCount),
     referenceObjects: new Array(referenceCount),

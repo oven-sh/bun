@@ -23,6 +23,9 @@ let tree = null;
 // The nodes of the file, by their number.
 let nodes = [];
 
+// `loc` here and `SourceCode` in source_code.js are also in src/jsc/bindings/LintSourceCode.cpp, which this turns on.
+const usesNativeSourceCode = process.env.BUN_LINT_NATIVE_SOURCE_CODE === "1";
+
 class Node {
   get loc() {
     const loc = { start: locationOf(this.range[0]), end: locationOf(this.range[1]) };
@@ -32,6 +35,9 @@ class Node {
   set loc(loc) {
     Object.defineProperty(this, "loc", { value: loc, writable: true, enumerable: true, configurable: true });
   }
+}
+if (usesNativeSourceCode) {
+  Object.defineProperty(Node.prototype, "loc", { get: native.locGetter, set: native.locSetter, configurable: true });
 }
 
 // The fields that a node does not have at all, where the others are `undefined`: rules ask whether a `Literal` has a `regex`.

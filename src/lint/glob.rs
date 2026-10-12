@@ -92,6 +92,25 @@ pub fn from_minimatch(pattern: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Returns the index after each path segment of `pattern` that ends outside of all groups.
+fn segment_ends(pattern: &[u8]) -> Vec<usize> {
+    let mut ends = Vec::new();
+    let (mut at, mut depth) = (0, 0_usize);
+    while let Some(&byte) = pattern.get(at) {
+        match byte {
+            b'\\' => at += 1,
+            b'[' => at = class_end(pattern, at).map_or(at, |end| end - 1),
+            b'{' | b'(' => depth += 1,
+            b'}' | b')' => depth = depth.saturating_sub(1),
+            b'/' if depth == 0 => ends.push(at),
+            _ => {}
+        }
+        at += 1;
+    }
+    ends.push(pattern.len());
+    ends
+}
+
 /// The minimatch options that the supported plugins can pass.
 #[derive(Copy, Clone, Default)]
 pub struct MinimatchOptions {
@@ -111,6 +130,8 @@ pub struct Minimatch {
     /// The pattern without its leading `!`s. `None` for a `#` comment, which matches nothing.
     pattern: Option<Pattern>,
     is_negated: bool,
+    /// For a negated pattern `a/b/c`: `a`, `a/b` and `a/b/c`. See [`Minimatch::may_match_inside`].
+    prefixes: Vec<Pattern>,
     /// `matchBase` is set and the pattern has no `/`, so it only looks at the file name.
     matches_file_name: bool,
     /// `nocase` is set. The pattern is already lower case.
@@ -130,23 +151,24 @@ impl Minimatch {
             true => 0,
             false => written.iter().take_while(|it| **it == b'!').count(),
         };
-        let parse = || {
-            let mut text = from_minimatch(&written[bangs..]);
-            if options.noext {
-                text = strings::replace_owned(&text, b"(", b"\\(");
-            }
-            // Only `nonegate` leaves a `!` here. It's a plain character then.
-            if text.starts_with(b"!") {
-                text.insert(0, b'\\');
-            }
-            match options.dot {
-                true => Pattern::with_dots(&text, Dots::SkipTraversal),
-                false => Pattern::with_dots(&text, Dots::Hide),
-            }
+        let mut text = from_minimatch(&written[bangs..]);
+        if options.noext {
+            text = strings::replace_owned(&text, b"(", b"\\(");
+        }
+        // Only `nonegate` leaves a `!` here. It's a plain character then.
+        if text.starts_with(b"!") {
+            text.insert(0, b'\\');
+        }
+        let parse = |text: &[u8]| match options.dot {
+            true => Pattern::with_dots(text, Dots::SkipTraversal),
+            false => Pattern::with_dots(text, Dots::Hide),
         };
+        let is_negated = bangs % 2 == 1 && !options.flip_negate;
+        let ends = segment_ends(&text).into_iter().filter(|_| is_negated);
         Minimatch {
-            pattern: (options.nocomment || !written.starts_with(b"#")).then(parse),
-            is_negated: bangs % 2 == 1 && !options.flip_negate,
+            pattern: (options.nocomment || !written.starts_with(b"#")).then(|| parse(&text)),
+            is_negated,
+            prefixes: ends.map(|end| parse(&text[..end])).collect(),
             matches_file_name: options.match_base && !strings::contains_char(&written, b'/'),
             folds_case: options.nocase,
         }
@@ -184,9 +206,14 @@ impl Minimatch {
 
     /// `match(directory, true)`, minimatch's partial match. ESLint only enters a directory if this returns true.
     pub fn may_match_inside(&self, directory: &[u8]) -> bool {
-        // A partial match is a match of the directory itself or of something inside it.
-        let is_hit = |it: &Pattern| it.matches(directory) || it.may_match_inside(directory);
-        (self.pattern.as_ref()).is_some_and(|it| is_hit(it) != self.is_negated)
+        // A partial match means the directory matches the first segments of the pattern. `Pattern::may_match_inside` may say
+        // yes too often, which is fine unless the answer is negated.
+        self.pattern
+            .as_ref()
+            .is_some_and(|it| match self.is_negated {
+                true => !self.prefixes.iter().any(|prefix| prefix.matches(directory)),
+                false => it.matches(directory) || it.may_match_inside(directory),
+            })
     }
 }
 

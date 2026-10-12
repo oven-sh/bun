@@ -19,7 +19,7 @@ pub const PROGRAM: &[(&str, &str)] = &[
     (
         "",
         "return { scopeManager, resetScopes, usedVariables };\n})();\n\
-         if (process.env.BUN_LINT_SCOPE_CELLS === \"1\") ({ scopeManager, resetScopes, usedVariables } = scopeCells);\n",
+         ({ scopeManager, resetScopes, usedVariables } = scopeCells);\n",
     ),
     ("source_code.js", include_str!("worker/source_code.js")),
     ("report.js", include_str!("worker/report.js")),

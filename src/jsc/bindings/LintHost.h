@@ -5,6 +5,7 @@
 #include "LintReport.h"
 #include "LintSourceCode.h"
 #include "LintTokens.h"
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSString.h>
 #include <wtf/Vector.h>
@@ -67,6 +68,9 @@ public:
     JSC::JSObject* createPosition(JSC::VM&, double index);
     // `{ start: { line, column }, end: { line, column } }`
     JSC::JSObject* createLoc(JSC::VM&, double start, double end);
+    // Whether `value` is an object with the Structure of what these two make, so that its properties are at the offsets 0 and 1.
+    bool isPosition(JSC::JSValue value) const { return value.isCell() && value.asCell()->structure() == m_positionStructure.get(); }
+    bool isLoc(JSC::JSValue value) const { return value.isCell() && value.asCell()->structure() == m_locStructure.get(); }
 
     LintReportState report;
     LintSourceCodeState sourceCode;
@@ -91,13 +95,41 @@ private:
     WTF::Vector<uint32_t> m_lineStarts;
 };
 
+// `target[name]`. An own data property of an ordinary object is found without a walk through the prototype chain.
+inline JSC::JSValue lintGet(JSC::JSGlobalObject* globalObject, JSC::JSValue target, const JSC::Identifier& name)
+{
+    if (target.isObject()) [[likely]] {
+        JSC::JSObject* object = asObject(target);
+        JSC::Structure* structure = object->structure();
+        if (!structure->typeInfo().overridesGetOwnPropertySlot()) [[likely]] {
+            unsigned attributes;
+            JSC::PropertyOffset offset = structure->get(globalObject->vm(), name, attributes);
+            if (offset != JSC::invalidOffset && !(attributes & (JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::CustomAccessorOrValue))) [[likely]]
+                return object->getDirect(offset);
+        }
+    }
+    return target.get(globalObject, name);
+}
+
+// `target[index]`
+inline JSC::JSValue lintGetIndex(JSC::JSGlobalObject* globalObject, JSC::JSValue target, unsigned index)
+{
+    if (target.isCell() && isJSArray(target.asCell())) [[likely]] {
+        JSC::JSArray* array = asArray(target);
+        if (array->canGetIndexQuickly(index)) [[likely]]
+            return array->getIndexQuickly(index);
+    }
+    return target.get(globalObject, index);
+}
+
 struct LintSpan {
     const uint8_t* ptr;
     size_t len;
 };
 
 // src/runtime/cli/lint_js.rs. Asks Rust about the file that's being linted. `kind` is one of `ask` in src/lint/js_plugin/wire.rs.
-// The answer is overwritten by the next one. It's `{ nullptr, 0 }` if no file is being linted.
+// The answer is Rust's memory, aligned to 8 bytes. It stays as it is and where it is until Rust calls `Bun__Lint__endFile`, so keep the span, not a copy,
+// and drop it in `endFile`. Asking again without details gives the same span. It's `{ nullptr, 0 }` if no file is being linted.
 extern "C" LintSpan Bun__Lint__ask(JSC::JSGlobalObject*, uint32_t kind, const uint8_t* details, size_t detailsLength);
 
 // For the lazy `m_lintHost` of ZigGlobalObject.

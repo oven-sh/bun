@@ -735,6 +735,75 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // ESLint 10.12.0 keeps these reports too. It prints `null` in JSON and 0 in `stylish`. Only its order differs, because it sorts
+  // with NaN.
+  test.concurrent(
+    "a report whose line or column isn't a number is kept",
+    async () => {
+      const files = {
+        "eslint.config.mjs": `
+          const locs = [{ line: 3 }, 5, { line: "1", column: "2" }, { start: { line: 3 } }, { column: 2 }];
+          const rule = {
+            create: context => ({
+              Program(node) {
+                locs.forEach((loc, i) => context.report({ node, loc, message: "loc " + i }));
+                context.report({ node, message: "last" });
+              },
+            }),
+          };
+          export default [{ plugins: { demo: { rules: { locs: rule } } }, rules: { "demo/locs": "error" } }];`,
+        "a.js": "a;\nb;\nc;\n",
+      };
+      const [json, stylish] = await Promise.all([
+        lint(files, ["-f", "json", "a.js"]),
+        lint(files, ["-f", "stylish", "a.js"]),
+      ]);
+      const places = JSON.parse(json.raw)[0].messages.map((it: any) => [it.message, it.line, it.column]);
+      expect(places).toEqual([
+        ["loc 1", null, null],
+        ["loc 2", null, null],
+        ["loc 4", null, 3],
+        ["last", 1, 1],
+        ["loc 0", 3, null],
+        ["loc 3", 3, null],
+      ]);
+      expect(
+        stylish.stdout
+          .split("\n")
+          .filter(line => line.includes("demo/locs"))
+          .map(line => line.trim().split(/\s+/)[0]),
+      ).toEqual(["0:0", "0:0", "0:3", "1:1", "3:0", "3:0"]);
+      expect({ json: json.exitCode, stylish: stylish.exitCode }).toEqual({ json: 1, stylish: 1 });
+    },
+    timeout,
+  );
+
+  // As under ESLint 10.12.0.
+  test.concurrent(
+    "`-f json` has the `data` of a suggestion that has a `desc`",
+    async () => {
+      const files = {
+        "eslint.config.mjs": `
+          const rule = {
+            meta: { hasSuggestions: true },
+            create: context => ({
+              Program(node) {
+                context.report({ node, message: "bad", suggest: [{ desc: "Use {{name}}.", data: { name: "b" }, fix: fixer => fixer.replaceText(node, "b") }] });
+              },
+            }),
+          };
+          export default [{ plugins: { demo: { rules: { suggests: rule } } }, rules: { "demo/suggests": "error" } }];`,
+        "a.js": "a;\n",
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+      expect(JSON.parse(raw)[0].messages[0].suggestions).toEqual([
+        { desc: "Use b.", data: { name: "b" }, fix: { range: [0, 3], text: "b" } },
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   // ESLint 10.12.0 and oxlint 1.87.0 call `fix`, and the `fix` of each suggestion, when a problem is reported, whoever reads what
   // they return.
   describe("a rule is asked for its fixes whatever is printed", () => {
@@ -2625,6 +2694,174 @@ export default {
       expect(required.stdout).toContain("Cannot find module 'is-not-installed-anywhere'");
       expect(awaited.exitCode).toBe(0);
       expect(asked).toEqual([]);
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("context.report() in JavaScript plugins", () => {
+  const oracle = join(import.meta.dir, "oracle", "jsplugins", "report");
+
+  test(
+    "messages, locations, merged fixes, suggestions and what bad input throws match ESLint",
+    async () => {
+      const { text } = require(join(oracle, "plugin.cjs"));
+      const files = {
+        "plugin.cjs": readFileSync(join(oracle, "plugin.cjs"), "utf8"),
+        "eslint.config.cjs": `const demo = require("./plugin.cjs");
+          module.exports = [{ plugins: { demo }, rules: Object.fromEntries(Object.keys(demo.rules).map(name => ["demo/" + name, "error"])) }];`,
+        "a.js": text,
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+      // Recorded with ESLint 10.12.0 by record.mjs in that directory.
+      expect(JSON.parse(raw)[0].messages).toEqual(JSON.parse(readFileSync(join(oracle, "expected.json"), "utf8")));
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "a context, a `report` and a fixer kept from an earlier file work on the current file",
+    async () => {
+      const files = {
+        "eslint.config.mjs": `
+          const kept = [];
+          const say = f => { try { return JSON.stringify(f()) ?? "undefined"; } catch (error) { return error.constructor.name; } };
+          process.on("exit", () => {
+            for (const it of kept) console.error("at exit:", say(() => it.report({ node: it.node, message: "late", fix: fixer => fixer.remove(it.node) })), say(() => it.fixer.remove(it.node)));
+          });
+          const rule = {
+            meta: { fixable: "code" },
+            create(context) {
+              return {
+                Program(node) {
+                  for (const it of kept) {
+                    it.context.report({ node: it.node, message: "the node of " + it.name });
+                    it.report({ node: { ...it.node.body[0] }, message: "a copy from " + it.name, fix: fixer => [fixer.insertTextBefore(it.node.body[0], "("), fixer.insertTextAfter(it.node.body[0], ")")] });
+                    context.report({ node, message: "the fixer of " + it.name + ": " + say(() => it.fixer.replaceText(it.node.body[0], "x")) });
+                  }
+                  let fixer;
+                  context.report({ node, message: "first", fix: it => ((fixer = it), null) });
+                  kept.push({ name: context.filename.slice(-4), context, report: context.report, fixer, node });
+                  // Nobody is left to hear this, as in ESLint.
+                  Promise.resolve().then(() => context.report({ loc: { line: 1, column: 1 }, message: "between files" }));
+                },
+              };
+            },
+          };
+          export default [{ plugins: { demo: { rules: { keeps: rule } } }, rules: { "demo/keeps": "error" } }];`,
+        // The larger file is linted first.
+        "a.js": "first;\nfile;\nlonger;\n",
+        "b.js": "b;",
+      };
+      const { raw, stderr, exitCode } = await lint(files, ["--threads", "1", "-f", "json", "a.js", "b.js"]);
+      const said = JSON.parse(raw).map((result: any) =>
+        result.messages.map((it: any) => [it.message, it.line, it.column, it.endLine, it.endColumn, it.fix]),
+      );
+      expect(said).toEqual([
+        [["first", 1, 1, 4, 1, undefined]],
+        [
+          ["the node of a.js", 1, 1, 4, 1, undefined],
+          // The text between the two insertions is that of b.js.
+          ["a copy from a.js", 1, 1, 1, 7, { range: [0, 6], text: "(b;)" }],
+          ['the fixer of a.js: {"range":[0,6],"text":"x"}', 1, 1, 1, 3, undefined],
+          ["first", 1, 1, 1, 3, undefined],
+        ],
+      ]);
+      expect(stderr.split("\n").filter(line => line.startsWith("at exit:"))).toEqual([
+        'at exit: undefined {"range":[0,21],"text":""}',
+        'at exit: undefined {"range":[0,2],"text":""}',
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("scopes in JavaScript plugins", () => {
+  // The messages under ESLint 10.12.0.
+  test(
+    "a global variable has what ESLint sets on it when a rule gets to it through reference.resolved first",
+    async () => {
+      const config = `const show = it =>
+          it &&
+          [
+            it.name,
+            it.writeable,
+            it.eslintImplicitGlobalSetting,
+            it.eslintExplicitGlobal,
+            it.eslintExplicitGlobalComments?.map(comment => comment.value),
+            it.scope.type,
+          ]
+            .map(part => JSON.stringify(part) ?? "undefined")
+            .join(" ");
+        const rule = {
+          create: context => ({
+            Identifier(node) {
+              const reference = context.sourceCode.getScope(node).references.find(it => it.identifier === node);
+              if (reference) context.report({ node, message: String(show(reference.resolved)) });
+            },
+          }),
+        };
+        module.exports = [
+          {
+            plugins: { p: { rules: { rule } } },
+            languageOptions: { globals: { foo: "readonly", bar: "writable" } },
+            rules: { "p/rule": "error" },
+          },
+        ];`;
+      const code = `/* global fromComment:writable */\nfoo(); bar = 1; JSON.parse(""); fromComment = 2; undeclared();\n`;
+      const { raw, exitCode } = await lint({ "eslint.config.cjs": config, "a.js": code }, ["-f", "json", "a.js"]);
+      const results: { messages: { message: string }[] }[] = JSON.parse(raw);
+      expect(results[0].messages.map(it => it.message)).toEqual([
+        `"foo" false "readonly" false undefined "global"`,
+        `"bar" true "writable" false undefined "global"`,
+        `"JSON" false "readonly" false undefined "global"`,
+        `"fromComment" true undefined true [" global fromComment:writable "] "global"`,
+        "null",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // From then on JavaScriptCore stores every array of the realm in another way.
+  test(
+    "nodes, scopes and code paths are right after a plugin has put an accessor with an index for a name on Array.prototype",
+    async () => {
+      const plugin = `Object.defineProperty(Array.prototype, "4294967290", { get() {}, set() {}, configurable: true });
+        const rule = {
+          create(context) {
+            let segments = 0;
+            return {
+              onCodePathSegmentStart() {
+                segments++;
+              },
+              "Program:exit"(node) {
+                const { scopes } = context.sourceCode.scopeManager;
+                const names = scopes.flatMap(scope => (scope.type === "global" ? [] : scope.variables.map(it => it.name)));
+                const resolved = scopes.flatMap(scope => scope.references.map(it => it.resolved?.name ?? null));
+                const message = JSON.stringify({ statements: node.body.map(it => it.type), segments, names, resolved });
+                context.report({ node, message });
+              },
+            };
+          },
+        };
+        export default { meta: { name: "p" }, rules: { rule } };`;
+      const code = Array.from({ length: 12 }, (_, i) => `let v${i} = ${i === 0 ? "other" : `v${i - 1}`};`).join("\n");
+      const config = { jsPlugins: ["./plugin.mjs"], rules: { "p/rule": "error" } };
+      const files = { "plugin.mjs": plugin, ".oxlintrc.json": oxlintrc(config), "a.js": `${code}\nif (v11) v0;\n` };
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      const names = Array.from({ length: 12 }, (_, i) => `v${i}`);
+      expect(JSON.parse(raw).diagnostics.map((it: { message: string }) => JSON.parse(it.message))).toEqual([
+        {
+          statements: [...names.map(() => "VariableDeclaration"), "IfStatement"],
+          segments: 3,
+          names,
+          resolved: ["v0", null, ...names.slice(1).flatMap((name, i) => [name, `v${i}`]), "v11", "v0"],
+        },
+      ]);
+      expect(exitCode).toBe(1);
     },
     timeout,
   );

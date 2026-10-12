@@ -290,7 +290,7 @@ const allSettings = new Map();
 // By id: a rule with its options. `own`: what its contexts have of their own.
 const configured = new Map();
 // `context.report` is the one in src/jsc/bindings/LintReport.cpp.
-const usesNativeReport = process.env.BUN_LINT_NATIVE_REPORT === "1";
+const usesNativeReport = process.env.BUN_LINT_NATIVE_REPORT !== "0";
 
 const isNonArrayObject = value => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -1060,8 +1060,8 @@ function respond(kind) {
     if (missing === NEEDS_SETTINGS) return `${NEEDS_SETTINGS}[]`;
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
     const used = usedVariables();
-    const all = usesNativeReport ? (native.takeReports() ?? []) : reports;
-    return all.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([all, used]);
+    if (usesNativeReport) native.sendReports();
+    return reports.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([reports, used]);
   } catch (error) {
     const line = currentNode === null ? null : currentNode.loc.start.line;
     return FAILED + JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]);

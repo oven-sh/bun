@@ -19,6 +19,9 @@
 namespace Bun {
 using namespace JSC;
 
+// LintNodes.cpp
+JSArray* tryCreateFilledLintArray(VM&, JSGlobalObject*, unsigned length);
+
 namespace {
 
 constexpr uint32_t none = UINT32_MAX;
@@ -70,6 +73,8 @@ enum class Field : uint8_t {
     WriteExpr,
     Partial,
     Init,
+    // Of a variable and of a reference.
+    Tainted,
     Count,
 };
 
@@ -78,6 +83,8 @@ struct LintScopes {
     static constexpr size_t headerWords = 11, scopeWords = 9, variableWords = 8, definitionWords = 7, referenceWords = 5;
 
     uint32_t scopeCount, declaredCount, variableCount, definitionCount, referenceCount, implicitCount;
+    // How many of the implicit globals are in `globalScope.implicit`. They come first.
+    uint32_t keptImplicitCount;
     uint32_t listed, nodeToScope, declaredVariables;
     std::span<const uint32_t> scopes, variables, definitions, references, implicit, lists;
 
@@ -132,6 +139,7 @@ struct LintScopes {
         listed = words[7];
         nodeToScope = words[8];
         declaredVariables = words[9];
+        keptImplicitCount = words[10];
         uint64_t at = headerWords;
         bool fits = true;
         auto part = [&](uint64_t length) {
@@ -149,7 +157,7 @@ struct LintScopes {
         references = part(uint64_t(referenceCount) * referenceWords);
         implicit = part(implicitCount);
         lists = part(listLength);
-        if (!fits || !scopeCount || declaredCount > variableCount)
+        if (!fits || !scopeCount || declaredCount > variableCount || keptImplicitCount > implicitCount)
             return false;
 
         for (uint32_t i = 0; i < scopeCount; ++i) {
@@ -211,9 +219,11 @@ struct Shape {
 };
 
 // In the flags of a variable.
-constexpr uint32_t isType = 1, isValue = 2, isUsed = 4, isArguments = 16, isStack = 256;
+constexpr uint32_t isType = 1, isValue = 2, isUsed = 4, isStack = 256, isTaintedVariable = 512;
+// In the kind of a scope.
+constexpr uint32_t isStrict = 256, hasThis = 512, hasArguments = 1024;
 // In the flags of a reference.
-constexpr uint32_t isWrite = 2, isInit = 8, isPartial = 512;
+constexpr uint32_t isWrite = 2, isInit = 8, isPartial = 512, isTainted = 1024;
 // In the flags of a definition.
 constexpr uint32_t isRest = 1, lacksParent = 2;
 // In `strings`.
@@ -333,11 +343,11 @@ public:
     }
 
 private:
-    // An array of `length` holes. Throws if there's no memory.
+    // An array of `length` times `undefined`. Throws if there's no memory.
     JSArray* emptyArray(uint32_t length)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        JSArray* array = JSArray::tryCreate(m_vm, m_arrayStructure, length);
+        JSArray* array = tryCreateFilledLintArray(m_vm, m_globalObject, length);
         if (!array) [[unlikely]]
             throwOutOfMemoryError(m_globalObject, scope);
         return array;
@@ -363,7 +373,16 @@ private:
     JSValue nodeOrNull(uint32_t id) { return id == none ? jsNull() : m_nodes->getIndexQuickly(id); }
     JSValue string(uint32_t index) { return m_strings->getIndexQuickly(index); }
 
-    // `node.name`, or `String(node.value)` of a `Literal`. A plugin can have changed the node.
+    // The data property `name` of `object`. Empty if it has none. It never runs a getter.
+    JSValue dataProperty(JSObject* object, PropertyName name)
+    {
+        unsigned attributes;
+        PropertyOffset offset = object->structure()->get(m_vm, name, attributes);
+        bool isData = isValidOffset(offset) && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue));
+        return isData ? object->getDirect(offset) : JSValue();
+    }
+
+    // `node.name`, or `String(node.value)` of a `Literal`. `undefined` if a plugin has changed the node so that it has neither.
     JSValue nameOfNode(uint32_t id)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -371,20 +390,23 @@ private:
         if (!node) [[unlikely]]
             return jsUndefined();
         // Nearly all are `Identifier`s, which have one Structure.
-        if (node->structureID() != m_nameStructure) {
-            unsigned attributes;
-            PropertyOffset offset = node->structure()->get(m_vm, m_vm.propertyNames->name, attributes);
-            if (!isValidOffset(offset) || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)) [[unlikely]] {
-                JSValue value = node->get(m_globalObject, m_vm.propertyNames->value);
-                RETURN_IF_EXCEPTION(scope, {});
-                JSString* name = value.toString(m_globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                return name;
-            }
+        if (node->structureID() == m_nameStructure) [[likely]]
+            return node->getDirect(m_nameOffset);
+        unsigned attributes;
+        PropertyOffset offset = node->structure()->get(m_vm, m_vm.propertyNames->name, attributes);
+        if (isValidOffset(offset) && !attributes) {
             m_nameStructure = node->structureID();
             m_nameOffset = offset;
+            return node->getDirect(offset);
         }
-        return node->getDirect(m_nameOffset);
+        JSValue value = dataProperty(node, m_vm.propertyNames->name);
+        if (!value)
+            value = dataProperty(node, m_vm.propertyNames->value);
+        if (!value || value.isObject() || value.isSymbol())
+            return jsUndefined();
+        JSString* name = value.toString(m_globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return name;
     }
 
     JSValue nameOf(uint32_t word)
@@ -507,6 +529,9 @@ private:
             case Field::Init:
                 value = writes ? jsBoolean(it[1] & isInit) : jsUndefined();
                 break;
+            case Field::Tainted:
+                value = jsBoolean(it[1] & isTainted);
+                break;
             default:
                 value = shape.like->getDirect(offset);
             }
@@ -541,6 +566,9 @@ private:
                 break;
             case Field::Stack:
                 value = jsBoolean(flags & isStack);
+                break;
+            case Field::Tainted:
+                value = jsBoolean(flags & isTaintedVariable);
                 break;
             case Field::Scope:
                 value = m_scopes->getIndexQuickly(it[1]);
@@ -601,6 +629,9 @@ private:
             case Field::Stack:
                 value = jsBoolean(true);
                 break;
+            case Field::Tainted:
+                value = jsBoolean(false);
+                break;
             case Field::Scope:
                 value = m_scopes->getIndexQuickly(0);
                 break;
@@ -646,9 +677,13 @@ private:
             case Field::Taints: {
                 JSMap* taints = JSMap::create(m_vm, mapStructure);
                 value = taints;
-                auto variables = m_message.list(it[6]);
-                if (!variables.empty() && m_message.variable(variables[0])[2] & isArguments)
+                if (it[0] & hasArguments)
                     taints->set(m_globalObject, string(argumentsString), jsBoolean(true));
+                for (uint32_t variable : m_message.list(it[6])) {
+                    RETURN_IF_EXCEPTION(scope, void());
+                    if (m_message.variable(variable)[2] & isTaintedVariable) [[unlikely]]
+                        taints->set(m_globalObject, asObject(m_variables->getIndexQuickly(variable))->getDirect(m_variableNameOffset), jsBoolean(true));
+                }
                 break;
             }
             case Field::Block:
@@ -670,10 +705,10 @@ private:
                 value = it[2] == none ? jsNull() : m_scopes->getIndexQuickly(it[2]);
                 break;
             case Field::IsStrict:
-                value = jsBoolean(it[0] & 256);
+                value = jsBoolean(it[0] & isStrict);
                 break;
             case Field::ThisFound:
-                value = jsBoolean(it[0] & 512);
+                value = jsBoolean(it[0] & hasThis);
                 break;
             case Field::ChildScopes:
                 value = array(it[5], m_scopes);
@@ -700,7 +735,7 @@ private:
     void fillImplicit(JSObject* implicit, uint32_t through)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        Vector<uint32_t, 8> variables(m_message.implicitCount, [&](size_t i) { return m_message.variableCount + static_cast<uint32_t>(i); });
+        Vector<uint32_t, 8> variables(m_message.keptImplicitCount, [&](size_t i) { return m_message.variableCount + static_cast<uint32_t>(i); });
         for (PropertyOffset offset = 0; offset < static_cast<PropertyOffset>(implicitShape.program.size()); ++offset) {
             JSValue value;
             switch (static_cast<Field>(implicitShape.program[offset])) {

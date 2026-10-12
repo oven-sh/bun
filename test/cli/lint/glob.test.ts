@@ -360,6 +360,7 @@ test.concurrent.each([
   // An empty alternative is dropped.
   ["{a,}.js", "a.js | build/a.js"],
   ["{a\\,b,1}.js", "a,b.js | 1.js"],
+  ["{a,{b,1}}.js", "a.js | b.js | build/a.js | src/b.js | 1.js"],
   ["a\\,b.js", "a,b.js"],
   ["\\{a\\}.js", "{a}.js"],
   // No sequences and no extglob
@@ -385,11 +386,11 @@ test.concurrent.each([
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // There's no JSON if every file is ignored.
   const diagnostics: { filename: string }[] = stdout.startsWith("{") ? JSON.parse(stdout).diagnostics : [];
   const linted = diagnostics.map(it => it.filename.replaceAll("\\", "/"));
-  expect(ignorable.filter(file => !linted.includes(file)).join(" | ")).toBe(ignored);
+  expect(ignorable.filter(file => !linted.includes(file)).join(" | "), stderr).toBe(ignored);
   expect(exitCode).toBe(1);
 });
 
@@ -429,7 +430,8 @@ test.concurrent.each(["{a,", "a{,", "*{a,", "[*", "{*", "a\\"])(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.startsWith("{")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
     const diagnostics: { code: string }[] = JSON.parse(stdout).diagnostics;
     expect(diagnostics.filter(it => it.code.includes("no-restricted-imports"))).toEqual([]);
     expect(exitCode).toBe(0);

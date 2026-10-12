@@ -39,33 +39,6 @@ bool requireNode(JSGlobalObject* globalObject, ThrowScope& scope, JSValue node)
     return false;
 }
 
-// An own data property of a plain object without a lookup through the prototype chain, or `object[name]`.
-JSValue getFast(JSGlobalObject* globalObject, JSValue target, const Identifier& name)
-{
-    if (target.isObject()) [[likely]] {
-        JSObject* object = asObject(target);
-        Structure* structure = object->structure();
-        if (!structure->typeInfo().overridesGetOwnPropertySlot()) [[likely]] {
-            unsigned attributes;
-            PropertyOffset offset = structure->get(globalObject->vm(), name, attributes);
-            if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) [[likely]]
-                return object->getDirect(offset);
-        }
-    }
-    return target.get(globalObject, name);
-}
-
-// `array[index]`
-JSValue getIndexFast(JSGlobalObject* globalObject, JSValue target, unsigned index)
-{
-    if (target.isCell() && isJSArray(target.asCell())) [[likely]] {
-        JSArray* array = asArray(target);
-        if (array->canGetIndexQuickly(index)) [[likely]]
-            return array->getIndexQuickly(index);
-    }
-    return target.get(globalObject, index);
-}
-
 // An index for `text.slice`.
 unsigned clampToText(double index, unsigned length)
 {
@@ -114,6 +87,67 @@ JSArray* linesOf(JSGlobalObject* globalObject, LintHost* host)
     RETURN_IF_EXCEPTION(scope, nullptr);
     state.lines.set(vm, host, lines);
     return lines;
+}
+
+// `value === "text"`
+bool isText(JSGlobalObject* globalObject, JSValue value, ASCIILiteral text)
+{
+    return value.isString() && asString(value)->view(globalObject) == text;
+}
+
+// Calls a method of `TokenStore`. None of them looks at `this`.
+JSValue callTokenMethod(JSGlobalObject* globalObject, const WriteBarrier<JSObject>& method, JSValue nodeOrToken, JSValue options = {})
+{
+    JSObject* function = method.get();
+    MarkedArgumentBuffer arguments;
+    arguments.append(nodeOrToken);
+    if (options)
+        arguments.append(options);
+    return call(globalObject, function, getCallData(function), jsUndefined(), arguments);
+}
+
+// `value.length`, which is 0 for what has none.
+double lengthOf(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (value.isCell() && isJSArray(value.asCell())) [[likely]]
+        return asArray(value)->length();
+    JSValue length = value.get(globalObject, globalObject->vm().propertyNames->length);
+    RETURN_IF_EXCEPTION(scope, 0);
+    RELEASE_AND_RETURN(scope, length.toNumber(globalObject));
+}
+
+// ESLint's `getInlineConfigNodes()`
+JSArray* inlineConfigNodesOf(JSGlobalObject* globalObject, LintHost* host)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintSourceCodeState& state = host->sourceCode;
+    if (JSArray* nodes = state.inlineConfigNodes.get())
+        return nodes;
+    JSValue comments = callHook(globalObject, state.comments);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // `ask::CONFIG_COMMENTS` in src/lint/js_plugin/wire.rs. The next answer overwrites this one.
+    constexpr uint32_t configComments = 13;
+    LintSpan answer = host->isLinting() ? Bun__Lint__ask(globalObject, configComments, nullptr, 0) : LintSpan {};
+    size_t count = answer.len / sizeof(LintSourceCodeState::ConfigComment);
+    state.configComments.resize(count);
+    if (count)
+        memcpy(state.configComments.mutableSpan().data(), answer.ptr, count * sizeof(LintSourceCodeState::ConfigComment));
+    MarkedArgumentBuffer nodes;
+    for (auto& it : state.configComments) {
+        JSValue comment = lintGetIndex(globalObject, comments, it.comment);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        nodes.append(comment);
+    }
+    if (nodes.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    JSArray* result = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), nodes);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    state.inlineConfigNodes.set(vm, host, result);
+    return result;
 }
 
 const Vector<uint32_t>& lastDescendantsOf(LintSourceCodeState& state)
@@ -285,11 +319,11 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetText, (JSGlobalObject * globalObject, CallFram
     JSValue node = callFrame->argument(0);
     if (!node.toBoolean(globalObject))
         return JSValue::encode(host->text());
-    JSValue range = getFast(globalObject, node, state.range);
+    JSValue range = lintGet(globalObject, node, state.range);
     RETURN_IF_EXCEPTION(scope, {});
 
     // `Math.max(node.range[0] - (beforeCount || 0), 0)`
-    JSValue first = getIndexFast(globalObject, range, 0);
+    JSValue first = lintGetIndex(globalObject, range, 0);
     RETURN_IF_EXCEPTION(scope, {});
     double start = first.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -301,7 +335,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetText, (JSGlobalObject * globalObject, CallFram
     start = std::isnan(start) ? start : std::max(start, 0.0);
 
     // `node.range[1] + (afterCount || 0)`
-    JSValue end = getIndexFast(globalObject, range, 1);
+    JSValue end = lintGetIndex(globalObject, range, 1);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue after = callFrame->argument(2);
     if (!end.isNumber() || after.toBoolean(globalObject)) [[unlikely]] {
@@ -322,6 +356,310 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetText, (JSGlobalObject * globalObject, CallFram
 JSC_DEFINE_HOST_FUNCTION(jsLintGetAllComments, (JSGlobalObject * globalObject, CallFrame*))
 {
     return JSValue::encode(callHook(globalObject, LintHost::from(globalObject)->sourceCode.comments));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsLintGetInlineConfigNodes, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(inlineConfigNodesOf(globalObject, LintHost::from(globalObject)));
+}
+
+// `getDisableDirectives()`
+JSC_DEFINE_HOST_FUNCTION(jsLintGetDisableDirectives, (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    LintSourceCodeState& state = host->sourceCode;
+    if (JSObject* result = state.disableDirectives.get())
+        return JSValue::encode(result);
+    JSArray* nodes = inlineConfigNodesOf(globalObject, host);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // In the order of `number_of` in src/lint/js_plugin/directives.rs.
+    static constexpr std::array<ASCIILiteral, 5> types { ""_s, "enable"_s, "disable"_s, "disable-line"_s, "disable-next-line"_s };
+    constexpr uint32_t disableLine = 3;
+    JSString* text = host->text();
+    unsigned length = text->length();
+    auto slice = [&](uint32_t start, uint32_t end) {
+        end = std::min(end, length);
+        start = std::min(start, end);
+        return jsSubstringOfResolved(vm, text, start, end - start);
+    };
+    MarkedArgumentBuffer problems, directives;
+    // A getter of a comment can ask for the directives again, which doesn't change the list.
+    for (unsigned i = 0; i < state.configComments.size(); ++i) {
+        auto it = state.configComments[i];
+        if (!it.label || it.label >= types.size())
+            continue;
+        JSValue node = nodes->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (it.label == disableLine) {
+            JSValue loc = lintGet(globalObject, node, state.loc);
+            RETURN_IF_EXCEPTION(scope, {});
+            std::array<JSValue, 2> lines;
+            for (unsigned end = 0; end < 2; ++end) {
+                JSValue position = lintGet(globalObject, loc, end ? state.end : state.start);
+                RETURN_IF_EXCEPTION(scope, {});
+                lines[end] = lintGet(globalObject, position, state.line);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            bool isOneLine = JSValue::strictEqual(globalObject, lines[0], lines[1]);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!isOneLine) {
+                JSObject* problem = constructEmptyObject(vm, state.problemStructure.get());
+                problem->putDirectOffset(vm, 0, jsNull());
+                problem->putDirectOffset(vm, 1, jsNontrivialString(vm, "eslint-disable-line comment should not span multiple lines."_s));
+                problem->putDirectOffset(vm, 2, loc);
+                problems.append(problem);
+                continue;
+            }
+        }
+        JSObject* directive = constructEmptyObject(vm, state.directiveStructure.get());
+        directives.append(directive);
+        directive->putDirectOffset(vm, 0, jsNontrivialString(vm, types[it.label]));
+        directive->putDirectOffset(vm, 1, node);
+        directive->putDirectOffset(vm, 2, slice(it.valueStart, it.valueEnd));
+        directive->putDirectOffset(vm, 3, slice(it.justificationStart, it.justificationEnd));
+    }
+    if (problems.hasOverflowed() || directives.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    JSObject* result = constructEmptyObject(vm, state.directivesStructure.get());
+    JSArray* list = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), problems);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectOffset(vm, 0, list);
+    list = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), directives);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirectOffset(vm, 1, list);
+    state.disableDirectives.set(vm, host, result);
+    return JSValue::encode(result);
+}
+
+// `getComments(node)`, which ESLint had until version 9.
+JSC_DEFINE_HOST_FUNCTION(jsLintGetComments, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintSourceCodeState& state = LintHost::from(globalObject)->sourceCode;
+    JSValue node = callFrame->argument(0);
+    JSObject* result = constructEmptyObject(vm, state.commentsStructure.get());
+    auto finish = [&](JSValue leading, JSValue trailing) {
+        result->putDirectOffset(vm, 0, leading);
+        result->putDirectOffset(vm, 1, trailing);
+        return JSValue::encode(result);
+    };
+    auto emptyArray = [&] { return constructEmptyArray(globalObject, nullptr); };
+    JSValue type = lintGet(globalObject, node, state.type);
+    RETURN_IF_EXCEPTION(scope, {});
+    // Whether `node[list]` is empty.
+    auto hasNone = [&](const Identifier& list) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue items = lintGet(globalObject, node, list);
+        RETURN_IF_EXCEPTION(scope, false);
+        double length = lengthOf(globalObject, items);
+        RETURN_IF_EXCEPTION(scope, false);
+        return length == 0;
+    };
+    bool isProgram = isText(globalObject, type, "Program"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isProgram) {
+        JSValue leading;
+        bool isEmpty = hasNone(state.body);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isEmpty)
+            leading = node.get(globalObject, state.commentsName);
+        else
+            leading = emptyArray();
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue trailing = emptyArray();
+        RETURN_IF_EXCEPTION(scope, {});
+        return finish(leading, trailing);
+    }
+
+    // What is in a node that is empty but for comments comes after it.
+    const Identifier* list = nullptr;
+    for (auto [name, items] : std::initializer_list<std::pair<ASCIILiteral, const Identifier*>> { { "BlockStatement"_s, &state.body }, { "ClassBody"_s, &state.body }, { "ObjectExpression"_s, &state.properties }, { "ArrayExpression"_s, &state.elements }, { "SwitchStatement"_s, &state.cases } }) {
+        bool isIt = isText(globalObject, type, name);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isIt)
+            list = items;
+    }
+    MarkedArgumentBuffer leading, trailing;
+    if (list) {
+        bool isEmpty = hasNone(*list);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isEmpty) {
+            JSValue inside = callTokenMethod(globalObject, state.getCommentsInside, node);
+            RETURN_IF_EXCEPTION(scope, {});
+            double count = lengthOf(globalObject, inside);
+            RETURN_IF_EXCEPTION(scope, {});
+            for (unsigned i = 0; i < count; ++i) {
+                JSValue comment = lintGetIndex(globalObject, inside, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                trailing.append(comment);
+            }
+        }
+    }
+
+    JSValue parent = lintGet(globalObject, node, state.parent);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isInner = parent.toBoolean(globalObject);
+    if (isInner) {
+        JSValue parentType = lintGet(globalObject, parent, state.type);
+        RETURN_IF_EXCEPTION(scope, {});
+        isInner = !isText(globalObject, parentType, "Program"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    // The comments next to the node, as far as they are in its parent.
+    auto collect = [&](bool isBefore, MarkedArgumentBuffer& found) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto& next = isBefore ? state.getTokenBefore : state.getTokenAfter;
+        auto& edge = isBefore ? state.start : state.end;
+        JSValue token = node;
+        while (true) {
+            token = callTokenMethod(globalObject, next, token, state.includeComments.get());
+            RETURN_IF_EXCEPTION(scope, );
+            if (!token.toBoolean(globalObject))
+                return;
+            JSValue tokenType = lintGet(globalObject, token, state.type);
+            RETURN_IF_EXCEPTION(scope, );
+            bool isComment = isText(globalObject, tokenType, "Line"_s) || isText(globalObject, tokenType, "Block"_s) || isText(globalObject, tokenType, "Shebang"_s);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!isComment)
+                return;
+            if (isInner) {
+                JSValue ofToken = lintGet(globalObject, token, edge);
+                RETURN_IF_EXCEPTION(scope, );
+                JSValue ofParent = lintGet(globalObject, parent, edge);
+                RETURN_IF_EXCEPTION(scope, );
+                double inner = ofToken.toNumber(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                double outer = ofParent.toNumber(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                if (isBefore ? inner < outer : inner > outer)
+                    return;
+            }
+            found.append(token);
+            if (found.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return;
+            }
+        }
+    };
+    collect(true, leading);
+    RETURN_IF_EXCEPTION(scope, {});
+    collect(false, trailing);
+    RETURN_IF_EXCEPTION(scope, {});
+    MarkedArgumentBuffer inOrder;
+    for (unsigned i = leading.size(); i--;)
+        inOrder.append(leading.at(i));
+    JSArray* before = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), inOrder);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSArray* after = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), trailing);
+    RETURN_IF_EXCEPTION(scope, {});
+    return finish(before, after);
+}
+
+// `getJSDocComment(node)`, which ESLint had until version 10.
+JSC_DEFINE_HOST_FUNCTION(jsLintGetJSDocComment, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintSourceCodeState& state = LintHost::from(globalObject)->sourceCode;
+    JSValue node = callFrame->argument(0);
+    JSValue parent = lintGet(globalObject, node, state.parent);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue typeValue = lintGet(globalObject, node, state.type);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!typeValue.isString())
+        return JSValue::encode(jsNull());
+    String type = asString(typeValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // `String(node.type)`
+    auto typeOf = [&](JSValue node) -> String {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue type = lintGet(globalObject, node, state.type);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, type.toWTFString(globalObject));
+    };
+    // `node.loc[edge].line`
+    auto lineOf = [&](JSValue node, const Identifier& edge) -> double {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue loc = lintGet(globalObject, node, state.loc);
+        RETURN_IF_EXCEPTION(scope, 0);
+        JSValue position = lintGet(globalObject, loc, edge);
+        RETURN_IF_EXCEPTION(scope, 0);
+        JSValue line = lintGet(globalObject, position, state.line);
+        RETURN_IF_EXCEPTION(scope, 0);
+        RELEASE_AND_RETURN(scope, line.toNumber(globalObject));
+    };
+    // The block comment that starts with `*` right before `astNode`, or null.
+    auto before = [&](JSValue astNode) -> EncodedJSValue {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue token = callTokenMethod(globalObject, state.getTokenBefore, astNode, state.includeComments.get());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!token.toBoolean(globalObject))
+            return JSValue::encode(jsNull());
+        double line = lineOf(astNode, state.start);
+        RETURN_IF_EXCEPTION(scope, {});
+        double tokenLine = lineOf(token, state.end);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!(line - tokenLine <= 1))
+            return JSValue::encode(jsNull());
+        JSValue tokenType = lintGet(globalObject, token, state.type);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool isBlock = isText(globalObject, tokenType, "Block"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isBlock)
+            return JSValue::encode(jsNull());
+        JSValue value = lintGet(globalObject, token, state.value);
+        RETURN_IF_EXCEPTION(scope, {});
+        String text = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(text.startsWith('*') ? token : jsNull());
+    };
+
+    if (type == "ClassDeclaration"_s || type == "FunctionDeclaration"_s) {
+        String parentType = typeOf(parent);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool isExported = parentType == "ExportDefaultDeclaration"_s || parentType == "ExportNamedDeclaration"_s || parentType == "ExportAllDeclaration"_s || parentType == "ExportSpecifier"_s;
+        RELEASE_AND_RETURN(scope, before(isExported ? parent : node));
+    }
+    if (type == "ClassExpression"_s) {
+        JSValue outer = lintGet(globalObject, parent, state.parent);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, before(outer));
+    }
+    if (type != "ArrowFunctionExpression"_s && type != "FunctionExpression"_s)
+        return JSValue::encode(jsNull());
+    String parentType = typeOf(parent);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (parentType != "CallExpression"_s && parentType != "NewExpression"_s) {
+        while (parent.toBoolean(globalObject)) {
+            JSValue comments = callTokenMethod(globalObject, state.getCommentsBefore, parent);
+            RETURN_IF_EXCEPTION(scope, {});
+            double count = lengthOf(globalObject, comments);
+            RETURN_IF_EXCEPTION(scope, {});
+            // `!comments.length`
+            if (count && !std::isnan(count))
+                break;
+            parentType = typeOf(parent);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (parentType.contains("Function"_s) || parentType == "MethodDefinition"_s || parentType == "Property"_s)
+                break;
+            parent = lintGet(globalObject, parent, state.parent);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (parent.toBoolean(globalObject)) {
+            parentType = typeOf(parent);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (parentType != "FunctionDeclaration"_s && parentType != "Program"_s)
+                RELEASE_AND_RETURN(scope, before(parent));
+        }
+    }
+    RELEASE_AND_RETURN(scope, before(node));
 }
 
 // `getNodeByRangeIndex(index)`
@@ -422,12 +760,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetLoc, (JSGlobalObject * globalObject, CallFrame
 
 JSC_DEFINE_HOST_FUNCTION(jsLintGetRange, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(getFast(globalObject, callFrame->argument(0), LintHost::from(globalObject)->sourceCode.range));
+    return JSValue::encode(lintGet(globalObject, callFrame->argument(0), LintHost::from(globalObject)->sourceCode.range));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsLintGetParent, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(getFast(globalObject, callFrame->argument(0), LintHost::from(globalObject)->sourceCode.parent));
+    return JSValue::encode(lintGet(globalObject, callFrame->argument(0), LintHost::from(globalObject)->sourceCode.parent));
 }
 
 // `getAncestors(node)`
@@ -441,7 +779,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetAncestors, (JSGlobalObject * globalObject, Cal
         return {};
     MarkedArgumentBuffer ancestors;
     while (true) {
-        node = getFast(globalObject, node, state.parent);
+        node = lintGet(globalObject, node, state.parent);
         RETURN_IF_EXCEPTION(scope, {});
         if (!node.toBoolean(globalObject))
             break;
@@ -493,11 +831,11 @@ JSC_DEFINE_HOST_FUNCTION(jsLintLocGetter, (JSGlobalObject * globalObject, CallFr
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
     JSValue thisValue = callFrame->thisValue();
-    JSValue range = getFast(globalObject, thisValue, host->sourceCode.range);
+    JSValue range = lintGet(globalObject, thisValue, host->sourceCode.range);
     RETURN_IF_EXCEPTION(scope, {});
     std::array<double, 2> indices;
     for (unsigned i = 0; i < 2; ++i) {
-        JSValue index = getIndexFast(globalObject, range, i);
+        JSValue index = lintGetIndex(globalObject, range, i);
         RETURN_IF_EXCEPTION(scope, {});
         indices[i] = index.toNumber(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -593,11 +931,11 @@ const Member members[] = {
     { "getText"_s, 3, jsLintGetText },
     { "getLines"_s, 0, jsLintSourceCodeLines },
     { "getAllComments"_s, 0, jsLintGetAllComments },
-    { "getInlineConfigNodes"_s, 0, nullptr },
-    { "getDisableDirectives"_s, 0, nullptr },
+    { "getInlineConfigNodes"_s, 0, jsLintGetInlineConfigNodes },
+    { "getDisableDirectives"_s, 0, jsLintGetDisableDirectives },
     { "getNodeByRangeIndex"_s, 1, jsLintGetNodeByRangeIndex },
-    { "getComments"_s, 1, nullptr },
-    { "getJSDocComment"_s, 1, nullptr },
+    { "getComments"_s, 1, jsLintGetComments },
+    { "getJSDocComment"_s, 1, jsLintGetJSDocComment },
     { "getLocFromIndex"_s, 1, jsLintGetLocFromIndex },
     { "getIndexFromLoc"_s, 1, jsLintGetIndexFromLoc },
     { "getLoc"_s, 1, jsLintGetLoc },
@@ -643,6 +981,13 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallF
     RETURN_IF_EXCEPTION(scope, {});
     if (!parent.isObject())
         return throwVMTypeError(globalObject, scope, "Expected a class"_s);
+    for (auto [name, method] : std::initializer_list<std::pair<ASCIILiteral, WriteBarrier<JSObject>*>> { { "getTokenBefore"_s, &state.getTokenBefore }, { "getTokenAfter"_s, &state.getTokenAfter }, { "getCommentsBefore"_s, &state.getCommentsBefore }, { "getCommentsInside"_s, &state.getCommentsInside } }) {
+        JSValue function = parent.get(globalObject, Identifier::fromString(vm, name));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!function.isCallable())
+            return throwVMTypeError(globalObject, scope, "Expected a method"_s);
+        method->set(vm, host, asObject(function));
+    }
     JSObject* prototype = constructEmptyObject(globalObject, asObject(parent));
     auto* constructor = LintSourceCodeConstructor::create(vm, globalObject, tokenStore, prototype);
     constructor->putDirect(vm, Identifier::fromString(vm, "splitLines"_s), JSFunction::create(vm, globalObject, 1, "splitLines"_s, jsLintSplitLines, ImplementationVisibility::Public), static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -672,9 +1017,26 @@ void LintSourceCodeState::finishCreation(VM& vm, JSGlobalObject* globalObject, L
     set(parent, "parent"_s);
     set(line, "line"_s);
     set(column, "column"_s);
+    set(start, "start"_s);
+    set(end, "end"_s);
+    set(type, "type"_s);
+    set(value, "value"_s);
+    set(body, "body"_s);
+    set(properties, "properties"_s);
+    set(elements, "elements"_s);
+    set(cases, "cases"_s);
+    set(commentsName, "comments"_s);
     set(emitDecoratorMetadata, "emitDecoratorMetadata"_s);
     set(experimentalDecorators, "experimentalDecorators"_s);
     set(isolatedDeclarations, "isolatedDeclarations"_s);
+    JSObject* objectPrototype = globalObject->objectPrototype();
+    problemStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "ruleId"_s, "message"_s, "loc"_s })));
+    directiveStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "type"_s, "node"_s, "value"_s, "justification"_s })));
+    directivesStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "problems"_s, "directives"_s })));
+    commentsStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "leading"_s, "trailing"_s })));
+    JSObject* options = constructEmptyObject(globalObject);
+    options->putDirect(vm, Identifier::fromString(vm, "includeComments"_s), jsBoolean(true));
+    includeComments.set(vm, host, options);
     servicesStructure.set(vm, host, LintHost::createShape(vm, globalObject, globalObject->objectPrototype(), std::to_array<ASCIILiteral>({ "emitDecoratorMetadata"_s, "experimentalDecorators"_s, "isolatedDeclarations"_s, "program"_s, "esTreeNodeToTSNodeMap"_s, "tsNodeToESTreeNodeMap"_s })));
 }
 
@@ -693,6 +1055,9 @@ void LintSourceCodeState::endFile()
     lines.clear();
     lineStartIndices.clear();
     parserServices.clear();
+    inlineConfigNodes.clear();
+    disableDirectives.clear();
+    configComments.clear();
     treeBuffer.clear();
     nodes.clear();
     starts = {};

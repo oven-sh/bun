@@ -18,7 +18,9 @@ Structure* LintHost::createStructure(VM& vm, JSGlobalObject* globalObject)
 
 LintHost* LintHost::create(VM& vm, JSGlobalObject* globalObject)
 {
-    LintHost* host = new (NotNull, allocateCell<LintHost>(vm)) LintHost(vm, createStructure(vm, globalObject));
+    // Before allocateCell(): nothing may be allocated between that and finishCreation().
+    Structure* structure = createStructure(vm, globalObject);
+    LintHost* host = new (NotNull, allocateCell<LintHost>(vm)) LintHost(vm, structure);
     host->finishCreation(vm, globalObject);
     return host;
 }
@@ -81,6 +83,9 @@ void LintHost::beginFile(VM& vm, JSString* text, uint32_t flags)
     m_flags = flags;
     m_isLinting = true;
     m_lineStarts.clear();
+    // Also what a plugin has asked for or reported between two files, from a promise or a timer.
+    report.endFile();
+    sourceCode.endFile();
     Locker locker { cellLock() };
     tokens.reset();
 }
@@ -89,8 +94,6 @@ void LintHost::endFile(VM& vm)
 {
     beginFile(vm, jsEmptyString(vm), 0);
     m_isLinting = false;
-    report.endFile();
-    sourceCode.endFile();
 }
 
 const Vector<uint32_t>& LintHost::lineStarts()
@@ -162,6 +165,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintEndFile, (JSGlobalObject * globalObject, CallFram
 {
     LintHost::from(globalObject)->endFile(globalObject->vm());
     return JSValue::encode(jsUndefined());
+}
+
+// For src/runtime/cli/lint_js.rs, which frees what the spans point to right after this.
+extern "C" void Bun__Lint__endFile(JSGlobalObject* globalObject)
+{
+    LintHost::from(globalObject)->endFile(globalObject->vm());
 }
 
 void addLintHostFunctions(JSGlobalObject* globalObject, JSObject* native)

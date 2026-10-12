@@ -31,7 +31,7 @@ const scopeFields = Object.fromEntries(
     ...namesIn(`$id set taints block through variables references variableScope upper isStrict thisFound childScopes
     __declaredVariables implicit name identifiers defs stack scope eslintUsed eslintExported
     eslintImplicitGlobalSetting eslintExplicitGlobal writeable isTypeVariable isValueVariable node parent index
-    kind rest identifier from resolved flag writeExpr partial init`),
+    kind rest identifier from resolved flag writeExpr partial init tainted`),
   ].map((name, field) => [name, field]),
 );
 
@@ -179,7 +179,7 @@ const eslintScopeLayout = (() => {
     "__maybeImplicitGlobal",
   ];
   const references = [[], ["writeExpr", "partial", "init"]].flatMap(written =>
-    scopeShape(Reference, referenceKeys(written), { tainted: false }),
+    scopeShape(Reference, referenceKeys(written)),
   );
 
   class ScopeManager {
@@ -242,7 +242,7 @@ const eslintScopeLayout = (() => {
     ScopeManager,
     forNative: [
       scopes,
-      variableShapes(Variable, null, variableKeys, [], { tainted: false, eslintExplicitGlobalComments: undefined }),
+      variableShapes(Variable, null, variableKeys, [], { eslintExplicitGlobalComments: undefined }),
       definitions,
       references,
       scopeShape(Object, ["set", "variables", "left"], {}, { left: "through" }),
@@ -292,7 +292,11 @@ class GlobalSet extends Map {
 }
 
 const typescriptLayout = (() => {
-  class ScopeBase {}
+  class ScopeBase {
+    isVariableScope() {
+      return this.variableScope === this;
+    }
+  }
   const names =
     namesIn(`GlobalScope ModuleScope FunctionScope FunctionExpressionNameScope BlockScope SwitchScope CatchScope WithScope
     ForScope ClassScope ClassFieldInitializerScope ClassStaticBlockScope TSModuleScope TSEnumScope TypeScope

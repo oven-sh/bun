@@ -49,6 +49,10 @@ pub(super) mod ask {
     pub(crate) const LOADED: u32 = 10;
     /// The code paths, their segments and the events. Only after [`AST`]. See `code_path/estree.rs` for the layout.
     pub(crate) const CODE_PATHS: u32 = 11;
+    /// Not a question. Given the reports about the file so far: see `reports.rs`.
+    pub(crate) const REPORTS: u32 = 12;
+    /// The comments that configure ESLint: see `directives.rs`.
+    pub(crate) const CONFIG_COMMENTS: u32 = 13;
 }
 
 /// Appends `list` to `lists`, its length first, and returns its offset. The empty list is at offset 0, so `lists` has to start

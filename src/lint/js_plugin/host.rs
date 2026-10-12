@@ -3,7 +3,7 @@
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
-use super::{ast, schema, scopes, tokens};
+use super::{ast, directives, reports, schema, scopes, tokens};
 use crate::ast::File;
 use crate::code_path;
 use crate::estree::Dialect;
@@ -17,6 +17,7 @@ use bun_collections::ByteSet;
 use bun_core::printer::json_stringify;
 use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
+use core::cell::RefCell;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -601,6 +602,7 @@ impl<'e> Host<'e> {
         message.extend_from_slice(if has_mark { &text[3..] } else { text });
 
         let mut nodes = None;
+        let reported = RefCell::new(Vec::new());
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
             _ if self.serve_any(asked, details, out) => {}
             ask::SETTINGS => out.extend_from_slice(&settings.json),
@@ -643,6 +645,8 @@ impl<'e> Host<'e> {
                     _ => ast::write_only_matches(file, &offsets, &selectors, out),
                 }
             }
+            ask::REPORTS => reports::read(details, &offsets, &mut reported.borrow_mut()),
+            ask::CONFIG_COMMENTS => directives::write(file, &offsets, out),
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {
@@ -669,7 +673,7 @@ impl<'e> Host<'e> {
                 return Err(OUT_OF_STEP.to_vec().into());
             };
             if kind == result::DONE && content.is_empty() {
-                return Ok((Vec::new(), Vec::new()));
+                return Ok((reported.take(), Vec::new()));
             }
             let Some(Json::Array(parts)) = crate::json::parse(content) else {
                 return Err(OUT_OF_STEP.to_vec().into());
@@ -677,9 +681,10 @@ impl<'e> Host<'e> {
             match kind {
                 result::DONE => {
                     let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
-                    let reports = part(0).iter().filter_map(|it| report_of(it, &offsets));
+                    let mut reports = reported.take();
+                    reports.extend(part(0).iter().filter_map(|it| report_of(it, &offsets)));
                     let used = part(1).iter().filter_map(|it| number(Some(it)));
-                    return Ok((reports.collect(), used.collect()));
+                    return Ok((reports, used.collect()));
                 }
                 result::FAILED => {
                     return Err(Failure {

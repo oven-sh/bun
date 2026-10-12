@@ -59,7 +59,7 @@ function parseDirective(value) {
 const directiveLabel = /^(eslint(?:-env|-enable|-disable(?:(?:-next)?-line)?)?|exported|globals?)(?:\s|$)/u;
 const lineDirectiveLabel = /^eslint-disable-(?:next-)?line$/u;
 
-class SourceCode extends TokenStore {
+const scriptedSourceCode = class SourceCode extends TokenStore {
   get text() {
     return text;
   }
@@ -322,7 +322,18 @@ class SourceCode extends TokenStore {
     }
     return false;
   }
-}
+};
+
+const SourceCode = usesNativeSourceCode
+  ? native.sourceCode(TokenStore, scriptedSourceCode.prototype, [
+      program,
+      scopeManager,
+      comments,
+      tokensAndComments,
+      () => fileSettings.languageOptions.parserOptions,
+      visitorKeys,
+    ])
+  : scriptedSourceCode;
 
 // Of the file that is being linted.
 let sourceCode = new SourceCode();

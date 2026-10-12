@@ -4,6 +4,8 @@
 //
 // A rule can pass anything. Every property is read once, where ESLint reads it first, so getters and Proxies see the same
 // order of reads and exceptions come in the same order.
+//
+// A report doesn't become a JavaScript value. It's written as bytes, which `sendReports` hands to Rust when the file is done.
 
 #include "LintReport.h"
 
@@ -19,6 +21,8 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/StableSort.h>
 #include <JavaScriptCore/StringObject.h>
+#include <array>
+#include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -56,14 +60,73 @@ JSString* toStringOrDescription(JSGlobalObject* globalObject, JSValue value)
     return jsString(vm, *description);
 }
 
-JSArray* createArray(JSGlobalObject* globalObject, std::initializer_list<JSValue> values)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    MarkedArgumentBuffer items;
-    for (JSValue value : values)
-        items.append(value);
-    RELEASE_AND_RETURN(scope, constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), items));
-}
+// Appends to the message for src/lint/js_plugin/reports.rs, which documents the layout. Every target of Bun is little-endian.
+class Writer {
+public:
+    explicit Writer(Vector<uint8_t>& out)
+        : m_out(out)
+    {
+    }
+
+    // There was no memory for something. What has been written is of no use.
+    bool hasFailed() const { return m_hasFailed; }
+
+    void word(uint32_t value) { bytes(asByteSpan(value)); }
+    void number(double value) { bytes(asByteSpan(value)); }
+    // A number that a rule gave. NaN: it gave something else.
+    void number(JSValue value) { number(value.isNumber() ? value.asNumber() : PNaN); }
+
+    void bytes(std::span<const uint8_t> added)
+    {
+        if (!m_hasFailed && !m_out.tryAppend(added))
+            m_hasFailed = true;
+    }
+
+    void string(StringView text)
+    {
+        if (text.is8Bit() && charactersAreAllASCII(text.span8())) [[likely]] {
+            word(text.length());
+            bytes(text.span8());
+            return;
+        }
+        // No character takes more than three bytes for each UTF-16 code unit.
+        if (!reserve(4 + size_t(text.length()) * 3))
+            return;
+        size_t at = m_out.size();
+        word(0);
+        unsigned length = text.length();
+        for (unsigned i = 0; i < length; ++i) {
+            char32_t character = text[i];
+            if (U16_IS_LEAD(character) && i + 1 < length && U16_IS_TRAIL(text[i + 1]))
+                character = U16_GET_SUPPLEMENTARY(character, text[++i]);
+            if (character < 0x80) {
+                m_out.append(static_cast<uint8_t>(character));
+                continue;
+            }
+            unsigned more = character < 0x800 ? 1 : character < 0x10000 ? 2
+                                                                        : 3;
+            m_out.append(static_cast<uint8_t>(((0xFF << (7 - more)) & 0xFF) | character >> (6 * more)));
+            while (more--)
+                m_out.append(static_cast<uint8_t>(0x80 | (character >> (6 * more) & 0x3F)));
+        }
+        uint32_t size = static_cast<uint32_t>(m_out.size() - at - 4);
+        memcpySpan(m_out.mutableSpan().subspan(at, 4), asByteSpan(size));
+    }
+
+private:
+    bool reserve(size_t more)
+    {
+        size_t needed = m_out.size() + more;
+        if (!m_hasFailed && needed > m_out.capacity() && !m_out.tryReserveCapacity(std::max(needed, m_out.capacity() * 2)))
+            m_hasFailed = true;
+        return !m_hasFailed;
+    }
+
+    Vector<uint8_t>& m_out;
+    bool m_hasFailed { false };
+};
+
+constexpr uint32_t hasId = 1, hasFix = 2, hasData = 4;
 
 // `text.slice(from, to)`
 StringView slice(StringView text, double from, double to)
@@ -178,13 +241,13 @@ struct Edit {
 Edit readEdit(JSGlobalObject* globalObject, const LintReportState& names, JSValue fix, unsigned index)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue range = fix.get(globalObject, names.range);
+    JSValue range = lintGet(globalObject, fix, names.range);
     RETURN_IF_EXCEPTION(scope, {});
     if (range.toBoolean(globalObject)) {
-        JSValue start = range.get(globalObject, 0u);
+        JSValue start = lintGetIndex(globalObject, range, 0);
         RETURN_IF_EXCEPTION(scope, {});
         if (start.isNumber()) {
-            JSValue end = range.get(globalObject, 1u);
+            JSValue end = lintGetIndex(globalObject, range, 1);
             RETURN_IF_EXCEPTION(scope, {});
             if (end.isNumber())
                 return { start.asNumber(), end.asNumber(), index };
@@ -196,13 +259,36 @@ Edit readEdit(JSGlobalObject* globalObject, const LintReportState& names, JSValu
     return {};
 }
 
-// `[start, end, text]` for one fix.
-JSValue cloneFix(JSGlobalObject* globalObject, const LintReportState& names, JSValue fix, const Edit& edit)
+// What a `fix` function comes to: ESLint's `{ range, text }`.
+struct Fix {
+    // The function returned one.
+    bool exists { false };
+    double start { 0 };
+    double end { 0 };
+    // Null: the rule gave something else than a string, and nobody can apply the fix.
+    String text;
+
+    bool canBeSent() const { return exists && !text.isNull(); }
+    void write(Writer& writer) const
+    {
+        writer.number(start);
+        writer.number(end);
+        writer.string(text);
+    }
+};
+
+// ESLint's `cloneFix`
+Fix cloneFix(JSGlobalObject* globalObject, const LintReportState& names, JSValue fix, const Edit& edit)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue text = fix.get(globalObject, names.text);
+    JSValue text = lintGet(globalObject, fix, names.text);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, createArray(globalObject, { jsNumber(edit.start), jsNumber(edit.end), text }));
+    Fix result { true, edit.start, edit.end, {} };
+    if (text.isString()) [[likely]] {
+        result.text = asString(text)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return result;
 }
 
 // `Array.from(iterable)`
@@ -232,8 +318,8 @@ void collect(JSGlobalObject* globalObject, JSObject* iterable, MarkedArgumentBuf
     }
 }
 
-// ESLint's `mergeFixes`: `[start, end, text]`, or null.
-JSValue mergeFixes(JSGlobalObject* globalObject, LintHost* host, JSObject* iterable)
+// ESLint's `mergeFixes`
+Fix mergeFixes(JSGlobalObject* globalObject, LintHost* host, JSObject* iterable)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -262,10 +348,10 @@ JSValue mergeFixes(JSGlobalObject* globalObject, LintHost* host, JSObject* itera
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (!count)
-        return jsNull();
+        return {};
     if (count == 1) {
         if (notAFix)
-            return jsNull();
+            return {};
         RELEASE_AND_RETURN(scope, cloneFix(globalObject, names, fixes.at(0), edits[0]));
     }
     // ESLint reads the `range` of each.
@@ -310,20 +396,20 @@ JSValue mergeFixes(JSGlobalObject* globalObject, LintHost* host, JSObject* itera
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    RELEASE_AND_RETURN(scope, createArray(globalObject, { jsNumber(start), jsNumber(end), jsString(vm, merged.toString()) }));
+    return { true, start, end, merged.isEmpty() ? emptyString() : merged.toString() };
 }
 
 JSObject* createFixer(JSGlobalObject*, LintReportState&, LintHost*);
 
-// ESLint's `normalizeFixes`: `[start, end, text]`, or null. `function` is the `fix` of `owner`.
-JSValue normalizeFixes(JSGlobalObject* globalObject, LintHost* host, JSValue owner, JSValue function)
+// ESLint's `normalizeFixes`. `function` is the `fix` of `owner`.
+Fix normalizeFixes(JSGlobalObject* globalObject, LintHost* host, JSValue owner, JSValue function)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintReportState& state = host->report;
     auto callData = getCallData(function);
     if (callData.type == CallData::Type::None)
-        return jsNull();
+        return {};
     JSObject* fixer = state.fixer.get();
     if (!fixer)
         fixer = createFixer(globalObject, state, host);
@@ -332,34 +418,75 @@ JSValue normalizeFixes(JSGlobalObject* globalObject, LintHost* host, JSValue own
     JSValue fix = call(globalObject, function, callData, owner, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     if (!fix.toBoolean(globalObject))
-        return jsNull();
+        return {};
     // `Symbol.iterator in fix`
     if (!fix.isObject()) {
         throwException(globalObject, scope, createInvalidInParameterError(globalObject, fix));
         return {};
     }
-    bool isIterable = asObject(fix)->hasProperty(globalObject, vm.propertyNames->iteratorSymbol);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (isIterable)
-        RELEASE_AND_RETURN(scope, mergeFixes(globalObject, host, asObject(fix)));
+    // What the fixer makes isn't iterable, as long as nobody has made every object so.
+    if (asObject(fix)->structure() != state.fixStructure.get() || !state.isObjectPrototypePlain(globalObject)) {
+        bool isIterable = asObject(fix)->hasProperty(globalObject, vm.propertyNames->iteratorSymbol);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isIterable)
+            RELEASE_AND_RETURN(scope, mergeFixes(globalObject, host, asObject(fix)));
+    }
     Edit edit = readEdit(globalObject, state, fix, 0);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, cloneFix(globalObject, state, fix, edit));
 }
 
+// The argument of `report`. If it's a plain object with data properties, which it nearly always is, all of them are read at once
+// by their offsets. Nothing can tell.
+class Descriptor {
+public:
+    using Field = LintReportState::Field;
+    using enum LintReportState::Field;
+
+    Descriptor(JSGlobalObject* globalObject, LintHost* host, JSValue value)
+        : m_value(value)
+        , m_names(host->report)
+    {
+        if (!value.isObject()) [[unlikely]]
+            return;
+        JSObject* object = asObject(value);
+        auto* shape = host->report.shapeOf(globalObject, host, object->structure());
+        if (!shape) [[unlikely]]
+            return;
+        for (size_t i = 0; i < m_fields.size(); ++i)
+            m_fields[i] = shape->offsets[i] == invalidOffset ? jsUndefined() : object->getDirect(shape->offsets[i]);
+        m_isRead = true;
+    }
+
+    JSValue value() const { return m_value; }
+
+    // Each field is asked for once.
+    JSValue get(JSGlobalObject* globalObject, Field field)
+    {
+        if (m_isRead) [[likely]]
+            return m_fields[static_cast<size_t>(field)];
+        return m_value.get(globalObject, m_names.fieldNames[static_cast<size_t>(field)]);
+    }
+
+private:
+    JSValue m_value;
+    const LintReportState& m_names;
+    std::array<JSValue, LintReportState::fieldCount> m_fields;
+    bool m_isRead { false };
+};
+
 // ESLint's `computeMessageFromDescriptor`. Sets `messageId`.
-JSValue messageOf(JSGlobalObject* globalObject, const LintReportState& names, JSValue descriptor, JSValue messages, JSValue& messageId)
+JSValue messageOf(JSGlobalObject* globalObject, Descriptor& descriptor, JSValue messages, JSValue& messageId)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    messageId = descriptor.get(globalObject, names.messageId);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    messageId = descriptor.get(globalObject, Descriptor::MessageId);
     RETURN_IF_EXCEPTION(scope, {});
     bool hasId = messageId.toBoolean(globalObject);
     if (hasId && !messages.toBoolean(globalObject)) {
         throwTypeError(globalObject, scope, "context.report() called with a messageId, but no messages were present in the rule metadata."_s);
         return {};
     }
-    JSValue message = descriptor.get(globalObject, vm.propertyNames->message);
+    JSValue message = descriptor.get(globalObject, Descriptor::Message);
     RETURN_IF_EXCEPTION(scope, {});
     bool hasMessage = message.toBoolean(globalObject);
     if (!hasId) {
@@ -447,57 +574,152 @@ void validateSuggestion(JSGlobalObject* globalObject, const LintReportState& nam
     kept.append(fix);
 }
 
-// `Object.fromEntries(Object.entries(data).map(([key, value]) => [key, String(value)]))`, or null.
-JSValue stringsOf(JSGlobalObject* globalObject, JSValue data)
+// Writes `Object.entries(data).map(([key, value]) => [key, String(value)])`. `data` is truthy.
+void writeData(JSGlobalObject* globalObject, JSValue data, Writer& writer)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!data.toBoolean(globalObject))
-        return jsNull();
     JSObject* object = data.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, );
     PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, );
     Vector<Identifier, 8> names;
     MarkedArgumentBuffer values;
     for (auto& key : keys) {
         PropertyDescriptor descriptor;
         bool exists = object->getOwnPropertyDescriptor(globalObject, key, descriptor);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
         if (!exists || !descriptor.enumerable())
             continue;
         JSValue value = object->get(globalObject, key);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
         names.append(key);
         values.append(value);
     }
     if (values.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
-        return {};
+        return;
     }
-    JSObject* strings = constructEmptyObject(globalObject);
+    writer.word(names.size());
     for (unsigned i = 0; i < names.size(); ++i) {
         JSString* string = toStringOrDescription(globalObject, values.at(i));
-        RETURN_IF_EXCEPTION(scope, {});
-        strings->putDirectMayBeIndex(globalObject, names[i], string);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(scope, );
+        auto view = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        writer.string(names[i].string());
+        writer.string(view);
     }
-    return strings;
 }
 
-// `{ line, column }` of `index`, which nobody has checked: `range[0]` or `range[1]` of a node without a `loc`.
-void locate(JSGlobalObject* globalObject, LintHost* host, JSValue index, JSValue& line, JSValue& column)
+// ESLint's `validateSuggestions` and `mapSuggestions`. `suggest` is an array. `beforeFixes` runs between the two. Writes the
+// suggestions that have a fix and returns how many there are, and how many of them were written.
+struct Mapped {
+    unsigned withFix { 0 };
+    unsigned written { 0 };
+};
+NEVER_INLINE Mapped mapSuggestions(JSGlobalObject* globalObject, LintHost* host, JSValue suggest, JSValue messages, Writer& writer, const Invocable<void()> auto& beforeFixes)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    double number = index.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
-    auto position = host->positionOf(number);
-    line = jsNumber(position.line);
-    column = jsNumber(position.column);
+    LintReportState& state = host->report;
+    MarkedArgumentBuffer suggested;
+    forEachInIterable(globalObject, suggest, [&](VM&, JSGlobalObject*, JSValue suggestion) {
+        validateSuggestion(globalObject, state, suggestion, messages, suggested);
+    });
+    RETURN_IF_EXCEPTION(scope, {});
+    if (suggested.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    beforeFixes();
+    RETURN_IF_EXCEPTION(scope, {});
+    Mapped mapped;
+    if (!host->wantsFixes())
+        return mapped;
+    for (unsigned i = 0; i < suggested.size(); i += suggestionFields) {
+        JSValue suggestion = suggested.at(i + suggestionObject);
+        JSValue data = suggestion.get(globalObject, state.data);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue desc = interpolate(globalObject, state, suggested.at(i + suggestionText), data);
+        RETURN_IF_EXCEPTION(scope, {});
+        Fix fix = normalizeFixes(globalObject, host, suggestion, suggested.at(i + suggestionFix));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!fix.exists)
+            continue;
+        ++mapped.withFix;
+        // The data is turned into strings even if nobody gets to see it.
+        bool isSent = desc.isString() && fix.canBeSent();
+        Vector<uint8_t> unseen;
+        Writer unseenWriter(unseen);
+        Writer& out = isSent ? writer : unseenWriter;
+        JSValue id = suggested.at(i + suggestionMessageId);
+        bool givesData = data.toBoolean(globalObject);
+        out.word((id.isString() ? hasId : 0) | (givesData ? hasData : 0));
+        if (isSent) {
+            auto view = asString(desc)->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            out.string(view);
+        }
+        if (id.isString()) {
+            auto view = asString(id)->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            out.string(view);
+        }
+        if (givesData) {
+            writeData(globalObject, data, out);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (isSent) {
+            fix.write(out);
+            ++mapped.written;
+        }
+    }
+    return mapped;
 }
 
 } // namespace
+
+const LintReportState::Shape* LintReportState::shapeOf(JSGlobalObject* globalObject, LintHost* host, Structure* structure)
+{
+    auto bits = reinterpret_cast<uintptr_t>(structure);
+    Shape& shape = shapes[((bits >> 7) ^ (bits >> 13)) % shapes.size()];
+    if (!isObjectPrototypePlain(globalObject)) [[unlikely]] {
+        if (!checkObjectPrototype(globalObject, host))
+            return nullptr;
+    }
+    if (shape.structure.get() == structure) [[likely]]
+        return &shape;
+    // The offsets of a dictionary change, and others answer for themselves.
+    if (structure->isDictionary() || structure->typeInfo().overridesGetOwnPropertySlot() || !structure->hasMonoProto() || structure->storedPrototype() != globalObject->objectPrototype())
+        return nullptr;
+    VM& vm = globalObject->vm();
+    std::array<PropertyOffset, fieldCount> offsets;
+    for (size_t i = 0; i < fieldCount; ++i) {
+        unsigned attributes;
+        offsets[i] = structure->get(vm, fieldNames[i], attributes);
+        if (offsets[i] != invalidOffset && (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
+            return nullptr;
+    }
+    shape.structure.set(vm, host, structure);
+    shape.offsets = offsets;
+    return &shape;
+}
+
+bool LintReportState::checkObjectPrototype(JSGlobalObject* globalObject, LintHost* host)
+{
+    VM& vm = globalObject->vm();
+    Structure* structure = globalObject->objectPrototype()->structure();
+    if (structure->isDictionary() || structure->typeInfo().overridesGetOwnPropertySlot() || !structure->storedPrototype().isNull())
+        return false;
+    for (auto& name : fieldNames) {
+        if (structure->get(vm, name) != invalidOffset)
+            return false;
+    }
+    if (structure->get(vm, vm.propertyNames->iteratorSymbol) != invalidOffset)
+        return false;
+    plainObjectPrototype.set(vm, host, structure);
+    return true;
+}
 
 // The function behind `context.report`. It's bound to `{ position, meta, report }`, which `reporter` makes.
 JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -511,35 +733,36 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
         return throwVMTypeError(globalObject, scope, "Expected a rule"_s);
     JSValue position = rule->getDirect(0);
     JSValue meta = rule->getDirect(1);
-    auto ofMeta = [&](const Identifier& name) { return meta.isUndefinedOrNull() ? jsUndefined() : meta.get(globalObject, name); };
+    auto ofMeta = [&](const Identifier& name) { return meta.isUndefinedOrNull() ? jsUndefined() : lintGet(globalObject, meta, name); };
 
     // ESLint's `normalizeMultiArgReportCall`
-    JSValue descriptor = callFrame->argument(0);
-    if (callFrame->argumentCount() > 1) {
+    JSValue argument = callFrame->argument(0);
+    if (callFrame->argumentCount() > 1) [[unlikely]] {
         unsigned at = 0;
         JSObject* made = constructEmptyObject(globalObject);
-        made->putDirect(vm, state.node, callFrame->argument(at++));
+        made->putDirect(vm, state.name(Descriptor::Node), callFrame->argument(at++));
         if (!callFrame->argument(1).isString())
-            made->putDirect(vm, state.loc, callFrame->argument(at++));
-        made->putDirect(vm, vm.propertyNames->message, callFrame->argument(at++));
-        made->putDirect(vm, state.data, callFrame->argument(at++));
-        made->putDirect(vm, state.fix, callFrame->argument(at++));
-        descriptor = made;
+            made->putDirect(vm, state.name(Descriptor::Loc), callFrame->argument(at++));
+        made->putDirect(vm, state.name(Descriptor::Message), callFrame->argument(at++));
+        made->putDirect(vm, state.name(Descriptor::Data), callFrame->argument(at++));
+        made->putDirect(vm, state.name(Descriptor::Fix), callFrame->argument(at++));
+        argument = made;
     }
+    Descriptor descriptor(globalObject, host, argument);
     JSValue messages = ofMeta(state.messages);
     RETURN_IF_EXCEPTION(scope, {});
 
     // ESLint's `assertValidNodeInfo`
-    JSValue node = descriptor.get(globalObject, state.node);
+    JSValue node = descriptor.get(globalObject, Descriptor::Node);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue loc;
-    if (node.toBoolean(globalObject)) {
+    if (node.toBoolean(globalObject)) [[likely]] {
         if (!jsTypeofIsObject(globalObject, node)) {
             throwError(globalObject, scope, "Node must be an object"_s);
             return {};
         }
     } else {
-        loc = descriptor.get(globalObject, state.loc);
+        loc = descriptor.get(globalObject, Descriptor::Loc);
         RETURN_IF_EXCEPTION(scope, {});
         if (!loc.toBoolean(globalObject)) {
             throwError(globalObject, scope, "Node must be provided when reporting error if location is not provided"_s);
@@ -548,133 +771,140 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
     }
 
     JSValue messageId;
-    JSValue message = messageOf(globalObject, state, descriptor, messages, messageId);
+    JSValue message = messageOf(globalObject, descriptor, messages, messageId);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // ESLint's `validateSuggestions`
-    JSValue suggest = descriptor.get(globalObject, state.suggest);
+    JSValue suggest = descriptor.get(globalObject, Descriptor::Suggest);
     RETURN_IF_EXCEPTION(scope, {});
-    MarkedArgumentBuffer suggested;
     bool hasSuggestions = false;
-    if (suggest.toBoolean(globalObject)) {
+    if (suggest.toBoolean(globalObject)) [[unlikely]] {
         hasSuggestions = isArray(globalObject, suggest);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (hasSuggestions) {
-        forEachInIterable(globalObject, suggest, [&](VM&, JSGlobalObject*, JSValue suggestion) {
-            validateSuggestion(globalObject, state, suggestion, messages, suggested);
-        });
+
+    // Where it is, and the fix. With suggestions this runs after they are checked and before their fixes are asked for.
+    // `start` and `end` are read when the report is made.
+    JSValue start, end, line, column, endLine, endColumn;
+    Fix fix;
+    auto locateAndFix = [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!loc) {
+            loc = descriptor.get(globalObject, Descriptor::Loc);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        if (loc.isUndefinedOrNull()) {
+            loc = lintGet(globalObject, node, state.name(Descriptor::Loc));
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        if (loc.isUndefinedOrNull()) [[unlikely]] {
+            // A copy of a node, `{ ...node }`, has no `loc`, because a node computes it when it's asked for.
+            JSValue range = node.get(globalObject, state.range);
+            RETURN_IF_EXCEPTION(scope, );
+            for (unsigned i = 0; i < 2; ++i) {
+                JSValue index = range.get(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, );
+                double number = index.toNumber(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                auto found = host->positionOf(number);
+                (i ? endLine : line) = jsNumber(found.line);
+                (i ? endColumn : column) = jsNumber(found.column + 1);
+            }
+        } else {
+            // `start = loc.start ?? loc` and `end = loc.start ? loc.end : null`
+            bool isPlain = host->isLoc(loc);
+            start = isPlain ? asObject(loc)->getDirect(0) : loc.get(globalObject, state.start);
+            RETURN_IF_EXCEPTION(scope, );
+            if (start.toBoolean(globalObject)) [[likely]] {
+                end = isPlain ? asObject(loc)->getDirect(1) : loc.get(globalObject, state.end);
+                RETURN_IF_EXCEPTION(scope, );
+            } else if (start.isUndefinedOrNull())
+                start = loc;
+        }
+        if (!host->wantsFixes())
+            return;
+        JSValue function = descriptor.get(globalObject, Descriptor::Fix);
+        RETURN_IF_EXCEPTION(scope, );
+        if (function.isUndefined())
+            return;
+        scope.release();
+        fix = normalizeFixes(globalObject, host, descriptor.value(), function);
+    };
+
+    Vector<uint8_t> suggestionBytes;
+    Mapped mapped;
+    if (hasSuggestions) [[unlikely]] {
+        Writer writer(suggestionBytes);
+        mapped = mapSuggestions(globalObject, host, suggest, messages, writer, locateAndFix);
         RETURN_IF_EXCEPTION(scope, {});
-        if (suggested.hasOverflowed()) [[unlikely]] {
+        if (writer.hasFailed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-    }
-
-    // Where it is. `start` and `end` are read when the report is made. A copy of a node, `{ ...node }`, has no `loc`,
-    // because a node computes it when it's asked for.
-    if (!loc) {
-        loc = descriptor.get(globalObject, state.loc);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    if (loc.isUndefinedOrNull()) {
-        loc = node.get(globalObject, state.loc);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    JSValue start, end, line, column, endLine = jsNull(), endColumn = jsNull();
-    if (loc.isUndefinedOrNull()) {
-        JSValue range = node.get(globalObject, state.range);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue index = range.get(globalObject, 0u);
-        RETURN_IF_EXCEPTION(scope, {});
-        locate(globalObject, host, index, line, column);
-        RETURN_IF_EXCEPTION(scope, {});
-        index = range.get(globalObject, 1u);
-        RETURN_IF_EXCEPTION(scope, {});
-        locate(globalObject, host, index, endLine, endColumn);
-        RETURN_IF_EXCEPTION(scope, {});
     } else {
-        start = loc.get(globalObject, state.start);
+        locateAndFix();
         RETURN_IF_EXCEPTION(scope, {});
-        if (start.toBoolean(globalObject)) {
-            end = loc.get(globalObject, state.end);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        if (start.isUndefinedOrNull())
-            start = loc;
     }
 
-    JSValue fix = jsNull();
-    JSValue suggestions = jsNull();
-    if (host->wantsFixes()) {
-        JSValue function = descriptor.get(globalObject, state.fix);
-        RETURN_IF_EXCEPTION(scope, {});
-        fix = normalizeFixes(globalObject, host, descriptor, function);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        // ESLint's `mapSuggestions`
-        MarkedArgumentBuffer mapped;
-        for (unsigned i = 0; i < suggested.size(); i += suggestionFields) {
-            JSValue suggestion = suggested.at(i + suggestionObject);
-            JSValue data = suggestion.get(globalObject, state.data);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue desc = interpolate(globalObject, state, suggested.at(i + suggestionText), data);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue suggestedFix = normalizeFixes(globalObject, host, suggestion, suggested.at(i + suggestionFix));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (suggestedFix.isNull())
-                continue;
-            JSValue strings = stringsOf(globalObject, data);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue id = suggested.at(i + suggestionMessageId);
-            JSArray* entry = createArray(globalObject, { id.isUndefinedOrNull() ? jsNull() : id, desc, strings, suggestedFix });
-            RETURN_IF_EXCEPTION(scope, {});
-            mapped.append(entry);
-        }
-        if (!mapped.isEmpty()) {
-            suggestions = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), mapped);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    JSValue data = descriptor.get(globalObject, state.data);
+    JSValue data = descriptor.get(globalObject, Descriptor::Data);
     RETURN_IF_EXCEPTION(scope, {});
     message = interpolate(globalObject, state, message, data);
     RETURN_IF_EXCEPTION(scope, {});
-    message = toStringOrDescription(globalObject, message);
+    JSString* messageString = toStringOrDescription(globalObject, message);
     RETURN_IF_EXCEPTION(scope, {});
-    if (start) {
-        line = start.get(globalObject, state.line);
-        RETURN_IF_EXCEPTION(scope, {});
-        column = start.get(globalObject, state.column);
-        RETURN_IF_EXCEPTION(scope, {});
+    // `position.line` and `position.column + 1`
+    auto read = [&](JSValue position, JSValue& line, JSValue& column) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (host->isPosition(position)) [[likely]] {
+            line = asObject(position)->getDirect(0);
+            column = asObject(position)->getDirect(1);
+        } else {
+            line = position.get(globalObject, state.line);
+            RETURN_IF_EXCEPTION(scope, );
+            column = position.get(globalObject, state.column);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        scope.release();
         column = jsAdd(globalObject, column, jsNumber(1));
+    };
+    if (start) [[likely]] {
+        read(start, line, column);
         RETURN_IF_EXCEPTION(scope, {});
         if (end && end.toBoolean(globalObject)) {
-            endLine = end.get(globalObject, state.line);
-            RETURN_IF_EXCEPTION(scope, {});
-            endColumn = end.get(globalObject, state.column);
-            RETURN_IF_EXCEPTION(scope, {});
-            endColumn = jsAdd(globalObject, endColumn, jsNumber(1));
+            read(end, endLine, endColumn);
             RETURN_IF_EXCEPTION(scope, {});
         }
-    } else {
-        column = jsNumber(column.asNumber() + 1);
-        endColumn = jsNumber(endColumn.asNumber() + 1);
     }
-
-    JSArray* report = createArray(globalObject, { position, message, messageId.isUndefinedOrNull() ? jsNull() : messageId, line, column, endLine, endColumn, fix, suggestions });
+    auto messageView = messageString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    JSArray* reports = state.reports.get();
-    if (!reports) {
-        reports = constructEmptyArray(globalObject, nullptr);
+    GCOwnedDataScope<StringView> idView { nullptr, StringView() };
+    if (messageId.isString()) {
+        idView = asString(messageId)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        state.reports.set(vm, host, reports);
     }
-    reports->push(globalObject, report);
-    RETURN_IF_EXCEPTION(scope, {});
 
-    if (!fix.isNull()) {
+    // Nothing from here to the end of the report runs JavaScript.
+    size_t before = state.bytes.size();
+    Writer writer(state.bytes);
+    writer.word(position.isNumber() ? JSC::toUInt32(position.asNumber()) : 0);
+    writer.word((messageId.isString() ? hasId : 0) | (fix.canBeSent() ? hasFix : 0));
+    writer.number(line);
+    writer.number(column);
+    writer.number(endLine ? endLine : jsNull());
+    writer.number(endColumn ? endColumn : jsNull());
+    writer.word(mapped.written);
+    writer.string(messageView);
+    if (messageId.isString())
+        writer.string(idView);
+    if (fix.canBeSent())
+        fix.write(writer);
+    writer.bytes(suggestionBytes.span());
+    if (writer.hasFailed()) [[unlikely]] {
+        state.bytes.shrink(before);
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    if (fix.exists) {
         JSValue fixable = ofMeta(state.fixable);
         RETURN_IF_EXCEPTION(scope, {});
         if (!fixable.toBoolean(globalObject)) {
@@ -682,7 +912,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
             return {};
         }
     }
-    if (!suggestions.isNull()) {
+    if (mapped.withFix) [[unlikely]] {
         JSValue allowed = ofMeta(state.hasSuggestions);
         RETURN_IF_EXCEPTION(scope, {});
         if (!allowed.isTrue()) {
@@ -743,7 +973,7 @@ JSValue fixRange(JSGlobalObject* globalObject, const LintReportState& state, JSV
         return {};
     }
     if constexpr (kind == FixKind::InsertAfter || kind == FixKind::InsertBefore) {
-        JSValue index = range.get(globalObject, kind == FixKind::InsertAfter ? 1u : 0u);
+        JSValue index = lintGetIndex(globalObject, range, kind == FixKind::InsertAfter ? 1 : 0);
         RETURN_IF_EXCEPTION(scope, {});
         range = createPair(globalObject, index);
         RETURN_IF_EXCEPTION(scope, {});
@@ -779,7 +1009,7 @@ EncodedJSValue fixNodeFunction(JSGlobalObject* globalObject, CallFrame* callFram
         method = thisValue.get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    JSValue range = callFrame->argument(0).get(globalObject, state.range);
+    JSValue range = lintGet(globalObject, callFrame->argument(0), state.range);
     RETURN_IF_EXCEPTION(scope, {});
     if (isFixer) [[likely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(fixRange<kind>(globalObject, state, range, callFrame->argument(1))));
@@ -841,31 +1071,39 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReporter, (JSGlobalObject * globalObject, CallFra
     rule->putDirectOffset(vm, 0, jsNumber(0));
     rule->putDirectOffset(vm, 1, callFrame->argument(0));
     rule->putDirectOffset(vm, 2, jsUndefined());
-    JSBoundFunction* report = JSBoundFunction::create(vm, globalObject, state.target.get(), rule, ArgList(), 0, state.name.get(), makeSource("report"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+    JSBoundFunction* report = JSBoundFunction::create(vm, globalObject, state.target.get(), rule, ArgList(), 0, nullptr, makeSource("report"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, {});
+    // Its name would be "bound report". Both properties are made when they're first asked for, `length` first.
+    report->get(globalObject, vm.propertyNames->length);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    report->putDirect(vm, vm.propertyNames->name, state.reportName.get(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     rule->putDirectOffset(vm, 2, report);
     return JSValue::encode(rule);
 }
 
-// `takeReports()` returns the reports about the file so far, each
-// `[rule, message, messageId, line, column, endLine, endColumn, fix, suggestions]`, or undefined if there are none.
-JSC_DEFINE_HOST_FUNCTION(jsLintTakeReports, (JSGlobalObject * globalObject, CallFrame*))
+// `sendReports()` hands the reports about the file so far to Rust.
+JSC_DEFINE_HOST_FUNCTION(jsLintSendReports, (JSGlobalObject * globalObject, CallFrame*))
 {
     LintReportState& state = LintHost::from(globalObject)->report;
-    JSArray* reports = state.reports.get();
-    state.reports.clear();
-    return JSValue::encode(reports ? reports : jsUndefined());
+    // `ask::REPORTS` in src/lint/js_plugin/wire.rs
+    constexpr uint32_t reports = 12;
+    if (!state.bytes.isEmpty())
+        Bun__Lint__ask(globalObject, reports, state.bytes.span().data(), state.bytes.size());
+    state.bytes.shrink(0);
+    return JSValue::encode(jsUndefined());
 }
 
 void LintReportState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintHost* host)
 {
     auto set = [&](Identifier& name, ASCIILiteral text) { name = Identifier::fromString(vm, text); };
-    set(node, "node"_s);
-    set(loc, "loc"_s);
+    constexpr std::array<ASCIILiteral, fieldCount> fields { "node"_s, "loc"_s, "messageId"_s, "message"_s, "suggest"_s, "fix"_s, "data"_s };
+    for (size_t i = 0; i < fieldCount; ++i)
+        set(fieldNames[i], fields[i]);
     set(messageId, "messageId"_s);
     set(data, "data"_s);
     set(fix, "fix"_s);
-    set(suggest, "suggest"_s);
     set(desc, "desc"_s);
     set(range, "range"_s);
     set(text, "text"_s);
@@ -879,7 +1117,6 @@ void LintReportState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintH
     set(docs, "docs"_s);
     set(suggestion, "suggestion"_s);
     set(includes, "includes"_s);
-    set(replace, "replace"_s);
     set(insertTextAfterRange, "insertTextAfterRange"_s);
     set(insertTextBeforeRange, "insertTextBeforeRange"_s);
     set(replaceTextRange, "replaceTextRange"_s);
@@ -888,14 +1125,14 @@ void LintReportState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintH
     ruleStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "position"_s, "meta"_s, "report"_s })));
     fixStructure.set(vm, host, LintHost::createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "range"_s, "text"_s })));
     target.set(vm, host, JSFunction::create(vm, globalObject, 0, "report"_s, jsLintReport, ImplementationVisibility::Public));
-    name.set(vm, host, jsNontrivialString(vm, "report"_s));
+    reportName.set(vm, host, jsNontrivialString(vm, "report"_s));
 }
 
 void addLintReportFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
     native->putDirect(vm, Identifier::fromString(vm, "reporter"_s), JSFunction::create(vm, globalObject, 1, "reporter"_s, jsLintReporter, ImplementationVisibility::Public));
-    native->putDirect(vm, Identifier::fromString(vm, "takeReports"_s), JSFunction::create(vm, globalObject, 0, "takeReports"_s, jsLintTakeReports, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "sendReports"_s), JSFunction::create(vm, globalObject, 0, "sendReports"_s, jsLintSendReports, ImplementationVisibility::Public));
 }
 
 } // namespace Bun

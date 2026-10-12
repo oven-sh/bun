@@ -21,6 +21,18 @@
 namespace Bun {
 using namespace JSC;
 
+// An array of `length` times `undefined`, or null if there's no memory. `setIndexQuickly` is safe for all its indices.
+// It isn't after `JSArray::tryCreate`, which makes room for a few items only once a plugin has put an accessor with an index for
+// a name on `Array.prototype`.
+JSArray* tryCreateFilledLintArray(VM& vm, JSGlobalObject* globalObject, unsigned length)
+{
+    ObjectInitializationScope initializationScope(vm);
+    JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), length);
+    for (unsigned i = 0; array && i < length; ++i)
+        array->initializeIndex(initializationScope, i, jsUndefined());
+    return array;
+}
+
 // `shape(prototype, keys, first, hidden = 0)` returns a template object with `keys` as inline properties, in that order.
 // `first` is the value of the first key. The last `hidden` keys are what `Object.defineProperty(object, key, { value })`
 // defines. They are not enumerable, writable or configurable. `nodes` and `codePaths` create objects with the template's Structure.
@@ -33,7 +45,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintShape, (JSGlobalObject * globalObject, CallFrame*
     if (!prototype || !keys || !keys->length() || keys->length() > JSFinalObject::maxInlineCapacity)
         return throwVMTypeError(globalObject, scope, "Expected a prototype and keys"_s);
     unsigned count = keys->length();
-    unsigned hidden = callFrame->argument(3).isUInt32() ? std::min(callFrame->argument(3).asUInt32(), count) : 0;
+    // A number that the JIT has made can be a double.
+    unsigned hidden = callFrame->argument(3).isNumber() ? std::min(JSC::toUInt32(callFrame->argument(3).asNumber()), count) : 0;
     Structure* structure = JSFinalObject::createStructure(vm, globalObject, prototype, count);
     for (unsigned i = 0; i < count; ++i) {
         JSValue key = keys->getIndex(globalObject, i);
@@ -146,7 +159,7 @@ public:
             return slice(from, m_tree.strings[2 * number + 1]);
         }
         case 4:
-            return number < m_knownStrings->length() ? m_knownStrings->getIndexQuickly(number) : JSValue();
+            return m_knownStrings->tryGetIndexQuickly(number);
         case 5:
             return jsNumber(number);
         case 6: {
@@ -290,7 +303,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame*
     if (at > tree.fields.size())
         return outOfStep();
 
-    JSArray* nodes = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
+    JSArray* nodes = tryCreateFilledLintArray(vm, globalObject, count);
     if (!nodes) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -465,14 +478,14 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCodePaths, (JSGlobalObject * globalObject, CallFr
 
     // Everything below is reachable from `result` as soon as it exists.
     Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
-    JSArray* result = JSArray::tryCreate(vm, arrayStructure, 2);
+    JSArray* result = tryCreateFilledLintArray(vm, globalObject, 2);
     if (!result) [[unlikely]]
         return outOfMemory();
-    JSArray* paths = JSArray::tryCreate(vm, arrayStructure, message.pathCount);
+    JSArray* paths = tryCreateFilledLintArray(vm, globalObject, message.pathCount);
     if (!paths) [[unlikely]]
         return outOfMemory();
     result->setIndexQuickly(vm, 0, paths);
-    JSArray* segments = JSArray::tryCreate(vm, arrayStructure, message.segmentCount);
+    JSArray* segments = tryCreateFilledLintArray(vm, globalObject, message.segmentCount);
     if (!segments) [[unlikely]]
         return outOfMemory();
     result->setIndexQuickly(vm, 1, segments);

@@ -27,6 +27,17 @@ struct LintSourceCodeState {
         visitor.append(constructor);
         visitor.append(instanceStructure);
         visitor.append(servicesStructure);
+        visitor.append(problemStructure);
+        visitor.append(directiveStructure);
+        visitor.append(directivesStructure);
+        visitor.append(commentsStructure);
+        visitor.append(includeComments);
+        visitor.append(getTokenBefore);
+        visitor.append(getTokenAfter);
+        visitor.append(getCommentsBefore);
+        visitor.append(getCommentsInside);
+        visitor.append(inlineConfigNodes);
+        visitor.append(disableDirectives);
         visitor.append(program);
         visitor.append(scopeManager);
         visitor.append(comments);
@@ -41,11 +52,24 @@ struct LintSourceCodeState {
     }
 
     // Built once.
-    JSC::Identifier range, loc, parent, line, column;
+    JSC::Identifier range, loc, parent, line, column, start, end, type, value, body, properties, elements, cases, commentsName;
     JSC::Identifier emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations;
     JSC::WriteBarrier<JSC::JSObject> constructor;
     JSC::WriteBarrier<JSC::Structure> instanceStructure;
     JSC::WriteBarrier<JSC::Structure> servicesStructure;
+    // `{ ruleId, message, loc }`, `{ type, node, value, justification }` and `{ problems, directives }`
+    JSC::WriteBarrier<JSC::Structure> problemStructure;
+    JSC::WriteBarrier<JSC::Structure> directiveStructure;
+    JSC::WriteBarrier<JSC::Structure> directivesStructure;
+    // `{ leading, trailing }`
+    JSC::WriteBarrier<JSC::Structure> commentsStructure;
+    // `{ includeComments: true }`
+    JSC::WriteBarrier<JSC::JSObject> includeComments;
+    // Methods of `TokenStore`.
+    JSC::WriteBarrier<JSC::JSObject> getTokenBefore;
+    JSC::WriteBarrier<JSC::JSObject> getTokenAfter;
+    JSC::WriteBarrier<JSC::JSObject> getCommentsBefore;
+    JSC::WriteBarrier<JSC::JSObject> getCommentsInside;
 
     // Functions of the program in src/lint/js_plugin/worker, for the parts of a file that it still makes.
     JSC::WriteBarrier<JSC::JSObject> program;
@@ -60,6 +84,13 @@ struct LintSourceCodeState {
     JSC::WriteBarrier<JSC::JSArray> lines;
     JSC::WriteBarrier<JSC::JSArray> lineStartIndices;
     JSC::WriteBarrier<JSC::JSObject> parserServices;
+    JSC::WriteBarrier<JSC::JSArray> inlineConfigNodes;
+    JSC::WriteBarrier<JSC::JSObject> disableDirectives;
+    // What src/lint/js_plugin/directives.rs writes for each of `inlineConfigNodes`.
+    struct ConfigComment {
+        uint32_t comment, label, valueStart, valueEnd, justificationStart, justificationEnd;
+    };
+    WTF::Vector<ConfigComment> configComments;
     JSC::WriteBarrier<JSC::JSArrayBuffer> treeBuffer;
     JSC::WriteBarrier<JSC::JSArray> nodes;
     std::span<const uint32_t> starts;

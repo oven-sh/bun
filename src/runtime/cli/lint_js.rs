@@ -46,16 +46,34 @@ pub(crate) struct LintVm {
     handle: Strong,
     /// Set while `handle` runs.
     call: Cell<Option<NonNull<Call<'static, 'static>>>>,
-    /// The last answer.
+    /// The last answer to [`request`].
     answer: RefCell<Vec<u8>>,
+    /// The answers to [`Bun__Lint__ask`] during this call.
+    kept: RefCell<Kept>,
+}
+
+/// Answers that native code has spans into. Each is written once, and its bytes stay where they are until the call is over:
+/// pushing to `all` moves the `Vec`s, not what they point to.
+#[derive(Default)]
+struct Kept {
+    all: Vec<Vec<u8>>,
+    /// Which of them answers a kind that was asked for without details.
+    plain: Vec<(u32, usize)>,
+    /// Native code was given a span.
+    is_lent: bool,
 }
 
 /// Takes the call out of the VM when it is over.
-struct Lent<'v>(&'v LintVm);
+struct Lent<'v>(&'v LintVm, &'v JSGlobalObject);
 
 impl Drop for Lent<'_> {
     fn drop(&mut self) {
         self.0.call.set(None);
+        let kept = core::mem::take(&mut *self.0.kept.borrow_mut());
+        // The program does this itself, unless it was cut short.
+        if kept.is_lent {
+            Bun__Lint__endFile(self.1);
+        }
     }
 }
 
@@ -70,6 +88,8 @@ unsafe extern "C" {
     ) -> JSValue;
     /// src/jsc/bindings/LintNodes.cpp
     safe fn Bun__Lint__nodeFunctions(global: &JSGlobalObject) -> JSValue;
+    /// src/jsc/bindings/LintHost.cpp. Drops every span that native code has kept.
+    safe fn Bun__Lint__endFile(global: &JSGlobalObject);
 }
 
 fn message_of(global: &JSGlobalObject, error: JSValue) -> Vec<u8> {
@@ -121,14 +141,56 @@ fn request(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 }
 
-/// Bytes that are the same until the next question is asked.
+/// Bytes that stay the same, and in the same place, until the call that is running is over.
 #[repr(C)]
 struct LintSpan {
     ptr: *const u8,
     len: usize,
 }
 
-/// [`request`] for src/jsc/bindings/LintHost.h. Null: no file is being linted.
+impl LintSpan {
+    fn of(bytes: &[u8]) -> LintSpan {
+        LintSpan {
+            ptr: bytes.as_ptr(),
+            len: bytes.len(),
+        }
+    }
+}
+
+/// Answers `kind` and keeps the answer. `None`: no file is being linted.
+fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
+    let state = crate::jsc_hooks::lint_vm().get()?;
+    let mut call = state.call.get()?;
+    // SAFETY: as in `ask`.
+    let call = unsafe { call.as_mut() };
+    state.kept.borrow_mut().is_lent = true;
+    if kind == 0 {
+        return Some(LintSpan::of(call.content));
+    }
+    if details.is_empty() {
+        let kept = state.kept.borrow();
+        let known = kept.plain.iter().find(|it| it.0 == kind);
+        if let Some(known) = known.and_then(|it| kept.all.get(it.1)) {
+            return Some(LintSpan::of(known));
+        }
+    }
+    let mut answer = Vec::new();
+    (call.serve)(kind, details, &mut answer);
+    // The allocator aligns every block to 8 bytes at least, which native code relies on to read numbers in place.
+    debug_assert!(answer.is_empty() || answer.as_ptr().addr().is_multiple_of(8));
+    let span = LintSpan::of(&answer);
+    let mut kept = state.kept.borrow_mut();
+    if details.is_empty() {
+        let at = kept.all.len();
+        kept.plain.push((kind, at));
+    }
+    kept.all.push(answer);
+    Some(span)
+}
+
+/// What [`request`] answers, for src/jsc/bindings/LintHost.h, without a copy. `details` are bytes, so a new kind can take numbers
+/// as they are. Every answer is kept until the call is over, so this is for tables, not for one small question per node.
+/// Null: no file is being linted.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Lint__ask(
     _global: &JSGlobalObject,
@@ -141,19 +203,10 @@ extern "C" fn Bun__Lint__ask(
         // SAFETY: the caller's, who keeps them until this returns.
         false => unsafe { core::slice::from_raw_parts(details, details_len) },
     };
-    match ask(kind, details) {
-        Some(state) => {
-            let answer = state.answer.borrow();
-            LintSpan {
-                ptr: answer.as_ptr(),
-                len: answer.len(),
-            }
-        }
-        None => LintSpan {
-            ptr: core::ptr::null(),
-            len: 0,
-        },
-    }
+    ask_and_keep(kind, details).unwrap_or(LintSpan {
+        ptr: core::ptr::null(),
+        len: 0,
+    })
 }
 
 /// `again(buffer)`
@@ -220,6 +273,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
                 handle: Strong::create(handle, global),
                 call: Cell::new(None),
                 answer: RefCell::new(Vec::new()),
+                kept: RefCell::default(),
             })
         }
         Err(error) => Err(message_of(global, global.take_exception(error))),
@@ -283,7 +337,7 @@ impl Vm for ThreadVm {
             let state = program_of(vm)?;
             let mut call = Call { content, serve };
             state.call.set(Some(NonNull::from(&mut call).cast()));
-            let _lent = Lent(state);
+            let _lent = Lent(state, global);
             let _scope = vm.enter_event_loop_scope();
             let kind = JSValue::js_number_from_int32(kind as i32);
             let mut returned = (state.handle.get().call(global, JSValue::UNDEFINED, &[kind]))

@@ -2205,20 +2205,6 @@ pub enum PercentEncodeError {
     IncompleteUTF8,
 }
 
-/// `encodeURIComponent(text)`, for UTF-8.
-pub fn encode_uri_component(text: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(text.len() + 16);
-    for &c in text {
-        if c.is_ascii_alphanumeric() || contains_char(b"-_.!~*'()", c) {
-            out.push(c);
-        } else {
-            out.push(b'%');
-            out.extend_from_slice(&crate::fmt::hex2_upper(c));
-        }
-    }
-    out
-}
-
 pub fn percent_encode_write(
     utf8_input: &[u8],
     writer: &mut Vec<u8>,
@@ -2252,6 +2238,23 @@ pub fn percent_encode_write(
     // Write the rest of the string
     writer.extend_from_slice(remaining);
     Ok(())
+}
+
+/// JavaScript's `encodeURIComponent` on bytes: every byte but `A-Z a-z 0-9 - _ . ! ~ * ' ( )` becomes `%XX`.
+pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
+    for &byte in input {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
+            writer.push(byte);
+        } else {
+            let h = crate::fmt::hex2_upper(byte);
+            writer.extend_from_slice(&[b'%', h[0], h[1]]);
+        }
+    }
 }
 
 /// Levenshtein's distance: how many elements have to be replaced, added or removed to make `b` of `a`.

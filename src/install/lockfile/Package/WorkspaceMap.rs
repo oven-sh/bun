@@ -527,12 +527,15 @@ impl WorkspaceMap {
                     root_dir,
                     false,
                     false,
-                    /* follow_symlinks: */ true,
+                    false,
                     false,
                     true,
                     Some(ignored_workspace_paths),
                 )? {
-                    Ok(w) => w,
+                    Ok(mut w) => {
+                        w.follow_matched_symlinks();
+                        w
+                    }
                     Err(e) => {
                         return Err(add_glob_error(log, source, loc, user_pattern, root_dir, &e));
                     }

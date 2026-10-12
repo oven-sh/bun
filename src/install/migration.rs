@@ -517,6 +517,54 @@ fn migrate_npm_lockfile<'a>(
     }))
 }
 
+/// What the install then resolves, to a version the lockfile does not name: `dropped`, and the rows that are bound to nothing.
+pub(crate) fn warn_unlocked_dependencies(
+    lockfile: &Lockfile,
+    manager: &PackageManager,
+    lockfile_name: &str,
+    dropped: &[Dependency],
+) {
+    let log_level = manager.options.log_level;
+    if log_level.is_silent() {
+        return;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let unlocked = || {
+        let unbound = (lockfile.buffers.dependencies.iter())
+            .zip(lockfile.buffers.resolutions.iter())
+            .filter(|(_, resolution)| **resolution == crate::INVALID_PACKAGE_ID)
+            .map(|(dep, _)| dep);
+        // Peers and optional dependencies are not always locked, and a workspace is no entry.
+        dropped.iter().chain(unbound).filter(|dep| {
+            !dep.behavior.is_peer()
+                && !dep.behavior.is_optional()
+                && !dep.behavior.is_workspace()
+                && lockfile.workspace_paths.get(&dep.name_hash).is_none()
+        })
+    };
+    let count = unlocked().count();
+    for dep in unlocked().take(if log_level.is_verbose() { count } else { 1 }) {
+        let name = bstr::BStr::new(dep.name.slice(buf));
+        let range = bstr::BStr::new(dep.version.literal.slice(buf));
+        if count == 1 || log_level.is_verbose() {
+            bun_core::warn!(
+                "{} has no entry for \"{}@{}\"; bun resolves it",
+                lockfile_name,
+                name,
+                range
+            );
+        } else {
+            bun_core::warn!(
+                "{} has no entry for \"{}@{}\" and {} more (--verbose lists them); bun resolves them",
+                lockfile_name,
+                name,
+                range,
+                count - 1
+            );
+        }
+    }
+}
+
 /// A fresh resolve only records `os`/`cpu`/`libc` for the root and npm registry
 /// packages (`Package::from_npm`); folder, tarball, git, and workspace packages
 /// install unconditionally, so a migrated lockfile must not constrain them.

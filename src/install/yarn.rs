@@ -451,13 +451,13 @@ fn bind_importer_dependency(
     spec_to_package_id.get(spec.as_slice()).copied()
 }
 
-/// Packages `0..importer_count` (root, then workspaces) own every row in the buffers so far.
+/// Packages `0..importer_count` (root, then workspaces) own every row in the buffers so far. Returns those without an entry.
 fn bind_importer_dependencies(
     this: &mut Lockfile,
     importer_count: usize,
     spec_to_package_id: &StringHashMap<PackageID>,
     workspace_id_by_path: &StringHashMap<PackageID>,
-) {
+) -> Vec<Dependency> {
     debug_assert_eq!(
         this.buffers.dependencies.len(),
         this.buffers.resolutions.len()
@@ -466,6 +466,7 @@ fn bind_importer_dependencies(
     this.buffers.resolutions.clear();
 
     let mut spec: Vec<u8> = Vec::new();
+    let mut unlocked = Vec::new();
     let mut consumed: u32 = 0;
     for package_id in 0..importer_count {
         let declared_slice = this.packages.items_dependencies()[package_id];
@@ -483,6 +484,7 @@ fn bind_importer_dependencies(
             );
             let Some(resolution) = bound else {
                 // `bun install` resolves it, like a dependency added after yarn.lock was written.
+                unlocked.push(dep);
                 continue;
             };
             this.buffers.dependencies.push(dep);
@@ -494,6 +496,7 @@ fn bind_importer_dependencies(
         this.packages.items_resolutions_mut()[package_id] = lockfile::PackageIDSlice::new(off, len);
     }
     debug_assert!(declared.next().is_none());
+    unlocked
 }
 
 pub(crate) fn migrate_yarn_lockfile<'a>(
@@ -710,7 +713,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    bind_importer_dependencies(
+    let unlocked = bind_importer_dependencies(
         this,
         importer_count,
         &spec_to_package_id,
@@ -774,6 +777,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         this.packages.items_resolutions_mut()[package_id as usize] =
             lockfile::DependencyIDSlice::new(deps_off, dep_count);
     }
+
+    crate::migration::warn_unlocked_dependencies(this, manager, "yarn.lock", &unlocked);
 
     this.tag_workspace_links(manager.options.link_workspace_packages);
     if this.resolve(log).is_err() {

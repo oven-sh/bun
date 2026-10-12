@@ -3911,6 +3911,25 @@ for (const linker of ["hoisted", "isolated"]) {
   });
 }
 
+test.concurrent.skipIf(isWindows)("`**` in a workspace glob does not go through a symlinked directory", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "mono", workspaces: ["packages/**"] })),
+    write(join(packageDir, "packages", "app", "package.json"), JSON.stringify({ name: "app", version: "1.0.0" })),
+    write(join(packageDir, "elsewhere", "package.json"), JSON.stringify({ name: "foreign", version: "1.0.0" })),
+    write(join(packageDir, "elsewhere", "inner", "package.json"), JSON.stringify({ name: "inner", version: "1.0.0" })),
+  ]);
+  symlinkSync(join("..", "..", "elsewhere"), join(packageDir, "packages", "app", "vendor"));
+
+  await using proc = spawn({ cmd: [bunExe(), "install"], cwd: packageDir, stdout: "pipe", stderr: "pipe", env });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  const members = (await file(join(packageDir, "bun.lock")).text()).matchAll(/^    "([^"]*)": \{$/gm);
+  expect(Array.from(members, match => match[1])).toEqual(["", "packages/app"]);
+  expect(exitCode).toBe(0);
+});
+
 // The npm lockfile migration reads each workspace package.json through the cache of the package manager.
 test.concurrent("the package.json cache keeps no mimalloc heap for each file", async () => {
   await acquireSlot();

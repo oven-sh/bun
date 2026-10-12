@@ -251,6 +251,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
 
     pub(crate) cwd: Box<[u8]>,
     pub(crate) follow_symlinks: bool,
+    /// Without `follow_symlinks`: a link that a component other than `**` matches is followed, not only one that is named.
+    follow_matched_symlinks: bool,
     pub(crate) error_on_broken_symlinks: bool,
     pub(crate) only_files: bool,
 
@@ -1448,6 +1450,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             matched_paths: MatchedMap::default(),
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
+            follow_matched_symlinks: false,
             followed_links: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
@@ -1888,12 +1891,21 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut it = active.iterator::<true, true>();
         while let Some(idx) = it.next() {
             let comp = &self.pattern_components[idx];
-            if comp.syntax_hint == SyntaxHint::Literal && self.match_pattern_impl(comp, entry_name)
-            {
+            let may_follow = match comp.syntax_hint {
+                SyntaxHint::Literal => true,
+                SyntaxHint::Double => false,
+                _ => self.follow_matched_symlinks,
+            };
+            if may_follow && self.match_pattern_impl(comp, entry_name) {
                 subset.set(idx);
             }
         }
         subset
+    }
+
+    /// As npm's workspaces: `packages/*` has a member that is a link, `packages/**` does not go through one.
+    pub fn follow_matched_symlinks(&mut self) {
+        self.follow_matched_symlinks = true;
     }
 
     #[inline]

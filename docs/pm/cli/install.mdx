@@ -697,6 +697,8 @@ Once nobody on the repository uses pnpm anymore, you can remove `pnpm-lock.yaml`
 
 Bun migrates a `yarn.lock` the same way when no `bun.lock` exists. Yarn v1 lockfiles and Yarn 2+ ("Berry") lockfiles, the YAML format with a `__metadata` header, are converted to `bun.lock` during `bun install` or `bun pm migrate`, and every locked version is kept. The original `yarn.lock` is left in place.
 
+A Yarn v1 lockfile that is older than `package.json` is still migrated: Bun resolves the dependencies it has no entry for and prints a warning that names them.
+
 A Yarn Berry lockfile is migrated only when Bun can keep everything it pins. If one package, patch, workspace or dependency cannot be carried over exactly, Bun prints the reason, does not migrate, and resolves from `package.json` instead (`bun pm migrate` exits with an error).
 
 For Yarn Berry lockfiles the migration handles:
@@ -715,19 +717,19 @@ For Yarn Berry lockfiles the migration handles:
 
 Limitations:
 
-- the package extensions built into Yarn are not applied
+- a package extension built into Yarn is applied when `yarn.lock` has the entry it adds; the list is the one of Yarn 4, and the `peerDependencies` it adds are left out
 - Yarn settings such as `nodeLinker` and `supportedArchitectures` are not migrated
 - integrity hashes come from the registry manifest; Yarn's `checksum` is not checked
 
 The lockfile is not migrated when it has:
 
-- a dependency with no lockfile entry (`yarn.lock` is older than `package.json`), or a workspace that the `package.json` `workspaces` globs do not match
+- a dependency with no lockfile entry (`yarn.lock` is older than `package.json`), unless a workspace's version satisfies its range and `enableTransparentWorkspaces` is on; or a workspace that the `package.json` `workspaces` globs do not match
 - a registry for Yarn (`npmRegistryServer` or `npmScopes` in a `.yarnrc.yml` of the project, a parent folder or the home folder, or `YARN_NPM_REGISTRY_SERVER`) that is not the registry Bun is configured with for that package, or that is written with an environment variable (`${VAR}`). Configure the registry in `bunfig.toml` or `.npmrc` and run the migration again. Yarn fetches the `@jsr` scope from `npm.jsr.io` by default, so that scope needs the same configuration
 - a package whose integrity the registry manifest does not give, for example an `__archiveUrl` on another host
 - a patch that `patchedDependencies` cannot express: several patch files for one package, a patch on a `file:` / `portal:` / `link:` folder, or a patch file outside the project
 - a `file:`, `portal:` or `link:` path that a registry, git or tarball package declares
 - an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
-- a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else (`enableTransparentWorkspaces: false`); Bun links the workspace under that name
+- a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else; Bun links the workspace under that name
 - a name in both `dependencies` and `devDependencies` when the version Yarn installed for the `devDependencies` range is not in the `dependencies` range, which is the one Bun reads
 - a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
 

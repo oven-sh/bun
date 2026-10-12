@@ -2865,6 +2865,34 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // In a script `<!--` and, at the start of a line, `-->` start a comment, whose value is what follows: as ESLint 10.12 has it.
+  test("a directive in a comment that starts with <!-- or -->", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [{
+        files: ["**/*.js"],
+        languageOptions: { sourceType: "script" },
+        linterOptions: { reportUnusedDisableDirectives: "error" },
+        rules: { "no-debugger": "error", "no-console": "error" },
+      }];`,
+      "next-line.js": "<!-- eslint-disable-next-line no-debugger\ndebugger;\n",
+      "line.js": "debugger; <!-- eslint-disable-line no-debugger\n",
+      "close.js": "--> eslint-disable-next-line no-debugger\ndebugger;\n",
+      // Only a block comment turns a rule off for the rest of the file.
+      "all.js": "<!-- eslint-disable no-debugger\ndebugger;\n",
+      "unused.js": "<!-- eslint-disable-next-line no-debugger\nfoo;\n",
+      "unused-line.js": "foo; <!-- eslint-disable-line no-console, no-debugger\n",
+    };
+    const { raw } = await lint(files, ["-f", "json", "."]);
+    const said = (JSON.parse(raw) as any[]).flatMap(({ filePath, messages }) =>
+      messages.map((it: any) => `${basename(filePath)}:${it.line}:${it.column} ${it.ruleId} ${JSON.stringify(it.fix?.range)}`),
+    );
+    expect(said.sort()).toEqual([
+      "all.js:2:1 no-debugger undefined",
+      "unused-line.js:1:6 null [5,53]",
+      "unused.js:1:1 null [0,41]",
+    ]);
+  });
+
   describe("--fix", () => {
     // The file is fixed, and linted again when all files are known, for the rule about several files. There the fix that breaks it
     // is tried once more and taken back.

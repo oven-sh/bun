@@ -1331,7 +1331,7 @@ catalogs:
       manifest: { dependencies: { "no-deps": "^2.0.0" }, devDependencies: { "no-deps": "^1.0.0" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
       error: () =>
-        `error: "no-deps" is in dependencies ("^2.0.0") and devDependencies ("^1.0.0") of "berry-reject"; yarn installs the devDependencies range and bun the dependencies one, which what yarn.lock pins does not match`,
+        `error: "no-deps" is in several dependency groups of "berry-reject"; yarn installs the range "^1.0.0" for all of them, and "^2.0.0" does not accept what yarn.lock pins for it`,
     },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {
@@ -2040,6 +2040,74 @@ catalogs:
     expect(lockedVersions(bunLock)).toEqual(["a-dep@1.0.3", "no-deps@1.0.0"]);
     expect(exitCode).toBe(0);
     await expectFrozenInstall(dir);
+  });
+
+  test.concurrent("a workspace keeps a name in every dependency group that lists it", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "berry-groups", workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { "a-dep": "^1.0.1" },
+        devDependencies: { "no-deps": "^1.0.0" },
+        // the same range as the group above, and another range than `dependencies`
+        optionalDependencies: { "no-deps": "^1.0.0", "a-dep": "~1.0.2" },
+      }),
+    };
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...files,
+        // yarn installs one range for a name: devDependencies', else optionalDependencies'
+        "yarn.lock": yarnLock({
+          "a-dep@npm:~1.0.2": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+          "a@workspace:packages/a": [
+            `resolution: "a@workspace:packages/a"`,
+            `dependencies:`,
+            `  a-dep: "npm:~1.0.2"`,
+            `  no-deps: "npm:^1.0.0"`,
+            `dependenciesMeta:`,
+            `  a-dep:`,
+            `    optional: true`,
+          ],
+          "berry-groups@workspace:.": [`resolution: "berry-groups@workspace:."`],
+          "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    const bunLock = await bunLockOf(dir);
+    expect(bunLock).toContain(`    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "a-dep": "^1.0.1",
+      },
+      "devDependencies": {
+        "no-deps": "^1.0.0",
+      },
+      "optionalDependencies": {
+        "a-dep": "~1.0.2",
+        "no-deps": "^1.0.0",
+      },
+    },`);
+    expect(lockedVersions(bunLock)).toEqual(["a-dep@1.0.3", "a@workspace:packages/a", "no-deps@1.0.0"]);
+
+    // the same groups as bun writes for these package.json files with no yarn.lock
+    const { packageDir: freshDir } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+    expect((await run(freshDir, "install", "--lockfile-only")).exitCode).toBe(0);
+    const workspaces = (lock: string) => lock.slice(lock.indexOf(`  "workspaces": {`), lock.indexOf(`  "packages": {`));
+    expect(workspaces(bunLock)).toBe(workspaces(await bunLockOf(freshDir)));
+
+    // and the next install has nothing to add
+    await expectFrozenInstall(dir);
+    const again = await run(dir, "install");
+    expect(again.stderr).not.toContain("Saved lockfile");
+    expect(await bunLockOf(dir)).toBe(bunLock);
   });
 
   test.concurrent("a berry lockfile that holds the yarn v1 marker below its first lines", async () => {

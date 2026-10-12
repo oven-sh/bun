@@ -652,7 +652,7 @@ The lockfile is not migrated when it has:
 - a patch that `patchedDependencies` cannot express: several patch files for one package, a patch on a `file:` / `portal:` / `link:` folder, or a patch file outside the project
 - an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
 - a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else; Bun links the workspace under that name
-- a name in both `dependencies` and `devDependencies` when the version Yarn installed for the `devDependencies` range is not in the `dependencies` range, which is the one Bun reads
+- a name in several dependency groups with different ranges, when the version Yarn installed is not in each of them: Yarn installs one range for the name (`devDependencies` first, then `optionalDependencies`, then `dependencies`) and Bun reads each group
 - a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
 
 The edits to `package.json` (rewritten ranges, `patchedDependencies`, catalogs) are written when `bun.lock` is saved. A command that does not write `package.json` (`--dry-run`, `--no-save`, `bun outdated`) does not migrate a lockfile that needs them, and a command that only reads the lockfile (`bun pm ls`) migrates it in memory and writes nothing. `bun why` does not contact the registry, so run `bun install` first.

@@ -1036,13 +1036,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         bstr::BStr::new(entry.name_slice())
                     );
 
-                    let active = dir.active.clone().expect("OOM: ComponentSet::clone");
+                    let active = &dir.active;
                     let entry_name = entry.name_slice();
                     let dir_dir_path = dir.dir_path().as_bytes();
                     let dir_fd = dir.fd;
                     match entry.kind() {
                         bun_sys::FileKind::File => {
-                            if self.walker.eval_file(&active, entry_name) {
+                            if self.walker.eval_file(active, entry_name) {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
                                     Some(prepared) => return Ok(Ok(Some(prepared))),
                                     None => continue,
@@ -1052,7 +1052,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         }
                         bun_sys::FileKind::Directory => {
                             let mut add_dir: bool = false;
-                            let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
+                            let child = self.walker.eval_dir(active, entry_name, &mut add_dir);
                             if child.count() != 0 {
                                 let mut followed_link: Option<FollowedLink> = None;
                                 if self.walker.should_descend_resolved_dir(
@@ -1089,10 +1089,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let follow_active: Option<ComponentSet> = if self.walker.follow_symlinks
                             {
                                 self.walker
-                                    .eval_impl(&active, entry_name)
+                                    .eval_impl(active, entry_name)
                                     .then(|| active.clone().expect("OOM"))
                             } else {
-                                let subset = self.walker.eval_literal_subset(&active, entry_name);
+                                let subset = self.walker.eval_literal_subset(active, entry_name);
                                 (subset.count() != 0).then_some(subset)
                             };
 
@@ -1109,7 +1109,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 continue;
                             }
 
-                            if self.walker.eval_file(&active, entry_name) {
+                            if self.walker.eval_file(active, entry_name) {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
                                     Some(prepared_path) => {
                                         return Ok(Ok(Some(prepared_path)));
@@ -1120,7 +1120,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             continue;
                         }
                         bun_sys::FileKind::Unknown => {
-                            if !self.walker.eval_impl(&active, entry_name) {
+                            if !self.walker.eval_impl(active, entry_name) {
                                 continue;
                             }
 
@@ -1135,7 +1135,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             match real_kind {
                                 bun_sys::FileKind::File => {
-                                    if self.walker.eval_file(&active, entry_name) {
+                                    if self.walker.eval_file(active, entry_name) {
                                         match self
                                             .walker
                                             .prepare_matched_path(entry_name, dir_dir_path)?
@@ -1152,7 +1152,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     // `Directory`, so no followed-link check is needed here.
                                     let mut add_dir: bool = false;
                                     let child =
-                                        self.walker.eval_dir(&active, entry_name, &mut add_dir);
+                                        self.walker.eval_dir(active, entry_name, &mut add_dir);
                                     if child.count() != 0 {
                                         let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
                                         let subdir_entry_name = self.walker.join(subdir_parts)?;
@@ -1182,9 +1182,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if self.walker.follow_symlinks {
                                             Some(active.clone().expect("OOM"))
                                         } else {
-                                            let subset = self
-                                                .walker
-                                                .eval_literal_subset(&active, entry_name);
+                                            let subset =
+                                                self.walker.eval_literal_subset(active, entry_name);
                                             (subset.count() != 0).then_some(subset)
                                         };
                                     if let Some(follow_active) = follow_active {
@@ -1194,7 +1193,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             follow_active,
                                         )?;
                                     } else if !self.walker.only_files {
-                                        if self.walker.eval_file(&active, entry_name) {
+                                        if self.walker.eval_file(active, entry_name) {
                                             match self
                                                 .walker
                                                 .prepare_matched_path(entry_name, dir_dir_path)?

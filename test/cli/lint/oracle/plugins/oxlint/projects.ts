@@ -2867,6 +2867,32 @@ export const projects: Project[] = [
     },
   },
   {
+    name: "callback-return/blanks-in-a-name",
+    about: "a name is compared with the callee as it is written, blanks and comments too",
+    config: {
+      ...rules(["node"], {}),
+      overrides: [
+        { files: ["a.js", "z.js"], rules: { "node/callback-return": ["error", ["a .b"]] } },
+        { files: ["c.js"], rules: { "node/callback-return": ["error", ["c\t.d"]] } },
+        { files: ["e.js"], rules: { "node/callback-return": ["error", ["e/**/.f"]] } },
+        { files: ["g.js"], rules: { "node/callback-return": ["error", ["g\n.h"]] } },
+        { files: ["i.js"], rules: { "node/callback-return": ["error", ["i [j]"]] } },
+        { files: ["k.js"], rules: { "node/callback-return": ["error", ["k. l"]] } },
+        { files: ["m.js"], rules: { "node/callback-return": ["error", ["m.n"]] } },
+      ],
+    },
+    files: {
+      "a.js": `function x(err) { if (err) { a .b(err); } foo(); }\n`,
+      "c.js": `function x(err) { if (err) { c\t.d(err); } foo(); }\n`,
+      "e.js": `function x(err) { if (err) { e/**/.f(err); } foo(); }\n`,
+      "g.js": `function x(err) { if (err) { g\n.h(err); } foo(); }\n`,
+      "i.js": `function x(err) { if (err) { i [j](err); } foo(); }\n`,
+      "k.js": `function x(err) { if (err) { k. l(err); } foo(); }\n`,
+      "m.js": `function x(err) { if (err) { m.n(err); } foo(); }\n`,
+      "z.js": `function x(err) { if (err) { a.b(err); } foo(); }\n`,
+    },
+  },
+  {
     name: "max-params/what-counts",
     about: "a rest parameter does not count; a method without a body is a function",
     config: rules([], { "max-params": ["error", 2] }),

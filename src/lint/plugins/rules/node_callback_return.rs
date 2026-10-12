@@ -90,9 +90,10 @@ impl Rule for CallbackReturn {
     }
 }
 
-/// The `a` of `a.b`.
+/// The `a` of `a.b` and of `a .b`.
 fn first_name(callback: &str) -> &str {
-    callback.get(..strings::index_of_any(callback.as_bytes(), b".[").unwrap_or(callback.len())).unwrap_or(callback)
+    let end = strings::index_of_any(callback.as_bytes(), b".[ \t\r\n/");
+    callback.get(..end.unwrap_or(callback.len())).unwrap_or(callback)
 }
 
 /// `Expression::as_member_expression`

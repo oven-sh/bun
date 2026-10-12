@@ -1328,6 +1328,15 @@
   "a.js:6:29+7 unicorn(no-accessor-recursion)",
   "a.js:9:30+18 unicorn(no-accessor-recursion)"
  ],
+ "callback-return/blanks-in-a-name": [
+  "a.js:1:30+9 node(callback-return)",
+  "c.js:1:30+9 node(callback-return)",
+  "e.js:1:30+12 node(callback-return)",
+  "g.js:1:30+9 node(callback-return)",
+  "i.js:1:30+10 node(callback-return)",
+  "k.js:1:30+9 node(callback-return)",
+  "m.js:1:30+8 node(callback-return)"
+ ],
  "max-params/what-counts": [
   "a.ts:2:11+29 eslint(max-params)",
   "a.ts:3:30+18 eslint(max-params)",

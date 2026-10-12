@@ -58,8 +58,11 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
             json_stringify(text.as_bytes(), out);
         }
     }
-    out.extend_from_slice(b",\"filename\": ");
-    json_stringify(&source.name, out);
+    // A problem of no file has no source.
+    if !source.name.is_empty() {
+        out.extend_from_slice(b",\"filename\": ");
+        json_stringify(&source.name, out);
+    }
     out.extend_from_slice(b",\"labels\": [");
     if let Some(first) = source.span(message) {
         write_label(out, source, first, message.first_label());

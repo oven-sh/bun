@@ -441,7 +441,8 @@ fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry
 }
 
 /// Where oxc has the function `f`, which is `entries[index]` and is declared in the scope `here`, if that is elsewhere: outside
-/// strict code a plain function in a block is a variable of the function around, unless that has declared the name before.
+/// strict code a plain function in a block is a variable of the function around, unless that has declared the name before. A
+/// function of the same block that is there already does not count: the two are one variable.
 fn scope_of_function_in_block<'a>(
     file: &'a File<'a>,
     tree: &ScopeTree,
@@ -457,8 +458,9 @@ fn scope_of_function_in_block<'a>(
         && raw.kind == FnKind::Decl
         && !raw.flags.intersects(not_plain)
         && !scopes::is_strict_for_oxc(file, tree, here)
-        && !(entries.iter())
-            .any(|other| other.name == it.name && other.scope == around && other.pos < it.pos);
+        && (entries.iter())
+            .filter(|other| other.name == it.name && other.scope == around && other.pos < it.pos)
+            .all(|other| matches!(other.decl, Decl::Fn(_)) && tree.scope_at(other.pos) == here);
     is_moved.then_some(around)
 }
 

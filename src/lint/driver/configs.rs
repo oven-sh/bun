@@ -261,6 +261,8 @@ pub(crate) struct Loader<'l> {
     tool: OnceLock<Option<Flavor>>,
     /// [`Loader::undecided`]
     undecided: OnceLock<(Vec<u8>, Vec<u8>)>,
+    /// The working directory has an `eslint.config.*`, in it or above it, and that is what the run is for.
+    has_file_of_eslint: OnceLock<bool>,
     /// [`Loader::refused`]
     refused: OnceLock<Vec<u8>>,
     /// `options.typeAware` of the configuration of the working directory, if that is one of oxlint.
@@ -471,6 +473,7 @@ impl<'l> Loader<'l> {
             rulesdir: OnceLock::new(),
             tool: OnceLock::new(),
             undecided: OnceLock::new(),
+            has_file_of_eslint: OnceLock::new(),
             refused: OnceLock::new(),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
@@ -1686,6 +1689,17 @@ impl<'l> Loader<'l> {
             && !self.has_one_configuration()
             && !self.options.disable_nested_config
             && !matches!(name, b".git" | b".jj")
+    }
+
+    /// Whether `loaded` is what a directory without a configuration file has in a run for an `eslint.config.*`. ESLint has none
+    /// for a file there, which ends the run. For a directory there it has one without a file, whose base path is the working
+    /// directory: what is not in that is ignored.
+    pub(crate) fn lacks_file_of_eslint(&self, loaded: &Loaded) -> bool {
+        let has_one = || {
+            let is_there = |it: &[u8]| self.names().any(|name| fs::is_file(&paths::join(it, name)));
+            self.tool() == Some(Flavor::Eslint) && paths::ancestors(self.cwd()).any(is_there)
+        };
+        loaded.flavor == Flavor::BuiltIn && *self.has_file_of_eslint.get_or_init(has_one)
     }
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.

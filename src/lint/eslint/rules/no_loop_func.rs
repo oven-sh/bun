@@ -80,6 +80,8 @@ pub struct Known<'a> {
     containing_loops: AncestorMemo<'a, Option<Stmt<'a>>>,
     writes_to_variables: FxHashMap<usize, Writes>,
     writes_to_globals: FxHashMap<Name<'a>, Writes>,
+    /// Where a variable is written to and not declared, sorted.
+    assignments: FxHashMap<usize, Vec<u32>>,
     /// Where the functions start that are reported as oxlint does.
     reported_as_oxlint: FxHashSet<u32>,
 }
@@ -171,13 +173,67 @@ impl<'a> Known<'a> {
     }
 }
 
+/// Where the loops that `statement` is in, in its function, and `statement` itself declare their variables: the `init` of a `for`,
+/// the `left` of a `for`-`in`. With whether something gives them another value for the next iteration.
+fn heads<'a>(statement: Stmt<'a>) -> impl Iterator<Item = (Span, bool)> {
+    let around = Node::Stmt(statement).ancestors().take_while(|it| !matches!(it, Node::Func(_)));
+    std::iter::once(Node::Stmt(statement)).chain(around).filter_map(|it| match it.as_stmt()?.kind() {
+        StmtKind::For { init, update, .. } => Some((init?.span(), update.is_some())),
+        StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some((left.span(), true)),
+        _ => None,
+    })
+}
+
+/// `is_unsafe_reference` of oxlint, which goes by the first declaration of `variable`. `None`: as for ESLint, where the end
+/// of the declaration is given.
+fn is_unsafe_for_oxlint<'a>(loop_node: Stmt<'a>, variable: Symbol<'a>, known: &mut Known<'a>) -> Option<bool> {
+    let is_safe = Some(false);
+    let Some(first) = variable.declarations().next() else {
+        return is_safe;
+    };
+    let (Some(place), whole) = (first.name_span(), loop_node.span()) else {
+        return is_safe;
+    };
+    let var_kind = match first.node() {
+        Some(Node::VarDecl(it)) => Some(it.var_kind()),
+        _ => None,
+    };
+    let is_in_head = |known: &Known<'a>, changing: bool| {
+        known.is_in_loop(place.start) && heads(loop_node).any(|(head, changes)| head.contains(place) && (changes || !changing))
+    };
+    match (first.kind()?, var_kind) {
+        (DeclarationKind::CatchClause, _) | (DeclarationKind::Variable, Some(VarKind::Let)) => {
+            (whole.contains(place) || is_in_head(known, false)).then_some(false)
+        }
+        // All iterations share it. Else only what is written in the loop counts, and no declaration does.
+        (DeclarationKind::Parameter, _) | (DeclarationKind::Variable, Some(VarKind::Var)) => {
+            if whole.contains(place) || is_in_head(known, true) {
+                return Some(true);
+            }
+            let assignments = known.assignments.entry(variable.key()).or_insert_with(|| {
+                let assignments = variable.references().filter(|it| it.is_write() && !it.is_init());
+                let mut starts: Vec<u32> = assignments.map(|it| it.ident().start()).collect();
+                starts.sort_unstable();
+                starts
+            });
+            let first_in_loop = assignments.get(assignments.partition_point(|&it| it < whole.start));
+            Some(first_in_loop.is_some_and(|&it| it < whole.end))
+        }
+        _ => is_safe,
+    }
+}
+
 /// It resolves to something, and ESLint's `isSafe` does not hold.
 fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect, known: &mut Known<'a>) -> bool {
     if dialect == Dialect::TypeScript && reference.is_type() {
         return false;
     }
+    let is_oxlint = loop_node.file().language().is_oxlint;
     let Some(variable) = reference.symbol() else {
         let (file, name) = (loop_node.file(), reference.name());
+        if is_oxlint {
+            return false;
+        }
         if !file.global(name.bytes()).is_some_and(|it| it.accepts(reference.is_type())) {
             return false;
         }
@@ -185,6 +241,9 @@ fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect
             .or_insert_with(|| Writes::among(file.unresolved_references_to(name.bytes()), file.scope()));
         return known.has_unsafe_write(writes, loop_node, 0);
     };
+    if is_oxlint && let Some(is_unsafe) = is_unsafe_for_oxlint(loop_node, variable, known) {
+        return is_unsafe;
+    }
     let declaration = match variable.declarations().next().and_then(Declaration::parent) {
         Some(Node::Stmt(statement)) => match statement.kind() {
             StmtKind::Var(declarations) => {
@@ -206,12 +265,8 @@ fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect
         }
         _ => 0,
     };
-    let mut writes = *(known.writes_to_variables.entry(variable.key()))
+    let writes = *(known.writes_to_variables.entry(variable.key()))
         .or_insert_with(|| Writes::among(variable.references(), variable.scope().variable_scope()));
-    // For oxlint it does not matter in which function a `var` is written to.
-    if loop_node.file().language().is_oxlint && matches!(declaration, Some((VarKind::Var, _))) {
-        writes.is_in_other_function = false;
-    }
     known.has_unsafe_write(writes, loop_node, excluded_end)
 }
 

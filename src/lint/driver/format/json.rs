@@ -3,6 +3,7 @@
 use super::Meta;
 use crate::results::FileResult;
 use bun_core::printer::json_stringify;
+use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, Utf16Offsets};
 use bun_threading::Guarded;
 use std::io::Write;
@@ -26,9 +27,18 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
     match &result.linted {
         None => {
             out.extend_from_slice(b",\"messages\":[");
-            for message in &result.messages {
-                out.extend_from_slice(
-                    b"{\"ruleId\":null,\"fatal\":false,\"severity\":1,\"message\":",
+            for (i, message) in result.messages.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                let severity = if message.severity == Severity::Error {
+                    2
+                } else {
+                    1
+                };
+                let _ = write!(
+                    out,
+                    "{{\"ruleId\":null,\"fatal\":false,\"severity\":{severity},\"message\":"
                 );
                 json_stringify(&message.message, out);
                 out.push(b'}');

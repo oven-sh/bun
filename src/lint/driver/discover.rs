@@ -186,6 +186,13 @@ fn thrown_by_eslint_8(error: &bun_sys::Error, path: &[u8]) -> Option<Fatal> {
     (error.get_errno() != bun_sys::E::ENOENT).then(|| cannot_follow(code, label, path))
 }
 
+/// ESLint's `assertConfigurationExists`, for the file at `path`.
+fn config_file_missing(path: &[u8]) -> Fatal {
+    let path = paths::to_native(path.to_vec());
+    let rest: &[u8] = b" has no eslint.config.* in its directory or above it.";
+    Fatal([b"Could not find config file. ", &path[..], rest].concat())
+}
+
 fn all_files_ignored(pattern: &[u8]) -> Fatal {
     let text = br#"You are linting "$", but all of the files matching the glob pattern "$" are ignored.
 
@@ -249,7 +256,9 @@ fn search(
     if fs::kind(&search.base_path) == Some(fs::Kind::Directory) {
         let inherited = loader.for_directory(&search.base_path)?;
         // From here on, a directory is only listed if it is not ignored.
-        let is_hidden = (inherited.config).is_directory_ignored(&search.base_path, dotfiles);
+        // ESLint lists where it starts, whatever it is: the base path can be further down.
+        let is_hidden = (inherited.config).is_directory_ignored(&search.base_path, dotfiles)
+            && !inherited.config.is_outside(&search.base_path);
         let name = paths::basename(&search.base_path);
         if (!is_hidden || loader.looks_for_configurations_in(&inherited, name))
             && let Some(ignores) =
@@ -309,6 +318,13 @@ fn search(
                     return;
                 }
             };
+            // ESLint asks for the configuration of whatever is not a directory, whatever it is called.
+            let lacks_file = loader.lacks_file_of_eslint(&own);
+            if lacks_file && let Some(file) = entries.iter().find(|it| !it.is_directory) {
+                let path = paths::join(&directory.path, &file.name);
+                failure.lock().get_or_insert(config_file_missing(&path));
+                return;
+            }
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
@@ -372,7 +388,10 @@ fn search(
                     if !matchers.iter().any(|it| it.matches_partially(&relative)) {
                         continue;
                     }
-                    let is_hidden = is_hidden || within.is_directory_ignored(&path, dotfiles);
+                    let cwd = &loader.environment().cwd[..];
+                    let is_hidden = is_hidden
+                        || within.is_directory_ignored(&path, dotfiles)
+                        || lacks_file && path != cwd && paths::inside(cwd, &path).is_none();
                     if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
                         // ESLint 8 goes round until the system has had enough.
                         if is_loop {
@@ -537,6 +556,9 @@ pub(crate) fn find_files(
         match there {
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
+                if loader.lacks_file_of_eslint(&loaded) {
+                    return Err(config_file_missing(&path));
+                }
                 let status = match loader.ignores_named_file(&pattern, &loaded) {
                     true => Status::Ignored,
                     false => loaded.config.get(loader.linter.registry(), &path).into(),

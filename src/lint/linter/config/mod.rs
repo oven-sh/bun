@@ -489,6 +489,7 @@ impl Within<'_> {
     pub fn is_directory_ignored(&mut self, path: &[u8], dotfiles: Dotfiles) -> bool {
         let config = self.config;
         match self.see(path, true) {
+            Some((parts, _)) if paths::is_external(parts.path()) => true,
             Some((parts, entry)) => config.is_ignored_globally_as(&parts, Some(&entry), dotfiles),
             None => config.is_directory_ignored_in(path, dotfiles),
         }
@@ -508,10 +509,14 @@ impl Within<'_> {
         let matching = {
             let Some((parts, entry)) = self.see(path, false) else {
                 return match config.is_file_ignored_in(path, dotfiles) {
+                    _ if config.is_outside(path) => FileConfig::External,
                     true => FileConfig::Ignored,
                     false => config.get_if(registry, path, must_match),
                 };
             };
+            if paths::is_external(parts.path()) {
+                return FileConfig::External;
+            }
             if config.is_ignored_globally_as(&parts, Some(&entry), dotfiles) {
                 return FileConfig::Ignored;
             }
@@ -719,6 +724,11 @@ impl Config {
         }
     }
 
+    /// Whether `path`, which is absolute, is outside of the base path. ESLint ignores what is.
+    pub fn is_outside(&self, path: &[u8]) -> bool {
+        paths::is_external(&self.relative(path))
+    }
+
     /// `directory` is absolute.
     pub fn see(&self, directory: &[u8]) -> Seen {
         let before_name = paths::relative_to_base_before_name(&self.base_path, directory);
@@ -762,6 +772,9 @@ impl Config {
         let mut relative = self.relative(directory);
         if relative.is_empty() {
             return false;
+        }
+        if paths::is_external(&relative) {
+            return true;
         }
         relative.push(b'/');
         self.is_ignored_globally(&relative, dotfiles)

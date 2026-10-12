@@ -36,7 +36,13 @@ const env = {
   ESLINT_USE_FLAT_CONFIG: undefined,
 };
 
-type Options = { cwd?: string; env?: Record<string, string | undefined>; before?: (dir: string) => void };
+type Options = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  before?: (dir: string) => void;
+  /** More arguments, which have the directory in them. */
+  args?: (dir: string) => string[];
+};
 
 /**
  * What is reported, as `file:line:column rule`, what else is printed, and the exit code. The format is one that is the same
@@ -46,7 +52,7 @@ async function lint(files: Record<string, string>, args: string[] = ["."], optio
   using dir = tempDir("bun-lint-config-files", files);
   options.before?.(String(dir));
   await using proc = spawn({
-    cmd: [...command, "--threads", "2", "-f", "json-with-metadata", ...args],
+    cmd: [...command, "--threads", "2", "-f", "json-with-metadata", ...args, ...(options.args?.(String(dir)) ?? [])],
     env: { ...env, ...options.env },
     cwd: join(String(dir), options.cwd ?? "."),
     stdin: "ignore",
@@ -4700,7 +4706,12 @@ describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to it
   const asOxlint = [".oxlintrc.json", "bunfig.toml", "no file"];
 
   test.each(passingOver)("one that leads nowhere is passed over by a search: %s", async flavor => {
-    const links = { "gone.js": "nowhere.js", "sub/gone.js": "/nowhere/at/all.js", "gone": "nowhere", "in.js": "gone/a.js" };
+    const links = {
+      "gone.js": "nowhere.js",
+      "sub/gone.js": "/nowhere/at/all.js",
+      "gone": "nowhere",
+      "in.js": "gone/a.js",
+    };
     for (const args of [["."], ["sub", "a.js"]]) {
       expect(await linted(flavor, links, args)).toMatchObject({ files: ["a.js", "sub/b.js"], exitCode: 1 });
     }
@@ -4715,16 +4726,21 @@ describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to it
     expect(stderr).toContain(`Cannot read <dir>/${name}: ${code}: `);
     expect({ files, exitCode }).toEqual({ files: [], exitCode: 2 });
     // It does not ask what a link is that it does not lint.
-    expect(await linted("eslint.config.js", { "gone": "nowhere", "self": "self", "sub/gone.md": "nowhere.md" })).toMatchObject({
+    expect(
+      await linted("eslint.config.js", { "gone": "nowhere", "self": "self", "sub/gone.md": "nowhere.md" }),
+    ).toMatchObject({
       files: ["a.js", "sub/b.js"],
       exitCode: 1,
     });
   });
 
-  test.each(asOxlint)("one that leads to itself, and two that lead to each other, are passed over: %s", async flavor => {
-    const links = { "self.js": "self.js", "self": "self", "sub/c.js": "d.js", "sub/d.js": "c.js" };
-    expect(await linted(flavor, links)).toMatchObject({ files: ["a.js", "sub/b.js"], exitCode: 1 });
-  });
+  test.each(asOxlint)(
+    "one that leads to itself, and two that lead to each other, are passed over: %s",
+    async flavor => {
+      const links = { "self.js": "self.js", "self": "self", "sub/c.js": "d.js", "sub/d.js": "c.js" };
+      expect(await linted(flavor, links)).toMatchObject({ files: ["a.js", "sub/b.js"], exitCode: 1 });
+    },
+  );
 
   test.each([
     [{ "self.js": "self.js" }, ["."], "self.js"],
@@ -4752,7 +4768,9 @@ describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to it
 
   test("one that leads nowhere and is an argument is a file that is not there", async () => {
     const named = (flavor: string) => linted(flavor, { "gone.js": "nowhere.js" }, ["gone.js", "a.js"]);
-    const [eslint, eslint8, oxlint] = await Promise.all(["eslint.config.js", ".eslintrc.json", ".oxlintrc.json"].map(named));
+    const [eslint, eslint8, oxlint] = await Promise.all(
+      ["eslint.config.js", ".eslintrc.json", ".oxlintrc.json"].map(named),
+    );
     for (const { stderr, exitCode } of [eslint, eslint8]) {
       expect(stderr).toContain('No files matching the pattern "gone.js" were found.');
       expect(exitCode).toBe(2);
@@ -4767,13 +4785,16 @@ describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to it
     });
   });
 
-  test.each(asOxlint)("an ignore file is asked about the path with the link in it, not where that leads: %s", async flavor => {
-    const files = { ...others, "hid/h.js": code, ".gitignore": "hid/\nskipped\n" };
-    expect(await linted(flavor, { "shown": "hid", "skipped": "sub" }, ["."], files)).toMatchObject({
-      files: ["a.js", "shown/h.js", "sub/b.js"],
-      exitCode: 1,
-    });
-  });
+  test.each(asOxlint)(
+    "an ignore file is asked about the path with the link in it, not where that leads: %s",
+    async flavor => {
+      const files = { ...others, "hid/h.js": code, ".gitignore": "hid/\nskipped\n" };
+      expect(await linted(flavor, { "shown": "hid", "skipped": "sub" }, ["."], files)).toMatchObject({
+        files: ["a.js", "shown/h.js", "sub/b.js"],
+        exitCode: 1,
+      });
+    },
+  );
 
   test.each(asOxlint)("one that leads above where the search starts is followed, once: %s", async flavor => {
     expect(await linted(flavor, { "up": ".." })).toMatchObject({
@@ -4799,6 +4820,157 @@ describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to it
     const ignoring = { ".eslintrc.json": rc({ ...noVar, ignorePatterns: [name] }), ...others };
     expect(await linted("no file", links as Record<string, string>, ["."], ignoring)).toMatchObject({
       files: ["a.js", "sub/b.js"],
+      exitCode: 1,
+    });
+  });
+});
+
+// What ESLint 10.12.0 lints, and which configuration files it runs. It judges a directory by the configuration of the directory
+// that it is in. Where that has no file, the base path is the working directory, and what is outside of it is ignored.
+describe.concurrent("a search that leaves the project of an eslint.config.js", () => {
+  const scripts = ["mine", "mine/sub", "mine/nested", "theirs", "theirs/deep", "none", "none/in"];
+  const inRepository = ["repo", "repo/packages/a", "repo/packages/b", "repo/packages/b/own", "repo/packages/c"];
+  const files = Object.fromEntries([...scripts, ...inRepository].map(it => [`w/${it}/x.js`, "debugger;\n"]));
+  const configured = ["mine", "mine/nested", "theirs", "theirs/deep", "repo", "repo/packages/b/own"];
+  type More = { files?: Record<string, string>; links?: Record<string, string> };
+
+  /** The configuration files that ran, but for that of the working directory, which always does, and the files with problems. */
+  const run = async (cwd: string, args: string[], more: More = {}) => {
+    using logs = tempDir("bun-lint-config-files-ran", {});
+    const log = join(String(logs), "ran.log");
+    const before = (dir: string) => {
+      for (const it of configured) {
+        const says = `fs.appendFileSync(${JSON.stringify(log)}, ${JSON.stringify(it + "\n")});`;
+        const text = `import fs from "node:fs";\n${says}\nexport default [{ rules: { "no-debugger": "error" } }];\n`;
+        writeFileSync(join(dir, "w", it, "eslint.config.js"), text);
+      }
+      for (const [path, to] of Object.entries(more.links ?? {})) {
+        symlinkSync(join(dir, "w", path, "..", to), join(dir, "w", path), "junction");
+      }
+    };
+    const given = args.map(it => it.replace("<w>", "<dir>/w"));
+    const result = await lint({ ...files, ...more.files }, [], {
+      cwd: `w/${cwd}`,
+      before,
+      args: dir => given.map(it => it.replace("<dir>", dir.replaceAll("\\", "/"))),
+    });
+    const ran = existsSync(log) ? [...new Set(readFileSync(log, "utf8").split("\n").filter(Boolean))].sort() : [];
+    return {
+      ran,
+      files: [...new Set(result.problems.map(it => it.split(":")[0].replace("w/", "")))],
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+    };
+  };
+  const ofMine = ["mine/nested/x.js", "mine/sub/x.js", "mine/x.js"];
+
+  test.each([[".."], ["<w>/**/x.js"], ["../**/x.js"], ["<w>"], [".", ".."]])(
+    "only what is in the working directory is entered: %s",
+    async (...args) => {
+      expect(await run("mine", args)).toMatchObject({ ran: ["mine", "mine/nested"], files: ofMine, exitCode: 1 });
+    },
+  );
+
+  test("not the directories beside it, not those above it", async () => {
+    expect(await run("mine", ["../*/x.js"])).toMatchObject({ ran: ["mine"], files: ["mine/x.js"], exitCode: 1 });
+    for (const [cwd, args] of [
+      ["mine", ["../.."]],
+      ["mine/sub", ["../.."]],
+      ["mine/sub", ["<w>/**/x.js"]],
+      ["repo/packages/a", ["../../.."]],
+    ] as const) {
+      const { ran, files, stderr, exitCode } = await run(cwd, [...args]);
+      expect(stderr).toContain("are ignored.");
+      // ESLint runs none at all.
+      expect({ ran, files, exitCode }).toEqual({ ran: [cwd.split("/")[0]], files: [], exitCode: 2 });
+    }
+  });
+
+  // "ESLint couldn't find an eslint.config.* file."
+  test.each([
+    ["../none", {}, "none/x.js"],
+    ["../none/x.js", {}, "none/x.js"],
+    ["../none/in", {}, "none/in/x.js"],
+    // Whatever it is called.
+    ["..", { files: { "w/readme.md": "" } }, "readme.md"],
+    ["<w>/**/x.js", { files: { "w/x.js": "debugger;\n" } }, "x.js"],
+    // A link to a directory is no directory to ESLint.
+    ["..", { links: { "linked": "theirs" } }, "linked"],
+  ])("a file without a configuration file ends the run: %s %j", async (argument, more, file) => {
+    const { ran, files, stderr, exitCode } = await run("mine", [argument], more);
+    expect(stderr).toContain(`Could not find config file. <dir>/w/${file} has no eslint.config.* `);
+    expect(ran.filter(it => !it.startsWith("mine"))).toEqual([]);
+    expect({ files, exitCode }).toEqual({ files: [], exitCode: 2 });
+  });
+
+  test("what is named and has a configuration file of its own is linted with that", async () => {
+    const theirs = { ran: ["mine", "theirs", "theirs/deep"], files: ["theirs/deep/x.js", "theirs/x.js"], exitCode: 1 };
+    expect(await run("mine", ["../theirs"])).toMatchObject(theirs);
+    expect(await run("mine", ["<w>/theirs"])).toMatchObject(theirs);
+    expect(await run("mine", ["../theirs/x.js"])).toMatchObject({ ran: ["mine", "theirs"], files: ["theirs/x.js"] });
+    expect(await run("mine", ["../theirs/deep"])).toMatchObject({ ran: ["mine", "theirs/deep"] });
+  });
+
+  test("a configuration file above the working directory is for what is beside that", async () => {
+    const own = ["repo", "repo/packages/b/own"];
+    const [a, b, c] = ["a", "b", "c"].map(it => `repo/packages/${it}/x.js`);
+    expect(await run("repo/packages/a", ["../b"])).toMatchObject({ ran: own, files: ["repo/packages/b/own/x.js", b] });
+    expect(await run("repo/packages/a", ["../*/x.js"])).toMatchObject({ ran: ["repo"], files: [a, b, c] });
+    expect(await run("repo/packages/a", ["../.."])).toMatchObject({
+      ran: own,
+      files: [a, "repo/packages/b/own/x.js", b, c, "repo/x.js"],
+    });
+    expect(await run("repo", [".."])).toMatchObject({
+      ran: own,
+      files: [a, "repo/packages/b/own/x.js", b, c, "repo/x.js"],
+    });
+  });
+
+  test("a link in the working directory that leads out of it is not followed, and is a path like any other if it is named", async () => {
+    const links = { "mine/link": "../theirs", "mine/bare": "../none" };
+    for (const args of [["."], ["**/x.js"], [".."]]) {
+      expect(await run("mine", args, { links })).toMatchObject({ ran: ["mine", "mine/nested"], files: ofMine });
+    }
+    expect(await run("mine", ["link/x.js"], { links })).toMatchObject({
+      ran: ["mine", "theirs"],
+      files: ["mine/link/x.js"],
+    });
+    expect(await run("mine", ["link"], { links })).toMatchObject({
+      ran: ["mine", "theirs", "theirs/deep"],
+      files: ["mine/link/deep/x.js", "mine/link/x.js"],
+    });
+    // The nearest file on the way up from the path with the link in it.
+    expect(await run("mine", ["bare"], { links })).toMatchObject({
+      ran: ["mine"],
+      files: ["mine/bare/in/x.js", "mine/bare/x.js"],
+    });
+  });
+
+  test("with --config and with --no-config-lookup no other file runs, and the base path is the working directory", async () => {
+    const all = { files: ofMine, exitCode: 1 };
+    expect(await run("mine", ["-c", "eslint.config.js", ".."])).toMatchObject({ ran: ["mine"], ...all });
+    expect(await run("mine", ["-c", "eslint.config.js", "<w>/**/x.js"])).toMatchObject({ ran: ["mine"], ...all });
+    expect(await run("mine", ["-c", "../theirs/eslint.config.js", ".."])).toMatchObject({ ran: ["theirs"], ...all });
+    const rule = ["--no-config-lookup", "--rule", "no-debugger:error"];
+    expect(await run("mine", [...rule, ".."])).toMatchObject({ ran: [], ...all });
+    expect(await run("mine", [...rule, "<w>/**/x.js"])).toMatchObject({ ran: [], ...all });
+    for (const args of [
+      ["-c", "eslint.config.js", "../theirs"],
+      ["-c", "eslint.config.js", "../.."],
+      [...rule, "../theirs"],
+    ]) {
+      const { ran, files, stderr, exitCode } = await run("mine", args);
+      expect(stderr).toContain("are ignored.");
+      expect({ ran, files, exitCode }).toEqual({ ran: args[0] === "-c" ? ["mine"] : [], files: [], exitCode: 2 });
+    }
+  });
+
+  test("without a configuration file in the working directory, each directory tells, as before", async () => {
+    expect(await run("none", [".."])).toMatchObject({
+      ran: configured.toSorted(),
+      files: Object.keys(files)
+        .map(it => it.replace("w/", ""))
+        .sort(),
       exitCode: 1,
     });
   });

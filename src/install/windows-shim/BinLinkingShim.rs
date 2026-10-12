@@ -205,8 +205,9 @@ mod host {
             e if e == w!(".mts") => Some(RunWithBun),
             e if e == w!(".tsx") => Some(RunWithBun),
             e if e == w!(".sh") => Some(RunWithBun),
-            e if e == w!(".cmd") => Some(RunWithCmd),
-            e if e == w!(".bat") => Some(RunWithCmd),
+            // Windows takes any spelling of these two for a batch file.
+            e if strings::eql_case_insensitive_t(e, b".cmd") => Some(RunWithCmd),
+            e if strings::eql_case_insensitive_t(e, b".bat") => Some(RunWithCmd),
             e if e == w!(".ps1") => Some(RunWithPowershell),
             _ => None,
         }

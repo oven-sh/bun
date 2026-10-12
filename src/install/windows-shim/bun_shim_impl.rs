@@ -1199,8 +1199,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
 
             // These run under `cmd /c`, which parses the line again: quoting protects no argument.
-            if (filename_u16.ends_with(bun_core::w!(".cmd\""))
-                || filename_u16.ends_with(bun_core::w!(".bat\"")))
+            if is_batch_file(filename_u16)
                 && user_arguments_u16
                     .iter()
                     .any(|&unit| is_cmd_special_character(unit))
@@ -1761,6 +1760,16 @@ pub(crate) fn main() -> ! {
 }
 
 // ───── helpers ─────
+
+/// `.cmd"` or `.bat"` at the end, in any spelling, as Windows takes them.
+fn is_batch_file(filename_and_quote: &[u16]) -> bool {
+    filename_and_quote.last_chunk::<5>().is_some_and(|end| {
+        [b".cmd\"", b".bat\""].iter().any(|batch| {
+            (end.iter().zip(batch.iter()))
+                .all(|(&unit, byte)| u8::try_from(unit).is_ok_and(|c| c.eq_ignore_ascii_case(byte)))
+        })
+    })
+}
 
 /// `batch_arg_has_cmd_metachars` (src/which/lib.rs) without `"`: a raw command line quotes with it.
 fn is_cmd_special_character(unit: u16) -> bool {

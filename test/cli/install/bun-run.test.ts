@@ -1506,10 +1506,17 @@ describe.concurrent("bun run", () => {
         "package.json": JSON.stringify({
           name: "cmd-tool-pkg",
           version: "0.0.0",
-          bin: { "cmd-tool": "./tool.cmd", "bat-tool": "./tool.bat" },
+          bin: {
+            "cmd-tool": "./tool.cmd",
+            "bat-tool": "./tool.bat",
+            "upper-tool": "./upper.CMD",
+            "mixed-tool": "./mixed.Bat",
+          },
         }),
         "tool.cmd": printFirstArgument,
         "tool.bat": printFirstArgument,
+        "upper.CMD": printFirstArgument,
+        "mixed.Bat": printFirstArgument,
       },
     });
     const run = async (...cmd: string[]) => {
@@ -1539,6 +1546,11 @@ describe.concurrent("bun run", () => {
       expect({ arg, ...(await run(launcher("cmd-tool"), arg)) }).toEqual({ arg, ...refused });
     }
     expect(await run(launcher("bat-tool"), "%CMD_METACHAR_PROBE%")).toEqual(refused);
+    // Windows takes any spelling of the extension for a batch file.
+    for (const name of ["upper-tool", "mixed-tool"]) {
+      expect(await run(launcher(name), "hello")).toEqual({ stdout: "arg=hello\r\n", stderr: "", exitCode: 0 });
+      expect({ name, ...(await run(launcher(name), "%CMD_METACHAR_PROBE%")) }).toEqual({ name, ...refused });
+    }
     // The same launcher runs inside bun.exe.
     expect(await run(bunExe(), "run", "cmd-tool", "%CMD_METACHAR_PROBE%")).toEqual(refused);
   });

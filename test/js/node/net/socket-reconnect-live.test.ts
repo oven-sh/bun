@@ -99,7 +99,9 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     });
   });
 
-  it("does not crash when reconnecting while the first connect is still in flight", async () => {
+  // libuv fails a second connect on a handle that has one in flight:
+  // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
+  it("fails with EALREADY when reconnecting while the first connect is still in flight", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -129,10 +131,6 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Node emits EALREADY here; Bun drops the first in-flight connect and
-    // completes the second. Either is acceptable so long as the process
-    // exits cleanly.
-    expect(["connect", "err:EALREADY"]).toContain(stdout);
-    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "err:EALREADY", stderr: "", exitCode: 0 });
   });
 });

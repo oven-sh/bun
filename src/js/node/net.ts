@@ -197,6 +197,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const StringPrototypeIncludes = String.prototype.includes;
 const reportError = globalThis.reportError;
 
 let uvBinding;
@@ -1883,6 +1884,11 @@ function traceConnectEnd(req) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
+  // TCPWrap::Connect parses the address in the family of the call: https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L465-L474
+  if ((addressType === 6) !== StringPrototypeIncludes.$call(address, ":")) return uv().UV_EINVAL;
+  // uv_tcp_connect allows one connect in flight per handle: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
+  if (self._handle?.readyState === 2) return uv().UV_EALREADY;
+  traceConnectStart(req);
   return kConnectDispatch(self, req, {
     hostname: address,
     port,
@@ -3385,7 +3391,6 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
     req.tls = tls;
     req.pauseOnConnect = options.pauseOnConnect;
 
-    traceConnectStart(req);
     err = kConnectTcp(self, addressType, req, address, port);
     // kConnectTcp returns 0 (not undefined) on the async-connect path, so the
     // perf context must be established whenever the attempt was dispatched
@@ -3502,7 +3507,6 @@ function internalConnectMultiple(context, canceled?) {
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
-  traceConnectStart(req);
   err = kConnectTcp(self, addressType, req, address, port);
 
   if (err) {

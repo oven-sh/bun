@@ -1062,7 +1062,7 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
 
 /// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
 /// is no digit, or a byte that is none in that radix.
-fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
+pub fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
     // The first 123 bits or more, then how many bits follow and whether one of them is set: that
     // decides a tie, and nothing else of them can be seen in 53 bits.
     let (mut value, mut dropped, mut is_inexact) = (0u128, 0u32, false);

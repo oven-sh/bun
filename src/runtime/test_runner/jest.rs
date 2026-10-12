@@ -6,6 +6,7 @@ use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
+use bun_lint::utils::eslint_utils::js_number::{parse_float, parse_int};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
@@ -794,55 +795,6 @@ fn write_json(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> J
     Err(global.throw_value(thrown))
 }
 
-fn trim_start_js_whitespace(text: &[u8]) -> &[u8] {
-    let end = bun_core::lexer::end_of_run(text, 0, |c| {
-        bun_core::lexer::is_whitespace(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)
-    });
-    &text[end..]
-}
-
-/// `text.trim()`
-pub(crate) fn trim_js_whitespace(text: &[u8]) -> &[u8] {
-    let text = trim_start_js_whitespace(text);
-    let (mut at, mut end) = (0, 0);
-    while at < text.len() {
-        let (c, size) = bun_core::lexer::char_and_size(text, at);
-        at += size.max(1);
-        if !(bun_core::lexer::is_whitespace(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)) {
-            end = at;
-        }
-    }
-    &text[..end]
-}
-
-fn split_sign(text: &[u8]) -> (f64, &[u8]) {
-    match text.split_first() {
-        Some((b'-', rest)) => (-1.0, rest),
-        Some((b'+', rest)) => (1.0, rest),
-        _ => (1.0, text),
-    }
-}
-
-/// `parseInt(text)`
-fn parse_int(text: &[u8]) -> f64 {
-    let (sign, text) = split_sign(trim_start_js_whitespace(text));
-    if let Some(hex) = text.strip_prefix(b"0x").or_else(|| text.strip_prefix(b"0X")) {
-        let digits = hex.iter().map_while(|&c| bun_core::fmt::hex_digit_value(c)).map(f64::from);
-        return sign * digits.reduce(|value, digit| value * 16.0 + digit).unwrap_or(f64::NAN);
-    }
-    let len = text.iter().take_while(|c| c.is_ascii_digit()).count();
-    sign * bun_core::fmt::parse_double(&text[..len]).unwrap_or(f64::NAN)
-}
-
-/// `parseFloat(text)`
-fn parse_float(text: &[u8]) -> f64 {
-    let text = trim_start_js_whitespace(text);
-    bun_core::fmt::parse_double(text).unwrap_or_else(|_| {
-        let (sign, text) = split_sign(text);
-        if text.starts_with(b"Infinity") { sign * f64::INFINITY } else { f64::NAN }
-    })
-}
-
 /// What Jest prints for `%<specifier>`: `util.format`, and pretty-format for `%p`.
 fn write_placeholder(
     global: &JSGlobalObject,
@@ -863,7 +815,7 @@ fn write_placeholder(
         b'd' | b'i' if value.is_big_int() => return write_inspected(global, value, title),
         b'd' | b'i' | b'f' if value.is_symbol() => f64::NAN,
         b'd' => value.to_number(global)?,
-        b'i' => parse_int(value.to_utf8(global)?.slice()),
+        b'i' => parse_int(value.to_utf8(global)?.slice(), 0).unwrap_or(f64::NAN),
         b'f' => parse_float(value.to_utf8(global)?.slice()),
         _ => return write_inspected(global, value, title),
     };
@@ -1027,7 +979,7 @@ fn write_vitest_placeholder(global: &JSGlobalObject, specifier: u8, value: JSVal
         }
         b'd' if value.is_symbol() => f64::NAN,
         b'd' => pretty_format::to_number(global, value)?,
-        b'i' => parse_int(&as_string(value)?),
+        b'i' => parse_int(&as_string(value)?, 0).unwrap_or(f64::NAN),
         _ => parse_float(&as_string(value)?),
     };
     pretty_format::write_number(title, number);

@@ -327,7 +327,7 @@ fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSV
             joined.extend_from_slice(string.to_utf8(global)?.slice());
         }
     }
-    let trimmed = jest::trim_js_whitespace(&joined);
+    let trimmed = bun_core::strings::trim_js_whitespace(&joined);
     let first_line = &trimmed[..bun_core::strings::index_of_char_usize(trimmed, b'\n').unwrap_or(trimmed.len())];
     let first_line: Vec<u8> = first_line.iter().copied().filter(|byte| *byte != b' ').collect();
     let headings: Vec<&[u8]> = bun_core::strings::split(&first_line, b"|").collect();

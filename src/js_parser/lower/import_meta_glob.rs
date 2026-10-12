@@ -127,7 +127,7 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
 }
 
 /// `None` when it is too long for a path.
-fn join(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+fn absolute_from(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
     let mut buf = path_buffer_pool::get();
     resolve_path::join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
         .filter(|joined| joined.len() < bun_paths::MAX_PATH_BYTES)
@@ -142,7 +142,7 @@ fn with_posix_separators(path: &[u8]) -> Vec<u8> {
 
 /// With `/` on every platform, and `./` unless it starts with `../`. Both are absolute and
 /// normalized. `None` when it is too long for a path.
-fn relative(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
+fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     let mut path = Vec::new();
     if cfg!(windows) {
         // Each directory of `from`, at least two bytes of it, can become `../`.
@@ -155,23 +155,15 @@ fn relative(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
         path.extend_from_slice(below);
     } else {
         // `resolve_path` takes a backslash for a separator on every platform. Here it is part of a name.
-        let mut from_names = strings::tokenize(from, b"/").peekable();
-        let mut to_names = strings::tokenize(to, b"/").peekable();
-        while from_names.peek().is_some() && from_names.peek() == to_names.peek() {
-            from_names.next();
-            to_names.next();
-        }
-        for _ in from_names {
-            path.extend_from_slice(b"../");
-        }
-        if path.is_empty() {
+        let len = bun_node_path::relative_buf_len::<u8>(from, to);
+        let mut buffers = vec![0u8; 3 * len];
+        let (buf, rest) = buffers.split_at_mut(len);
+        let (from_buf, tmp_buf) = rest.split_at_mut(len);
+        let below = bun_node_path::relative_posix_t(from, to, buf, from_buf, tmp_buf).ok()?;
+        if !below.starts_with(b"../") {
             path.extend_from_slice(b"./");
         }
-        for name in to_names {
-            path.extend_from_slice(name);
-            path.push(b'/');
-        }
-        path.pop();
+        path.extend_from_slice(below);
     }
     (path.len() < bun_paths::MAX_PATH_BYTES).then_some(path)
 }
@@ -252,7 +244,7 @@ impl Pattern {
             if bun_glob::detect_glob_syntax(segment) {
                 return Some(Pattern {
                     negated,
-                    dir: join(dir, &names)?,
+                    dir: absolute_from(dir, &names)?,
                     glob: rest.to_vec(),
                     is_name: false,
                 });
@@ -269,7 +261,7 @@ impl Pattern {
             let Some(after) = after else {
                 return Some(Pattern {
                     negated,
-                    dir: join(dir, &names[..name_start])?,
+                    dir: absolute_from(dir, &names[..name_start])?,
                     glob: names[name_start..].to_vec(),
                     is_name: true,
                 });
@@ -310,7 +302,7 @@ fn find_files(
 
         if pattern.is_name {
             let mut buf = path_buffer_pool::get();
-            if let Some(file) = join(&pattern.dir, &pattern.glob)
+            if let Some(file) = absolute_from(&pattern.dir, &pattern.glob)
                 && matches!(
                     bun_sys::exists_at_type(bun_sys::Fd::cwd(), resolve_path::z(&file, &mut buf)),
                     Ok(bun_sys::ExistsAtType::File)
@@ -494,8 +486,8 @@ impl<'a> Arguments<'a, '_> {
         }
         let base_dir = match options.base {
             [] => Some(importer_dir.unwrap_or(root).to_vec()),
-            [b'/', base @ ..] => join(root, base),
-            base => join(importer_dir.unwrap_or(root), base),
+            [b'/', base @ ..] => absolute_from(root, base),
+            base => absolute_from(importer_dir.unwrap_or(root), base),
         };
         let Some(base_dir) = base_dir else {
             return self.invalid(
@@ -566,15 +558,15 @@ impl<'a> Arguments<'a, '_> {
         expansion.entries.reserve(files.len());
         for file in &files {
             let import_path = match importer_dir {
-                Some(dir) => relative(dir, file),
+                Some(dir) => specifier_from(dir, file),
                 None => Some(with_posix_separators(file)),
             };
             let key = if !options.base.is_empty() {
-                relative(&base_dir, file)
+                specifier_from(&base_dir, file)
             } else if is_relative {
                 import_path.clone()
             } else {
-                relative(root, file).map(|from_root| match from_root.strip_prefix(b".") {
+                specifier_from(root, file).map(|from_root| match from_root.strip_prefix(b".") {
                     Some(key) if key.starts_with(b"/") => key.to_vec(),
                     _ => from_root,
                 })

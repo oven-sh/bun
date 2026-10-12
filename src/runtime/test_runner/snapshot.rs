@@ -7,6 +7,7 @@ use bun_core::printer as js_printer;
 use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
+use bun_lint::utils::text::natural_compare;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{self};
 
@@ -252,51 +253,6 @@ fn snapshot_file_path(file_id: FileId, buf: &mut [u8]) -> (&'static [u8], usize,
     (dir_path, dir_len, pos - 1)
 }
 
-/// natural-compare, which Jest and Vitest sort the keys of a file with.
-fn natural_compare(a: &[u16], b: &[u16]) -> core::cmp::Ordering {
-    fn code(text: &[u16], at: usize) -> u32 {
-        let unit = u32::from(text.get(at).copied().unwrap_or(0));
-        match unit {
-            45 => 65,
-            46..=47 => unit - 1,
-            48..=57 => unit + 18,
-            58..=64 => unit - 11,
-            65..=90 => unit + 11,
-            91..=96 => unit - 37,
-            97..=122 => unit + 5,
-            123..=127 => unit - 63,
-            _ => unit,
-        }
-    }
-    const DIGITS: core::ops::RangeInclusive<u32> = 66..=75;
-    fn number(text: &[u16], first_digit: usize) -> (f64, usize) {
-        let mut end = first_digit + 1;
-        while DIGITS.contains(&code(text, end)) {
-            end += 1;
-        }
-        (text[first_digit..end].iter().fold(0.0, |number, digit| number * 10.0 + f64::from(*digit - 48)), end)
-    }
-
-    let (mut at_a, mut at_b) = (0, 0);
-    loop {
-        let (code_a, code_b) = (code(a, at_a), code(b, at_b));
-        let is_number = |code: u32| DIGITS.contains(&code) && code != *DIGITS.start();
-        let order = if is_number(code_a) && is_number(code_b) {
-            let (number_a, number_b);
-            (number_a, at_a) = number(a, at_a);
-            (number_b, at_b) = number(b, at_b);
-            number_a.total_cmp(&number_b)
-        } else {
-            at_a += 1;
-            at_b += 1;
-            code_a.cmp(&code_b)
-        };
-        if order.is_ne() || code_b == 0 {
-            return order;
-        }
-    }
-}
-
 /// jest-snapshot `printBacktickString`
 fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'`');
@@ -423,21 +379,14 @@ impl Snapshots {
         if format != Format::Bun {
             self.file_buf = Vec::new();
         }
-        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted()?;
+        let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
         self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
         Ok(format)
     }
 
-    fn keys_are_sorted(&self) -> Result<bool, Error> {
-        let mut previous: Vec<u16> = Vec::new();
-        for key in self.values.keys() {
-            let key = strings::to_utf16_alloc_for_real(key, false, false).map_err(|_| Error::ParseError)?;
-            if natural_compare(&previous, &key).is_gt() {
-                return Ok(false);
-            }
-            previous = key;
-        }
-        Ok(true)
+    /// As Jest and Vitest sort them.
+    fn keys_are_sorted(&self) -> bool {
+        self.values.keys().windows(2).all(|pair| natural_compare(&pair[0], &pair[1]).is_le())
     }
 
     /// Whether a snapshot of the current file that does not match may be one that an older Bun wrote.
@@ -758,13 +707,7 @@ impl Snapshots {
             };
         }
 
-        let keys = self
-            .values
-            .keys()
-            .iter()
-            .map(|key| strings::to_utf16_alloc_for_real(key, false, false))
-            .collect::<Result<Vec<Vec<u16>>, _>>()
-            .map_err(|_| Error::FailedToWriteSnapshotFile)?;
+        let keys = self.values.keys();
         // Insertion, because the comparison is not known to be a total order, which `sort_by` may panic on.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
         // What this run has not seen may still be an entry of Bun's: the file goes on saying so.

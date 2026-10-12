@@ -6,6 +6,7 @@
 use core::cell::Cell;
 
 use bun_core::String as BunString;
+use bun_core::fmt::quote;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
     JsClass as _, JsResult,
@@ -116,10 +117,6 @@ pub(crate) enum Next {
 
 const BUILTIN: [&[u8]; 8] =
     [b"task", b"expect", b"signal", b"skip", b"annotate", b"onTestFinished", b"onTestFailed", b"bench"];
-
-fn quoted(name: &[u8]) -> impl core::fmt::Display + '_ {
-    bun_core::fmt::quote(name)
-}
 
 fn bound(global: &JSGlobalObject, this_value: JSValue, name: &'static str, function: JSHostFn) -> JsResult<JSValue> {
     JSFunction::create(global, name, function, 1, Default::default()).bind(
@@ -241,8 +238,8 @@ impl TestFixtures {
                             unknown => {
                                 errors.push(format!(
                                     "{signature}: fixture {} has the unknown scope {}. Expected \"test\", \"file\" or \"worker\"",
-                                    quoted(name),
-                                    quoted(unknown),
+                                    quote(name),
+                                    quote(unknown),
                                 ));
                                 Scope::Test
                             }
@@ -250,10 +247,10 @@ impl TestFixtures {
                     }
                 };
                 if replaced.is_some() && given_scope != scope {
-                    errors.push(format!("{signature}: fixture {} is already defined with the scope \"{}\"", quoted(name), scope.name()));
+                    errors.push(format!("{signature}: fixture {} is already defined with the scope \"{}\"", quote(name), scope.name()));
                 }
                 if replaced.is_some() && given_auto != auto {
-                    errors.push(format!("{signature}: fixture {} is already defined with {{ auto: {auto} }}", quoted(name)));
+                    errors.push(format!("{signature}: fixture {} is already defined with {{ auto: {auto} }}", quote(name)));
                 }
                 (auto, scope) = (given_auto, given_scope);
             }
@@ -261,7 +258,7 @@ impl TestFixtures {
                 errors.push(format!(
                     "{signature}: the {}-scoped fixture {} cannot be defined inside describe(). Define it at the top level of the file",
                     scope.name(),
-                    quoted(name),
+                    quote(name),
                 ));
             }
             let mut dependencies = Vec::new();
@@ -271,16 +268,16 @@ impl TestFixtures {
                     ContextParameter::Properties(names) => dependencies = names,
                     ContextParameter::RestProperty => errors.push(format!(
                         "{signature}: the first parameter of fixture {} cannot have a rest property",
-                        quoted(name),
+                        quote(name),
                     )),
                     ContextParameter::Other(Some(parameter)) => errors.push(format!(
                         "{signature}: the first parameter of fixture {} must be an object destructuring pattern, received {}",
-                        quoted(name),
-                        quoted(&parameter),
+                        quote(name),
+                        quote(&parameter),
                     )),
                     ContextParameter::Other(None) => errors.push(format!(
                         "{signature}: the first parameter of fixture {} must be an object destructuring pattern",
-                        quoted(name),
+                        quote(name),
                     )),
                 }
             }
@@ -342,23 +339,23 @@ impl TestFixtures {
                 let Some(found) = Self::find(&definitions, &registrations, dependency) else {
                     errors.push(format!(
                         "{signature}: fixture {} depends on {}, which is not a fixture",
-                        quoted(&fixture.name),
-                        quoted(dependency),
+                        quote(&fixture.name),
+                        quote(dependency),
                     ));
                     continue;
                 };
                 if found == index && fixture.parent.is_none() {
                     errors.push(format!(
                         "{signature}: fixture {0} depends on itself, and there is no earlier {0} for it to extend",
-                        quoted(&fixture.name),
+                        quote(&fixture.name),
                     ));
                 } else if fixture.scope > definitions[found].scope {
                     errors.push(format!(
                         "{signature}: the {}-scoped fixture {} cannot depend on the {}-scoped fixture {}",
                         fixture.scope.name(),
-                        quoted(&fixture.name),
+                        quote(&fixture.name),
                         definitions[found].scope.name(),
-                        quoted(dependency),
+                        quote(dependency),
                     ));
                 }
             }
@@ -498,7 +495,7 @@ impl TestFixtures {
             ContextParameter::Other(Some(parameter)) => {
                 return Err(global.throw(format_args!(
                     "The parameter that fixtures are destructured from must be an object destructuring pattern, received {}",
-                    quoted(parameter),
+                    quote(parameter),
                 )));
             }
             ContextParameter::Other(None) => {
@@ -534,7 +531,7 @@ impl TestFixtures {
                         return Err(global.throw(format_args!(
                             "The {}-scoped fixture {} has been torn down",
                             fixture.scope.name(),
-                            quoted(&fixture.name),
+                            quote(&fixture.name),
                         )));
                     }
                 }
@@ -543,7 +540,7 @@ impl TestFixtures {
             let Some(test_context) = test_context.map(|test_context| unsafe { &*test_context }) else {
                 return Err(global.throw(format_args!(
                     "The test-scoped fixture {} cannot be used in beforeAll() or afterAll(). Give it {{ scope: \"file\" }}, or use beforeEach() or afterEach()",
-                    quoted(&fixture.name),
+                    quote(&fixture.name),
                 )));
             };
             if test_context.has_fixture(index) {
@@ -746,7 +743,7 @@ impl ActiveFixture {
         if definition.kind == Kind::Builder {
             return self.provide(this_value, global, definition, returned);
         }
-        let error = global.create_error_instance(format_args!("Fixture {} returned without calling use()", quoted(&definition.name)));
+        let error = global.create_error_instance(format_args!("Fixture {} returned without calling use()", quote(&definition.name)));
         self.fail(this_value, global, error)
     }
 }
@@ -790,7 +787,7 @@ fn use_fixture(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     let this_value = frame.this();
     let (this, definition) = ActiveFixture::of_call(global, frame)?;
     if this.state.get() != State::SettingUp {
-        return Err(global.throw(format_args!("use() of fixture {} was called more than once", quoted(&definition.name))));
+        return Err(global.throw(format_args!("use() of fixture {} was called more than once", quote(&definition.name))));
     }
     let release = JSPromise::create(global).to_js();
     active::release_set_cached(this_value, global, release);
@@ -807,7 +804,7 @@ fn on_cleanup(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         return Err(global.throw_invalid_argument_type_value("cleanup", "function", cleanup));
     }
     if active::cleanup_get_cached(this_value).is_some() {
-        return Err(global.throw(format_args!("onCleanup() of fixture {} was called more than once", quoted(&definition.name))));
+        return Err(global.throw(format_args!("onCleanup() of fixture {} was called more than once", quote(&definition.name))));
     }
     active::cleanup_set_cached(this_value, global, cleanup);
     Ok(JSValue::UNDEFINED)

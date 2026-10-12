@@ -1,9 +1,9 @@
 //! `// @vitest-environment jsdom`, `[test] environment`, `--environment`; src/js/internal/test/environment.ts makes the window.
 
 use super::jest::Jest;
-use bun_core::lexer::{self, end_of_run};
+use bun_core::lexer::end_of_run;
 use bun_core::{Output, Timespec, TimespecMockMode};
-use bun_core::strings::{self, CodePoint};
+use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
@@ -18,17 +18,9 @@ struct Pragmas<'a> {
     options: Option<&'a [u8]>,
 }
 
-fn is_line_terminator(c: CodePoint) -> bool {
-    matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)
-}
-
-fn is_space(c: CodePoint) -> bool {
-    lexer::is_whitespace(c) || is_line_terminator(c)
-}
-
 /// Where the comment that Jest reads ends: jest-docblock's `/^\s*(\/\*\*?(.|\r?\n)*?\*\/)/`.
 fn end_of_leading_docblock(source: &[u8]) -> usize {
-    let start = end_of_run(source, 0, is_space);
+    let start = end_of_run(source, 0, |c| strings::is_js_whitespace(c as u32));
     if !source[start..].starts_with(b"/*") {
         return 0;
     }
@@ -63,12 +55,12 @@ impl<'a> Pragmas<'a> {
                 continue;
             }
             let spaces = if is_options { at + OPTIONS.len() } else { at };
-            let start = end_of_run(source, spaces, is_space);
+            let start = end_of_run(source, spaces, |c| strings::is_js_whitespace(c as u32));
             if start == spaces {
                 continue;
             }
             if is_options {
-                let line = &source[start..end_of_run(source, start, |c| !is_line_terminator(c))];
+                let line = &source[start..end_of_run(source, start, |c| !strings::is_js_line_terminator(c as u32))];
                 if !line.is_empty() {
                     found.options = Some(line.strip_suffix(b"*/").unwrap_or(line));
                 }

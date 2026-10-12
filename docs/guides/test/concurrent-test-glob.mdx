@@ -5,7 +5,7 @@ mode: center
 description: Set a glob pattern to decide which tests from which files run in parallel
 ---
 
-This guide demonstrates how to use the `concurrentTestGlob` option to selectively run tests concurrently based on file naming patterns.
+The `concurrentTestGlob` option in `bunfig.toml` runs tests concurrently in files whose names match a glob pattern.
 
 ## Project Structure
 
@@ -23,7 +23,7 @@ my-project/
 
 ## Configuration
 
-Configure your `bunfig.toml` to run test files with "concurrent-" prefix concurrently:
+Configure your `bunfig.toml` to run test files with the "concurrent-" prefix concurrently:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -35,7 +35,7 @@ concurrentTestGlob = "**/concurrent-*.test.ts"
 
 ### Unit Test (Sequential)
 
-Sequential tests are good for tests that share state or have specific ordering requirements:
+Tests that share state or depend on ordering should stay sequential:
 
 ```ts title="tests/unit/math.test.ts" icon="/icons/typescript.svg"
 import { test, expect } from "bun:test";
@@ -102,21 +102,19 @@ bun test tests/integration
 
 ## Benefits
 
-1. **Gradual Migration**: Migrate to concurrent tests file by file by renaming them
-2. **Clear Organization**: File naming convention indicates execution mode
-3. **Performance**: Integration tests run faster in parallel
-4. **Safety**: Unit tests remain sequential where needed
-5. **Flexibility**: Easy to change execution mode by renaming files
+1. **Gradual migration**: rename files one at a time to move them to concurrent execution
+2. **Clear organization**: the filename tells you how a file's tests run
+3. **Performance**: independent integration tests finish faster in parallel
+4. **Safety**: unit tests stay sequential where they need to
 
 ## Migration Strategy
 
 To migrate existing tests to concurrent execution:
 
-1. **Start with independent integration tests** - These typically don't share state
+1. **Start with independent integration tests** - these typically don't share state
 2. **Rename files to match the glob pattern**: `mv api.test.ts concurrent-api.test.ts`
-3. **Verify tests still pass** - Run `bun test` to ensure no race conditions
-4. **Monitor for shared state issues** - Watch for flaky tests or unexpected failures
-5. **Continue migrating stable tests incrementally** - Don't rush the migration
+3. **Run `bun test`** - check for race conditions and flaky or unexpected failures
+4. **Continue migrating stable tests** file by file
 
 ## Tips
 
@@ -124,11 +122,11 @@ To migrate existing tests to concurrent execution:
 - **Keep related sequential tests together** in the same directory
 - **Document why certain tests must remain sequential** with comments
 - **Use `test.concurrent()` for fine-grained control** in sequential files
-  (Note: In files matched by `concurrentTestGlob`, plain `test()` already runs concurrently)
+  (in files matched by `concurrentTestGlob`, plain `test()` already runs concurrently)
 
 ## Multiple Patterns
 
-You can specify multiple patterns for different test categories:
+`concurrentTestGlob` also accepts multiple patterns:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -139,7 +137,7 @@ concurrentTestGlob = [
 ]
 ```
 
-This configuration will run tests concurrently if they match any of these patterns:
+Tests in files matching any of these patterns run concurrently:
 
 - All tests in `integration/` directories
 - All tests in `e2e/` directories

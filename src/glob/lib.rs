@@ -1,12 +1,26 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+mod braces;
+mod class;
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
+pub mod ignore;
+mod linear;
 pub mod matcher;
+mod node;
+pub mod pattern;
+mod read_ignore;
+mod read_minimatch;
+mod read_minimatch3;
+mod read_picomatch;
+pub mod scan;
+mod segments;
+mod sets;
+mod unit;
 
 // `match` is a Rust keyword; re-export with raw identifier.
 pub use crate::glob_walker as walk;
 pub use crate::matcher::{MatchResult, r#match};
+pub use crate::pattern::{Candidate, How, Options, Pattern, Syntax};
 pub use walk::GlobWalker;
 
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
@@ -30,18 +44,20 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     for &token in SPECIAL_SYNTAX.iter() {
         let mut slice = potential_pattern;
         while !slice.is_empty() {
-            if let Some(idx) = slice.iter().position(|&b| b == token) {
+            if let Some(idx) = bun_core::strings::index_of_char_usize(slice, token) {
                 // Check for even number of backslashes preceding the
-                // token to know that it's not escaped
+                // token to know that it's not escaped. `idx` is relative to
+                // `slice`; a backslash run can't extend past its start (the
+                // byte before it is the previous, unescaped-or-not, token).
                 let mut i = idx;
-                let mut backslash_count: u16 = 0;
+                let mut escaped = false;
 
-                while i > 0 && potential_pattern[i - 1] == b'\\' {
-                    backslash_count += 1;
+                while i > 0 && slice[i - 1] == b'\\' {
+                    escaped = !escaped;
                     i -= 1;
                 }
 
-                if backslash_count.is_multiple_of(2) {
+                if !escaped {
                     return true;
                 }
                 slice = &slice[idx + 1..];

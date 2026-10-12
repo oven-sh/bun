@@ -2,6 +2,7 @@
 
 import { describe, expect, it, test } from "bun:test";
 import {
+  type AsymmetricKeyType,
   createCipheriv,
   createDecipheriv,
   createPrivateKey,
@@ -13,21 +14,23 @@ import {
   generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
+  type JsonWebKeyInput,
   KeyObject,
   privateDecrypt,
   privateEncrypt,
   publicDecrypt,
   publicEncrypt,
+  type PublicKeyInput,
   randomBytes,
   sign,
   verify,
 } from "crypto";
 import fs from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
-function readFile(...args) {
+function readFile(...args: [path: string, encoding: BufferEncoding]) {
   const result = fs.readFileSync(...args);
 
   if (isWindows) {
@@ -102,8 +105,11 @@ function testSignVerify(publicKey: any, privateKey: any) {
 
 describe("crypto.KeyObjects", () => {
   test("Attempting to create a key using other than CryptoKey should throw", async () => {
+    // @ts-expect-error
     expect(() => new KeyObject("secret", "")).toThrow();
+    // @ts-expect-error
     expect(() => new KeyObject("secret")).toThrow();
+    // @ts-expect-error
     expect(() => KeyObject.from("invalid_key")).toThrow();
   });
   test("basics of createSecretKey should work", async () => {
@@ -136,11 +142,13 @@ describe("crypto.KeyObjects", () => {
 
     // Constructing a private key from a public key should be impossible, even
     // if the public key was derived from a private key.
+    // @ts-expect-error
     expect(() => createPrivateKey(createPublicKey(privatePem))).toThrow();
 
     // Similarly, passing an existing private key object to createPrivateKey
     // should throw.
     const privateKey = createPrivateKey(privatePem);
+    // @ts-expect-error
     expect(() => createPrivateKey(privateKey)).toThrow();
   });
 
@@ -203,16 +211,16 @@ describe("crypto.KeyObjects", () => {
     expect(derivedPublicKey.symmetricKeySize).toBe(undefined);
 
     const publicKeyFromJwk = createPublicKey({ key: publicJwk, format: "jwk" });
-    expect(publicKey.type).toBe("public");
-    expect(publicKey.toString()).toBe("[object KeyObject]");
-    expect(publicKey.asymmetricKeyType).toBe("rsa");
-    expect(publicKey.symmetricKeySize).toBe(undefined);
+    expect(publicKeyFromJwk.type).toBe("public");
+    expect(publicKeyFromJwk.toString()).toBe("[object KeyObject]");
+    expect(publicKeyFromJwk.asymmetricKeyType).toBe("rsa");
+    expect(publicKeyFromJwk.symmetricKeySize).toBe(undefined);
 
     const privateKeyFromJwk = createPrivateKey({ key: jwk, format: "jwk" });
-    expect(privateKey.type).toBe("private");
-    expect(privateKey.toString()).toBe("[object KeyObject]");
-    expect(privateKey.asymmetricKeyType).toBe("rsa");
-    expect(privateKey.symmetricKeySize).toBe(undefined);
+    expect(privateKeyFromJwk.type).toBe("private");
+    expect(privateKeyFromJwk.toString()).toBe("[object KeyObject]");
+    expect(privateKeyFromJwk.asymmetricKeyType).toBe("rsa");
+    expect(privateKeyFromJwk.symmetricKeySize).toBe(undefined);
 
     // It should also be possible to import an encrypted private key as a public
     // key.
@@ -225,7 +233,7 @@ describe("crypto.KeyObjects", () => {
       }),
       format: "pem",
       passphrase: "123", // this is not documented, but it works
-    });
+    } as PublicKeyInput);
     expect(decryptedKey.type).toBe("public");
     expect(decryptedKey.asymmetricKeyType).toBe("rsa");
 
@@ -237,6 +245,7 @@ describe("crypto.KeyObjects", () => {
 
     // Test exporting with an invalid options object, this should throw.
     for (const opt of [undefined, null, "foo", 0, NaN]) {
+      // @ts-expect-error
       expect(() => publicKey.export(opt)).toThrow();
     }
 
@@ -328,6 +337,7 @@ describe("crypto.KeyObjects", () => {
     expect(() => createPrivateKey({ key: "" })).toThrow();
   });
   test("This should not abort either: https://github.com/nodejs/node/issues/29904", async () => {
+    // @ts-expect-error
     expect(() => createPrivateKey({ key: Buffer.alloc(0), format: "der", type: "spki" })).toThrow();
   });
 
@@ -341,6 +351,59 @@ describe("crypto.KeyObjects", () => {
       });
       createPrivateKey({ key, format: "der", type: "pkcs1" });
     }).toThrow("error:06000066:public key routines:OPENSSL_internal:DECODE_ERROR");
+  });
+
+  test("createPrivateKey resolves the encoding options before reading the key bytes", () => {
+    const der = createPrivateKey(privatePem).export({ format: "der", type: "pkcs8" });
+    expect(createPrivateKey({ key: der, format: "der", type: "pkcs8" }).type).toBe("private");
+
+    const arrayBuffer = new ArrayBuffer(der.byteLength);
+    const view = new Uint8Array(arrayBuffer);
+    view.set(der);
+    let passphraseReads = 0;
+    let transferred;
+    expect(() =>
+      createPrivateKey({
+        key: view,
+        format: "der",
+        type: "pkcs8",
+        get passphrase() {
+          passphraseReads++;
+          transferred = arrayBuffer.transfer();
+          return undefined;
+        },
+      }),
+    ).toThrow();
+    expect(passphraseReads).toBe(1);
+    expect(view.byteLength).toBe(0);
+    expect(transferred.byteLength).toBe(der.byteLength);
+  });
+
+  test("createPublicKey resolves the encoding options before reading the key bytes", () => {
+    const der = createPublicKey(publicPem).export({ format: "der", type: "spki" });
+    const arrayBuffer = new ArrayBuffer(der.byteLength);
+    new Uint8Array(arrayBuffer).set(der);
+    expect(createPublicKey({ key: arrayBuffer, format: "der", type: "spki" }).type).toBe("public");
+
+    const detachable = new ArrayBuffer(der.byteLength);
+    new Uint8Array(detachable).set(der);
+    let passphraseReads = 0;
+    let transferred;
+    expect(() =>
+      createPublicKey({
+        key: detachable,
+        format: "der",
+        type: "spki",
+        get passphrase() {
+          passphraseReads++;
+          transferred = detachable.transfer();
+          return undefined;
+        },
+      } as PublicKeyInput),
+    ).toThrow();
+    expect(passphraseReads).toBe(1);
+    expect(detachable.byteLength).toBe(0);
+    expect(transferred.byteLength).toBe(der.byteLength);
   });
 
   [
@@ -389,7 +452,7 @@ describe("crypto.KeyObjects", () => {
       },
     },
   ].forEach(info => {
-    const keyType = info.keyType;
+    const keyType = info.keyType as AsymmetricKeyType;
     // Ed448 and X448 are not supported yet
     const test = keyType === "x448" || keyType === "ed448" ? it.skip : it;
     let privateKey: KeyObject;
@@ -420,7 +483,7 @@ describe("crypto.KeyObjects", () => {
       ["jwk", { key: info.jwk, format: "jwk" }],
     ].forEach(([name, input]) => {
       test(`${keyType} createPublicKey using ${name} key should work`, async () => {
-        const key = createPublicKey(input);
+        const key = createPublicKey(input as string | JsonWebKeyInput);
         expect(key.type).toBe("public");
         expect(key.asymmetricKeyType).toBe(keyType);
         expect(key.symmetricKeySize).toBe(undefined);
@@ -428,7 +491,7 @@ describe("crypto.KeyObjects", () => {
           expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
         }
         if (name == "jwk") {
-          const jwt = { ...info.jwk };
+          const jwt: Partial<typeof info.jwk> = { ...info.jwk };
           delete jwt.d;
           const jwk_exported = key.export({ format: "jwk" });
           expect(jwk_exported).toEqual(jwt);
@@ -493,7 +556,7 @@ describe("crypto.KeyObjects", () => {
       exportedD: "ABIIbmn3Gm_Y11uIDkC3g2ijpRxIrJEBY4i_JJYo5OougzTl3BX2ifRluPJMaaHcNerbQH_WdVkLLX86ShlHrRyJ",
     },
   ].forEach(info => {
-    const { keyType, namedCurve } = info;
+    const { keyType, namedCurve } = info as typeof info & { keyType: "ec" };
     const test = namedCurve === "secp256k1" ? it.skip : it;
     let privateKey: KeyObject;
     test(`${keyType} ${namedCurve} createPrivateKey from Buffer should work`, async () => {
@@ -534,7 +597,7 @@ describe("crypto.KeyObjects", () => {
       ["jwk", { key: info.jwk, format: "jwk" }],
     ].forEach(([name, input]) => {
       test(`${keyType} ${namedCurve} createPublicKey using ${name} should work`, async () => {
-        const key = createPublicKey(input);
+        const key = createPublicKey(input as string | JsonWebKeyInput);
         expect(key.type).toBe("public");
         expect(key.asymmetricKeyType).toBe(keyType);
         expect(key.asymmetricKeyDetails?.namedCurve).toBe(namedCurve);
@@ -543,7 +606,7 @@ describe("crypto.KeyObjects", () => {
           expect(key.export({ type: "spki", format: "pem" })).toEqual(info.public);
         }
         if (name == "jwk") {
-          const jwt = { ...info.jwk };
+          const jwt: Partial<typeof info.jwk> = { ...info.jwk };
           delete jwt.d;
           const jwk_exported = key.export({ format: "jwk" });
           expect(jwk_exported).toEqual(jwt);
@@ -582,7 +645,7 @@ describe("crypto.KeyObjects", () => {
       key: privateEncryptedPem,
       format: "pem",
       passphrase: "password", // this is not documented but should work
-    });
+    } as PublicKeyInput);
     expect(publicKey.type).toBe("public");
     expect(publicKey.asymmetricKeyType).toBe("rsa");
     expect(publicKey.symmetricKeySize).toBe(undefined);
@@ -621,9 +684,13 @@ describe("crypto.KeyObjects", () => {
           for (const algo of ["sha1", "sha256"]) {
             // Any salt length should work.
             for (const saltLength of [undefined, 8, 10, 12, 16, 18, 20]) {
-              const signature = createSign(algo).update("foo").sign({ key, saltLength });
+              const signature = createSign(algo)
+                .update("foo")
+                .sign({ key: key as KeyObject, saltLength });
               for (const pkey of [key, publicKey, publicPem]) {
-                const okay = createVerify(algo).update("foo").verify({ key: pkey, saltLength }, signature);
+                const okay = createVerify(algo)
+                  .update("foo")
+                  .verify({ key: pkey as KeyObject, saltLength }, signature);
                 expect(okay).toBeTrue();
               }
             }
@@ -669,6 +736,7 @@ describe("crypto.KeyObjects", () => {
       expect(createSecretKey(first).equals(createSecretKey(first))).toBeTrue();
       expect(createSecretKey(first).equals(createSecretKey(second))).toBeFalse();
 
+      // @ts-expect-error
       expect(() => keyObject.equals(0)).toThrow(
         /The "otherKeyObject" argument must be an instance of KeyObject. Received type number \(0\)/,
       );
@@ -689,16 +757,45 @@ describe("crypto.KeyObjects", () => {
     }
   });
 
+  it("rsa-pss deprecated hash/mgf1Hash options: an error thrown while emitting the DEP0154 warning propagates", async () => {
+    // Emitting a DeprecationWarning reads process.noDeprecation; run in a child so the getter can't
+    // affect other tests.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Object.defineProperty(process, "noDeprecation", { get() { throw new Error("noDeprecation getter"); } });
+        for (const opt of ["hash", "mgf1Hash"]) {
+          try {
+            require("crypto").generateKeyPairSync("rsa-pss", { modulusLength: 512, [opt]: "sha256" });
+            console.log(opt + ": no throw");
+          } catch (e) {
+            console.log(opt + ": " + e.message);
+          }
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("hash: noDeprecation getter\nmgf1Hash: noDeprecation getter\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   ["ed25519", "x25519"].forEach(keyType => {
     it(`${keyType} equals should work`, async () => {
-      const first = generateKeyPairSync(keyType);
-      const second = generateKeyPairSync(keyType);
+      const first = generateKeyPairSync(keyType as "ed25519");
+      const second = generateKeyPairSync(keyType as "ed25519");
 
       const secret = generateKeySync("aes", { length: 128 });
 
       expect(first.publicKey.equals(first.publicKey)).toBeTrue();
 
-      expect(first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))));
+      expect(
+        first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))),
+      ).toBeTrue();
 
       expect(first.publicKey.equals(second.publicKey)).toBeFalse();
       expect(first.publicKey.equals(second.privateKey)).toBeFalse();
@@ -717,15 +814,17 @@ describe("crypto.KeyObjects", () => {
   test("This should not cause a crash: https://github.com/nodejs/node/issues/44471", async () => {
     for (const key of ["", "foo", null, undefined, true, Boolean]) {
       expect(() => {
+        // @ts-expect-error
         createPublicKey({ key, format: "jwk" });
       }).toThrow();
       expect(() => {
+        // @ts-expect-error
         createPrivateKey({ key, format: "jwk" });
       }).toThrow();
     }
   });
 
-  ["hmac", "aes"].forEach(type => {
+  (["hmac", "aes"] as const).forEach(type => {
     [128, 256].forEach(length => {
       test(`generateKey ${type} ${length}`, async () => {
         {
@@ -735,7 +834,7 @@ describe("crypto.KeyObjects", () => {
           expect(keybuf.byteLength).toBe(length / 8);
         }
 
-        const { promise, resolve, reject } = Promise.withResolvers();
+        const { promise, resolve, reject } = Promise.withResolvers<KeyObject>();
         generateKey(type, { length }, (err, key) => {
           if (err) {
             reject(err);
@@ -781,7 +880,7 @@ describe("crypto.KeyObjects", () => {
         expect(typeof publicKey).toBe("object");
         expect(typeof privateKey).toBe("object");
         expect(publicKey.x).toBe(privateKey.x);
-        expect(publicKey.y).toBe(publicKey.y);
+        expect(publicKey.y).toBe(privateKey.y);
         expect(publicKey.d).toBeUndefined();
         expect(privateKey.d).toBeDefined();
         expect(publicKey.kty).toEqual("EC");
@@ -840,7 +939,7 @@ describe("crypto.KeyObjects", () => {
       test(`should work with ${type}`, async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         generateKeyPair(
-          type,
+          type as "ed25519",
           {
             publicKeyEncoding: {
               format: "jwk",
@@ -1140,7 +1239,7 @@ describe("crypto.KeyObjects", () => {
         expect(typeof publicKey).toBe("object");
         expect(typeof privateKey).toBe("object");
         expect(publicKey.x).toBe(privateKey.x);
-        expect(publicKey.y).toBe(publicKey.y);
+        expect(publicKey.y).toBe(privateKey.y);
         expect(publicKey.d).toBeUndefined();
         expect(privateKey.d).toBeDefined();
         expect(publicKey.kty).toEqual("EC");
@@ -1185,7 +1284,7 @@ describe("crypto.KeyObjects", () => {
     ["ed25519", "ed448", "x25519", "x448"].forEach(type => {
       const test = type === "x448" || type === "ed448" ? it.skip : it;
       test(`should work with ${type}`, async () => {
-        const { publicKey, privateKey } = generateKeyPairSync(type, {
+        const { publicKey, privateKey } = generateKeyPairSync(type as "ed25519", {
           publicKeyEncoding: {
             format: "jwk",
           },
@@ -1309,28 +1408,19 @@ describe("crypto.KeyObjects", () => {
   });
 
   test(`Test sync explicit elliptic curve key generation with an encrypted private key`, async () => {
-    const { publicKey, privateKey } = generateKeyPairSync(
-      "ec",
-      {
-        namedCurve: "prime256v1",
-        publicKeyEncoding: {
-          type: "spki",
-          format: "pem",
-        },
-        privateKeyEncoding: {
-          type: "sec1",
-          format: "pem",
-          cipher: "aes-128-cbc",
-          passphrase: "secret",
-        },
+    const { publicKey, privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      publicKeyEncoding: {
+        type: "spki",
+        format: "pem",
       },
-      (err, publicKey, privateKey) => {
-        if (err) {
-          return reject(err);
-        }
-        resolve({ publicKey, privateKey });
+      privateKeyEncoding: {
+        type: "sec1",
+        format: "pem",
+        cipher: "aes-128-cbc",
+        passphrase: "secret",
       },
-    );
+    });
 
     expect(typeof publicKey).toBe("string");
     expect(publicKey).toMatch(spkiExp);
@@ -1479,7 +1569,6 @@ describe("crypto.KeyObjects", () => {
     } else {
       test("can generate key", () => {
         const prop = randomProp();
-        // @ts-expect-error
         globalThis[prop] = generateKeySync;
         try {
           const result = fn(`${prop}("aes", { length: 128 })`);
@@ -1487,7 +1576,6 @@ describe("crypto.KeyObjects", () => {
           const keybuf = result.export();
           expect(keybuf.byteLength).toBe(128 / 8);
         } finally {
-          // @ts-expect-error
           delete globalThis[prop];
         }
       });
@@ -1572,7 +1660,7 @@ test.todo("RSA-PSS should work", async () => {
         publicExponent: 65537,
         hashAlgorithm: "sha1",
         mgf1HashAlgorithm: "sha1",
-        saltLength: 20,
+        saltLength: 20 as any,
       });
 
       expect(publicKey.type).toBe("public");
@@ -1592,7 +1680,7 @@ test.todo("RSA-PSS should work", async () => {
         modulusLength: 2048,
         publicExponent: 65537,
         hashAlgorithm: "sha256",
-        saltLength: 16,
+        saltLength: 16 as any,
       });
       expect(publicKey.type).toBe("public");
       expect(publicKey.asymmetricKeyType).toBe("rsa-pss");
@@ -1747,3 +1835,91 @@ test("ECDSA should work", async () => {
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
+
+test("generateKeyPair passes the thrown Error to the callback when key export fails", async () => {
+  const { promise, resolve } = Promise.withResolvers<Error & { code?: string }>();
+  // P-224 keygen succeeds, JWK export does not, driving the caught-exception
+  // branch of the async completion. Node surfaces the Error object itself.
+  generateKeyPair(
+    "ec",
+    {
+      namedCurve: "secp224r1",
+      publicKeyEncoding: { format: "jwk" },
+      privateKeyEncoding: { format: "jwk" },
+    } as any,
+    err => resolve(err as any),
+  );
+  const err = await promise;
+  expect(err).toBeInstanceOf(Error);
+  expect(err.code).toBe("ERR_CRYPTO_JWK_UNSUPPORTED_CURVE");
+  expect(err.message).toContain("Unsupported JWK EC curve");
+});
+
+// The async crypto jobs (generateKeyPair, sign, diffieHellman, hkdf, ...) run
+// on the work pool and complete on the JS thread. The native job ctx must be
+// freed before the JS callback is invoked: a callback that never returns
+// (process.exit()) would otherwise strand everything the ctx still owns (the
+// generated EVP_PKEY, key refs, BIGNUMs). These children run with leak
+// checking on, so a stranded OpenSSL allocation fails the child with a
+// LeakSanitizer report.
+describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leaks nothing", () => {
+  const lsanEnv = {
+    ...bunEnv,
+    BUN_DESTRUCT_VM_ON_EXIT: "1",
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+    LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+  };
+  const cases = {
+    "generateKeyPair (KeyObject output)": `crypto.generateKeyPair("rsa", { modulusLength: 512 }, done);`,
+    "generateKeyPair (encrypted PEM output)": `crypto.generateKeyPair("rsa", {
+        modulusLength: 512,
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "secret" },
+      }, done);`,
+    "sign": `{
+        const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+        crypto.sign("sha256", Buffer.from("data"), privateKey, done);
+      }`,
+    "diffieHellman": `{
+        const a = crypto.generateKeyPairSync("x25519", {});
+        const b = crypto.generateKeyPairSync("x25519", {});
+        crypto.diffieHellman({ privateKey: a.privateKey, publicKey: b.publicKey }, done);
+      }`,
+    "hkdf": `crypto.hkdf("sha256", "key", "salt", "info", 32, done);`,
+    "checkPrime": `crypto.checkPrime(7n, done);`,
+    "generatePrime": `crypto.generatePrime(64, done);`,
+    "generateKey (secret)": `crypto.generateKey("hmac", { length: 256 }, done);`,
+    // The second path to the same leak: the completion task is enqueued but
+    // never dispatched (the spin keeps the JS thread busy until exit), so the
+    // shutdown release of queued jobs must free the ctx.
+    "generateKeyPair (exit before completion dispatch)": `{
+        crypto.generateKeyPair("rsa", { modulusLength: 512 }, () => {});
+        const end = Bun.nanoseconds() + 1_000_000_000;
+        while (Bun.nanoseconds() < end) {}
+        process.exit(0);
+      }`,
+  };
+
+  for (const [name, snippet] of Object.entries(cases)) {
+    test.concurrent(name, async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const crypto = require("crypto");
+             const done = err => {
+               if (err) { console.error(err); process.exit(2); }
+               process.exit(0);
+             };
+             ${snippet}`,
+        ],
+        env: lsanEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("LeakSanitizer");
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+  }
+});

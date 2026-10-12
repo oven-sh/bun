@@ -15,7 +15,7 @@ await proc.exited;
 
 ---
 
-The second argument accepts a configuration object.
+The second argument is a configuration object.
 
 ```ts
 const proc = Bun.spawn(["echo", "Hello, world!"], {
@@ -29,7 +29,7 @@ const proc = Bun.spawn(["echo", "Hello, world!"], {
 
 ---
 
-By default, the `stdout` of the child process can be consumed as a `ReadableStream` using `proc.stdout`.
+By default, `proc.stdout` is a `ReadableStream` of the child process's `stdout`.
 
 ```ts
 const proc = Bun.spawn(["echo", "hello"]);
@@ -40,4 +40,4 @@ output; // => "hello\n"
 
 ---
 
-See [Docs > API > Child processes](/runtime/child-process) for complete documentation.
+See [Child processes](/runtime/child-process).

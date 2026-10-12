@@ -90,6 +90,21 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(sessionCookie.isExpired()).toBe(false);
   });
 
+  test("Cookie.isExpired() gives Max-Age precedence over Expires", () => {
+    const past = new Date(Date.now() - 1000);
+    const future = new Date(Date.now() + 86_400_000);
+
+    // Max-Age wins over Expires regardless of which one the header listed first.
+    expect(new Bun.Cookie("name", "value", { maxAge: 3600, expires: past }).isExpired()).toBe(false);
+    expect(new Bun.Cookie("name", "value", { maxAge: 0, expires: future }).isExpired()).toBe(true);
+    expect(Bun.Cookie.parse("a=b; Max-Age=3600; Expires=Wed, 21 Oct 2015 07:28:00 GMT").isExpired()).toBe(false);
+    expect(Bun.Cookie.parse("a=b; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=3600").isExpired()).toBe(false);
+
+    // A non-positive Max-Age is the "delete this cookie" signal.
+    expect(new Bun.Cookie("name", "value", { maxAge: 0 }).isExpired()).toBe(true);
+    expect(new Bun.Cookie("name", "value", { maxAge: -1 }).isExpired()).toBe(true);
+  });
+
   test("Cookie.parse works with all attributes", () => {
     const cookieStr =
       "name=value; Domain=example.com; Expires=Thu, 13 Mar 2025 12:00:00 GMT; Path=/foo; Max-Age=3600; Secure; HttpOnly; Partitioned; SameSite=Strict";
@@ -105,6 +120,55 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie.expires).toEqual(new Date("Thu, 13 Mar 2025 12:00:00 GMT"));
     expect(cookie.partitioned).toBe(true);
     expect(cookie.sameSite).toBe("strict");
+  });
+
+  test("Cookie.parse keeps Expires when Max-Age comes first", () => {
+    const maxAgeFirst = Bun.Cookie.parse("a=b; Max-Age=60; Expires=Wed, 01 Jan 2031 00:00:00 GMT");
+    const expiresFirst = Bun.Cookie.parse("a=b; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Max-Age=60");
+
+    expect(maxAgeFirst.toJSON()).toEqual({
+      name: "a",
+      value: "b",
+      path: "/",
+      expires: new Date("Wed, 01 Jan 2031 00:00:00 GMT"),
+      maxAge: 60,
+      secure: false,
+      sameSite: "lax",
+      httpOnly: false,
+      partitioned: false,
+    });
+    expect(maxAgeFirst.toJSON()).toEqual(expiresFirst.toJSON());
+    expect(maxAgeFirst.toString()).toBe(expiresFirst.toString());
+  });
+
+  test("Cookie.parse takes the last value of a repeated attribute", () => {
+    const cookie = Bun.Cookie.parse(
+      "a=b; Max-Age=10; Expires=Wed, 01 Jan 2031 00:00:00 GMT; Max-Age=60; Expires=Thu, 02 Jan 2031 00:00:00 GMT",
+    );
+
+    expect(cookie.maxAge).toBe(60);
+    expect(cookie.expires).toEqual(new Date("Thu, 02 Jan 2031 00:00:00 GMT"));
+  });
+
+  test("Cookie.parse reads every attribute in any order", () => {
+    const attributes = [
+      "Max-Age=3600",
+      "Expires=Thu, 13 Mar 2025 12:00:00 GMT",
+      "Domain=example.com",
+      "Path=/foo",
+      "Secure",
+      "HttpOnly",
+      "Partitioned",
+      "SameSite=Strict",
+    ];
+    const expected = Bun.Cookie.parse(`name=value; ${attributes.join("; ")}`).toJSON();
+    expect(expected).toHaveProperty("expires", new Date("Thu, 13 Mar 2025 12:00:00 GMT"));
+
+    // Rotating the attributes must never change the parsed cookie.
+    for (let i = 1; i < attributes.length; i++) {
+      const rotated = [...attributes.slice(i), ...attributes.slice(0, i)];
+      expect(Bun.Cookie.parse(`name=value; ${rotated.join("; ")}`).toJSON()).toEqual(expected);
+    }
   });
 
   test("Cookie.serialize creates cookie string", () => {
@@ -198,7 +262,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
         "foo=bar; Path=/; Secure; HttpOnly; Partitioned; SameSite=Lax",
-        "name=; Path=/; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
       ]
     `);
   });
@@ -347,6 +411,108 @@ describe("iterator", () => {
     a=b
     c=d"
   `);
+  });
+});
+
+describe("cookie header values with non-ASCII characters", () => {
+  test("preserves a non-ASCII cookie value when another value in the header is percent-encoded", () => {
+    const map = new Bun.CookieMap("a=%20; b=café");
+    expect(map.get("b")).toBe("café");
+    expect(map.get("a")).toBe(" ");
+  });
+
+  test("decodes a percent-encoded cookie value that also contains non-ASCII characters", () => {
+    const map = new Bun.CookieMap("b=café%20au%20lait");
+    expect(map.get("b")).toBe("café au lait");
+  });
+});
+
+describe("delete with prefixed cookie names", () => {
+  test("deleting a cookie whose name starts with __Host- emits a Secure expiring cookie", () => {
+    const map = new Bun.CookieMap("__Host-id=1");
+    map.delete("__Host-id");
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
+    ]);
+  });
+
+  test("deleting a cookie whose name starts with __Secure- emits a Secure expiring cookie", () => {
+    const map = new Bun.CookieMap("__Secure-id=1");
+    map.delete("__Secure-id");
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Secure-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
+    ]);
+  });
+
+  test("deleting a cookie without a name prefix emits an expiring cookie without Secure", () => {
+    const map = new Bun.CookieMap("__Host-id=1; id=1");
+    map.delete("__Host-id");
+    map.delete("id");
+    expect(map.toSetCookieHeaders()).toEqual([
+      "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
+      "id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+    ]);
+  });
+});
+
+describe("subclassing", () => {
+  class SessionCookie extends Bun.Cookie {
+    pair() {
+      return `${this.name}=${this.value}`;
+    }
+  }
+  class Jar extends Bun.CookieMap {
+    names() {
+      return [...this.keys()];
+    }
+  }
+
+  test.each([
+    ["(name, value)", ["id", "1"]],
+    ["(name, value, options)", ["id", "1", { path: "/app" }]],
+    ["(cookieString)", ["id=1; Path=/app"]],
+    ["(options)", [{ name: "id", value: "1", path: "/app" }]],
+  ])("new (class extends Bun.Cookie)%s returns an instance of the subclass", (_overload, args) => {
+    const cookie = new SessionCookie(...(args as any));
+    expect(Object.getPrototypeOf(cookie)).toBe(SessionCookie.prototype);
+    expect(cookie).toBeInstanceOf(Bun.Cookie);
+    expect(cookie.pair()).toBe("id=1");
+    expect(cookie.serialize()).toStartWith("id=1; Path=/");
+  });
+
+  test.each([
+    ["(string)", "a=1; b=2"],
+    ["(object)", { a: "1", b: "2" }],
+    [
+      "(pairs)",
+      [
+        ["a", "1"],
+        ["b", "2"],
+      ],
+    ],
+  ])("new (class extends Bun.CookieMap)%s returns an instance of the subclass", (_overload, init) => {
+    const jar = new Jar(init as any);
+    expect(Object.getPrototypeOf(jar)).toBe(Jar.prototype);
+    expect(jar).toBeInstanceOf(Bun.CookieMap);
+    expect(jar.names()).toEqual(["a", "b"]);
+    jar.set("c", "3");
+    expect(jar.toJSON()).toEqual({ a: "1", b: "2", c: "3" });
+  });
+
+  test("Reflect.construct takes the prototype from newTarget", () => {
+    function NewTarget() {}
+    const cookie = Reflect.construct(Bun.Cookie, ["id", "1"], NewTarget);
+    expect(Object.getPrototypeOf(cookie)).toBe(NewTarget.prototype);
+    expect(Bun.Cookie.prototype.serialize.call(cookie)).toStartWith("id=1;");
+
+    const map = Reflect.construct(Bun.CookieMap, ["a=1"], NewTarget);
+    expect(Object.getPrototypeOf(map)).toBe(NewTarget.prototype);
+    expect(Bun.CookieMap.prototype.get.call(map, "a")).toBe("1");
+  });
+
+  test("the base constructors still return the base prototype", () => {
+    expect(Object.getPrototypeOf(new Bun.Cookie("id", "1"))).toBe(Bun.Cookie.prototype);
+    expect(Object.getPrototypeOf(new Bun.CookieMap("a=1"))).toBe(Bun.CookieMap.prototype);
   });
 });
 

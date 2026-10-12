@@ -24,7 +24,7 @@ impl SendFile {
 
     // Takes the resolved fd directly rather than the socket; callers pass
     // `socket.fd()`.
-    pub fn write(&mut self, socket_fd: Fd) -> Status {
+    pub(crate) fn write(&mut self, socket_fd: Fd) -> Status {
         // Clamp `remain` so the signed sendfile count cannot overflow.
         let adjusted_count_temporary: u64 = (self.remain as u64).min(i64::MAX as u64);
         let adjusted_count: u64 = adjusted_count_temporary;
@@ -60,7 +60,7 @@ impl SendFile {
                     return Status::Done;
                 }
 
-                return Status::Err(bun_core::errno_to_zig_err(errcode as i32));
+                return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
         }
 
@@ -89,7 +89,7 @@ impl SendFile {
                 if errcode == bun_sys::E::SUCCESS {
                     return Status::Done;
                 }
-                return Status::Err(bun_core::errno_to_zig_err(errcode as i32));
+                return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
         }
 
@@ -121,7 +121,7 @@ impl SendFile {
                     return Status::Done;
                 }
 
-                return Status::Err(bun_core::errno_to_zig_err(errcode as i32));
+                return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
         }
 
@@ -134,8 +134,10 @@ impl SendFile {
     }
 }
 
-pub enum Status {
+pub(crate) enum Status {
+    #[cfg(not(windows))]
     Done,
-    Err(bun_core::Error),
+    #[cfg(not(windows))]
+    Err(crate::Error),
     Again,
 }

@@ -113,10 +113,11 @@ test("database test", async () => {
 | `mysql_tls` | MySQL with TLS | 3306 | SSL certificates included |
 | **Redis/Valkey** | | | |
 | `redis_unified` | Redis with all features | 6379 (TCP), 6380 (TLS) | Persistence, Unix sockets, ACLs |
-| **S3/MinIO** | | | |
-| `minio` | S3-compatible storage | 9000 (API), 9001 (Console) | AWS S3 API testing |
 | **WebSocket** | | | |
 | `autobahn` | WebSocket test suite | 9002 | 517 conformance tests |
+
+The S3 tests use no container. They start the S3 server in
+`test/packages/s3-server`, which runs on `Bun.serve`.
 
 ## Usage Examples
 
@@ -171,12 +172,14 @@ test("wait for service to be healthy", async () => {
 ```
 test/docker/
 ├── docker-compose.yml       # Service definitions
-├── Dockerfile.postgres-plain # postgres_plain image (bakes in init-scripts)
-├── Dockerfile.postgres-auth  # postgres_auth image (init-scripts + pg_hba)
+├── Dockerfile.postgres-plain # postgres_plain image (baked PGDATA + init-scripts)
+├── Dockerfile.postgres-auth  # postgres_auth image (baked PGDATA + init-scripts + pg_hba)
+├── Dockerfile.mysql-plain           # mysql_plain image (baked data dir)
+├── Dockerfile.mysql-native-password # mysql_native_password image (baked data dir, legacy auth)
 ├── Dockerfile.autobahn       # autobahn image (fuzzingserver.json)
 ├── Dockerfile.squid          # squid image (squid.conf)
 ├── index.ts                # TypeScript API
-├── prepare-ci.sh          # CI/CD setup script
+├── prepare-ci.ts          # CI/CD setup script
 ├── README.md              # This file
 ├── config/                # Service configurations
 │   ├── fuzzingserver.json # Autobahn config

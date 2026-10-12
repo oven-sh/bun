@@ -3,8 +3,9 @@
 const common = require('../common');
 const assert = require('assert');
 const dgram = require('dgram');
+const { kStateSymbol } = require('internal/dgram');
 const s = dgram.createSocket('udp4');
-const { handle } = s[Object.getOwnPropertySymbols(s).filter(sym => sym.description === "state symbol")[0]];
+const { handle } = s[kStateSymbol];
 
 s.on('error', common.mustCall((err) => {
   s.close();

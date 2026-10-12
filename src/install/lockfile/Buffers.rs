@@ -17,7 +17,7 @@ use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invali
 
 #[derive(Default)]
 pub struct Buffers {
-    pub trees: tree::List,
+    pub(crate) trees: tree::List,
     pub hoisted_dependencies: DependencyIDList,
     /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
     /// Should be the same length as `dependencies`
@@ -34,7 +34,7 @@ pub struct Buffers {
 // needed.
 
 impl Buffers {
-    pub fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
         self.trees
             .reserve(that.trees.len().saturating_sub(self.trees.len()));
         self.resolutions.reserve(
@@ -80,23 +80,23 @@ mod sizes {
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 }
 
-pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Error> {
+pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     let start_pos = stream.read_int_le::<u64>()?;
 
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
     if start_pos == 0xDEAD_BEEF {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // These are absolute numbers, it shouldn't be zero.
     // There's a prefix before any of the arrays, so it can never be zero here.
     if start_pos == 0 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // We shouldn't be going backwards.
     if start_pos < (stream.pos as u64).saturating_sub(size_of::<u64>() as u64) {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     let end_pos = stream.read_int_le::<u64>()?;
@@ -104,22 +104,22 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
     // That shouldn't happen.
     if end_pos == 0xDEAD_BEEF {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // These are absolute numbers, it shouldn't be zero.
     if end_pos == 0 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // Prevent integer overflow.
     if start_pos > end_pos {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // Prevent buffer overflow.
     if end_pos > stream.buffer.len() as u64 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     let byte_len = end_pos - start_pos;
@@ -134,7 +134,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     }
 
     if start_pos % core::mem::align_of::<T>() as u64 != 0 || byte_len % size_of::<T>() as u64 != 0 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     let start_pos = start_pos as usize;
@@ -151,11 +151,11 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     Ok(misaligned.to_vec())
 }
 
-pub fn write_array<S, T>(
+pub(crate) fn write_array<S, T>(
     stream: &mut S,
     array: &[T],
     prefix: &'static str,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     // One type plays both the positional-stream and append-writer roles —
     // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and
@@ -213,11 +213,11 @@ where
     Ok(())
 }
 
-pub fn save<S>(
+pub(crate) fn save<S>(
     lockfile: &Lockfile,
     options: &PackageManagerOptions,
     stream: &mut S,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     // See `write_array` — a single bound avoids two `&mut` to the same object.
     S: lockfile::PositionalStream + bun_io::Write,
@@ -236,10 +236,6 @@ where
             let mut clone: Vec<$elem> = Vec::with_capacity(buffers.$field.len());
             clone.extend_from_slice(buffers.$field.as_slice());
             write_array(stream, clone.as_slice(), $prefix)?;
-            #[cfg(debug_assertions)]
-            {
-                // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, pos, stream.get_pos()?));
-            }
         }};
     }
 
@@ -264,10 +260,6 @@ where
             // reader ignores this string; only the exact bytes matter.
             "\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n",
         )?;
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "trees", pos, stream.get_pos()?));
-        }
     }
 
     // -- hoisted_dependencies --
@@ -349,11 +341,6 @@ where
             to_clone.as_slice(),
             "\n<[26]u8> 26 sizeof, 1 alignof\n",
         )?;
-
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "dependencies", pos, stream.get_pos()?));
-        }
     }
 
     // -- extern_strings --
@@ -376,11 +363,11 @@ where
 }
 
 impl Buffers {
-    pub fn legacy_package_to_dependency_id(
+    pub(crate) fn legacy_package_to_dependency_id(
         &self,
         dependency_visited: Option<&mut Bitset>,
         package_id: PackageID,
-    ) -> Result<DependencyID, bun_core::Error> {
+    ) -> crate::Result<DependencyID> {
         match package_id {
             0 => return Ok(tree::ROOT_DEP_ID),
             id if id == invalid_package_id => return Ok(invalid_package_id),
@@ -401,7 +388,7 @@ impl Buffers {
                 }
             }
         }
-        Err(bun_core::err!("Lockfile is missing resolution data"))
+        Err(crate::Error::LockfileIsMissingResolutionData)
     }
 }
 
@@ -409,7 +396,7 @@ pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
     pm_: Option<&mut PackageManager>,
-) -> Result<Buffers, bun_core::Error> {
+) -> crate::Result<Buffers> {
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
 
@@ -418,25 +405,17 @@ pub(crate) fn load(
 
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
-            #[cfg(debug_assertions)]
-            let _pos: usize = stream.pos;
-
             this.$field = read_array::<$elem>(stream)?;
             if let Some(pm) = pm_.as_deref() {
                 if pm.options.log_level.is_verbose() {
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
             }
-            // #[cfg(debug_assertions)]
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, _pos, stream.get_pos()?));
         }};
     }
 
     // -- trees --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         let tree_list: Vec<tree::External> = read_array(stream)?;
         // `set_len` then `iter_mut()` would form `&mut Tree` to uninitialized
         // memory (UB), so we push into the reserved capacity instead.
@@ -455,9 +434,6 @@ pub(crate) fn load(
 
     // -- dependencies --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
         if let Some(pm) = pm_.as_deref() {
             if pm.options.log_level.is_verbose() {

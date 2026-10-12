@@ -73,7 +73,7 @@ describe("WebAssembly.compileStreaming", () => {
   test("doesn't compile a non-Response", async () => {
     const nonResponse = Buffer.from("not a Response");
     // @ts-expect-error nonResponse is not a Response
-    expect(WebAssembly.compileStreaming(nonResponse)).rejects.toThrow(
+    await expect(WebAssembly.compileStreaming(nonResponse)).rejects.toThrow(
       `The "source" argument must be an instance of Response or an Promise resolving to Response. Received an instance of Buffer`,
     );
   });
@@ -83,6 +83,58 @@ describe("WebAssembly.compileStreaming", () => {
     expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
       "WebAssembly response has unsupported MIME type 'image/png'",
     );
+  });
+
+  // https://webassembly.github.io/spec/web-api/#compile-a-potential-webassembly-response
+  // requires a byte-case-insensitive match for `application/wasm`, with no
+  // parameters. Mirrors WPT wasm/webapi/contenttype.any.js.
+  describe("Content-Type matching", () => {
+    const wasmBody = () => Buffer.from(simpleWasm, "base64");
+
+    test.each(["application/wasm", "APPLICATION/wasm", "APPLICATION/WASM"])(
+      "accepts Content-Type %j",
+      async contentType => {
+        const response = new Response(wasmBody(), { headers: { "Content-Type": contentType } });
+        await expect(WebAssembly.compileStreaming(response)).resolves.toBeInstanceOf(WebAssembly.Module);
+      },
+    );
+
+    test("accepts a case-insensitive Content-Type over HTTP", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(wasmBody(), { headers: { "Content-Type": "APPLICATION/WASM" } }),
+      });
+      const response = await fetch(server.url);
+      expect(response.headers.get("content-type")).toBe("APPLICATION/WASM");
+      await expect(WebAssembly.compileStreaming(response)).resolves.toBeInstanceOf(WebAssembly.Module);
+    });
+
+    test.each([
+      "",
+      // A case-insensitive prefix of "application/wasm" must not match.
+      "application",
+      "application/javascript",
+      "application/octet-stream",
+      "text/wasm",
+      "application/wasm;",
+      "application/wasm;x",
+      "application/wasm;charset=UTF-8",
+    ])("rejects Content-Type %j", async contentType => {
+      const response = new Response(wasmBody(), { headers: { "Content-Type": contentType } });
+      // An empty Content-Type header value reads back as absent, so it echoes as 'null'.
+      const echoed = contentType === "" ? "null" : contentType;
+      await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+        `WebAssembly response has unsupported MIME type '${echoed}'`,
+      );
+    });
+
+    test("rejects a missing Content-Type", async () => {
+      const response = new Response(wasmBody());
+      response.headers.delete("Content-Type");
+      await expect(WebAssembly.compileStreaming(response)).rejects.toThrow(
+        "WebAssembly response has unsupported MIME type 'null'",
+      );
+    });
   });
 
   test("doesn't compile a Response that isn't OK", async () => {

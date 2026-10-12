@@ -36,7 +36,10 @@ _bun_add_completion() {
         '--development[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
-        '--exact[Add the exact version instead of the ^range]' &&
+        '--exact[Add the exact version instead of the ^range]' \
+        '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
+        '*--filter[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' \
+        '*-F[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' &&
         ret=0
 
     case $state in
@@ -257,6 +260,7 @@ _bun_pm_completion() {
         sub_commands=(
             'bin\:"print the path to bin folder" '
             'ls\:"list the dependency tree according to the current lockfile" '
+            'licenses\:"list installed packages grouped by license" '
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
@@ -293,6 +297,25 @@ _bun_pm_completion() {
             pmargs=(
                 "--all[list the entire dependency tree according to the current lockfile]"
                 "--trusted[list only trusted dependencies]"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                $pmargs &&
+                ret=0
+
+            ;;
+        licenses)
+            pmargs=(
+                "--json[output as JSON]"
+                "--prod[omit devDependencies]"
+                "--production[omit devDependencies]"
+                "--dev[list only what devDependencies pull in]"
+                "-D[list only what devDependencies pull in]"
+                "--long[also print author, description and homepage]"
+                "*--filter[list only the matching workspaces' dependencies]:workspace pattern"
+                "*-F[list only the matching workspaces' dependencies]:workspace pattern"
             )
 
             _arguments -s -C \
@@ -377,7 +400,10 @@ _bun_install_completion() {
         '-D[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
-        '--exact[Add the exact version instead of the ^range]' &&
+        '--exact[Add the exact version instead of the ^range]' \
+        '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
+        '*--filter[Install packages for the matching workspaces]:workspace pattern' \
+        '*-F[Install packages for the matching workspaces]:workspace pattern' &&
         ret=0
 
     case $state in
@@ -417,7 +443,9 @@ _bun_remove_completion() {
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--link-native-bins[Link "bin" from a matching platform-specific dependency instead. Default: esbuild, turbo]:link-native-bins' \
-        '--help[Print this help menu]' &&
+        '--help[Print this help menu]' \
+        '*--filter[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' \
+        '*-F[Remove the package(s) from the matching workspaces instead of the current package]:workspace pattern' &&
         ret=0
 
     case $state in
@@ -486,9 +514,7 @@ _bun_run_completion() {
         '-i[Automatically install dependencies and use global cache in bun'"'"'s runtime, equivalent to --install=fallback'] \
         '--prefer-offline[Skip staleness checks for packages in bun'"'"'s JavaScript runtime and resolve from disk]' \
         '--prefer-latest[Use the latest matching versions of packages in bun'"'"'s JavaScript runtime, always checking npm]' \
-        '--silent[Don'"'"'t repeat the command for bun run]' \
-        '--dump-environment-variables[Dump environment variables from .env and process as JSON and quit. Useful for debugging]' \
-        '--dump-limits[Dump system limits. Userful for debugging]' &&
+        '--silent[Don'"'"'t repeat the command for bun run]' &&
         ret=0
 
     case $state in
@@ -596,13 +622,29 @@ _bun_update_completion() {
         '--config[Load config(bunfig.toml)]: :->config' \
         '-y[Write a yarn.lock file (yarn v1)]' \
         '--yarn[Write a yarn.lock file (yarn v1)]' \
-        '-p[Don'"'"'t install devDependencies]' \
-        '--production[Don'"'"'t install devDependencies]' \
+        '-p[Only update dependencies and optionalDependencies]' \
+        '--production[Only update dependencies and optionalDependencies]' \
+        '-P[Only update dependencies and optionalDependencies]' \
+        '--prod[Only update dependencies and optionalDependencies]' \
+        '-d[Only update devDependencies]' \
+        '--dev[Only update devDependencies]' \
+        '-D[Only update devDependencies]' \
+        '--development[Only update devDependencies]' \
+        '--no-optional[Don'"'"'t update optionalDependencies]' \
+        '-E[Write exact versions to package.json instead of ^ or ~ ranges]' \
+        '--exact[Write exact versions to package.json instead of ^ or ~ ranges]' \
         '--no-save[Don'"'"'t save a lockfile]' \
         '--save[Save to package.json]' \
         '--dry-run[Don'"'"'t install anything]' \
         '--frozen-lockfile[Disallow changes to lockfile]' \
-        '--latest[Updates dependencies to latest version, regardless of compatibility]' \
+        '-L[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '--latest[Update packages to their latest versions, ignoring the ranges in package.json]' \
+        '-i[Show an interactive list of outdated packages to select for update]' \
+        '--interactive[Show an interactive list of outdated packages to select for update]' \
+        '-r[Update packages in all workspaces]' \
+        '--recursive[Update packages in all workspaces]' \
+        '*--filter[Update packages for the matching workspaces]:workspace pattern' \
+        '*-F[Update packages for the matching workspaces]:workspace pattern' \
         '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
         '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
@@ -640,6 +682,238 @@ _bun_outdated_completion() {
     case $state in
     config)
         _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_dedupe_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '--check[Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything]' \
+        '-c[Load config(bunfig.toml)]: :->config' \
+        '--config[Load config(bunfig.toml)]: :->config' \
+        '-y[Write a yarn.lock file (yarn v1)]' \
+        '--yarn[Write a yarn.lock file (yarn v1)]' \
+        '-p[Don'"'"'t install devDependencies]' \
+        '--production[Don'"'"'t install devDependencies]' \
+        '--no-save[Don'"'"'t save a lockfile]' \
+        '--save[Save to package.json]' \
+        '--dry-run[Don'"'"'t install anything]' \
+        '--frozen-lockfile[Disallow changes to lockfile]' \
+        '--lockfile-only[Generate a lockfile without installing dependencies]' \
+        '-f[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
+        '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
+        '--no-cache[Ignore manifest cache entirely]' \
+        '--silent[Don'"'"'t log anything]' \
+        '--verbose[Excessively verbose logging]' \
+        '--no-progress[Disable the progress bar]' \
+        '--no-summary[Don'"'"'t print a summary]' \
+        '--no-verify[Skip verifying integrity of newly downloaded packages]' \
+        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
+        '--linker[Linker strategy]:linker:(isolated hoisted)' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
+_bun_prune_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '-p[Also remove packages that are only needed by devDependencies]' \
+        '--production[Also remove packages that are only needed by devDependencies]' \
+        '-P[Also remove packages that are only needed by devDependencies]' \
+        '--prod[Also remove packages that are only needed by devDependencies]' \
+        '*--omit[Also remove packages that are only needed by the given dependency types]:type:(dev optional peer)' \
+        '--dry-run[Print what would be removed without deleting anything]' \
+        '*--os[Prune for a different operating system than the current one]:os' \
+        '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
+        '--linker[Linker to assume when node_modules mixes isolated and hoisted installs]:linker:(isolated hoisted)' \
+        '*--filter[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
+        '*-F[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
+        '--silent[Don'"'"'t log anything]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '-h[Print this help menu]' \
+        '--help[Print this help menu]' &&
+        ret=0
+}
+
+_bun_check_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--project[Path to a tsconfig.json or its directory]:project:_files' \
+        '-p[Path to a tsconfig.json or its directory]:project:_files' \
+        '--pretty[Show source code around each error]' \
+        '--no-pretty[One line per error]' \
+        '--all[Show every error]' \
+        '--threads[Number of threads]:threads' \
+        '--timing[Print load and check times]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
+_bun_lint_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--config[Use this configuration file instead of looking for one]:config:_files' \
+        '-c[Use this configuration file instead of looking for one]:config:_files' \
+        '--no-config-lookup[Do not look for a configuration file]' \
+        '--flavor[Whose configuration files count where there are both\: eslint or oxlint]:flavor' \
+        '--rule[Configure a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
+        '--global[Define global variables\: --global a,b\:true]:global' \
+        '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \
+        '--ext[Lint files with these extensions too]:ext' \
+        '--fix[Fix what can be fixed, and write the files]' \
+        '--fix-dry-run[Fix without writing. The json format has the fixed code]' \
+        '--fix-type[Only apply fixes of rules of these types\: directive, problem, suggestion, layout]:fix-type' \
+        '--ignore-pattern[Ignore the files that match]:ignore-pattern' \
+        '--no-ignore[Lint ignored files too]' \
+        '--no-warn-ignored[Do not warn about an ignored file that is named as an argument]' \
+        '--stdin[Lint the code on standard input]' \
+        '--stdin-filename[The file name that the code on standard input is linted as]:stdin-filename:_files' \
+        '--quiet[Report errors only]' \
+        '--max-warnings[Exit with 1 if there are more warnings than this]:max-warnings' \
+        '--format[stylish (default), pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif]:format' \
+        '-f[stylish (default), pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif]:format' \
+        '--all[Show every problem (pretty and agent group identical problems above 50)]' \
+        '--output-file[Write the report to a file]:output-file:_files' \
+        '-o[Write the report to a file]:output-file:_files' \
+        '--color[Always use colors]' \
+        '--no-color[Never use colors]' \
+        '--no-inline-config[Ignore eslint-disable and other configuration comments]' \
+        '--report-unused-disable-directives[Report eslint-disable comments that disable nothing, as errors]' \
+        '--report-unused-disable-directives-severity[The same, as off, warn or error]:report-unused-disable-directives-severity' \
+        '--report-unused-inline-configs[Report configuration comments that change nothing]:report-unused-inline-configs' \
+        '--suppress-all[Tolerate the errors that there are now\: write them to eslint-suppressions.json]' \
+        '--suppress-rule[The same for the errors of a rule]:suppress-rule' \
+        '--suppressions-location[Another file than eslint-suppressions.json]:suppressions-location:_files' \
+        '--prune-suppressions[Remove from that file what no longer occurs]' \
+        '--pass-on-unpruned-suppressions[Do not fail if that file has what no longer occurs]' \
+        '--no-error-on-unmatched-pattern[Do not fail if an argument matches no file]' \
+        '--pass-on-no-patterns[Exit with 0 if there are no arguments, instead of linting .]' \
+        '--exit-on-fatal-error[Exit with 2 if a file cannot be parsed]' \
+        '--allow-unsupported[Only warn about rules and files of the configuration that cannot be linted yet]' \
+        '--native-plugin-rules[The plugins whose built-in rules run in place of the installed package\: import,react-hooks (default\: all)]:native-plugin-rules' \
+        '--no-native-plugin-rules[Run the rules of the installed plugins, in JavaScript, not the built-in ones]' \
+        '--print-config[Print the configuration of a file, and lint nothing]:print-config:_files' \
+        '--type-aware[Run the rules that need types, whatever the configuration says]' \
+        '--no-type-aware[Skip the rules that need types]' \
+        '--infer-globals[The globals of a file are what the types of its project declare, too]' \
+        '--no-infer-globals[Without a configuration file\: those of browsers and of Node.js]' \
+        '--project[The tsconfig.json for the rules that need types]:project:_files' \
+        '-p[The tsconfig.json for the rules that need types]:project:_files' \
+        '--type-check[With --type-aware\: report type errors too]' \
+        '--allow[Turn a rule off, or with an .oxlintrc.json a category]:allow' \
+        '-A[Turn a rule off, or with an .oxlintrc.json a category]:allow' \
+        '--warn[The same\: make it a warning]:warn' \
+        '-W[The same\: make it a warning]:warn' \
+        '--deny[The same\: make it an error]:deny' \
+        '-D[The same\: make it an error]:deny' \
+        '--deny-warnings[Exit with 1 if there are warnings]' \
+        '--silent[Print no problems]' \
+        '--ignore-path[A file with patterns to ignore, in place of .eslintignore]:ignore-path:_files' \
+        '--disable-nested-config[Use the configuration file of the working directory for every file]' \
+        '--fix-suggestions[Apply suggestions, as oxlint does]' \
+        '--fix-dangerously[Apply every fix and suggestion, as oxlint does]' \
+        '--init[Write an .oxlintrc.json with the defaults of oxlint]' \
+        '--rules[List the rules that are built in]' \
+        '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--timing[Print how long each phase took]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
+_bun_format_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--check[Do not write. Exit with 1 if a file is not formatted]' \
+        '-c[Do not write. Exit with 1 if a file is not formatted]' \
+        '--list-different[Do not write. Print the files that are not formatted, and exit with 1 if there are any]' \
+        '-l[Do not write. Print the files that are not formatted, and exit with 1 if there are any]' \
+        '--stdin-filepath[Format standard input as that file, and print the result]:stdin-filepath:_files' \
+        '--config[Use this configuration file instead of looking for one]:config:_files' \
+        '--no-config[Do not look for a configuration file]' \
+        '--disable-nested-config[Use the configuration file of the working directory for every file]' \
+        '--no-editorconfig[Do not read .editorconfig]' \
+        '--config-precedence[cli-override (default), file-override, or prefer-file]:config-precedence' \
+        '--ignore-path[Files with patterns to ignore (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
+        '--ignore-pattern[Ignore the files that match, as a line of .prettierignore does]:ignore-pattern' \
+        '--with-node-modules[Format files in node_modules too]' \
+        '--no-error-on-unmatched-pattern[Do not fail if an argument matches no file]' \
+        '--ignore-unknown[Say nothing about a file that there is no parser for]' \
+        '-u[Say nothing about a file that there is no parser for]' \
+        '--find-config-path[Print the configuration file of a file, and format nothing]:find-config-path:_files' \
+        '--log-level[silent, error, warn, log (default), or debug]:log-level' \
+        '--print-width[The line length to wrap at (default\: 80)]:print-width' \
+        '--tab-width[Spaces per indentation level (default\: 2)]:tab-width' \
+        '--use-tabs[Indent with tabs]' \
+        '--no-semi[Only print semicolons where they are needed]' \
+        '--single-quote[Use single quotes]' \
+        '--jsx-single-quote[Use single quotes in JSX]' \
+        '--quote-props[as-needed (default), consistent, or preserve]:quote-props' \
+        '--trailing-comma[all (default), es5, or none]:trailing-comma' \
+        '--no-bracket-spacing[No spaces between the braces of an object literal]' \
+        '--bracket-same-line[Put the closing bracket of a multi-line element at the end of the last line]' \
+        '--arrow-parens[always (default) or avoid]:arrow-parens' \
+        '--object-wrap[preserve (default) or collapse]:object-wrap' \
+        '--single-attribute-per-line[One attribute per line in HTML, Vue, and JSX]' \
+        '--html-whitespace-sensitivity[css (default), strict, or ignore]:html-whitespace-sensitivity' \
+        '--vue-indent-script-and-style[Indent what is in the script and style tags of Vue files]' \
+        '--prose-wrap[preserve (default), always, or never]:prose-wrap' \
+        '--embedded-language-formatting[auto (default) or off]:embedded-language-formatting' \
+        '--end-of-line[lf (default), crlf, cr, or auto]:end-of-line' \
+        '--require-pragma[Only format files that start with a comment that has @format or @prettier]' \
+        '--check-ignore-pragma[Do not format files that start with a comment that has @noformat or @noprettier]' \
+        '--insert-pragma[Put a comment with @format at the top of the files that are formatted]' \
+        '--range-start[Only format the statements from this offset on]:range-start' \
+        '--range-end[Only format the statements up to this offset]:range-end' \
+        '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--allow-unsupported[Only warn about files in a language that is not supported]' \
+        '--flavor[Without a configuration file, format like prettier or like oxfmt]:flavor' \
+        '--init[Write an .oxfmtrc.json, with which files are formatted like oxfmt does]' \
+        '--timing[Print how long each phase took]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
+_bun_audit_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '2: :->subcommand' \
+        '--json[Output in JSON format]' \
+        '--audit-level[Only print advisories with severity greater than or equal to the given level]:level:(low moderate high critical)' \
+        '*--ignore[Ignore advisories by GHSA or numeric advisory ID]:advisory' \
+        '--prod[Omit devDependencies]' \
+        '--production[Omit devDependencies]' \
+        '*--omit[Exclude dependency types from the audit]:type:(dev optional peer)' \
+        '--dry-run[Show what bun audit fix would change without changing anything]' \
+        '--latest[Let bun audit fix update direct dependencies past their declared ranges]' \
+        '-L[Let bun audit fix update direct dependencies past their declared ranges]' \
+        '--cwd[Set a specific cwd]:cwd' \
+        '--help[Print this help menu]' &&
+        ret=0
+
+    case $state in
+    subcommand)
+        _alternative 'args:subcommand:((fix\:"Upgrade vulnerable packages to the lowest safe version"))'
 
         ;;
     esac
@@ -738,7 +1012,8 @@ _bun() {
     cmd)
         local -a scripts_list
         IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
-        scripts="scripts:scripts:((${scripts_list//:/\\\\:}))"
+        scripts="scripts:scripts:compadd -a scripts_list"
+        local -a files_list
         IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
 
         main_commands=(
@@ -752,6 +1027,12 @@ _bun() {
             'add\:"Add a dependency to package.json (bun a)" '
             'remove\:"Remove a dependency from package.json (bun rm)" '
             'update\:"Update outdated dependencies & save to package.json" '
+            'audit\:"Check installed packages for vulnerabilities" '
+            'check\:"Type check a TypeScript project" '
+            'lint\:"Lint JavaScript and TypeScript" '
+            'format\:"Format code the way Prettier does" '
+            'dedupe\:"Remove duplicate versions from the lockfile" '
+            'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
             'link\:"Link an npm package globally" '
             'unlink\:"Globally unlink an npm package" '
@@ -761,7 +1042,7 @@ _bun() {
             'help\:"Show all supported flags and commands" '
         )
         main_commands=($main_commands)
-        _alternative "$scripts" "args:command:(($main_commands))" "files:files:(($files_list))"
+        _alternative "$scripts" "args:command:(($main_commands))" "files:files:compadd -a files_list"
 
         ;;
     args)
@@ -831,6 +1112,30 @@ _bun() {
             ;;
         outdated)
             _bun_outdated_completion
+
+            ;;
+        audit)
+            _bun_audit_completion
+
+            ;;
+        check)
+            _bun_check_completion
+
+            ;;
+        lint)
+            _bun_lint_completion
+
+            ;;
+        format)
+            _bun_format_completion
+
+            ;;
+        dedupe)
+            _bun_dedupe_completion
+
+            ;;
+        prune)
+            _bun_prune_completion
 
             ;;
         'test')
@@ -920,6 +1225,30 @@ _bun() {
                     _bun_outdated_completion
 
                     ;;
+                audit)
+                    _bun_audit_completion
+
+                    ;;
+                check)
+                    _bun_check_completion
+
+                    ;;
+                lint)
+                    _bun_lint_completion
+
+                    ;;
+                format)
+                    _bun_format_completion
+
+                    ;;
+                dedupe)
+                    _bun_dedupe_completion
+
+                    ;;
+                prune)
+                    _bun_prune_completion
+
+                    ;;
                 'test')
                     _bun_test_completion
 
@@ -942,12 +1271,12 @@ _bun_list_bunfig_toml() {
 }
 
 _bun_run_param_script_completion() {
-    local -a scripts_list
+    local -a scripts_list bins
     IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
     IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
 
-    _alternative "scripts:scripts:((${scripts_list//:/\\\\:}))"
-    _alternative "bin:bin:((${bins//:/\\\\:}))"
+    _alternative "scripts:scripts:compadd -a scripts_list"
+    _alternative "bin:bin:compadd -a bins"
     _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
 }
 
@@ -958,8 +1287,8 @@ _bun_link_param_package_completion() {
     global_node_modules=$install_dir/install/global/node_modules
 
     local -a packages_full_path=(${global_node_modules}/*(N))
-    packages=$(echo $packages_full_path | tr ' ' '\n' | xargs  basename)
-    _alternative "dirs:directory:(($packages))"
+    local -a packages=(${packages_full_path:t})
+    _alternative "dirs:directory:compadd -a packages"
 }
 
 _bun_remove_param_package_completion() {
@@ -969,10 +1298,11 @@ _bun_remove_param_package_completion() {
 
     # TODO: move to "bun getcompletes"
     if [ -f "package.json" ]; then
-        local dependencies=$(jq -r '.dependencies | keys[]' package.json)
-        local dev_dependencies=$(jq -r '.devDependencies | keys[]' package.json)
-        _alternative "deps:dependency:(($dependencies))"
-        _alternative "deps:dependency:(($dev_dependencies))"
+        local -a dependencies dev_dependencies
+        IFS=$'\n' dependencies=($(jq -r '.dependencies | keys[]' package.json))
+        IFS=$'\n' dev_dependencies=($(jq -r '.devDependencies | keys[]' package.json))
+        _alternative "deps:dependency:compadd -a dependencies"
+        _alternative "deps:dependency:compadd -a dev_dependencies"
     fi
 }
 

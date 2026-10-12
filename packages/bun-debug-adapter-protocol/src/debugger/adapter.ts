@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { AddressInfo, createServer, Socket } from "node:net";
 import * as path from "node:path";
@@ -205,7 +206,26 @@ type IDebugAdapter = {
   ) => void | DAP.ResponseMap[R] | Promise<DAP.ResponseMap[R]> | Promise<void>;
 };
 
-export type DebugAdapterEventMap = InspectorEventMap & {
+/**
+ * Inspector event domains that the adapter re-emits. Restricting this keeps a debug target from
+ * invoking the adapter's own `Adapter.*` and `Process.*` handlers by sending events with those names,
+ * and `DebugAdapterEventMap` only contains the inspector events that can actually be re-emitted.
+ */
+const inspectorEventDomains = [
+  "Audit",
+  "Console",
+  "Debugger",
+  "Heap",
+  "Inspector",
+  "LifecycleReporter",
+  "Runtime",
+  "ScriptProfiler",
+  "TestReporter",
+] as const;
+
+type InspectorEvent = keyof InspectorEventMap & `${(typeof inspectorEventDomains)[number]}.${string}`;
+
+export type DebugAdapterEventMap = Pick<InspectorEventMap, InspectorEvent> & {
   [E in keyof DAP.EventMap as E extends string ? `Adapter.${E}` : never]: [DAP.EventMap[E]];
 } & {
   "Adapter.request": [DAP.Request];
@@ -224,24 +244,14 @@ export type DebugAdapterEventMap = InspectorEventMap & {
 const isDebug = process.env.NODE_ENV === "development";
 const debugSilentEvents = new Set(["Adapter.event", "Inspector.event"]);
 
-const inspectorEventDomains = new Set([
-  "Audit",
-  "Console",
-  "Debugger",
-  "Heap",
-  "Inspector",
-  "LifecycleReporter",
-  "Runtime",
-  "ScriptProfiler",
-  "TestReporter",
-]);
+const inspectorEventDomainSet: ReadonlySet<string> = new Set(inspectorEventDomains);
 
-function isInspectorEvent(event: unknown): boolean {
+function isInspectorEvent(event: unknown): event is InspectorEvent {
   if (typeof event !== "string") {
     return false;
   }
   const dot = event.indexOf(".");
-  return dot !== -1 && inspectorEventDomains.has(event.slice(0, dot));
+  return dot !== -1 && inspectorEventDomainSet.has(event.slice(0, dot));
 }
 
 let threadId = 1;
@@ -299,7 +309,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       let sent = false;
       sent ||= emit(event, ...args);
       if (isInspectorEvent(event)) {
-        sent ||= this.emit(event as keyof JSC.EventMap, ...(args as any));
+        sent ||= this.emit(event, ...(args as any));
       }
       return sent;
     };
@@ -2813,7 +2823,7 @@ function nextId(): number {
 }
 
 export function getRandomId() {
-  return Math.random().toString(36).slice(2);
+  return randomBytes(16).toString("hex");
 }
 
 export function normalizeWindowsPath(winPath: string): string {

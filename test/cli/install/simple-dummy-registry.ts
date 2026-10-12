@@ -5,7 +5,7 @@ const __dirname = dirname(Bun.fileURLToPath(import.meta.url));
 
 export class SimpleRegistry {
   private debugLogs: boolean;
-  private server: Server | null = null;
+  private server: Server<undefined> | null = null;
   private port: number = 0;
   public requestedUrls: string[] = [];
   private scannerBehavior: "clean" | "warn" | "fatal" = "clean";
@@ -64,6 +64,10 @@ export class SimpleRegistry {
       this.server.stop();
       this.server = null;
     }
+  }
+
+  [Symbol.dispose]() {
+    this.stop();
   }
 
   private handleMetadata(packageName: string): Response {

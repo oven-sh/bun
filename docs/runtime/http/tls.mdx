@@ -3,7 +3,7 @@ title: TLS
 description: Enable TLS in Bun.serve
 ---
 
-Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS.
+Bun's TLS support is built in, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). To enable TLS, pass both `key` and `cert`.
 
 ```ts
 Bun.serve({
@@ -14,7 +14,7 @@ Bun.serve({
 });
 ```
 
-The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. Each can be a string, `BunFile`, `TypedArray`, `Buffer`, or an array of those. Bun uses only the last key/cert pair in an array; to serve several certificates, pass an array of `tls` objects, each with a `serverName` (see [SNI](#server-name-indication-sni) below).
 
 ```ts
 Bun.serve({
@@ -43,7 +43,7 @@ Bun.serve({
 
 ### CA Certificates
 
-Optionally, you can override the trusted CA certificates by passing a value for `ca`. By default, the server will trust the list of well-known CAs curated by Mozilla. When `ca` is specified, the Mozilla list is overwritten.
+Pass `ca` to override the trusted CA certificates. By default, the server trusts the list of well-known CAs curated by Mozilla; setting `ca` replaces that list.
 
 ```ts
 Bun.serve({
@@ -51,6 +51,39 @@ Bun.serve({
     key: Bun.file("./key.pem"), // path to TLS key
     cert: Bun.file("./cert.pem"), // path to TLS cert
     ca: Bun.file("./ca.pem"), // path to root CA certificate  // [!code ++]
+  },
+});
+```
+
+### Client certificates (mTLS)
+
+A server asks clients for a certificate only when `requestCert` is `true`. `ca` on its own does not: it names the CAs that client certificates are verified against.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    ca: Bun.file("./client-ca.pem"), // CA that issues the client certificates
+    requestCert: true, // [!code ++]
+  },
+});
+```
+
+With `requestCert: true`, the server refuses a client that sends no certificate or one that `ca` does not verify. Set `rejectUnauthorized: false` to accept those clients too. The `NODE_TLS_REJECT_UNAUTHORIZED` environment variable does not change this for a server.
+
+### Certificate revocation lists
+
+Pass `crl` to refuse peer certificates that a CA has revoked. It takes the PEM contents of one or more CRLs, in the same value types as `ca`. On a server it applies to client certificates, so use it with `requestCert`.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    ca: Bun.file("./client-ca.pem"),
+    requestCert: true,
+    crl: Bun.file("./client-ca.crl.pem"), // [!code ++]
   },
 });
 ```
@@ -99,3 +132,5 @@ Bun.serve({
   ],
 });
 ```
+
+If two entries share a `serverName`, the later entry replaces the earlier one. This matches `tls.Server#addContext()`. A trailing dot is ignored, so `my-server1.com.` and `my-server1.com` name the same host. Names are compared case-insensitively, and a `*` stands for exactly one label on every transport: `*.my-server1.com` matches `a.my-server1.com` but not `a.b.my-server1.com`.

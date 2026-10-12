@@ -11,7 +11,7 @@
 //!
 //! Conditional on `env.config.enable_function_outlining`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -22,11 +22,15 @@ use crate::ssa::enter_ssa::placeholder_function;
 /// Outline anonymous function expressions that have no captured context variables.
 ///
 /// Ported from TS `outlineFunctions` in `Optimization/OutlineFunctions.ts`.
-pub fn outline_functions(
+pub(crate) fn outline_functions(
     func: &mut HirFunction,
     env: &mut Environment,
     fbt_operands: &HashSet<IdentifierId>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Collect per-instruction actions to maintain depth-first name allocation order.
     // Each entry: (instr index, function_id to recurse into, should_outline)
     enum Action {

@@ -25,6 +25,7 @@ unsafe extern "C" {
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
     fn us_quic_stream_write(s: *mut Stream, data: *const u8, len: c_uint) -> c_int;
     safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int);
+    safe fn us_quic_stream_want_read(s: &mut Stream, want: c_int);
     fn us_quic_stream_send_headers(
         s: *mut Stream,
         h: *const Header,
@@ -86,6 +87,10 @@ impl Stream {
 
     pub fn want_write(&mut self, want: bool) {
         us_quic_stream_want_write(self, want as c_int)
+    }
+
+    pub fn want_read(&mut self, want: bool) {
+        us_quic_stream_want_read(self, want as c_int)
     }
 
     pub fn send_headers(&mut self, headers: &[Header], end_stream: bool) -> c_int {

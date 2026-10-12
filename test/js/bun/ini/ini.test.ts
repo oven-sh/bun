@@ -1,7 +1,7 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("parse ini", () => {
   test("weird section", () => {
@@ -316,7 +316,7 @@ hello = "\\\\$\{LOL}"
     function envVarTest(args: { name: string; ini: string; env: Record<string, string>; expected: any }) {
       const { name, ini, env, expected } = args;
       test(name, async () => {
-        const tempdir = tempDirWithFiles("hi", { "foo.ini": ini });
+        await using tempdir = tempDir("hi", { "foo.ini": ini });
         const inipath = `${tempdir}/foo.ini`.replaceAll("\\", "/");
         const code = /* ts */ `
 const { iniInternals } = require("bun:internal-for-testing");
@@ -414,6 +414,35 @@ isbar = 'lol'
 
     expect(parse(ini)).toEqual({
       foo: "hihihi",
+    });
+  });
+
+  describe("empty single-quoted value", () => {
+    test.each([
+      ["a='", { a: "" }],
+      ["a=''", { a: "" }],
+      ["'=x", { "": "x" }],
+      ["''=x", { "": "x" }],
+      ["[']\nx=1", { "": { x: "1" } }],
+      ["['']\nx=1", { "": { x: "1" } }],
+    ])("%s", (ini, expected) => {
+      expect(parse(ini)).toEqual(expected);
+    });
+
+    test("section over empty-quote value does not mutate shared state", () => {
+      expect(parse("a=''\n[a]\nhello=world")).toEqual({ a: "" });
+      expect(parse("x=''")).toEqual({ x: "" });
+    });
+
+    test("fuzz repro ='\\n[]\\n=' does not create a self-referential object", () => {
+      expect(parse("='\n[]\n='")).toEqual({ "": "" });
+    });
+
+    test.each([
+      ["a='\n[a]\nb='", { a: "" }],
+      ["a=''\n[a]\nb=''", { a: "" }],
+    ])("no infinite recursion for %j", (ini, expected) => {
+      expect(parse(ini)).toEqual(expected);
     });
   });
 

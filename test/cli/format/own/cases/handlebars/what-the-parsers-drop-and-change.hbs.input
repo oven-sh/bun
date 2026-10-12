@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<!doctype html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+{{this/a}} {{[this]}} {{this.this}} {{a ...b}} {{[a/b]}} {{a.#b}} {{@a/b}} {{a.[b].[c d]}}
+{{&a}} {{"a" b c=d}} {{(a=b) c}} {{a ((b=c) d)}}
+{{1.50}} {{-0}} {{007}} {{123456789012345678901234567890}} {{0.0000001}}
+{{^a}}b{{else}}c{{/a}} {{#a}}b{{^}}c{{/a}}
+{{{{raw a}}}} <b>{{c}}</b> {{{{/raw}}}}
+<!---a--> <!--{{a}}--> <!-- a-{{b}} --> <!-- {{#if a}} --> {{> b}} {{/if}} -->
+< a>b</a> <imG></imG> <a b=c/> <a b={{c}}/>
+a\{{b}} c\\{{d}} e\\\{{f}} <a b="c\{{d}}e\\{{f}}"></a>
+{{#a}}{{else}}{{#if b}}{{/if}}{{/a}} {{#a}}{{else b}}{{else a}}{{/a}} {{#a}}{{~else b~}}c{{~/a~}}
+{{a "b\"c" 'd\'e' g="h'i\"j"}}
+<title><b></title> <style>a<b{c:d}</style> <script>a</b></script>
+{{a "f\"}}

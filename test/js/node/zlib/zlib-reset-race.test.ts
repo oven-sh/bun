@@ -9,15 +9,38 @@
 // zstd would read freed memory (heap-use-after-free under ASAN) and brotli
 // would silently corrupt or fail compression.
 //
-// After the fix, reset() is deferred until the in-flight write completes
-// (mirroring pending_close).
+// reset() now throws instead of touching the live state, matching node
+// (`CompressionStream::Reset` in src/node_zlib.cc). The state is left alone
+// either way, so the use-after-free this test guards cannot happen; the
+// fixtures below assert the throw and still exit cleanly.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+// Asserts node's behavior: reset() during an in-flight write throws rather
+// than freeing state the worker thread is using. Tolerates the write having
+// already landed (then reset() legitimately succeeds).
+const resetInFlight = /* js */ `
+  function resetWhileWriting(z, inFlight) {
+    try {
+      z.reset();
+      if (inFlight()) {
+        console.error("reset() did not throw while a write was in flight");
+        process.exit(1);
+      }
+    } catch (err) {
+      if (err.message !== "Cannot reset zlib stream while a write is in progress") {
+        console.error("unexpected error from reset(): " + err.message);
+        process.exit(1);
+      }
+    }
+  }
+`;
+
 const zstdFixture = /* js */ `
   const zlib = require("zlib");
   const crypto = require("crypto");
+  ${resetInFlight}
 
   // Random data at a high compression level so each threadpool job is slow
   // enough that reset() lands while ZSTD_compressStream2 is still running.
@@ -26,6 +49,7 @@ const zstdFixture = /* js */ `
   let remaining = 0;
   for (let i = 0; i < 4; i++) {
     remaining++;
+    let written = false;
     const z = zlib.createZstdCompress({
       chunkSize: 1024 * 1024,
       params: { [zlib.constants.ZSTD_c_compressionLevel]: 19 },
@@ -33,26 +57,29 @@ const zstdFixture = /* js */ `
     z.on("error", () => {});
     z.on("data", () => {});
     z.write(buf, () => {
+      written = true;
       z.end();
       if (--remaining === 0) console.log("OK");
     });
     // Spin briefly so the threadpool starts ZSTD_compressStream2 before reset().
     const start = Date.now();
     while (Date.now() - start < 30) {}
-    // Before the fix this frees the ZSTD_CCtx while the worker thread is
+    // Before the fix this freed the ZSTD_CCtx while the worker thread was
     // inside ZSTD_compressStream2 -> heap-use-after-free under ASAN.
-    z.reset();
+    resetWhileWriting(z, () => !written);
   }
 `;
 
 const brotliFixture = /* js */ `
   const zlib = require("zlib");
+  ${resetInFlight}
 
   const buf = Buffer.alloc(2 * 1024 * 1024, "abcdefgh");
 
   let remaining = 0;
   for (let i = 0; i < 4; i++) {
     remaining++;
+    let written = false;
     const z = zlib.createBrotliCompress({
       chunkSize: 1024 * 1024,
       params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 },
@@ -60,38 +87,42 @@ const brotliFixture = /* js */ `
     z.on("error", () => {});
     z.on("data", () => {});
     z.write(buf, () => {
+      written = true;
       z.end();
       if (--remaining === 0) console.log("OK");
     });
     const start = Date.now();
     while (Date.now() - start < 10) {}
-    // Before the fix this frees the BrotliEncoderState while the worker
-    // thread is inside BrotliEncoderCompressStream.
-    z.reset();
+    // Before the fix this freed the BrotliEncoderState while the worker
+    // thread was inside BrotliEncoderCompressStream.
+    resetWhileWriting(z, () => !written);
   }
 `;
 
 const deflateFixture = /* js */ `
   const zlib = require("zlib");
   const crypto = require("crypto");
+  ${resetInFlight}
 
   const buf = crypto.randomBytes(2 * 1024 * 1024);
 
   let remaining = 0;
   for (let i = 0; i < 4; i++) {
     remaining++;
+    let written = false;
     const z = zlib.createDeflate({ chunkSize: 2 * 1024 * 1024, level: 9 });
     z.on("error", () => {});
     z.on("data", () => {});
     z.write(buf, () => {
+      written = true;
       z.end();
       if (--remaining === 0) console.log("OK");
     });
     const start = Date.now();
     while (Date.now() - start < 10) {}
-    // Before the fix this calls deflateReset() on the z_stream while the
-    // worker thread is inside deflate() -> data race / state corruption.
-    z.reset();
+    // Before the fix this called deflateReset() on the z_stream while the
+    // worker thread was inside deflate() -> data race / state corruption.
+    resetWhileWriting(z, () => !written);
   }
 `;
 
@@ -129,5 +160,40 @@ test("deflate: reset() while an async write is in flight does not race", async (
   const { stdout, stderr, exitCode } = await run(deflateFixture);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+const resizableWriteFixture = (which: "in" | "out") => /* js */ `
+  const zlib = require("zlib");
+  const makers = [
+    () => zlib.createDeflateRaw(),
+    () => zlib.createBrotliCompress(),
+    () => zlib.createZstdCompress(),
+  ];
+  for (const make of makers) {
+    const h = make()._handle;
+    const resizable = new Uint8Array(new ArrayBuffer(64, { maxByteLength: 128 }));
+    const plain = new Uint8Array(new ArrayBuffer(64));
+    const [input, output] = ${JSON.stringify(which)} === "in" ? [resizable, plain] : [null, resizable];
+    try {
+      h.write(0, input, 0, input ? 64 : 0, output, 0, 64);
+      console.log("handled");
+    } catch (e) {
+      console.log("threw " + e.code + ": " + e.message);
+    }
+  }
+`;
+
+test("async write() rejects an output buffer backed by a resizable ArrayBuffer for zlib, brotli, and zstd", async () => {
+  const { stdout, exitCode } = await run(resizableWriteFixture("out"));
+  const expected = 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer';
+  expect(stdout.trim()).toBe([expected, expected, expected].join("\n"));
+  expect(exitCode).toBe(0);
+});
+
+test("async write() rejects an input buffer backed by a resizable ArrayBuffer for zlib, brotli, and zstd", async () => {
+  const { stdout, exitCode } = await run(resizableWriteFixture("in"));
+  const expected = 'threw ERR_INVALID_ARG_VALUE: The "in" argument must not be backed by a resizable ArrayBuffer';
+  expect(stdout.trim()).toBe([expected, expected, expected].join("\n"));
   expect(exitCode).toBe(0);
 });

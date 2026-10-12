@@ -7,6 +7,7 @@
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
+    macro(FetchSession) \
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(Image) \
@@ -23,18 +24,19 @@
     macro(SHA512) \
     macro(SHA512_256) \
     macro(TOML) \
+    macro(XML) \
     macro(YAML) \
     macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
-    macro(assetPrefix) \
     macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
     macro(hash) \
     macro(inspect) \
+    macro(isStandaloneExecutable) \
     macro(origin) \
     macro(s3) \
     macro(semver) \
@@ -44,7 +46,6 @@
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(allocUnsafe) \
-    macro(braces) \
     macro(build) \
     macro(color) \
     macro(connect) \
@@ -52,9 +53,6 @@
     macro(createShellInterpreter) \
     macro(deflateSync) \
     macro(file) \
-    macro(fs) \
-    macro(gc) \
-    macro(generateHeapSnapshot) \
     macro(gunzipSync) \
     macro(gzipSync) \
     macro(indexOfLine) \
@@ -62,7 +60,6 @@
     macro(jest) \
     macro(listen) \
     macro(mmap) \
-    macro(nanoseconds) \
     macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \

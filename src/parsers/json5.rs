@@ -99,8 +99,6 @@ bun_core::impl_tag_error!(ParseError);
 
 bun_core::oom_from_alloc!(ParseError);
 
-bun_core::named_error_set!(ParseError);
-
 #[derive(Clone, Copy)]
 pub enum Error {
     Oom,
@@ -134,17 +132,8 @@ pub enum AddToLogError {
 }
 bun_core::impl_tag_error!(AddToLogError);
 
-impl From<AddToLogError> for bun_core::Error {
-    fn from(e: AddToLogError) -> Self {
-        match e {
-            AddToLogError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            AddToLogError::StackOverflow => bun_core::err!("StackOverflow"),
-        }
-    }
-}
-
 impl Error {
-    pub fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
+    pub(crate) fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
         let loc: Loc = match *self {
             Error::Oom => return Err(AddToLogError::OutOfMemory),
             Error::StackOverflow => return Err(AddToLogError::StackOverflow),
@@ -207,12 +196,12 @@ pub enum ExternalError {
 }
 bun_core::impl_tag_error!(ExternalError);
 
-impl From<ExternalError> for bun_core::Error {
+impl From<ExternalError> for crate::Error {
     fn from(e: ExternalError) -> Self {
         match e {
-            ExternalError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            ExternalError::SyntaxError => bun_core::err!("SyntaxError"),
-            ExternalError::StackOverflow => bun_core::err!("StackOverflow"),
+            ExternalError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ExternalError::SyntaxError => crate::Error::SyntaxError,
+            ExternalError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -573,6 +562,7 @@ impl<'a> JSON5Parser<'a> {
             let value = self.parse_value()?;
 
             properties.push(G::Property {
+                flags: E::own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()
@@ -742,14 +732,9 @@ impl<'a> JSON5Parser<'a> {
                 buf.push(0);
             }
             b'x' => {
-                // \xHH hex escape
-                let value = self
-                    .source
-                    .get(self.pos..self.pos + 2)
-                    .and_then(|s| bun_core::fmt::hex_pair_value(s[0], s[1]))
-                    .ok_or(ParseError::InvalidHexEscape)?;
-                self.pos += 2;
-                append_codepoint_to_utf8(buf, i32::from(value))?;
+                // \xHH hex escape (2 hex digits fit in 8 bits, cast is lossless)
+                let value = self.read_hex_digits(2, ParseError::InvalidHexEscape)?;
+                append_codepoint_to_utf8(buf, value as i32)?;
             }
             b'u' => {
                 // \uHHHH unicode escape
@@ -1053,10 +1038,21 @@ impl<'a> JSON5Parser<'a> {
     // ── Helper Functions ──
 
     fn read_hex4(&mut self) -> Result<i32, ParseError> {
-        let v = bun_core::fmt::parse_hex4(&self.source[self.pos..])
-            .ok_or(ParseError::InvalidUnicodeEscape)?;
-        self.pos += 4;
-        Ok(i32::from(v))
+        // 4 hex digits fit in 16 bits, cast is lossless
+        let v = self.read_hex_digits(4, ParseError::InvalidUnicodeEscape)?;
+        Ok(v as i32)
+    }
+
+    /// Reads exactly `count` hex digits at `pos`. On failure `pos` is left on
+    /// the first byte that is not a hex digit (or at EOF), so the reported
+    /// error location points at the offending character.
+    fn read_hex_digits(&mut self, count: usize, err: ParseError) -> Result<u32, ParseError> {
+        let (value, consumed) = bun_core::fmt::parse_hex_prefix(&self.source[self.pos..], count);
+        self.pos += consumed;
+        if consumed < count {
+            return Err(err);
+        }
+        Ok(value)
     }
 
     fn read_codepoint(&self) -> Option<Codepoint> {

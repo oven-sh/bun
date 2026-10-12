@@ -1,4 +1,6 @@
 // Comprehensive REPRL wrapper for Bun fuzzing with all runtime APIs exposed
+// test/js/bun/util/fuzzilli-reprl-execve.fixture.ts evaluates this file as it is, so it has to stay plain
+// JavaScript: no type syntax.
 // Based on workerd's approach to maximize fuzzing coverage
 // https://bun.com/docs/runtime
 
@@ -13,10 +15,9 @@ globalThis.require = require;
 globalThis.__dirname = "/";
 globalThis.__filename = "/fuzzilli.js";
 
-// process.execve either replaces the process image (on success) or prints an
-// error and aborts (on failure, matching Node) — both of which kill the REPRL
+// process.execve replaces the process image on success, which kills the REPRL
 // child, so fuzzed scripts must not be able to reach the real implementation.
-process.execve = () => {};
+Object.assign(process, { execve() {} });
 
 // ============================================================================
 // REPRL Protocol Loop

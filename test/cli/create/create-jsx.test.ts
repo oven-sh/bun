@@ -323,7 +323,9 @@ for (const development of [true, false]) {
   });
 }
 
-test("auto-install passes detected dependencies as positionals", async () => {
+// Windows: `bun create` never prints the "--only-missing install" line this
+// asserts on, so the dependency detection cannot be observed there.
+test.todoIf(isWindows)("auto-install passes detected dependencies as positionals", async () => {
   using dir = tempDir("create-arg-separator", {
     "Component.tsx": `import "--trust";
 

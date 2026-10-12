@@ -46,7 +46,7 @@ function handleClient(client: net.Socket) {
 
   client.on("data", chunk => {
     if (!upstream) {
-      head = Buffer.concat([head, chunk]);
+      head = Buffer.concat([head, chunk as Buffer]);
       const end = head.indexOf("\r\n\r\n");
       if (end === -1) return;
       const leftover = head.subarray(end + 4);

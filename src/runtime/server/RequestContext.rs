@@ -1045,14 +1045,13 @@ where
         cell
     }
 
-    /// The cell holds a handler's promise unless the program already handles
-    /// it: only then does `on_reject` owe the report after an upgrade.
     fn create_handler_promise_cell(
         &self,
         global: &JSGlobalObject,
         promise_js: JSValue,
         promise: jsc::AnyPromise,
     ) -> JSValue {
+        // A promise the program already handles keeps its own rejection report.
         let held = if promise.is_handled() {
             JSValue::ZERO
         } else {

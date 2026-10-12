@@ -1798,6 +1798,21 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     },
   );
 
+  // Prettier 3.9.9 and oxfmt 0.72 read a configuration in their own process: `[node, <the tool>, ...arguments]`.
+  test.each(["prettier.config.mjs", "oxfmt.config.ts"])("`process.argv` of %s is the command line", async name => {
+    // `--cwd sub` once more would be `sub/sub`.
+    const args = ["--cwd", "sub", "--no-color", "--", "a.js"];
+    const files = {
+      [`sub/${name}`]: `
+        const seen = JSON.stringify([process.argv[0] === process.execPath, ...process.argv.slice(1)]);
+        export default { semi: seen !== ${JSON.stringify(JSON.stringify([true, "format", ...args]))} };\n`,
+      "sub/a.js": "a;\n",
+    };
+    const result = await format(files, args, { reads: ["sub/a.js"] });
+    expect(result.files["sub/a.js"]).toBe("a\n");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("an oxfmt.config.ts that imports defineConfig from oxfmt works without the package", async () => {
     const files = {
       "oxfmt.config.ts": 'import { defineConfig } from "oxfmt";\nexport default defineConfig({ semi: false });\n',
@@ -3796,11 +3811,18 @@ describe.concurrent("how a path is written", () => {
       .map(it => readFileSync(join(import.meta.dir, "../../../src/lint/driver", it), "utf8"))
       .join("")
       .replaceAll('require("node:path")', 'require("node:path").win32');
+    // `run` in src/lint/driver/evaluate.rs.
+    const given = {
+      path: join(String(dir), "-"),
+      marker: "<marker>",
+      argument: JSON.stringify({ groups }),
+      commandLine: [],
+    };
     await using proc = spawn({
-      cmd: [bunExe(), "-e", source, "<marker>", join(String(dir), "-")],
+      cmd: [bunExe(), "-e", `const given = ${JSON.stringify(given)};\n${source}`],
       env,
       cwd: String(dir),
-      stdin: Buffer.from(JSON.stringify({ groups })),
+      stdin: "ignore",
       stdout: "pipe",
       stderr: "inherit",
     });

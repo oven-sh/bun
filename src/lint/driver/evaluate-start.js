@@ -1,4 +1,4 @@
-// The first part of a script that runs a configuration file. The second part calls `finish` with the result.
+// The first part of a script that runs a configuration file, after `given`. The second part calls `finish` with the result.
 
 // A PATH that came from the other side goes back as it came, one that is found here through `portablePath`: `resolve` is for comparing.
 const { pathToFileURL } = require("node:url");
@@ -13,9 +13,12 @@ const fs = require("node:fs");
   nodeModule.builtinModules = nodeModule.builtinModules.filter(name => !isOfBun(name));
   nodeModule.isBuiltin = name => !isOfBun(name) && isBuiltin(name);
 }
-// As it is given, with `/` on every system: what is answered has it as a key, by which it is looked up.
-const path = process.argv.at(-1);
-const marker = process.argv.at(-2);
+// `path`: as it is given, with `/` on every system: what is answered has it as a key, by which it is looked up. `argument`: what
+// some scripts take.
+const { path, marker, argument } = given;
+// A configuration sees the command line of the command, as in ESLint, Prettier and oxlint, which run it in their own process, and
+// as a plugin does here.
+for (const it of given.commandLine) process.argv.push(it);
 
 // Who has removed the packages of oxlint, oxfmt and Vite+ still has `import { defineConfig } from "oxlint"` in the file.
 for (const name of ["oxlint", "oxfmt", "vite-plus"]) {

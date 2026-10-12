@@ -132,7 +132,7 @@ function ranks(orders) {
 }
 
 const groups = [];
-for (const group of JSON.parse(await Bun.stdin.text()).groups) {
+for (const group of JSON.parse(argument).groups) {
   const { classes, ...which } = group;
   try {
     const orders = (await orderFor(which))(classes);

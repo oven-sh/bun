@@ -470,6 +470,9 @@ fn visit_function_expression(
     func_id: FunctionId,
     errors: &mut Vec<CompilerErrorDetail>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
     let func = &env.functions[func_id.0 as usize];
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {

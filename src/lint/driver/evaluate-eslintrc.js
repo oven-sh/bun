@@ -21,7 +21,7 @@ const nodePath = require("node:path");
 // `pluginsFrom`: the directory that plugins are looked for from. `content`: what the file says, if it is none that can be read.
 // `cwd`: the working directory of the run, which is that of the programs. `rulesdir`: what `--rulesdir` names. It comes with a
 // `content` that names nothing. `loadsTypescriptEslint`: the rules of that package are to run, and not those that are built in.
-const { pluginsFrom, content, cwd, rulesdir, loadsTypescriptEslint } = JSON.parse(process.argv.at(-3));
+const { pluginsFrom, content, cwd, rulesdir, loadsTypescriptEslint } = JSON.parse(argument);
 if (cwd !== undefined) process.chdir(cwd);
 // Any text can be a key.
 const map = () => ({ __proto__: null });

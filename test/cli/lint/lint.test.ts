@@ -7700,30 +7700,6 @@ foo(b)
       },
       timeout,
     );
-
-    // It is handed to the process as an argument. The command line of a process has at most 32,767 characters on Windows, with the
-    // path of the executable, that of the configuration file, and a `\` before every `"`. Elsewhere there is room for four times that.
-    test("the scripts that run one fit on the command line of Windows", () => {
-      const driver = join(import.meta.dir, "..", "..", "..", "src", "lint", "driver");
-      const read = (...names: string[]) => names.map(name => readFileSync(join(driver, name), "utf8")).join("");
-      const scripts = {
-        eslint: read("evaluate-start.js", "evaluate-describe.js", "evaluate-stand-ins.js", "evaluate-eslint.js"),
-        prettier: read("evaluate-start.js", join("fmt", "evaluate-prettier.js")),
-        tailwind: read("evaluate-start.js", join("fmt", "tailwind.js")),
-      };
-      // `quote_cmd_arg` of libuv.
-      const quoted = (text: string) =>
-        text.length + 2 + (text.match(/\\*"/g) ?? []).reduce((sum, it) => sum + it.length, 0);
-      // Two paths as long as they get, and the rest.
-      const others = 2 * 1024 + 64;
-      for (const [name, script] of Object.entries(scripts)) {
-        expect({ name, fits: quoted(script) + others < 32_767, hasCarriageReturn: script.includes("\r") }).toEqual({
-          name,
-          fits: true,
-          hasCarriageReturn: false,
-        });
-      }
-    });
   });
 });
 

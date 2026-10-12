@@ -98,6 +98,19 @@ fn disallow_code_generation_before(command: &[u8]) {
     );
 }
 
+/// What `-e` has in a process that `run_script` starts.
+const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
+
+/// In such a process: reads the program.
+pub(crate) fn read_program_of_script(ctx: &mut ContextData) {
+    let mut program = Vec::new();
+    if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
+        && File::stdin().read_to_end_into(&mut program).is_ok()
+    {
+        ctx.runtime_options.eval.script = program.into_boxed_slice();
+    }
+}
+
 /// Runs `script` with this executable, to its end.
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
@@ -137,14 +150,24 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     if cfg!(not(windows)) {
         argv.push(Box::from(&b"--config=/dev/null"[..]));
     }
+    // Not the program: the command line of a process has room for 32,767 characters on Windows, and an argument for 128 KB on
+    // Linux.
     argv.push(Box::from(&b"-e"[..]));
-    argv.push(Box::from(script.source.concat().as_bytes()));
-    argv.extend(script.arguments.iter().map(|it| Box::<[u8]>::from(*it)));
-    let mut options = SpawnOptions {
+    argv.push(Box::from(PROGRAM_IS_ON_STDIN));
+    let [read, written] = match bun_sys::pipe() {
+        Ok(ends) => ends.map(File::from_fd),
+        Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
+    };
+    // The process is not to have the end that is written to: it would wait for itself to close it.
+    #[cfg(unix)]
+    for end in [&read, &written] {
+        let _ = bun_sys::set_close_on_exec(end.handle());
+    }
+    let options = SpawnOptions {
         argv,
         stdout: SyncStdio::Buffer,
         stderr: SyncStdio::Buffer,
-        stdin: SyncStdio::Ignore,
+        stdin: SyncStdio::Pipe(read.handle()),
         cwd: Box::<[u8]>::from(script.cwd),
         envp: Some(envp.as_ptr()),
         #[cfg(windows)]
@@ -156,28 +179,17 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         },
         ..Default::default()
     };
-    let spawned = match script.stdin {
-        b"" => spawn(&options),
-        input => match bun_sys::pipe() {
-            Ok([read, written]) => {
-                let (read, written) = (File::from_fd(read), File::from_fd(written));
-                // The process is not to have the end that is written to: it would wait for itself to close it.
-                #[cfg(unix)]
-                for end in [&read, &written] {
-                    let _ = bun_sys::set_close_on_exec(end.handle());
-                }
-                options.stdin = SyncStdio::Pipe(read.handle());
-                std::thread::scope(|scope| {
-                    scope.spawn(move || written.write_all(input));
-                    let spawned = spawn(&options);
-                    // Who still writes is told that nobody reads any more.
-                    drop(read);
-                    spawned
-                })
-            }
-            Err(error) => Ok(Err(error)),
-        },
-    };
+    // It is written while what the program prints is read, so neither waits for the other.
+    let spawned = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            let parts = script.source.iter().map(|it| it.as_bytes());
+            std::iter::once(script.head).chain(parts).try_for_each(|it| written.write_all(it))
+        });
+        let spawned = spawn(&options);
+        // Who still writes is told that nobody reads any more.
+        drop(read);
+        spawned
+    });
     match spawned {
         Ok(Ok(result)) if result.is_ok() => Ok(result.stdout),
         Ok(Ok(result)) => Err(result.stderr),
@@ -214,6 +226,7 @@ pub(crate) fn run_and_exit(
         let _turn = turn.lock();
         run_script(script)
     };
+    let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` asks for it where a path names another drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
@@ -231,6 +244,7 @@ pub(crate) fn run_and_exit(
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         run_script: &run_script,
+        command_line: &command_line,
         js_engine: &js_engine,
         version: Global::package_json_version.as_bytes(),
         memory: super::lint_js::memory(),

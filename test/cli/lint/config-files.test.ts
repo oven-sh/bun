@@ -73,6 +73,9 @@ async function lint(files: Record<string, string>, args: string[] = ["."], optio
 
 // eqeqeq 2:7, no-debugger 2:13, no-var 1:1
 const code = "var x = 1;\nif (x == 2) debugger;\n";
+/** What precedes a program of src/lint/driver that runs a configuration file: `run` in evaluate.rs. */
+const given = (path: string, argument: object | "" = "") =>
+  `const given = ${JSON.stringify({ path, marker: "<marker>", argument: argument && JSON.stringify(argument), commandLine: [] })};\n`;
 const rc = (config: object) => JSON.stringify({ root: true, ...config });
 const eqeqeq = { rules: { eqeqeq: "error" } };
 const noVar = { rules: { "no-var": "error" } };
@@ -660,14 +663,7 @@ describe.concurrent("an eslint.config.js", () => {
     // What `require.resolve(..)` returns is asked for with `/`.
     const content = { extends: ["./base.json", String.raw`C:\t\other.json`], parser: "nowhere", plugins: ["nowhere"] };
     await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        source,
-        JSON.stringify({ pluginsFrom: "C:/t", content }),
-        "<marker>",
-        "C:/t/.eslintrc.json",
-      ],
+      cmd: [bunExe(), "-e", given("C:/t/.eslintrc.json", { pluginsFrom: "C:/t", content }) + source],
       env,
       cwd: String(dir),
       stdout: "pipe",
@@ -698,14 +694,7 @@ describe.concurrent("an eslint.config.js", () => {
       .replaceAll('require("node:path")', 'require("node:path").win32');
     const content = { extends: ["C:\\t\\base.json", ".\\near.json", "a-package"], parser: "C:\\t\\parser.js" };
     await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        source,
-        JSON.stringify({ pluginsFrom: "C:/t", content }),
-        "<marker>",
-        "C:/t/.eslintrc.json",
-      ],
+      cmd: [bunExe(), "-e", given("C:/t/.eslintrc.json", { pluginsFrom: "C:/t", content }) + source],
       env,
       cwd: String(dir),
       stdout: "pipe",
@@ -735,7 +724,7 @@ describe.concurrent("an eslint.config.js", () => {
     const root = String(dir).replaceAll("\\", "/");
     const path = `${root}/./.eslintrc.js`;
     await using proc = spawn({
-      cmd: [bunExe(), "-e", source.join(""), JSON.stringify({ pluginsFrom: root }), "<marker>", path],
+      cmd: [bunExe(), "-e", given(path, { pluginsFrom: root }) + source.join("")],
       env,
       cwd: String(dir),
       stdout: "pipe",
@@ -765,7 +754,7 @@ describe.concurrent("an eslint.config.js", () => {
     const keys = await Promise.all(
       paths.map(async path => {
         await using proc = spawn({
-          cmd: [bunExe(), "-e", source.join(""), "<marker>", path],
+          cmd: [bunExe(), "-e", given(path) + source.join("")],
           env,
           cwd: join(path, ".."),
           stdout: "pipe",
@@ -1153,9 +1142,9 @@ describe.concurrent("every run evaluates an eslint.config.js", () => {
       utimesSync(join(root, name), time, time);
     };
     for (const [name, text] of Object.entries(files)) write(name, text);
-    const run = async (more: Record<string, string> = {}) => {
+    const run = async (more: Record<string, string> = {}, flags: string[] = []) => {
       await using proc = spawn({
-        cmd: [...command, "--threads", "2", "-f", "unix", "a.js"],
+        cmd: [...command, "--threads", "2", "-f", "unix", ...flags, "a.js"],
         env: { ...env, SOME_TOKEN: undefined, ...more },
         cwd: root,
         stdin: "ignore",
@@ -1183,6 +1172,24 @@ describe.concurrent("every run evaluates an eslint.config.js", () => {
       it.write("node_modules/eslint-config-optional/package.json", `{ "name": "eslint-config-optional" }`);
       it.write("node_modules/eslint-config-optional/index.js", `module.exports = { rules: { eqeqeq: "error" } };`);
       expect(await it.run()).toEqual(["eqeqeq"]);
+    },
+    timeout,
+  );
+
+  // As ESLint 10.12.0.
+  test(
+    "what it makes of the command line holds for that run",
+    async () => {
+      using it = project({
+        "eslint.config.mjs": `export default [
+          { rules: { "no-var": process.argv.includes("--fix") ? "error" : "off", eqeqeq: "error" } },
+        ];`,
+      });
+      const text = () => readFileSync(join(it.root, "a.js"), "utf8");
+      expect([await it.run(), text()]).toEqual([["eqeqeq"], code]);
+      expect([await it.run({}, ["--fix"]), text()]).toEqual([["eqeqeq"], code.replace("var", "let")]);
+      it.write("a.js", code);
+      expect([await it.run(), text()]).toEqual([["eqeqeq"], code]);
     },
     timeout,
   );
@@ -1237,6 +1244,78 @@ test.skipIf(isWindows).each([
   const result = await lint(files, ["a.js"]);
   expect(result.problems).toEqual(["a.js:2:7 eqeqeq"]);
   expect(result.exitCode).toBe(1);
+});
+
+// ESLint 10.12.0 and oxlint 1.87.0 read a configuration in their own process: `[node, <the tool>, ...arguments]`.
+describe.concurrent("`process.argv` of a configuration is the command line", () => {
+  const kinds: [string, (rules: string) => string][] = [
+    ["eslint.config.mjs", rules => `export default [{ rules: ${rules} }];`],
+    ["oxlint.config.ts", rules => `export default { categories: { correctness: "off" }, rules: ${rules} };`],
+    [".eslintrc.cjs", rules => `module.exports = { root: true, rules: ${rules} };`],
+  ];
+  const before = ["lint", "--threads", "2", "-f", "json-with-metadata"];
+  /** Reports `var` if it sees `args`, and nothing else, after what `lint` begins with. Else the run fails and says what it sees. */
+  const sees = (args: string[]) => `
+    const seen = JSON.stringify(process.argv.slice(1));
+    if (seen !== ${JSON.stringify(JSON.stringify([...before, ...args]))} || process.argv[0] !== process.execPath)
+      throw new Error(seen);
+    if (JSON.stringify(Bun.argv) !== JSON.stringify(process.argv)) throw new Error(JSON.stringify(Bun.argv));\n`;
+
+  test.each(kinds)("%s", async (name, config) => {
+    const args = ["--fix-dry-run", "a.js"];
+    const files = { [name]: sees(args) + config(`{ "no-var": "off", eqeqeq: "error" }`), "a.js": code };
+    const result = await lint(files, args);
+    expect(result.problems).toEqual(["a.js:2:7 eqeqeq"]);
+    expect(result.exitCode).toBe(1);
+  });
+
+  // `--cwd sub` once more would be `sub/sub`, `-c` a bunfig.toml, `-e` and `-p` a program, `--help` and `--version` the end.
+  test.each(kinds)("the process that reads %s takes none of it for a flag of its own", async (name, config) => {
+    const paths = ["a.js", "-e", "-p", "--help", "--version", "--watch", "--inspect-brk", "--silent", "--"];
+    const args = ["--cwd", "sub", "-c", name, "--no-error-on-unmatched-pattern", "--", ...paths];
+    const files = { [`sub/${name}`]: sees(args) + config(`{ eqeqeq: "error" }`), "sub/a.js": code };
+    const result = await lint(files, args);
+    expect(result.problems).toEqual(["sub/a.js:2:7 eqeqeq"]);
+    expect(result.exitCode).toBe(1);
+  });
+
+  // Windows has room for 32,767 characters there.
+  test.each(kinds)("the program that reads %s is not on the command line of its process", async (name, config) => {
+    const rules = `{ eqeqeq: process.execArgv.join(" ").length < 200 ? "error" : "off" }`;
+    const result = await lint({ [name]: config(rules), "a.js": code }, ["a.js"]);
+    expect(result.problems).toEqual(["a.js:2:7 eqeqeq"]);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("a plugin sees the same", async () => {
+    const config = `
+      const same = { meta: { schema: false }, create: context => ({ Program(node) {
+        context.report({ node, message: String(JSON.stringify(context.options[0]) === JSON.stringify(process.argv)) });
+      } }) };
+      export default [{ plugins: { p: { rules: { same } } }, rules: { "p/same": ["error", process.argv] } }];`;
+    using dir = tempDir("bun-lint-config-files", { "eslint.config.mjs": config, "a.js": code });
+    await using proc = spawn({
+      cmd: [...command, "-f", "unix", "--no-warn-ignored", "a.js"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout, String(dir))).toBe("<dir>/a.js:1:1: true [Error/p/same]\n\n1 problem");
+  });
+
+  // It is not on the command line of the process that reads the file, nor in its environment: there is no room for it twice.
+  test.skipIf(isWindows)("a command line of a megabyte", async () => {
+    const names = Array.from({ length: 15_000 }, (_, index) => `a${index}`.padEnd(40, "b"));
+    const args = [...names.flatMap(it => ["--global", it]), "a.js"];
+    const rules = `{ eqeqeq: process.argv.length === ${1 + before.length + args.length} ? "error" : "off" }`;
+    const files = { "eslint.config.mjs": `export default [{ rules: ${rules} }];`, "a.js": code };
+    const result = await lint(files, args);
+    expect(result.problems).toEqual(["a.js:2:7 eqeqeq"]);
+    expect(result.exitCode).toBe(1);
+  });
 });
 
 describe.concurrent("what is built in is not loaded to evaluate an eslint.config.js", () => {

@@ -46,14 +46,13 @@ pub struct Stream {
 /// The text of a program, in parts: several programs begin with the same.
 pub(crate) type Source = &'static [&'static str];
 
-/// A program for the running executable to run, as `bun -e <source> <arguments>`.
+/// A program for the running executable to run: `head`, then `source`.
 pub struct Script<'s> {
+    /// What the program is given, as a declaration.
+    pub head: &'s [u8],
     pub source: Source,
-    pub arguments: &'s [&'s [u8]],
     /// The working directory.
     pub cwd: &'s [u8],
-    /// What it reads from standard input. It is written while what the program prints is read, so neither waits for the other.
-    pub stdin: &'s [u8],
 }
 
 impl Script<'_> {
@@ -88,6 +87,8 @@ pub struct Environment<'e> {
     /// Runs a script to its end. `Ok`: what it has printed on standard output. `Err`: it failed, and
     /// this is why.
     pub run_script: &'e (dyn Fn(&Script) -> Result<Vec<u8>, Vec<u8>> + Sync),
+    /// The command line of this process, without the executable.
+    pub command_line: &'e [&'e [u8]],
     /// Where the rules that are written in JavaScript run.
     pub js_engine: &'e dyn Engine,
     /// The version of Bun.

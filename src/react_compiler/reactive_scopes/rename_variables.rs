@@ -149,6 +149,9 @@ impl Visitor<'_> {
     /// Upstream recurses into a nested function twice, which walks depth `d` 2^d times.
     fn visit_hir_function(&self, func_id: FunctionId, state: &mut Scopes) {
         let env = self.env;
+        if !env.has_stack() {
+            return;
+        }
         let inner_func = &env.functions[func_id.0 as usize];
         for param in &inner_func.params {
             state.visit_identifier(param.place().identifier, env);
@@ -159,11 +162,8 @@ impl Visitor<'_> {
                 for lvalue in crate::hir::visitors::lvalues(instr) {
                     state.visit_identifier(lvalue.identifier, env);
                 }
-                // `traverse_value`
-                if env.has_stack() {
-                    for place in crate::hir::visitors::operands(&instr.value, &env.functions) {
-                        state.visit_identifier(place.identifier, env);
-                    }
+                for place in crate::hir::visitors::operands(&instr.value, &env.functions) {
+                    state.visit_identifier(place.identifier, env);
                 }
                 if let InstructionValue::FunctionExpression { lowered_func, .. }
                 | InstructionValue::ObjectMethod { lowered_func, .. } = &instr.value

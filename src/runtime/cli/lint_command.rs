@@ -183,7 +183,9 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let spawned = std::thread::scope(|scope| {
         scope.spawn(move || {
             let parts = script.source.iter().map(|it| it.as_bytes());
-            std::iter::once(script.head).chain(parts).try_for_each(|it| written.write_all(it))
+            std::iter::once(script.head)
+                .chain(parts)
+                .try_for_each(|it| written.write_all(it))
         });
         let spawned = spawn(&options);
         // Who still writes is told that nobody reads any more.

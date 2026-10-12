@@ -8115,6 +8115,12 @@ describe("css tests", () => {
             ".a{color:blue}.a{color:red}.b{color:var(--c,lab(50% 20 30))}",
             `.a{color:red}.b{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".b")}`,
           ],
+          // The part split off for Firefox 78 and Safari 14 builds its copies after that second pass.
+          [
+            ".a{color:red}.a{color:blue}.b,.c:focus-visible{color:var(--c,lab(50% 20 30))}",
+            `.a{color:#00f}.b{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".b")}` +
+              `.c:focus-visible{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".c:focus-visible")}`,
+          ],
           [
             ".a{color:red}.a{color:foo(1)}.b{color:var(--c,lab(50% 20 30))}",
             `.a{color:foo(1)}.b{color:var(--c,#a16945)}${copies(c => `color:var(--c,${c})`, ".b")}`,

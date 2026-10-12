@@ -51,7 +51,7 @@ impl Glob {
 /// `globs.some((glob) => minimatch(path, glob) || minimatch(path, join(process.cwd(), glob)))`
 pub(crate) struct GlobsFromCwd {
     written: Vec<Box<[u8]>>,
-    /// Each glob as written and joined to the working directory. Every file in a run has the same working directory.
+    /// Each glob twice: as written, and joined to the cwd. Parsed once, because every file in a run has the same cwd.
     parsed: OnceLock<Vec<[Glob; 2]>>,
 }
 

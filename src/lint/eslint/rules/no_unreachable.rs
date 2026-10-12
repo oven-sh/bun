@@ -269,7 +269,7 @@ fn found_in_all<'a>(file: &'a File<'a>) -> Vec<Span> {
     state.found
 }
 
-/// Why nothing gets to the statements of `range`.
+/// Explains why the statements in `range` are unreachable.
 fn hint<'a>(range: Span, file: &'a File<'a>) -> Option<String> {
     let all = KINDS.iter().flat_map(|&kind| file.stmts_of_kind(kind));
     let first = all.filter(|it| it.span().start == range.start && !it.is_reachable()).max_by_key(|it| it.span().end)?;
@@ -280,7 +280,7 @@ fn hint<'a>(range: Span, file: &'a File<'a>) -> Option<String> {
         Node::Stmt(block) => block.as_block()?,
         _ => return None,
     };
-    // What is hoisted is passed over.
+    // Skip back over hoisted declarations. They're unreachable too, but aren't part of `range`.
     let mut cause = list.before(first.span().start)?;
     while !cause.is_reachable() {
         cause = list.before(cause.span().start)?;

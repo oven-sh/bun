@@ -59,15 +59,15 @@ pub(crate) struct File {
     sections: Vec<Section>,
 }
 
-/// What takes any characters, `/` too, where a name has started and goes on.
+/// Matches any characters, `/` included. For stars that come after the start of a path segment, as in `a**b`.
 const ANYTHING: &[u8] = b"{*,*/**/*}";
 
-/// The stars at a place in a pattern, if any.
+/// The run of `*` at some offset in a pattern. It can be empty.
 struct Stars {
     end: usize,
-    /// A name starts with them.
+    /// A path segment starts with them.
     starts_name: bool,
-    /// A name ends with them.
+    /// A path segment ends with them.
     ends_name: bool,
 }
 
@@ -100,7 +100,7 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
         }
     }
     full.push(b'/');
-    // A `**` that is a part of a name crosses `/` too.
+    // A `**` that's only part of a path segment still matches across `/`.
     let mut at = 0;
     while let Some(&byte) = glob.get(at) {
         let stars = Stars::at(&glob, at);
@@ -122,7 +122,8 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
     full
 }
 
-/// `Glob::new(written)` of globset: `*` and `?` take a `/` too. `None`: it is refused, and the section is for no file.
+/// globset's `Glob::new(written)`, where `*` and `?` also match `/`. `None` if globset rejects the pattern. The section
+/// then applies to no file.
 fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
     let mut glob = Vec::with_capacity(written.len() + ANYTHING.len());
     if written.starts_with(b"!") {
@@ -138,7 +139,7 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
             b'*' => {
                 let stars = Stars::at(written, at);
                 let end = stars.end;
-                // Only a `/` or the start of the pattern starts a segment here. An alternative can be glued to a name.
+                // Here only `/` or the start of the pattern begins a segment. An alternative can follow a name directly.
                 let is_after_literal = at > 0 && matches!(written[at - 1], b'{' | b',');
                 glob.extend_from_slice(
                     match (
@@ -334,7 +335,7 @@ impl File {
                 [b'[', name @ .., b']'] => {
                     let known = file.sections.iter().position(|it| it.name == name);
                     at = Some(known.unwrap_or_else(|| {
-                        // A section without a name has no pattern.
+                        // A section with an empty name has no pattern.
                         let glob = || {
                             Pattern::with_dots(
                                 &bun_lint::glob::from_minimatch(&full_glob(directory, name)),

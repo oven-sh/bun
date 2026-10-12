@@ -675,7 +675,7 @@ files = ["*.test.*"]
 excludeFiles = ["${prefix}vendor/**"]
 rules = { "no-console" = "off" }
 `;
-    /** The files below tree/ that have a problem. */
+    /** Returns the files under tree/ that have a problem. */
     async function reported(files: Record<string, string>, args: string[]) {
       const { raw, stderr, exitCode } = await lint({ ...strictEslint, ...tree, ...files }, ["-f", "json", ...args]);
       expect({ stderr: stderr.replace(/^Linted .*$/m, ""), exitCode }).toEqual({ stderr: "", exitCode: 1 });
@@ -745,11 +745,39 @@ rules = { "no-console" = "off" }
     );
 
     test(
-      "a negated excludeFiles pattern excludes the same files on both sides",
+      "negated patterns select the same files on both sides",
       async () => {
-        const negated = `[[lint.overrides]]\nfiles = "**/*"\nexcludeFiles = "!**/*.test.*"\nrules = { "no-console" = "off" }\n`;
-        const files = { "eslint.config.mjs": config, "tree/bunfig.toml": negated };
-        expect(await reported(files, ["--cwd", "tree", "."])).toEqual(["b.js", "b.vue"]);
+        const both = (names: string[]) => names.flatMap(name => [`negated/${name}.js`, `negated/${name}.vue`]).sort();
+        const sources = both(["a", "a.test", "src/b", "src/b.test"]).map(it => [
+          `tree/${it}`,
+          it.endsWith(".js") ? "console.log(1);\n" : "<template />\n",
+        ]);
+        const [plain, tests] = [both(["a", "src/b"]), both(["a.test", "src/b.test"])];
+        // The patterns, and the files that still get reported because the override doesn't apply to them.
+        const rows: Record<string, string[]> = {
+          'files = ["*.test.*"]': plain,
+          'files = ["!**/*.test.*"]': tests,
+          'files = ["!*.test.*"]': tests,
+          'files = ["!!*.test.*"]': plain,
+          'files = ["!src/**"]': both(["src/b", "src/b.test"]),
+          // `!(` starts an extglob group. It isn't a negation.
+          'files = ["!(a|b).{js,vue}"]': plain,
+          'files = ["!!(a|b).{js,vue}"]': tests,
+          'files = ["**/*"]\nexcludeFiles = ["!*.test.*"]': plain,
+          'files = ["**/*"]\nexcludeFiles = ["!**/*.test.*"]': plain,
+          'files = ["**/*"]\nexcludeFiles = ["!(a|b).{js,vue}"]': tests,
+        };
+        const run = (patterns: string) => {
+          const bunfig = `[[lint.overrides]]\n${patterns}\nrules = { "no-console" = "off" }\n`;
+          const files = {
+            "eslint.config.mjs": config,
+            ...Object.fromEntries(sources),
+            "tree/negated/bunfig.toml": bunfig,
+          };
+          return reported(files, ["--cwd", "tree/negated", "."]);
+        };
+        const results = await Promise.all(Object.keys(rows).map(run));
+        expect(Object.fromEntries(Object.keys(rows).map((patterns, at) => [patterns, results[at]]))).toEqual(rows);
       },
       timeout,
     );

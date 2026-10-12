@@ -1436,7 +1436,7 @@ describe("ansi renderer line wrapping", () => {
     "- An item with `code`. And **bold words that go on**, with `x`; and (`y`), [text](https://e.com).\n  - nested `item`, with more `code`: yes.\n",
   ];
 
-  test("what has no space before it stays with the word before it", () => {
+  test("a line never breaks where the source has no space", () => {
     expect(Markdown.ansi("It can be one `const`.\n", { colors: false, columns: 19 })).toBe("It can be one\nconst.\n");
     expect(Markdown.ansi("a word (`code`) ends\n", { colors: false, columns: 9 })).toBe("a word\n(code)\nends\n");
     expect(Markdown.ansi("one **two**, three\n", { colors: false, columns: 7 })).toBe("one\ntwo,\nthree\n");
@@ -1462,7 +1462,7 @@ describe("ansi renderer line wrapping", () => {
     }
   });
 
-  test("the styles of the place where the line is broken are closed and opened again", () => {
+  test("open styles are closed before a line break and reopened after it", () => {
     const out = Markdown.ansi("> **some bold `code`**.\n", { columns: 16 });
     expect(Bun.stripANSI(out)).toBe("│ some bold\n│ code.\n");
     const [first, second] = out.split("\n");

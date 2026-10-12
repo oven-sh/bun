@@ -24,6 +24,7 @@ mod directives;
 mod engine;
 mod eslint;
 mod host;
+mod layouts;
 mod prettier;
 mod processor;
 mod reports;

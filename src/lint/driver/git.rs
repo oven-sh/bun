@@ -1,8 +1,8 @@
-//! `--staged` and `--changed`, for `bun lint` and `bun format`: the files that git names.
+//! `--staged` and `--changed` for `bun lint` and `bun format`. Both get their list of files from git.
 //!
-//! Git runs in the working directory and with the environment of this process, which in a hook says where the index is.
-//! It starts no program here that `git diff --name-only` does not start: no pager, no external diff, no conversion to text,
-//! no look into a submodule, no fetch.
+//! Git runs in the working directory and inherits this process's environment. In a hook, that environment tells git
+//! where the index is. These calls start no program that `git diff --name-only` wouldn't start itself: no pager, no
+//! external diff, no textconv, no submodule scan, no fetch.
 
 use crate::args::{UsageError, error};
 use crate::run::{Environment, Fatal};
@@ -10,7 +10,7 @@ use crate::{fs, paths};
 use bun_core::strings;
 use bun_sema::util::FxHashSet;
 
-/// Which files git is asked for.
+/// Which files to ask git for.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Only {
     /// `--staged`
@@ -19,37 +19,36 @@ pub enum Only {
     Changed(Option<Vec<u8>>),
 }
 
-/// A call of git.
+/// One git invocation.
 pub struct Command<'c> {
-    /// What follows `git`.
+    /// Arguments after `git`.
     pub args: &'c [&'c [u8]],
-    /// What it reads on standard input.
+    /// Written to git's stdin.
     pub input: &'c [u8],
-    /// The working directory.
     pub cwd: &'c [u8],
 }
 
 impl Command<'_> {
-    /// What its environment has beside that of this process. A clone that lacks objects does not go and get them.
+    /// Set on top of this process's environment. Stops a partial clone from fetching the objects it's missing.
     pub const VARIABLES: [(&'static [u8], &'static [u8]); 1] = [(b"GIT_NO_LAZY_FETCH", b"1")];
 }
 
-/// What has become of a call.
+/// Result of a git invocation that ran.
 pub struct Finished {
-    /// It has exited with 0.
+    /// The exit code was 0.
     pub is_ok: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
 
-/// Why git has not run.
+/// Why git couldn't run.
 pub enum NotRun {
-    /// `PATH` has no `git`.
+    /// `git` isn't in `PATH`.
     NotFound,
     Failed(Vec<u8>),
 }
 
-/// `git diff` that prints names from the top of the repository, each with a NUL behind it, whatever the configuration says.
+/// `git diff` that prints NUL-terminated paths relative to the repository root, whatever the user's git config says.
 const DIFF: [&[u8]; 10] = [
     b"--no-optional-locks",
     b"-c",
@@ -63,10 +62,10 @@ const DIFF: [&[u8]; 10] = [
     b"--no-textconv",
 ];
 
-/// Added, modified, or something else than before: not deleted, not in conflict.
+/// Added, modified or type-changed files. Leaves out deleted and conflicted ones.
 const IS_THERE: &[u8] = b"--diff-filter=AMT";
 
-/// Where the default branch is looked for, and how a person writes that.
+/// Refs to try for the default branch, each with the short name used in error messages.
 const DEFAULT_BRANCHES: [(&[u8], &str); 3] = [
     (b"refs/remotes/origin/HEAD", "origin/HEAD"),
     (b"refs/heads/main", "main"),
@@ -74,7 +73,7 @@ const DEFAULT_BRANCHES: [(&[u8], &str); 3] = [
 ];
 
 impl Only {
-    /// Takes in the flag that is called `name`: `staged` or `changed`.
+    /// Applies one flag. `name` is `staged` or `changed`.
     pub(crate) fn set(
         into: &mut Option<Only>,
         name: &[u8],
@@ -103,13 +102,13 @@ impl Only {
         }
     }
 
-    /// Why there is nothing to narrow in a run that reads standard input, for which `flag` asks.
+    /// Error for combining this with `flag`, which makes the run read stdin. There's no file list to filter then.
     pub(crate) fn refusal_of_stdin(&self, flag: &str) -> Vec<u8> {
         format!("{} and {flag} cannot be used together", self.flag()).into_bytes()
     }
 }
 
-/// `first`, and under it what git has said.
+/// An error that starts with `first`, with git's stderr indented below it.
 fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
     let mut text = first.as_bytes().to_vec();
     for line in strings::split(&finished.stderr, b"\n").map(<[u8]>::trim_ascii_end) {
@@ -121,24 +120,24 @@ fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
     Fatal(text)
 }
 
-/// The one line that is the ID of an object.
+/// The object ID git printed. `None` if git failed or printed anything else.
 fn object_id(finished: &Finished) -> Option<&[u8]> {
     let id = finished.stdout.trim_ascii();
     (finished.is_ok && !id.is_empty() && id.iter().all(u8::is_ascii_hexdigit)).then_some(id)
 }
 
-/// The files that git names.
+/// The files git listed for `--staged` or `--changed`.
 pub(crate) struct Files<'e> {
     only: &'e Only,
     environment: &'e Environment<'e>,
-    /// Absolute.
+    /// Absolute paths.
     named: FxHashSet<Vec<u8>>,
-    /// Those that have changes beside what is staged. They are asked for in a run that writes what is staged.
+    /// Files with unstaged changes. Only filled in for a `--staged` run that writes files.
     partly_staged: FxHashSet<Vec<u8>>,
 }
 
 impl<'e> Files<'e> {
-    /// `writes`: the run writes files.
+    /// `writes` is true if the run writes files.
     pub(crate) fn read(
         only: &'e Only,
         writes: bool,
@@ -151,7 +150,8 @@ impl<'e> Files<'e> {
             partly_staged: FxHashSet::default(),
         };
         let flag = only.flag();
-        // The first fails where there are no files, as in `.git`. The second is the way from here, however this place is written.
+        // `--show-toplevel` is only here to fail where there's no work tree, like inside `.git`. `--show-cdup` is the
+        // relative path from here to the root, so it doesn't matter how `cwd` is spelled.
         let found = files.git(&[b"rev-parse", b"--show-toplevel", b"--show-cdup"], b"")?;
         if !found.is_ok {
             let first = format!("{flag} needs a git repository");
@@ -211,7 +211,7 @@ impl<'e> Files<'e> {
         })
     }
 
-    /// What a call prints: names from `top`, each with a NUL behind it.
+    /// Runs git and parses its output, which is NUL-terminated paths relative to `top`.
     fn names(&self, top: &[u8], args: &[&[u8]]) -> Result<FxHashSet<Vec<u8>>, Fatal> {
         let finished = self.git(args, b"")?;
         if !finished.is_ok {
@@ -226,7 +226,8 @@ impl<'e> Files<'e> {
         self.names(top, &[&DIFF[..], args].concat())
     }
 
-    /// The ID of the commit that `written` names. Only that goes on to git: `written` could be read as a flag, or as a range.
+    /// Resolves `written` to a commit ID. Later git calls only get the ID, because they could parse `written` as a flag
+    /// or a range.
     fn commit(&self, written: &[u8]) -> Result<Vec<u8>, Fatal> {
         let unknown = || {
             let rest = b"\" is not a branch, tag or commit in this repository";
@@ -240,7 +241,7 @@ impl<'e> Files<'e> {
         object_id(&found).map(<[u8]>::to_vec).ok_or_else(unknown)
     }
 
-    /// The last commit that `HEAD` has in common with the default branch.
+    /// The merge base of `HEAD` and the default branch.
     fn where_it_left_the_default_branch(&self) -> Result<Vec<u8>, Fatal> {
         for (branch, _) in DEFAULT_BRANCHES {
             if let Some(id) = object_id(&self.git(&[b"merge-base", b"HEAD", branch], b"")?) {
@@ -259,18 +260,18 @@ impl<'e> Files<'e> {
         ))
     }
 
-    /// Whether git names the file at `path`, which is absolute. A link is not the file that it leads to.
+    /// Whether git listed the file at `path` (absolute). A symlink doesn't count, even if it points to a file.
     pub(crate) fn has(&self, path: &[u8]) -> bool {
         self.named.contains(path)
             && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
     }
 
-    /// Whether to write the file at `path` and stage it would stage what its author has not.
+    /// True if writing `path` and staging it again would also stage changes the user didn't stage.
     pub(crate) fn is_partly_staged(&self, path: &[u8]) -> bool {
         self.partly_staged.contains(path)
     }
 
-    /// For a run that is left without a file. `verb`: what it does to files.
+    /// Message for a run with no files left. `verb` is what the run does to files, like "lint".
     pub(crate) fn nothing_left(&self, verb: &str) -> String {
         match self.only {
             Only::Staged => format!("No staged files to {verb}"),
@@ -278,7 +279,8 @@ impl<'e> Files<'e> {
         }
     }
 
-    /// Why `files`, which are absolute and [partly staged](Files::is_partly_staged), are as they were. `done`: what they are not.
+    /// Explains why `files` (absolute paths, all [partly staged](Files::is_partly_staged)) weren't written. `done` is
+    /// what didn't happen to them, like "fixed".
     pub(crate) fn refusal_to_write(&self, files: &mut [Vec<u8>], done: &str) -> Vec<u8> {
         files.sort_unstable();
         let shown = files
@@ -316,8 +318,8 @@ impl<'e> Files<'e> {
         }
     }
 
-    /// Stages `written` again, which are absolute, were staged as a whole, and have been written. It is `git add` for names
-    /// that are no patterns, however many there are.
+    /// Re-stages `written`: absolute paths of files that were fully staged and that this run rewrote. Same as `git add`,
+    /// except that paths are never treated as patterns and there can be any number of them.
     pub(crate) fn stage(&self, written: &[Vec<u8>]) -> Result<(), Fatal> {
         if *self.only != Only::Staged || written.is_empty() {
             return Ok(());

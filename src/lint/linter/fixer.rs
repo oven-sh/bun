@@ -14,7 +14,7 @@ pub struct Fixed {
     pub remaining: Vec<LintMessage>,
     /// The rules whose fixes are in `output`.
     pub applied: Vec<RuleId>,
-    /// How many fixes are in `output`.
+    /// Number of fixes applied to produce `output`.
     pub count: usize,
 }
 
@@ -88,7 +88,7 @@ pub fn apply_fixes(
 pub struct FixReport {
     /// Whether the text has changed.
     pub is_fixed: bool,
-    /// How many fixes, of all passes, are in `output`.
+    /// Number of fixes applied to produce `output`, over all passes.
     pub fixes: usize,
     pub output: Vec<u8>,
     /// What is left to report, about `output`.
@@ -108,8 +108,8 @@ pub fn is_parse_error(message: &LintMessage) -> bool {
     message.is_fatal && message.message.starts_with(b"Parsing error: ")
 }
 
-/// What is reported if the fixes of a pass are taken back. `before`: the text before that pass. `was_fixed`: it is not the first
-/// text. `fixes`: how many are in it.
+/// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` says whether
+/// earlier passes had already changed it, and `fixes` is how many fixes they applied.
 fn without_the_last_pass(
     before: Vec<u8>,
     (rules, was_fixed, fixes): (Vec<RuleId>, bool, usize),
@@ -136,7 +136,7 @@ pub fn verify_and_fix(
     let mut current = text.to_vec();
     let mut previous: Option<Vec<u8>> = None;
     let (mut is_fixed, mut is_circular, mut fixes) = (false, false, 0);
-    // The rules whose fixes the pass before has applied, whether the text had changed before it, and by how many fixes.
+    // About the previous pass: the rules whose fixes it applied, then `is_fixed` and `fixes` as they were before it.
     let mut last_pass: Option<(Vec<RuleId>, bool, usize)> = None;
     let mut passes = 0;
     loop {

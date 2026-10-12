@@ -65,7 +65,7 @@ impl Reader {
         }
     }
 
-    /// Takes back what does not count because of the byte at `at`, which is one of `SPECIAL`.
+    /// Un-counts the bytes that shouldn't count because of the byte at `at`, which is one of `SPECIAL`.
     fn look_around(&mut self, text: &[u8], at: usize) {
         let (before, rest) = text.split_at_checked(at).unwrap_or_default();
         let previous = before.last().copied().unwrap_or(0);

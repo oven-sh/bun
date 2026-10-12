@@ -2043,7 +2043,8 @@ To create a project with the official Next.js scaffolding tool, run\n\
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
-    /// The flags in the help of `bun lint` and `bun format`: the common ones, or all under their headings.
+    /// Prints the flags for `bun lint --help` and `bun format --help`: the common ones, or with `all`, every flag under its
+    /// heading.
     fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
         if all {
             for group in help.groups {
@@ -2058,7 +2059,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         pretty!("\n");
     }
 
-    /// At the end of the help of `bun <command>`, where a script of the project has its name.
+    /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
     fn print_note_about_script(command: &str) {
         use crate::cli::script_or_command::{Runs, runs};
         if runs(command.as_bytes()) == Runs::Script {

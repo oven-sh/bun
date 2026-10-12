@@ -15,7 +15,7 @@ pub enum Step {
     Key(Vec<u8>),
 }
 
-/// What a minimum or maximum applies to.
+/// The quantity that a minimum or maximum limits.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Of {
     /// The number itself.
@@ -38,7 +38,7 @@ pub(super) enum Why {
     Duplicates,
     /// `required`
     Missing(Vec<u8>),
-    /// `additionalProperties: false`: the property, and the properties that the schema has.
+    /// `additionalProperties: false`. Holds the unknown property and the properties the schema has.
     Unknown(Vec<u8>, Vec<Vec<u8>>),
     /// `anyOf`, `oneOf`, `not`, `then` or `else` failed. The errors before this one have the details.
     Composite,

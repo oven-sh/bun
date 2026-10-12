@@ -1,7 +1,7 @@
-//! What the rules say about themselves: `--rules` and `--explain`.
+//! `--rules` and `--explain`, which list and document the rules.
 //!
-//! The words are those of `docs/lint/rules/<plugin>/<rule>.mdx`. `src/codegen/generate-lint-docs.ts` puts them into two
-//! files, which are in the executable compressed. Only the two flags read them.
+//! The text comes from `docs/lint/rules/<plugin>/<rule>.mdx`. `src/codegen/generate-lint-docs.ts` packs it into two
+//! files that are embedded in the executable, compressed. Only these two flags read them.
 
 use crate::format::oxlint::plugin as scope_in_oxlint;
 use crate::print_config::{object, text, write_indented};
@@ -25,7 +25,7 @@ macro_rules! pretty {
     };
 }
 
-/// A line for each page: [its name](Meta::page), a tab, and its description.
+/// Descriptions by [page name](Meta::page). The embedded file has one `name<tab>description` line per page.
 fn descriptions() -> FxHashMap<&'static [u8], &'static [u8]> {
     let lines = bun_zstd::embed_compressed!(codegen "lint-rule-descriptions.txt");
     let lines = strings::split(lines, b"\n");
@@ -37,16 +37,16 @@ fn descriptions() -> FxHashMap<&'static [u8], &'static [u8]> {
         .collect()
 }
 
-/// The page about the rule, in Markdown: its description, an empty line, and the rest.
+/// The rule's docs page in Markdown: the description, an empty line, then the rest.
 fn page_of(meta: &Meta) -> Option<&'static [u8]> {
-    // Before each page: a NUL, its name, and a newline.
+    // Each page starts with a NUL, its name and a newline.
     let pages = bun_zstd::embed_compressed!(codegen "lint-rule-pages.txt");
     let head = [b"\0", &meta.page()[..], b"\n"].concat();
     let page = &pages[strings::index_of(pages, &head)? + head.len()..];
     Some(&page[..strings::index_of_char_usize(page, 0).unwrap_or(page.len())])
 }
 
-/// Severity and options of the rules that are on when nothing is configured.
+/// Severity and options of the rules that are on by default, with no config at all.
 struct Defaults(FxHashMap<(Plugin, &'static str), (Severity, Arc<[Json]>)>);
 
 impl Defaults {
@@ -84,14 +84,14 @@ impl Defaults {
     }
 }
 
-/// The rules, each with what oxlint calls its plugin: one for each page, sorted.
+/// All rules, sorted, each with oxlint's name for its plugin. One entry per docs page.
 fn listed(registry: &Registry) -> Vec<(&'static [u8], &'static Meta)> {
     let mut all: Vec<_> = registry
         .all()
         .iter()
         .map(|it| (scope_in_oxlint(it.meta.plugin.prefix().as_bytes()), it.meta))
         .collect();
-    // A rule of the React Compiler is there as `react-hooks/..` too: the one of oxlint's own plugin is listed.
+    // React Compiler rules are also registered as `react-hooks/..`. Keep the one under oxlint's own plugin name.
     bun_lint::utils::sort::sort_by_key(&mut all, |it| {
         (it.0, it.1.name, it.1.plugin.prefix().as_bytes() != it.0)
     });
@@ -99,12 +99,12 @@ fn listed(registry: &Registry) -> Vec<(&'static [u8], &'static Meta)> {
     all
 }
 
-/// The rule that runs for `meta` where neither ESLint nor oxlint has a configuration.
+/// The rule that runs in place of `meta` in a project with no ESLint or oxlint config.
 fn in_native_mode(registry: &Registry, meta: &'static Meta, id: &[u8]) -> &'static Meta {
     registry.find_by_any_name(id).map_or(meta, |it| it.meta)
 }
 
-/// `--rules -f json`: the keys of oxlint, with what oxlint says but for `docs_url`, and then Bun's.
+/// `--rules -f json`. oxlint's keys come first, with oxlint's values except for `docs_url`. Bun's own keys follow.
 pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
     let (descriptions, defaults) = (descriptions(), Defaults::new(registry));
     let rules = listed(registry).into_iter().map(|(scope, meta)| {
@@ -192,7 +192,7 @@ pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
     out.push(b'\n');
 }
 
-/// `--rules` into a pipe or a file: a rule a line, as oxlint calls it.
+/// `--rules` when stdout is a pipe or a file: one rule per line, under oxlint's name for it.
 pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry) {
     for (scope, meta) in listed(registry) {
         out.extend_from_slice(scope);
@@ -200,7 +200,7 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry) {
     }
 }
 
-/// `--rules` in a terminal: the rules of each plugin, each with how severe it is by default and its description.
+/// `--rules` in a terminal: rules grouped by plugin, each with its default severity and description.
 pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colors: bool) {
     let (descriptions, defaults) = (descriptions(), Defaults::new(registry));
     let all = listed(registry);
@@ -233,7 +233,7 @@ pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colo
                 .get(&meta.page()[..])
                 .copied()
                 .unwrap_or_default();
-            // A terminal has no backticks.
+            // Backticks are Markdown. They'd only be noise in a terminal.
             let description = strings::replace_owned(description, b"`", b"");
             let url = meta.docs_url();
             let _ = write!(out, "{}", TerminalHyperlink::new(&url, &id, colors));
@@ -253,7 +253,7 @@ pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colo
     );
 }
 
-/// What the code knows about the rule, in a line of Markdown.
+/// One line of Markdown with the facts that come from the code, not the docs page.
 fn facts(
     meta: &Meta,
     aliases: &[Vec<u8>],
@@ -288,7 +288,8 @@ fn facts(
     line
 }
 
-/// The rule that `name` is a name of, with or without its plugin. `Err`: there is no such rule, or more than one, and what to say.
+/// Looks up a rule by any of its names, with or without the plugin prefix. `Err` has the message to print if no rule
+/// matches, or more than one.
 fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
     if let Some(entry) = registry.find_by_any_name(name) {
         return Ok(entry.meta);
@@ -315,7 +316,7 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
     .ok_or_else(|| native::unknown_rule(registry, name))
 }
 
-/// `--explain <rule>`: the page about the rule that `name` is a name of. `Err`: what to say instead.
+/// `--explain <rule>`. Returns the rendered docs page for `name`, or the error message to print.
 pub(crate) fn explain(
     registry: &Registry,
     name: &[u8],
@@ -335,7 +336,7 @@ pub(crate) fn explain(
     let (description, rest) = page.split_at(after_description);
     let colors = colors.unwrap_or(environment.stdout.colors);
     let hyperlinks = colors && environment.stdout.is_tty;
-    // What is no hyperlink is printed with its address after it, which this is.
+    // Without hyperlinks the renderer prints links as "text (url)". Here the text is the URL, so it would show twice.
     let (before_url, after_url): (&[u8], &[u8]) =
         if hyperlinks { (b"<", b">") } else { (b"", b"") };
     let markdown = [

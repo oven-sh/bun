@@ -10,7 +10,7 @@
 #include "LintHost.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
@@ -73,18 +73,20 @@ JSC_DEFINE_HOST_FUNCTION(jsLintShape, (JSGlobalObject * globalObject, CallFrame*
 
 namespace {
 
-// The tree as src/lint/js_plugin/ast.rs writes it: six words, then the parts whose lengths these are.
+// The tree as src/lint/js_plugin/ast.rs writes it: eight words, then the parts whose lengths these are.
 struct LintTree {
     uint32_t count, fieldCount, listCount, stringCount;
     std::span<const uint8_t> numbers;
     std::span<const uint32_t> starts, ends, parents, fields, lists, strings;
+    // The nodes whose properties are in the other order, ascending.
+    std::span<const uint32_t> alternates;
     std::span<const uint8_t> types;
     // UTF-8. The strings that aren't in the text of the file.
     std::span<const uint8_t> extra;
 
     bool read(std::span<const uint8_t> bytes)
     {
-        constexpr size_t header = 6;
+        constexpr size_t header = 8;
         if (bytes.size() < header * 4 || reinterpret_cast<uintptr_t>(bytes.data()) % 8)
             return false;
         auto* words = reinterpret_cast<const uint32_t*>(bytes.data());
@@ -92,8 +94,8 @@ struct LintTree {
         fieldCount = words[1];
         listCount = words[2];
         stringCount = words[3];
-        uint64_t numberCount = words[4], extraLength = words[5];
-        uint64_t size = header * 4 + numberCount * 8 + (uint64_t(count) * 3 + fieldCount + listCount + stringCount) * 4 + count + extraLength;
+        uint64_t numberCount = words[4], extraLength = words[5], alternateCount = words[6];
+        uint64_t size = header * 4 + numberCount * 8 + (uint64_t(count) * 3 + fieldCount + listCount + stringCount + alternateCount) * 4 + count + extraLength;
         if (size > bytes.size())
             return false;
         const uint8_t* at = bytes.data() + header * 4;
@@ -110,6 +112,7 @@ struct LintTree {
         fields = part(fieldCount);
         lists = part(listCount);
         strings = part(stringCount);
+        alternates = part(alternateCount);
         types = { at, count };
         extra = { at + count, static_cast<size_t>(extraLength) };
         return true;
@@ -293,6 +296,12 @@ private:
 
 } // namespace
 
+JSC_DEFINE_HOST_FUNCTION(jsLintIllegalConstructor, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMTypeError(globalObject, scope, "Illegal constructor"_s);
+}
+
 bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
 {
     constexpr uint32_t layouts = 15;
@@ -303,39 +312,50 @@ bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
     words.fill(0, (answer.len + 3) / 4);
     memcpy(words.mutableSpan().data(), answer.ptr, answer.len);
     uint32_t typeCount = words[0], stringCount = words[1], wordCount = words[2];
-    if (typeCount > 256 || wordCount > answer.len / 4 || stringCount > wordCount)
+    if (answer.len < 20 || words[3] != layoutKinds || typeCount > 256 || wordCount > answer.len / 4)
+        return false;
+    uint32_t orderLength = words[4];
+    if (uint64_t(stringCount) + orderLength > wordCount)
         return false;
     std::span<const Latin1Character> names { reinterpret_cast<const Latin1Character*>(words.span().data() + wordCount), answer.len - size_t(wordCount) * 4 };
     auto isName = [&](uint32_t reference) { return (reference >> 8) + (reference & 255) <= names.size(); };
 
-    std::array<Vector<Layout>, dialects> byDialect;
+    std::array<Vector<Layout>, layoutKinds> byKind;
     Vector<uint32_t> typeNames;
-    uint32_t structureCount = 0;
-    size_t at = 3, end = wordCount - stringCount;
+    uint32_t templateCount = 0;
+    size_t at = 5, end = wordCount - stringCount - orderLength;
     for (uint32_t type = 0; type < typeCount; ++type) {
         if (at >= end || !isName(words[at]))
             return false;
         typeNames.append(words[at++]);
-        for (auto& list : byDialect) {
-            if (end - at < 4)
+        for (auto& list : byKind) {
+            if (end - at < 5)
                 return false;
-            Layout layout { words[at], words[at + 1], words[at + 2], {}, structureCount };
-            size_t length = size_t(words[at + 3]) * 2;
-            at += 4;
-            if (layout.fieldCount > 32 || length > end - at || length / 2 > JSFinalObject::maxInlineCapacity || std::popcount(layout.leftOut) > 4)
+            Layout layout { words[at], words[at + 1], words[at + 2], {}, {}, templateCount };
+            std::array<size_t, 2> lengths { size_t(words[at + 3]) * 2, size_t(words[at + 4]) * 2 };
+            at += 5;
+            if (layout.fieldCount > 32 || std::popcount(layout.leftOut) > 4)
                 return false;
-            layout.properties = words.span().subspan(at, length);
-            bool hasParent = false;
-            for (size_t i = 0; i < length; i += 2) {
-                uint32_t what = layout.properties[i + 1];
-                if (!isName(layout.properties[i]) || (what >= layout.fieldCount && (what < What::Type || what > What::Parent)))
+            for (unsigned order = 0; order < 2; ++order) {
+                size_t length = lengths[order];
+                if (length > end - at || length / 2 > JSFinalObject::maxInlineCapacity)
                     return false;
-                hasParent |= what == What::Parent;
+                auto properties = words.span().subspan(at, length);
+                bool hasParent = false;
+                for (size_t i = 0; i < length; i += 2) {
+                    uint32_t what = properties[i + 1];
+                    if (!isName(properties[i]) || (what >= layout.fieldCount && (what < What::Type || what > What::Deprecated)))
+                        return false;
+                    hasParent |= what == What::Parent;
+                }
+                if (length && !hasParent)
+                    return false;
+                (order ? layout.alternate : layout.properties) = properties;
+                at += length;
             }
-            if (!hasParent)
+            if (layout.properties.empty())
                 return false;
-            at += length;
-            structureCount += 1u << std::popcount(layout.leftOut);
+            templateCount += (layout.alternate.empty() ? 1u : 2u) << std::popcount(layout.leftOut);
             list.append(layout);
         }
     }
@@ -345,6 +365,18 @@ bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
         if (!isName(reference))
             return false;
     }
+    std::array<std::span<const uint32_t>, 2> orders;
+    auto orderWords = words.span().subspan(end + stringCount, orderLength);
+    for (auto& order : orders) {
+        if (orderWords.empty() || size_t(orderWords[0]) * 2 > orderWords.size() - 1)
+            return false;
+        order = orderWords.subspan(1, size_t(orderWords[0]) * 2);
+        orderWords = orderWords.subspan(1 + order.size());
+        for (size_t i = 0; i < order.size(); i += 2) {
+            if (!isName(order[i]) || (order[i + 1] >= typeCount && order[i + 1] != noType))
+                return false;
+        }
+    }
 
     // The collector can be looking at the host.
     Locker locker { host->cellLock() };
@@ -352,11 +384,12 @@ bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
     m_names = names;
     m_knownStringNames = m_words.span().subspan(end, stringCount);
     m_typeNameReferences = WTF::move(typeNames);
-    m_layouts = WTF::move(byDialect);
-    m_structures.grow(structureCount);
+    m_layouts = WTF::move(byKind);
+    m_visitorKeyOrders = orders;
+    m_templates.grow(templateCount);
     m_typeNames.grow(typeCount);
     m_knownStrings.grow(stringCount);
-    m_prototypes.grow(size_t(typeCount) * dialects);
+    m_prototypes.grow(size_t(typeCount) * 2);
     return true;
 }
 
@@ -378,36 +411,86 @@ JSString* LintNodeState::knownString(VM& vm, LintHost* host, uint32_t index)
     return slot.get();
 }
 
-JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, bool isEspree, uint8_t type)
+JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, uint8_t type)
 {
-    auto& slot = m_prototypes[size_t(type) * dialects + isEspree];
-    if (!slot)
-        slot.set(vm, host, constructEmptyObject(globalObject, nodePrototype.get()));
-    return slot.get();
+    if (kind == TypeScript)
+        return globalObject->objectPrototype();
+    if (kind <= OldEspree) {
+        auto& slot = m_prototypes[size_t(type) * 2 + kind];
+        if (!slot)
+            slot.set(vm, host, constructEmptyObject(globalObject, nodePrototype.get()));
+        return slot.get();
+    }
+    auto& slot = m_sharedPrototypes[kind];
+    if (slot)
+        return slot.get();
+    JSObject* prototype = constructEmptyObject(globalObject);
+    slot.set(vm, host, prototype);
+    if (kind == Espree) {
+        // acorn's `class Node`, for `constructor.name` and `instanceof`.
+        JSFunction* constructor = JSFunction::create(vm, globalObject, 3, "Node"_s, jsLintIllegalConstructor, ImplementationVisibility::Public, NoIntrinsic, jsLintIllegalConstructor);
+        constructor->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+        prototype->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    } else {
+        // oxlint's `get loc()`
+        GetterSetter* loc = GetterSetter::create(vm, globalObject, host->sourceCode.locGetter.get(), nullptr);
+        prototype->putDirectNonIndexAccessor(vm, Identifier::fromString(vm, "loc"_s), loc, PropertyAttribute::Accessor | PropertyAttribute::DontDelete);
+    }
+    return prototype;
 }
 
-Structure* LintNodeState::makeStructure(VM& vm, JSGlobalObject* globalObject, LintHost* host, bool isEspree, uint8_t type, unsigned which)
+JSObject* LintNodeState::makeTemplate(JSGlobalObject* globalObject, LintHost* host, LayoutKind kind, uint8_t type, unsigned which, bool isAlternate, unsigned index)
 {
-    const Layout& layout = m_layouts[isEspree][type];
-    // Whether the nodes with this Structure have the property that `what` is in.
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Layout& layout = m_layouts[kind][type];
+    auto properties = isAlternate ? layout.alternate : layout.properties;
+    // Whether the nodes have the property that `what` is in.
     auto has = [&](uint32_t what) {
         if (what >= What::Type || !(layout.leftOut >> what & 1))
             return true;
         return (which >> std::popcount(layout.leftOut & ((1u << what) - 1)) & 1) != 0;
     };
     unsigned count = 0;
-    for (size_t i = 0; i < layout.properties.size(); i += 2)
-        count += has(layout.properties[i + 1]);
-    Structure* structure = JSFinalObject::createStructure(vm, globalObject, prototype(vm, globalObject, host, isEspree, type), count);
-    for (size_t i = 0; i < layout.properties.size(); i += 2) {
-        if (!has(layout.properties[i + 1]))
+    for (size_t i = 0; i < properties.size(); i += 2)
+        count += has(properties[i + 1]);
+    // It's made the way a plugin could make it, so that the Structure knows about what isn't a plain property.
+    JSFinalObject* like = JSFinalObject::create(vm, JSFinalObject::createStructure(vm, globalObject, prototype(vm, globalObject, host, kind, type), count));
+    m_templates[index].set(vm, host, like);
+    for (size_t i = 0; i < properties.size(); i += 2) {
+        uint32_t what = properties[i + 1];
+        if (!has(what))
             continue;
-        PropertyOffset offset;
-        structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, AtomString(name(layout.properties[i]))), 0, offset);
+        Identifier key = Identifier::fromString(vm, AtomString(name(properties[i])));
+        if (what == What::Loc && !hasEagerLoc) {
+            // As in a token: a plain property to a plugin, which is computed from `range` when it's first read.
+            like->putDirectCustomAccessor(vm, key, host->sourceCode.lazyLocOfNode.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
+        } else if (what == What::Comments || what == What::Tokens) {
+            for (auto& list : host->tokens.listsOfProgram) {
+                if (list.name != key)
+                    continue;
+                if (kind == Oxlint)
+                    like->putDirectNonIndexAccessor(vm, key, list.getter.get(), static_cast<unsigned>(PropertyAttribute::Accessor));
+                else
+                    like->putDirectCustomAccessor(vm, key, list.customValue.get(), static_cast<unsigned>(PropertyAttribute::CustomValue));
+            }
+        } else if (what == What::Deprecated) {
+            JSValue pair = deprecated->get(globalObject, Identifier::fromString(vm, makeString(StringView(name(m_typeNameReferences[type])), '.', StringView(name(properties[i])))));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            JSValue getter = lintGetIndex(globalObject, pair, 0);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            JSValue setter = lintGetIndex(globalObject, pair, 1);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!getter.isCallable() || !setter.isCallable()) {
+                throwTypeError(globalObject, scope, "Expected a getter and a setter"_s);
+                return nullptr;
+            }
+            like->putDirectNonIndexAccessor(vm, key, GetterSetter::create(vm, globalObject, asObject(getter), asObject(setter)), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
+        } else
+            like->putDirect(vm, key, jsUndefined());
     }
-    RELEASE_ASSERT(structure->maxOffset() == static_cast<PropertyOffset>(count) - 1);
-    m_structures[layout.firstStructure + which].set(vm, host, structure);
-    return structure;
+    RELEASE_ASSERT(like->structure()->maxOffset() == static_cast<PropertyOffset>(count) - 1);
+    return like;
 }
 
 JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* host, bool isEspree)
@@ -418,22 +501,44 @@ JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* hos
         return made;
     JSObject* all = constructEmptyObject(globalObject);
     m_visitorKeys[isEspree].set(vm, host, all);
-    for (size_t type = 0; type < typeCount(); ++type) {
-        const Layout& layout = m_layouts[isEspree][type];
+    auto add = [&](uint32_t typeName, uint32_t type) {
         MarkedArgumentBuffer keys;
-        // In the order of the fields, which is the order of the traversal.
-        for (uint32_t field = 0; field < layout.fieldCount; ++field) {
-            if (!(layout.visitorKeys >> field & 1))
-                continue;
-            for (size_t i = 0; i < layout.properties.size(); i += 2) {
-                if (layout.properties[i + 1] == field)
-                    keys.append(jsOwnedString(vm, AtomString(name(layout.properties[i]))));
+        if (type == noType)
+            keys.append(jsOwnedString(vm, AtomString("argument"_s)));
+        else {
+            const Layout& layout = m_layouts[isEspree ? OldEspree : OldTypeScript][type];
+            // In the order of the fields, which is the order of the traversal.
+            for (uint32_t field = 0; field < layout.fieldCount; ++field) {
+                if (!(layout.visitorKeys >> field & 1))
+                    continue;
+                for (size_t i = 0; i < layout.properties.size(); i += 2) {
+                    if (layout.properties[i + 1] == field)
+                        keys.append(jsOwnedString(vm, AtomString(name(layout.properties[i]))));
+                }
             }
         }
-        JSArray* list = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        all->putDirect(vm, Identifier::fromString(vm, AtomString(name(m_typeNameReferences[type]))), list);
+        JSObject* list = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isExact) {
+            objectConstructorFreeze(globalObject, list);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        all->putDirect(vm, Identifier::fromString(vm, AtomString(name(typeName))), list);
+    };
+    if (!isExact) {
+        for (size_t type = 0; type < typeCount(); ++type) {
+            add(m_typeNameReferences[type], type);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        return all;
     }
+    auto order = m_visitorKeyOrders[isEspree];
+    for (size_t i = 0; i < order.size(); i += 2) {
+        add(order[i], order[i + 1]);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    objectConstructorFreeze(globalObject, all);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     return all;
 }
 
@@ -463,7 +568,8 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     if (!state.isLoaded() || !tree.read(bytes))
         return outOfStep();
     uint32_t count = tree.count;
-    bool isEspree = host->isEspree();
+    auto kind = state.kindFor(host->isEspree(), host->isOxlint());
+    auto locKind = kind == LintNodeState::Espree ? LintLocShape::EspreeToken : LintLocShape::TypeScript;
 
     // Where the words of each node start.
     Vector<uint32_t> offsets(count);
@@ -473,7 +579,7 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
         if (type >= state.typeCount() || tree.parents[id] >= count)
             return outOfStep();
         offsets[id] = static_cast<uint32_t>(at);
-        at += state.layout(isEspree, type).fieldCount;
+        at += state.layout(kind, type).fieldCount;
     }
     if (at > tree.fields.size())
         return outOfStep();
@@ -487,11 +593,12 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
     LintNodeMaker maker(globalObject, tree, nodes, host->text());
     // Where each node has `parent`.
     Vector<uint8_t> parentOffsets(count);
+    size_t alternatesLeft = tree.alternates.size();
 
     // What is in a node has a higher number.
     for (uint32_t id = count; id--;) {
         uint8_t type = tree.types[id];
-        const auto& layout = state.layout(isEspree, type);
+        const auto& layout = state.layout(kind, type);
         const uint32_t* words = tree.fields.data() + offsets[id];
         uint32_t start = tree.starts[id], end = tree.ends[id];
         unsigned which = 0;
@@ -502,11 +609,18 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
                     which |= (words[i] ? 1u : 0u) << bit++;
             }
         }
-        JSFinalObject* node = JSFinalObject::create(vm, state.structure(vm, globalObject, host, isEspree, type, which));
+        bool isAlternate = alternatesLeft && tree.alternates[alternatesLeft - 1] == id;
+        alternatesLeft -= isAlternate;
+        isAlternate &= !layout.alternate.empty();
+        JSObject* like = state.templateFor(globalObject, host, kind, type, which, isAlternate);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSString* typeName = state.typeName(vm, host, type);
+        JSFinalObject* node = JSFinalObject::create(vm, like->structure());
         nodes->setIndexQuickly(vm, id, node);
+        auto properties = isAlternate ? layout.alternate : layout.properties;
         PropertyOffset offset = 0;
-        for (size_t i = 1; i < layout.properties.size(); i += 2) {
-            uint32_t what = layout.properties[i];
+        for (size_t i = 1; i < properties.size(); i += 2) {
+            uint32_t what = properties[i];
             JSValue value;
             if (what < What::Type) [[likely]] {
                 if ((layout.leftOut >> what & 1) && !words[what]) [[unlikely]]
@@ -515,45 +629,66 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
                 RETURN_IF_EXCEPTION(scope, nullptr);
                 if (!value) [[unlikely]]
                     return outOfStep();
-            } else if (what == What::Type)
-                value = state.typeName(vm, host, type);
-            else if (what == What::Start)
-                value = jsNumber(start);
-            else if (what == What::End)
-                value = jsNumber(end);
-            else if (what == What::Parent) {
-                parentOffsets[id] = static_cast<uint8_t>(offset);
-                value = jsNull();
             } else {
-                ObjectInitializationScope initializationScope(vm);
-                JSArray* range = JSArray::tryCreateUninitializedRestricted(initializationScope, rangeStructure, 2);
-                if (!range) [[unlikely]] {
-                    throwOutOfMemoryError(globalObject, scope);
-                    return nullptr;
+                switch (what) {
+                case What::Type:
+                    value = typeName;
+                    break;
+                case What::Start:
+                    value = jsNumber(start);
+                    break;
+                case What::End:
+                    value = jsNumber(end);
+                    break;
+                case What::Parent:
+                    parentOffsets[id] = static_cast<uint8_t>(offset);
+                    value = jsNull();
+                    break;
+                case What::Range: {
+                    ObjectInitializationScope initializationScope(vm);
+                    JSArray* range = JSArray::tryCreateUninitializedRestricted(initializationScope, rangeStructure, 2);
+                    if (!range) [[unlikely]] {
+                        throwOutOfMemoryError(globalObject, scope);
+                        return nullptr;
+                    }
+                    range->initializeIndex(initializationScope, 0, jsNumber(start));
+                    range->initializeIndex(initializationScope, 1, jsNumber(end));
+                    value = range;
+                    break;
                 }
-                range->initializeIndex(initializationScope, 0, jsNumber(start));
-                range->initializeIndex(initializationScope, 1, jsNumber(end));
-                value = range;
+                case What::Loc:
+                    value = state.hasEagerLoc ? JSValue(lintCreateLoc(vm, host, locKind, start, end)) : like->getDirect(offset);
+                    break;
+                default:
+                    value = like->getDirect(offset);
+                }
             }
             node->putDirectOffset(vm, offset++, value);
         }
     }
     for (uint32_t id = 1; id < count; ++id)
         asObject(nodes->getIndexQuickly(id))->putDirectOffset(vm, parentOffsets[id], nodes->getIndexQuickly(tree.parents[id]));
-    host->sourceCode.setTree(vm, host, nullptr, nodes, tree.starts, tree.ends, tree.parents);
+    host->sourceCode.setTree(vm, host, nodes, tree.starts, tree.ends, tree.parents);
     return nodes;
 }
 
-// `defineNodes(prototype)`: all nodes inherit from `prototype`. It's called once, while something is handled.
+// `defineNodes(prototype, flags, deprecated)` is called once, while something is handled. `flags`: 1 for nodes that are laid out as the
+// parser of the real tool lays them out, 2 for a `loc` that is made with the node. Without the first, all nodes inherit from
+// `prototype`. `deprecated`: by `Type.property`, a getter and a setter for the deprecated properties of typescript-estree.
 JSC_DEFINE_HOST_FUNCTION(jsLintDefineNodes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
     JSObject* prototype = callFrame->argument(0).getObject();
-    if (!prototype || host->nodes.isLoaded() || !host->nodes.load(globalObject, host))
+    JSValue flags = callFrame->argument(1);
+    JSObject* deprecated = callFrame->argument(2).getObject();
+    if (!prototype || !flags.isNumber() || !deprecated || host->nodes.isLoaded() || !host->nodes.load(globalObject, host))
         return throwVMTypeError(globalObject, scope, "The layouts are not as expected"_s);
     host->nodes.nodePrototype.set(vm, host, prototype);
+    host->nodes.deprecated.set(vm, host, deprecated);
+    host->nodes.isExact = JSC::toUInt32(flags.asNumber()) & 1;
+    host->nodes.hasEagerLoc = JSC::toUInt32(flags.asNumber()) & 2;
     return JSValue::encode(jsUndefined());
 }
 
@@ -585,7 +720,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodePrototype, (JSGlobalObject * globalObject, Ca
     auto type = host->nodes.typeNamed(text.data);
     if (!type)
         return throwVMTypeError(globalObject, scope, "Expected the name of a type"_s);
-    return JSValue::encode(host->nodes.prototype(vm, globalObject, host, false, *type));
+    return JSValue::encode(host->nodes.prototype(vm, globalObject, host, LintNodeState::OldTypeScript, *type));
 }
 
 // `visitorKeys(isEspree)`: ESLint's `visitorKeys`. The same object each time.
@@ -837,7 +972,7 @@ extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 4, "shape"_s, jsLintShape, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "listen"_s), JSFunction::create(vm, globalObject, 2, "listen"_s, jsLintListen, ImplementationVisibility::Public));
-    object->putDirect(vm, Identifier::fromString(vm, "defineNodes"_s), JSFunction::create(vm, globalObject, 1, "defineNodes"_s, jsLintDefineNodes, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "defineNodes"_s), JSFunction::create(vm, globalObject, 3, "defineNodes"_s, jsLintDefineNodes, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "typeId"_s), JSFunction::create(vm, globalObject, 1, "typeId"_s, jsLintTypeId, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "nodePrototype"_s), JSFunction::create(vm, globalObject, 1, "nodePrototype"_s, jsLintNodePrototype, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "visitorKeys"_s), JSFunction::create(vm, globalObject, 1, "visitorKeys"_s, jsLintVisitorKeys, ImplementationVisibility::Public));

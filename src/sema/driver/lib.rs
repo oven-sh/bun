@@ -185,8 +185,8 @@ pub const STACK_OF_A_WORKER: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREA
 
 static KEEP_REGIONS: Guarded<Vec<ThreadId>> = Guarded::new(Vec::new());
 
-/// From now on, a parallel region that starts on the calling thread runs on that thread alone, as it does on a pool thread.
-/// For a thread outside the pool that pool threads wait for: if it waited for them too, nobody would make progress.
+/// From now on, parallel regions that start on the calling thread run on that thread alone, like they do on a pool thread. Call
+/// this on a thread outside the pool that pool threads wait for. If it waited for them too, they'd deadlock.
 pub fn keep_regions_on_this_thread() {
     KEEP_REGIONS.lock().push(std::thread::current().id());
 }

@@ -1,8 +1,8 @@
-//! A bridge: files in a language that only a plugin of Prettier reads are handed to the project's own Prettier.
+//! A bridge to the project's own Prettier, for files in a language that only a Prettier plugin can format.
 //!
-//! `bun format` has no Svelte, no Astro, no PHP. Where the configuration of Prettier names the plugin for such a
-//! language, and both are installed, the file goes whole to `prettier.format`, in the VMs that run the plugins of
-//! `bun lint`. What comes back is checked or written like what the formatter prints. It is as exact as it is slow.
+//! `bun format` doesn't support Svelte, Astro or PHP. If the Prettier config lists the plugin for such a language, and
+//! both Prettier and the plugin are installed, the whole file goes to `prettier.format`. That runs in the same VMs that
+//! run `bun lint`'s plugins. The result is checked or written like the built-in formatter's output. It's exact, but slow.
 
 use super::cli::{Options, Precedence};
 use super::config::is_option_of_prettier;
@@ -30,7 +30,7 @@ pub(crate) struct Prettier<'e> {
 }
 
 impl<'e> Prettier<'e> {
-    /// `files`, `size`: how many files are going to be handed over, and how large they are together. `threads`: `--threads`.
+    /// `files` and `size` are the number of files that will be handed over and their total size. `threads` is `--threads`.
     pub(crate) fn new(
         environment: &'e Environment,
         options: &Options,

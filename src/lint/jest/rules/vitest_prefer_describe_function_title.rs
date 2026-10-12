@@ -70,7 +70,7 @@ fn run<'a>(
         return;
     };
     match ctx.runner {
-        // There is no value to pass.
+        // A type-only import has no value to pass to `describe`.
         Runner::Bun if !is_value => return,
         Runner::Bun => {}
         Runner::Jest | Runner::Vitest => {

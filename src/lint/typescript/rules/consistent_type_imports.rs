@@ -584,7 +584,7 @@ impl Rule for ConsistentTypeImports {
                 let options = types.compiler_options();
                 (options.experimental_decorators, options.emit_decorator_metadata)
             }
-            // Nothing can say it there, and the fix takes away what the metadata needs.
+            // There's no config file to set these in, and the fix would remove imports that decorator metadata needs.
             None if file.language().stands_alone => (true, true),
             None => (file.language().experimental_decorators, file.language().emit_decorator_metadata),
         };

@@ -158,7 +158,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     }
 }
 
-/// Runs git to its end.
+/// Runs git and waits for it to exit.
 fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
     let mut buffer = bun_paths::path_buffer_pool::get();
     let path = bun_core::env_var::PATH.get().unwrap_or(b"");
@@ -184,8 +184,8 @@ fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
     }
 }
 
-/// Runs `argv` in `cwd` to its end, with `input` on its standard input, and with the environment of this process once `adapt`
-/// has changed it, which returns whether it could. `Err`: why it has not run.
+/// Runs `argv` in `cwd` with `input` on its stdin, and waits for it to exit. The child gets this process's environment after
+/// `adapt` has changed it. `adapt` returns false if it couldn't. `Err` says why the command didn't run.
 fn run_to_end(
     argv: Vec<Box<[u8]>>,
     cwd: &[u8],

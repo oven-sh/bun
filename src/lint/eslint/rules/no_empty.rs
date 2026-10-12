@@ -11,9 +11,8 @@ const SUGGEST_COMMENT: Message =
     Message::new("suggestComment", "Add comment inside empty {{type}} statement.");
 
 impl NoEmpty {
-    /// `braces`: a `{ }` without statements or cases. All that can be in it is whitespace and
-    /// comments. `place`: where it is reported. `removed`: what oxlint suggests to remove. `is_handler`: whether it is the block
-    /// of a `catch`.
+    /// `braces` is a `{ }` with no statements or cases, so it can only contain whitespace and comments. `place` is where to
+    /// report. `removed` returns what oxlint suggests removing. `is_handler` returns whether it's the block of a `catch`.
     fn check(
         braces: Span,
         place: Span,

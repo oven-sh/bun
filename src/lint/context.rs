@@ -287,7 +287,7 @@ pub struct Report<'a> {
     data: Data<'a>,
     /// A text is made of `data`.
     reads_data: bool,
-    /// [`Report::hint`]
+    /// Whether hints are shown. See [`Report::hint`].
     reads_hints: bool,
     diagnostic: Option<Diagnostic>,
 }
@@ -438,8 +438,8 @@ impl<'a> Report<'a> {
         }
     }
 
-    /// Bun's own sentence under a message of ESLint that does not tell what is wrong and what to do. It is shown where
-    /// [`Report::help`] is, in its place, and not with a configuration of oxlint. The rule has [`Meta::hints`]. Empty: none.
+    /// Adds Bun's own sentence under an ESLint message that doesn't say what's wrong or what to do. It replaces
+    /// [`Report::help`] and is never shown with an oxlint config. The rule must set [`Meta::hints`]. Empty means no hint.
     pub fn hint(mut self, text: &'static str) -> Self {
         if self.reads_hints
             && !text.is_empty()
@@ -450,7 +450,7 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// The same for a text that has to be made. `text` is called at once, and only if the hint is read.
+    /// Like [`Report::hint`], for text that has to be built. `text` runs right away, and only if hints are shown.
     pub fn hint_with(mut self, text: impl FnOnce() -> Option<String>) -> Self {
         if self.reads_hints
             && let Some(text) = text()

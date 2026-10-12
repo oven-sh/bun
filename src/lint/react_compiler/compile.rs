@@ -35,8 +35,8 @@ pub(crate) struct Compiler<'a> {
     arena: bun_alloc::Arena,
 }
 
-/// oxlint's `react_compiler_plugin_options`, the plugin's `COMPILER_OPTIONS`. `stands_alone`: the plugin is not to be followed
-/// where that makes a rule useless.
+/// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `stands_alone` we don't follow the plugin
+/// where that would make a rule useless.
 fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
@@ -66,7 +66,7 @@ fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
         validate_hooks_usage: true,
         validate_no_derived_computations_in_effects: true,
         validate_exhaustive_memoization_dependencies: true,
-        // The plugin has it behind a flag that is off, so that its `exhaustive-effect-dependencies` never reports.
+        // The plugin keeps this behind a flag that's off, so its `exhaustive-effect-dependencies` never reports.
         validate_exhaustive_effect_dependencies: match is_oxlint || stands_alone {
             true => ExhaustiveEffectDepsMode::All,
             false => ExhaustiveEffectDepsMode::Off,

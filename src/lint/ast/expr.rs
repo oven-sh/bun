@@ -1678,7 +1678,7 @@ impl<'a> Jsx<'a> {
     }
 }
 
-/// [`Expr::jsx_text_value`] of the text `written`.
+/// [`Expr::jsx_text_value`] for the source text `written`.
 pub(crate) fn jsx_text_value_of(written: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings;
     if !is_espree || !strings::contains(written, b"\r\n") {

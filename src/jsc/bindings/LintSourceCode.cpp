@@ -1122,7 +1122,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintMarkVariableAsUsed, __attribute__
 
 namespace {
 
-// `Object.defineProperty(object, "loc", { value, writable: true, enumerable: true, configurable: true })`
+// `Object.defineProperty(object, "loc", { value, writable: true, enumerable: true, configurable: true })`. What oxlint's getter
+// defines is only writable.
 void defineLoc(JSGlobalObject* globalObject, LintHost* host, JSValue target, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -1134,39 +1135,60 @@ void defineLoc(JSGlobalObject* globalObject, LintHost* host, JSValue target, JSV
     JSObject* object = asObject(target);
     const Identifier& name = host->sourceCode.loc.name();
     Structure* structure = object->structure();
+    unsigned attributes = host->isOxlint() && host->nodes.isExact ? PropertyAttribute::DontEnum | PropertyAttribute::DontDelete : 0;
     // A node or a token that hasn't got one.
     if (object->type() == FinalObjectType && structure->isStructureExtensible() && structure->get(vm, name) == invalidOffset) [[likely]] {
-        object->putDirect(vm, name, value);
+        object->putDirect(vm, name, value, attributes);
         return;
     }
     scope.release();
-    object->methodTable()->defineOwnProperty(object, globalObject, name, PropertyDescriptor(value, 0), true);
+    object->methodTable()->defineOwnProperty(object, globalObject, name, PropertyDescriptor(value, attributes), true);
 }
 
-// What the getter of `loc` does. It's computed when it's asked for. From then on it's an own property, as a parser makes it.
-JSValue computeLoc(JSGlobalObject* globalObject, LintHost* host, JSValue nodeOrToken)
+// From its `range`, and the lines of the current file.
+JSObject* createLocOf(JSGlobalObject* globalObject, LintHost* host, JSValue nodeOrToken)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue range = host->sourceCode.range.get(globalObject, host, nodeOrToken);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, nullptr);
     std::array<double, 2> indices;
     if (int32_t start, end; getInt32Pair(range, start, end)) [[likely]]
         indices = { static_cast<double>(start), static_cast<double>(end) };
     else {
         for (unsigned i = 0; i < 2; ++i) {
             JSValue index = lintGetIndex(globalObject, range, i);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, nullptr);
             indices[i] = index.toNumber(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
     auto kind = host->isOxlint() ? LintLocShape::Oxlint : host->isEspree() ? LintLocShape::EspreeToken
                                                                            : LintLocShape::TypeScript;
-    JSObject* loc = lintCreateLoc(vm, host, kind, indices[0], indices[1]);
+    return lintCreateLoc(vm, host, kind, indices[0], indices[1]);
+}
+
+// What the getter of `loc` does. It's computed when it's asked for. From then on it's an own property, as a parser makes it.
+JSValue computeLoc(JSGlobalObject* globalObject, LintHost* host, JSValue nodeOrToken)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSObject* loc = createLocOf(globalObject, host, nodeOrToken);
+    RETURN_IF_EXCEPTION(scope, {});
     defineLoc(globalObject, host, nodeOrToken, loc);
     RETURN_IF_EXCEPTION(scope, {});
     return loc;
+}
+
+// What's in `loc` of a node of ESLint until it's read. To a plugin it's a plain property all along.
+JSC_DEFINE_CUSTOM_GETTER(lintLazyLocOfNode, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    JSObject* loc = createLocOf(globalObject, host, JSValue::decode(thisValue));
+    RETURN_IF_EXCEPTION(scope, {});
+    lintReplaceCustomValue(vm, host, asObject(JSValue::decode(thisValue)), name, loc);
+    return JSValue::encode(loc);
 }
 
 } // namespace
@@ -1409,9 +1431,8 @@ __attribute__((minsize)) void LintSourceCodeState::finishCreation(VM& vm, JSGlob
     servicesStructure.set(vm, host, LintHost::createShape(vm, globalObject, globalObject->objectPrototype(), std::to_array<ASCIILiteral>({ "emitDecoratorMetadata"_s, "experimentalDecorators"_s, "isolatedDeclarations"_s, "program"_s, "esTreeNodeToTSNodeMap"_s, "tsNodeToESTreeNodeMap"_s })));
 }
 
-void LintSourceCodeState::setTree(VM& vm, LintHost* host, JSArrayBuffer* buffer, JSArray* nodesOfFile, std::span<const uint32_t> startsOfNodes, std::span<const uint32_t> endsOfNodes, std::span<const uint32_t> parentsOfNodes)
+void LintSourceCodeState::setTree(VM& vm, LintHost* host, JSArray* nodesOfFile, std::span<const uint32_t> startsOfNodes, std::span<const uint32_t> endsOfNodes, std::span<const uint32_t> parentsOfNodes)
 {
-    treeBuffer.setMayBeNull(vm, host, buffer);
     nodes.set(vm, host, nodesOfFile);
     starts = startsOfNodes;
     ends = endsOfNodes;
@@ -1427,7 +1448,6 @@ void LintSourceCodeState::endFile()
     inlineConfigNodes.clear();
     disableDirectives.clear();
     configComments = {};
-    treeBuffer.clear();
     nodes.clear();
     starts = {};
     ends = {};
@@ -1441,6 +1461,7 @@ void addLintSourceCodeFunctions(JSGlobalObject* globalObject, JSObject* native)
     native->putDirect(vm, Identifier::fromString(vm, "sourceCode"_s), JSFunction::create(vm, globalObject, 2, "sourceCode"_s, jsLintSourceCode, ImplementationVisibility::Public));
     LintHost* host = LintHost::from(globalObject);
     host->sourceCode.locGetter.set(vm, host, JSFunction::create(vm, globalObject, 0, "get loc"_s, jsLintLocGetter, ImplementationVisibility::Public));
+    host->sourceCode.lazyLocOfNode.set(vm, host, CustomGetterSetter::create(vm, lintLazyLocOfNode, nullptr));
     native->putDirect(vm, Identifier::fromString(vm, "locGetter"_s), host->sourceCode.locGetter.get());
     native->putDirect(vm, Identifier::fromString(vm, "locSetter"_s), JSFunction::create(vm, globalObject, 1, "set loc"_s, jsLintLocSetter, ImplementationVisibility::Public));
 }

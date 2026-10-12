@@ -256,7 +256,7 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
     out
 }
 
-/// `SyntaxError: Unclosed string (3:6)`, of a file that is not a script.
+/// `SyntaxError: Unclosed string (3:6)`, for code that isn't JavaScript or TypeScript.
 #[cold]
 fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Vec<u8> {
     syntax_error_in_words(text, message.text().as_bytes(), offset)
@@ -808,7 +808,7 @@ enum Done {
     Unchanged,
     /// It is not formatted. With `--write`, it was not. And how long that took to find out.
     Different(Duration),
-    /// It is not formatted, and not written: [`git::Files::is_partly_staged`].
+    /// Skipped: neither formatted nor written. See [`git::Files::is_partly_staged`].
     PartlyStaged,
     /// It has classes of Tailwind CSS whose order is not known yet.
     PutAside,
@@ -825,7 +825,7 @@ struct Run<'r> {
     began: Instant,
     /// `--doctor`
     modules: Option<&'r Modules>,
-    /// [`Configs::is_native`], once that is known: the words are Bun's.
+    /// [`Configs::is_native`], once that's known. If true, messages use Bun's own wording.
     is_native: bool,
 }
 
@@ -909,7 +909,8 @@ impl Run<'_> {
         self.log(text.as_bytes());
     }
 
-    /// What `--check` says at the end of a run in which so many files were not formatted, were, and could not be.
+    /// Prints the `--check` summary. The counts are files that need formatting, files that are already formatted, and
+    /// files that couldn't be checked.
     fn sum_up_check(&mut self, [different, unchanged, failed]: [usize; 3]) {
         let (colors, level) = (self.colors(), self.options.log_level);
         let out = &mut self.out.stderr;
@@ -933,7 +934,7 @@ impl Run<'_> {
         if failed > 0 && level >= LogLevel::Error {
             let _ = writeln!(out, "Could not check {failed} {}.", files(failed));
         }
-        // Why there is none, or not all, has been said.
+        // If not every file is formatted, the reason has already been printed.
         if different + failed > 0 || self.out.exit_code != 0 || level < LogLevel::Log {
             return;
         }
@@ -1370,9 +1371,9 @@ impl Run<'_> {
         // The largest first, so that no thread begins it when the others are nearly done.
         sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
         let started = Instant::now();
-        // Before any other thread runs: this starts JavaScriptCore, and so would the first pattern of a configuration that one
-        // of them compiles. The thread that starts it is its main thread.
-        // Its threads have the stack for what walks a tree that is as deep as a parser lets it be.
+        // This has to come before any other thread runs. It starts JavaScriptCore, which the first config pattern compiled
+        // on another thread would otherwise do, and the thread that starts JavaScriptCore becomes its main thread.
+        // The pool's threads have enough stack to walk a tree as deep as a parser allows.
         bun_sema_driver::use_a_pool_of_their_own("Bun Format");
         let bridge = (!handed_over.is_empty()).then(|| {
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
@@ -1549,7 +1550,7 @@ impl Run<'_> {
                         // oxfmt does not name the files that it writes.
                         (true, false) if !options.list_different => {}
                         (false, true) if !self.is_native => self.warn(&shown),
-                        // It is what the run is asked for.
+                        // The list of files is what `--check` was asked for, so it goes to stdout.
                         (false, true) if options.log_level >= LogLevel::Warn => {
                             self.out.stdout.extend_from_slice(&shown);
                             self.out.stdout.push(b'\n');
@@ -1774,7 +1775,7 @@ impl Run<'_> {
         if let Some(only) = (options.only.as_ref()).filter(|_| options.stdin_filepath.is_some()) {
             return self.fail(&only.refusal_of_stdin("--stdin-filepath"));
         }
-        // Both say it before they look at the files, the patterns or the configuration.
+        // Prettier and oxfmt both report this before they look at files, patterns or config.
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         if let Some(refusal) = options.refusal_of_modes(is_oxfmt) {
             let mut out = self.fail(&refusal);

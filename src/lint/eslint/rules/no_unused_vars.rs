@@ -48,7 +48,7 @@ const REMOVE_VAR: Message = Message::new("removeVar", "Remove unused variable '{
 
 /// One of the `..IgnorePattern` options.
 pub struct Pattern {
-    /// `None`: `^_`, the usual one, and the default without a configuration file. JavaScriptCore is not started for it.
+    /// `None` means `^_`, the most common pattern and the default with no config file. It's matched without JavaScriptCore.
     regex: Option<Regex>,
     /// `String(regex)`
     text: String,
@@ -901,8 +901,8 @@ impl NoUnusedVars {
         }
     }
 
-    /// The `additional` of `getDefinedMessageData` and `getAssignedMessageData`. Without a configuration file [the hint](Self::hint)
-    /// says it of `^_`, which is the default there.
+    /// `additional` in ESLint's `getDefinedMessageData` and `getAssignedMessageData`. Empty for `^_` when there's no config
+    /// file, because it's the default there and [the hint](Self::hint) mentions it.
     pub fn unused_message_data(&self, kind: VariableType, file: &File) -> String {
         match self.description(kind) {
             (_, Some(pattern)) if file.language().stands_alone && pattern.source() == "^_" => String::new(),
@@ -1090,10 +1090,10 @@ impl NoUnusedVars {
         }
     }
 
-    /// For a variable that is unused. `def`: its first definition.
+    /// The hint for an unused variable. `def` is its first definition.
     pub fn hint(&self, def: Declaration, kind: VariableType) -> &'static str {
         match def {
-            // What is thrown there should have it as its cause.
+            // If the handler throws, the caught error should be the `cause`, so don't suggest removing the parameter.
             Declaration::Var(pat) if def.is_catch_parameter() && matches!(pat.parent(), Node::VarDecl(_)) => {
                 let throws = matches!(pat.parent().parent(), Node::Stmt(it)
                     if matches!(it.kind(), StmtKind::Try { handler: Some(handler), .. }

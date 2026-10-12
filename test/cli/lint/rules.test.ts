@@ -1,4 +1,5 @@
-// What rules do that the recorded cases of their own test suites cannot show: it takes a project, or the command line.
+// Tests for rule behavior that the recorded cases from the rules' own test suites can't cover, because it takes a
+// project or the command line.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
@@ -7,7 +8,7 @@ afterAll(endChildren);
 
 const env = { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, GITHUB_ACTIONS: undefined };
 
-/** `line:column rule message` of each report of a rule whose name starts with `prefix`, file by file. */
+/** Returns `line:column rule message` for each report from a rule whose name starts with `prefix`, file by file. */
 async function lint(files: Record<string, string>, prefix: string, args: string[] = ["."]) {
   using dir = tempDir("bun-lint-rules", files);
   await using proc = spawn({
@@ -27,7 +28,7 @@ async function lint(files: Record<string, string>, prefix: string, args: string[
     .map(it => `${it.line}:${it.column} ${it.ruleId} ${it.message}`);
 }
 
-describe.concurrent("a rule that only uses types where there are any gets them", () => {
+describe.concurrent("rules that can use types but don't need them get them when types are on", () => {
   const eslintrc = (rules: object) =>
     JSON.stringify({
       root: true,
@@ -37,7 +38,7 @@ describe.concurrent("a rule that only uses types where there are any gets them",
       rules,
     });
 
-  test("`types` of naming-convention", async () => {
+  test("naming-convention's `types` option", async () => {
     const options = { selector: "variable", types: ["boolean"], format: ["PascalCase"], prefix: ["is", "has"] };
     const reports = await lint(
       {
@@ -53,7 +54,7 @@ describe.concurrent("a rule that only uses types where there are any gets them",
     ]);
   });
 
-  test("`emitDecoratorMetadata` of the tsconfig.json for consistent-type-imports", async () => {
+  test("consistent-type-imports reads `emitDecoratorMetadata` from tsconfig.json", async () => {
     const files = (compilerOptions: object) => ({
       ".eslintrc.json": eslintrc({ "@typescript-eslint/consistent-type-imports": "error" }),
       "tsconfig.json": JSON.stringify({ compilerOptions, include: ["*.ts"] }),
@@ -69,7 +70,7 @@ describe.concurrent("a rule that only uses types where there are any gets them",
 });
 
 test.concurrent(
-  "consistent-type-imports leaves a file with a decorator alone where nothing tells about the metadata",
+  "without types, consistent-type-imports skips files with decorators, because it can't tell if they emit metadata",
   async () => {
     const files = {
       "bunfig.toml": `[lint.rules]\n"@typescript-eslint/consistent-type-imports" = "error"\n`,
@@ -84,7 +85,7 @@ test.concurrent(
   },
 );
 
-test.concurrent("`>` and `}` in the text of JSX are refused in the words of espree", async () => {
+test.concurrent("`>` and `}` in JSX text are parse errors, worded like espree's", async () => {
   const config = `export default [{ files: ["*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
   using dir = tempDir("bun-lint-rules", {
     "eslint.config.mjs": config,
@@ -104,7 +105,7 @@ test.concurrent("`>` and `}` in the text of JSX are refused in the words of espr
 });
 
 test.concurrent(
-  "react/jsx-props-no-spread-multi has a fix where eslint-plugin-react is not to be followed",
+  "react/jsx-props-no-spread-multi has a fix without a config file, where it doesn't have to match eslint-plugin-react",
   async () => {
     const code = `export const a = props => <button {...props} type="submit" {...props} {...props} />;\n`;
     using dir = tempDir("bun-lint-rules", {
@@ -120,13 +121,13 @@ test.concurrent(
   },
 );
 
-describe.concurrent("the rules of the React Compiler where eslint-plugin-react-hooks is not to be followed", () => {
+describe.concurrent("React Compiler rules only match eslint-plugin-react-hooks with an ESLint config", () => {
   const effect = `import { useEffect } from "react";\nexport function Room({ roomId }) {\n  useEffect(() => {\n    connect(roomId);\n  }, []);\n  return <i />;\n}\n`;
   const calls = `export function Profile({ user }) {\n  const id = [BigInt(user.id), Symbol("a"), Avatar(user)];\n  return <i>{id}</i>;\n}\n`;
   const names = ["exhaustive-effect-dependencies", "capitalized-calls"];
   const briefly = (reports: string[]) => reports.map(it => it.split(" ").slice(0, 2).join(" "));
 
-  test("without a configuration file", async () => {
+  test("without a config file", async () => {
     const bunfig = `[lint.rules]\n${names.map(name => `"react-hooks/${name}" = "error"\n`).join("")}`;
     const reports = await lint({ "bunfig.toml": bunfig, "a.jsx": effect, "b.jsx": calls }, "react-hooks/");
     expect(briefly(reports)).toEqual([
@@ -135,7 +136,7 @@ describe.concurrent("the rules of the React Compiler where eslint-plugin-react-h
     ]);
   });
 
-  test("with a configuration file of ESLint, as the plugin", async () => {
+  test("with an ESLint config, they report what the plugin reports", async () => {
     const eslintrc = JSON.stringify({
       root: true,
       parserOptions: { ecmaVersion: 2022, sourceType: "module", ecmaFeatures: { jsx: true } },
@@ -154,10 +155,10 @@ describe.concurrent("the rules of the React Compiler where eslint-plugin-react-h
   });
 });
 
-describe.concurrent("the rules of `import` without a configuration file of another tool", () => {
+describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
   const rules = (...names: string[]) => `[lint.rules]\n${names.map(name => `"import/${name}" = "error"\n`).join("")}`;
 
-  test("modules resolve as they do in Bun", async () => {
+  test("modules resolve the way Bun resolves them", async () => {
     const reports = await lint(
       {
         "bunfig.toml": rules("no-unresolved"),
@@ -189,7 +190,7 @@ describe.concurrent("the rules of `import` without a configuration file of anoth
     ]);
   });
 
-  test("the exports of TypeScript and JSX files are read", async () => {
+  test("exports are read from TypeScript and JSX files", async () => {
     const reports = await lint(
       {
         "bunfig.toml": rules("default", "named", "namespace", "export"),
@@ -227,7 +228,7 @@ describe.concurrent("the rules of `import` without a configuration file of anoth
     ]);
   });
 
-  test("`ts` in the options of import/extensions", async () => {
+  test("import/extensions accepts `ts` in its options", async () => {
     const reports = await lint(
       {
         "bunfig.toml": `[lint.rules]\n"import/extensions" = ["error", "ignorePackages", { ts = "never" }]\n`,
@@ -239,7 +240,7 @@ describe.concurrent("the rules of `import` without a configuration file of anoth
     expect(reports).toEqual([`2:8 import/extensions Unexpected use of file extension "ts" for "./user.ts"`]);
   });
 
-  test("[lint.settings] replaces what is built in", async () => {
+  test("[lint.settings] replaces the built-in settings", async () => {
     const reports = await lint(
       {
         "bunfig.toml": `${rules("no-unresolved")}[lint.settings]\n"import/resolver" = "node"\n`,

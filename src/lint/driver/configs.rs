@@ -1,11 +1,10 @@
-//! Finds and reads the configuration files: ESLint's `ConfigLoader`.
+//! Finds and loads config files. This is ESLint's `ConfigLoader`.
 //!
-//! The configuration of a file is the nearest one: the first directory, from that of the file
-//! upwards, that has a file of one of [`NAMES`]. If a directory has several, the first of the list
-//! counts. Configurations are not merged.
+//! A file uses the closest config: walk up from the file's directory and stop at the first directory that has a file
+//! named in [`NAMES`]. If a directory has several, the one that comes first in [`NAMES`] wins. Configs are never merged.
 //!
-//! The files of ESLint 8 ([`eslintrc::NAMES`]) count where none of these does, in no directory further up either: neither ESLint
-//! nor oxlint reads them beside a file of its own. They are merged with those above them.
+//! ESLint 8's files ([`eslintrc::NAMES`]) are only used if no directory on the way up has a file from [`NAMES`], because
+//! neither ESLint nor oxlint reads them next to a config of its own. These are merged with the ones in parent directories.
 //!
 //! A tool never reads another tool's config files. The config that applies to the working directory picks the tool, and only
 //! that tool's files count further down, because templates, fixtures and examples contain all sorts. If both an ESLint and an
@@ -35,7 +34,8 @@ use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
-/// The `package.json` of the package that `specifier` names, as it is installed for the files in `directory`. `None` for a path.
+/// The parsed `package.json` of the package that `specifier` names, found in `node_modules` from `directory` up. `None`
+/// if `specifier` is a path.
 pub(crate) fn installed_package(directory: &[u8], specifier: &[u8]) -> Option<Json> {
     if specifier.starts_with(b".") || paths::is_absolute(specifier) {
         return None;
@@ -52,7 +52,7 @@ pub(crate) fn installed_package(directory: &[u8], specifier: &[u8]) -> Option<Js
     bun_lint::json::parse(&json)
 }
 
-/// Its version.
+/// The installed version of that package.
 fn installed_version(directory: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
     let package = installed_package(directory, specifier)?;
     Some(package.get(b"version")?.as_str()?.to_vec())
@@ -92,9 +92,9 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
     (b"oxlint.config.mts", Flavor::Oxlint, Syntax::Program),
 ];
 
-/// What is linted, and how, if there is no configuration file. `$severityByKind`: see `Reader::grade_by_kind`. `$forReact`: see
-/// `ResolvedConfig::outside_of_react`. `$withoutWarnings`: see `Reader::without_warnings`.
-/// `UNUSED_ON_PURPOSE`: see there.
+/// The config used when there's no config file: which files are linted, and with which rules. For `$severityByKind` see
+/// `Reader::grade_by_kind`, for `$forReact` see `ResolvedConfig::outside_of_react`, for `$withoutWarnings` see
+/// `Reader::without_warnings`. The word `UNUSED_ON_PURPOSE` is replaced with [`UNUSED_ON_PURPOSE`].
 const BUILT_IN: &[u8] = br#"[
     { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
@@ -157,13 +157,13 @@ const BUILT_IN: &[u8] = br#"[
     }
 ]"#;
 
-/// The options of the two `no-unused-vars` in [`BUILT_IN`]: a name that starts with `_` says that it is not used.
+/// Options for both `no-unused-vars` rules in [`BUILT_IN`]. A name that starts with `_` is unused on purpose.
 const UNUSED_ON_PURPOSE: &[u8] = br#"{
     "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_",
     "destructuredArrayIgnorePattern": "^_", "ignoreRestSiblings": true
 }"#;
 
-/// [`BUILT_IN`]. `with_types`: with the rules that need types.
+/// Parses [`BUILT_IN`]. `with_types` also turns on the rules that need types.
 fn built_in_json(with_types: bool) -> Json {
     let preset: &[u8] = match with_types {
         true => b"recommended-type-checked",
@@ -174,7 +174,7 @@ fn built_in_json(with_types: bool) -> Json {
     bun_lint::json::parse(&text).unwrap_or(Json::Null)
 }
 
-/// [`BUILT_IN`] alone: what is on where nobody has configured anything.
+/// [`BUILT_IN`] on its own: the rules that are on when nothing is configured.
 pub(crate) fn defaults(registry: &Registry) -> Option<Config> {
     Config::without_a_file(registry, b"/", &built_in_json(false)).ok()
 }
@@ -265,7 +265,7 @@ pub(crate) fn depends_on_react(directory: &[u8]) -> Option<bool> {
 pub(crate) struct Loaded {
     pub(crate) config: Config,
     pub(crate) flavor: Flavor,
-    /// The file that it was read from. With ESLint 8: the nearest of them.
+    /// The file it was loaded from. ESLint 8 merges several files, so there it's the closest one.
     pub(crate) file: Option<Vec<u8>>,
     /// Whether the rules that need types run, where that is the same for all files:
     /// `options.typeAware` of an `.oxlintrc.json`. `None`: the configuration of each file says.
@@ -388,7 +388,7 @@ fn plugin_shorthand(name: &[u8]) -> Vec<u8> {
         .to_vec()
 }
 
-/// `[lint.globals]`, and `--global a,b:true`
+/// Globals from `[lint.globals]` and `--global a,b:true`. The flag wins.
 fn globals_of(options: &Options) -> Option<Json> {
     let mut globals = options.globals.clone();
     for name in &options.global {
@@ -402,7 +402,8 @@ fn globals_of(options: &Options) -> Option<Json> {
     (!globals.is_empty()).then_some(Json::Object(globals))
 }
 
-/// `--rule` for ESLint, and before it `-A`, `-W` and `-D` of oxlint with a rule: the options that the rule has stay.
+/// Rule settings from oxlint's `-A`, `-W` and `-D` (when they name a rule), then from ESLint's `--rule`. The oxlint flags
+/// only set a severity, so the rule keeps whatever options it has.
 fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
     let filters = options.filters.iter();
     let filters = filters.filter(|it| !is_category(&it.1));
@@ -414,12 +415,12 @@ fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
     rules
 }
 
-/// What an override is written as.
+/// The config format to write an override in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Shape {
-    /// An object of an `eslint.config.js`.
+    /// An object in an `eslint.config.js`.
     Flat,
-    /// An element of `overrides` in an `.oxlintrc.json`.
+    /// An entry of `overrides` in an `.oxlintrc.json`.
     Oxlint,
     /// The same in an `.eslintrc.json`.
     Legacy,
@@ -732,8 +733,9 @@ impl<'l> Loader<'l> {
         self.by_file.lock().len() > 1
     }
 
-    /// `[[lint.overrides]]`, and after them what the command line says about rules and globals. `base_path`: what patterns are
-    /// relative to unless an override says otherwise.
+    /// Writes `[[lint.overrides]]` as config objects in the given `shape`. The command line's rules and globals go last, as
+    /// one more override that matches every file. `base_path` is what the config resolves patterns against, unless an
+    /// override says otherwise.
     fn overrides(&self, shape: Shape, base_path: &[u8]) -> Vec<Json> {
         let text = |it: &[u8]| Json::String(it.to_vec());
         let write = |it: &Override| {
@@ -912,8 +914,8 @@ impl<'l> Loader<'l> {
         native::split_pairs(self.linter.registry(), objects, types)
     }
 
-    /// ESLint's `calculateConfigArray`. `file_config`: what the configuration file exports. `is_of_eslint`: it is not what is
-    /// built in.
+    /// ESLint's `calculateConfigArray`. `file_config` is what the config file exports. `is_of_eslint` is false if that's
+    /// Bun's built-in config instead.
     fn flat(
         &self,
         base_path: &[u8],
@@ -1130,7 +1132,7 @@ impl<'l> Loader<'l> {
             config,
             flavor: Flavor::BuiltIn,
             file: None,
-            // Without `--type-aware` no rule that needs types is on, but for those that the user turns on.
+            // Without `--type-aware`, the only rules on that need types are the ones the user turned on.
             wants_types: Some(true),
             denies_warnings: false,
             max_warnings: None,
@@ -1282,7 +1284,7 @@ impl<'l> Loader<'l> {
         }))
     }
 
-    /// One line for each plugin that has rules which are configured and do not exist here, with all of them. `file`: where.
+    /// Warns once per plugin, listing every rule of it that `config` sets and Bun doesn't have. `file` is the config file.
     fn warn_about_unknown_rules(&self, config: &Config, file: &[u8]) {
         let mut by_plugin: Vec<(&[u8], Vec<&[u8]>)> = Vec::new();
         for id in config.unknown_rules() {
@@ -1459,7 +1461,7 @@ impl<'l> Loader<'l> {
     /// Prefixes `why`, ESLint's message about an invalid config, with a line that says where the mistake is. That's `file`
     /// (the config file), bunfig.toml or `--rule`.
     pub(crate) fn name_place(&self, file: Option<&[u8]>, why: &[u8]) -> Vec<u8> {
-        // As ESLint 9 says it, and as ESLint 8 does.
+        // ESLint 9's wording first, then ESLint 8's.
         let is_about = |id: &[u8]| {
             let says = |before: &[u8]| strings::contains(why, &[before, id, b"\""].concat());
             says(b"Key \"rules\": Key \"")
@@ -1987,7 +1989,8 @@ impl<'l> Loader<'l> {
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.
     pub(crate) fn wants_types(&self, loaded: &Loaded, config: &ResolvedConfig) -> bool {
-        // Without a configuration file nobody has said. A rule that only uses types where there are any is no reason to check them.
+        // With no config file and no flag, the rules decide. A rule that only uses types when they're available isn't a
+        // reason to type check.
         if loaded.flavor == Flavor::BuiltIn && self.options.type_aware.is_none() {
             return self.options.type_check || config.has_enabled(|it| it.requires_types);
         }

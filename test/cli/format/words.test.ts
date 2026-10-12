@@ -1,4 +1,4 @@
-// What `bun format` says where no configuration of Prettier or oxfmt applies.
+// Tests for what `bun format` prints when there's no Prettier or oxfmt config.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -26,7 +26,7 @@ async function format(files: Record<string, string>, args: string[], more: Recor
 }
 
 describe.concurrent("bun format --check", () => {
-  test("names the files that need formatting, writes nothing and exits with 1", async () => {
+  test("lists the files that need formatting, writes nothing and exits with 1", async () => {
     const files = { "a.js": ugly, "b.js": formatted, "src/c.ts": ugly, "d.json": "{}\n" };
     expect(await format(files, ["--check"])).toEqual({
       stdout: "a.js\nsrc/c.ts\n",
@@ -36,7 +36,7 @@ describe.concurrent("bun format --check", () => {
     });
   });
 
-  test("one file", async () => {
+  test("uses the singular for one file", async () => {
     const files = { "a.js": ugly, "b.js": formatted };
     expect(await format(files, ["--check"])).toEqual({
       stdout: "a.js\n",
@@ -55,7 +55,7 @@ describe.concurrent("bun format --check", () => {
     expect(one).toMatchObject({ stdout: "", stderr: "1 file is formatted.\n", exitCode: 0 });
   });
 
-  test("a file that cannot be read as code is counted apart", async () => {
+  test("files with syntax errors are counted separately", async () => {
     const { stdout, stderr, exitCode } = await format(
       { "a.js": ugly, "b.js": formatted, "broken.js": "const = 1;\n" },
       ["--check"],
@@ -68,7 +68,7 @@ describe.concurrent("bun format --check", () => {
     expect(exitCode).toBe(2);
   });
 
-  test("[format] in bunfig.toml and an .editorconfig change nothing about the words", async () => {
+  test("[format] in bunfig.toml and an .editorconfig don't change the wording", async () => {
     const files = {
       "a.js": "a;\n",
       "b.js": "if (a) {\n    b\n}\n",
@@ -96,7 +96,7 @@ describe.concurrent("bun format --check", () => {
     });
   });
 
-  test("colors change nothing but the colors", async () => {
+  test("colored output has the same text", async () => {
     const files = { "a.js": ugly, "b.js": formatted };
     const [plain, colored] = await Promise.all([
       format(files, ["--check"]),
@@ -112,7 +112,7 @@ describe.concurrent("bun format --check", () => {
     ["prettier in package.json", { "package.json": `{ "prettier": {} }` }, []],
     ["--config", { "mine.json": "{}\n" }, ["--config", "mine.json"]],
     ["--flavor prettier", {}, ["--flavor", "prettier"]],
-  ])("with %s the words are Prettier's", async (_, configuration, flags) => {
+  ])("with %s the output is worded like Prettier's", async (_, configuration, flags) => {
     const [different, same] = await Promise.all([
       format({ ...configuration, "a.js": ugly, "b.js": ugly }, [...flags, "--check", "a.js", "b.js"]),
       format({ ...configuration, "a.js": formatted }, [...flags, "--check", "a.js"]),
@@ -131,7 +131,7 @@ describe.concurrent("bun format --check", () => {
 });
 
 describe.concurrent("bun format", () => {
-  test("errors and warnings look like Bun's", async () => {
+  test("errors start with Bun's `error:`, or Prettier's `[error]` with a .prettierrc", async () => {
     const [missing, ofPrettier] = await Promise.all([
       format({ "a.js": formatted }, ["nothing.js"]),
       format({ "a.js": formatted, ".prettierrc": "{}\n" }, ["nothing.js"]),
@@ -142,7 +142,7 @@ describe.concurrent("bun format", () => {
     expect(ofPrettier.exitCode).toBe(2);
   });
 
-  test("also what is said before a file is looked at", async () => {
+  test("errors and warnings about flags get the same prefixes", async () => {
     const flags = ["--plugin", "prettier-plugin-x"];
     const [refused, allowed, ofPrettier] = await Promise.all([
       format({ "a.js": formatted }, flags),
@@ -155,7 +155,7 @@ describe.concurrent("bun format", () => {
     expect([refused.exitCode, allowed.exitCode, ofPrettier.exitCode]).toEqual([2, 0, 2]);
   });
 
-  test("names the files that it writes, and counts them", async () => {
+  test("lists the files it writes and counts them", async () => {
     const { stdout, stderr, exitCode, files } = await format({ "a.js": ugly, "b.js": formatted, "c.js": ugly }, []);
     expect(stdout).toBe("a.js\nc.js\n");
     expect(stderr).toBe("Formatted 2 files, 1 unchanged\n");
@@ -163,7 +163,7 @@ describe.concurrent("bun format", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("--check --write does the same", async () => {
+  test("--check --write writes files like a plain run", async () => {
     const { stdout, stderr, exitCode, files } = await format({ "a.js": ugly, "b.js": formatted }, [
       "--check",
       "--write",

@@ -1,4 +1,4 @@
-// The line that `pretty` and `agent` print under a report whose message alone does not tell what is wrong and what to do.
+// Tests for the hint line that `pretty` and `agent` print when a message alone doesn't explain the problem or the fix.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
@@ -12,7 +12,7 @@ async function lint(files: Record<string, string>, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-/** What `pretty` says about `code`: a line for each report, with the rule, the line, and the hint if there is one. */
+/** Lints `code` with `-f pretty`. Returns one string per report: the rule, the line, and the hint if there is one. */
 async function hints(code: string, file = "a.js", others: Record<string, string> = {}) {
   const { stdout } = await lint({ ...others, [file]: code }, "-f", "pretty");
   const reports = stdout.matchAll(/^(?:error|warn): .*  (\S+)\n +at [^\n]*?:(\d+):\d+\n(?:\nnote: (.*)\n)?/gm);
@@ -20,7 +20,7 @@ async function hints(code: string, file = "a.js", others: Record<string, string>
 }
 
 describe.concurrent("no-useless-assignment", () => {
-  test("every way leads to another assignment", async () => {
+  test("every branch assigns again", async () => {
     const code = `
 export function rename(kind) {
   let name = "honeypot";
@@ -37,13 +37,13 @@ export function rename(kind) {
     ]);
   });
 
-  test("the next statement assigns", async () => {
+  test("the next statement assigns again", async () => {
     expect(await hints(`export function f(a) {\n  let b = a;\n  b = 2;\n  return b;\n}\n`)).toEqual([
       "no-useless-assignment 2: It is overwritten on line 3 before it is read.",
     ]);
   });
 
-  test("three ways and more", async () => {
+  test("three or more branches assign again", async () => {
     const cases = (count: number) => Array.from({ length: count }, (_, i) => `    case ${i}: b = ${i}; break;\n`);
     const code = (count: number) =>
       `export function f(a) {\n  let b = -1;\n  switch (a) {\n${cases(count).join("")}    default: b = 9;\n  }\n  return b;\n}\n`;
@@ -53,14 +53,14 @@ export function rename(kind) {
     ]);
   });
 
-  test("nothing reads the variable again", async () => {
+  test("the variable is never read again", async () => {
     expect(await hints(`export function f(a) {\n  let b = a;\n  use(b);\n  b = 2;\n}\n`, "a.ts")).toEqual([
       "no-useless-assignment 4: Nothing reads it after this.",
     ]);
   });
 });
 
-/** The code, and what is said about it. The code uses what it declares, so that nothing else is reported. */
+/** Code and its expected reports. The code uses everything it declares, so nothing else gets reported. */
 const cases: [code: string, ...reports: string[]][] = [
   [
     `let a;\nif (a = f()) use(a);`,
@@ -250,7 +250,7 @@ test.concurrent("@typescript-eslint/no-unused-vars", async () => {
   ]);
 });
 
-test.concurrent.each(["a.js", "a.ts"])("no-unused-vars with options of the project, in %s", async file => {
+test.concurrent.each(["a.js", "a.ts"])("no-unused-vars with options from bunfig.toml, in %s", async file => {
   const rule = file === "a.js" ? "no-unused-vars" : "@typescript-eslint/no-unused-vars";
   const bunfig = `[lint.rules]\n"${rule}" = ["warn", { args = "all" }]\n`;
   const code = `const { a, ...others } = Bun;\nconsole.log(others);\nconst _b = 1;\n`;
@@ -260,7 +260,7 @@ test.concurrent.each(["a.js", "a.ts"])("no-unused-vars with options of the proje
   ]);
 });
 
-test.concurrent("the rules of typescript-eslint", async () => {
+test.concurrent("typescript-eslint rules", async () => {
   const code = `
 declare const list: number[];
 list.pop;
@@ -328,7 +328,7 @@ test.concurrent("no-octal", async () => {
   ]);
 });
 
-describe.concurrent("where a hint is shown", () => {
+describe.concurrent("formats that show a hint", () => {
   const files = { "a.js": `export function f(a) {\n  let b = a;\n  b = 2;\n  return b;\n}\n` };
   const hint = "It is overwritten on line 3 before it is read.";
 

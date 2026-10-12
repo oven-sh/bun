@@ -474,7 +474,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       "completions/bun.fish",
       "src/runtime/bake/bun-framework-react/client.tsx",
     ].map(rel => ({ input: resolve(cfg.cwd, rel), name: rel })),
-    // Codegen outputs (browser bundles, the docs of the lint rules), named `codegen/<path in codegenDir>`.
+    // Codegen outputs (browser bundles, lint rule docs), named `codegen/<path in codegenDir>`.
     ...[
       "bake.client.js",
       "bake.error.js",
@@ -499,7 +499,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
   }
 }
 
-/** What `bun lint --rules` and `bun lint --explain` print, in `codegenDir`. */
+/** The text that `bun lint --rules` and `bun lint --explain` print. Written to `codegenDir`. */
 const LINT_DOCS = ["lint-rule-descriptions.txt", "lint-rule-pages.txt"];
 
 function emitLintDocs({ n, cfg, sources, o, dirStamp }: Ctx): void {

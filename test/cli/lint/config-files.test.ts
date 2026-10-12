@@ -3297,7 +3297,7 @@ describe.concurrent("whose configuration files count", () => {
     [".eslintrc.yaml", yaml("no-var"), "no-var"],
     [".eslintrc.yml", yaml("no-var"), "no-var"],
     ["legacy.json", legacy, "no-var"],
-  ])("where there are files of both, --config picks %s, and there is no note", async (name, text, rule) => {
+  ])("with both kinds of config file, --config picks %s and prints no note", async (name, text, rule) => {
     const files = { ...both, [`picked/${name}`]: text };
     const [byFlag, byKey] = await Promise.all([
       lint(files, ["--config", `picked/${name}`, "a.js"]),
@@ -3309,7 +3309,7 @@ describe.concurrent("whose configuration files count", () => {
     }
   });
 
-  test("an eslint.config.js and only a dependency on oxlint: the file counts", async () => {
+  test("an eslint.config.js wins over a dependency on oxlint", async () => {
     const files = {
       "eslint.config.js": both["eslint.config.js"],
       "package.json": JSON.stringify({ devDependencies: { eslint: "*", oxlint: "*" } }),
@@ -3429,7 +3429,7 @@ describe.concurrent("whose configuration files count", () => {
     expect({ problems, stderr, exitCode }).toEqual({ problems: [], stderr: `error: ${why}`, exitCode: 2 });
   });
 
-  test("--disable-nested-config skips config files in subdirectories without a config file", async () => {
+  test("without a root config file, --disable-nested-config skips config files in subdirectories", async () => {
     const files = { "a.js": code, "sub/.oxlintrc.json": oxlintrc({ eqeqeq: "error" }), "sub/b.js": code };
     expect((await lint(files)).problems).toEqual(["a.js:2:13 no-debugger", "sub/b.js:2:7 eqeqeq"]);
     expect((await lint(files, ["--disable-nested-config", "."])).problems).toEqual([
@@ -3757,7 +3757,7 @@ describe.concurrent("the command line of oxlint", () => {
     expect(forEslint.exitCode).toBe(2);
   });
 
-  test("so does a run that uses oxlint because of --config or package.json", async () => {
+  test("a run that uses oxlint because of --config or package.json also exits with 1", async () => {
     const broken = { "broken.json": "{", "a.js": code };
     expect((await lint(broken, ["-c", "broken.json"])).exitCode).toBe(1);
     const files = { "package.json": JSON.stringify({ devDependencies: { oxlint: "*" } }), "a.js": code };
@@ -4013,7 +4013,7 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect((await lint({ ...files, "a.js": "let x = 1;\nx;\n" }, ["--allow-unsupported", "."])).exitCode).toBe(0);
   });
 
-  test("a rule that only a comment turns on and that is not built in: without a config file no package has it", async () => {
+  test("without a config file, a comment that turns on a rule that isn't built in is reported as a problem", async () => {
     const files = { "a.js": "/* eslint promise/not-there: error, jest/nope: error */\nexport {};\n" };
     const { problems, stderr, exitCode } = await lint(files);
     expect(problems).toEqual(["a.js:1:1 jest/nope", "a.js:1:1 promise/not-there"]);

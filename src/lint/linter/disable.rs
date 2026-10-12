@@ -63,7 +63,8 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) rules_to_ignore: &'i [RuleId],
     /// There are more of them, which have no name here.
     pub(crate) has_skipped_rules: bool,
-    /// Without a configuration file: the rules that are off. What names one is not reported: it can be there for another tool.
+    /// Rules that are off, when there's no config file. An unused directive that names one isn't reported, because it may be
+    /// there for another tool.
     pub(crate) off: &'i [RuleId],
 }
 

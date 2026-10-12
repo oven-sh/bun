@@ -407,8 +407,8 @@ impl<'a, 'v> Variable<'a, 'v> {
             .find(|it| !is_identifier_used_between_assigned_and_equal_sign(it, target.identifier))
     }
 
-    /// Goes from the end of the segments of `target` through those where nothing is assigned to the
-    /// variable, and tells whether it is read on the way. `overwritten`: called with each assignment that ends a way.
+    /// Walks forward from the end of `target`'s segments, through segments that don't assign to the variable, and returns
+    /// whether the variable is read along the way. Calls `overwritten` with each assignment that ends a path.
     fn is_read_later(&self, target: &Assignment<'a>, mut overwritten: impl FnMut(&Assignment<'a>)) -> bool {
         let mut seen: FxHashSet<u32> = FxHashSet::default();
         let mut stack: SmallVec<[Segment<'a>; 16]> = target
@@ -433,7 +433,7 @@ impl<'a, 'v> Variable<'a, 'v> {
         false
     }
 
-    /// For an assignment that [`Variable::is_assignment_unused`] is true of: what becomes of the value.
+    /// The hint for an assignment that [`Variable::is_assignment_unused`] flagged. Says what happens to the value.
     fn hint(&self, index: usize, next: u32, file: &File<'a>) -> Option<String> {
         let mut lines: SmallVec<[u32; 4]> = SmallVec::new();
         let mut overwritten = |it: &Assignment<'a>| lines.push(file.line_of(it.identifier.start));

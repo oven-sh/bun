@@ -5,7 +5,6 @@
 #include "LintPropertyCache.h"
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSWeakMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <span>
@@ -20,9 +19,9 @@ struct LintSourceCodeState {
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*, LintHost*);
     void endFile();
 
-    // The nodes of the current file by their number, and where they are. The spans point into `buffer`, or into memory that Rust keeps
-    // until the file is done if `buffer` is null.
-    void setTree(JSC::VM&, LintHost*, JSC::JSArrayBuffer* buffer, JSC::JSArray* nodes, std::span<const uint32_t> starts, std::span<const uint32_t> ends, std::span<const uint32_t> parents);
+    // The nodes of the current file by their number, and where they are. The spans point into memory that Rust keeps until the file is
+    // done.
+    void setTree(JSC::VM&, LintHost*, JSC::JSArray* nodes, std::span<const uint32_t> starts, std::span<const uint32_t> ends, std::span<const uint32_t> parents);
 
     template<typename Visitor>
     void visit(Visitor& visitor)
@@ -32,6 +31,7 @@ struct LintSourceCodeState {
         parent.visit(visitor);
         type.visit(visitor);
         visitor.append(locGetter);
+        visitor.append(lazyLocOfNode);
         visitor.append(scopeCache);
         visitor.append(constructor);
         visitor.append(instance);
@@ -48,7 +48,6 @@ struct LintSourceCodeState {
         visitor.append(lines);
         visitor.append(lineStartIndices);
         visitor.append(parserServices);
-        visitor.append(treeBuffer);
         visitor.append(nodes);
     }
 
@@ -59,6 +58,8 @@ struct LintSourceCodeState {
     JSC::Identifier emitDecoratorMetadata, experimentalDecorators, isolatedDeclarations;
     // The getter of `loc` that nodes and tokens inherit.
     JSC::WriteBarrier<JSC::JSObject> locGetter;
+    // What's in `loc` of a node of ESLint until it's read.
+    JSC::WriteBarrier<JSC::JSCell> lazyLocOfNode;
     // By node: what `getScope` has found.
     JSC::WriteBarrier<JSC::JSWeakMap> scopeCache;
     JSC::WriteBarrier<JSC::JSObject> constructor;
@@ -88,7 +89,6 @@ struct LintSourceCodeState {
         uint32_t comment, label, valueStart, valueEnd, justificationStart, justificationEnd;
     };
     std::span<const ConfigComment> configComments;
-    JSC::WriteBarrier<JSC::JSArrayBuffer> treeBuffer;
     JSC::WriteBarrier<JSC::JSArray> nodes;
     std::span<const uint32_t> starts;
     std::span<const uint32_t> ends;

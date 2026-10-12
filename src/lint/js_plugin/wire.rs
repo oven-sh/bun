@@ -59,7 +59,9 @@ pub(super) mod ask {
     pub(crate) const WANTS_TREE: u32 = 2;
     /// All events of the code path analysis are among the calls, also those that nothing listens for.
     pub(crate) const WANTS_ALL_EVENTS: u32 = 4;
-    /// Which properties the nodes of each type have: see `write_layouts` in `schema.rs`. A realm asks once.
+    /// The tree says which nodes have their properties in the other order: see `alternates` in `layouts.rs`.
+    pub(crate) const WANTS_ALTERNATES: u32 = 8;
+    /// Which properties the nodes of each type have: see `layouts.rs`. A realm asks once.
     pub(crate) const LAYOUTS: u32 = 15;
 }
 

@@ -64,7 +64,7 @@ pub(crate) struct FileResult {
     pub(crate) line_starts: Option<Vec<u32>>,
     /// The text has been changed by fixes: `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
-    /// By how many.
+    /// Number of fixes applied.
     pub(crate) fixes: usize,
     /// What the fixes have made of the text, if that is not `text`: oxlint fixes once, and reports what is left where it was.
     pub(crate) fixed_text: Option<Vec<u8>>,

@@ -20,7 +20,7 @@ async function lint(files: Record<string, string>, args: string[], env: Env = {}
   return { stdout, stderr, exitCode };
 }
 
-/** The same with a terminal as standard output. */
+/** Like `lint`, but stdout is a terminal. */
 async function lintInTerminal(args: string[], env: Env = {}) {
   using dir = tempDir("bun-lint-explain", {});
   let output = "";
@@ -56,7 +56,7 @@ interface Listed {
 
 const listRules = async () => JSON.parse((await lint({}, ["--rules", "-f", "json"])).stdout) as Listed[];
 
-/** `<plugin>/<rule>` of every page. */
+/** Returns every docs page as `<plugin>/<rule>`. */
 const pages = () => [...new Bun.Glob("*/**/*.mdx").scanSync(pagesDir)].map(it => it.replaceAll("\\", "/").slice(0, -4));
 
 function frontmatter(page: string) {
@@ -122,7 +122,7 @@ describe.concurrent("--rules -f json", () => {
     expect([...rules.values()].filter(it => (it.schema === null) !== (it.default_options === null))).toEqual([]);
   });
 
-  test("is the same whatever config the project has", async () => {
+  test("is the same no matter what config the project has", async () => {
     const [alone, eslint, oxlint] = await Promise.all([
       lint({}, ["--rules", "-f", "json"]),
       lint({ "eslint.config.mjs": "export default [];" }, ["--rules", "-f", "json"]),
@@ -132,7 +132,7 @@ describe.concurrent("--rules -f json", () => {
     expect(oxlint.stdout).toBe(alone.stdout);
   });
 
-  test("every rule has one ID, and no name means two rules", async () => {
+  test("no ID or alias refers to more than one rule", async () => {
     const rules = await listRules();
     const names = rules.flatMap(it => [it.id, ...it.aliases]);
     expect(names.filter((name, at) => names.indexOf(name) !== at)).toEqual([]);
@@ -140,7 +140,7 @@ describe.concurrent("--rules -f json", () => {
     expect([...new Set(rules.map(it => it.kind))].sort()).toEqual(["layout", "problem", "suggestion", null].sort());
   });
 
-  test("docs_url is the page of the rule, by the directory of its plugin", async () => {
+  test("docs_url points to the rule's page in its plugin's directory", async () => {
     const rules = await listRules();
     const directories = Object.fromEntries(rules.map(it => [it.scope, it.docs_url.slice(base.length).split("/")[0]]));
     expect(directories).toEqual({
@@ -164,14 +164,14 @@ describe.concurrent("--rules -f json", () => {
     expect(rules.filter(it => it.docs_url !== `${base}${directories[it.scope]}/${it.value}`)).toEqual([]);
   });
 
-  test("description is the description of the page", async () => {
+  test("description matches the docs page's description", async () => {
     const rules = new Map((await listRules()).map(it => [it.docs_url.slice(base.length), it]));
     const written = pages().map(page => ({ page, description: frontmatter(page).description }));
     expect(written.length).toBeGreaterThan(1000);
     expect(written.map(({ page }) => ({ page, description: rules.get(page)?.description }))).toEqual(written);
   });
 
-  test("on_by_default is what --print-config says where nothing is configured", async () => {
+  test("on_by_default matches --print-config in a project without a config", async () => {
     const react = { "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }) };
     const [rules, ...printed] = await Promise.all([
       listRules(),
@@ -197,14 +197,14 @@ describe.concurrent("--rules -f json", () => {
 });
 
 describe.concurrent("--rules", () => {
-  test("into a pipe: a rule a line", async () => {
+  test("prints one rule per line into a pipe", async () => {
     const [{ stdout, stderr, exitCode }, rules] = await Promise.all([lint({}, ["--rules"]), listRules()]);
     expect(stdout).toBe(rules.map(it => `${it.scope}/${it.value}\n`).join(""));
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("in a terminal: by plugin, with the descriptions", async () => {
+  test.skipIf(isWindows)("groups rules by plugin and adds descriptions in a terminal", async () => {
     const [{ output, exitCode }, rules] = await Promise.all([lintInTerminal(["--rules"]), listRules()]);
     const lines = output.split("\n");
     const count = (scope: string) => rules.filter(it => it.scope === scope).length;
@@ -236,7 +236,7 @@ describe.concurrent("--rules", () => {
 });
 
 describe.concurrent("--explain", () => {
-  test("prints the page of the rule", async () => {
+  test("prints the rule's docs page", async () => {
     const { stdout, stderr, exitCode } = await lint({}, ["--explain", "eqeqeq"]);
     const { description } = frontmatter("eslint/eqeqeq");
     expect(stdout.split("\n").slice(0, 7)).toEqual([
@@ -252,17 +252,17 @@ describe.concurrent("--explain", () => {
     expect(stdout).toContain(
       '\nConfigure\n---------\n\nOff by default. To turn it on:\n\nbunfig.toml\n\n+- toml\n| [lint.rules]\n| "eqeqeq" = "error" # or "warn"\n',
     );
-    // The file name of a code block.
+    // A code block's file name goes above it.
     expect(stdout).toContain("\n\nbunfig.toml\n\n+- toml\n| [lint.rules]\n");
     expect(stdout).toEndWith(`\n${base}eslint/eqeqeq\n`);
-    // Neither the frontmatter nor the comments of MDX.
+    // Frontmatter and MDX comments are left out.
     expect(stdout).not.toContain("title:");
     expect(stdout).not.toContain("{/*");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  test("says what the code knows about the rule", async () => {
+  test("summarizes the default severity, fixability, aliases and related rules", async () => {
     const third = async (rule: string) =>
       (await lint({}, ["--explain", rule], { COLUMNS: "200" })).stdout.split("\n\n")[2];
     const rules = ["no-debugger", "prefer-const", "typescript/no-floating-promises", "no-unused-vars", "jest/no-hooks"];
@@ -275,7 +275,7 @@ describe.concurrent("--explain", () => {
     ]);
   });
 
-  test("takes every name of a rule", async () => {
+  test("accepts a rule's ID and all of its aliases", async () => {
     const rules = await listRules();
     const names = ["@typescript-eslint/no-explicit-any", "react-hooks/rules-of-hooks", "@next/next/no-img-element"];
     for (const rule of rules.filter(it => names.includes(it.id))) {
@@ -286,7 +286,7 @@ describe.concurrent("--explain", () => {
     }
   });
 
-  test("takes the name of a rule without its plugin, if only one rule has it", async () => {
+  test("accepts a rule name without its plugin if only one rule has that name", async () => {
     const [short, long, several] = await Promise.all([
       lint({}, ["--explain", "no-floating-promises"]),
       lint({}, ["--explain", "@typescript-eslint/no-floating-promises"]),
@@ -303,7 +303,7 @@ describe.concurrent("--explain", () => {
     });
   });
 
-  test("a rule that does not exist", async () => {
+  test("an unknown rule is an error, with a suggestion", async () => {
     expect(await lint({}, ["--explain", "no-vra"])).toEqual({
       stdout: "",
       stderr: 'error: Unknown rule "no-vra"\n  Did you mean "no-var"?\n',
@@ -314,7 +314,7 @@ describe.concurrent("--explain", () => {
     );
   });
 
-  test("without a rule", async () => {
+  test("fails without a rule name", async () => {
     const { stdout, exitCode } = await lint({}, ["--explain"]);
     expect(stdout).toBe("");
     expect(exitCode).toBe(2);
@@ -327,7 +327,7 @@ describe.concurrent("--explain", () => {
     expect(here.exitCode).toBe(0);
   });
 
-  test("is the command's where package.json has a lint script", async () => {
+  test("works even if package.json has a `lint` script", async () => {
     const files = { "package.json": JSON.stringify({ scripts: { lint: "echo the script" } }) };
     const [one, other, alone] = await Promise.all([
       lint(files, ["--explain", "no-var"]),
@@ -338,7 +338,7 @@ describe.concurrent("--explain", () => {
     expect(other).toEqual(alone);
   });
 
-  test("wraps at the width of the terminal, and has colors where they are on", async () => {
+  test("wraps at the terminal width, and uses colors when they're on", async () => {
     const [narrow, colored] = await Promise.all([
       lint({}, ["--explain", "no-var"], { COLUMNS: "40" }),
       lint({}, ["--explain", "no-var"], { NO_COLOR: undefined, FORCE_COLOR: "1" }),
@@ -349,7 +349,7 @@ describe.concurrent("--explain", () => {
     expect(Bun.stripANSI(colored.stdout)).toContain("no-var");
   });
 
-  test.skipIf(isWindows)("in a terminal the address is a link", async () => {
+  test.skipIf(isWindows)("the URL is a hyperlink in a terminal", async () => {
     const { output, exitCode } = await lintInTerminal(["--explain", "no-var"], { NO_COLOR: undefined });
     expect(output).toContain(`\x1b]8;;${base}eslint/no-var\x1b\\`);
     expect(exitCode).toBe(0);

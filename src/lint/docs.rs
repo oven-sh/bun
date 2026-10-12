@@ -1,9 +1,9 @@
-//! Where the page about a rule is: `docs/lint/rules/<directory>/<name>.mdx`.
+//! Maps a rule to its docs page, `docs/lint/rules/<directory>/<name>.mdx`.
 
 use crate::rule::{Meta, Plugin};
 
 impl Plugin {
-    /// The directory of the pages about its rules. The rules of `react-hooks` are in that of `react`.
+    /// The directory with this plugin's rule pages. `react-hooks` rules share `react`'s directory.
     pub const fn directory_of_docs(self) -> &'static str {
         match self {
             Plugin::Eslint => "eslint",
@@ -29,7 +29,7 @@ impl Plugin {
 }
 
 impl Meta {
-    /// `typescript/no-explicit-any`: the page about the rule, under `docs/lint/rules` and without `.mdx`.
+    /// The rule's page, relative to `docs/lint/rules` and without `.mdx`, like `typescript/no-explicit-any`.
     pub fn page(&self) -> Vec<u8> {
         let directory = self.plugin.directory_of_docs();
         [directory.as_bytes(), b"/", self.name.as_bytes()].concat()

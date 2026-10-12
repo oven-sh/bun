@@ -14,7 +14,7 @@ async function runIn(files: Record<string, string>, ...args: string[]) {
 
 const run = (...args: string[]) => runIn({}, ...args);
 
-/** The flags that a help lists, by their long names, and what it says about each. */
+/** Maps each flag listed in a help text (by its long name) to its description. */
 const listed = (help: string): Record<string, string> =>
   Object.fromEntries([...help.matchAll(/^ {2}(?:-\w,| {3}) --([\w-]+)(?:=<val>)? +(.+)$/gm)].map(it => [it[1], it[2]]));
 
@@ -80,21 +80,21 @@ describe.concurrent.each([
     expect(exitCode).toBe(0);
   });
 
-  test("--help --all has every flag that the command takes", async () => {
+  test("--help --all lists every flag the command accepts", async () => {
     const { stdout, stderr, exitCode } = await run(command, "--help", "--all");
     expect(stdout.match(/^\S.*:$/gm)).toEqual([...headings.map(heading => `${heading}:`), "Examples:"]);
     const params = readFileSync(join(root, source), "utf8").matchAll(/clap::param!\(\s*"(?:-\w, )?(--[^\s"]+)/g);
     const taken = [...params].flatMap(it => it[1].split("/"));
     expect(taken.length).toBeGreaterThan(70);
     const mentioned = new Set(stdout.match(/--[\w-]+/g));
-    // `--no-semi` stands for `--semi` too.
+    // Listing `--no-semi` covers `--semi` too.
     const missing = taken.filter(flag => !mentioned.has(flag) && !mentioned.has(flag.replace("--", "--no-")));
     expect(missing).toEqual([]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  test("--help says about a flag what --help --all says", async () => {
+  test("--help and --help --all describe a flag the same way", async () => {
     const [short, all] = await Promise.all([run(command, "--help"), run(command, "--help", "--all")]);
     expect(listed(all.stdout)).toMatchObject(listed(short.stdout));
   });
@@ -104,7 +104,7 @@ describe.concurrent.each([
     expect(one).toEqual(other);
   });
 
-  test.each(["--help", "-h", "--help-all"])("%s is not for a script of that name in package.json", async flag => {
+  test.each(["--help", "-h", "--help-all"])("%s isn't passed to a package.json script of that name", async flag => {
     const files = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script" } }) };
     const [here, elsewhere] = await Promise.all([runIn(files, command, flag), run(command, flag)]);
     expect(here.stdout).toBe(
@@ -116,7 +116,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     expect(here.exitCode).toBe(0);
   });
 
-  // They ask Bun about itself, and nothing is linted or formatted.
+  // These flags ask about Bun itself. They don't lint or format anything.
   test.each([
     ["--doctor"],
     ["--init"],
@@ -128,7 +128,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     ["--version"],
     ["-v"],
     ["-V"],
-  ])("%s %s is not for a script of that name in package.json", async (...args) => {
+  ])("%s %s isn't passed to a package.json script of that name", async (...args) => {
     const scripts = (name: string) => ({ "package.json": JSON.stringify({ scripts: { [name]: "echo the script" } }) });
     const [here, elsewhere] = await Promise.all([
       runIn(scripts(command), command, ...args),
@@ -141,21 +141,21 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     });
   });
 
-  test("another flag is for the script", async () => {
+  test("other flags are passed to the script", async () => {
     const files = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script" } }) };
     const { stdout, exitCode } = await runIn(files, command, "--threads=1");
     expect(stdout).toBe("the script --threads=1\n");
     expect(exitCode).toBe(0);
   });
 
-  test("-- --help is for the script", async () => {
+  test("-- --help is passed to the script", async () => {
     const files = { "package.json": JSON.stringify({ scripts: { [command]: "echo the script" } }) };
     const { stdout, exitCode } = await runIn(files, command, "--", "--help");
     expect(stdout).toBe("the script --help\n");
     expect(exitCode).toBe(0);
   });
 
-  test("the shell completions have the flags of --help --all", async () => {
+  test("shell completions list the same flags as --help --all", async () => {
     const { stdout } = await run(command, "--help", "--all");
     const flags = Object.entries(listed(stdout))
       .filter(([, description]) => !/^(No effect|Not supported)/.test(description))
@@ -168,13 +168,13 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
     expect({
       bash: [...bash.matchAll(/--([\w-]+)/g)].map(it => it[1]).sort(),
       zsh: [...zsh.matchAll(/^ +'--([\w-]+)\[/gm)].map(it => it[1]).sort(),
-      // It has these two for every command.
+      // bun.fish defines these two once, for every command.
       fish: [...fish, ["", "help"], ["", "version"]].map(it => it[1]).sort(),
     }).toEqual({ bash: flags, zsh: flags, fish: flags });
   });
 });
 
-test("bun format --all is refused without --help", async () => {
+test("bun format --all is rejected without --help", async () => {
   const { stdout, stderr, exitCode } = await run("format", "--all");
   expect(stderr).toContain("error: --all has no effect without --help");
   expect(stdout).toBe("");

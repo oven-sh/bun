@@ -262,7 +262,7 @@ pub(crate) mod valid_title {
         must_match_patterns: MatcherPatterns,
     }
 
-    /// `pattern`: `/pattern/flags` or a pattern. oxlint ignores the flags. For `bun:test` the `i` counts.
+    /// `pattern` is `/pattern/flags` or a bare pattern. oxlint ignores the flags. For `bun:test` the `i` flag works.
     fn compile_matcher_pattern(
         pattern: &Json,
         message: Option<&Json>,

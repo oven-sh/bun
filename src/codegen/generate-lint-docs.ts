@@ -1,9 +1,9 @@
-// Puts the pages about the lint rules, `docs/lint/rules/<plugin>/<rule>.mdx`, into two files for the executable:
+// Packs the lint rule docs, `docs/lint/rules/<plugin>/<rule>.mdx`, into two files that are embedded in the executable:
 //
-// - descriptions: a line for each page, `<plugin>/<rule>\t<the description of its frontmatter>`, for `bun lint --rules`
-// - pages: for each page a NUL, `<plugin>/<rule>`, a newline and its Markdown, for `bun lint --explain <rule>`:
-//   the description, then the text without the frontmatter and the MDX comments, and with the file name of a code
-//   block in a line before it
+// - descriptions: one line per page, `<plugin>/<rule>\t<description from the frontmatter>`. For `bun lint --rules`.
+// - pages: for each page a NUL, `<plugin>/<rule>`, a newline, then its Markdown. For `bun lint --explain <rule>`.
+//   The Markdown is the description, then the page without its frontmatter and MDX comments. A code block's file
+//   name moves to a line above the block.
 //
 // Both are sorted by `<plugin>/<rule>`. `src/lint/driver/explain.rs` reads them.
 //
@@ -18,7 +18,7 @@ if (!root || !descriptionsPath || !pagesPath) {
   process.exit(1);
 }
 
-/** The value of `key` in `frontmatter`: one line, with or without double quotes. */
+/** Returns the value of `key` in `frontmatter`. A value is one line, with or without double quotes. */
 function field(frontmatter: string, key: string): string {
   const value = new RegExp(`^${key}:[ \\t]*(.*?)[ \\t]*$`, "m").exec(frontmatter)?.[1] ?? "";
   if (!value.startsWith('"')) return value;
@@ -30,8 +30,8 @@ function field(frontmatter: string, key: string): string {
 }
 
 /**
- * Without the comments of MDX. What is in a code block is code: `{/* .. *\/}` is a comment of JSX there.
- * The file name after the language of a code block, which a terminal does not show, becomes a paragraph.
+ * Removes MDX comments. Code blocks are left alone, because `{/* .. *\/}` is a JSX comment there.
+ * A terminal doesn't show the file name after a code block's language, so it becomes a paragraph of its own.
  */
 function forTerminal(markdown: string): string {
   const lines: string[] = [];
@@ -61,7 +61,7 @@ function forTerminal(markdown: string): string {
 const names = readdirRecursive(root)
   .filter(path => path.endsWith(".mdx"))
   .map(path => relative(root, path).slice(0, -".mdx".length).split(sep).join("/"))
-  // What is not in the directory of a plugin is about no rule.
+  // Pages outside a plugin's directory aren't about a rule.
   .filter(name => name.includes("/"))
   .sort((a, b) => (a < b ? -1 : 1));
 

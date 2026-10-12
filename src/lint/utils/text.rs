@@ -28,7 +28,7 @@ use bun_core::strings;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
-/// TypeScript's `getSpellingSuggestion`: the one of `candidates` that `name` is most likely meant to be.
+/// TypeScript's `getSpellingSuggestion`. Returns the candidate that `name` is most likely a typo of.
 pub fn spelling_suggestion<'c>(
     name: &[u8],
     candidates: impl Iterator<Item = &'c [u8]>,

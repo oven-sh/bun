@@ -161,7 +161,7 @@ struct Directory {
     /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
     /// alone about what it is nearest to.
     is_hidden: bool,
-    /// [`Loader::is_of_react`] for the parent directory. For the search root, for the directory itself.
+    /// [`Loader::is_of_react`] of the parent directory, or of the directory itself if it's the search root.
     is_of_react: bool,
 }
 
@@ -337,7 +337,7 @@ fn search(
                 return;
             }
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
-            // The listing already tells us whether there's a package.json, so most directories just inherit the answer.
+            // The listing already tells us whether there's a package.json, so most directories inherit the answer.
             let has_package = || entries.iter().any(|it| it.name == b"package.json");
             let decides =
                 !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn && has_package();

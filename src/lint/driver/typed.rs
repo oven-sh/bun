@@ -637,11 +637,11 @@ struct Fixing {
     previous: Option<Vec<u8>>,
     passes: usize,
     is_fixed: bool,
-    /// How many fixes are in `current`.
+    /// Number of fixes applied to get `current`.
     fixes: usize,
     /// Nothing more is fixed: only the messages about `current` are missing.
     is_over: bool,
-    /// The rules whose fixes the last pass has applied, whether the text had changed before it, and by how many fixes.
+    /// The rules whose fixes the last pass applied, then `is_fixed` and `fixes` as they were before that pass.
     last_pass: Option<(Vec<RuleId>, bool, usize)>,
 }
 

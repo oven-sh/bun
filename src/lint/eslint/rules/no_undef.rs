@@ -17,7 +17,7 @@ fn has_typeof_operator(reference: Reference) -> bool {
     )
 }
 
-/// What `bun test` defines in a test file.
+/// Globals that `bun test` defines in test files.
 const OF_BUN_TEST: [&str; 12] = [
     "afterAll",
     "afterEach",

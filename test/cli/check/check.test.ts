@@ -15397,7 +15397,7 @@ export function f<T>(rest: T) {
     expect(exitCode).toBe(0);
   });
 
-  test("--help is not for a `check` script in package.json", async () => {
+  test("--help prints bun check's help even if package.json has a `check` script", async () => {
     using dir = project({ "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }) });
     const { stdout, exitCode } = await check(dir, ["--help"]);
     expect(stdout).toStartWith("Usage: bun check [flags] [...files or directories]");

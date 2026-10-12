@@ -168,9 +168,9 @@ pub(crate) struct Meta<'m> {
     pub(crate) help: Option<WithHelp<'m>>,
     pub(crate) cwd: &'m [u8],
     pub(crate) color: bool,
-    /// The name of a rule leads to its page: the report goes to a terminal, with colors.
+    /// Rule names are hyperlinks to their docs pages. On when the report goes to a terminal with colors.
     pub(crate) links: bool,
-    /// The columns of the terminal that the report goes to. 0: it goes elsewhere.
+    /// Width in columns of the terminal the report goes to. 0 if it doesn't go to a terminal.
     pub(crate) width: usize,
     /// `--color`, `--no-color`
     pub(crate) color_option: Option<bool>,
@@ -189,15 +189,15 @@ pub(crate) struct Meta<'m> {
     pub(crate) run: oxlint::Run,
     /// The configuration is oxlint's, so the run says that it is one of oxlint.
     pub(crate) is_oxlint: bool,
-    /// No configuration file of ESLint or oxlint applies.
+    /// No ESLint or oxlint config applies.
     pub(crate) is_native: bool,
     pub(crate) pool: &'m Pool,
     /// Of Bun.
     pub(crate) version: &'m [u8],
 }
 
-/// `name`, which is what a format calls the rule of `message`, as a link to the page of the rule. `None`: [`Meta::links`] is off, or
-/// there is no page.
+/// Wraps `name`, which is a format's name for the rule behind `message`, in a hyperlink to the rule's docs page. `None` if
+/// [`Meta::links`] is off or the rule has no page.
 fn link(name: &[u8], message: &LintMessage, meta: &Meta) -> Option<Vec<u8>> {
     let url = message
         .rule_id
@@ -207,7 +207,7 @@ fn link(name: &[u8], message: &LintMessage, meta: &Meta) -> Option<Vec<u8>> {
     Some(format!("{}", TerminalHyperlink::new(&url, name, true)).into_bytes())
 }
 
-/// The same, or `name`.
+/// Same as [`link`], but falls back to plain `name`.
 fn linked<'n>(name: &'n [u8], message: &LintMessage, meta: &Meta) -> Cow<'n, [u8]> {
     link(name, message, meta).map_or(Cow::Borrowed(name), Cow::Owned)
 }

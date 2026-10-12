@@ -7,17 +7,18 @@ use bun_core::{UnwrapOrOom, env_var};
 
 use super::check_command::working_directory;
 
-/// What `bun <command>` runs.
+/// The kind of thing `bun <command>` runs.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Runs {
     Command,
-    /// That of the nearest `package.json`, which is where `bun run` looks.
+    /// A script in the nearest `package.json`, which is where `bun run` looks.
     Script,
-    /// A file, what a package installs, or the scripts of other packages.
+    /// A file, an executable that a package installs, or scripts in other packages.
     Other,
 }
 
-/// Whether `arg` asks `bun <command>` about itself or its configuration, so that nothing is checked, linted or formatted.
+/// Whether `arg` only asks `bun <command>` about itself or its config, like `--help`, so nothing is checked, linted or
+/// formatted.
 fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     let name = bun_core::strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
     let of_lint_and_format = matches!(
@@ -34,7 +35,7 @@ fn asks_the_command(command: &[u8], arg: &[u8]) -> bool {
     matches!(name, b"--help" | b"-h" | b"--help-all") || (of_lint_and_format && command != b"check")
 }
 
-/// Whether `bun <command>` runs something of the project, as it did before `command` was one.
+/// Whether `bun <command>` runs something from the project, as it did before `command` became a built-in command.
 #[cold]
 #[inline(never)]
 pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
@@ -43,7 +44,7 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
     !of_command.any(|arg| asks_the_command(command, arg)) && runs(command) != Runs::Command
 }
 
-/// Whatever the arguments of `command` are.
+/// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
 pub(crate) fn runs(command: &[u8]) -> Runs {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::join_abs_string;

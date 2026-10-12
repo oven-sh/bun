@@ -75,12 +75,21 @@ function longPluginName(name) {
   return normalized.startsWith("eslint-plugin-") ? normalized : `eslint-plugin-${normalized}`;
 }
 
+// Converts a `[[lint.overrides]]` pattern to a `Bun.Glob` pattern, like `Pattern::of_bunfig` in src/glob/pattern.rs.
+function bunfigGlob(pattern) {
+  // Leading `!`s negate the whole pattern, so they stay in front. The `!` of `!(a|b)` starts a group instead.
+  const bangs = /^!*/u.exec(pattern)[0].length;
+  const negations = bangs > 0 && pattern[bangs] === "(" ? bangs - 1 : bangs;
+  const rest = pattern.slice(negations);
+  // A pattern without a slash matches the file name in any directory.
+  const anywhere = rest.startsWith("./") ? rest.slice(2) : rest.includes("/") ? rest : `**/${rest}`;
+  return pattern.slice(0, negations) + anywhere;
+}
+
 // Builds one matcher function from the globs of a `[[lint.overrides]]` entry, which are relative to `base`. ESLint calls it with
 // an absolute path. It uses Bun's globs, so these files match the same overrides as the files Bun lints itself.
 function bunfigMatcher(patterns, base) {
-  // A pattern without a slash matches the file name in any directory.
-  const glob = it => (it.startsWith("./") ? it.slice(2) : it.includes("/") ? it : `**/${it}`);
-  const globs = patterns.map(it => new Bun.Glob(glob(it)));
+  const globs = patterns.map(it => new Bun.Glob(bunfigGlob(it)));
   return file => {
     const relative = nodePath.relative(base, file).replaceAll("\\", "/");
     const isInside = relative !== ".." && !relative.startsWith("../") && !nodePath.isAbsolute(relative);

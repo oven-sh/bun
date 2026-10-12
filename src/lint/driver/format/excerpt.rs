@@ -220,8 +220,8 @@ impl<'r> Rule<'r> {
     }
 }
 
-/// The groups of problems with the same rule and message, the largest first. `by_rule`: whatever the message of a rule, and
-/// errors before warnings.
+/// Groups problems that have the same rule and message, largest group first. With `by_rule`, the message is ignored and
+/// groups of errors come before groups of warnings.
 fn grouped<'r>(problems: &[Problem<'r>], by_rule: bool) -> Vec<Vec<Problem<'r>>> {
     let mut index: FxHashMap<(Rule, &[u8]), usize> = FxHashMap::default();
     let mut groups: Vec<Vec<Problem>> = Vec::new();
@@ -262,11 +262,12 @@ fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
     files
 }
 
-/// The columns that are left of a place in sight when the start of its line is not.
+/// How many columns stay visible to the left of the reported place when the start of its line is cut off.
 const LEFT_OF_THE_PLACE: usize = 30;
 
-/// `lines`, and the column of a place in the last of them, which is at `column` there. Both are counted as ESLint counts: from 1,
-/// in UTF-16 code units. Of lines that are wider than `room` columns of a terminal, the part around the place. 0: as wide as it takes.
+/// Fits `lines` into `room` terminal columns. Lines that are too wide are cut down to the part around the reported place,
+/// which is at `column` in the last line. Returns the text and the place's new column. Both columns count like ESLint's:
+/// from 1, in UTF-16 code units. A `room` of 0 means no limit.
 fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
     use strings::visible::width::exclude_ansi_colors::{utf8 as width, utf8_index_at_width};
     let text = without_tabs(lines);
@@ -281,7 +282,7 @@ fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
         before => before - LEFT_OF_THE_PLACE.min(room / 2),
     };
     let (mut cut, mut column) = (Vec::with_capacity(text.len()), column);
-    // What is above the start of a line says nothing about its end.
+    // Once the start of the line is cut off, the lines above it aren't useful context any more. Only show the last one.
     let first = if skipped > 0 { lines.len() - 1 } else { 0 };
     for (i, line) in strings::split(&text, b"\n").enumerate().skip(first) {
         if i > first {
@@ -308,10 +309,10 @@ fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
     (cut, column)
 }
 
-/// The file, the line and the column of a place, and the lines of the file to show: the last is that of the place.
+/// The file, line and column of a place, and the source lines to show. The place is in the last line.
 type Spot<'s> = ((&'s [u8], u32, u32), &'s [&'s [u8]]);
 
-/// `text`, the way Bun prints its own errors.
+/// Prints `text` the way Bun prints its own errors.
 fn write_said(
     out: &mut Vec<u8>,
     meta: &Meta,
@@ -358,7 +359,7 @@ fn write_said(
         };
 }
 
-/// Returns whether there is more below it than its place.
+/// Returns true if it printed notes below the problem, not only its location.
 fn write_pretty_problem<'r>(
     out: &mut Vec<u8>,
     problem: Problem<'r>,
@@ -435,7 +436,7 @@ fn write_pretty_problem<'r>(
     has_notes
 }
 
-/// `12 problems (3 errors, 9 warnings)`, and how many of them `--fix` fixes. Without the end of the last line.
+/// Prints `12 problems (3 errors, 9 warnings)` and how many of them `--fix` can fix. The last line gets no newline.
 fn write_pretty_summary(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let mut counts = Counts::default();
     results.iter().for_each(|it| counts.add(it.counts));

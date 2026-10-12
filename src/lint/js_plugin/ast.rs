@@ -146,7 +146,7 @@ pub(super) struct Numbered<'a> {
     pub(super) twice: Vec<u32>,
 }
 
-const HEADER: usize = 6;
+const HEADER: usize = 8;
 /// In the start of a pair of `strings`: it is in `extra`.
 const IN_EXTRA: u32 = 1 << 31;
 
@@ -521,8 +521,8 @@ pub(super) fn walk<'a, 's>(
 }
 
 impl Writer<'_, '_> {
-    /// Appends the tree.
-    pub(super) fn append(&self, out: &mut Vec<u8>) {
+    /// Appends the tree. `alternates`: see `layouts.rs`.
+    pub(super) fn append(&self, alternates: &[u32], out: &mut Vec<u8>) {
         let tree = &self.tree;
         let header: [u32; HEADER] = [
             tree.types.len() as u32,
@@ -531,6 +531,8 @@ impl Writer<'_, '_> {
             tree.strings.len() as u32,
             tree.numbers.len() as u32,
             tree.extra.len() as u32,
+            alternates.len() as u32,
+            0,
         ];
         wire::words(out, &header);
         for number in &tree.numbers {
@@ -543,6 +545,7 @@ impl Writer<'_, '_> {
             &tree.fields,
             &tree.lists,
             &tree.strings,
+            alternates,
         ] {
             wire::words(out, part);
         }

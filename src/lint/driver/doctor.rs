@@ -1,8 +1,8 @@
-//! `--doctor`: what somebody who comes from ESLint, oxlint, Prettier or oxfmt wants to know before switching. It reads the
-//! configuration and finds the files as a run does. Nothing is linted, formatted or written.
+//! `--doctor` tells someone coming from ESLint, oxlint, Prettier or oxfmt what to expect before they switch. It loads the
+//! config and finds files the way a real run does, but it doesn't lint, format or write anything.
 //!
-//! What runs where is asked of what decides it in a run: the [`ResolvedConfig`] of each file, its [`Route`], the [`Host`] of the
-//! plugins. Which packages a configuration file cannot be read without is seen while it is read: [`watching`].
+//! To say what runs where, it asks the same code that decides in a real run: each file's [`ResolvedConfig`] and
+//! [`Route`], and the plugins' [`Host`]. [`watching`] records which packages a config file needs while it loads.
 
 mod packages;
 
@@ -37,12 +37,12 @@ pub(crate) struct How {
     pub(crate) colors: bool,
 }
 
-/// The files of the modules that were loaded to read the configuration files.
+/// Paths of the modules that were loaded while evaluating the config files.
 #[derive(Default)]
 pub(crate) struct Modules(Guarded<Vec<Vec<u8>>>);
 
 impl Modules {
-    /// The packages that they are of.
+    /// The packages those modules belong to.
     pub(crate) fn packages(&self) -> Vec<Vec<u8>> {
         let modules = self.0.lock();
         let packages = modules.iter().filter_map(|it| package_of_file(it));
@@ -50,7 +50,7 @@ impl Modules {
     }
 }
 
-/// Calls `run` with an [`Environment`] in which what the programs that read configuration files load is noted.
+/// Calls `run` with an [`Environment`] that records every module loaded by the scripts that evaluate config files.
 pub(crate) fn watching<R>(
     environment: &Environment,
     run: impl FnOnce(&Environment, &Modules) -> R,
@@ -75,7 +75,7 @@ pub(crate) fn sorted(mut names: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     names
 }
 
-/// The package that the file at `path` is in. `None`: it is in none.
+/// The package that contains the file at `path`, if any.
 fn package_of_file(path: &[u8]) -> Option<&[u8]> {
     let package = paths::package_of(path);
     (package.len() < path.len()).then_some(package)
@@ -85,7 +85,7 @@ pub(crate) fn texts(all: &[Vec<u8>]) -> Json {
     Json::Array(all.iter().map(|it| text(it)).collect())
 }
 
-/// How many files there are of each kind, by how their names end.
+/// File counts, grouped by extension.
 #[derive(Default)]
 pub(crate) struct Kinds(Vec<(Vec<u8>, usize)>);
 
@@ -94,7 +94,7 @@ impl Kinds {
         self.add_ending(crate::fmt::ending_of(path), 1);
     }
 
-    /// `count` files whose names end in `ending`, which is the whole name of one without a dot.
+    /// Adds `count` files with the extension `ending`. For a file without a dot, `ending` is its whole name.
     pub(crate) fn add_ending(&mut self, ending: &[u8], count: usize) {
         let star: &[u8] = if ending.starts_with(b".") { b"*" } else { b"" };
         let kind = [star, ending].concat();
@@ -108,7 +108,7 @@ impl Kinds {
         self.0.iter().map(|it| it.1).sum()
     }
 
-    /// The most frequent first.
+    /// Most frequent first.
     fn in_order(&self) -> Vec<&(Vec<u8>, usize)> {
         let mut all: Vec<_> = self.0.iter().collect();
         bun_lint::utils::sort::sort_by(&mut all, |a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -144,7 +144,7 @@ pub(crate) fn write_count(out: &mut Vec<u8>, colors: bool, number: usize, what: 
     );
 }
 
-/// Below such a line: names, each with a number behind it.
+/// Goes below a [`write_count`] line. Each row is a name followed by a number.
 pub(crate) fn write_table(out: &mut Vec<u8>, colors: bool, rows: &[(Vec<u8>, usize)]) {
     let width = rows.iter().map(|it| it.0.len()).max().unwrap_or(0);
     for (name, number) in rows {
@@ -161,7 +161,7 @@ pub(crate) fn write_table(out: &mut Vec<u8>, colors: bool, rows: &[(Vec<u8>, usi
     }
 }
 
-/// What a run says beside its results.
+/// The warnings and advice a run prints besides its results.
 pub(crate) fn write_notes(out: &mut Vec<u8>, colors: bool, notes: &[Vec<u8>]) {
     if !notes.is_empty() {
         out.push(b'\n');
@@ -171,16 +171,16 @@ pub(crate) fn write_notes(out: &mut Vec<u8>, colors: bool, notes: &[Vec<u8>]) {
     }
 }
 
-/// Why a rule that is on does not run.
+/// Why a rule that's turned on doesn't run.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Reason {
-    /// It is not built in, and no plugin of the configuration has it.
+    /// It isn't built in, and none of the config's plugins has it.
     NotSupported,
-    /// With a configuration of ESLint 8, which says so in every file.
+    /// Same, but for an ESLint 8 config. ESLint 8 reports the missing definition in every file.
     NotDefined,
-    /// `bun format` does its work.
+    /// `bun format` does its job.
     Formatting,
-    /// Nothing asks for types.
+    /// It needs types, and nothing turned them on.
     NeedsTypes,
 }
 
@@ -194,7 +194,7 @@ impl Reason {
         }
     }
 
-    /// Behind the number of the rules, which is `count`.
+    /// Printed after the number of rules, `count`.
     fn shown(self, count: usize) -> &'static str {
         match (self, count) {
             (Reason::NotSupported, 1) => "is not supported",
@@ -208,25 +208,25 @@ impl Reason {
         }
     }
 
-    /// Whether nothing is lost with the rules, so that a few names will do. `-f json` has them all.
+    /// True if not running these rules loses nothing, so the report only names a few. `-f json` lists them all.
     fn is_harmless(self) -> bool {
         matches!(self, Reason::Formatting | Reason::NeedsTypes)
     }
 }
 
-/// The rules that are on for a file that the run would lint.
+/// Every rule that's on for at least one file the run would lint.
 #[derive(Default)]
 struct Rules {
-    /// As they are reported.
+    /// IDs as they appear in reports.
     native: Vec<Vec<u8>>,
     javascript: Vec<Arc<js_plugin::Rule>>,
     not_run: Vec<(Reason, Vec<u8>)>,
-    /// One of them needs types, and has them.
+    /// At least one rule needs types and gets them.
     has_types: bool,
 }
 
 impl Rules {
-    /// `wants_types`: whether the rules that need types run with `config`.
+    /// `wants_types` says whether rules that need types run under `config`.
     fn add(&mut self, config: &ResolvedConfig, wants_types: bool) {
         for rule in config
             .configured()
@@ -265,7 +265,7 @@ impl Rules {
         self.javascript.dedup_by(|a, b| Arc::ptr_eq(a, b));
     }
 
-    /// How many of those that are built in each plugin has.
+    /// Number of built-in rules per plugin, largest first.
     fn native_by_plugin(&self) -> Vec<(Vec<u8>, usize)> {
         let mut plugins: Vec<(Vec<u8>, usize)> = Vec::new();
         for id in &self.native {
@@ -283,8 +283,8 @@ impl Rules {
     }
 }
 
-/// What a person calls the place that a plugin is from: its package, or else its file, from `cwd`. `location`: of
-/// [`Host::plugins`].
+/// Where a plugin comes from, for display: its package name, or its file path relative to `cwd` if it isn't in a package.
+/// `location` comes from [`Host::plugins`].
 fn source_of(location: &Json, cwd: &[u8]) -> Option<Vec<u8>> {
     let file = |path: &[u8]| {
         let path = paths::from_native(path);
@@ -317,7 +317,7 @@ fn kind_of(flavor: Flavor) -> (&'static [u8], &'static str) {
     }
 }
 
-/// `bun lint --doctor`: the report.
+/// Builds the `bun lint --doctor` report.
 pub(crate) fn lint(
     (loader, options): (&Loader, &Options),
     pool: &Pool,
@@ -337,7 +337,7 @@ pub(crate) fn lint(
     let (mut by_eslint, mut not_linted) = (Kinds::default(), Kinds::default());
     let mut all_loaded: Vec<&Arc<Loaded>> = vec![&own];
     let mut seen = FxHashSet::default();
-    // Files are not linted that the package `eslint` would lint.
+    // Some files are skipped only because the `eslint` package isn't installed.
     let mut lacks_eslint = false;
     for target in &targets {
         let Status::Matched(config) = &target.status else {
@@ -367,7 +367,7 @@ pub(crate) fn lint(
             all_loaded.push(&target.loaded);
         }
     }
-    // Nothing is here yet: what a file would have.
+    // No files yet, so report the rules a new `.js` and `.ts` file would get.
     for name in [&b"a.js"[..], b"a.ts"]
         .iter()
         .filter(|_| targets.is_empty())

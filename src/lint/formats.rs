@@ -70,7 +70,7 @@ pub enum Reason {
 }
 
 impl Reason {
-    /// What follows "the rule ran in JavaScript for 12 files because ".
+    /// Completes the sentence "the rule ran in JavaScript for 12 files because ..".
     pub fn text(self) -> &'static str {
         match self {
             Reason::Version => {

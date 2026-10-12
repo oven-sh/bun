@@ -6,17 +6,17 @@ use bun_core::strings;
 
 pub type Param = clap::Param<clap::Help>;
 
-/// The flags under one heading of `--help --all`.
+/// The flags under one heading in `--help --all`.
 pub struct Group {
     pub title: &'static str,
     pub params: &'static [Param],
 }
 
-/// What `--help` says about the flags of a command.
+/// A command's flags, as `--help` lists them.
 pub struct Help {
     /// `--help --all` shows all of them.
     pub groups: &'static [Group],
-    /// The long names of the flags that `--help` shows, in this order.
+    /// Long names of the flags that plain `--help` shows, in display order.
     pub common: &'static [&'static [u8]],
 }
 

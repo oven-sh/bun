@@ -120,7 +120,7 @@ const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
 /// What else there is at the top of a configuration file of Prettier.
 const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath"];
 
-/// What [`SortSettings`] calls `sortImports` when it comes from a flag or `[format]`.
+/// The name [`SortSettings`] uses for `sortImports` when a flag or `[format]` sets it.
 const SORT_IMPORTS_OF_BUN: &[u8] = b"bun.sortImports";
 
 /// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
@@ -427,9 +427,10 @@ impl Override {
         }
         let name = paths::basename(relative);
         [false, true].into_iter().any(|with_slashes| {
-            // With patterns without slashes, what is excluded is matched against the name too,
-            // whatever it looks like: micromatch's `basename`.
-            // What is the path, letter for letter, matches whatever it means, and before `basename` is looked at.
+            // This is micromatch's `basename` option. For `files` patterns without a slash, `excludeFiles` patterns are
+            // matched against the file name too, whether or not they have a slash themselves.
+            // A pattern that equals the path character for character always matches, whatever it means as a glob.
+            // micromatch checks that before it looks at `basename`.
             let matches = |it: &Pattern| {
                 it.glob.matches(if with_slashes { relative } else { name }) || *it.text == *relative
             };
@@ -1193,7 +1194,8 @@ impl<'c> Configs<'c> {
         *self.lacks_file.get_or_init(has_none)
     }
 
-    /// Whether the run stands in for no other tool: no configuration of Prettier or oxfmt applies where it starts, and no flag asks.
+    /// True if the run isn't imitating another tool: no Prettier or oxfmt config applies to the working directory, and no
+    /// flag asks for one.
     pub(crate) fn is_native(&self) -> bool {
         self.flavor == Flavor::Prettier
             && self.options.is_like_oxfmt.is_none()

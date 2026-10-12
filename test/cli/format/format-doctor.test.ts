@@ -27,7 +27,7 @@ async function doctor(files: Record<string, string>, args: string[] = []) {
   return { stdout, stderr, exitCode, isUntouched };
 }
 
-/** A package that is installed. Nothing loads it. */
+/** Files for an installed package. Nothing loads it. */
 const installed = (name: string) => ({
   [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", main: "index.js" }),
   [`node_modules/${name}/index.js`]: "module.exports = {};",
@@ -82,7 +82,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("-f json has the same as data", async () => {
+  test("-f json prints the same report as JSON", async () => {
     const { stdout, exitCode } = await doctor(prettier, ["-f", "json"]);
     expect(JSON.parse(stdout)).toEqual({
       config: { path: ".prettierrc", kind: "prettier", nested: [], editorconfig: true },
@@ -108,7 +108,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("Prettier and a built-in plugin can go where no file needs them", async () => {
+  test("Prettier and a built-in plugin are removable when no file needs them", async () => {
     const { stdout, exitCode } = await doctor({
       "package.json": dependencies("prettier", "@trivago/prettier-plugin-sort-imports"),
       ".prettierrc.json": JSON.stringify({ plugins: ["@trivago/prettier-plugin-sort-imports"] }),
@@ -126,7 +126,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("a plugin that is not supported, and one that is not installed", async () => {
+  test("lists unsupported plugins and plugins that aren't installed", async () => {
     const project = {
       ...installed("prettier"),
       "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "prettier-plugin-astro"),
@@ -170,7 +170,7 @@ Still needed:   prettier, prettier-plugin-astro (some files go to them)
     expect(exitCode).toBe(0);
   });
 
-  test("a config file that is a program needs what it imports", async () => {
+  test("packages that a JavaScript config file imports are still needed", async () => {
     const { stdout, exitCode } = await doctor({
       "node_modules/prettier-config-shared/package.json": JSON.stringify({
         name: "prettier-config-shared",
@@ -192,7 +192,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("only what is tooling for the formatter by the form of its name can be removed", async () => {
+  test("only packages named like formatter tooling are removable", async () => {
     const names = [
       "prettier",
       "oxfmt",
@@ -224,7 +224,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(exitCode).toBe(0);
   });
 
-  test("what a script, lint-staged or a package that stays uses cannot be removed", async () => {
+  test("a package used by a script, lint-staged or another dependency is still needed", async () => {
     const project = (fields: object) => ({
       "package.json":
         JSON.stringify({ devDependencies: { prettier: "*", "eslint-plugin-prettier": "*" }, ...fields }, null, 2) +
@@ -281,20 +281,20 @@ Run bun format --init to add a [format] section to bunfig.toml
     expect(exitCode).toBe(0);
   });
 
-  test("a config file that cannot be read is an error", async () => {
+  test("an invalid config file is an error", async () => {
     const { stdout, stderr, exitCode } = await doctor({ ".prettierrc.json": "{", "a.js": ugly });
     expect(stdout).toBe("");
     expect(stderr).toContain(".prettierrc.json");
     expect(exitCode).toBe(2);
   });
 
-  test("-f takes json only", async () => {
+  test("-f only accepts json", async () => {
     const { stderr, exitCode } = await doctor({ "a.js": ugly }, ["-f", "yaml"]);
     expect(stderr).toContain(`--format takes json, not "yaml"`);
     expect(exitCode).not.toBe(0);
   });
 
-  test("the format script of package.json does not take its place", async () => {
+  test("runs even if package.json has a `format` script", async () => {
     const { stdout, exitCode } = await doctor({
       "package.json": JSON.stringify({ scripts: { format: "echo the script" } }),
       "a.js": ugly,

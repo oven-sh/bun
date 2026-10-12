@@ -192,7 +192,7 @@ fn has_unknown_resolver(json: &Json) -> bool {
 
 const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
 
-/// The rules about a problem that [warn by default](Reader::grade_by_kind): what they find does nothing, unused or dead, and is not wrong.
+/// `Kind::Problem` rules that [warn by default](Reader::grade_by_kind) anyway. They find unused or useless code, not bugs.
 const ABOUT_WHAT_DOES_NOTHING: [&[u8]; 14] = [
     b"@typescript-eslint/await-thenable",
     b"@typescript-eslint/no-extra-non-null-assertion",
@@ -474,8 +474,8 @@ impl Reader<'_> {
         Ok(settings)
     }
 
-    /// `$severityByKind`, which the defaults of `bun lint` have: of the rules that are on, one about a problem is an error, but for
-    /// [`ABOUT_WHAT_DOES_NOTHING`], any other a warning.
+    /// `$severityByKind`, which `bun lint`'s default config sets. Enabled `Kind::Problem` rules become errors, except those in
+    /// [`ABOUT_WHAT_DOES_NOTHING`]. Every other enabled rule becomes a warning.
     fn grade_by_kind(&self, settings: &mut [RuleSetting]) {
         for setting in settings
             .iter_mut()
@@ -491,8 +491,8 @@ impl Reader<'_> {
         }
     }
 
-    /// `$withoutWarnings`, which the defaults of `bun lint` have for declaration files: turns off what the objects so far make a
-    /// warning.
+    /// `$withoutWarnings`, which `bun lint`'s default config sets for declaration files. Turns off every rule that the config
+    /// objects so far set to warn.
     fn without_warnings(&self) -> Vec<RuleSetting> {
         let so_far = self.objects.iter().flat_map(|it| &it.rules);
         let off = |it: &RuleSetting| RuleSetting {

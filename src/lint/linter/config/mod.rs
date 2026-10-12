@@ -205,7 +205,7 @@ struct ConfigObject {
     parser_location: Option<Json>,
     /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
     changes_linter: bool,
-    /// `$forReact`, which the defaults of `bun lint` have: see [`ResolvedConfig::outside_of_react`].
+    /// `$forReact`, which `bun lint`'s default config sets. See [`ResolvedConfig::outside_of_react`].
     is_for_react: bool,
     /// Of an override of oxlint that has `plugins`: those, and those of the files, as sets. The settings at the start of its
     /// `rules` that yield are what `categories` turn on.

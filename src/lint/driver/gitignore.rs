@@ -1,9 +1,9 @@
-//! `.gitignore` and the files in its format. ESLint does not read them. oxlint does, so they count
-//! where an `.oxlintrc.json` is the configuration, and where there is none. Prettier reads those of
+//! `.gitignore` and other files in its format. ESLint doesn't read them. oxlint does, so they apply
+//! when the config is an `.oxlintrc.json` and when there's no config. Prettier only reads the ones in
 //! the working directory.
 //!
-//! Here is which files there are, and which directory their lines belong to. What a line matches is
-//! said by [`bun_lint::ignore`].
+//! This module finds the files and tracks which directory each file's lines belong to.
+//! [`bun_lint::ignore`] decides what a line matches.
 
 use crate::{fs, paths};
 use bun_core::strings;

@@ -1,4 +1,4 @@
-// What `bun lint` prints where no configuration file of ESLint or oxlint applies, and what is the same with one.
+// Tests for `bun lint` output without an ESLint or oxlint config file, and for the parts that stay the same with one.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { sep } from "node:path";
@@ -48,7 +48,7 @@ const hasTerminal = (() => {
   }
 })();
 
-/** As a person runs it. Both streams are the terminal. */
+/** Runs `bun lint` the way a person does, with stdout and stderr both attached to a terminal. */
 async function inTerminal(files: Files, args: string[] = [], more: Record<string, string | undefined> = {}) {
   using dir = tempDir("bun-lint-output", files);
   const decoder = new TextDecoder();
@@ -78,7 +78,7 @@ const warnsAboutVar = ["--rule", "no-var: warn"];
 const eslint = { "eslint.config.js": `export default [{ rules: { "no-debugger": "error", "no-var": "warn" } }];\n` };
 const oxlint = { ".oxlintrc.json": `{ "rules": { "no-debugger": "error", "no-var": "warn" } }` };
 
-describe.concurrent("without a configuration file", () => {
+describe.concurrent("without a config file", () => {
   test("the default format is pretty, which ends with a summary", async () => {
     const [byDefault, named] = await Promise.all([
       lint({ "a.js": bad }, warnsAboutVar),
@@ -107,13 +107,13 @@ describe.concurrent("without a configuration file", () => {
     expect(named).toEqual(byDefault);
   });
 
-  test("a [lint] section in bunfig.toml changes nothing about that", async () => {
+  test("a [lint] section in bunfig.toml doesn't change the default format", async () => {
     const { stdout, exitCode } = await lint({ "a.js": bad, "bunfig.toml": `[lint.rules]\n"no-var" = "warn"\n` });
     expect(stdout).toEndWith("\n\n2 problems (1 error, 1 warning)\n1 can be fixed with --fix\n");
     expect(exitCode).toBe(1);
   });
 
-  test("the summary counts with the noun, and says nothing about --fix if it fixes nothing", async () => {
+  test("the summary pluralizes its counts, and only mentions --fix if something is fixable", async () => {
     const [one, two] = await Promise.all([
       lint({ "a.js": "debugger;\n" }),
       lint({ "a.js": "var a = 1, b = 2;\nvar c = a + b;\nconsole.log(c);\n" }, warnsAboutVar),
@@ -124,21 +124,21 @@ describe.concurrent("without a configuration file", () => {
     expect(two.exitCode).toBe(0);
   });
 
-  test("nothing is printed on stdout if there is no problem", async () => {
+  test("stdout is empty if there are no problems", async () => {
     const { stdout, stderr, exitCode } = await lint({ "a.js": "console.log(1);\n" });
     expect(stdout).toBe("");
     expect(stderr).toBe("✓ No problems in 1 file\n");
     expect(exitCode).toBe(0);
   });
 
-  test("--quiet: the summary is about what is shown", async () => {
+  test("with --quiet, the summary only counts what's shown", async () => {
     const { stdout, exitCode } = await lint({ "a.js": bad }, [...warnsAboutVar, "--quiet"]);
     expect(stdout).not.toContain("no-var");
     expect(stdout).toEndWith("\n\n1 problem (1 error, 0 warnings)\n");
     expect(exitCode).toBe(1);
   });
 
-  test("above 50 problems identical ones are grouped, and the summary counts them all", async () => {
+  test("above 50 problems, identical ones are grouped and the summary still counts them all", async () => {
     const many = { "a.js": Buffer.alloc(10 * 60, "debugger;\n").toString(), "b.js": bad };
     const [grouped, all] = await Promise.all([lint(many, warnsAboutVar), lint(many, [...warnsAboutVar, "--all"])]);
     expect(grouped.stdout).toBe(
@@ -168,7 +168,7 @@ describe.concurrent("without a configuration file", () => {
     expect(all.stdout).toEndWith("\n\n62 problems (61 errors, 1 warning)\n1 can be fixed with --fix\n");
   });
 
-  test("-f stylish is ESLint's", async () => {
+  test("-f stylish prints ESLint's format", async () => {
     const { stdout, exitCode } = await lint({ "a.js": bad }, [...warnsAboutVar, "-f", "stylish"]);
     expect(stdout).toBe(
       [
@@ -186,7 +186,7 @@ describe.concurrent("without a configuration file", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("an agent gets agent, and GitHub Actions the annotations after the report", async () => {
+  test("an agent gets the agent format, and GitHub Actions gets annotations after the report", async () => {
     const [agent, actions] = await Promise.all([
       lint({ "a.js": "debugger;\n" }, [], { AGENT: "1" }),
       lint({ "a.js": "debugger;\n" }, [], { GITHUB_ACTIONS: "true" }),
@@ -200,8 +200,8 @@ describe.concurrent("without a configuration file", () => {
   });
 });
 
-describe.concurrent("with a configuration file", () => {
-  test("ESLint's: the default format is stylish, and pretty has no summary", async () => {
+describe.concurrent("with a config file", () => {
+  test("ESLint config: the default format is stylish, and pretty has no summary", async () => {
     const [byDefault, stylish, pretty] = await Promise.all([
       lint({ ...eslint, "a.js": bad }),
       lint({ ...eslint, "a.js": bad }, ["-f", "stylish"]),
@@ -212,22 +212,22 @@ describe.concurrent("with a configuration file", () => {
     expect(pretty.stdout).toEndWith("error: Unexpected 'debugger' statement.  no-debugger\n    at a.js:2:1\n\n");
   });
 
-  test("-c counts as one", async () => {
+  test("-c counts as a config file", async () => {
     const { stdout } = await lint({ "my.config.js": eslint["eslint.config.js"], "a.js": bad }, ["-c", "my.config.js"]);
     expect(stdout).toContain("\n✖ 2 problems (1 error, 1 warning)\n");
   });
 
-  test("oxlint's: no summary but its own last line", async () => {
+  test("oxlint config: no summary, only oxlint's own last line", async () => {
     const { stdout } = await lint({ ...oxlint, "a.js": bad });
     expect(stdout).not.toContain("2 problems");
     expect(withoutTime(stdout)).toEndWith("\n\nLinted 1 file\n");
   });
 });
 
-describe.concurrent("the name of a rule leads to its page", () => {
+describe.concurrent("rule names link to their docs pages", () => {
   const files = { "a.js": "debugger;\n" };
   const configs = { none: {}, eslint, oxlint };
-  // The last line has the time that the run took.
+  // Drops the last line, which has the run's duration.
   const lines = (text: string) => text.split("\n").filter(line => !line.includes("Linted "));
 
   test.skipIf(!hasTerminal).each([
@@ -244,18 +244,18 @@ describe.concurrent("the name of a rule leads to its page", () => {
       lint(project, ["-f", format], { FORCE_COLOR: "1" }),
     ]);
     expect(shown.output).toContain(link("eslint/no-debugger", name));
-    // Nothing else is different.
+    // Apart from the links, it matches colored output in a pipe.
     expect(piped.stdout).toContain("\x1b[");
     expect(piped.stdout).not.toContain("\x1b]8");
     expect(lines(withoutLinks(shown.output))).toEqual(lines(piped.stdout + piped.stderr));
   });
 
-  test.skipIf(!hasTerminal)("by the directory of the plugin, not by its prefix", async () => {
+  test.skipIf(!hasTerminal)("the URL uses the plugin's docs directory, not its prefix", async () => {
     const { output } = await inTerminal({ "a.ts": "export const a: any = 1;\n" });
     expect(output).toContain(link("typescript/no-explicit-any", "@typescript-eslint/no-explicit-any"));
   });
 
-  test.skipIf(!hasTerminal)("not without colors, and not in a file", async () => {
+  test.skipIf(!hasTerminal)("no links without colors or in an output file", async () => {
     const [plain, refused, toFile] = await Promise.all([
       inTerminal(files, [], { NO_COLOR: "1" }),
       inTerminal(files, ["--no-color"]),
@@ -266,7 +266,7 @@ describe.concurrent("the name of a rule leads to its page", () => {
     for (const { output } of [plain, refused, toFile]) expect(output).not.toContain("\x1b]8");
   });
 
-  test.each(["pretty", "stylish"])("not in a pipe: %s", async format => {
+  test.each(["pretty", "stylish"])("no links in a pipe: %s", async format => {
     const [plain, colored, asked] = await Promise.all([
       lint(files, ["-f", format]),
       lint(files, ["-f", format], { FORCE_COLOR: "1" }),
@@ -281,11 +281,11 @@ describe.concurrent("the name of a rule leads to its page", () => {
   });
 });
 
-describe.concurrent("--fix says what it has fixed", () => {
+describe.concurrent("--fix prints what it fixed", () => {
   const twice = "var a = 1;\nvar b = 2;\nconsole.log(a, b);\n";
   const noVar = ["--rule", "no-var: error"];
 
-  test("how many problems, in how many files", async () => {
+  test("counts the problems and the files", async () => {
     const [two, one, three] = await Promise.all([
       lint({ "a.js": twice, "b.js": "console.log(1);\n" }, ["--fix", ...noVar]),
       lint({ "a.js": "var a = 1;\nconsole.log(a);\n" }, ["--fix", ...noVar]),
@@ -296,14 +296,14 @@ describe.concurrent("--fix says what it has fixed", () => {
     expect(three.stderr).toBe("Fixed 3 problems in 2 files\n✓ No problems in 2 files\n");
   });
 
-  test("before what is said about the rest", async () => {
+  test("prints it before the summary of what's left", async () => {
     const { stdout, stderr, exitCode } = await lint({ "a.js": "debugger;\n" + twice }, ["--fix", ...noVar]);
     expect(stdout).toEndWith("\n\n1 problem (1 error, 0 warnings)\n");
     expect(stderr).toBe("Fixed 2 problems in 1 file\nLinted 1 file\n");
     expect(exitCode).toBe(1);
   });
 
-  test("what a fix leaves for the next pass counts too", async () => {
+  test("counts problems fixed in later passes too", async () => {
     const { stderr } = await lint({ "a.js": "var a = 1;\nconsole.log(a);\n" }, [
       "--fix",
       ...noVar,
@@ -313,7 +313,7 @@ describe.concurrent("--fix says what it has fixed", () => {
     expect(stderr).toBe("Fixed 2 problems in 1 file\n✓ No problems in 1 file\n");
   });
 
-  test("nothing if nothing is fixed, or nothing is written", async () => {
+  test("prints nothing if nothing was fixed or written", async () => {
     const [clean, unfixable, dry] = await Promise.all([
       lint({ "a.js": "console.log(1);\n" }, ["--fix"]),
       lint({ "a.js": "debugger;\n" }, ["--fix"]),
@@ -324,7 +324,7 @@ describe.concurrent("--fix says what it has fixed", () => {
     expect(dry.stderr).toBe("✓ No problems in 1 file\n");
   });
 
-  test("with a configuration file of ESLint, and of oxlint, whose stdout is as it was", async () => {
+  test("also with an ESLint or oxlint config, and oxlint's stdout stays the same", async () => {
     const [ofEslint, ofOxlint] = await Promise.all([
       lint({ ...eslint, "a.js": twice }, ["--fix"]),
       lint({ ...oxlint, "a.js": twice }, ["--fix"]),
@@ -342,8 +342,8 @@ describe.concurrent("--fix says what it has fixed", () => {
   });
 });
 
-describe.concurrent("what pretty shows of the code", () => {
-  test("the ^ is under the place, whatever is before it", async () => {
+describe.concurrent("code frames in pretty", () => {
+  test("the ^ lines up with the problem, whatever characters come before it", async () => {
     const { stdout } = await lint({
       "a.js": `console.log("日本語", "😀"); debugger;\n`,
       "b.js": "{\n\t\tdebugger;\n}\n",
@@ -372,7 +372,7 @@ describe.concurrent("what pretty shows of the code", () => {
     ]);
   });
 
-  test("a problem of several lines is shown where it starts", async () => {
+  test("a multi-line problem is shown at its first line", async () => {
     const { stdout } = await lint({ "a.js": "function f() {\n  return 1;\n  f(\n    2,\n  );\n}\nf();\n" });
     expect(stdout).toStartWith(
       ["1 | function f() {", "2 |   return 1;", "3 |   f(", "      ^", "warn: Unreachable code.  no-unreachable"].join(
@@ -387,7 +387,7 @@ describe.concurrent("what pretty shows of the code", () => {
     "start.js": `debugger; console.log("${filler}");\n`,
   };
 
-  test.skipIf(!hasTerminal)("of a line that is wider than the terminal, the part around the place", async () => {
+  test.skipIf(!hasTerminal)("a line wider than the terminal is cut to the part around the problem", async () => {
     const { output } = await inTerminal(long, [], { NO_COLOR: "1" });
     expect(output.split("\n\n").slice(0, 2)).toEqual([
       [
@@ -405,13 +405,13 @@ describe.concurrent("what pretty shows of the code", () => {
     ]);
   });
 
-  test("in a pipe nothing is cut", async () => {
+  test("lines aren't cut in a pipe", async () => {
     const { stdout } = await lint(long);
     expect(stdout).toContain(`\n2 | console.log("${filler}"); debugger;\n`);
     expect(stdout).toContain(`\n1 | debugger; console.log("${filler}");\n`);
   });
 
-  test("a warning is yellow, an error red", async () => {
+  test("warnings are yellow and errors are red", async () => {
     const { stdout } = await lint({ "a.js": bad }, warnsAboutVar, { FORCE_COLOR: "1" });
     expect(stdout).toContain("\x1b[33mwarn\x1b[0m");
     expect(stdout).toContain("\x1b[31merror\x1b[0m");
@@ -419,7 +419,7 @@ describe.concurrent("what pretty shows of the code", () => {
     expect(stdout).toContain("\x1b[33m1 warning\x1b[0m");
   });
 
-  test("a count of none has no color", async () => {
+  test("a count of zero has no color", async () => {
     const { stdout } = await lint({ "a.js": "debugger;\n" }, [], { FORCE_COLOR: "1" });
     expect(stdout).toContain("\x1b[31m1 error\x1b[0m");
     expect(stdout).not.toContain("\x1b[33m0 warnings");
@@ -430,7 +430,7 @@ describe.concurrent("what pretty shows of the code", () => {
 describe.concurrent("above 50 problems", () => {
   const names = Array.from({ length: 60 }, (_, i) => `let a${i};`).join("\n") + "\n";
 
-  test("the problems of a rule are one group, and errors come first", async () => {
+  test("each rule's problems form one group, and errors come first", async () => {
     const { stdout, exitCode } = await lint({ "a.js": names, "b.js": "debugger;\n" }, [
       "--rule",
       "no-unused-vars: warn",
@@ -461,7 +461,7 @@ describe.concurrent("above 50 problems", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("with a configuration file, those that say the same are", async () => {
+  test("with a config file, only problems with the same message are grouped", async () => {
     const config = `export default [{ rules: { "no-unused-vars": "warn", "no-debugger": "error" } }];\n`;
     const { stdout } = await lint({ "eslint.config.js": config, "a.js": names, "b.js": "debugger;\n" }, [
       "-f",

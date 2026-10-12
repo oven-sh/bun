@@ -1,12 +1,12 @@
-//! `[lint]` and `[format]` of bunfig.toml. A key is the default of the flag of the same name: `maxWarnings` of
-//! `--max-warnings`, `semi = false` of `--no-semi`. A section becomes the same `Options` as a command line does, by the
-//! same `Options::set`, and the command line is laid over it. So what a key takes is what its flag takes: the kind of
-//! value is read from the table of flags, and a value is refused by what refuses it after the flag.
+//! Reads `[lint]` and `[format]` from bunfig.toml. A key sets the default for the flag with the same name: `maxWarnings`
+//! for `--max-warnings`, `semi = false` for `--no-semi`. A section is turned into the same `Options` as a command line,
+//! through the same `Options::set`, and the command line is applied on top of it. So a key takes exactly what its flag
+//! takes: the value's type comes from the flag table, and the code that rejects a bad value for the flag rejects it here.
 //!
-//! More than a flag can say: the tables and `overrides` of `[lint]`, and in `[format]` the options of what a flag turns on ([`FEATURES`])
-//! and `overrides`.
+//! A few keys can say more than a flag can: the tables and `overrides` in `[lint]`, and in `[format]` both `overrides` and
+//! the options of the features that a flag only turns on ([`FEATURES`]).
 //!
-//! Bun's reader of bunfig.toml finds and parses the file. What it calls with the file is here.
+//! Bun's bunfig.toml loader finds and parses the file, then calls into this module.
 
 use crate::args::{Param, UsageError, error};
 use crate::format::Format;
@@ -56,7 +56,7 @@ struct Table {
     flags: &'static [&'static [u8]],
     /// The same, with a key that is called otherwise, or that is read by hand.
     renamed: &'static [(&'static [u8], &'static [u8])],
-    /// The keys that no flag says.
+    /// Keys that have no flag.
     without_flag: &'static [&'static [u8]],
     /// The flags that say what one run does. A file that rewrites code without a word, or that prints something else than
     /// the report, is a trap: the key is refused with the name of the flag.
@@ -181,7 +181,7 @@ impl Table {
     }
 }
 
-/// What is wrong with `key`, which is no key of the table `section`. `meant`: one that is.
+/// Error message for `key`, which isn't a key of the `section` table. `meant` is the key to suggest, if any.
 fn not_a_key(key: &[u8], section: &[u8], meant: Option<&[u8]>) -> Vec<u8> {
     let mut message = [b"Unknown key \"", key, b"\" in [", section, b"]"].concat();
     if let Some(meant) = meant {
@@ -190,7 +190,7 @@ fn not_a_key(key: &[u8], section: &[u8], meant: Option<&[u8]>) -> Vec<u8> {
     message
 }
 
-/// `key` is none of `keys`, which are those of the table `section`.
+/// Rejects `key`, which isn't one of `keys` (all the keys of the `section` table), and suggests the closest one.
 fn unknown_key<T>(
     key: &[u8],
     at: Loc,
@@ -556,7 +556,7 @@ fn set_in_format(
     }
     FORMAT.set(key, value, &mut |flag, value, is_on| {
         options.set(flag, value, is_on)?;
-        // With the flag, a wrong value comes out at the first file.
+        // The flag only reports an invalid value once the first file is formatted. Here it's checked right away.
         let given = options.format.last().filter(|_| value.is_some());
         match given.filter(|it| key.name == it.0) {
             Some((name, value))
@@ -634,7 +634,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
     items.iter().map(one).collect()
 }
 
-/// The elements of `value`, which is `overrides` of `section`.
+/// The tables in `value`, which is the `overrides` array of `section`.
 fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], Refusal> {
     match &value.data {
         Data::EArray(items) => Ok(items.slice()),
@@ -650,7 +650,7 @@ fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], Refusal>
     }
 }
 
-/// `files` of `item`, an element of `overrides`, say which files it is for.
+/// Rejects `item`, an entry of `overrides`, if it has no `files` to say what it applies to.
 fn needs_files(item: &Expr, files: &[Vec<u8>]) -> Result<(), Refusal> {
     match files.is_empty() {
         true => refuse(item.loc, &[b"an override needs \"files\""]),
@@ -860,7 +860,7 @@ impl Place {
     }
 }
 
-/// An entry of `[lint.rules]`, or of `rules` of an override.
+/// One entry of `[lint.rules]` or of an override's `rules`.
 #[derive(Clone, Debug)]
 pub struct RuleOfBunfig {
     pub key_at: usize,
@@ -876,7 +876,8 @@ fn json_of(value: &Expr) -> Result<Json, Refusal> {
     )
 }
 
-/// `[lint.rules]`, or `rules` of an override, and where each is. `--rule` reads levn, which has no way to write every string.
+/// Parses `[lint.rules]` or an override's `rules`, and records where each entry is. This doesn't go through `--rule`,
+/// because that flag parses levn, which can't express every string.
 fn rules(table: &Expr) -> Result<(Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>), Refusal> {
     let (mut rules, mut places) = (Vec::new(), Vec::new());
     for (rule, setting) in entries(table)? {
@@ -896,7 +897,7 @@ fn rules(table: &Expr) -> Result<(Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>), Refu
     Ok((rules, places))
 }
 
-/// `overrides` of `[lint]`.
+/// Parses `[[lint.overrides]]`.
 fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
     let items = tables_of(value, b"lint")?;
     let one = |item: &Expr| {
@@ -927,7 +928,8 @@ fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal>
     items.iter().map(one).collect()
 }
 
-/// `[lint.globals]`, or `globals` of an override. A boolean is what ESLint takes it for: whether it can be written to.
+/// Parses `[lint.globals]` or an override's `globals`. A boolean means what it means to ESLint: whether the global is
+/// writable.
 fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     let one = |(name, value): (Key, &Expr)| {
         let kind: &[u8] = match bun_lint::json::from_parsed(value) {
@@ -950,7 +952,7 @@ fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     entries(table)?.into_iter().map(one).collect()
 }
 
-/// `[lint.settings]`, or `settings` of an override.
+/// Parses `[lint.settings]` or an override's `settings`.
 fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     let one = |(name, value): (Key, &Expr)| Ok((name.name, json_of(value)?));
     entries(table)?.into_iter().map(one).collect()

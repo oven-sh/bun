@@ -240,8 +240,8 @@ const FUNCTIONS: [&[u8]; 9] = [
     b"tv",
 ];
 
-/// `sortTailwindcss` for the file at `path`. `value`: the option as JSON, which is not `false`. `of_config`: the directory of
-/// the oxfmt config that sets it, or `None` if `[format]` or the flag sets it.
+/// Resolves `sortTailwindcss` for the file at `path`. `value` is the option as JSON, and it isn't `false`. `of_config` is
+/// the directory of the oxfmt config that sets it, or `None` if `[format]` or the flag sets it.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
     environment: &Environment,

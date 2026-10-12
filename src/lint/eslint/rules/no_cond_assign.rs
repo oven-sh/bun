@@ -38,7 +38,7 @@ fn place<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
     }
 }
 
-/// `can_stay`: one more pair of parentheses allows it.
+/// `can_stay` means the rule allows the assignment once it's wrapped in another pair of parentheses.
 fn hint(assignment: Expr<'_>, can_stay: bool) -> &'static str {
     let is_plain = matches!(assignment.kind(), ExprKind::Assign { op: None, .. });
     match (is_plain, can_stay) {

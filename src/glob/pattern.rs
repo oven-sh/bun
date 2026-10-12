@@ -209,18 +209,17 @@ impl Pattern {
     }
 
     /// One element of oxc's `GlobSet::new`. A leading `./` is dropped, and a pattern without `/` matches in any directory.
+    /// oxc puts the `**/` in front of a leading `!` too, which makes the `!` a literal, so `!a.js` matches no `a.js` there.
     pub fn of_oxc_glob_set(written: &[u8]) -> Pattern {
-        Pattern::of_bunfig(&of_fast_glob(written))
+        Pattern::new(&in_any_directory(&of_fast_glob(written)))
     }
 
     /// A pattern from `overrides` in bunfig.toml. It has all of `Bun.Glob`'s syntax. A leading `./` is dropped, and a pattern
     /// without `/` matches in any directory.
     pub fn of_bunfig(written: &[u8]) -> Pattern {
-        match written.strip_prefix(b"./") {
-            Some(rest) => Pattern::new(rest),
-            None if strings::contains_char(written, b'/') => Pattern::new(written),
-            None => Pattern::new(&[b"**/", written].concat()),
-        }
+        // Leading `!`s negate the whole pattern, so they stay in front.
+        let (bangs, rest) = written.split_at(matcher::negations(written));
+        Pattern::new(&[bangs, &in_any_directory(rest)].concat())
     }
 
     #[inline]
@@ -309,6 +308,15 @@ impl Pattern {
     /// Every match starts with one of these, followed by `/` or the end of the path. `None` if unknown.
     pub fn heads(&self) -> Option<Vec<&[u8]>> {
         (!self.heads.is_empty()).then(|| self.heads.iter().map(|it| &it[..]).collect())
+    }
+}
+
+/// Drops a leading `./`, or else puts `**/` in front of a pattern without `/` so that it matches in any directory.
+fn in_any_directory(pattern: &[u8]) -> Cow<'_, [u8]> {
+    match pattern.strip_prefix(b"./") {
+        Some(rest) => Cow::Borrowed(rest),
+        None if strings::contains_char(pattern, b'/') => Cow::Borrowed(pattern),
+        None => Cow::Owned([b"**/", pattern].concat()),
     }
 }
 

@@ -760,7 +760,7 @@ const rules: Record<string, Case[]> = {
     { code: `const A = z.string();`, options: [{ roots: ["v"] }] },
     `const A = userSchema();`,
     `const B = A.extend({ b: 1 });`,
-    // The wrapper has the suffix of the factories.
+    // `lazySchema` itself ends with the factory suffix.
     {
       code: `${zod}const A = lazySchema(() => z.object({ a: userSchema() }));`,
       options: [{ factorySuffix: "Schema", lazyWrapper: "lazySchema" }],
@@ -1754,7 +1754,7 @@ const testRules: Record<string, Case[]> = {
     `test.todo("a", () => {});`,
     `test.todoIf(a)("b");`,
     `own("a", () => {});`,
-    // `**` can be nothing, and a star is for every character of a name.
+    // `**` also matches zero segments, and `*` matches any character of a name.
     ...[
       `test("a", () => {\n  request(b).expect(200);\n});`,
       `test("a", () => {\n  request(b).get("/").set("c").expect(200);\n});`,
@@ -1770,7 +1770,7 @@ const testRules: Record<string, Case[]> = {
       code,
       options: [{ assertFunctionNames: ["request.**.expect", "check*", "**.verify", "$ass*"] }],
     })),
-    // A wrapper of one's own, a method, a hook.
+    // A custom wrapper, a method and a hook.
     ...[
       `«own»("a", () => {});`,
       `«helpers.own»("a", () => {});`,
@@ -1844,7 +1844,7 @@ const testRules: Record<string, Case[]> = {
     .map(it => (it.code.includes("«") ? it : it.code))
     .map(inBunTest),
 
-  // A test is counted with its blocks and with the functions that it passes on.
+  // A test's count includes its nested blocks and the callbacks it passes to other functions.
   "max-expects": [
     `test("a", () => {\n  expect(1).toBe(1);\n  «expect»(2).toBe(2);\n});`,
     `test("a", () => {\n  expect(1).toBe(1);\n  for (const b of c) {\n    «expect»(b).toBe(2);\n  }\n});`,
@@ -1865,7 +1865,7 @@ const testRules: Record<string, Case[]> = {
     `test("a", function () {\n  if (b) «expect»(1).toBe(1);\n});`,
     `test("a", function named() {\n  if (b) «expect»(1).toBe(1);\n});`,
     `test("a", () => {\n  each(function () {\n    if (b) «expect»(1).toBe(1);\n  });\n});`,
-    // What a test calls or is.
+    // Functions that a test calls, or that are passed as the test itself.
     `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", () => check());`,
     `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", check);`,
     `const check = () => {\n  if (b) «expect»(1).toBe(1);\n};\ntest("a", () => check());`,
@@ -1878,7 +1878,7 @@ const testRules: Record<string, Case[]> = {
     `const checks = {\n  check() {\n    if (b) expect(1).toBe(1);\n  },\n};\ntest("a", () => checks.check());`,
   ].map(inBunTest),
 
-  // What decides whether a test runs, what it is called and how long it may take is not in the test.
+  // The condition for running a test, its title and its timeout aren't part of the test body.
   "no-conditional-in-test": [
     `test("a", () => {\n  «if (a) b();»\n});`,
     `test.skipIf(a)("b", () => {\n  const c = «d || e»;\n});`,
@@ -2050,7 +2050,7 @@ const testRules: Record<string, Case[]> = {
   "prefer-spy-on": [
     ...[
       { code: `a.b = «jest.fn»();`, suggestions: [`jest.spyOn(a, 'b').mockImplementation();`] },
-      // `spyOn` is not imported.
+      // No suggestion, because `spyOn` isn't imported.
       `a.b = «mock»();`,
       `a.b = other();`,
       `const a = mock();`,
@@ -2077,7 +2077,7 @@ const testRules: Record<string, Case[]> = {
       code: `import { add } from "./add";\ndescribe(«"add"», () => {});`,
       suggestions: [`import { add } from "./add";\ndescribe(add, () => {});`],
     },
-    // A type is nothing that can be passed.
+    // A type can't be passed as a value.
     `import type { Add } from "./add";\ndescribe("Add", () => {});`,
     `import { type Add } from "./add";\ndescribe("Add", () => {});`,
   ].map(inBunTest),
@@ -2457,7 +2457,7 @@ describe.concurrent("the plugin bun", () => {
     expect(exitCode).toBe(2);
   });
 
-  test("what each rule says", async () => {
+  test("each rule's message", async () => {
     const files = {
       "bunfig.toml": `[lint.rules]
 "bun/no-eager-dynamic-import" = "error"
@@ -2897,7 +2897,7 @@ expect(1).toBe(1);
         "8 bun:test/valid-expect-in-promise",
       ]);
       expect(own(reported(stdout, "quiet.test.js"))).toEqual([]);
-      // Errors, but for one.
+      // All of them are errors except `no-disabled-tests`.
       const files = JSON.parse(stdout) as { messages: { ruleId: string; severity: number }[] }[];
       const ofBunTest = files.flatMap(it => it.messages).filter(it => it.ruleId.startsWith("bun:test/"));
       expect(ofBunTest.filter(it => it.severity !== 2).map(it => it.ruleId)).toEqual(["bun:test/no-disabled-tests"]);
@@ -3007,7 +3007,7 @@ expect(1).toBe(1);
     expect(named.exitCode).toBe(1);
   });
 
-  test("the settings of Vitest are not for it", async () => {
+  test("`settings.vitest` doesn't apply to it", async () => {
     const code = `import { describe } from "bun:test";\nimport { add } from "./add";\ndescribe("add", () => {});\ndescribe("", () => {});\n`;
     const config = {
       settings: { vitest: { typecheck: true } },
@@ -3017,7 +3017,7 @@ expect(1).toBe(1);
     expect(unix(stdout)).toEqual(["3 Error/bun:test(prefer-describe-function-title)", "4 Error/bun:test(valid-title)"]);
   });
 
-  test("valid-title names the pattern as the option has it", async () => {
+  test("valid-title prints the pattern exactly as the option spells it", async () => {
     const code = `import { it, test } from "bun:test";\nit("a", () => {});\ntest("b", () => {});\n`;
     const rules = { "bun:test/valid-title": ["error", { mustMatch: { it: "^should ", test: "/^ADDS /i" } }] };
     const { stdout } = await lint({ "eslint.config.mjs": flat(rules), "a.test.js": code }, ["-f", "unix", "."]);

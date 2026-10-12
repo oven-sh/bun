@@ -1,6 +1,6 @@
-//! Which packages of the tool that is replaced can go. A package is only said to be removable if its name has the form of
-//! tooling for that tool, and if nothing that is looked at uses it: the configuration, the scripts and `lint-staged` of
-//! `package.json`, and the packages that stay.
+//! Works out which of the replaced tool's packages can be uninstalled. A package is only called removable if its name
+//! follows that tool's naming scheme and nothing we check uses it. We check the config, the `scripts` and `lint-staged`
+//! sections of `package.json`, and the packages that stay.
 
 use super::{sorted, texts};
 use crate::configs::installed_package;
@@ -17,7 +17,7 @@ macro_rules! pretty {
     };
 }
 
-/// What can use a package and is not looked at.
+/// Places that can use a package but aren't checked.
 const NOT_CHECKED: [&str; 3] = ["other tools' configs", "CI files", "Git hooks"];
 
 /// Whether `name` is `family-..`, `@scope/family` or `@scope/family-..`.
@@ -33,7 +33,7 @@ fn is_of_family(name: &[u8], family: &[u8]) -> bool {
     }
 }
 
-/// Whether a package called `name` is there for ESLint or oxlint and for nothing else. `vite-plugin-eslint` is there for Vite.
+/// Whether the package `name` only exists to serve ESLint or oxlint. `vite-plugin-eslint` doesn't, because it serves Vite.
 pub(crate) fn is_for_linting(name: &[u8]) -> bool {
     let families: [&[u8]; 3] = [
         b"eslint-plugin",
@@ -59,19 +59,19 @@ pub(crate) fn is_for_formatting(name: &[u8]) -> bool {
 /// Why a package has to stay installed.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Need {
-    /// Rules of it run in JavaScript.
+    /// Some of its rules run in JavaScript.
     Rules,
     /// It lints or formats files.
     Files,
-    /// The configuration file, which is shown as this, cannot be read without it.
+    /// The config file can't be loaded without it. Holds the file's name as shown to the user.
     Configuration(Vec<u8>),
-    /// There is no configuration file: that the project depends on it says whose defaults apply.
+    /// There's no config file, so having this dependency is what picks whose defaults apply.
     Defaults,
-    /// The script of `package.json` that is called this runs it.
+    /// The `package.json` script with this name runs it.
     Script(Vec<u8>),
-    /// A command of `lint-staged` in `package.json` runs it.
+    /// A `lint-staged` command in `package.json` runs it.
     LintStaged,
-    /// This package, which stays, depends on it.
+    /// This package depends on it and is staying.
     Dependent(Vec<u8>),
 }
 
@@ -88,7 +88,7 @@ impl Need {
         }
     }
 
-    /// The file, the script or the package that needs it.
+    /// The file, script or package that needs it.
     fn by(&self) -> Option<&[u8]> {
         match self {
             Need::Configuration(by) | Need::Script(by) | Need::Dependent(by) => Some(by),
@@ -96,7 +96,7 @@ impl Need {
         }
     }
 
-    /// Behind the names of `count` packages.
+    /// The reason printed after the names of `count` packages.
     fn shown(&self, count: usize) -> String {
         let (it, its) = if count == 1 {
             ("it", "its")
@@ -115,19 +115,19 @@ impl Need {
     }
 }
 
-/// The keys of the objects that `json` has as `sections`.
+/// Sorted keys of the objects at `json[section]`, for each of `sections`.
 fn names_in(json: &Json, sections: &[&[u8]]) -> Vec<Vec<u8>> {
     let objects = sections.iter().filter_map(|it| json.get(it)?.as_object());
     sorted(objects.flatten().map(|it| it.0.clone()).collect())
 }
 
-/// Whether a word of `command`, a line for a shell, is `name`, or a path to it.
+/// Whether any word of the shell command `command` is `name` or a path ending in `name`.
 fn runs(command: &[u8], name: &[u8]) -> bool {
     strings::tokenize_any(command, b" \t\n;&|()\"'")
         .any(|word| word == name || paths::basename(word) == name)
 }
 
-/// What of `manifest`, a `package.json`, runs the command `name`.
+/// Finds the part of `manifest` (a parsed `package.json`) that runs the command `name`.
 fn run_by(manifest: &Json, name: &[u8]) -> Option<Need> {
     let entries = |key: &[u8]| {
         manifest
@@ -147,7 +147,7 @@ fn run_by(manifest: &Json, name: &[u8]) -> Option<Need> {
         .then_some(Need::LintStaged)
 }
 
-/// What becomes of the packages that `package.json` depends on.
+/// The verdict on `package.json`'s dependencies: which can be removed, and which are still needed and why.
 #[derive(Default)]
 pub(crate) struct Packages {
     removable: Vec<Vec<u8>>,
@@ -155,8 +155,8 @@ pub(crate) struct Packages {
 }
 
 impl Packages {
-    /// Of the `package.json` nearest to `cwd`. `is_of_a_tool`: whether a package is there for the tool that is replaced and for
-    /// nothing else. `need`: why a run needs a package.
+    /// Reads the `package.json` closest to `cwd`. `is_of_a_tool` says whether a package only exists to serve the replaced
+    /// tool. `need` says why a run still needs a package, if it does.
     pub(crate) fn new(
         cwd: &[u8],
         is_of_a_tool: &dyn Fn(&[u8]) -> bool,
@@ -184,7 +184,7 @@ impl Packages {
             }
             staying.push(name);
         }
-        // What stays keeps what it depends on, which keeps what that depends on.
+        // A package that stays keeps its own dependencies installed, and so on down the tree.
         while let Some(stays) = staying.pop().filter(|_| !packages.removable.is_empty()) {
             let Some(installed) = installed_package(directory, &stays) else {
                 continue;

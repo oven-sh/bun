@@ -166,7 +166,7 @@ const OF_OXFMT: &[Param] = &[
     clap::param!("--lsp                           Not supported"),
 ];
 
-/// What the help has as `--no-..`.
+/// Flags that `--help` lists in their `--no-..` form.
 const OPPOSITES: &[Param] = &[
     clap::param!("--editorconfig"),
     clap::param!("--semi"),
@@ -314,7 +314,7 @@ pub struct Options {
     pub is_like_oxfmt: Option<bool>,
     /// Add `[format]` to bunfig.toml.
     pub init: bool,
-    /// Says what a run would do with the configuration, and formats nothing.
+    /// Report what a run would do with this config, without formatting.
     pub doctor: bool,
     /// `-f json`
     pub as_json: bool,
@@ -329,7 +329,7 @@ pub struct Options {
     pub color: Option<bool>,
     pub version: bool,
     pub help: bool,
-    /// With `help`: every flag.
+    /// With `help`, list every flag.
     pub all: bool,
     /// `0`: the number of cores.
     pub threads: usize,

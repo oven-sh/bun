@@ -98,7 +98,7 @@ pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
         .ok_or_else(|| b"This file is nested too deeply".to_vec())
 }
 
-/// What is wrong with a text, and where. The first line and the first column are 1.
+/// A syntax error and its position. Lines and columns start at 1.
 pub struct SyntaxError {
     pub message: Vec<u8>,
     pub line: i32,

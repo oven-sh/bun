@@ -1062,7 +1062,8 @@ impl<'a> AnsiRenderer<'a> {
             return;
         };
         self.out.list.remove(space.at);
-        // The break is written with the styles of its place, after what moves, and then put before it.
+        // Write the break at the end, using the styles that were open at the
+        // space, then rotate it in front of the moved text.
         let span_flags = core::mem::replace(&mut self.span_flags, space.span_flags);
         let link = self.link.take();
         self.link = space.in_link.then(|| OpenLink {

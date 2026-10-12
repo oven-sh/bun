@@ -1,5 +1,5 @@
-// What `bun lint` and `bun format` say in their own words, each in the situation that it is for. The other test files have
-// the messages that belong to a feature. Here are the rest.
+// Tests for messages that `bun lint` and `bun format` word themselves, each in the situation that triggers it. Messages
+// that belong to a feature are tested with that feature. This file has the rest.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
@@ -24,7 +24,7 @@ async function bun(files: Record<string, string | Buffer>, args: string[]) {
 }
 
 describe.concurrent("bun lint", () => {
-  test("rules that need types, with --no-type-aware", async () => {
+  test("rules that need types are skipped with a warning", async () => {
     const rules = (...names: string[]) => `[lint.rules]\n${names.map(it => `"${it}" = "error"\n`).join("")}`;
     const files = { "a.ts": "export const a: number = 1;\n" };
     const [one, two] = await Promise.all([
@@ -44,14 +44,14 @@ describe.concurrent("bun lint", () => {
       "warn: Skipped 2 rules that need type information\n  Remove typeAware = false or --no-type-aware to run them.\n",
     );
     expect([one.exitCode, two.exitCode]).toEqual([0, 0]);
-    // A config file that does not ask for types.
+    // Same with a config file that doesn't turn type information on.
     const config = `const plugin = { meta: { name: "@typescript-eslint/eslint-plugin" }, rules: {} };
 export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescript-eslint/await-thenable": "error" } }];\n`;
     const { stderr } = await bun({ "a.js": "export const a = 1;\n", "eslint.config.mjs": config }, ["lint", "a.js"]);
     expect(stderr).toStartWith("warn: Skipped 1 rule that needs type information\n  Use --type-aware to run it.\n");
   });
 
-  test("a config file that ends the process", async () => {
+  test("a config file that calls process.exit", async () => {
     const { stderr, exitCode } = await bun({ "eslint.config.mjs": "process.exit(1);\n", "a.js": "a;\n" }, ["lint"]);
     expect(stderr).toBe(
       "error: Cannot load the configuration file <dir>/eslint.config.mjs:\nIt exited before it exported a config.",
@@ -59,13 +59,13 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
     expect(exitCode).toBe(2);
   });
 
-  test("an .eslintrc.json that is not JSON", async () => {
+  test("an .eslintrc.json with invalid JSON", async () => {
     const { stderr, exitCode } = await bun({ ".eslintrc.json": "{ nope\n", "a.js": "a;\n" }, ["lint"]);
     expect(stderr).toEndWith("Cannot read config file: <dir>/.eslintrc.json\nError: Invalid JSON.");
     expect(exitCode).toBe(2);
   });
 
-  test("an option that is not JSON, for a rule that runs in JavaScript", async () => {
+  test("a non-JSON option for a rule that runs in JavaScript", async () => {
     const files = {
       "mine.js": `export default { meta: { name: "mine" }, rules: { x: { meta: { schema: false }, create: () => ({}) } } };\n`,
       "oxlint.config.ts": `export default { jsPlugins: ["./mine.js"], rules: { "mine/x": ["error", { a: new Map() }] } };\n`,
@@ -78,7 +78,7 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
     expect(exitCode).toBe(1);
   });
 
-  test("an older typescript-eslint beside an .eslintrc", async () => {
+  test("an older typescript-eslint with an .eslintrc", async () => {
     const files = {
       "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({
         name: "@typescript-eslint/eslint-plugin",
@@ -100,7 +100,7 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
     expect(exitCode).toBe(0);
   });
 
-  test("a flag that is read and not supported, and --env-info", async () => {
+  test("a recognized but unsupported flag, and --env-info", async () => {
     const [flag, info] = await Promise.all([
       bun({ "a.js": "a;\n" }, ["lint", "--mcp"]),
       bun({}, ["lint", "--env-info"]),
@@ -113,13 +113,13 @@ export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescri
 });
 
 describe.concurrent("bun format", () => {
-  test("a file in UTF-16", async () => {
+  test("a UTF-16 file", async () => {
     const { stderr, exitCode } = await bun({ "a.js": Buffer.from("﻿a;\n", "utf16le") }, ["format", "a.js"]);
     expect(stderr).toStartWith("error: a.js: SyntaxError: This file is UTF-16. bun format only reads UTF-8.\n");
     expect(exitCode).toBe(2);
   });
 
-  test("--plugin with --allow-unsupported, and a flag that is read and not supported", async () => {
+  test("--plugin with --allow-unsupported, and a recognized but unsupported flag", async () => {
     const [plugin, flag] = await Promise.all([
       bun({ "a.js": "a;\n" }, ["format", "--plugin=prettier-plugin-x", "--allow-unsupported", "--check", "a.js"]),
       bun({ "a.js": "a;\n" }, ["format", "--migrate=prettier"]),
@@ -130,7 +130,7 @@ describe.concurrent("bun format", () => {
     expect(flag.exitCode).toBe(2);
   });
 
-  test("options of oxfmt in a .prettierrc", async () => {
+  test("oxfmt options in a .prettierrc", async () => {
     const hint = "\n[error]   Use --allow-unsupported to make this a warning.";
     const [one, two, allowed] = await Promise.all([
       bun({ ".prettierrc": `{ "sortTailwindcss": true }\n`, "a.js": "a;\n" }, ["format", "a.js"]),

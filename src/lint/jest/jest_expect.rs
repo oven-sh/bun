@@ -1286,12 +1286,12 @@ pub(crate) mod no_conditional_expect {
         Conditional,
         /// A call of `it` or `test`.
         Test,
-        /// A function that is no arrow function, and what its name declares. For `bun:test` one that has a name to call it by, or
-        /// is a method: `function () {}` and `() => {}` run where they are passed to.
+        /// A non-arrow function, with the symbol its name declares. For `bun:test` it has to be a method or have a name it can
+        /// be called by. A bare `function () {}` or `() => {}` runs where it's passed, so the walk continues through it.
         Function(Option<Symbol<'a>>),
     }
 
-    /// `check` of `const check = () => {};`
+    /// Returns `check` for the function in `const check = () => {};`.
     fn variable_of(func: Func<'_>) -> Option<Symbol<'_>> {
         let function = func.owner().as_expr()?;
         match function.parent() {
@@ -1399,7 +1399,7 @@ pub(crate) mod max_expects {
         "Enforces a maximum number assertion calls in a test body.",
     );
 
-    /// Whether `func` is passed to a call, or called where it is written, and is not the callback of a test.
+    /// Whether `func` is an argument of a call or is called right where it's written, and isn't a test's callback.
     fn runs_with_what_is_around<'a>(ctx: &Ctx<'a, '_>, func: Func<'a>) -> bool {
         matches!(
             func.owner().as_expr().map(|it| it.parent()),
@@ -1413,7 +1413,7 @@ pub(crate) mod max_expects {
 
     pub(crate) fn run_once<'a>(max: u32, ctx: &Ctx<'a, '_>) {
         let (mut scopes, mut functions) = (Scopes::default(), AncestorMemo::default());
-        // How many there are in each scope. A block is one. For `bun:test` in each test, with its blocks and callbacks.
+        // Number of `expect` calls per scope (a block is a scope). For `bun:test`, per test with its blocks and callbacks.
         let mut count_map: FxHashMap<Option<Node<'a>>, u32> = FxHashMap::default();
         for jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let Some(ident) = jest_node
@@ -1425,7 +1425,7 @@ pub(crate) mod max_expects {
             };
             let node = Node::Expr(jest_node.node);
             let (scope, limit) = match ctx.runner {
-                // The first is never too many.
+                // The first `expect` is never over the limit, even with `max: 0`.
                 Runner::Jest | Runner::Vitest => (scopes.of(node), max.max(1)),
                 Runner::Bun => (
                     functions.find(node, |_, parent| match parent {

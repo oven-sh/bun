@@ -1,4 +1,4 @@
-// `bun lint --init` and `bun format --init`.
+// Tests for `bun lint --init` and `bun format --init`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -64,7 +64,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
     expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe(section);
   });
 
-  // The bytes, one character for each.
+  // File contents are written as bytes, one latin1 character per byte.
   test.each<[string, string, string]>([
     ["a line break at the end", '[install]\nregistry = "a"\n', "\n" + section],
     ["none", '[install]\nregistry = "a"', "\n\n" + section],
@@ -95,7 +95,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
       exitCode: 0,
     });
     expect(readFileSync(path, "latin1")).toBe(before + added);
-    // It can be read, and the section is seen.
+    // The result still parses, and the new section is found.
     expect(await run(String(dir), command, "--init")).toEqual({
       stdout: `bunfig.toml already has a [${command}] section\n`,
       stderr: "",
@@ -112,7 +112,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
     `${command} = { ${key} = true }\n`,
     `a = 1\r\n\r\n[${command}] # here\r\n${key} = false`,
     ...(command === "lint" ? ['[lint.rules]\n"no-var" = "error"\n', "[lint.globals]\n"] : []),
-  ])("leaves a bunfig.toml with %j as it is", async before => {
+  ])("leaves a bunfig.toml with %j unchanged", async before => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": before });
     expect(await run(String(dir), command, "--init")).toEqual({
       stdout: `bunfig.toml already has a [${command}] section\n`,
@@ -127,7 +127,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
     ["a = 1\nb = \n", "bunfig.toml:2:5"],
     [`[${command}]\nnothing = 1\n`, "bunfig.toml:2:1"],
     [`${command} = 1\n`, `bunfig.toml:1:${command.length + 4}`],
-  ])("a bunfig.toml that cannot be used is an error, and stays as it is: %j", async (before, place) => {
+  ])("an invalid bunfig.toml is an error and is left unchanged: %j", async (before, place) => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": before });
     const result = await run(String(dir), command, "--init");
     expect(result.stderr).toContain("error: ");
@@ -136,8 +136,8 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
     expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe(before);
   });
 
-  // The one that is read is another: `--init` is about the one in the working directory.
-  test("the same with `bun --config=<path>`", async () => {
+  // `--config` makes Bun read another file, but `--init` always edits the bunfig.toml in the working directory.
+  test("an invalid bunfig.toml is also an error with `bun --config=<path>`", async () => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": "a = 1\nb = \n", "other.toml": "" });
     await using proc = spawn({
       cmd: [bunExe(), "--config=other.toml", command, "--init"],
@@ -155,7 +155,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
 
   const cannotBeKeptFromWriting = isWindows || process.getuid?.() === 0;
 
-  test.skipIf(cannotBeKeptFromWriting)("a bunfig.toml that cannot be written is an error", async () => {
+  test.skipIf(cannotBeKeptFromWriting)("a read-only bunfig.toml is an error", async () => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": "a = 1\n" });
     chmodSync(join(String(dir), "bunfig.toml"), 0o444);
     expect(await run(String(dir), command, "--init")).toEqual({
@@ -167,7 +167,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
     expect(readdirSync(String(dir))).toEqual(["bunfig.toml"]);
   });
 
-  test.skipIf(cannotBeKeptFromWriting)("a bunfig.toml that cannot be read is an error", async () => {
+  test.skipIf(cannotBeKeptFromWriting)("an unreadable bunfig.toml is an error", async () => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": "a = 1\n" });
     chmodSync(join(String(dir), "bunfig.toml"), 0o200);
     expect(await run(String(dir), command, "--init")).toEqual({
@@ -179,7 +179,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
     expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe("a = 1\n");
   });
 
-  test.skipIf(cannotBeKeptFromWriting)("a directory that nothing can be added to", async () => {
+  test.skipIf(cannotBeKeptFromWriting)("in a read-only directory, only creating bunfig.toml fails", async () => {
     using dir = tempDir("bun-init-section", { "none/a.js": "a;\n", "one/bunfig.toml": "a = 1\n" });
     const [none, one] = [join(String(dir), "none"), join(String(dir), "one")];
     chmodSync(none, 0o555);
@@ -190,7 +190,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
         stderr: expect.stringMatching(/^error: Cannot write bunfig\.toml: EACCES: .+\n$/),
         exitCode: 2,
       });
-      // The file can be written.
+      // An existing bunfig.toml is still writable.
       expect(await run(one, command, "--init")).toEqual({
         stdout: `Added [${command}] to bunfig.toml\n`,
         stderr: "",
@@ -213,7 +213,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
   });
 
   const flavor = command === "lint" ? "oxlint" : "oxfmt";
-  test(`--flavor=${flavor} is not written down`, async () => {
+  test(`--flavor=${flavor} isn't saved to bunfig.toml`, async () => {
     using dir = tempDir("bun-init-section", { "a.js": "a;\n" });
     expect(await run(String(dir), command, "--init", `--flavor=${flavor}`)).toEqual({
       stdout: `Created bunfig.toml with a [${command}] section\n`,
@@ -225,7 +225,7 @@ describe.concurrent.each(["lint", "format"] as const)("bun %s --init", command =
   });
 });
 
-describe.concurrent("with a configuration file of another tool nothing is written", () => {
+describe.concurrent("writes nothing if another tool's config file is in use", () => {
   const flat = "export default [];\n";
   test.each<[Command, Record<string, string>, string[], string]>([
     ["lint", { "eslint.config.js": flat }, [], "eslint.config.js"],
@@ -262,14 +262,14 @@ describe.concurrent("with a configuration file of another tool nothing is writte
     ["format", { "package.json": '{ "devDependencies": { "prettier": "3.0.0" } }' }],
     ["format", { ".editorconfig": "root = true\n" }],
     ["format", { ".prettierrc": "{}", "args": "--no-config" }],
-  ])("not these, bun %s: %j", async (command, { args, ...files }) => {
+  ])("still writes bunfig.toml, bun %s: %j", async (command, { args, ...files }) => {
     using dir = tempDir("bun-init-section", files);
     const result = await run(String(dir), command, "--init", ...(args ? [args] : []));
     expect(result.stdout).toBe(`Created bunfig.toml with a [${command}] section\n`);
     expect(result.exitCode).toBe(0);
   });
 
-  test("one that cannot be read is an error", async () => {
+  test("a broken config file is an error", async () => {
     using dir = tempDir("bun-init-section", { "eslint.config.js": "throw new Error('no');\n", ".prettierrc": "{" });
     for (const command of ["lint", "format"] as const) {
       const result = await run(String(dir), command, "--init");
@@ -280,8 +280,8 @@ describe.concurrent("with a configuration file of another tool nothing is writte
   });
 });
 
-// Each line that is a comment, without the `# `, alone and with the others.
-describe.concurrent("what is commented out can be used", () => {
+// Uncomments each commented-out line, one at a time and then all together.
+describe.concurrent("the commented-out lines work when uncommented", () => {
   const commented = (text: string) => text.split("\n").flatMap((line, at) => (line.startsWith("# ") ? [at] : []));
   const variants = (text: string) =>
     [[], ...commented(text).map(at => [at]), commented(text)].map(lines => {

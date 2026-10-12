@@ -1542,7 +1542,7 @@ pub fn github_action(utf8: &[u8]) -> GithubActionFormatter<'_> {
     GithubActionFormatter { text: utf8 }
 }
 
-/// `text`, which a terminal opens `link` for: OSC 8. `enabled`: not only `text`.
+/// Prints `text` as a terminal hyperlink to `link` (OSC 8). Prints plain `text` if `enabled` is false.
 pub struct TerminalHyperlink<'a> {
     link: &'a [u8],
     text: &'a [u8],

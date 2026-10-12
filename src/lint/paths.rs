@@ -311,7 +311,8 @@ pub fn normalize(path: &[u8]) -> Vec<u8> {
     of_node(style, normalized)
 }
 
-/// The package that `name` is, or is a file of: eslint-config-next writes `require.resolve("eslint-import-resolver-node")`.
+/// The package that `name` belongs to. `name` is a package name or a path to a file inside one, because eslint-config-next
+/// writes `require.resolve("eslint-import-resolver-node")`.
 pub fn package_of(name: &[u8]) -> &[u8] {
     const FOLDER: &[u8] = b"node_modules";
     let after =

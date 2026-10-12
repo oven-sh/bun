@@ -1,4 +1,4 @@
-//! What the formats of oxlint share.
+//! Code shared by oxlint's formats.
 
 use bun_core::strings;
 use bun_lint::context::Severity;

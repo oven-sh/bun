@@ -386,7 +386,7 @@ fn may_be_static_literal(e: Expr<'_>) -> bool {
     }
 }
 
-/// `left`: the left side of `op`, which is `&&`, `||` or `??` and always goes the same way.
+/// The hint for a `&&`, `||` or `??` that always picks the same side. `left` is its left side.
 fn why_short_circuit(op: BinOp, left: Expr) -> &'static str {
     let value = get_static_value(left, Some(Node::Expr(left).scope()));
     let is_object = matches!(left.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Fn | ExprTag::Class | ExprTag::New);

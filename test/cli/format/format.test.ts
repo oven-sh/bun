@@ -35,7 +35,7 @@ import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 afterAll(endChildren);
 
 const command = [bunExe(), "format"];
-/** The start of an error, in Prettier's words and in Bun's. */
+/** Matches the start of an error line: Prettier's `[error]` or Bun's `error:`. */
 const anError = /^(?:\[error\]|error:) /m;
 
 const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined };
@@ -1434,7 +1434,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       exitCode: 2,
     });
     expect(await piped("{}\n")).toMatchObject({ raw: files["a.svelte"], stderr: "", exitCode: 0 });
-    // Prettier has no TOML. Where neither tool is stood in for, it is a language like another.
+    // Prettier doesn't format TOML. Without a Prettier or oxfmt config, Bun formats it like any other language.
     expect(await different({ ...files, ".prettierrc": "{}\n" }, [])).toEqual(["c.js"]);
     expect(await different(files, [])).toEqual(["b.toml", "c.js", "Pipfile"]);
     const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
@@ -5539,7 +5539,7 @@ describe.concurrent("[format] in bunfig.toml", () => {
 
   test.each(others)("%s", async (line, flags, opposite, files, args) => {
     const bunfig = { "bunfig.toml": `[format]\n${line}\n` };
-    // The file is one of those that are formatted, so it is there in every run.
+    // bunfig.toml gets formatted too, so every run has one to keep the outputs comparable.
     const empty = { "bunfig.toml": "# Nothing.\n" };
     const [plain, byKey, byFlag, underFlag, byOtherFlag] = await Promise.all([
       run({ ...files, ...empty }, args),
@@ -5679,7 +5679,7 @@ describe.concurrent("[format] in bunfig.toml", () => {
         return [flag, /expected [\w ]+ but received array|cannot be set in bunfig\.toml/.test(stderr)];
       }),
     );
-    // Flags of Prettier and oxfmt that say nothing about a project, or have no effect.
+    // Prettier and oxfmt flags that aren't project settings, or that do nothing.
     expect(answers.filter(it => !it[1]).map(it => it[0])).toEqual([
       "parser",
       "plugin",

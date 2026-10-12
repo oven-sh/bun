@@ -1,4 +1,4 @@
-//! `bun format --doctor`: see [`crate::doctor`].
+//! `bun format --doctor`. See [`crate::doctor`].
 
 use super::config::{self, Configs, Flavor};
 use super::files::{Expanded, Target};
@@ -19,26 +19,26 @@ macro_rules! pretty {
     };
 }
 
-/// What a run makes of the files that it has found, before it formats any.
+/// How a run sorts the files it found, before it formats any of them.
 pub(super) struct Sorted<'s> {
-    /// All of them.
+    /// Every file, whichever group it ends up in.
     pub(super) found: &'s [Expanded],
     pub(super) formatted: &'s [(usize, &'s Target)],
-    /// They go to the project's own Prettier.
+    /// Sent to the project's own Prettier.
     pub(super) handed_over: &'s [(usize, &'s Target)],
-    /// In another language: how their names end, and how many have each ending.
+    /// Files in a language `bun format` doesn't support that can't go to Prettier either, as (extension, count) pairs.
     pub(super) others: &'s [(&'s [u8], usize)],
-    /// How many are left alone because of plugins that are not there.
+    /// Number of files skipped because their config uses plugins that `bun format` doesn't include.
     pub(super) left_for_plugins: usize,
-    /// The packages that would have to be installed for more files to be handed over.
+    /// Packages to install so that more files can be sent to Prettier.
     pub(super) not_installed: &'s [&'s [u8]],
 }
 
-/// The plugins that the configuration names for the files of a run.
+/// The plugins that the config lists for the files in this run.
 #[derive(Default)]
 struct Plugins {
     built_in: Vec<Vec<u8>>,
-    /// They add a language, whose files go to the project's own Prettier.
+    /// Plugins that add a language. Files in that language go to the project's own Prettier.
     for_languages: Vec<Vec<u8>>,
     not_supported: Vec<Vec<u8>>,
 }
@@ -58,7 +58,6 @@ impl Plugins {
     }
 }
 
-/// The report. `cwd`: the working directory.
 pub(super) fn report(
     (configs, cwd): (&Configs, &[u8]),
     pool: &Pool,
@@ -87,12 +86,12 @@ pub(super) fn report(
     }
     let mut nested = sorted(nested);
     nested.retain(|it| Some(it) != file.as_ref());
-    // Prettier loads every plugin that the configuration of a file names.
+    // Prettier loads every plugin listed in a file's config, so all of them have to stay installed.
     let for_files = files.handed_over.iter().flat_map(|(_, target)| {
         let named = configs.packages_of_plugins(&target.scope, &target.path);
         std::iter::once(&b"prettier"[..]).chain(named)
     });
-    // What is not installed is what keeps files from going there.
+    // Packages that aren't installed yet are needed too. They're the reason some files can't go to Prettier.
     let prettier = files.not_installed.first().map(|_| &b"prettier"[..]);
     let for_files = for_files
         .chain(prettier)
@@ -103,7 +102,7 @@ pub(super) fn report(
     let mut not_formatted = Kinds::default();
     (files.others.iter()).for_each(|it| not_formatted.add_ending(it.0, it.1));
 
-    // Which options have no effect shows when the options of a file are read.
+    // Resolving each file's options is what fills in `unsupported_options`.
     let mut failure = Guarded::new(None);
     pool.for_each(files.formatted.len(), 16, &|at| {
         let target = files.formatted[at].1;

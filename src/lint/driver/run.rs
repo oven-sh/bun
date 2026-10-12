@@ -79,7 +79,7 @@ pub struct Environment<'e> {
     pub cwd: Vec<u8>,
     pub stdout: Stream,
     pub stderr: Stream,
-    /// How many columns the terminal of standard output has.
+    /// Width of stdout's terminal, in columns.
     pub columns: fn() -> u16,
     /// `Output::is_ai_agent()`
     pub is_ai_agent: bool,
@@ -90,7 +90,7 @@ pub struct Environment<'e> {
     /// Runs a script to its end. `Ok`: what it has printed on standard output. `Err`: it failed, and
     /// this is why.
     pub run_script: &'e (dyn Fn(&Script) -> Result<Vec<u8>, Vec<u8>> + Sync),
-    /// Runs git to its end.
+    /// Runs git and waits for it to exit.
     pub run_git: &'e (dyn Fn(&git::Command) -> Result<git::Finished, git::NotRun> + Sync),
     /// The command line of this process, without the executable.
     pub command_line: &'e [&'e [u8]],
@@ -172,14 +172,15 @@ enum Needs {
     Heavy,
 }
 
-/// The files of a run that are linted without types, for threads that have a VM.
+/// The files that are linted without types, as a work queue for the threads that have a VM.
 struct Files<'f> {
     heavy: &'f [&'f Target],
-    /// They need a VM. The largest come first.
+    /// Files that need a VM, largest first.
     with_engine: &'f [&'f Target],
     plain: &'f [&'f Target],
     next_heavy: AtomicUsize,
-    /// How many of `with_engine` are taken, and how many of those from the start and from the end.
+    /// `taken` counts the `with_engine` files handed out so far. `ends` counts how many of them came from the start and
+    /// how many from the end.
     taken: AtomicUsize,
     ends: [AtomicUsize; 2],
     next_plain: AtomicUsize,
@@ -207,8 +208,8 @@ impl Work for Files<'_> {
         if self.taken.fetch_add(1, Ordering::Relaxed) >= self.with_engine.len() {
             return self.lint_plain();
         }
-        // A VM keeps the memory that its largest file took. So few of them start with the largest files and the others with
-        // the smallest, until they meet.
+        // A VM never gives back the memory its largest file needed. So a few VMs work down from the largest files and the
+        // rest work up from the smallest, until they meet.
         let [first, last] = &self.ends;
         let at = match realm % 4 {
             0 => Some(first.fetch_add(1, Ordering::Relaxed)),
@@ -413,7 +414,7 @@ impl Run<'_> {
             .unwrap_or_else(|| configs::is_for_oxlint(self.options.flavor, &self.environment.cwd))
     }
 
-    /// `is_oxlint`: the configuration of the working directory is oxlint's. `is_native`: there is none.
+    /// `is_oxlint` means the working directory's config is oxlint's. `is_native` means it has no config.
     fn format(&self, is_oxlint: bool, is_native: bool) -> Result<Format, Vec<u8>> {
         let name: &[u8] = match &self.options.format {
             Some(name) => &name[..],
@@ -855,7 +856,7 @@ impl Run<'_> {
         };
         match heavy.is_empty() && with_engine.is_empty() {
             true => lint_plain(),
-            // Without a VM each fails, and says why.
+            // No VM could start. Lint them here anyway, so that each one fails with the reason.
             false
                 if (context.js_plugins)
                     .work_off(&files, &mut lint_plain)
@@ -935,7 +936,7 @@ impl Run<'_> {
             discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
         }));
         let loader = Loader::new(&linter, options, environment, &js_plugins);
-        // The list of the rules is the same for both, and `--doctor` says it in its report.
+        // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
         if let Some((of_eslint, of_oxlint)) = loader.passed_over().filter(|_| is_told) {
             pretty!(
@@ -1191,7 +1192,7 @@ impl Run<'_> {
                 1 => b" rule enabled in a comment",
                 _ => b" rules enabled in comments",
             };
-            // Without a configuration file there is no package that could have them.
+            // With no config file there's no plugin package these rules could come from, so skip the advice.
             let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
             loader.cannot_do(&[
                 in_comments.len().to_string().as_bytes(),
@@ -1293,7 +1294,8 @@ impl Run<'_> {
             results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
         }
         phases.linting += started.elapsed().as_secs_f64();
-        // ESLint lints one file after the other, so it stops at the first path. Which thread was first here is up to the clock.
+        // ESLint lints files one at a time, so it stops at the first path that throws. Threads race here, so pick the
+        // first path to get the same error every time.
         let thrown = results.iter().filter(|it| it.thrown.is_some());
         let first = thrown.min_by(|a, b| strings::order_utf16(&a.path, &b.path));
         if let Some(thrown) = first.and_then(|it| it.thrown.as_ref()) {

@@ -280,12 +280,12 @@ pub struct ResolvedConfig {
     pub for_eslint: Option<Arc<js_plugin::Configuration>>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
     pub error: Option<Vec<u8>>,
-    /// Part of it is for React only: all but that part. See [`ResolvedConfig::outside_of_react`].
+    /// This config without its React-only part, if it has one. See [`ResolvedConfig::outside_of_react`].
     pub(super) without_react: Option<Arc<ResolvedConfig>>,
 }
 
 impl ResolvedConfig {
-    /// What a file that has this configuration has in a project that is not one of React. Whoever knows the project asks.
+    /// The config to use instead of this one in a project that doesn't use React. The caller has to know whether it does.
     pub fn outside_of_react(self: Arc<Self>) -> Arc<ResolvedConfig> {
         match &self.without_react {
             Some(others) => Arc::clone(others),

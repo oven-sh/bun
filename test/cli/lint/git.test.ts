@@ -1,4 +1,4 @@
-// `--staged` and `--changed` of `bun lint` and `bun format`.
+// Tests for `--staged` and `--changed` in `bun lint` and `bun format`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import {
@@ -17,7 +17,7 @@ import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-// In place of the machine's own configuration.
+// An empty global git config, so the machine's own config doesn't affect the tests.
 const machine = tempDir("bun-lint-git-config", { "gitconfig": "" });
 afterAll(() => machine[Symbol.dispose]());
 
@@ -52,7 +52,7 @@ async function git(cwd: string, ...args: string[]) {
   return stdout;
 }
 
-/** A repository on `main`, with `files` in its first commit if there are any. */
+/** Creates a repository on `main`. If there are any `files`, they go into a first commit. */
 async function repository(files: Record<string, string>) {
   const dir = tempDir("bun-lint-git", files);
   const root = realpathSync(String(dir));
@@ -74,7 +74,7 @@ const write = (root: string, name: string, text: string) => {
 };
 const read = (root: string, name: string) => readFileSync(join(root, name), "utf8");
 
-/** The files of a run, from `root`. */
+/** Returns the files a run would process, as paths relative to `root`. */
 async function selected(root: string, cwd: string, args: string[], more?: Env) {
   const { stdout, stderr, exitCode } = await bun(cwd, [...args, "--list-files"], more);
   expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
@@ -83,7 +83,7 @@ async function selected(root: string, cwd: string, args: string[], more?: Env) {
 }
 
 const commands = ["lint", "format"] as const;
-// What `--fix` and `bun format` change, and what they make of it.
+// Code that both `--fix` and `bun format` change, and what each turns it into.
 const before = "let a   = 1;\nexport { a };\n";
 const after = { lint: "const a   = 1;\nexport { a };\n", format: "let a = 1;\nexport { a };\n" };
 const done = { lint: "fixed", format: "formatted" };
@@ -91,7 +91,7 @@ const writing = { lint: ["lint", "--fix", "--rule", "prefer-const: error"], form
 const tidy = "export const a = 1;\n";
 
 describe.concurrent.each(commands)("bun %s", command => {
-  test("--staged takes what is in the index and differs from HEAD", async () => {
+  test("--staged selects the files whose staged version differs from HEAD", async () => {
     using repo = await repository({
       "modified.js": tidy,
       "unstaged.js": tidy,
@@ -111,16 +111,16 @@ describe.concurrent.each(commands)("bun %s", command => {
 
     const all = ["added.js", "modified.js", "new-name.js", "sub/modified.js", odd].sort();
     expect(await selected(root, root, [command, "--staged"])).toEqual(all);
-    // Below the top: the arguments are from there, the names of git are not.
+    // In a subdirectory, arguments are relative to it, but git's paths are relative to the repository root.
     expect(await selected(root, join(root, "sub"), [command, "--staged"])).toEqual(["sub/modified.js"]);
     expect(await selected(root, join(root, "sub"), [command, "--staged", ".."])).toEqual(all);
-    // Whatever the repository says about how names are printed.
+    // Config that changes how git prints paths makes no difference.
     await git(root, "config", "diff.relative", "true");
     await git(root, "config", "diff.renames", "copies");
     expect(await selected(root, join(root, "sub"), [command, "--staged", ".."])).toEqual(all);
   });
 
-  test("--changed takes what differs from where the branch left the default branch, and what is new", async () => {
+  test("--changed selects files that differ from the merge base with the default branch, and untracked files", async () => {
     using repo = await repository({
       "a.js": tidy,
       "b.js": tidy,
@@ -132,7 +132,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     await git(root, "checkout", "-q", "-b", "feature");
     write(root, "a.js", before);
     await commit(root);
-    // The default branch goes on.
+    // The default branch moves on.
     await git(root, "checkout", "-q", "main");
     write(root, "d.js", before);
     await commit(root);
@@ -150,11 +150,11 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(await selected(root, root, [command, "--changed=main"])).toEqual([...all, "d.js"].sort());
     await git(root, "tag", "-a", "-m", "a tag", "v1", "main~1");
     expect(await selected(root, root, [command, "--changed=v1"])).toEqual(all);
-    // What follows is a file.
+    // Without `=`, the next argument is a file, not a ref.
     expect(await selected(root, root, [command, "--changed", "a.js", "d.js"])).toEqual(["a.js"]);
   });
 
-  test("--changed prefers origin/HEAD, then main, then master, and says what it tried", async () => {
+  test("--changed tries origin/HEAD, then main, then master, and lists them if none exists", async () => {
     using repo = await repository({ "a.js": tidy, "b.js": tidy, "c.js": tidy });
     const { root } = repo;
     const first = (await git(root, "rev-parse", "HEAD")).trim();
@@ -182,7 +182,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
   });
 
-  test("--changed=<ref> takes one commit, and nothing that git could read as something else", async () => {
+  test("--changed=<ref> only accepts a single commit, not flags, ranges or paths", async () => {
     using repo = await repository({ "a.js": tidy });
     const { root } = repo;
     write(root, "a.js", before);
@@ -195,7 +195,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(read(root, "a.js")).toBe(before);
   });
 
-  test("they only narrow what the arguments and the ignore files select", async () => {
+  test("--staged and --changed only narrow down what the arguments and ignore files select", async () => {
     using repo = await repository({
       "src/a.js": tidy,
       "lib/a.js": tidy,
@@ -215,14 +215,14 @@ describe.concurrent.each(commands)("bun %s", command => {
       expect(await selected(root, root, [command, flag, "src"])).toEqual(["src/a.js"]);
       expect(await selected(root, root, [command, flag, "lib/*.js"])).toEqual(["lib/a.js"]);
       expect(await selected(root, root, [command, flag, "--ignore-pattern", "lib"])).toEqual(["src/a.js"]);
-      // A name that is mistyped is still one.
+      // A mistyped path is still an error.
       const { exitCode } = await bun(root, [command, flag, "scr"]);
       expect(exitCode).toBe(2);
     }
     expect(without).toEqual(["lib/a.js", "src/a.js"]);
   });
 
-  test("a run that is left without a file says so, and succeeds", async () => {
+  test("a run with no files left says so and exits with 0", async () => {
     using repo = await repository({ "a.js": before, "b.js": tidy });
     const { root } = repo;
     expect(await bun(root, [command, "--staged"])).toEqual({
@@ -235,7 +235,7 @@ describe.concurrent.each(commands)("bun %s", command => {
       stderr: `No changed files to ${command}\n`,
       exitCode: 0,
     });
-    // There are some, and the argument is another file.
+    // A file is staged, but the argument names a different one.
     write(root, "b.js", before);
     await git(root, "add", "b.js");
     const { stderr, exitCode } = await bun(root, [command, "--staged", "a.js"]);
@@ -243,7 +243,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(read(root, "a.js")).toBe(before);
   });
 
-  test("a repository without a commit", async () => {
+  test("in a repository without commits, --staged works and --changed is an error", async () => {
     using repo = await repository({});
     const { root } = repo;
     write(root, "staged.js", before);
@@ -256,7 +256,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
   });
 
-  test.each(["--staged", "--changed"])("%s where there is no repository, or no git", async flag => {
+  test.each(["--staged", "--changed"])("%s is an error outside a repository or without git", async flag => {
     using dir = tempDir("bun-lint-git", { "a.js": before, "empty/.keep": "" });
     const root = realpathSync(String(dir));
     const outside = await bun(root, [command, flag], { GIT_CEILING_DIRECTORIES: join(root, "..") });
@@ -270,7 +270,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(read(root, "a.js")).toBe(before);
   });
 
-  test("flags that do not go together", async () => {
+  test("--staged can't be combined with --changed or stdin", async () => {
     using repo = await repository({ "a.js": tidy });
     const together = await bun(repo.root, [command, "--staged", "--changed"]);
     expect(together.stderr).toContain("--staged and --changed cannot be used together");
@@ -281,7 +281,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(piped.exitCode).toBe(2);
   });
 
-  test("a link is not the file that it leads to, and a repository in the repository is another one", async () => {
+  test("symlinks are skipped, and a nested repository is a separate repository", async () => {
     using repo = await repository({ "a.js": tidy });
     const { root } = repo;
     write(root, "inner/a.js", tidy);
@@ -299,10 +299,10 @@ describe.concurrent.each(commands)("bun %s", command => {
     }
   });
 
-  test("a file that is written and was staged as a whole is staged again", async () => {
+  test("a fully staged file is staged again after it's rewritten", async () => {
     using repo = await repository({ "a.js": tidy, "sub/b.js": tidy, "c.js": tidy });
     const { root } = repo;
-    // A name is no pattern: that one would stage c.js too.
+    // File names aren't passed to git as patterns. As a pattern, `*.js` would stage c.js too.
     const names = [...(isWindows ? [] : ["*.js"]), "a.js", "new.js", "sub/b.js"];
     for (const name of names) write(root, name, before);
     await git(root, "add", "-A");
@@ -327,7 +327,7 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(exitCode).toBe(0);
   });
 
-  test("a file with staged and unstaged changes is not written", async () => {
+  test("a file with both staged and unstaged changes isn't written", async () => {
     using repo = await repository({ "partly.js": tidy, "sub/partly.js": tidy, "whole.js": tidy, "tidy.js": tidy });
     const { root } = repo;
     for (const name of ["partly.js", "whole.js"]) write(root, name, before);
@@ -335,12 +335,11 @@ describe.concurrent.each(commands)("bun %s", command => {
     await git(root, "add", "-A");
     const more = before + "export const unstaged = 1;\n";
     write(root, "partly.js", more);
-    // It has nothing to write, so there is nothing to refuse.
+    // tidy.js is partly staged too, but needs no rewrite, so it isn't an error.
     write(root, "tidy.js", tidy);
 
     const one = await bun(root, [...writing[command], "--staged"]);
     expect(one.stderr).toContain(`partly.js has both staged and unstaged changes, so it was not ${done[command]}`);
-    // Nothing says that all is well.
     expect(one.stderr).not.toContain("No problems");
     expect(one.stderr).toContain(
       "Stage the rest with git add, or put it away with git stash --keep-index. Then run this again.",
@@ -361,14 +360,14 @@ describe.concurrent.each(commands)("bun %s", command => {
     expect(two.exitCode).toBe(2);
     expect(read(root, "sub/partly.js")).toBe(more);
 
-    // A run that writes nothing has nothing to refuse.
+    // A run that doesn't write files has nothing to reject.
     const looking = command === "lint" ? ["lint", "--rule", "prefer-const: error"] : ["format", "--check"];
     const three = await bun(root, [...looking, "--staged"]);
     expect(three.stderr).not.toContain("unstaged");
     expect(three.exitCode).toBe(1);
   });
 
-  test.skipIf(isWindows)("in a hook, for the index of the commit", async () => {
+  test.skipIf(isWindows)("works in a pre-commit hook, on the index of that commit", async () => {
     using repo = await repository({ "a.js": tidy, "b.js": tidy });
     const { root } = repo;
     const hook = join(root, ".git/hooks/pre-commit");
@@ -380,14 +379,14 @@ describe.concurrent.each(commands)("bun %s", command => {
     await git(root, "add", "a.js");
     await git(root, "commit", "-q", "-m", "what is staged");
     expect(await git(root, "show", "HEAD:a.js")).toBe(after[command]);
-    // The index of such a commit is a file of its own.
+    // `git commit -a` gives the hook a separate index file.
     write(root, "b.js", before);
     await git(root, "commit", "-q", "-a", "-m", "all");
     expect(await git(root, "show", "HEAD:b.js")).toBe(after[command]);
     expect(await git(root, "status", "--porcelain")).toBe("");
   });
 
-  test.skipIf(isWindows)("git starts no program of the repository's configuration", async () => {
+  test.skipIf(isWindows)("git never runs programs named in the repository's config", async () => {
     using repo = await repository({ "a.js": tidy, "b.js": tidy, ".gitattributes": "*.js diff=mine\n" });
     const { root } = repo;
     const program = join(root, "program.sh");
@@ -408,14 +407,14 @@ describe.concurrent.each(commands)("bun %s", command => {
   });
 });
 
-test.concurrent("bun lint --staged prints what its format prints for no file", async () => {
+test.concurrent("bun lint --staged -f json prints an empty result if nothing is staged", async () => {
   using repo = await repository({ "a.js": before });
   const { stdout, stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "-f", "json"]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "No staged files to lint\n", exitCode: 0 });
 });
 
 test.concurrent(
-  "bun lint with a configuration of oxlint says the same, where it says it for every configuration",
+  "with an oxlint config, bun lint --staged and --changed print the same messages, also on stderr",
   async () => {
     using repo = await repository({ ".oxlintrc.json": "{}", "a.js": before });
     expect(await bun(repo.root, ["lint", "--staged"])).toEqual({
@@ -431,7 +430,7 @@ test.concurrent(
   },
 );
 
-describe.concurrent("bun lint --staged --fix reports a file that it does not fix as it is left", () => {
+describe.concurrent("bun lint --staged --fix still reports the problems in a partly staged file", () => {
   // One problem that can be fixed, and one that cannot.
   const staged = "let a = 1;\nexport { a };\nif (a) {\n}\n";
   const left = staged + "export const unstaged = 1;\n";
@@ -454,7 +453,7 @@ describe.concurrent("bun lint --staged --fix reports a file that it does not fix
     expect(await git(root, "status", "--porcelain")).toBe(`MM partly.${ext}\nM  whole.${ext}\n`);
   }
 
-  test("for people", async () => {
+  test("in the default format", async () => {
     using repo = await partlyStaged("js");
     const { stdout, stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "--fix", ...rules]);
     expect(stdout.match(/\b(prefer-const|no-empty)$|partly\.js:\d+:\d+$/gm)).toEqual([
@@ -464,7 +463,7 @@ describe.concurrent("bun lint --staged --fix reports a file that it does not fix
       "partly.js:3:8",
     ]);
     expect(stdout).toEndWith("\n\n2 problems (2 errors, 0 warnings)\n1 can be fixed with --fix\n");
-    // The one in the other file.
+    // That's the problem in whole.js.
     expect(stderr).toContain("Fixed 1 problem in 1 file\n");
     expect(stderr).toContain("Linted 2 files ");
     expect(stderr).toContain(refusal("js"));
@@ -502,7 +501,7 @@ describe.concurrent("bun lint --staged --fix reports a file that it does not fix
     await isUntouched(repo.root, ext);
   });
 
-  test("a problem that cannot be fixed is no reason to refuse the file", async () => {
+  test("a partly staged file with nothing to fix isn't rejected", async () => {
     using repo = await partlyStaged("js");
     const { stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "--fix", "--rule", "no-empty: error"]);
     expect(stderr).not.toContain("unstaged");
@@ -511,7 +510,7 @@ describe.concurrent("bun lint --staged --fix reports a file that it does not fix
   });
 });
 
-test.concurrent("bun format --staged does not count a file that it does not write", async () => {
+test.concurrent("bun format --staged doesn't count a file it skips", async () => {
   using repo = await repository({ "partly.js": tidy, "whole.js": tidy, "tidy.js": tidy });
   const { root } = repo;
   for (const name of ["partly.js", "whole.js"]) write(root, name, before);

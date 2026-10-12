@@ -122,6 +122,15 @@ struct LintTokenState {
         JSC::WriteBarrier<JSC::CustomGetterSetter> customValue;
     };
     std::array<ListOfProgram, 2> listsOfProgram;
+    // What `lintReplaceCustomValue` has found out: an object with the Structure `before` gets `after` when the value of `name`, which
+    // is at `offset`, has been computed. By the number of `before`, which keeps `name` alive.
+    struct Replacement {
+        JSC::WriteBarrier<JSC::Structure> before;
+        JSC::WriteBarrier<JSC::Structure> after;
+        WTF::UniquedStringImpl* name { nullptr };
+        JSC::PropertyOffset offset { JSC::invalidOffset };
+    };
+    std::array<Replacement, 256> replacements;
     // Where oxlint's getter keeps the `loc` that it has made. Plugins can't see it.
     JSC::Identifier cachedLocName;
     JSC::Identifier includeCommentsName;
@@ -155,6 +164,10 @@ void LintTokenState::visit(Visitor& visitor)
     }
     visitor.append(regexStructure);
     visitor.append(oxlintRegexStructure);
+    for (auto& replacement : replacements) {
+        visitor.append(replacement.before);
+        visitor.append(replacement.after);
+    }
     for (auto& name : typeNames)
         visitor.append(name);
     for (auto& list : listsOfProgram) {
@@ -171,6 +184,9 @@ void LintTokenState::visit(Visitor& visitor)
 
 // The `loc` of what's from `start` to `end` of the current file, for tokens and for nodes. A node of espree has `EspreeToken`.
 JSC::JSObject* lintCreateLoc(JSC::VM&, LintHost*, LintLocShape::Kind, double start, double end);
+
+// Makes the property `name`, which has been computed just now, the plain data property that it has looked like all along.
+void lintReplaceCustomValue(JSC::VM&, LintHost*, JSC::JSObject*, JSC::PropertyName, JSC::JSValue);
 
 // `ast.comments` and `sourceCode.tokensAndComments` of the current file. They throw if there's none.
 JSC::EncodedJSValue lintComments(JSC::JSGlobalObject*);

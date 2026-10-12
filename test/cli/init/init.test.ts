@@ -417,7 +417,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   }, 30_000);
 
   test.each(["--react", "--react=tailwind", "--react=shadcn"])(
-    "the bunfig.toml of bun init %s has the section that bun lint --init adds",
+    "bun init %s writes the same [lint] section to bunfig.toml as bun lint --init",
     async flag => {
       await using temp = tempDir("bun-init-lint-section", { "alone/a.js": "" });
       const run = async (cwd: string, ...args: string[]) => {
@@ -497,7 +497,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       ]);
       expect({ checkStdout, checkStderr, checkExited }).toMatchObject({ checkStdout: "", checkExited: 0 });
 
-      // `bun lint` has nothing to report, not even a warning, and `bun format` nothing to change.
+      // `bun lint` reports nothing, not even a warning, and `bun format` has nothing to change.
       await using lint = Bun.spawn({
         cmd: [bunExe(), "lint", "-f", "json"],
         cwd: temp,
@@ -547,7 +547,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   );
 
   test.skipIf(isWindows)(
-    "the CLAUDE.md is as `bun format` leaves it",
+    "`bun format --check` passes on the generated CLAUDE.md",
     async () => {
       await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
       fs.chmodSync(path.join(temp, "bin/claude"), 0o755);

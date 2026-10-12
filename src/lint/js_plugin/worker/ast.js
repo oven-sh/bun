@@ -43,21 +43,33 @@ const deprecated = {
   },
 };
 
-function defineDeprecated(prototype, name) {
-  for (const [key, get] of Object.entries(deprecated[name] ?? {})) {
-    Object.defineProperty(prototype, key, {
-      get() {
-        return get(this, this);
-      },
-      set(value) {
-        Object.defineProperty(this, key, { value, writable: true, enumerable: true, configurable: true });
-      },
-      configurable: true,
-    });
-  }
+// A getter and a setter for the deprecated property `key`.
+function deprecatedAccessors(key, get) {
+  return [
+    function () {
+      return get(this, this);
+    },
+    function (value) {
+      Object.defineProperty(this, key, { value, writable: true, enumerable: true, configurable: true });
+    },
+  ];
 }
 
+// The nodes are laid out as the parser of the real tool lays them out: see `layouts.rs`.
+const hasExactNodes = process.env.BUN_LINT_EXACT_NODES === "1";
+
 function defineNodes() {
-  native.defineNodes(Node.prototype);
-  for (const name of Object.keys(deprecated)) defineDeprecated(native.nodePrototype(name), name);
+  const accessors = {};
+  for (const [name, properties] of Object.entries(deprecated)) {
+    for (const [key, get] of Object.entries(properties)) accessors[`${name}.${key}`] = deprecatedAccessors(key, get);
+  }
+  const flags = (hasExactNodes ? 1 : 0) | (process.env.BUN_LINT_EAGER_LOC === "1" ? 2 : 0);
+  native.defineNodes(Node.prototype, flags, accessors);
+  if (hasExactNodes) return;
+  for (const [name, properties] of Object.entries(deprecated)) {
+    for (const key of Object.keys(properties)) {
+      const [get, set] = accessors[`${name}.${key}`];
+      Object.defineProperty(native.nodePrototype(name), key, { get, set, configurable: true });
+    }
+  }
 }

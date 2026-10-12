@@ -58,7 +58,7 @@ enum State {
     Raw,
 }
 
-/// The ASCII that `[^\s!"#%-,\.\/;->@\[-\^`\{-~]` matches.
+/// The ASCII bytes that `[^\s!"#%-,\.\/;->@\[-\^`\{-~]` matches.
 const ASCII_OF_ID: ByteSet = ByteSet::of(b"$-:?_\x7F")
     .with_range(0x00, 0x08)
     .with_range(0x0E, 0x1F)

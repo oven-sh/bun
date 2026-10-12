@@ -611,7 +611,7 @@ pub(crate) mod prefer_to_be {
                 op: UnOp::Minus,
                 operand,
             } if operand.is_parenthesized() => return false,
-            // oxlint looks for the `.` only where there is no `-`.
+            // oxlint only looks for the `.` when there's no `-` in front of the number.
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
@@ -1062,7 +1062,7 @@ pub(crate) mod no_large_snapshots {
                 if let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
                     && let Some(first_arg_expr) = match ctx.runner {
                         Runner::Jest | Runner::Vitest => first_expression(jest_fn_call.args),
-                        // `toMatchInlineSnapshot({ id: expect.any(Number) }, `..`)`
+                        // The snapshot comes last: `toMatchInlineSnapshot({ id: expect.any(Number) }, `..`)`
                         Runner::Bun => jest_fn_call.args.last(),
                     }
                     && let Some(snapshot_matcher) = (jest_fn_call.members.iter()).find(|member| {

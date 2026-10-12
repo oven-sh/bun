@@ -3,7 +3,7 @@
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
-use super::{calls, directives, reports, schema, scopes, tokens};
+use super::{calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
 use crate::code_path;
 use crate::estree::Dialect;
@@ -231,7 +231,7 @@ impl<'e> Host<'e> {
                 self.state.lock().loading.realms += 1;
                 schema::write_start(&self.cwd, self.measures, out);
             }
-            ask::LAYOUTS => schema::write_layouts(out),
+            ask::LAYOUTS => layouts::write(out),
             ask::LOADED => {
                 let parts = crate::json::parse(details);
                 if let Some(

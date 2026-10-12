@@ -331,7 +331,7 @@ pub(crate) mod prefer_mock_return_shorthand {
             if !func.is_arrow() && found.has_this_expression || found.has_mutable_reference {
                 continue;
             }
-            // `mockReturnValue(create())` calls it once, not each time.
+            // `mockReturnValue(create())` would call `create` once instead of on every call.
             if ctx.runner == Runner::Bun && found.contains_call_like_expression {
                 continue;
             }
@@ -382,7 +382,7 @@ pub(crate) mod prefer_mock_return_shorthand {
         let mut statements = statements_of(func)?;
         match (statements.next()?.kind(), statements.next()) {
             (StmtKind::Return(Some(arg_expr)), None) => Some((func, arg_expr)),
-            // oxlint takes `function () { a; }` for one that returns `a`.
+            // oxlint treats `function () { a; }` as if it returned `a`.
             (StmtKind::Expr(expression), None) if !func.is_arrow() && runner != Runner::Bun => {
                 Some((func, expression))
             }
@@ -485,7 +485,7 @@ pub(crate) mod prefer_spy_on {
             && file.has_exprs([ExprTag::Assign])
     }
 
-    /// The `mock` of `mock(..)`, if it is what `bun:test` exports under that name.
+    /// Returns the callee of `mock(..)` if it's the `mock` imported from `bun:test`.
     fn mock_of_bun(value: Expr<'_>) -> Option<Expr<'_>> {
         let callee = value.as_call().filter(|_| is_plain(value))?.callee();
         let (file, local) = (value.file(), callee.as_ident()?);
@@ -500,7 +500,7 @@ pub(crate) mod prefer_spy_on {
         (is_mock && callee.symbol() == file.top_level_scope().get_name(local)).then_some(callee)
     }
 
-    /// `a, 'b'` for `a.b`
+    /// Prints `a.b` as `a, 'b'`.
     fn print_object_and_property(content: &mut Vec<u8>, left_assign: Expr) {
         match left_assign.kind() {
             ExprKind::Index { obj, index, .. } => {
@@ -518,7 +518,7 @@ pub(crate) mod prefer_spy_on {
         }
     }
 
-    /// `a.b = mock(c)`
+    /// Reports `a.b = mock(c)`.
     fn check_mock_of_bun<'a>(
         assign_expr: Expr<'a>,
         (callee, call_expr): (Expr<'a>, Expr<'a>),

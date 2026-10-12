@@ -1,4 +1,4 @@
-//! `--init` of `bun lint` and `bun format`: adds the section of the command to the bunfig.toml in the working directory.
+//! `bun lint --init` and `bun format --init`. Adds the command's section to the bunfig.toml in the working directory.
 
 use crate::format::summary::write_error;
 use crate::run::{Environment, Outcome};
@@ -7,12 +7,12 @@ use bun_core::strings::{self, BOM};
 use bun_lint::json::{Notation, with_parsed};
 use std::borrow::Cow;
 
-/// What a command adds.
+/// The section one command adds.
 pub(crate) struct Section {
     name: &'static str,
-    /// What follows the header. A line that is a comment is a setting without its `# `.
+    /// Everything after the `[name]` header. Each commented-out line is a valid setting once its `# ` is removed.
     body: &'static str,
-    /// The key of a `package.json` that holds a configuration of the tool that the command can stand in for.
+    /// The `package.json` key that holds the config of the tool this command replaces.
     key_in_package: &'static str,
 }
 
@@ -43,7 +43,7 @@ impl Section {
         strings::replace_owned(text.as_bytes(), b"\n", line_break)
     }
 
-    /// `Ok`: what has been done. `Err`: why nothing has.
+    /// `Ok` says what was done. `Err` says why nothing was.
     fn try_add(&self, other: Option<&[u8]>, cwd: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
         if let Some(other) = other {
             let key = match paths::basename(other).starts_with(b"package.") {
@@ -83,7 +83,7 @@ impl Section {
             Some(at) if !strings::contains_char(&text[..at], b'\n') => b"\r\n",
             _ => b"\n",
         };
-        // An empty line after what is there.
+        // Leave one empty line between the existing content and the new section.
         let written = text.trim_ascii_end().len();
         let wanted: usize = if written == 0 { 0 } else { 2 };
         let is_in_a_line = !text.is_empty() && !text.ends_with(b"\n");
@@ -99,7 +99,7 @@ impl Section {
         Ok(format!("Added [{}] to bunfig.toml", self.name).into_bytes())
     }
 
-    /// `other`: the configuration file of another tool that counts in the working directory.
+    /// `other` is another tool's config file, if one applies in the working directory.
     pub(crate) fn add(&self, other: Option<&[u8]>, environment: &Environment) -> Outcome {
         let mut out = Outcome::default();
         match self.try_add(other, &environment.cwd) {

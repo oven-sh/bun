@@ -37,7 +37,7 @@ async function doctor(files: Record<string, string>, args: string[] = []) {
   return { stdout, stderr, exitCode, isUntouched };
 }
 
-/** A package with a plugin for ESLint that has `rules`, none of which reports anything. */
+/** Files for an installed ESLint plugin with the given `rules`. None of them reports anything. */
 function plugin(name: string, rules: string[], { isModule = false, version = "99.0.0" } = {}) {
   const object = `{ meta: { name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)} }, rules: { ${rules
     .map(rule => `${JSON.stringify(rule)}: { create: () => ({}) }`)
@@ -56,7 +56,7 @@ function plugin(name: string, rules: string[], { isModule = false, version = "99
 const dependencies = (...names: string[]) =>
   JSON.stringify({ name: "app", type: "module", devDependencies: Object.fromEntries(names.map(name => [name, "*"])) });
 
-// A VM is started for a plugin that only a VM can describe, which takes seconds in a debug build.
+// Plugins that aren't built in get loaded in a JavaScript VM, and starting one takes seconds in a debug build.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
 const flat = {
@@ -128,7 +128,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   );
 
   test(
-    "-f json has the same as data",
+    "-f json prints the same report as JSON",
     async () => {
       const { stdout, exitCode } = await doctor(flat, ["-f", "json"]);
       expect(JSON.parse(stdout)).toEqual({
@@ -163,7 +163,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   );
 
   test(
-    "counts the rules of the files that the arguments select",
+    "only counts rules for the files that the arguments select",
     async () => {
       const { stdout, exitCode } = await doctor(flat, ["-f", "json", "src/a.js"]);
       const { files, rules } = JSON.parse(stdout);
@@ -176,7 +176,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   );
 
   test(
-    "--no-native-plugin-rules sends the rules of a plugin to its package",
+    "--no-native-plugin-rules runs a plugin's rules from its package",
     async () => {
       const { stdout, exitCode } = await doctor(flat, ["-f", "json", "--no-native-plugin-rules"]);
       const { rules, packages } = JSON.parse(stdout);
@@ -231,7 +231,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     timeout,
   );
 
-  test("of the rules that lose nothing it names a few", async () => {
+  test("lists every unsupported rule, but only the first few formatting rules", async () => {
     const files = {
       "eslint.config.js": `export default [{ rules: { indent: 2, semi: 2, quotes: 2, "comma-dangle": 2, "no-such-rule": 2, "nor-this": 2, "nor-that": 2, "nor-any": 2 } }];`,
     };
@@ -245,7 +245,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(text.exitCode).toBe(0);
   });
 
-  test("the rules for React are on in a project that depends on it", async () => {
+  test("the React rules are on in a project that depends on react", async () => {
     const native = async (dependency: string) => {
       const files = { "package.json": dependencies(dependency), "a.jsx": "" };
       return JSON.parse((await doctor(files, ["-f", "json"])).stdout).rules.native;
@@ -304,7 +304,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   );
 
   test(
-    "says what a run says about the versions of plugins",
+    "repeats the note that a normal run prints about plugin versions",
     async () => {
       const files = { ...flat, ...plugin("eslint-plugin-react-hooks", ["rules-of-hooks"], { version: "1.0.0" }) };
       const [text, json] = await Promise.all([doctor(files), doctor(files, ["-f", "json"])]);
@@ -316,7 +316,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     timeout,
   );
 
-  test("files that only the parser of the config reads go to the installed ESLint", async () => {
+  test("files that need the config's custom parser go to the installed ESLint", async () => {
     const files = {
       "package.json": dependencies("eslint"),
       "eslint.config.js": `
@@ -353,7 +353,7 @@ Still needed:   eslint (some files go to it)
     expect(missing.exitCode).toBe(0);
   });
 
-  test("with both an ESLint and an oxlint config it says which one is used, and why", async () => {
+  test("with both an ESLint and an oxlint config, says which one is used and why", async () => {
     const files = {
       "eslint.config.js": `export default [{ rules: { "no-var": "error", eqeqeq: "error" } }];`,
       ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error" } }),
@@ -388,7 +388,7 @@ eslint.config.js is ignored because the project also has an oxlint config. Use -
     expect(picked.exitCode).toBe(0);
   });
 
-  test("only what is tooling for the linter by the form of its name can be removed", async () => {
+  test("only packages named like linter tooling are removable", async () => {
     const names = [
       "eslint",
       "oxlint",
@@ -429,7 +429,7 @@ eslint.config.js is ignored because the project also has an oxlint config. Use -
     expect(exitCode).toBe(0);
   });
 
-  test("what a script, lint-staged or a package that stays uses cannot be removed", async () => {
+  test("a package used by a script, lint-staged or another dependency is still needed", async () => {
     const installed = (name: string, fields: object) => ({
       [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", ...fields }),
     });
@@ -482,7 +482,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     expect(text.exitCode).toBe(0);
   });
 
-  test("a plugin whose rules run in JavaScript keeps the eslint that it depends on", async () => {
+  test("eslint is still needed if a plugin that runs in JavaScript depends on it", async () => {
     const files = {
       ...plugin("eslint-plugin-first", ["a"]),
       "package.json": dependencies("eslint", "eslint-plugin-first"),
@@ -502,7 +502,7 @@ Still needed:   eslint (eslint-plugin-first needs it)
     expect(exitCode).toBe(0);
   });
 
-  test("names the config files further down", async () => {
+  test("lists the config files in subdirectories", async () => {
     const { stdout, exitCode } = await doctor({
       "eslint.config.js": `export default [{ rules: { "no-var": "error" } }];`,
       "packages/a/eslint.config.js": `export default [{ rules: { eqeqeq: "error" } }];`,
@@ -536,7 +536,7 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(0);
   });
 
-  test("without a config file, [lint.rules] of bunfig.toml count", async () => {
+  test("without a config file, [lint.rules] in bunfig.toml still counts", async () => {
     const files = { "a.js": "" };
     const [plain, configured] = await Promise.all([
       doctor(files, ["-f", "json"]),
@@ -556,7 +556,7 @@ Also packages/a/eslint.config.js
     expect(configured.exitCode).toBe(0);
   });
 
-  test("without any file to lint it says what a file would have", async () => {
+  test("with no files to lint, lists the rules a file would get", async () => {
     const { stdout, exitCode } = await doctor({ "README.md": "" }, ["-f", "json"]);
     const { files, rules } = JSON.parse(stdout);
     expect(files.linted).toBe(0);
@@ -565,7 +565,7 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(0);
   });
 
-  test("a config file that cannot be read is an error", async () => {
+  test("a config file that throws is an error", async () => {
     const { stdout, stderr, exitCode } = await doctor({
       "eslint.config.js": `throw new Error("broken on purpose");`,
       "a.js": "",
@@ -575,7 +575,7 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(2);
   });
 
-  test("a config that ESLint refuses is an error", async () => {
+  test("a config that ESLint would reject is an error", async () => {
     const { stdout, stderr, exitCode } = await doctor({
       "eslint.config.js": `export default [{ rules: { eqeqeq: ["error", "sometimes"] } }];`,
       "a.js": "",
@@ -585,7 +585,7 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(2);
   });
 
-  test("the lint script of package.json does not take its place", async () => {
+  test("runs even if package.json has a `lint` script", async () => {
     const { stdout, exitCode } = await doctor({
       "package.json": JSON.stringify({ scripts: { lint: "echo the script" } }),
       "a.js": "",

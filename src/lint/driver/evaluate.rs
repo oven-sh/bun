@@ -110,7 +110,7 @@ fn run(
     }))
 }
 
-/// What `finish` has written, in all that a script has `printed`.
+/// Finds the object that the script's `finish` wrote. `printed` is everything the script printed.
 fn handed_to_finish(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     let at = strings::last_index_of(printed, MARKER)?;
     match bun_lint::json::parse(&printed[at + MARKER.len()..])? {
@@ -119,7 +119,7 @@ fn handed_to_finish(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     }
 }
 
-/// The files of the modules that a script has loaded, which it says under `--doctor`. `printed`: all that it has printed.
+/// Paths of the modules a script loaded. It only reports them under `--doctor`. `printed` is everything it printed.
 pub(crate) fn modules_in(printed: &[u8]) -> Vec<Vec<u8>> {
     let entries = handed_to_finish(printed).unwrap_or_default();
     let modules = entries.iter().find(|it| it.0 == b"modules");

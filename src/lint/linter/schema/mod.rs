@@ -1,11 +1,11 @@
-//! The options that a rule accepts: ESLint's `meta.schema` and `meta.defaultOptions`.
+//! Schemas for rule options: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
-//! ESLint validates the options of every rule that is enabled, and refuses a configuration with
-//! options that the schema of the rule does not allow. The schemas are data here (126 KB for 360 rules,
-//! of which that of a rule is parsed when options for it are validated), not part of the rules.
+//! ESLint validates the options of every enabled rule, and rejects a config whose options don't
+//! match the rule's schema. Here the schemas are data, not part of the rules (126 KB for 360
+//! rules). A rule's schema is parsed only when its options are validated.
 //!
-//! The default options are merged into the options for validating and for comparing only. A rule
-//! is made from the options as they are written, and knows its defaults itself.
+//! Default options are merged in only for validating and comparing. A rule is built from the
+//! options as written, and applies its own defaults.
 
 mod data;
 mod plain;

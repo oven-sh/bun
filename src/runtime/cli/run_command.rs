@@ -3429,7 +3429,7 @@ impl RunCommand {
         Global::exit(code);
     }
 
-    /// How many columns the terminal of standard output has: `COLUMNS`, else what the terminal says, else 80.
+    /// Width of stdout's terminal in columns. Uses `COLUMNS` if it's set, then asks the terminal, then falls back to 80.
     pub(crate) fn columns_of_stdout() -> u16 {
         // Honor COLUMNS so piped output and tests can pin a width.
         if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {

@@ -60,7 +60,7 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     for (name, spans) in identifiers {
         // oxlint reports the first one, once, and removes all but the last.
         if !is_oxlint {
-            // The plugin has no fix.
+            // The plugin has no fix, so only fix when there's no plugin to match.
             let fixes = cx.language().stands_alone;
             for (previous, span) in spans.iter().zip(spans.iter().skip(1)) {
                 cx.report(*span, NO_MULTI_SPREADING)

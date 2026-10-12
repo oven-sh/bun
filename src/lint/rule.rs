@@ -371,15 +371,15 @@ pub struct Meta {
     /// It runs only on a file of a program that has been type checked, and
     /// [`File::types`](crate::ast::File::types) never fails in it.
     pub requires_types: bool,
-    /// It runs without types too, and asks them where the file has them.
+    /// The rule also runs without types, and uses them in files that have them.
     pub uses_types: bool,
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
-    /// It is a port of the rule that oxlint has, not of the rule of the plugin for ESLint: the messages, the places, the fixes and
-    /// the options are oxlint's. With a configuration of ESLint it does not exist: the package of the project answers.
+    /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
+    /// oxlint's. It doesn't exist with an ESLint config. The project's installed package runs there instead.
     pub follows_oxlint: bool,
     /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
     /// rule of the package is asked.
@@ -479,7 +479,7 @@ impl Meta {
         self
     }
 
-    /// Whether a file whose configuration wants types is type checked for it.
+    /// Whether enabling this rule gets a file type checked, if the file's config asks for types.
     pub const fn asks_types(&self) -> bool {
         self.requires_types || self.uses_types
     }
@@ -494,7 +494,7 @@ impl Meta {
         self
     }
 
-    /// Some of its reports have a [`Report::hint`](crate::context::Report::hint). Without this none is shown.
+    /// Some of the rule's reports have a [`Report::hint`](crate::context::Report::hint). Hints aren't shown without this.
     pub const fn hints(mut self) -> Meta {
         self.has_hints = true;
         self

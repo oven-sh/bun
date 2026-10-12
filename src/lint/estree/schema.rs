@@ -890,7 +890,7 @@ estree_schema! {
             Node::EnumMember(member) => VNode::of_expr(member.init()?)?,
             _ => return None,
         };
-        ts_hidden Computed = match v.base {
+        ts_data Computed = match v.base {
             Node::EnumMember(member) => is_computed(member.key()),
             _ => return None,
         };

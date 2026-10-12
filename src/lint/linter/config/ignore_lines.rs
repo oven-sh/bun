@@ -1,5 +1,5 @@
-//! `ignorePatterns` of an `.oxlintrc.json` and of the configuration files of ESLint 8: lines in the format of a `.gitignore`.
-//! What a line matches is said by [`crate::ignore`]. Here is who asks what.
+//! `ignorePatterns` from `.oxlintrc.json` and from ESLint 8 config files. Both are lists of `.gitignore`-style lines.
+//! [`crate::ignore`] does the matching. This module calls it the way each tool does.
 
 use crate::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 

@@ -119,7 +119,7 @@ impl<'a> File<'a> {
         self.comment_variables()?.of_environments.get(name).copied()
     }
 
-    /// What the environments define that `/* eslint-env */` comments of the file name, sorted by name.
+    /// Globals from the environments that the file's `/* eslint-env */` comments name, sorted by name.
     pub(crate) fn globals_of_environments_in_comments(&'a self) -> Vec<(&'a [u8], Global)> {
         let Some(variables) = self.comment_variables() else {
             return Vec::new();

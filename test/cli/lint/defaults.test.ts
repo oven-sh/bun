@@ -1,4 +1,4 @@
-// What `bun lint` does in a project that has no configuration of ESLint or oxlint.
+// Tests for what `bun lint` does in a project without an ESLint or oxlint config.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -18,7 +18,7 @@ const env = {
 
 type Result = { filePath: string; messages: { line: number; column: number; severity: number; ruleId: string }[] };
 
-/** `reports`: `a.js:1:1 error no-debugger` for each problem. `texts`: the files when the command has run. */
+/** `reports` has one `a.js:1:1 error no-debugger` string per problem. `texts` has the files' contents after the run. */
 async function lint(files: Record<string, string>, args: string[], stdin?: string) {
   using dir = tempDir("bun-lint-defaults", files);
   await using proc = spawn({
@@ -49,7 +49,7 @@ describe.concurrent("severities", () => {
     "b.ts": "export let a: any = 1;\nexport const b = 1 as unknown as Number;\n",
   };
 
-  test("a default rule about a problem is an error, one about code that does nothing and every other one a warning", async () => {
+  test("default rules that catch bugs are errors, and the rest are warnings", async () => {
     const { reports, exitCode } = await lint(files, []);
     expect(reports).toEqual([
       "a.js:1:1 error no-debugger",
@@ -62,7 +62,7 @@ describe.concurrent("severities", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("with --type-aware too", async () => {
+  test("the rules that --type-aware adds are split the same way", async () => {
     const { reports, exitCode } = await lint(
       {
         "tsconfig.json": "{}",
@@ -78,7 +78,7 @@ describe.concurrent("severities", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("warnings do not fail the run, --max-warnings does, --quiet hides them", async () => {
+  test("warnings don't fail the run unless --max-warnings is exceeded, and --quiet hides them", async () => {
     const warned = { "a.js": files["a.js"].replace("debugger;", "") };
     const [plain, limited, quiet] = await Promise.all([
       lint(warned, []),
@@ -95,7 +95,7 @@ describe.concurrent("severities", () => {
     expect([plain.exitCode, limited.exitCode, quiet.exitCode]).toEqual([0, 1, 1]);
   });
 
-  test("what bunfig.toml and --rule set stays as it is set", async () => {
+  test("severities from bunfig.toml and --rule are kept as written", async () => {
     const bunfig = `[lint.rules]\n"no-empty" = "error"\n"no-debugger" = "warn"\n"no-var" = "error"\n`;
     const [byFile, byFlag] = await Promise.all([
       lint({ ...files, "bunfig.toml": bunfig, "c.js": "var c = 1;\nexport { c };\n" }, []),
@@ -119,7 +119,7 @@ describe.concurrent("severities", () => {
     ]);
   });
 
-  test("the same configurations are all errors in an eslint.config.js", async () => {
+  test("the same presets are all errors in an eslint.config.js", async () => {
     const config = `export default [
       { files: ["**/*.{js,ts}"], extends: ["eslint:recommended"], languageOptions: { globals: { Bun: "readonly" } } },
       { files: ["**/*.ts"], extends: ["typescript-eslint/recommended"] },
@@ -135,7 +135,7 @@ describe.concurrent("severities", () => {
     ]);
   });
 
-  test("bun:test/no-disabled-tests is a warning, the other rules for tests are errors", async () => {
+  test("bun:test/no-disabled-tests is a warning, the other bun:test rules are errors", async () => {
     const code = `import { expect, test } from "bun:test";\ntest.skip("a", () => {});\ntest.only("b", () => {\n  expect(1);\n});\n`;
     const { reports } = await lint({ "a.test.ts": code }, []);
     expect(reports).toEqual([
@@ -145,7 +145,7 @@ describe.concurrent("severities", () => {
     ]);
   });
 
-  test("--print-config", async () => {
+  test("--print-config shows the default severities and options", async () => {
     const { json } = await lint(files, ["--print-config", "b.ts"]);
     const { rules } = json;
     const unusedOnPurpose = {
@@ -182,7 +182,7 @@ declare const c: any;
 `;
 
   test.each(["types.d.ts", "types.d.mts", "types.d.cts", "types.d.css.ts"])(
-    "%s: the default rules that are errors run, those that are warnings do not",
+    "%s: default rules run if they're errors, and are skipped if they're warnings",
     async name => {
       const { reports, exitCode } = await lint({ [name]: code }, []);
       expect(reports).toEqual([`${name}:2:18 error @typescript-eslint/no-wrapper-object-types`]);
@@ -190,7 +190,7 @@ declare const c: any;
     },
   );
 
-  test("other files that are called alike have the warnings", async () => {
+  test("files with similar names still get the warnings", async () => {
     const { reports } = await lint({ "d.ts": "export const a: any = 1;\n", "a.d.js": "let a;\n" }, []);
     expect(reports).toEqual([
       "a.d.js:1:5 warning no-unused-vars",
@@ -198,7 +198,7 @@ declare const c: any;
     ]);
   });
 
-  test("what bunfig.toml and --rule set is for them too", async () => {
+  test("rules set in bunfig.toml or with --rule apply to them too", async () => {
     const bunfig = `[lint.rules]\n"@typescript-eslint/no-explicit-any" = "warn"\n"no-var" = "error"\n`;
     const expected = [
       "types.d.ts:1:1 error no-var",
@@ -213,7 +213,7 @@ declare const c: any;
     expect(byFlag.reports).toEqual(expected);
   });
 
-  test("with an eslint.config.js they are files like any other", async () => {
+  test("with an eslint.config.js they're linted like any other file", async () => {
     const config = `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/recommended"] }];\n`;
     const { reports } = await lint({ "types.d.ts": code, "eslint.config.js": config }, ["types.d.ts"]);
     expect(reports).toEqual([
@@ -225,7 +225,7 @@ declare const c: any;
   });
 });
 
-describe.concurrent("a name that starts with _ is unused on purpose", () => {
+describe.concurrent("names that start with _ are allowed to be unused", () => {
   const code = `const _a = 1;
 export function f(_b, c) {}
 try {
@@ -255,12 +255,12 @@ const h = 1;
       "'c' is defined but never used.",
       "'h' is assigned a value but never used.",
     ]);
-    // As in ESLint, a severity alone leaves the options as they are, and options replace them.
+    // Like in ESLint, a severity on its own keeps the default options, and explicit options replace them.
     expect(severity.reports).toEqual([`${name}:2:23 error ${rule}`, `${name}:11:7 error ${rule}`]);
     expect(options.reports).toEqual(all.map(at => `${name}:${at} warning ${rule}`));
   });
 
-  test("not with an eslint.config.js", async () => {
+  test("doesn't apply with an eslint.config.js", async () => {
     const config = `export default [{ rules: { "no-unused-vars": "error" } }];\n`;
     const { reports } = await lint({ "eslint.config.js": config, "a.js": code }, ["a.js"]);
     expect(reports).toEqual(all.map(at => `a.js:${at} error no-unused-vars`));
@@ -281,7 +281,7 @@ console.log(5);
 `;
   const unused = (line: number) => `a.js:${line}:1 warning null`;
 
-  test("one for a rule that is off, or that does not exist, is left alone", async () => {
+  test("a comment for a rule that's off or doesn't exist isn't reported as unused", async () => {
     const [reported, fixed] = await Promise.all([lint({ "a.js": code }, []), lint({ "a.js": code }, ["--fix"])]);
     expect(reported.reports).toEqual([unused(3), unused(7), unused(9)]);
     expect(reported.json[0].messages.map((it: { message: string }) => it.message)).toEqual([
@@ -298,7 +298,7 @@ console.log(5);
     );
   });
 
-  test("a rule that the project or a comment turns on is on", async () => {
+  test("a rule turned on by bunfig.toml or a comment counts as on", async () => {
     const bunfig = `[lint.rules]\n"no-alert" = "warn"\n`;
     const text = `/* eslint no-eval: error */\n// eslint-disable-next-line no-alert, no-eval, no-console\nconsole.log(1);\n`;
     const { json } = await lint({ "bunfig.toml": bunfig, "a.js": text }, []);
@@ -308,7 +308,7 @@ console.log(5);
     ]);
   });
 
-  test("with an eslint.config.js they are reported, as by ESLint", async () => {
+  test("with an eslint.config.js they're reported, like in ESLint", async () => {
     const config = `export default [{ rules: { "no-debugger": "error" } }];\n`;
     const { reports } = await lint({ "eslint.config.js": config, "a.js": code }, ["a.js"]);
     expect(reports).toEqual([
@@ -363,7 +363,7 @@ export function useThing(a, on) {
     JSON.stringify({ name: "app", [field]: { [name]: "^19.0.0" } });
 
   test.each(["dependencies", "devDependencies", "peerDependencies"])(
-    "a file with JSX beside a package.json with react in %s",
+    "the React rules are on if package.json has react in %s",
     async field => {
       const files = { "package.json": dependingOn(field), "src/App.jsx": component, "src/App.tsx": component };
       const { reports, exitCode } = await lint(files, []);
@@ -372,7 +372,7 @@ export function useThing(a, on) {
     },
   );
 
-  test("every file of the project, with JSX or without", async () => {
+  test("they run on every file in the project, with or without JSX", async () => {
     const files = {
       "package.json": dependingOn("dependencies"),
       "App.js": component,
@@ -387,7 +387,7 @@ export function useThing(a, on) {
     ["no package.json", {}],
     ["a package.json without react", { "package.json": dependingOn("dependencies", "preact") }],
     ["react in optionalDependencies", { "package.json": dependingOn("optionalDependencies") }],
-  ])("%s: nothing", async (_, more) => {
+  ])("%s: the React rules stay off", async (_, more) => {
     const { reports, exitCode } = await lint({ ...more, "App.jsx": component, "useThing.js": hook }, []);
     expect(reports).toEqual([]);
     expect(exitCode).toBe(0);
@@ -441,7 +441,7 @@ export function useThing(a, on) {
     expect(named.reports).toEqual([]);
   });
 
-  test("a file that is named, and standard input", async () => {
+  test("they also run on files passed by name and on stdin", async () => {
     const files = { "package.json": dependingOn("dependencies"), "src/App.jsx": component };
     const [named, piped] = await Promise.all([
       lint(files, ["src/App.jsx"]),
@@ -451,7 +451,7 @@ export function useThing(a, on) {
     expect(piped.reports).toEqual(found("src/Other.jsx"));
   });
 
-  test("with --type-aware", async () => {
+  test("they also run with --type-aware", async () => {
     const files = {
       "package.json": dependingOn("dependencies"),
       "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve", noImplicitAny: false } }),
@@ -462,7 +462,7 @@ export function useThing(a, on) {
     expect(reports.filter(it => it.includes("react"))).toEqual([...found("App.tsx"), ...foundInHook("useThing.ts")]);
   });
 
-  test("what is set for them stays as it is set, with react in package.json or without", async () => {
+  test("bunfig.toml settings for them apply with or without react in package.json", async () => {
     const bunfig = `[lint.rules]\n"react-hooks/rules-of-hooks" = "warn"\n"react-hooks/exhaustive-deps" = "error"\n"react/jsx-key" = "off"\n`;
     const files = { "bunfig.toml": bunfig, "App.jsx": component, "useThing.js": hook };
     const expected = [
@@ -492,7 +492,7 @@ export function useThing(a, on) {
     expect(exitCode).toBe(0);
   });
 
-  test("--print-config has them where package.json has react", async () => {
+  test("--print-config lists them only if package.json has react", async () => {
     const files = {
       "package.json": dependingOn("dependencies"),
       "mail/package.json": dependingOn("dependencies", "preact"),
@@ -511,7 +511,7 @@ export function useThing(a, on) {
     expect(ofReact(without.json)).toEqual([]);
   });
 
-  test("not with a configuration of ESLint or oxlint", async () => {
+  test("they stay off with an ESLint or oxlint config", async () => {
     const files = { "package.json": dependingOn("dependencies"), "App.jsx": component };
     const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
     const [eslint, oxlint] = await Promise.all([

@@ -695,13 +695,33 @@ JSObject* locOf(JSGlobalObject* globalObject, LintHost* host, JSObject* token, L
     return lintCreateLoc(vm, host, kind, start, end);
 }
 
-// Makes the property `name`, which has been computed just now, the plain data property that it has looked like all along.
-void replaceCustomValue(VM& vm, JSObject* object, PropertyName name, JSValue value)
+} // namespace
+
+void lintReplaceCustomValue(VM& vm, LintHost* host, JSObject* object, PropertyName name, JSValue value)
 {
+    Structure* before = object->structure();
+    auto& known = host->tokens.replacements[(before->id().bits() >> 4) % host->tokens.replacements.size()];
+    if (known.before.get() == before && known.name == name.uid()) [[likely]] {
+        object->setStructure(vm, known.after.get());
+        object->putDirectOffset(vm, known.offset, value);
+        return;
+    }
     unsigned attributes;
-    if (object->getDirectOffset(vm, name, attributes) != invalidOffset && (attributes & PropertyAttribute::CustomValue))
-        object->putDirect(vm, name, value, attributes & ~PropertyAttribute::CustomValue);
+    PropertyOffset offset = object->getDirectOffset(vm, name, attributes);
+    if (offset == invalidOffset || !(attributes & PropertyAttribute::CustomValue))
+        return;
+    object->putDirect(vm, name, value, attributes & ~PropertyAttribute::CustomValue);
+    Structure* after = object->structure();
+    // Only what the next object with that Structure can do in the same way.
+    if (before->isDictionary() || after->isDictionary() || after->get(vm, name) != offset)
+        return;
+    known.before.set(vm, host, before);
+    known.after.set(vm, host, after);
+    known.name = name.uid();
+    known.offset = offset;
 }
+
+namespace {
 
 // To a plugin `loc` is a plain data property, as with ESLint. It's computed when it's first read.
 EncodedJSValue computeLoc(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName name, LintLocShape::Kind kind)
@@ -709,9 +729,10 @@ EncodedJSValue computeLoc(JSGlobalObject* globalObject, EncodedJSValue thisValue
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* token = asObject(JSValue::decode(thisValue));
-    JSObject* loc = locOf(globalObject, LintHost::from(globalObject), token, kind);
+    LintHost* host = LintHost::from(globalObject);
+    JSObject* loc = locOf(globalObject, host, token, kind);
     RETURN_IF_EXCEPTION(scope, {});
-    replaceCustomValue(vm, token, name, loc);
+    lintReplaceCustomValue(vm, host, token, name, loc);
     return JSValue::encode(loc);
 }
 
@@ -1199,7 +1220,7 @@ EncodedJSValue computeListOfProgram(JSGlobalObject* globalObject, EncodedJSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     EncodedJSValue list = listOfProgram(globalObject, isComments);
     RETURN_IF_EXCEPTION(scope, {});
-    replaceCustomValue(vm, asObject(JSValue::decode(thisValue)), name, JSValue::decode(list));
+    lintReplaceCustomValue(vm, LintHost::from(globalObject), asObject(JSValue::decode(thisValue)), name, JSValue::decode(list));
     return list;
 }
 

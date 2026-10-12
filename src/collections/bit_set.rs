@@ -277,7 +277,7 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
     bit_length.div_ceil(usize::BITS as usize)
 }
 
-/// A set of bytes, in 32 bytes. It can be a `const` or a `static`.
+/// A set of byte values that takes 32 bytes. Works as a `const` or a `static`.
 pub type ByteSet = ArrayBitSet<256, { num_masks_for(256) }>;
 
 impl ByteSet {
@@ -290,7 +290,7 @@ impl ByteSet {
         set
     }
 
-    /// With `first..=last` too.
+    /// Also adds `first..=last`.
     pub const fn with_range(mut self, first: u8, last: u8) -> ByteSet {
         let mut byte = first as usize;
         while byte <= last as usize {

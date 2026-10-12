@@ -699,7 +699,7 @@ impl Default for Location {
 }
 
 impl Location {
-    /// On a line of its own, under a message of `kind`: `at file:line:column`. Nothing if there is no file.
+    /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
     pub fn write_place<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
@@ -1106,7 +1106,7 @@ impl Data {
     }
 }
 
-/// The columns of a terminal that the first `units` UTF-16 code units of `line` take.
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`.
 fn width_before(line: &[u8], units: usize) -> usize {
     use bun_core::strings;
     if strings::is_all_ascii(line) {

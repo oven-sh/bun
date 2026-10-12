@@ -195,7 +195,8 @@ impl Context<'_, '_> {
         self.options.fix || self.options.fix_dry_run
     }
 
-    /// Whether the file at `path` is fixed. One that would not be written is reported as it is left.
+    /// Whether fixes are applied to the file at `path`. A partly staged file won't be written, so its problems are reported
+    /// unfixed.
     pub(crate) fn fixes_file(&self, path: &[u8]) -> bool {
         self.fixes() && !self.only.is_some_and(|it| it.is_partly_staged(path))
     }
@@ -424,7 +425,8 @@ impl Context<'_, '_> {
         Ok(())
     }
 
-    /// Parses `text` as the file at `path`, on the calling thread, and calls `then` with the file. `None`: it's nested too deeply.
+    /// Parses `text` as the file at `path` on the calling thread, and calls `then` with the file. `then` gets `None` if the
+    /// code is nested too deeply.
     fn parse(
         &self,
         path: &[u8],
@@ -533,7 +535,7 @@ impl Context<'_, '_> {
         parse_again: &ParseAgain,
     ) -> LintResult {
         let parsed = self.timing.now();
-        // Whoever says what the file on the disk is sees to what is not read here.
+        // This is a processor's block that may be misread. Don't lint it. The caller decides what to do with it.
         if as_what.physical_path_len.is_some() && may_be_misread(file) {
             return LintResult {
                 is_unread: true,
@@ -541,7 +543,7 @@ impl Context<'_, '_> {
             };
         }
         let options = self.lint_options();
-        // The parts of a file that is linted in parts are not put together a second time.
+        // Help on demand lints the text a second time. That only works for a file that's linted in one piece.
         let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
         let waits_for_demand = self.help_on_demand && is_whole && !as_what.with_help;
         let options = LintOptions {
@@ -552,13 +554,13 @@ impl Context<'_, '_> {
                 Fixes::Disabled => false,
             },
             disables_fixes: as_what.fixes == Fixes::Disabled,
-            // A processor is given the messages.
+            // A block's messages are handed to its processor, so they have to be complete.
             wants_texts_of_fixes: options.wants_texts_of_fixes
                 || as_what.physical_path_len.is_some(),
             wants_help: options.wants_help && !waits_for_demand,
             wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
             wants_places: options.wants_places || as_what.physical_path_len.is_some(),
-            // Its rules have no such thing.
+            // JavaScript rules have no help, so there's no reason to run them again.
             js_plugins: options.js_plugins.filter(|_| !as_what.with_help),
             parse_again: Some(parse_again),
             physical_path_len: as_what.physical_path_len,
@@ -573,7 +575,7 @@ impl Context<'_, '_> {
             unused_directives_as_oxlint(&mut result, as_what.script.is_some());
         }
         self.promote_suggestions(&mut result);
-        // What is fixed is another text in the end.
+        // Fixes change the text, so these line starts wouldn't match the final one.
         if self.keeps_text && is_whole && !self.fixes() {
             result.line_starts = file.known_line_starts().map(<[u32]>::to_vec);
         }

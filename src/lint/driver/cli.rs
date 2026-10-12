@@ -201,7 +201,7 @@ const OF_OXLINT: &[Param] = &[
     clap::param!("--disable-typescript-plugin     Turn off the <b>typescript<r> plugin"),
 ];
 
-/// What the help has as `--no-..`.
+/// Flags that `--help` lists in their `--no-..` form.
 const OPPOSITES: &[Param] = &[
     clap::param!("--config-lookup"),
     clap::param!("--ignore"),
@@ -407,14 +407,14 @@ pub enum FixType {
     Layout,
 }
 
-/// An element of `overrides` in `[lint]`.
+/// One entry of `[[lint.overrides]]`.
 #[derive(Clone, Debug, Default)]
 pub struct Override {
-    /// Patterns for paths from the working directory. One without a slash is for a name in any directory.
+    /// Globs matched against the path relative to the working directory. A glob without a slash matches the file name.
     pub files: Vec<Vec<u8>>,
     pub excluded: Vec<Vec<u8>>,
     pub rules: Vec<(Vec<u8>, Json)>,
-    /// Where each of `rules` is.
+    /// bunfig.toml location of each entry in `rules`.
     pub places: Vec<crate::bunfig::RuleOfBunfig>,
     pub globals: Vec<(Vec<u8>, Json)>,
     pub settings: Vec<(Vec<u8>, Json)>,
@@ -432,7 +432,7 @@ pub struct Options {
     pub of_one_tool: Vec<OfOneTool>,
     pub ext: Option<Vec<Vec<u8>>>,
     pub global: Vec<Vec<u8>>,
-    /// `[lint.globals]` of bunfig.toml, which `--global` comes after.
+    /// `[lint.globals]` from bunfig.toml. `--global` is applied after it.
     pub globals: Vec<(Vec<u8>, Json)>,
     pub parser: Option<Vec<u8>>,
     pub parser_options: Vec<(Vec<u8>, Json)>,
@@ -442,9 +442,10 @@ pub struct Options {
     pub rule: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml locations for the first entries of `rule`, which came from `[lint.rules]`.
     pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
-    /// `[[lint.overrides]]` of bunfig.toml. No flag sets them.
+    /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
     pub overrides: Vec<Override>,
-    /// With `overrides`: the command line alone, whose rules and globals come after them.
+    /// Only set if there are `overrides`. The command line's options on their own, because its rules and globals apply
+    /// after the overrides.
     pub of_command_line: Option<Box<Options>>,
     pub fix: bool,
     pub fix_dry_run: bool,
@@ -471,7 +472,7 @@ pub struct Options {
     pub pass_on_no_patterns: bool,
     /// Empty: no file is named, as for oxlint.
     pub print_config: Option<Vec<u8>>,
-    /// Says what a run would do with the configuration, and lints nothing.
+    /// Report what a run would do with this config, without linting.
     pub doctor: bool,
     pub suppress_all: bool,
     pub suppress_rule: Option<Vec<Vec<u8>>>,
@@ -492,7 +493,7 @@ pub struct Options {
     pub fix_safely: bool,
     /// oxlint's `--rules`: lists the rules, and lints nothing.
     pub rules: bool,
-    /// Prints the page about this rule, and lints nothing.
+    /// Print this rule's docs page, without linting.
     pub explain: Option<Vec<u8>>,
     /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
     /// in `plugins`, and whether it is on.

@@ -9,10 +9,11 @@
 //! `code_path/estree.rs` gives them.
 
 use super::ast::{self, Numbered};
+use super::layouts;
 use super::wire::{self, ask};
 use crate::ast::File;
 use crate::code_path::estree::{self, Tree};
-use crate::estree::NodeType;
+use crate::estree::{Dialect, NodeType};
 use crate::selector::Selector;
 use bun_core::strings::Utf16OffsetTable;
 
@@ -271,7 +272,13 @@ pub(super) fn listen<'a>(
     wire::words(out, &calls);
     if let Some(writer) = writer.as_ref().filter(|_| sends_tree) {
         let tree_start = out.len();
-        writer.append(out);
+        let is_typescript_estree =
+            Dialect::of(file) != Dialect::Espree && !file.language().is_oxlint;
+        let alternates = match flags & ask::WANTS_ALTERNATES != 0 && is_typescript_estree {
+            true => layouts::alternates(writer.view()),
+            false => Vec::new(),
+        };
+        writer.append(&alternates, out);
         let length = (out.len() - tree_start) as u32;
         out[start + 4..start + 8].copy_from_slice(&length.to_le_bytes());
     }

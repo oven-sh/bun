@@ -672,8 +672,8 @@ pub(crate) fn for_each_call_named_like<'a>(
     }
 }
 
-/// The calls that are tests by what is written, whatever `it` and `test` refer to: those that are in no other, in the order of
-/// the source. For `bun:test` the callback of each: `test.skipIf(a || b)(..)` has no condition in the test.
+/// Calls that look like tests by name, whatever `it` and `test` actually refer to. Only the outermost ones, in source order.
+/// For `bun:test` each span is the test's callback, so `a || b` in `test.skipIf(a || b)(..)` isn't a condition in the test.
 pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
     let find = || {
         let mut tests: Vec<Span> = Vec::new();
@@ -1546,8 +1546,8 @@ pub(crate) fn run_on_jest_nodes<'a>(
     iter_possible_jest_call_node(ctx.file, ctx.runner).for_each(|node| run(node, ctx));
 }
 
-/// For `bun:test`: the calls of the functions `names` that are not among [`iter_possible_jest_call_node`], which are wrappers of
-/// one's own around `test`. oxlint compares `additionalTestBlockFunctions` only with what the runner declares.
+/// For `bun:test`: calls to the functions in `names` that [`iter_possible_jest_call_node`] doesn't return. Those are the user's
+/// own wrappers around `test`. oxlint only compares `additionalTestBlockFunctions` with the names the runner declares.
 pub(crate) fn calls_of_own_test_blocks<'a>(
     ctx: &Ctx<'a, '_>,
     names: &[String],
@@ -1765,9 +1765,10 @@ pub(crate) fn print_expression(out: &mut Vec<u8>, e: Expr) {
     out.append(&mut codegen.code);
 }
 
-/// `request.*.expect` is `/^request\.[a-z\d]*\.expect(\.|$)/iu`, and `**` is also for dots. `None` if that is not valid.
+/// Converts `request.*.expect` to `/^request\.[a-z\d]*\.expect(\.|$)/iu`. `**` also matches dots. Returns `None` if the result
+/// isn't a valid regex.
 ///
-/// For `bun:test` the stars are also for `_` and `$`, and `**` can be nothing: `request.**.expect` is for `request.expect` too.
+/// For `bun:test`, stars also match `_` and `$`, and `**` can match nothing: `request.**.expect` matches `request.expect`.
 pub(crate) fn convert_pattern(pattern: &str, runner: Runner) -> Option<Regex> {
     let is_bun = runner == Runner::Bun;
     let mut converted = "^".to_owned();

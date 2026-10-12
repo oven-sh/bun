@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// | `prettier-plugin-organize-imports` | `organizeImportsSkipDestructiveCodeActions`, `organizeImportsTypeOrder` |
 /// | the `compilerOptions` of the `tsconfig.json` of the file, which that plugin reads | `tsconfig.jsx`, `tsconfig.jsxFactory`, `tsconfig.jsxFragmentFactory`, `tsconfig.reactNamespace` |
 /// | oxfmt | `sortImports`, which used to be `experimentalSortImports` |
-/// | Bun | `bun.sortImports`: `sortImports` of `[format]` in bunfig.toml, and `--sort-imports` |
+/// | Bun | `bun.sortImports`, set by `sortImports` under `[format]` in bunfig.toml or by `--sort-imports` |
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Settings {
     entries: Vec<(Box<[u8]>, Box<[u8]>)>,

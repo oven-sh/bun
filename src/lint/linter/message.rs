@@ -116,15 +116,15 @@ impl Suppression {
     }
 }
 
-/// The `data` of a suggestion, which ESLint passes on.
+/// A suggestion's `data`, which ESLint passes through to its output.
 #[derive(Clone, Debug, Default)]
 pub enum Data {
     /// The rule gave none.
     #[default]
     None,
-    /// What the placeholders in the message of a built-in rule stand for.
+    /// Values for the placeholders in a built-in rule's message.
     Texts(Vec<(&'static str, Vec<u8>)>),
-    /// What a rule written in JavaScript gave, as JSON.
+    /// The `data` that a rule written in JavaScript gave, as JSON.
     Json(Vec<u8>),
 }
 
@@ -145,7 +145,8 @@ impl From<crate::context::Suggestion> for Suggestion {
         Suggestion {
             message_id: Cow::Borrowed(it.message_id),
             message: it.message,
-            // A built-in rule whose upstream writes `desc` itself fills a template of its own. That data isn't upstream's.
+            // Where upstream writes `desc` itself, the built-in rule fills in a template of its own. That data isn't
+            // upstream's, so drop it.
             data: match it.data.is_empty() || it.message_id.is_empty() {
                 true => Data::None,
                 false => Data::Texts(it.data),
@@ -475,7 +476,7 @@ fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
     out.push(b'}');
 }
 
-/// `,"data":{..}`, if the rule gave any.
+/// Writes `,"data":{..}` if the rule gave any data.
 fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
     let texts = match &suggestion.data {
         Data::None => return,

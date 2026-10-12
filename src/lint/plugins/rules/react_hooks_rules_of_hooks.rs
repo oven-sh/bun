@@ -578,7 +578,7 @@ pub struct State<'a> {
     starts: Vec<usize>,
 }
 
-/// What decides whether `hook` is called in `func`.
+/// The hint for a conditional hook. Points at the condition or early return that decides whether `func` calls `hook`.
 fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
     let file = hook.file();
     let mut inner = Node::Expr(hook);

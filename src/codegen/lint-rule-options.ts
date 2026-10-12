@@ -38,7 +38,7 @@ const toml = (value: Json): string =>
       ? tomlTable(Object.entries(value))
       : JSON.stringify(value);
 
-/** What the hand-written "## Options" part of a page says about the options. */
+/** Facts about the options, parsed from the hand-written "## Options" part of a page. */
 export type Documented = {
   /**
    * Rows of the `Option | Default | ...` tables: the option's name, and its default if that cell is JSON in backticks.
@@ -164,7 +164,7 @@ function accepts(schema: Schema, value: Json, root: Schema): boolean {
 }
 
 /**
- * What `schema` accepts, as a list to join with "or": `"always"`, `"never"`, `number`, `list of strings`.
+ * The values `schema` accepts, as a list to join with "or": `"always"`, `"never"`, `number`, `list of strings`.
  * `short` names the type of an enum instead of its values.
  */
 function kinds(schema: Schema, root: Schema, short = false): string[] {

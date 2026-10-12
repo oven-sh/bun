@@ -436,7 +436,10 @@ describe("pnpm-lock.yaml v9", () => {
         expect(requests.filter(r => !r.authorized)).toEqual([]);
         expect(requests.map(r => r.path)).toContain("/no-deps/-/no-deps-1.0.1.tgz");
         expect(nodeModulesPackages(String(dir))).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
-        expect(await bunLockOf(String(dir))).not.toContain("hunter2");
+        // the whole URL, so that a username left in it fails too
+        expect(await bunLockOf(String(dir))).toContain(
+          `"no-deps@1.0.1", "http://localhost:${server.port}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`,
+        );
         expect(exitCode).toBe(0);
       },
     );

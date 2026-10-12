@@ -5221,7 +5221,10 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new((NEEDS_OPEN || str.is_empty()) && !dest_is_dup);
+    let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
+    if dest_is_dup {
+        truncate.set(false);
+    }
     let written = core::cell::Cell::new(0usize);
 
     // we only truncate if it's a path
@@ -5306,7 +5309,10 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     // TODO: on windows this is always synchronous
 
-    let truncate = (NEEDS_OPEN || bytes.is_empty()) && !dest_is_dup;
+    let mut truncate = NEEDS_OPEN || bytes.is_empty();
+    if dest_is_dup {
+        truncate = false;
+    }
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 

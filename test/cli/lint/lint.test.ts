@@ -2779,6 +2779,84 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // `namespace A.B { .. }` is one node, and what is between the braces is its body: a rule that looks at the statements beside a
+  // statement says there what it says in `namespace B { .. }` and in `namespace A { export namespace B { .. } }`.
+  describe("the statements of a namespace with dots in its name", () => {
+    const bodies = {
+      "one-var": ["let a = 1;", "let b = 2;", "var c = 3;", "var d = 4;"],
+      "vars-on-top": ["export var x = 1;", "foo();", "export var y = 2;"],
+      "overloads": [
+        "export function f(a: string): void;",
+        "export function f(a: any) {}",
+        "export function g(a: any) {}",
+      ],
+      "void": [
+        "export function f(): void;",
+        "export function f(a?: string): void | string { return a; }",
+        "function g(a?: string): void | string { return a; }",
+      ],
+    };
+    const forms = [
+      ["namespace B {", "}"],
+      ["namespace A.B {", "}"],
+      ["namespace A.B.C {", "}"],
+      ["namespace A { export namespace B {", "} }"],
+    ];
+    const rules = (prefix: string) => ({
+      "one-var": ["error", "consecutive"],
+      "vars-on-top": "error",
+      [`${prefix}/explicit-module-boundary-types`]: ["error", { allowOverloadFunctions: true }],
+      [`${prefix}/no-invalid-void-type`]: "error",
+    });
+    test.each([
+      [
+        // What oxlint 1.87 reports for each of the four.
+        "oxlint",
+        ".oxlintrc.json",
+        JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules: rules("typescript") }),
+        {
+          "one-var": ["3:1 one-var", "4:1 vars-on-top", "5:1 one-var", "5:1 vars-on-top"],
+          "vars-on-top": [],
+          "overloads": [
+            "3:19 explicit-module-boundary-types",
+            "4:17 explicit-module-boundary-types",
+            "4:19 explicit-module-boundary-types",
+          ],
+          "void": ["4:25 no-invalid-void-type"],
+        },
+      ],
+      [
+        "ESLint",
+        "eslint.config.mjs",
+        `export default [{
+          files: ["**/*.ts"],
+          plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+          languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+          rules: ${JSON.stringify(rules("@typescript-eslint"))},
+        }];`,
+        {
+          "one-var": ["3:1 one-var", "4:1 vars-on-top", "5:1 one-var", "5:1 vars-on-top"],
+          "vars-on-top": ["4:1 vars-on-top"],
+          "overloads": ["4:19 explicit-module-boundary-types", "4:8 explicit-module-boundary-types"],
+          "void": ["4:25 no-invalid-void-type"],
+        },
+      ],
+    ])("as %s", async (_, name, configuration, inEach) => {
+      const sources: Record<string, string> = {};
+      for (const [body, lines] of Object.entries(bodies))
+        forms.forEach(
+          ([head, tail], form) => (sources[`${body}.${form}.ts`] = [head, ...lines, tail].join("\n") + "\n"),
+        );
+      const { stdout } = await lint({ [name]: configuration, ...sources }, ["-f", "unix", ...Object.keys(sources)]);
+      const found = Object.fromEntries(Object.keys(sources).map((it): [string, string[]] => [it, []]));
+      for (const it of stdout.matchAll(/([\w.-]+\.ts):(\d+:\d+): .*[/(]([\w-]+)\)?\]/g))
+        found[it[1]].push(`${it[2]} ${it[3]}`);
+      for (const it of Object.values(found)) it.sort();
+      const expected = Object.keys(sources).map(it => [it, inEach[it.split(".")[0] as keyof typeof inEach]]);
+      expect(found).toEqual(Object.fromEntries(expected));
+    });
+  });
+
   describe("--fix", () => {
     // The file is fixed, and linted again when all files are known, for the rule about several files. There the fix that breaks it
     // is tried once more and taken back.

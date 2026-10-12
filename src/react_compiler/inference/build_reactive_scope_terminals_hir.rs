@@ -15,6 +15,7 @@ use crate::collections::IdBitSet;
 use crate::collections::IdMap;
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
+use crate::collections::sort_slice_by;
 use crate::hir::AstAlloc;
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
@@ -104,7 +105,7 @@ fn collect_scope_rewrites(
     // Sort: ascending by start, descending by end for ties. Scopes with one range stay as
     // they were met, as `Array.prototype.sort` leaves them.
     let mut items: Vec<ScopeId> = scope_ids;
-    items.sort_by(|a, b| {
+    sort_slice_by(&mut items, |a, b| {
         let a_range = &env.scopes[a.0 as usize].range;
         let b_range = &env.scopes[b.0 as usize].range;
         let start_diff = a_range.start.0.cmp(&b_range.start.0);

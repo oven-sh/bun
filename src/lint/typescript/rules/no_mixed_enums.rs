@@ -54,7 +54,9 @@ fn any_enclosing_scope<'a>(declaration: Stmt<'a>, visit: &mut dyn FnMut(Scope<'a
     let Some(enclosing) = Node::Stmt(declaration).scope().parent() else {
         return false;
     };
-    if !declaration.is_exported() {
+    // The `B` of `namespace A.B { }` is a member of `A`.
+    let is_after_dot = declaration.as_module().is_some_and(|it| it.outermost() != it);
+    if !declaration.is_exported() && !is_after_dot {
         return visit(enclosing);
     }
     // `getMergedScopes`

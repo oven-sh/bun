@@ -1435,10 +1435,10 @@ impl<'a> EnumMember<'a> {
 declaration! {
     /// `namespace N { .. }`, `module N { .. }`, `declare module "m" { .. }`, `declare global { .. }`
     ///
-    /// `namespace A.B { .. }` is a namespace `A` whose body is the one statement `B { .. }`:
+    /// `namespace A.B { .. }` is stored as a namespace `A` with the one statement `B { .. }`:
     /// [`Module::nested`]. That statement is not a node: ESLint has one `TSModuleDeclaration` whose
-    /// `id` is a `TSQualifiedName`. No listener is called with it, a walk goes from `A` to the
-    /// statements between the braces ([`Module::innermost`]), and their parent is `A`.
+    /// `id` is a `TSQualifiedName`. No listener is called with it, the parent of the statements
+    /// between the braces is `A`, and they are the [`Module::body`] of `A`, as of `B`.
     Module, ModuleId, modules, Module
 }
 
@@ -1462,8 +1462,15 @@ impl<'a> Module<'a> {
         }
     }
 
+    /// The statements between the braces, for each of the names of `namespace A.B.C { .. }`.
     #[inline]
     pub fn body(self) -> List<'a, Stmt<'a>> {
+        self.innermost().stored_body()
+    }
+
+    /// For the `A` of `namespace A.B { .. }`, the `B { .. }`.
+    #[inline]
+    fn stored_body(self) -> List<'a, Stmt<'a>> {
         List::ids(self.file, self.raw().body)
     }
 
@@ -1490,19 +1497,18 @@ impl<'a> Module<'a> {
         }
     }
 
-    /// The `{ .. }`. For the `A` of `namespace A.B { .. }` there is none.
+    /// The `{ .. }`, for each of the names of `namespace A.B.C { .. }`.
     pub fn body_span(self) -> Option<Span> {
-        if !self.has_body() || self.nested().is_some() {
-            return None;
-        }
-        Some(Span::new(
-            skip_trivia(self.file.text(), self.name_span().end),
-            self.span().end,
-        ))
+        let last = self.innermost();
+        last.has_body().then(|| {
+            Span::new(
+                skip_trivia(self.file.text(), last.name_span().end),
+                last.span().end,
+            )
+        })
     }
 
-    /// The `C` of `namespace A.B.C { .. }`, whose body is what is between the braces. Itself, if its
-    /// name has no dots.
+    /// The `C` of `namespace A.B.C { .. }`. Itself, if its name has no dots.
     pub fn innermost(self) -> Module<'a> {
         let mut at = self;
         while let Some(nested) = at.nested() {
@@ -1522,7 +1528,8 @@ impl<'a> Module<'a> {
 
     /// The `B` of `namespace A.B`.
     pub fn nested(self) -> Option<Module<'a>> {
-        let only = self.body().first().filter(|_| self.body().len() == 1)?;
+        let stored = self.stored_body();
+        let only = stored.first().filter(|_| stored.len() == 1)?;
         match only.as_module() {
             Some(nested) if self.file.is_nested_namespace(only.id()) => Some(nested),
             _ => None,

@@ -1,4 +1,4 @@
-use crate::collections::{FxHashSet as HashSet, IdBitSet, IdMap};
+use crate::collections::{FxHashSet as HashSet, IdBitSet, IdMap, sort_slice_by};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerSuggestion, CompilerSuggestionOperation,
     ErrorCategory, SourceLocation,
@@ -1210,7 +1210,7 @@ fn validate_dependencies(
     types: &[Type],
 ) -> Result<Option<CompilerDiagnostic>, CompilerDiagnostic> {
     // Sort dependencies by name and path
-    inferred.sort_unstable_by(|a, b| {
+    sort_slice_by(&mut inferred, |a, b| {
         match (a, b) {
             (
                 InferredDependency::Global { binding: ab },

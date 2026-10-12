@@ -17,7 +17,7 @@
 
 use std::cmp;
 
-use crate::collections::{IdBitSet, IdMap};
+use crate::collections::{IdBitSet, IdMap, sort_slice_by};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
@@ -164,7 +164,7 @@ fn visit_instruction_id(
 
             // Sort scopes by start descending (matching active_scopes order)
             let mut scopes_sorted = scope_end_entry.scopes;
-            scopes_sorted.sort_unstable_by(|a, b| {
+            sort_slice_by(&mut scopes_sorted, |a, b| {
                 let a_start = env.scopes[a.0 as usize].range.start;
                 let b_start = env.scopes[b.0 as usize].range.start;
                 b_start.cmp(&a_start)
@@ -192,7 +192,7 @@ fn visit_instruction_id(
 
             // Sort by end descending
             let mut scopes_sorted = scope_start_entry.scopes;
-            scopes_sorted.sort_unstable_by(|a, b| {
+            sort_slice_by(&mut scopes_sorted, |a, b| {
                 let a_end = env.scopes[a.0 as usize].range.end;
                 let b_end = env.scopes[b.0 as usize].range.end;
                 b_end.cmp(&a_end)

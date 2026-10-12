@@ -324,7 +324,7 @@ impl<'a> Checker<'a, '_> {
             && !member.flags().contains(Flags::ABSTRACT)
             && has_overload_signatures(Node::Member(member))
         {
-            return;
+            return self.check_parameters_of_overloaded(func);
         }
         check_function_expression_return_type(func, self.options_for(func), |loc| {
             self.cx.report(if self.cx.language().is_oxlint { oxlint_place(func) } else { loc }, MISSING_RETURN_TYPE);
@@ -345,12 +345,19 @@ impl<'a> Checker<'a, '_> {
             return;
         }
         if self.rule.allow_overload_functions && has_overload_signatures(Node::Func(func)) {
-            return;
+            return self.check_parameters_of_overloaded(func);
         }
         check_function_return_type(func, self.options_for(func), |loc| {
             self.cx.report(if self.cx.language().is_oxlint { oxlint_place(func) } else { loc }, MISSING_RETURN_TYPE);
         });
         self.check_parameters(func);
+    }
+
+    /// With `allowOverloadFunctions` oxlint passes over the return type only.
+    fn check_parameters_of_overloaded(&mut self, func: Func<'a>) {
+        if self.cx.language().is_oxlint {
+            self.check_parameters(func);
+        }
     }
 
     /// There is nothing to say about it, whatever it is part of.

@@ -13,7 +13,7 @@
 //! - `src/HIR/DeriveMinimalDependenciesHIR.ts`
 //! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
-use crate::collections::{IdBitSet, IdMap, IndexMap};
+use crate::collections::{IdBitSet, IdMap, IndexMap, sort_slice_by};
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::rc::Rc;
@@ -1667,7 +1667,7 @@ impl ReactiveScopeDependencyTreeHIR {
         // instruction-based entries, and the first insertion determines the
         // root access type.
         let mut sorted_deps: Vec<&ReactiveScopeDependency> = hoistable_objects.collect();
-        sorted_deps.sort_unstable_by(|a, b| {
+        sort_slice_by(&mut sorted_deps, |a, b| {
             let a_optional = !a.path.is_empty() && a.path[0].optional;
             let b_optional = !b.path.is_empty() && b.path[0].optional;
             b_optional.cmp(&a_optional)

@@ -450,7 +450,7 @@ pub(super) fn gather_captured_context<'h>(
     // Sort captured entries by source position so context declarations appear
     // in source order, matching the TS compiler's position-ordered traversal.
     let mut sorted: Vec<_> = captured.into_iter().collect();
-    sorted.sort_unstable_by_key(|(_, (pos, _))| *pos);
+    sorted.sort_unstable_by_key(|(ref_, (pos, _))| (*pos, ref_.inner_index()));
 
     Ok(sorted
         .into_iter()

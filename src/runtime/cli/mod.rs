@@ -362,6 +362,8 @@ pub(crate) mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "patch_remove_command.rs"]
+pub(crate) mod patch_remove_command;
 #[path = "pm_diff_command.rs"]
 pub(crate) mod pm_diff_command;
 pub(crate) mod pm_diff_normalize;
@@ -1032,6 +1034,9 @@ pub(crate) mod command {
         if x == RootCommandMatcher::case(b"patch-commit") {
             return Tag::PatchCommitCommand;
         }
+        if x == RootCommandMatcher::case(b"patch-remove") {
+            return Tag::PatchRemoveCommand;
+        }
         if x == RootCommandMatcher::case(b"r")
             || x == RootCommandMatcher::case(b"remove")
             || x == RootCommandMatcher::case(b"rm")
@@ -1331,6 +1336,7 @@ pub(crate) mod command {
             Tag::UpdateCommand => exec_update(log),
             Tag::PatchCommand => exec_patch(log),
             Tag::PatchCommitCommand => exec_patch_commit(log),
+            Tag::PatchRemoveCommand => exec_patch_remove(log),
             Tag::OutdatedCommand => exec_outdated(log),
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
@@ -1691,6 +1697,7 @@ pub(crate) mod command {
         exec_update             => (UpdateCommand,         super::update_command::UpdateCommand::exec),
         exec_patch              => (PatchCommand,          super::patch_command::PatchCommand::exec),
         exec_patch_commit       => (PatchCommitCommand,    super::patch_commit_command::PatchCommitCommand::exec),
+        exec_patch_remove       => (PatchRemoveCommand,    super::patch_remove_command::PatchRemoveCommand::exec),
         exec_outdated           => (OutdatedCommand,       super::outdated_command::OutdatedCommand::exec),
         exec_update_interactive => (UpdateInteractiveCommand, super::update_interactive_command::UpdateInteractiveCommand::exec),
         exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec),
@@ -2244,6 +2251,9 @@ Execute a shell script directly from Bun.
             }
             Tag::PatchCommitCommand => {
                 pm_print_help(PmSubcommand::PatchCommit);
+            }
+            Tag::PatchRemoveCommand => {
+                pm_print_help(PmSubcommand::PatchRemove);
             }
             Tag::OutdatedCommand => {
                 pm_print_help(PmSubcommand::Outdated);

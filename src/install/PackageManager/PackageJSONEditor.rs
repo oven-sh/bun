@@ -224,6 +224,34 @@ pub(crate) fn edit_patched_dependencies(
     Ok(())
 }
 
+/// Removes every `patch_keys` entry from `"patchedDependencies"`; when the
+/// object becomes empty the whole property is removed. Returns whether
+/// anything was removed.
+pub(crate) fn remove_patched_dependencies(package_json: &mut Expr, patch_keys: &[Box<[u8]>]) -> bool {
+    let Some(query) = package_json.as_property(b"patchedDependencies") else {
+        return false;
+    };
+    let Some(mut e_object) = query.expr.data.e_object() else {
+        return false;
+    };
+    let before = e_object.properties.len();
+    e_object.properties.retain(|property| {
+        !property
+            .key
+            .and_then(|key| key.data.e_string())
+            .is_some_and(|key| patch_keys.iter().any(|patch_key| key.eql_bytes(patch_key)))
+    });
+    if e_object.properties.len() == before {
+        return false;
+    }
+    if e_object.properties.is_empty() {
+        let root = package_json.data.as_e_object_mut();
+        let _ = root.properties.swap_remove(query.i as usize);
+        root.package_json_sort();
+    }
+    true
+}
+
 pub fn edit_trusted_dependencies(
     package_json: &mut Expr,
     names_to_add: &mut [Box<[u8]>],

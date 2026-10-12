@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -4672,6 +4673,170 @@ describe.skipIf(!hasRunner)("the paths of Windows, on every system", () => {
     ]);
     expect(error).toBeUndefined();
     expect(files.map((it: string[]) => it.toSorted())).toEqual([["eqeqeq", "no-var"]]);
+  });
+});
+
+// What ESLint 10.12.0, ESLint 8.57.1 and oxlint 1.87.0 do with the same files. Without a configuration file as oxlint.
+describe.skipIf(isWindows).concurrent("a symbolic link that leads nowhere, to itself, or back up", () => {
+  const flavors: Record<string, Record<string, string>> = {
+    "eslint.config.js": { "eslint.config.js": `export default [${JSON.stringify(noVar)}];` },
+    ".eslintrc.json": { ".eslintrc.json": rc(noVar) },
+    ".oxlintrc.json": { ".oxlintrc.json": JSON.stringify({ ...noVar, categories: { correctness: "off" } }) },
+    "bunfig.toml": { "bunfig.toml": `[lint.rules]\n"no-var" = "error"\n` },
+    "no file": {},
+  };
+  const others = { "a.js": code, "sub/b.js": code };
+  /** The files with problems, what is printed, and the exit code. `links`: where each is, and what it has. */
+  const linted = async (flavor: string, links: Record<string, string>, args = ["."], files = others) => {
+    const inProject = Object.entries({ ...flavors[flavor], ...files }).map(([name, text]) => [`project/${name}`, text]);
+    const before = (dir: string) =>
+      Object.entries(links).forEach(([path, to]) => symlinkSync(to, join(dir, "project", path)));
+    const all = { ...Object.fromEntries(inProject), "project/.keep": "", "outside/c.js": code };
+    const { problems, stdout, stderr, exitCode } = await lint(all, args, { before, cwd: "project" });
+    const names = problems.map(it => it.split(":")[0].replace("project/", ""));
+    return { files: [...new Set(names)], stdout, stderr: stderr.replaceAll("<dir>/project/", "<dir>/"), exitCode };
+  };
+  const passingOver = [".eslintrc.json", ".oxlintrc.json", "bunfig.toml", "no file"];
+  const asOxlint = [".oxlintrc.json", "bunfig.toml", "no file"];
+
+  test.each(passingOver)("one that leads nowhere is passed over by a search: %s", async flavor => {
+    const links = { "gone.js": "nowhere.js", "sub/gone.js": "/nowhere/at/all.js", "gone": "nowhere", "in.js": "gone/a.js" };
+    for (const args of [["."], ["sub", "a.js"]]) {
+      expect(await linted(flavor, links, args)).toMatchObject({ files: ["a.js", "sub/b.js"], exitCode: 1 });
+    }
+  });
+
+  // "Error: ENOENT: no such file or directory, open '<dir>/gone.js'", "Error: ELOOP: too many symbolic links encountered, open .."
+  test.each([
+    ["gone.js", "nowhere.js", "ENOENT"],
+    ["self.js", "self.js", "ELOOP"],
+  ])("ESLint reads %s, which leads to %s, and that is the end of the run", async (name, to, code) => {
+    const { files, stderr, exitCode } = await linted("eslint.config.js", { [name]: to });
+    expect(stderr).toContain(`Cannot read <dir>/${name}: ${code}: `);
+    expect({ files, exitCode }).toEqual({ files: [], exitCode: 2 });
+    // It does not ask what a link is that it does not lint.
+    expect(await linted("eslint.config.js", { "gone": "nowhere", "self": "self", "sub/gone.md": "nowhere.md" })).toMatchObject({
+      files: ["a.js", "sub/b.js"],
+      exitCode: 1,
+    });
+  });
+
+  test.each(asOxlint)("one that leads to itself, and two that lead to each other, are passed over: %s", async flavor => {
+    const links = { "self.js": "self.js", "self": "self", "sub/c.js": "d.js", "sub/d.js": "c.js" };
+    expect(await linted(flavor, links)).toMatchObject({ files: ["a.js", "sub/b.js"], exitCode: 1 });
+  });
+
+  test.each([
+    [{ "self.js": "self.js" }, ["."], "self.js"],
+    // Whatever it is called, and wherever it is.
+    [{ "self": "self" }, ["."], "self"],
+    [{ "node_modules/self": "self" }, ["."], "node_modules/self"],
+    [{ "sub/self.md": "self.md" }, ["**/*.js"], "sub/self.md"],
+    [{ "self.js": "self.js" }, ["a.js", "self.js"], "self.js"],
+  ])("ESLint 8 asks where every link leads, and %j is the end of the run", async (links, args, name) => {
+    const files = { ...others, "node_modules/.keep": "" };
+    const { stderr, exitCode } = await linted(".eslintrc.json", links as Record<string, string>, args, files);
+    expect(stderr).toContain(`ELOOP: too many symbolic links encountered, stat '<dir>/${name}'`);
+    expect(exitCode).toBe(2);
+  });
+
+  test("nothing but a link that leads nowhere is nothing", async () => {
+    const only = (flavor: string) => linted(flavor, { "gone.js": "nowhere.js" }, ["."], {});
+    const [eslint8, oxlint] = await Promise.all([only(".eslintrc.json"), only(".oxlintrc.json")]);
+    // 'No files matching the pattern "." were found.'
+    expect(eslint8.stderr).toContain('pattern "."');
+    expect(eslint8.exitCode).toBe(2);
+    expect(oxlint.stdout).toContain("No files found to lint. Please check your paths and ignore patterns.");
+    expect(oxlint.exitCode).toBe(1);
+  });
+
+  test("one that leads nowhere and is an argument is a file that is not there", async () => {
+    const named = (flavor: string) => linted(flavor, { "gone.js": "nowhere.js" }, ["gone.js", "a.js"]);
+    const [eslint, eslint8, oxlint] = await Promise.all(["eslint.config.js", ".eslintrc.json", ".oxlintrc.json"].map(named));
+    for (const { stderr, exitCode } of [eslint, eslint8]) {
+      expect(stderr).toContain('No files matching the pattern "gone.js" were found.');
+      expect(exitCode).toBe(2);
+    }
+    expect(oxlint).toMatchObject({ files: ["a.js"], exitCode: 1 });
+  });
+
+  test.each(passingOver)("one that leads to a directory is followed: %s", async flavor => {
+    expect(await linted(flavor, { "linked": "sub", "sub/out": "../../outside" })).toMatchObject({
+      files: ["a.js", "linked/b.js", "linked/out/c.js", "sub/b.js", "sub/out/c.js"],
+      exitCode: 1,
+    });
+  });
+
+  test.each(asOxlint)("an ignore file is asked about the path with the link in it, not where that leads: %s", async flavor => {
+    const files = { ...others, "hid/h.js": code, ".gitignore": "hid/\nskipped\n" };
+    expect(await linted(flavor, { "shown": "hid", "skipped": "sub" }, ["."], files)).toMatchObject({
+      files: ["a.js", "shown/h.js", "sub/b.js"],
+      exitCode: 1,
+    });
+  });
+
+  test.each(asOxlint)("one that leads above where the search starts is followed, once: %s", async flavor => {
+    expect(await linted(flavor, { "up": ".." })).toMatchObject({
+      files: ["a.js", "sub/b.js", "up/outside/c.js", "up/project/a.js", "up/project/sub/b.js"],
+      exitCode: 1,
+    });
+  });
+
+  test.each(asOxlint)("one that leads back up is passed over: %s", async flavor => {
+    const links = { "here": ".", "sub/up": "..", "sub/too": "../sub" };
+    expect(await linted(flavor, links)).toMatchObject({ files: ["a.js", "sub/b.js"], exitCode: 1 });
+  });
+
+  // It goes round until the system has had enough: "ELOOP: too many symbolic links encountered, stat '<dir>/here/here/here/.."
+  test.each([
+    [{ "here": "." }, "here"],
+    [{ "sub/up": ".." }, "sub/up"],
+  ])("ESLint 8 follows %j to the end of the run", async (links, name) => {
+    const { stderr, exitCode } = await linted(".eslintrc.json", links as Record<string, string>);
+    expect(stderr).toContain(`ELOOP: too many symbolic links encountered, stat '<dir>/${name}`);
+    expect(exitCode).toBe(2);
+    // Not where it does not go.
+    const ignoring = { ".eslintrc.json": rc({ ...noVar, ignorePatterns: [name] }), ...others };
+    expect(await linted("no file", links as Record<string, string>, ["."], ignoring)).toMatchObject({
+      files: ["a.js", "sub/b.js"],
+      exitCode: 1,
+    });
+  });
+});
+
+// With a file of mode 000, as somebody who is not root.
+describe.skipIf(isWindows || process.getuid?.() === 0).concurrent("a file that cannot be opened", () => {
+  const files = { "a.js": code, "locked.js": code, "sub/b.js": code };
+  const before = (dir: string) => chmodSync(join(dir, "locked.js"), 0);
+
+  // oxlint 1.87.0: `x Failed to open file <dir>/locked.js with error "Permission denied (os error 13)"`, and
+  // "Found 0 warnings and 3 errors.". Without a configuration file as oxlint.
+  test.each([
+    [".oxlintrc.json", JSON.stringify({ ...noVar, categories: { correctness: "off" } })],
+    ["bunfig.toml", `[lint.rules]\n"no-var" = "error"\n`],
+    [".keep", ""],
+  ])("is an error, and the others are linted: %s", async (name, text) => {
+    for (const args of [["."], ["locked.js", "a.js", "sub"]]) {
+      const { problems, stdout, exitCode } = await lint({ ...files, [name]: text }, args, { before });
+      expect(stdout).toContain("Failed to open file <dir>/locked.js with error ");
+      expect(stdout).toContain("Permission denied (os error 13)");
+      expect(problems).toContain(`${name === ".oxlintrc.json" ? "" : "locked.js"}:0:0 -`);
+      // For oxlint it is a problem of no file.
+      expect([...new Set(problems.map(it => it.split(":")[0]))]).toEqual(
+        [name === ".oxlintrc.json" ? "" : "locked.js", "a.js", "sub/b.js"].sort(),
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  // ESLint 10.12.0 and 8.57.1: "Error: EACCES: permission denied, open '<dir>/locked.js'", and nothing else.
+  test.each([
+    ["eslint.config.js", `export default [${JSON.stringify(noVar)}];`],
+    [".eslintrc.json", rc(noVar)],
+  ])("is the end of the run: %s", async (name, text) => {
+    const { problems, stderr, exitCode } = await lint({ ...files, [name]: text }, ["."], { before });
+    expect(stderr).toContain("Cannot read <dir>/locked.js: EACCES: ");
+    expect({ problems, exitCode }).toEqual({ problems: [], exitCode: 2 });
   });
 });
 

@@ -640,11 +640,16 @@ impl Context<'_, '_> {
         let started = self.timing.now();
         let text = match fs::read(&target.path) {
             Ok(text) => text,
-            // A link that leads nowhere. oxlint passes over it.
-            Err(_)
-                if target.loaded.flavor == Flavor::Oxlint && fs::kind(&target.path).is_none() =>
-            {
-                return Ok(None);
+            Err(error) if matches!(target.loaded.flavor, Flavor::Oxlint | Flavor::BuiltIn) => {
+                // It is gone since it was found. oxlint passes over what is not there.
+                if fs::kind(&target.path).is_none() {
+                    return Ok(None);
+                }
+                let number = format!(" (os error {})", error.errno);
+                let printed = [error.msg().unwrap_or(b"unknown error"), number.as_bytes()].concat();
+                let shown = paths::to_native(target.path.clone());
+                let is_named = target.loaded.flavor != Flavor::Oxlint;
+                return Ok(Some(FileResult::unopened(shown, &printed, is_named)));
             }
             Err(error) => {
                 return Err(Fatal(

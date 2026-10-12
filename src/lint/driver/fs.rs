@@ -66,6 +66,16 @@ pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
     Some((kind, found.st_size as u64))
 }
 
+/// What the link at `path` leads to. `Ok(None)`: neither a file nor a directory.
+pub(crate) fn end_of_link(path: &[u8]) -> bun_sys::Result<Option<Kind>> {
+    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))?;
+    Ok(match bun_sys::kind_from_mode(found.st_mode as _) {
+        EntryKind::File => Some(Kind::File),
+        EntryKind::Directory => Some(Kind::Directory),
+        _ => None,
+    })
+}
+
 pub(crate) fn kind(path: &[u8]) -> Option<Kind> {
     Some(kind_and_size(path)?.0)
 }

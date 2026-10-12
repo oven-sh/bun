@@ -637,6 +637,15 @@ fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut Marker<'a>
         {
             marks.scope = scope_of_parameters(func);
             for param in func.this_param().into_iter().chain(func.params()) {
+                // oxlint leaves the parameters alone, and nothing that has the name of a key or a label in their types.
+                if file.language().is_oxlint {
+                    param.pat().for_each_binding(&mut |pat| {
+                        if let Some(name) = pat.as_ident() {
+                            mark_identifier(name, Node::Pat(pat), marks);
+                        }
+                    });
+                    continue;
+                }
                 mark_identifiers(Node::Param(param), marks);
             }
             marks.scope = None;

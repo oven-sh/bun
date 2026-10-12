@@ -166,6 +166,26 @@ fn no_files_found(pattern: &[u8]) -> Fatal {
     )
 }
 
+/// What `fs.statSync(path)` of Node throws.
+fn cannot_follow(code: &str, label: &str, path: &[u8]) -> Fatal {
+    let path = paths::to_native(path.to_vec());
+    let parts = [
+        code.as_bytes(),
+        b": ",
+        label.as_bytes(),
+        b", stat '",
+        &path,
+        b"'",
+    ];
+    Fatal(parts.concat())
+}
+
+/// `statSafeSync` of ESLint 8: `None` where nothing is at `path`.
+fn thrown_by_eslint_8(error: &bun_sys::Error, path: &[u8]) -> Option<Fatal> {
+    let (code, label) = error.uv_code_label()?;
+    (error.get_errno() != bun_sys::E::ENOENT).then(|| cannot_follow(code, label, path))
+}
+
 fn all_files_ignored(pattern: &[u8]) -> Fatal {
     let text = br#"You are linting "$", but all of the files matching the glob pattern "$" are ignored.
 
@@ -310,18 +330,35 @@ fn search(
             let mut within = own.config.within(&directory.path, seen);
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
-                let mut real = None;
-                // oxlint follows links. As for the crate `ignore`, with which it walks, a loop is a link to one of the
-                // directories on the way from where the search starts.
-                if entry.is_link
-                    && own.flavor == Flavor::Oxlint
-                    && fs::kind(&path) == Some(fs::Kind::Directory)
-                {
-                    real = fs::real_path(&path).filter(|real| !directory.way.has(real));
-                    if real.is_none() {
-                        continue;
+                let (mut real, mut is_loop) = (None, false);
+                // ESLint takes a link for a file, and sees what it is when it reads it. ESLint 8 and oxlint ask where it leads,
+                // and go there. As for the crate `ignore`, with which oxlint walks, a loop is a link to one of the directories
+                // on the way from where the search starts.
+                if entry.is_link && own.flavor != Flavor::Eslint {
+                    match fs::end_of_link(&path) {
+                        Ok(Some(fs::Kind::Directory)) => {
+                            let Some(end) = fs::real_path(&path) else {
+                                continue;
+                            };
+                            is_loop = directory.way.has(&end);
+                            if is_loop && own.flavor != Flavor::EslintRc {
+                                continue;
+                            }
+                            (real, entry.is_directory) = (Some(end), true);
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            // Whatever the link is called.
+                            if own.flavor == Flavor::EslintRc
+                                && let Some(thrown) = thrown_by_eslint_8(&error, &path)
+                            {
+                                failure.lock().get_or_insert(thrown);
+                                return;
+                            }
+                            // It leads nowhere, and is passed over.
+                            continue;
+                        }
                     }
-                    entry.is_directory = true;
                 }
                 if reads_ignore_files && ignores.is_ignored(&path, entry.is_directory) {
                     continue;
@@ -337,6 +374,14 @@ fn search(
                     }
                     let is_hidden = is_hidden || within.is_directory_ignored(&path, dotfiles);
                     if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
+                        // ESLint 8 goes round until the system has had enough.
+                        if is_loop {
+                            let label = "too many symbolic links encountered";
+                            failure
+                                .lock()
+                                .get_or_insert(cannot_follow("ELOOP", label, &path));
+                            return;
+                        }
                         let real =
                             real.unwrap_or_else(|| paths::join(&directory.way.real, &entry.name));
                         directories.push(Directory {
@@ -454,12 +499,12 @@ pub(crate) fn find_files(
         dotfiles: Dotfiles::AsConfigured,
         patterns: Vec::new(),
     }];
+    let is_for_eslint_8 = |base_path: &[u8]| {
+        let loaded = loader.for_directory(base_path);
+        loaded.is_ok_and(|it| it.flavor == Flavor::EslintRc)
+    };
     let mut add = |base_path: Vec<u8>, wanted: Wanted| {
         // It means nothing to other configurations: their arguments are searched for together.
-        let is_for_eslint_8 = |base_path: &[u8]| {
-            let loaded = loader.for_directory(base_path);
-            loaded.is_ok_and(|it| it.flavor == Flavor::EslintRc)
-        };
         let dotfiles = match dotfiles_for(&wanted.raw) {
             Dotfiles::Linted if is_for_eslint_8(&base_path) => Dotfiles::Linted,
             _ => Dotfiles::AsConfigured,
@@ -481,7 +526,15 @@ pub(crate) fn find_files(
     for pattern in patterns {
         let pattern = paths::from_native(pattern);
         let path = paths::resolve(cwd, &pattern);
-        match fs::kind_and_size(&path) {
+        let there = fs::kind_and_size(&path);
+        if there.is_none()
+            && let Err(error) = fs::end_of_link(&path)
+            && let Some(thrown) = thrown_by_eslint_8(&error, &path)
+            && is_for_eslint_8(paths::dirname(&path))
+        {
+            return Err(thrown);
+        }
+        match there {
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
                 let status = match loader.ignores_named_file(&pattern, &loaded) {

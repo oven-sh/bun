@@ -76,9 +76,23 @@ pub(crate) struct FileResult {
 impl FileResult {
     /// ESLint's `createIgnoreResult`.
     pub(crate) fn ignored(path: Vec<u8>, message: &[u8]) -> FileResult {
+        FileResult::about(path, Severity::Warn, message)
+    }
+
+    /// What oxlint reports about the file at `path`, which it cannot open, and goes on. `error`: as Rust prints it. `is_named`: it
+    /// is a problem of that file. For oxlint it is one of no file.
+    pub(crate) fn unopened(path: Vec<u8>, error: &[u8], is_named: bool) -> FileResult {
+        let start: &[u8] = b"Failed to open file ";
+        let message = [start, &path, b" with error \"", error, b"\""].concat();
+        let path = if is_named { path } else { Vec::new() };
+        FileResult::about(path, Severity::Error, &message)
+    }
+
+    /// A problem of no rule, at no place in the file at `path`, which is not linted.
+    fn about(path: Vec<u8>, severity: Severity, message: &[u8]) -> FileResult {
         let messages = vec![LintMessage {
             rule_id: None,
-            severity: Severity::Warn,
+            severity,
             message: message.to_vec(),
             message_id: None,
             line: 0,

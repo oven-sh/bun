@@ -83,8 +83,6 @@
   "ignores: package.json#eslintIgnore: the file is broken": "exit",
   "files: no arguments at all": "exit",
   "files: a directory without files to lint": "text",
-  "files: links to a file and to a directory": "messages",
-  "files: a broken link": "exit",
   "system: .eslintrc.json only, ESLINT_USE_FLAT_CONFIG=true": "text",
   "system: eslint.config.js only, ESLINT_USE_FLAT_CONFIG=false": "exit",
   "print-config: rules, env, globals, parserOptions, settings": "config",

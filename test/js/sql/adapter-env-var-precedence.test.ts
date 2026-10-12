@@ -305,15 +305,18 @@ describe("SQL adapter environment variable precedence", () => {
       }
     }
 
+    const postgresUrl = "postgres://pu:pp@pghost:5432/pgdb";
+    const mysqlUrl = "mysql://mu:mp@myhost:3306/mydb";
+    const mariadbUrl = "mariadb://mu:mp@myhost:3306/mydb";
     const urlsForAnotherDatabase = [
-      "postgres://pu:pp@pghost:5432/pgdb",
+      postgresUrl,
       "postgresql://pu:pp@pghost:5432/pgdb",
       "POSTGRES://pu:pp@pghost:5432/pgdb",
+      " postgres://pu:pp@pghost:5432/pgdb",
       "postgres://pu:pp@pghost:5432/pgdb?sslmode=require",
-      "mysql://mu:mp@myhost:3306/mydb",
+      mysqlUrl,
       "mysql2://mu:mp@myhost:3306/mydb",
-      "mariadb://mu:mp@myhost:3306/mydb",
-      "https://example.com/db",
+      mariadbUrl,
     ];
 
     test.each(
@@ -334,11 +337,32 @@ describe("SQL adapter environment variable precedence", () => {
       expect(row).toEqual({ a: 1 });
     });
 
-    test("reads SQLITE_URL", async () => {
-      using dir = tempDir("sql-env-own-variable", {});
-      const filename = `${dir}/own.db`;
-      const variables = { SQLITE_URL: `sqlite://${filename}`, DATABASE_URL: "postgres://pu:pp@pghost:5432/pgdb" };
-      expect(await filenameWith(variables)).toBe(filename);
+    // Each variable is checked by itself: one that is ignored does not hide the next one.
+    test.each(
+      [
+        { read: "DATABASEURL", ignored: { DATABASE_URL: postgresUrl } },
+        { read: "TLS_DATABASE_URL", ignored: { DATABASE_URL: postgresUrl } },
+        { read: "TLS_DATABASE_URL", ignored: { DATABASE_URL: postgresUrl, DATABASEURL: mysqlUrl } },
+        { read: "SQLITE_URL", ignored: { DATABASE_URL: postgresUrl } },
+        {
+          read: "SQLITE_URL",
+          ignored: { DATABASE_URL: postgresUrl, DATABASEURL: mysqlUrl, TLS_DATABASE_URL: mariadbUrl },
+        },
+        { read: "SQLITEURL", ignored: { TLS_DATABASE_URL: postgresUrl } },
+      ].map(row => ({ ...row, names: Object.keys(row.ignored).join(", ") })),
+    )("reads $read after it ignores $names", async ({ read, ignored }) => {
+      using dir = tempDir("sql-env-next-variable", {});
+      const filename = `${dir}/next.db`;
+      expect(await filenameWith({ ...ignored, [read]: `sqlite://${filename}` })).toBe(filename);
+    });
+
+    test("reads the first variable that it does not ignore", async () => {
+      using dir = tempDir("sql-env-variable-order", {});
+      const [first, second, third] = ["first.db", "second.db", "third.db"].map(name => `${dir}/${name}`);
+      const variables = { DATABASE_URL: first, DATABASEURL: second, TLS_DATABASE_URL: third };
+      expect(await filenameWith(variables)).toBe(first);
+      expect(await filenameWith({ ...variables, DATABASE_URL: postgresUrl })).toBe(second);
+      expect(await filenameWith({ ...variables, DATABASE_URL: postgresUrl, DATABASEURL: mysqlUrl })).toBe(third);
     });
 
     test("still uses a DATABASE_URL that is a SQLite URL or a path", async () => {
@@ -351,13 +375,17 @@ describe("SQL adapter environment variable precedence", () => {
       expect(filenames).toEqual([":memory:", ":memory:", filename, filename, filename]);
     });
 
-    // A scheme that no adapter claims, a SQLite scheme in upper case and a value with no scheme stay file names.
-    test.each(["libsql://db.example.com", "mongodb://mongohost:27017/db", "SQLITE://env.db", "127.0.0.1:5432/db"])(
-      "still takes DATABASE_URL=%s as the file name",
-      async url => {
-        expect(await filenameWith({ DATABASE_URL: url })).toBe(url);
-      },
-    );
+    // A scheme that does not name a server database of Bun.SQL, and a value with no scheme, stay file names.
+    test.each([
+      "libsql://db.example.com",
+      "mongodb://mongohost:27017/db",
+      "https://example.com/db",
+      "http://example.com/db",
+      "ftp://example.com/db",
+      "127.0.0.1:5432/db",
+    ])("still takes DATABASE_URL=%s as the file name", async url => {
+      expect(await filenameWith({ DATABASE_URL: url })).toBe(url);
+    });
   });
 
   describe("PGSSLMODE", () => {

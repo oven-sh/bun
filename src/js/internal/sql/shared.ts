@@ -1620,22 +1620,32 @@ const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 const env = Bun.env;
 
 /**
- * Whether `url` has the scheme of a database that the SQLite adapter does not
- * open. A path, a bare host and a scheme that no adapter claims do not.
+ * The value of DATABASE_URL, DATABASEURL or TLS_DATABASE_URL as the SQLite
+ * adapter reads it. The URL of a server database is not a file name, so the
+ * variable then counts as not set. A path, a bare host and any other scheme
+ * stay file names.
  */
-function isUrlForAnotherAdapter(url: string): boolean {
-  const schemeEnd = url.indexOf("://");
-  if (schemeEnd === -1) return false;
-  const named = parseAdapterFromProtocol(url.slice(0, schemeEnd).toLowerCase());
-  return named !== null && named !== "sqlite";
+function sqliteUrlFromGenericVariable(value: string | undefined): string | null {
+  if (!value) return null;
+  const schemeEnd = value.indexOf("://");
+  if (schemeEnd !== -1) {
+    // The server adapters parse the value with `new URL()`, which ignores whitespace before the scheme and its case.
+    const scheme = value.slice(0, schemeEnd).trim().toLowerCase();
+    // `http`, `https` and `ftp` select postgres when no adapter is given, but they name no database.
+    if (scheme !== "http" && scheme !== "https" && scheme !== "ftp") {
+      const named = parseAdapterFromProtocol(scheme);
+      if (named !== null && named !== "sqlite") return null;
+    }
+  }
+  return value;
 }
 
 /**
  * Reads environment variables to try and find a connnection string
  * @param adapter If an adapter is specified in the options, pass it here.
- * DATABASE_URL, DATABASEURL and TLS_DATABASE_URL apply to every adapter,
- * except that the SQLite adapter skips a URL for another database. The
- * variables specific to that adapter come next. Otherwise it will try them all.
+ * DATABASE_URL, DATABASEURL and TLS_DATABASE_URL come first for every adapter
+ * (see sqliteUrlFromGenericVariable for SQLite), then the variables specific to
+ * that adapter. Otherwise it will try them all.
  */
 function getConnectionDetailsFromEnvironment(
   adapter: Bun.SQL.__internal.Adapter | undefined,
@@ -1643,18 +1653,19 @@ function getConnectionDetailsFromEnvironment(
   let url: string | null = null;
   let sslMode: SSLMode.require | null = null;
 
-  url ||= env.DATABASE_URL || env.DATABASEURL || null;
-  if (!url) {
-    url = env.TLS_DATABASE_URL || null;
-    if (url) sslMode = SSLMode.require;
-  }
-  if (url) {
-    if (adapter !== "sqlite" || !isUrlForAnotherAdapter(url)) {
-      return [url, sslMode, adapter || null];
+  if (adapter === "sqlite") {
+    url =
+      sqliteUrlFromGenericVariable(env.DATABASE_URL) ||
+      sqliteUrlFromGenericVariable(env.DATABASEURL) ||
+      sqliteUrlFromGenericVariable(env.TLS_DATABASE_URL);
+  } else {
+    url ||= env.DATABASE_URL || env.DATABASEURL || null;
+    if (!url) {
+      url = env.TLS_DATABASE_URL || null;
+      if (url) sslMode = SSLMode.require;
     }
-    // Not a file name. SQLITE_URL still applies.
-    url = null;
   }
+  if (url) return [url, sslMode, adapter || null];
 
   if (!adapter || adapter === "postgres") {
     url ||= env.POSTGRES_URL || env.PGURL || env.PG_URL || env.PGURL || null;

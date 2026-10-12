@@ -326,6 +326,7 @@ pub(crate) fn run<'a>(
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
     f.comments = lx.comments;
     scratch.stacks = stacks;
+    scratch.html_opens = lx.html_opens;
     if let Some(why) = refusal {
         scratch.recycled = Some(f);
         return Err(Refused {

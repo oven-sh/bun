@@ -159,6 +159,8 @@ pub struct Scratch {
     /// What `parser::jsdoc::read_by_checker` says of the TypeScript file that is parsed for the
     /// second time. Otherwise 0.
     jsdoc_wanted: u8,
+    /// Of the text that was parsed last.
+    html_opens: lexer::HtmlOpens,
 }
 
 impl Scratch {

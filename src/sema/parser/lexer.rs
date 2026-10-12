@@ -53,6 +53,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_babel: bool,
     /// `Dialect::oxc`
     pub(crate) is_oxc: bool,
+    /// [`HtmlOpens`], with `is_oxc`.
+    pub(crate) html_opens: HtmlOpens,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,
     /// `hir::File::comment_directives`
@@ -78,6 +80,14 @@ pub(crate) struct Lexer<'a> {
     /// Where values with escapes are decoded.
     buffer: Vec<u8>,
     pub(crate) stack_check: bun_core::StackCheck,
+}
+
+/// Where the first `<!--` is that was read as a `<`, outside a script, and the first that nothing but blanks and comments
+/// precedes on its line. For oxc the one starts a comment in all but what is a module by its name, the other is an error there.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct HtmlOpens {
+    pub(crate) first: Option<u32>,
+    pub(crate) first_on_its_line: Option<u32>,
 }
 
 /// What a lookahead restores.
@@ -307,6 +317,7 @@ impl<'a> Lexer<'a> {
             is_typescript_5: false,
             is_babel: false,
             is_oxc: false,
+            html_opens: HtmlOpens::default(),
             atoms,
             names,
             comment_directives: Vec::new(),
@@ -626,8 +637,8 @@ impl<'a> Lexer<'a> {
                     (b'/', after) if self.is_jsx && !self.is_ecmascript && after != b'*' => {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
-                    (b'!', b'-') if self.is_script && at(pos + 3) == b'-' => {
-                        return self.scan_after_comments(pos);
+                    (b'!', b'-') if (self.is_script || self.is_oxc) && at(pos + 3) == b'-' => {
+                        return self.scan_at_html_open(pos);
                     }
                     _ => self.set(T::LessThan, pos, next),
                 },
@@ -769,6 +780,20 @@ impl<'a> Lexer<'a> {
                 None => return,
             }
         }
+    }
+
+    /// At a `<!--`, in a script or with `is_oxc`.
+    #[cold]
+    #[inline(never)]
+    fn scan_at_html_open(&mut self, pos: usize) {
+        if self.is_script {
+            return self.scan_after_comments(pos);
+        }
+        self.html_opens.first.get_or_insert(pos as u32);
+        if self.newline_before || self.full_start == 0 {
+            self.html_opens.first_on_its_line.get_or_insert(pos as u32);
+        }
+        self.set(T::LessThan, pos, pos + 1);
     }
 
     /// `Scan`, at a `*` behind a line break, with `skipJSDocLeadingAsterisks`: the first one in the

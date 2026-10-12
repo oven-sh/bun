@@ -110,20 +110,42 @@ fn file_of(
     text: &[u8],
     atoms: Option<&dyn Intern>,
 ) -> Box<FileBuilder> {
-    let file = file_read_as(scratch, how, text, atoms, false);
+    let mut file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
-    if !how.dialect.oxc || how.dialect.script || !is_refused(&file) {
+    let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);
+    if !how.dialect.oxc || how.dialect.script || !was_refused && html_opens.first.is_none() {
         return file;
     }
     // For oxc a file is a script if nothing in it says that it is a module, or if its name says so. Here only these are
     // read otherwise in one.
     let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
     let is_script_by_name = is_named([b".cjs", b".cts"]);
+    let is_module_by_name = is_named([b".mjs", b".mts"]);
+    let is_module = is_module_by_name || file.has_module_syntax && !is_script_by_name;
     let words: [&[u8]; 3] = [b"await", b"<!--", b"-->"];
-    if !words.iter().any(|it| bun_core::strings::contains(text, it))
-        || is_named([b".mjs", b".mts"])
-        || file.has_module_syntax && !is_script_by_name
-    {
+    if was_refused && (is_module || !words.iter().any(|it| bun_core::strings::contains(text, it))) {
+        return file;
+    }
+    // `a <!--b`, which is `a < !--b` for every other parser.
+    if is_module {
+        let refused = match is_module_by_name {
+            true => html_opens.first_on_its_line,
+            false => html_opens.first,
+        };
+        if let Some(at) = refused {
+            let error = Diagnostic::new(DiagnosticKind::Parse, (at, at + 4), 1109, &[]);
+            *file = FileBuilder {
+                kind: FileKind::Tsx,
+                is_js: file.is_js,
+                is_flow: file.is_flow,
+                has_errors: true,
+                has_parse_diagnostics: true,
+                error_pos: at,
+                source_len: text.len() as u32,
+                diagnostics: vec![error],
+                ..Default::default()
+            };
+        }
         return file;
     }
     scratch.recycle(file);
@@ -136,7 +158,7 @@ fn file_of(
         ..how
     };
     let script = file_read_as(scratch, as_script, text, atoms, true);
-    if !is_refused(&script) && (is_script_by_name || !script.has_module_syntax) {
+    if (!was_refused || !is_refused(&script)) && (is_script_by_name || !script.has_module_syntax) {
         return script;
     }
     // Atoms of its own are those of the last reading.

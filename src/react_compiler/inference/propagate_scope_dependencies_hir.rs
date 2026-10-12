@@ -1413,7 +1413,9 @@ fn propagate_non_null(
         graph.working[index_of(k)] = Some(v.assumed_non_null_objects.clone());
     }
 
-    for _ in 0..100 {
+    // Upstream gives the function up after 100 rounds. It ends by itself: no path is made but by taking
+    // a `?.` out of one, and a block that has lost a path for one with fewer never keeps it again.
+    loop {
         let mut changed = false;
 
         // Forward pass (using predecessors)

@@ -2884,7 +2884,9 @@ describe.concurrent("bun lint", () => {
     };
     const { raw } = await lint(files, ["-f", "json", "."]);
     const said = (JSON.parse(raw) as any[]).flatMap(({ filePath, messages }) =>
-      messages.map((it: any) => `${basename(filePath)}:${it.line}:${it.column} ${it.ruleId} ${JSON.stringify(it.fix?.range)}`),
+      messages.map(
+        (it: any) => `${basename(filePath)}:${it.line}:${it.column} ${it.ruleId} ${JSON.stringify(it.fix?.range)}`,
+      ),
     );
     expect(said.sort()).toEqual([
       "all.js:2:1 no-debugger undefined",

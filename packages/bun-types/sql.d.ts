@@ -170,7 +170,7 @@ declare module "bun" {
     type ContextCallbackResult<T> = T extends Array<PromiseLike<any>> ? AwaitPromisesArray<T> : Awaited<T>;
     type ContextCallback<T, SQL> = (sql: SQL) => Bun.MaybePromise<T>;
 
-    interface SQLiteOptions extends BunSQLite.DatabaseOptions {
+    interface SQLiteOptions extends Omit<BunSQLite.DatabaseOptions, "readonly" | "create" | "readwrite"> {
       adapter?: "sqlite";
 
       /**
@@ -184,9 +184,44 @@ declare module "bun" {
        * - `./dev.db`
        * - `:memory:`
        *
+       * A `sqlite:` or `file:` URL can end with a `?mode=` query parameter:
+       * `ro` (read-only), `rw` (read-write) or `rwc` (read-write, and create
+       * the file if it does not exist). Any other `mode` throws an error. The
+       * `readonly`, `create` and `readwrite` options take priority over `mode`.
+       *
        * @default ":memory:"
        */
       filename?: URL | ":memory:" | (string & {}) | undefined;
+
+      /**
+       * Open the database in read-only mode. A read-only handle cannot write,
+       * and it does not create the file.
+       *
+       * When set, this option takes priority over `?mode=` in {@link filename}.
+       *
+       * @default false
+       */
+      readonly?: boolean | undefined;
+
+      /**
+       * Create the database file if it does not exist.
+       *
+       * When `false`, the first query on a file that does not exist rejects
+       * with the code `SQLITE_CANTOPEN`.
+       *
+       * @default true
+       */
+      create?: boolean | undefined;
+
+      /**
+       * Open the database for reading and writing.
+       *
+       * When `false`, the database opens in read-only mode, the same as
+       * `readonly: true`.
+       *
+       * @default true
+       */
+      readwrite?: boolean | undefined;
 
       /**
        * Called when a connection attempt completes.

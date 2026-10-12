@@ -5,6 +5,7 @@ import { isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import path from "path";
 
 describe("Connection & Initialization", () => {
@@ -367,6 +368,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
       expect(sql.options.adapter).toBe("sqlite");
       expect(sql.options.readonly).toBe(false);
+      expect(sql.options.create).toBe(false);
 
       await sql`INSERT INTO test VALUES (1)`;
       const result = await sql`SELECT * FROM test`;
@@ -423,6 +425,254 @@ describe("Connection & Initialization", () => {
 
       await sql.close();
       await rm(dir, { recursive: true });
+    });
+  });
+
+  describe("Open mode", () => {
+    // What a handle does with a database that exists, and with a file that does not exist.
+    type Mode = { existing: string; rows: number; missing: string; createdMissing: boolean };
+    const readWriteCreate: Mode = { existing: "writes", rows: 1, missing: "opens", createdMissing: true };
+    const readWrite: Mode = { existing: "writes", rows: 1, missing: "SQLITE_CANTOPEN", createdMissing: false };
+    const readOnly: Mode = { existing: "SQLITE_READONLY", rows: 0, missing: "SQLITE_CANTOPEN", createdMissing: false };
+
+    function seed(filename: string) {
+      using db = new Database(filename);
+      db.run("CREATE TABLE t (a)");
+    }
+
+    function rowsIn(filename: string) {
+      using db = new Database(filename, { readonly: true });
+      return (db.query("SELECT count(*) AS n FROM t").get() as { n: number }).n;
+    }
+
+    async function errorCode(query: Promise<unknown>, ok: string) {
+      try {
+        await query;
+        return ok;
+      } catch (error) {
+        return (error as SQL.SQLiteError).code;
+      }
+    }
+
+    async function observe(open: (filename: string) => SQL): Promise<Mode> {
+      using dir = tempDir("sqlite-open-mode", {});
+      const existing = join(String(dir), "existing.db");
+      const missing = join(String(dir), "missing.db");
+      seed(existing);
+
+      const observed: Mode = { existing: "", rows: -1, missing: "", createdMissing: false };
+      {
+        await using sql = open(existing);
+        observed.existing = await errorCode(sql`INSERT INTO t VALUES (1)`, "writes");
+      }
+      observed.rows = rowsIn(existing);
+      {
+        await using sql = open(missing);
+        observed.missing = await errorCode(sql`SELECT 1`, "opens");
+      }
+      observed.createdMissing = existsSync(missing);
+      return observed;
+    }
+
+    const show = (options: Record<string, unknown>) => {
+      const entries = Object.entries(options).map(([key, value]) => `${key}: ${value}`);
+      return entries.length ? `{ ${entries.join(", ")} }` : "{}";
+    };
+
+    const _ = undefined;
+    const F = false;
+    const T = true;
+    // [readonly, create, readwrite]. A key that is `_` is not passed.
+    const table: [boolean | undefined, boolean | undefined, boolean | undefined, Mode][] = [
+      [_, _, _, readWriteCreate],
+      [_, _, F, readOnly],
+      [_, _, T, readWriteCreate],
+      [_, F, _, readWrite],
+      [_, F, F, readOnly],
+      [_, F, T, readWrite],
+      [_, T, _, readWriteCreate],
+      [_, T, F, readOnly],
+      [_, T, T, readWriteCreate],
+      [F, _, _, readWriteCreate],
+      [F, _, F, readOnly],
+      [F, _, T, readWriteCreate],
+      [F, F, _, readWrite],
+      [F, F, F, readOnly],
+      [F, F, T, readWrite],
+      [F, T, _, readWriteCreate],
+      [F, T, F, readOnly],
+      [F, T, T, readWriteCreate],
+      [T, _, _, readOnly],
+      [T, _, F, readOnly],
+      [T, _, T, readOnly],
+      [T, F, _, readOnly],
+      [T, F, F, readOnly],
+      [T, F, T, readOnly],
+      [T, T, _, readOnly],
+      [T, T, F, readOnly],
+      [T, T, T, readOnly],
+    ];
+    const optionRows: [Record<string, unknown>, Mode][] = [
+      ...table.map(([readonly, create, readwrite, mode]): [Record<string, unknown>, Mode] => {
+        const options: Record<string, unknown> = {};
+        if (readonly !== undefined) options.readonly = readonly;
+        if (create !== undefined) options.create = create;
+        if (readwrite !== undefined) options.readwrite = readwrite;
+        return [options, mode];
+      }),
+      // `undefined` is an option that is not given. Any other falsy `readwrite` is off.
+      [{ readonly: undefined, create: undefined, readwrite: undefined }, readWriteCreate],
+      [{ readwrite: null }, readOnly],
+      [{ readwrite: 0 }, readOnly],
+    ];
+
+    test.each(optionRows.map(([options, mode]) => [show(options), options, mode] as const))(
+      "%s",
+      async (_title, options, mode) => {
+        const open = (filename: string) => new SQL({ adapter: "sqlite", filename, ...options } as SQL.Options);
+        expect(await observe(open)).toEqual(mode);
+      },
+    );
+
+    // An option that is given takes priority over ?mode=.
+    const urlRows: [string, Record<string, unknown>, Mode][] = [
+      ["?mode=ro", {}, readOnly],
+      ["?mode=ro", { readonly: undefined }, readOnly],
+      ["?mode=ro", { readonly: false }, readWriteCreate],
+      ["?mode=ro", { readwrite: true }, readOnly],
+      ["?mode=ro", { create: true }, readOnly],
+      ["?mode=rw", {}, readWrite],
+      ["?mode=rw", { create: undefined }, readWrite],
+      ["?mode=rw", { create: true }, readWriteCreate],
+      ["?mode=rw", { readonly: true }, readOnly],
+      ["?mode=rw", { readwrite: false }, readOnly],
+      ["?mode=rwc", {}, readWriteCreate],
+      ["?mode=rwc", { create: undefined }, readWriteCreate],
+      ["?mode=rwc", { create: false }, readWrite],
+      ["?mode=rwc", { readwrite: false }, readOnly],
+      // When mode repeats, the most restrictive one applies, in any order.
+      ["?mode=rw&mode=ro", {}, readOnly],
+      ["?mode=ro&mode=rw", {}, readOnly],
+      ["?mode=rwc&mode=rw", {}, readWrite],
+      ["?mode=rw&mode=rwc", {}, readWrite],
+      ["?mode=rwc&mode=rw&mode=ro", {}, readOnly],
+      ["?cache=shared&mode=ro", {}, readOnly],
+    ];
+
+    test.each(urlRows.map(([query, options, mode]) => [query, show(options), options, mode] as const))(
+      "%s with %s",
+      async (query, _title, options, mode) => {
+        const open = (filename: string) => new SQL(`sqlite://${filename}${query}`, options as SQL.Options);
+        expect(await observe(open)).toEqual(mode);
+      },
+    );
+
+    const unset: { readonly?: boolean; strict?: boolean } = { strict: true };
+    test.each([
+      ["readonly: undefined", { readonly: undefined }],
+      ["a wrapper that forwards a setting its caller did not set", { readonly: unset.readonly, strict: unset.strict }],
+    ])("?mode=ro in a filename that is a file: URL holds with %s", async (_title, options) => {
+      const open = (filename: string) =>
+        new SQL({ adapter: "sqlite", filename: pathToFileURL(filename).href + "?mode=ro", ...options });
+      expect(await observe(open)).toEqual(readOnly);
+    });
+
+    test("sql.options reports the mode that the handle has", async () => {
+      using dir = tempDir("sqlite-open-mode-options", {});
+      const filename = join(String(dir), "db.sqlite");
+      seed(filename);
+
+      const reported = async (sql: SQL) => {
+        await using handle = sql;
+        const { readonly, create } = handle.options as SQL.SQLiteOptions;
+        return { readonly, create };
+      };
+      expect(await reported(new SQL({ adapter: "sqlite", filename, readwrite: false }))).toEqual({
+        readonly: true,
+        create: undefined,
+      });
+      expect(await reported(new SQL(`sqlite://${filename}?mode=rw`))).toEqual({
+        readonly: false,
+        create: false,
+      });
+      expect(await reported(new SQL(`sqlite://${filename}?mode=rwc`, { create: undefined }))).toEqual({
+        readonly: false,
+        create: true,
+      });
+    });
+
+    // The constructor throws before it opens or creates anything.
+    async function constructionError(open: (filename: string) => SQL) {
+      using dir = tempDir("sqlite-open-mode-rejected", {});
+      const missing = join(String(dir), "missing.db");
+      let error: unknown;
+      try {
+        await open(missing).close();
+      } catch (e) {
+        error = e;
+      }
+      return { error, createdMissing: existsSync(missing) };
+    }
+
+    test.each([
+      [
+        "{ readOnly: true }",
+        (filename: string) => new SQL({ adapter: "sqlite", filename, readOnly: true } as SQL.Options),
+      ],
+      [
+        "{ readOnly: false }",
+        (filename: string) => new SQL({ adapter: "sqlite", filename, readOnly: false } as SQL.Options),
+      ],
+      [
+        "{ readOnly: undefined }",
+        (filename: string) => new SQL({ adapter: "sqlite", filename, readOnly: undefined } as SQL.Options),
+      ],
+      [
+        "a URL and { readOnly: true }",
+        (filename: string) => new SQL(`sqlite://${filename}`, { readOnly: true } as SQL.Options),
+      ],
+      [
+        "a path and { adapter, readOnly: true }",
+        (filename: string) => new SQL(filename, { adapter: "sqlite", readOnly: true } as SQL.Options),
+      ],
+    ])("%s throws the error that bun:sqlite throws for the misspelling", async (_title, open) => {
+      const { error, createdMissing } = await constructionError(open);
+      expect(error).toBeInstanceOf(TypeError);
+      expect((error as TypeError).message).toBe('Misspelled option "readOnly" should be "readonly"');
+      expect(createdMissing).toBe(false);
+    });
+
+    test.each([
+      ["?mode=RO", "The argument 'mode' must be one of: ro, rw, rwc. Received 'RO'"],
+      ["?mode=readonly", "The argument 'mode' must be one of: ro, rw, rwc. Received 'readonly'"],
+      ["?mode=", "The argument 'mode' must be one of: ro, rw, rwc. Received ''"],
+      ["?mode=rwc&mode=bogus", "The argument 'mode' must be one of: ro, rw, rwc. Received 'bogus'"],
+      ["?mode=memory", "The argument 'mode' must be one of: ro, rw, rwc. Received 'memory'"],
+    ])("%s throws and creates no file", async (query, message) => {
+      const { error, createdMissing } = await constructionError(filename => new SQL(`sqlite://${filename}${query}`));
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error).toMatchObject({ code: "ERR_INVALID_ARG_VALUE", message });
+      expect(createdMissing).toBe(false);
+    });
+
+    test("option keys that the options object inherits are read", async () => {
+      using dir = tempDir("sqlite-open-mode-inherited", {});
+      const filename = join(String(dir), "db.sqlite");
+      seed(filename);
+
+      class Settings {
+        adapter = "sqlite" as const;
+        get readonly() {
+          return true;
+        }
+        get safeIntegers() {
+          return true;
+        }
+      }
+      await using sql = new SQL(`sqlite://${filename}`, new Settings());
+      const [row] = await sql`SELECT 1 AS n`;
+      expect(row).toEqual({ n: 1n });
+      expect(await errorCode(sql`INSERT INTO t VALUES (1)`, "writes")).toBe("SQLITE_READONLY");
     });
   });
 

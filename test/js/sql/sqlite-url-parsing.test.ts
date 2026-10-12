@@ -84,11 +84,19 @@ describe("SQLite URL Parsing Matrix", () => {
     const queryParams = [
       { query: "", readonly: undefined, create: undefined, name: "no params" },
       { query: "?mode=ro", readonly: true, create: undefined, name: "readonly" },
-      { query: "?mode=rw", readonly: false, create: undefined, name: "read-write" },
+      { query: "?mode=rw", readonly: false, create: false, name: "read-write" },
       { query: "?mode=rwc", readonly: false, create: true, name: "read-write-create" },
-      { query: "?mode=invalid", readonly: undefined, create: undefined, name: "invalid mode" },
       { query: "?other=param", readonly: undefined, create: undefined, name: "other param" },
       { query: "?mode=ro&cache=shared", readonly: true, create: undefined, name: "multiple params" },
+      // When mode repeats, the most restrictive one applies, in any order.
+      { query: "?mode=rw&mode=ro", readonly: true, create: undefined, name: "rw then ro" },
+      { query: "?mode=ro&mode=rw", readonly: true, create: undefined, name: "ro then rw" },
+      { query: "?mode=ro&mode=rwc", readonly: true, create: undefined, name: "ro then rwc" },
+      { query: "?mode=rwc&mode=rw", readonly: false, create: false, name: "rwc then rw" },
+      { query: "?mode=rw&mode=rwc", readonly: false, create: false, name: "rw then rwc" },
+      { query: "?mode=ro&mode=ro", readonly: true, create: undefined, name: "the same mode twice" },
+      { query: "?mode=r%6F", readonly: true, create: undefined, name: "a percent-encoded mode" },
+      { query: "?MODE=ro", readonly: undefined, create: undefined, name: "a parameter name in another case" },
     ];
 
     const queryMatrix = protocolsWithQuery.flatMap(base =>
@@ -109,6 +117,43 @@ describe("SQLite URL Parsing Matrix", () => {
       if (!testCase.base.startsWith("file://")) {
         expect(sql.options.filename).toBe("test.db");
       }
+    });
+
+    async function constructionError(url: string) {
+      try {
+        await new SQL(url).close();
+      } catch (error) {
+        return error;
+      }
+    }
+
+    // SQLite itself refuses each of these with "no such access mode", except `memory`, which this adapter does not support.
+    const unknownModes = [
+      { query: "?mode=invalid", received: "invalid", name: "an unknown mode" },
+      { query: "?mode=RO", received: "RO", name: "a mode in upper case" },
+      { query: "?mode=readonly", received: "readonly", name: "the mode readonly" },
+      { query: "?mode=r", received: "r", name: "the mode r" },
+      { query: "?mode=read-only", received: "read-only", name: "the mode read-only" },
+      { query: "?mode=", received: "", name: "an empty mode" },
+      { query: "?mode", received: "", name: "a mode with no value" },
+      { query: "?mode=ro+", received: "ro ", name: "a mode with a trailing +" },
+      { query: "?mode=%20ro", received: " ro", name: "a mode with a leading space" },
+      { query: "?mode=bogus&mode=ro", received: "bogus", name: "an unknown mode before a valid one" },
+      { query: "?mode=ro&mode=bogus", received: "bogus", name: "an unknown mode after a valid one" },
+      { query: "?cache=shared&mode=rwx", received: "rwx", name: "an unknown mode after another parameter" },
+      { query: "?mode=memory", received: "memory", name: "the mode memory" },
+      { query: "?mode=ro#fragment", received: "ro#fragment", name: "a fragment after the mode" },
+    ];
+
+    test.each(
+      protocolsWithQuery.flatMap(base => unknownModes.map(mode => ({ base, url: base + mode.query, ...mode }))),
+    )("$base with $name throws", async ({ url, received }) => {
+      const error = await constructionError(url);
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error).toMatchObject({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The argument 'mode' must be one of: ro, rw, rwc. Received '${received}'`,
+      });
     });
   });
 

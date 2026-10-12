@@ -1545,10 +1545,22 @@ function parseDefinitelySqliteUrl(value: string | URL | null): string | null {
   return null;
 }
 
+// What a `mode` query parameter allows, from least to most.
+const enum SQLiteAccess {
+  unset = 0,
+  readonly = 1,
+  readwrite = 2,
+  readwriteCreate = 3,
+}
+
 function parseSQLiteOptions(
   filenameOrUrl: string | URL | null | undefined,
-  options: Bun.SQL.__internal.OptionsWithDefinedAdapter,
+  options: Bun.SQL.__internal.Define<Bun.SQL.SQLiteOptions>,
 ): Bun.SQL.__internal.DefinedSQLiteOptions {
+  if ("readOnly" in options) {
+    throw new TypeError('Misspelled option "readOnly" should be "readonly"');
+  }
+
   // Start with base options
   const sqliteOptions: Bun.SQL.__internal.DefinedSQLiteOptions = {
     ...options,
@@ -1586,30 +1598,66 @@ function parseSQLiteOptions(
   // Empty filename defaults to :memory:
   sqliteOptions.filename = filename || ":memory:";
 
-  // Parse query parameters if present
+  // Only `mode` is read from the query, with `ro`, `rw` and `rwc` of https://www.sqlite.org/uri.html#urimode
   if (queryString) {
     const params = new URLSearchParams(queryString);
-    const mode = params.get("mode");
+    let access = SQLiteAccess.unset;
+    let mode = params.get("mode");
+    while (mode !== null) {
+      let next: SQLiteAccess;
+      switch (mode) {
+        case "ro":
+          next = SQLiteAccess.readonly;
+          break;
+        case "rw":
+          next = SQLiteAccess.readwrite;
+          break;
+        case "rwc":
+          next = SQLiteAccess.readwriteCreate;
+          break;
+        default:
+          throw $ERR_INVALID_ARG_VALUE("mode", mode, "must be one of: ro, rw, rwc");
+      }
+      // When `mode` repeats, the most restrictive one applies.
+      if (access === SQLiteAccess.unset || next < access) {
+        access = next;
+      }
+      // Drops every pair with this value, so the next get() returns the next distinct value.
+      params.delete("mode", mode);
+      mode = params.get("mode");
+    }
 
-    if (mode === "ro") {
-      sqliteOptions.readonly = true;
-    } else if (mode === "rw") {
-      sqliteOptions.readonly = false;
-    } else if (mode === "rwc") {
-      sqliteOptions.readonly = false;
-      sqliteOptions.create = true;
+    switch (access) {
+      case SQLiteAccess.readonly:
+        sqliteOptions.readonly = true;
+        break;
+      case SQLiteAccess.readwrite:
+        sqliteOptions.readonly = false;
+        sqliteOptions.create = false;
+        break;
+      case SQLiteAccess.readwriteCreate:
+        sqliteOptions.readonly = false;
+        sqliteOptions.create = true;
+        break;
     }
   }
 
-  // Apply other SQLite-specific options
-  if ("readonly" in options) {
-    sqliteOptions.readonly = options.readonly;
+  // An option that is given takes priority over `mode`. `undefined` is not given.
+  const readonly = options.readonly;
+  if (readonly !== undefined) {
+    sqliteOptions.readonly = readonly;
   }
-  if ("create" in options) {
-    sqliteOptions.create = options.create;
+  const create = options.create;
+  if (create !== undefined) {
+    sqliteOptions.create = create;
   }
-  if ("safeIntegers" in options) {
-    sqliteOptions.safeIntegers = options.safeIntegers;
+  const readwrite = options.readwrite;
+  if (readwrite !== undefined && !readwrite) {
+    sqliteOptions.readonly = true;
+  }
+  const safeIntegers = options.safeIntegers;
+  if (safeIntegers !== undefined) {
+    sqliteOptions.safeIntegers = safeIntegers;
   }
 
   return sqliteOptions;

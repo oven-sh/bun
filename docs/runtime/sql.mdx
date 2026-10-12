@@ -240,11 +240,22 @@ const sql = new SQL({
 });
 ```
 
+Bun opens the database in read-only mode when `readonly` is `true` or `readwrite` is `false`. An option that is `undefined` counts as not set.
+
 Bun parses query parameters in the URL to set these options:
 
 - `?mode=ro` → `readonly: true`
 - `?mode=rw` → `readonly: false, create: false`
 - `?mode=rwc` → `readonly: false, create: true` (default)
+
+Bun throws an error for any other `mode`. When a URL repeats `mode`, the most restrictive one applies.
+
+An option that you set in the options object takes priority over `mode`:
+
+```ts
+// Opens in read-only mode
+const sql = new SQL("sqlite://data.db?mode=rwc", { readonly: true });
+```
 
 </Accordion>
 
@@ -736,7 +747,7 @@ const sql = new SQL({
   // SQLite-specific access modes
   readonly: false, // Open in read-only mode
   create: true, // Create database if it doesn't exist
-  readwrite: true, // Allow read and write operations
+  readwrite: true, // Allow read and write operations. Set to false to open in read-only mode
 
   // SQLite data handling
   strict: true, // Enable strict mode for better type safety

@@ -299,3 +299,20 @@ expectType<Bun.SQL.ContextCallbackResult<unknown>>;
 declare const aSqlInstance: Bun.SQL;
 expectType(aSqlInstance.options.host).is<string | undefined>(); // property exists in postgres/mysql/mariadb options
 expectType(aSqlInstance.options.safeIntegers).is<boolean | undefined>(); // property exits in sqlite options
+
+// The SQLite options that select the open mode accept a value that is not set.
+{
+  const settings: { readonly?: boolean; create?: boolean; readwrite?: boolean } = {};
+  const sqliteOptions: Bun.SQL.SQLiteOptions = {
+    adapter: "sqlite",
+    filename: ":memory:",
+    readonly: settings.readonly,
+    create: settings.create,
+    readwrite: settings.readwrite,
+    strict: true,
+    safeIntegers: false,
+  };
+  expectType(sqliteOptions.readwrite).is<boolean | undefined>();
+  expectType(sqliteOptions.strict).is<boolean | undefined>();
+  new Bun.SQL(sqliteOptions);
+}

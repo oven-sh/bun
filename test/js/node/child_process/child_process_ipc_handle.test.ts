@@ -740,8 +740,6 @@ const net = require('node:net');
 const { text } = require('node:stream/consumers');
 const [serialization, order] = process.argv.slice(2);
 const steps = order.split(',');
-const child = fork('child.js', { stdio: ['ignore', 'pipe', 'inherit', 'ipc'], serialization });
-const childDone = Promise.all([text(child.stdout), new Promise(resolve => child.on('exit', resolve))]);
 const server = net.createServer();
 const sockets = [];
 const wanted = steps.filter(step => step.includes('socket')).length;
@@ -754,6 +752,9 @@ server.listen(0, '127.0.0.1', () => {
   }
 });
 async function run() {
+  // Forked in the same tick as the sends: the child cannot read yet, so the first write stops at the socket buffer.
+  const child = fork('child.js', { stdio: ['ignore', 'pipe', 'inherit', 'ipc'], serialization });
+  const childDone = Promise.all([text(child.stdout), new Promise(resolve => child.on('exit', resolve))]);
   const pad = Buffer.alloc(2 * 1024 * 1024, 'x').toString();
   const callbacks = steps.map(() => 'never called');
   steps.forEach((step, i) => {
@@ -860,12 +861,12 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
         "parent.js": `
 const { fork } = require('node:child_process');
 const net = require('node:net');
-const child = fork('child.js');
-let disconnects = 0;
-child.on('disconnect', () => { disconnects++; });
 const server = net.createServer();
 server.listen(0, '127.0.0.1', () => {
   net.connect(server.address().port, '127.0.0.1', function () {
+    const child = fork('child.js');
+    let disconnects = 0;
+    child.on('disconnect', () => { disconnects++; });
     child.send({ pad: Buffer.alloc(2 * 1024 * 1024, 'x').toString() });
     child.send('socket', this);
     child.send('after');

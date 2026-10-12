@@ -878,6 +878,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         merge_state.last_compat = None;
     }
 
+    // The ltr/rtl rules get no cut: behind any rule boundary their :dir()/:lang() selectors still outrank a later declaration.
     if !logical.is_empty() {
         let mut log = CssRuleList { v: logical };
         log.minify(context, parent_is_unused)?;

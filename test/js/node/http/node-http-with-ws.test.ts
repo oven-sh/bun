@@ -232,6 +232,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     "delivers the 101 and an immediate callback write on a %s socket",
     async (_name, reuse, warmupRequests) => {
       let connection!: import("ws").WebSocket;
+      let bytesWrittenBeforeSend = 0;
       const message = Promise.withResolvers<Buffer>();
       const fixture = await openWebSocketWithAgent({
         ServerClass: NpmWebSocketServer,
@@ -242,6 +243,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
         },
         onConnection(ws) {
           connection = ws;
+          bytesWrittenBeforeSend = (ws as WsWebSocket & { _socket: Socket })._socket.bytesWritten;
           ws.send("ready");
         },
       });
@@ -249,6 +251,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
         expect(connection).toBe(fixture.accepted.ws);
         expect(fixture.accepted.head).toEqual(Buffer.alloc(0));
         expect((await message.promise).toString()).toBe("ready");
+        expect((fixture.accepted.socket as Socket).bytesWritten - bytesWrittenBeforeSend).toBe(7);
       } finally {
         await closeWebSocketFixture(fixture);
       }

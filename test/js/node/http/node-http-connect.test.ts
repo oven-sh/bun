@@ -4,7 +4,7 @@ import http from "http";
 
 import { once } from "node:events";
 import https from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
@@ -60,6 +60,42 @@ async function writeInTwoReads(
 
 const BIG_DATA = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
 describe("HTTP server CONNECT", () => {
+  test.each(["http", "https"])("%s: bytesWritten counts raw CONNECT writes", async proto => {
+    const server = proto === "https" ? https.createServer(tlsCert) : http.createServer();
+    const reply = "HTTP/1.1 200 Connection Established\r\n\r\n";
+    const payload = "héllo";
+    let accepted: Socket | undefined;
+    let written = 0;
+    server.on("connect", (_req, socket) => {
+      accepted = socket as Socket;
+      const before = accepted.bytesWritten;
+      socket.write(reply);
+      socket.write(payload);
+      written = accepted.bytesWritten - before;
+      socket.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client =
+      proto === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    try {
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      const ended = once(client, "end");
+      client.write("CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n");
+      await ended;
+      expect(Buffer.concat(chunks).toString()).toBe(reply + payload);
+      expect(written).toBe(Buffer.byteLength(reply + payload));
+    } finally {
+      client.destroy();
+      accepted?.destroy();
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   test("should handle backpressure", async () => {
     const responseHeader = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
     await using proxyServer = http.createServer((req, res) => {

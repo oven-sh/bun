@@ -7640,11 +7640,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_declaration_with_explicit_type_annotation(&self, f: FileId, declaration: Decl) -> bool {
         let (hir, bound) = (self.hir(f), self.bound(f));
         match declaration {
-            Decl::Var(pat) | Decl::Param(pat) => match bound.pat_parent[pat.idx()] {
-                PatParent::Var(d) => hir[d].ty.is_some(),
-                PatParent::Param(p) => hir[p].ty.is_some(),
-                _ => false,
-            },
+            Decl::Var(pat) | Decl::Param(pat) => {
+                bound.pat_parent[pat.idx()].has_type_annotation(hir)
+            }
             Decl::ParameterProperty(p) => hir[p].ty.is_some(),
             Decl::Member(m) => hir[m].kind == MemberKind::Property && hir[m].ty.is_some(),
             // `isExpandoPropertyFunctionWithReturnTypeAnnotation`

@@ -838,7 +838,6 @@ impl<'s> Program<'s> {
             assigned_parameters: Vec::new(),
             assigned_unknown: Vec::new(),
             context_checking: Vec::new(),
-            assigned_parameter_counts: Vec::new(),
             context_checked_here: Default::default(),
             resolved_signatures: Default::default(),
             in_check_identifier: Vec::new(),
@@ -1671,10 +1670,8 @@ pub struct Checker<'p, 's> {
     /// The functions whose first check is in progress, see `context_checked`. They are published to
     /// `Program::context_checked`, for every thread, only once the results of the first check are:
     /// a thread that found one without the other would continue without a first check of its own.
-    context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature)>,
-    /// For each entry of `context_checking`: the number of parameters for which
-    /// `assignParameterType` has returned. `links.resolvedType` of the others is nil.
-    assigned_parameter_counts: Vec<usize>,
+    /// The third: the number of parameters for which `assignParameterType` has returned.
+    context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature, usize)>,
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to write. See `is_context_checked`.
     context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
     /// The functions whose first check is not published because a frame in progress is tainted,

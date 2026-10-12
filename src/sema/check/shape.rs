@@ -7242,13 +7242,14 @@ impl<'p, 's> Checker<'p, 's> {
                 // symbols at once, and defers that of more (`CheckFlagsDeferredType`).
                 let (mut resolved_type, mut is_new) = (None, false);
                 if types.len() == 2 {
+                    let whole = ty;
                     let of_shape = *is_shape_of_whole.get_or_insert_with(|| {
                         parts.iter().all(|&written| {
                             let part = self.apparent_type(written);
                             self.is_deferred(written)
                                 || self.is_union(part)
                                 || !matches!(self.data(part), TypeData::Tuple { .. })
-                                    && self.type_with_this_argument(part, ty) == part
+                                    && self.type_with_this_argument(part, whole) == part
                         })
                     });
                     let known = match of_shape {

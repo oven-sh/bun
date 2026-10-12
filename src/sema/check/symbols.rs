@@ -2786,11 +2786,7 @@ impl<'p, 's> Checker<'p, 's> {
         // strictNullChecks the default is not checked.
         let hir = self.hir(file);
         let root = root_declaration(self.bound(file), pat);
-        let is_annotated = match root {
-            PatParent::Var(d) => hir[d].ty.is_some(),
-            PatParent::Param(p) => hir[p].ty.is_some(),
-            _ => false,
-        };
+        let is_annotated = root.has_type_annotation(hir);
         if is_annotated && !self.p.files.options.strict_null_checks {
             return ty;
         }
@@ -3108,11 +3104,7 @@ impl<'p, 's> Checker<'p, 's> {
         // the pattern is a cycle.
         // `checkDeclarationInitializer` has assigned `links.resolvedType` of the initializer
         // unless the declaration has a type annotation.
-        let is_annotated = match bound.pat_parent[pattern.idx()] {
-            PatParent::Var(d) => hir[d].ty.is_some(),
-            PatParent::Param(p) => hir[p].ty.is_some(),
-            _ => false,
-        };
+        let is_annotated = bound.pat_parent[pattern.idx()].has_type_annotation(hir);
         let actual = if is_annotated {
             self.get_type_of_initializer(file, initializer)
         } else {

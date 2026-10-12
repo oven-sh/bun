@@ -3891,8 +3891,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `links.flags |= NodeCheckFlagsContextChecked`, before anything else is read. The entry has
         // `getContextualSignature` until the signature for `assignContextualParameterTypes` exists.
         let checking = self.context_checking.len();
-        (self.context_checking).push(((file, func), (contextual_signature, false)));
-        self.assigned_parameter_counts.push(0);
+        (self.context_checking).push(((file, func), (contextual_signature, false), 0));
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         // `getSignaturesOfType(getTypeOfSymbol(..))`: `resolveAnonymousTypeMembers` begins with
@@ -3971,14 +3970,14 @@ impl<'p, 's> Checker<'p, 's> {
                 self.assigned_parameters.push(self.stack.len());
                 self.type_of_param(file, p);
                 self.assigned_parameters.pop();
-                self.assigned_parameter_counts[checking] = i + 1;
+                self.context_checking[checking].2 = i + 1;
                 // `assignContextualParameterTypes` leaves out a parameter with an annotation.
                 if contextual_signature.is_none() || hir[p].ty.is_none() {
                     self.assign_binding_element_types(file, hir[p].pat);
                 }
             }
         }
-        self.assigned_parameter_counts[checking] = f.params.len();
+        self.context_checking[checking].2 = f.params.len();
         if contextual_signature.is_some()
             && f.ret.is_none()
             && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
@@ -4025,7 +4024,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.look_at_signature(file, func);
         self.end_recheck(outer);
         self.context_checking.pop();
-        self.assigned_parameter_counts.pop();
         if holds {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
@@ -4105,7 +4103,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let mut checking = self.context_checking.iter();
         match checking.rposition(|c| c.0 == (file, func)) {
-            Some(checking) => index >= self.assigned_parameter_counts[checking],
+            Some(checking) => index >= self.context_checking[checking].2,
             None => {
                 self.context_checked_under_taint(file, func).is_none()
                     && (self.p.context_checked.get(&self.task, &(file, func))).is_none()

@@ -529,45 +529,53 @@ snapshots:
       expect(beside.exitCode).toBe(0);
     });
 
-    test.concurrent("a registry with its credentials in the URL still installs after migration", async () => {
-      // every request has to carry the credentials; the tarball URL in bun.lock has none
-      const requests: { path: string; authorized: boolean }[] = [];
-      const packages = join(import.meta.dir, "..", "registry", "packages");
-      let origin = "";
-      using server = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          const { pathname } = new URL(req.url);
-          const authorized = req.headers.get("authorization") === `Basic ${btoa("builder:hunter2secret")}`;
-          requests.push({ path: pathname, authorized });
-          if (!authorized) return new Response("unauthorized", { status: 401 });
-          if (pathname === "/no-deps/-/no-deps-1.0.1.tgz") {
-            return new Response(Bun.file(join(packages, "no-deps", "no-deps-1.0.1.tgz")));
-          }
-          if (pathname === "/no-deps") {
-            const manifest = await Bun.file(join(packages, "no-deps", "package.json")).text();
-            return Response.json(JSON.parse(manifest.replaceAll("http://localhost:4873/", origin)));
-          }
-          return new Response("not found", { status: 404 });
-        },
-      });
-      origin = `http://localhost:${server.port}/`;
-      using dir = tempDir("pnpm-registry-url-credentials", {
-        "package.json": JSON.stringify({ name: "registry-credentials", dependencies: { "no-deps": "^1.0.0" } }),
-        "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work").replaceAll("work:", ""),
-        "bunfig.toml": `[install]\nregistry = "$PNPM_TEST_REGISTRY"\nlinker = "hoisted"\n`,
-      });
+    // `user:password@`, and a username alone, which is `user:` (a token some registries take that way)
+    test.concurrent.each(["builder:hunter2secret", "hunter2token"])(
+      "a registry with its credentials in the URL still installs after migration (%s)",
+      async userinfo => {
+        // every request has to carry the credentials; the tarball URL in bun.lock has none
+        const expected = `Basic ${btoa(userinfo.includes(":") ? userinfo : `${userinfo}:`)}`;
+        const requests: { path: string; authorized: boolean }[] = [];
+        const packages = join(import.meta.dir, "..", "registry", "packages");
+        let origin = "";
+        using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const { pathname } = new URL(req.url);
+            const authorized = req.headers.get("authorization") === expected;
+            requests.push({ path: pathname, authorized });
+            if (!authorized) return new Response("unauthorized", { status: 401 });
+            if (pathname === "/no-deps/-/no-deps-1.0.1.tgz") {
+              return new Response(Bun.file(join(packages, "no-deps", "no-deps-1.0.1.tgz")));
+            }
+            if (pathname === "/no-deps") {
+              const manifest = await Bun.file(join(packages, "no-deps", "package.json")).text();
+              return Response.json(JSON.parse(manifest.replaceAll("http://localhost:4873/", origin)));
+            }
+            return new Response("not found", { status: 404 });
+          },
+        });
+        origin = `http://localhost:${server.port}/`;
+        using dir = tempDir("pnpm-registry-url-credentials", {
+          "package.json": JSON.stringify({ name: "registry-credentials", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work").replaceAll("work:", ""),
+          "bunfig.toml": `[install]\nregistry = "$PNPM_TEST_REGISTRY"\nlinker = "hoisted"\n`,
+        });
 
-      const env = { PNPM_TEST_REGISTRY: `http://builder:hunter2secret@localhost:${server.port}/` };
-      const { stderr, exitCode } = await runWithEnv(String(dir), env, "install");
-      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-      expect(stderr).not.toContain("error:");
-      expect(requests.filter(r => !r.authorized)).toEqual([]);
-      expect(requests.map(r => r.path)).toContain("/no-deps/-/no-deps-1.0.1.tgz");
-      expect(nodeModulesPackages(String(dir))).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
-      expect(await bunLockOf(String(dir))).not.toContain("hunter2secret");
-      expect(exitCode).toBe(0);
-    });
+        const env = { PNPM_TEST_REGISTRY: `http://${userinfo}@localhost:${server.port}/` };
+        const { stderr, exitCode } = await runWithEnv(String(dir), env, "install");
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(stderr).not.toContain("error:");
+        expect(requests.filter(r => !r.authorized)).toEqual([]);
+        expect(requests.map(r => r.path)).toContain("/no-deps/-/no-deps-1.0.1.tgz");
+        expect(nodeModulesPackages(String(dir))).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
+        // the whole URL, so that a username left in it fails too
+        expect(await bunLockOf(String(dir))).toContain(
+          `"no-deps@1.0.1", "http://localhost:${server.port}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"`,
+        );
+        expect(exitCode).toBe(0);
+      },
+    );
 
     test("namedRegistries entry pointing at another registry is used for the tarballs", async () => {
       const named = `http://127.0.0.1:${verdaccio.port}/`;

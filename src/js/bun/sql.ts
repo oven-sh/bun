@@ -203,6 +203,8 @@ const SQL = function SQL(
       }
     } catch (err) {
       query.reject(err);
+      // The statement failed inside this call (SQLite runs it synchronously).
+      return true;
     }
   }
 
@@ -235,6 +237,7 @@ const SQL = function SQL(
     values: any[],
     pooledConnection: PooledConnection,
     transactionQueries: Set<Query<any, any>>,
+    handler = queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
   ) {
     try {
       let flags = connectionInfo.bigint
@@ -248,7 +251,7 @@ const SQL = function SQL(
         strings,
         values,
         flags,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        handler,
         pool,
       );
       transactionQueries.add(query);
@@ -666,11 +669,11 @@ const SQL = function SQL(
       pool.attachConnectionCloseHandler(pooledConnection, onClose);
     }
 
-    function run_internal_transaction_sql(string) {
+    function run_internal_transaction_sql(string, handler?) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
       }
-      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries, handler);
     }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
@@ -883,7 +886,18 @@ const SQL = function SQL(
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }
-      const commit_result = await run_internal_transaction_sql(COMMIT_COMMAND);
+      // SQLite keeps the transaction open when COMMIT fails with SQLITE_BUSY or for a deferred
+      // foreign key. It runs COMMIT inside the handler, so the handler reads the state: one
+      // microtask later another begin() on the connection can have opened its own transaction.
+      const commit_result = await run_internal_transaction_sql(
+        COMMIT_COMMAND,
+        pool.isConnectionInTransaction &&
+          ((query, handle, err) => {
+            if (queryFromTransactionHandler.$call(pooledConnection, state.queries, query, handle, err)) {
+              needs_rollback = pool.isConnectionInTransaction!(pooledConnection);
+            }
+          }),
+      );
       // PostgreSQL answers COMMIT on an aborted transaction with a
       // CommandComplete tag of "ROLLBACK" (the session is already in the
       // failed-transaction state, so nothing was committed). Surfacing that

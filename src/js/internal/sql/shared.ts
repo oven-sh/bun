@@ -2259,6 +2259,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   supportsReservedConnections?(): boolean;
   cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
+  /// For a database that runs a statement inside `handle.run()` and can keep the transaction open when COMMIT fails.
+  isConnectionInTransaction?(connection: Connection): boolean;
   attachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
 

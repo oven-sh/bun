@@ -239,7 +239,11 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool)
         .iter()
         .map(|it| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta))
         .collect();
-    bun_lint::utils::sort::sort_by_key(&mut all, |it| (it.0, it.1.name));
+    // A rule of the React Compiler is there as `react-hooks/..` too: the one of oxlint's own plugin is listed.
+    bun_lint::utils::sort::sort_by_key(&mut all, |it| {
+        (it.0, it.1.name, it.1.plugin.prefix().as_bytes() != it.0)
+    });
+    all.dedup_by_key(|it| (it.0, it.1.name));
     if !as_json {
         for (scope, meta) in all {
             out.extend_from_slice(scope);

@@ -1492,7 +1492,12 @@ impl NoUselessAssignment {
                     && uses.is_assignment_unused(index, next)
                     && !oxlint_takes_for_used(assignments.get(index + 1), read_references.last())
                 {
-                    debug_assert!(cx.state.unknown.contains(&variable));
+                    // Only a debug build gets here with a variable that was passed over. Types are not walked: of a name in
+                    // one it is not known in which segment it is.
+                    if !cx.state.unknown.contains(&variable) {
+                        debug_assert!(variable.references().any(|it| is_type_only_reference(variable.symbol, it)));
+                        continue 'variables;
+                    }
                     // For oxlint a name that is declared is without its type.
                     let name = variable.symbol.name();
                     let end = match cx.language().is_oxlint {

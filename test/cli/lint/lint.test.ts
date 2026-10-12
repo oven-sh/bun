@@ -1564,6 +1564,11 @@ describe.concurrent("bun lint", () => {
           docs_url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
         });
         expect(find("typescript", "no-floating-promises").type_aware).toBe(true);
+        // Each once. A rule of the React Compiler is `react-hooks/purity` too, which has suggestions: oxlint's has none.
+        expect(new Set(rules.map((it: any) => `${it.scope}/${it.value}`)).size).toBe(rules.length);
+        expect(rules.filter((it: any) => it.value === "purity").map((it: any) => [it.scope, it.fix])).toEqual([
+          ["react", "none"],
+        ]);
         // The deprecated rules about layout are not built in.
         expect([find("eslint", "semi"), find("react", "jsx-space-before-closing")]).toEqual([undefined, undefined]);
         expect(exitCode).toBe(0);

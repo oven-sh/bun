@@ -515,7 +515,6 @@ export function resolveLlvmToolchain(
   | "ranlib"
   | "ld"
   | "ld64Lld"
-  | "rustLld"
   | "rustLlvmVersion"
   | "rustSysroot"
   | "rustHostTriple"
@@ -683,9 +682,7 @@ export function resolveLlvmToolchain(
         : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
   })?.path;
 
-  // rust-lld: optional alternative linker for cross-language LTO when
-  // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
+  const { rustLlvmVersion, rustSysroot, rustHostTriple } = probeRustToolchain(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -710,7 +707,6 @@ export function resolveLlvmToolchain(
     ranlib,
     ld,
     ld64Lld,
-    rustLld,
     rustLlvmVersion,
     rustSysroot,
     rustHostTriple,
@@ -752,33 +748,18 @@ export interface CargoToolchain {
 }
 
 /**
- * Locate rustc's bundled lld and its LLVM version.
+ * Ask the pinned rustc what it is: its LLVM version (resolveConfig() requires
+ * clang's to be the same major), its sysroot and its host triple.
  *
- * rustc ships its own copy of lld (built against the same LLVM rustc emits
- * bitcode with). When `-Clinker-plugin-lto` is on and rustc's LLVM is newer
- * than clang's, clang's `ld.lld` can't read the rust bitcode ("Unknown
- * attribute kind"). LLVM bitcode is forward-compatible only — a newer lld
- * reads older bitcode, never the reverse — so the fix is to link with
- * rust-lld instead, which reads both clang's (older) and rustc's (same)
- * bitcode.
- *
- * The path under `gcc-ld/` is a wrapper that invokes the sibling
- * `rust-lld` binary in the right "flavor" (ld.lld / ld64.lld / lld-link),
- * matching what `--ld-path=` expects on each platform. On Windows we use
- * `rust-lld.exe` directly since lld-link mode is selected by argv[0] there.
- *
- * Returns undefined for both fields if rustc isn't installed or its sysroot
- * doesn't have the expected layout (e.g. distro-packaged rustc without the
- * `rust-lld` component).
+ * Every field is undefined if rustc isn't installed or doesn't answer.
  */
-export function findRustLld(os: OS): {
-  rustLld: string | undefined;
+export function probeRustToolchain(os: OS): {
   rustLlvmVersion: string | undefined;
   /** `rustc --print sysroot` of the pinned toolchain; its `bin/rustc` is the real compiler behind the rustup proxy. */
   rustSysroot: string | undefined;
   rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  const none = { rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
@@ -787,13 +768,11 @@ export function findRustLld(os: OS): {
       : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
-  // The pinned nightly may not be installed on this machine yet. `rustc --print sysroot` (a rustup proxy invocation)
-  // would auto-install — but the download blows past a short spawnSync timeout
-  // and the silent failure leaves `rustLld` undefined, which falls back to the
-  // system lld. With cross-language LTO that means an older lld reading newer
-  // rust-emitted bitcode → `Invalid record`. Pre-flight a `rustup toolchain
-  // install` so the proxy resolves instantly: idempotent (~0.5s, it re-checks
-  // the channel manifest) when already installed, downloads on a stale agent.
+  // The pinned nightly may not be installed on this machine yet. Pre-flight a
+  // `rustup toolchain install` so the `rustc` queries below (rustup proxy
+  // invocations) resolve instantly and rust-src is there: idempotent (~0.5s,
+  // it re-checks the channel manifest) when already installed, downloads on a
+  // stale agent.
   // `-q` also hides the download progress, so say how long it took whenever
   // it evidently did more than that check: every build job of CI build 91391
   // spent 34-36s in here without a line of output. Skip when there's no
@@ -805,19 +784,7 @@ export function findRustLld(os: OS): {
     const started = performance.now();
     spawnSync(
       rustup,
-      [
-        "-q",
-        "toolchain",
-        "install",
-        channel,
-        "--no-self-update",
-        "--profile",
-        "minimal",
-        "--component",
-        "rust-src",
-        "--component",
-        "llvm-tools",
-      ],
+      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
       {
         encoding: "utf8",
         timeout: 300_000,
@@ -863,23 +830,13 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion, rustSysroot: sysroot };
-
-  const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
-  const candidate =
-    os === "windows"
-      ? join(bin, "rust-lld.exe")
-      : os === "darwin"
-        ? join(bin, "gcc-ld", "ld64.lld")
-        : join(bin, "gcc-ld", "ld.lld");
-  const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+  return { rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
 }
 
 /**
  * Read the pinned channel from `rust-toolchain.toml` at the repo root.
  * Mirrors `readRustToolchainChannel()` in config.ts but stays in `tools.ts`
- * because `findRustLld()` runs during `resolveToolchain()` — *before*
+ * because `probeRustToolchain()` runs during `resolveToolchain()` — *before*
  * `resolveConfig()` reads the channel into `cfg.rustToolchain`. Both walk the
  * same file; keeping the parse local avoids an import cycle.
  */

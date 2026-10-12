@@ -454,7 +454,7 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
-        // What the parser only logs is an error all the same: the statements are its best guess.
+        // What the parser only logs is still an error: the statements are its best guess.
         if p.log().errors > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
@@ -2421,7 +2421,6 @@ impl<'a> Parser<'a> {
         }
 
         // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        #[allow(deprecated)]
         if !p.response_ref.is_null()
             && p.symbols.as_slice()[p.response_ref.inner_index() as usize].use_count_estimate > 0
         {

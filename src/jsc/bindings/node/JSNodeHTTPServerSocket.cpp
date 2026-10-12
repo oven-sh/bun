@@ -16,6 +16,7 @@
 #include <bun-uws/src/App.h>
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
+extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
@@ -374,6 +375,26 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
     return deferShutdownUntilResponseDrains<false>(socket, destroySoon);
 }
 
+JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globalObject)
+{
+    // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
+    // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
+    // re-add), without which macOS 26 does not deliver the peer's close.
+    // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
+    const bool cycleReads = !upgraded && !tunnelReadsPaused();
+    if (socket && cycleReads) {
+        us_socket_pause(socket);
+    }
+    auto result = us_socket_buffered_js_write(socket, is_ssl, ended, hasUnsentResponseBytes(), flushesStreamBufferOnDrain(), &streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+    // Undo the pause above after the shutdown so the unread body drains
+    // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
+    // SHUT_WR) is not deleted by a W -> R|W -> R step.
+    if (socket && cycleReads) {
+        us_socket_resume(socket);
+    }
+    return result;
+}
+
 template<bool SSL>
 static void closeWhenDrainedImpl(us_socket_t* socket)
 {
@@ -527,14 +548,14 @@ JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* stru
     : JSC::JSDestructibleObject(vm, structure)
     , socket(socket)
     , is_ssl(is_ssl)
-    , currentResponseObject(response, JSC::WriteBarrierEarlyInit)
+    , m_currentResponse(response, JSC::WriteBarrierEarlyInit)
 {
 }
 
 void JSNodeHTTPServerSocket::detach()
 {
     this->m_duplex.clear();
-    this->currentResponseObject.clear();
+    this->m_currentResponse.clear();
     {
         Locker locker { m_pipelinedResponsesLock };
         this->m_pipelinedResponses.clear();
@@ -630,7 +651,7 @@ extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
 }
 
 template<bool SSL>
-static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose, bool hasMoreQueued)
+static void startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool connectionClose)
 {
     /* node:http compat connections always carry the derived ext block. */
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
@@ -656,7 +677,6 @@ static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
     if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
         onNodeHttpReadsResumable<SSL>(socket);
     }
-    return true;
 }
 
 bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose)
@@ -665,23 +685,25 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNode
         return false;
     }
 
-    bool hasMoreQueued = false;
+    bool wasQueued;
     {
         Locker locker { m_pipelinedResponsesLock };
-        m_pipelinedResponses.removeFirstMatching([&](auto& entry) { return entry.get() == response; });
-        hasMoreQueued = !m_pipelinedResponses.isEmpty();
+        wasQueued = m_pipelinedResponses.removeFirstMatching([&](auto& entry) { return entry.get() == response; });
+    }
+    // Only a response that this connection queued can get it.
+    if (!wasQueued || response->m_ctx == nullptr) {
+        return false;
     }
 
-    bool ok;
+    // Before the state reset: the response in flight leaves its last bytes in the buffer and its handler slots empty.
+    setCurrentResponse(vm, response);
     if (is_ssl) {
-        ok = startPipelinedResponseImpl<true>(socket, isAncient, connectionClose, hasMoreQueued);
+        startPipelinedResponseImpl<true>(socket, isAncient, connectionClose);
     } else {
-        ok = startPipelinedResponseImpl<false>(socket, isAncient, connectionClose, hasMoreQueued);
+        startPipelinedResponseImpl<false>(socket, isAncient, connectionClose);
     }
-    if (ok) {
-        currentResponseObject.set(vm, this, response);
-    }
-    return ok;
+    Bun__NodeHTTPResponse_grantConnection(response->m_ctx);
+    return true;
 }
 
 void JSNodeHTTPServerSocket::stopHTTPParsing()
@@ -701,7 +723,7 @@ void JSNodeHTTPServerSocket::stopHTTPParsing()
 // list so a re-entrant close cannot deliver the notification twice.
 static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
 {
-    if (auto* res = socket->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = socket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
     }
     // Root every queued response across the onClose calls below: clearing
@@ -728,13 +750,39 @@ static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
     }
 }
 
+void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted)
+{
+    socket = adopted;
+    upgraded = true;
+    releaseTunnelReadsForUpgrade();
+
+    // The HTTP connection is gone for the responses that did not upgrade it. They stay queued: the close still tells them.
+    if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {
+        Bun__NodeHTTPResponse_takeBackConnection(res->m_ctx, JSValue::encode(res), true);
+    }
+    WTF::Vector<WebCore::JSNodeHTTPResponse*, 2> pipelined;
+    {
+        Locker locker { m_pipelinedResponsesLock };
+        for (auto& entry : m_pipelinedResponses) {
+            if (auto* res = entry.get()) {
+                pipelined.append(res);
+            }
+        }
+    }
+    for (auto* res : pipelined) {
+        if (res->m_ctx != nullptr) {
+            Bun__NodeHTTPResponse_takeBackConnection(res->m_ctx, JSValue::encode(res), true);
+        }
+    }
+}
+
 void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
 {
     syncPeerCertificateVerification();
     this->socket = nullptr;
     this->closeReadError = readError;
     this->peer_ended = peerEnded;
-    if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_setClosed(res->m_ctx);
     }
     {
@@ -799,7 +847,7 @@ void JSNodeHTTPServerSocket::flushResponseBytesAhead()
     if (upgraded || isClosed()) {
         return;
     }
-    if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_spillPendingWrite(res->m_ctx);
     }
     if (is_ssl) {
@@ -980,7 +1028,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
-    visitor.append(fn->currentResponseObject);
+    visitor.append(fn->m_currentResponse);
     visitor.append(fn->functionToCallOnClose);
     visitor.append(fn->functionToCallOnDrain);
     visitor.append(fn->functionToCallOnData);
@@ -1011,7 +1059,7 @@ static WebCore::JSNodeHTTPResponse* getNodeHTTPResponse(us_socket_t* socket)
     if (!serverSocket) {
         return nullptr;
     }
-    return serverSocket->currentResponseObject.get();
+    return serverSocket->currentResponse();
 }
 
 extern "C" JSC::EncodedJSValue Bun__getNodeHTTPResponseThisValue(bool is_ssl, us_socket_t* socket)
@@ -1039,7 +1087,7 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     if (!serverSocket) {
         return;
     }
-    if (auto* res = serverSocket->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+    if (auto* res = serverSocket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
     }
 }

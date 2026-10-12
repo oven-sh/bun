@@ -838,7 +838,6 @@ const ruleLane: Record<RuleName, Lane> = {
   host_tool_cc: "other",
   mkdir_stamp: "other",
   regen: "other",
-  shim_crt_decompress: "other",
 };
 
 export interface ChartBar {

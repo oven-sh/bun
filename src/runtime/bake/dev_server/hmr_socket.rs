@@ -33,7 +33,6 @@ impl HmrSocket {
     /// DevServer (the socket is removed from `active_websocket_connections` and
     /// destroyed before DevServer is torn down) — the BackRef invariant.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     unsafe fn dev<'a>(&self) -> &'a mut DevServer {
         // Detach the borrow from `&self` (explicit unbound `'a`) so callers may
         // interleave `self.*` field access with `dev.*` — DevServer is a

@@ -4746,11 +4746,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.union_reduced(&values)
             };
             infos.push(IndexInfo {
-                key,
-                value,
-                readonly,
-                declaration: None,
                 components: self.types().intern_components(&components),
+                ..IndexInfo::new(key, value, readonly)
             });
         }
         infos

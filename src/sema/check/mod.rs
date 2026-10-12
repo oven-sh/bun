@@ -827,6 +827,7 @@ impl<'s> Program<'s> {
             is_call_re_resolved: false,
             untyped_call_resolved_again: None,
             assigned_parameters: Vec::new(),
+            assigned_unknown: Vec::new(),
             context_checking: Vec::new(),
             context_checked_here: Default::default(),
             resolved_signatures: Default::default(),
@@ -1628,6 +1629,9 @@ pub struct Checker<'p, 's> {
     /// The indices in `stack` of the parameters whose type `assignParameterType` is computing. It
     /// pushes no type resolution, so a cycle through the initializer of one is not its cycle.
     assigned_parameters: Vec<usize>,
+    /// The patterns of the parameters whose `links.resolvedType` is `unknown` while
+    /// `assignParameterType` computes the type of the pattern to replace it.
+    assigned_unknown: Vec<(FileId, PatId)>,
     /// `links.resolvedSignature != nil` for the calls that this checker has resolved and that
     /// `Program::calls` may not have: tsgo caches a signature that was resolved inside a cycle,
     /// `calls` does not. Whether a call is deferred under `CheckModeSkipGenericFunctions` depends

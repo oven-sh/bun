@@ -712,7 +712,7 @@ impl<'p, 's> Checker<'p, 's> {
                 new.symbol_declared_at = shape.symbol_declared_at;
                 new.symbol = shape.symbol;
                 new.spread_rank = shape.spread_rank;
-                new.spread_of = shape.spread_of.map(|(left, right)| {
+                new.created_from = shape.created_from.map(|(left, right)| {
                     (
                         self.instantiate(left, mapper),
                         self.instantiate(right, mapper),

@@ -1,0 +1,37 @@
+---
+title: "@typescript-eslint/no-confusing-non-null-assertion"
+description: "Disallow a non-null assertion `!` right before `=`, `==`, `===`, `in` or `instanceof`"
+---
+
+`user! == other` asserts that `user` is not null and then tests for equality. It reads like `user !== other`, which means the opposite. In the same way, `count! = 1` looks like `count != 1`, and `key! in cache` looks like `!(key in cache)`.
+
+The report comes with a suggestion: remove the `!`, or put the left side in parentheses.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+declare let user: string | undefined;
+declare const cache: Record<string, number>;
+
+const isSame = user! == "ada";
+user! = "grace";
+const isCached = user! in cache;
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+declare let user: string | undefined;
+declare const cache: Record<string, number>;
+
+const isSame = user == "ada";
+user = "grace";
+const isCached = user! in cache;
+const isOther = "ada" == user!;
+```

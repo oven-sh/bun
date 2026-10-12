@@ -1,0 +1,77 @@
+---
+title: "consistent-this"
+description: "Enforce one name for variables that hold `this`"
+---
+
+Code that saves `this` for a nested function calls the variable `that`, `self`, `me` or `vm`. With one name everywhere, you know what the variable holds without looking for its declaration.
+
+The rule reports `this` assigned to any other name. It also reports the chosen name when it holds something other than `this`. The default name is `that`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function Timer() {
+  const self = this;
+  setInterval(function () {
+    self.tick();
+  }, 1000);
+}
+```
+
+{/* bad */}
+
+```js
+const that = document.body;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function Timer() {
+  const that = this;
+  setInterval(function () {
+    that.tick();
+  }, 1000);
+}
+```
+
+Destructuring is not an alias, so it is allowed:
+
+{/* good */}
+
+```js
+function Timer() {
+  const { interval, tick } = this;
+  setInterval(tick, interval);
+}
+```
+
+## Options
+
+The options are the names you allow, one or more:
+
+```toml bunfig.toml
+[lint.rules]
+consistent-this = ["error", "self", "vm"]
+```
+
+{/* good {"options": ["self", "vm"]} */}
+
+```js
+function Timer() {
+  const self = this;
+  setInterval(function () {
+    self.tick();
+  }, 1000);
+}
+```
+
+## When not to use it
+
+An arrow function uses the `this` of the code around it, so new code rarely needs an alias at all.

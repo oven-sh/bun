@@ -1,0 +1,93 @@
+---
+title: "getter-return"
+description: "Require getters to return a value"
+---
+
+A getter that does not return gives `undefined` to whoever reads the property. Usually the `return` was forgotten, or one branch of the getter has none.
+
+The rule checks `get` in classes and object literals, and the `get` function of a property descriptor passed to `Object.defineProperty`, `Reflect.defineProperty`, `Object.defineProperties` or `Object.create`.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const user = {
+  get fullName() {
+    `${this.first} ${this.last}`;
+  },
+};
+```
+
+{/* bad */}
+
+```js
+class Cart {
+  get total() {
+    if (this.items.length > 0) {
+      return sum(this.items);
+    }
+  }
+}
+```
+
+{/* bad */}
+
+```js
+Object.defineProperty(user, "age", {
+  get: function () {
+    now() - this.born;
+  },
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const user = {
+  get fullName() {
+    return `${this.first} ${this.last}`;
+  },
+};
+
+class Cart {
+  get total() {
+    if (this.items.length > 0) {
+      return sum(this.items);
+    }
+    return 0;
+  }
+}
+```
+
+## Options
+
+| Option          | Default | What it does                                                                                |
+| --------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `allowImplicit` | `false` | Allow `return;` without a value. The getter still has to end with a `return` on every path. |
+
+{/* bad */}
+
+```js
+class Session {
+  get token() {
+    return;
+  }
+}
+```
+
+{/* good {"options": [{"allowImplicit": true}]} */}
+
+```js
+class Session {
+  get token() {
+    return;
+  }
+}
+```

@@ -1,0 +1,56 @@
+---
+title: "prefer-promise-reject-errors"
+description: "Require an `Error` object as the reason of a promise rejection"
+---
+
+A promise rejected with a string or a plain object has no stack trace, so you cannot see where it failed. The code that catches it and reads `error.message` gets `undefined`.
+
+The rule checks `Promise.reject()` and the `reject` function of `new Promise((resolve, reject) => ...)`. It reports a reason that cannot be an `Error`: a literal, an object literal, `undefined`, or nothing. A variable or the result of a call is not reported, because the rule cannot tell what it holds.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+Promise.reject("User not found");
+
+new Promise((resolve, reject) => {
+  reject({ code: 404 });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+Promise.reject(new Error("User not found"));
+
+new Promise((resolve, reject) => {
+  reject(new RangeError("Page out of range"));
+});
+
+Promise.reject(reason);
+```
+
+## Options
+
+| Option             | Default | What it does                        |
+| ------------------ | ------- | ----------------------------------- |
+| `allowEmptyReject` | `false` | Allow a rejection with no argument. |
+
+{/* good {"options": [{"allowEmptyReject": true}]} */}
+
+```js
+Promise.reject();
+```
+
+Writing out `undefined` is still reported:
+
+{/* bad {"options": [{"allowEmptyReject": true}]} */}
+
+```js
+Promise.reject(undefined);
+```

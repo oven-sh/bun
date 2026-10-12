@@ -1,0 +1,44 @@
+---
+title: "@typescript-eslint/no-import-type-side-effects"
+description: "Require `import type` when every name in an import is marked `type`"
+---
+
+With `verbatimModuleSyntax` in `tsconfig.json`, TypeScript removes the names marked `type` from an import and keeps the rest of the statement. `import { type User } from "./models"` becomes `import {} from "./models"`, so the module is still loaded and run. `import type { User } from "./models"` is removed completely.
+
+`--fix` moves `type` in front of the braces.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { type User, type Role } from "./models";
+
+export function describe(user: User, role: Role) {}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import type { User, Role } from "./models";
+
+export function describe(user: User, role: Role) {}
+```
+
+An import that also brings in a value has to stay at run time, so it is fine:
+
+{/* good */}
+
+```ts
+import { type User, loadUser } from "./models";
+
+export const user: User = loadUser();
+```
+
+## When not to use it
+
+Without `verbatimModuleSyntax`, TypeScript drops an import that is only used for types, so both forms compile to the same code.

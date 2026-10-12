@@ -1,0 +1,40 @@
+---
+title: "no-eq-null"
+description: "Disallow comparing with `null` using `==` or `!=`"
+---
+
+`value == null` is `true` for `null` and also for `undefined`. If you meant only `null`, the check lets `undefined` through. If you meant both, the next reader cannot tell that from the code.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+if (user == null) {
+  redirect("/login");
+}
+
+while (node != null) {
+  node = node.next;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (user === null) {
+  redirect("/login");
+}
+
+if (session === null || session === undefined) {
+  redirect("/login");
+}
+```
+
+## When not to use it
+
+`== null` is a common short way to test for `null` and `undefined` at once. If your code does that on purpose, leave this rule off. `eqeqeq` with the `"smart"` option allows `== null` and still reports `value == other`.

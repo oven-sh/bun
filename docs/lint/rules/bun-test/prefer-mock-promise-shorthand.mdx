@@ -1,0 +1,48 @@
+---
+title: "bun:test/prefer-mock-promise-shorthand"
+description: "Require `mockResolvedValue()` and `mockRejectedValue()` for mocks that return a promise"
+---
+
+A mock has methods for the two things an async function can do. `mockResolvedValue(user)` says the same as `mockReturnValue(Promise.resolve(user))` or `mockImplementation(() => Promise.resolve(user))`, without the wrapping.
+
+| Reported                                                                              | Write                                                  |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `mockReturnValue(Promise.resolve(x))`, `mockImplementation(() => Promise.resolve(x))` | `mockResolvedValue(x)`                                 |
+| `mockReturnValue(Promise.reject(x))`, `mockImplementation(() => Promise.reject(x))`   | `mockRejectedValue(x)`                                 |
+| `mockReturnValueOnce(..)`, `mockImplementationOnce(..)`                               | `mockResolvedValueOnce(x)`, `mockRejectedValueOnce(x)` |
+
+`--fix` rewrites the call.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { mock } from "bun:test";
+
+const fetchUser = mock().mockReturnValue(Promise.resolve({ name: "Ada" }));
+const saveUser = mock().mockImplementationOnce(() => Promise.reject(new Error("offline")));
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { mock } from "bun:test";
+
+const fetchUser = mock().mockResolvedValue({ name: "Ada" });
+const saveUser = mock().mockRejectedValueOnce(new Error("offline"));
+```
+
+An implementation that takes parameters is allowed, because its result can depend on them:
+
+{/* good */}
+
+```ts
+import { mock } from "bun:test";
+
+const fetchUser = mock().mockImplementation((id: number) => Promise.resolve({ id }));
+```

@@ -266,6 +266,23 @@ impl Plugin {
         }
     }
 
+    /// What can be before the `/` where neither ESLint nor oxlint has a configuration: every name that either has for the
+    /// plugin. The first is [`Plugin::prefix`].
+    pub const fn spellings(self) -> &'static [&'static str] {
+        match self {
+            // oxlint has both names for the rules of both.
+            Plugin::ReactHooks => &["react-hooks", "react_hooks", "react"],
+            Plugin::React => &["react"],
+            plugin => plugin.names().prefixes,
+        }
+    }
+
+    /// The plugins that have `prefix` among their [spellings](Plugin::spellings).
+    pub fn spelled(prefix: &[u8]) -> impl Iterator<Item = Plugin> {
+        let has = move |it: &Plugin| it.spellings().iter().any(|it| it.as_bytes() == prefix);
+        Plugin::ALL.iter().copied().filter(has)
+    }
+
     /// The plugin of oxlint that has the rules of this one: those of `react-hooks` are in its `react`.
     pub const fn in_oxlint(self) -> Plugin {
         match self {
@@ -360,11 +377,13 @@ pub struct Meta {
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
     /// It is a port of the rule that oxlint has, not of the rule of the plugin for ESLint: the messages, the places, the fixes and
-    /// the options are oxlint's. It exists only with a configuration of oxlint.
+    /// the options are oxlint's. With a configuration of ESLint it does not exist: the package of the project answers.
     pub follows_oxlint: bool,
     /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
     /// rule of the package is asked.
     pub hands_back: bool,
+    /// [`Meta::hints`]
+    pub has_hints: bool,
     pub reports: When,
     /// A hash of `name`.
     pub(crate) key: u32,
@@ -385,6 +404,7 @@ impl Meta {
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
+            has_hints: false,
             reports: When::Entering,
             key: hash_const(0, name.as_bytes()) as u32,
         }
@@ -442,6 +462,12 @@ impl Meta {
 
     pub const fn hands_back(mut self) -> Meta {
         self.hands_back = true;
+        self
+    }
+
+    /// Some of its reports have a [`Report::hint`](crate::context::Report::hint). Without this none is shown.
+    pub const fn hints(mut self) -> Meta {
+        self.has_hints = true;
         self
     }
 

@@ -1,0 +1,80 @@
+---
+title: "react/jsx-no-bind"
+description: "Disallow `.bind()` and functions created during render as JSX props"
+---
+
+A `.bind()` call, an arrow function or a function expression in a prop makes a new function on every render. The child sees a prop that changed, so `React.memo` and `PureComponent` cannot skip its render, and an effect that depends on the function runs again.
+
+The rule also follows a prop back to a `const` or a function declared inside the component.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+function Toolbar({ onSave, doc }) {
+  const handleReset = () => doc.reset();
+
+  return (
+    <div>
+      <Button onClick={() => onSave(doc)} />
+      <Button onClick={doc.print.bind(doc)} />
+      <Button onClick={handleReset} />
+    </div>
+  );
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Toolbar({ onSave, doc }) {
+  const handleSave = useCallback(() => onSave(doc), [onSave, doc]);
+
+  return <Button onClick={handleSave} />;
+}
+```
+
+## Options
+
+| Option                | Default | What it does                                                                                                 |
+| --------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `allowArrowFunctions` | `false` | Allow arrow functions.                                                                                       |
+| `allowFunctions`      | `false` | Allow `function` expressions and declarations.                                                               |
+| `allowBind`           | `false` | Allow `.bind()`.                                                                                             |
+| `ignoreRefs`          | `false` | Do not check the `ref` prop.                                                                                 |
+| `ignoreDOMComponents` | `false` | Do not check DOM elements such as `<button>`. They are never memoized, so a new function costs them nothing. |
+
+{/* good {"options": [{"allowArrowFunctions": true}]} */}
+
+```jsx
+const button = <Button onClick={() => save(doc)} />;
+```
+
+{/* good {"options": [{"ignoreRefs": true}]} */}
+
+```jsx
+const field = <Input ref={node => (input = node)} />;
+```
+
+With `ignoreDOMComponents`, components are still checked:
+
+{/* good {"options": [{"ignoreDOMComponents": true}]} */}
+
+```jsx
+const button = <button onClick={() => save(doc)}>Save</button>;
+```
+
+{/* bad {"options": [{"ignoreDOMComponents": true}]} */}
+
+```jsx
+const button = <Button onClick={() => save(doc)}>Save</Button>;
+```
+
+## When not to use it
+
+A new function only costs something if the child is memoized or uses the function as a dependency. In most other code an inline arrow function is fine and easier to read. The React Compiler also memoizes these functions for you.

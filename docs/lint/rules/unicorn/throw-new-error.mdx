@@ -1,0 +1,34 @@
+---
+title: "unicorn/throw-new-error"
+description: "Require `new` when creating an error"
+---
+
+The built-in errors can be created without `new`, but a class of your own cannot. `throw ValidationError("..")` throws a `TypeError` about the missing `new` instead of the error you meant to throw. Always writing `new` works for both.
+
+The rule goes by the name. It reports a call of `Error`, or of any name that starts with a capital letter and ends with `Error`, whether or not the result is thrown.
+
+`--fix` adds `new`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+throw Error("Not found");
+throw errors.ValidationError("Name is required");
+const timeout = TypeError("Expected a number");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+throw new Error("Not found");
+throw new errors.ValidationError("Name is required");
+const timeout = new TypeError("Expected a number");
+
+throw createError(404);
+```

@@ -1,0 +1,50 @@
+---
+title: "@typescript-eslint/no-unsafe-type-assertion"
+description: "Disallow type assertions that narrow a type"
+---
+
+`value as T` makes TypeScript treat `value` as a `T` without a check. If `T` is narrower than the real type, the claim can be false, and the code that follows works with a value that is not what its type says.
+
+An assertion from or to `any` is reported as well. An assertion to a wider type is always true, so it is allowed, and so is `as const`.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+function toPort(value: string | number) {
+  return value as number;
+}
+```
+
+{/* bad {"count": 2} */}
+
+```ts
+interface Config {
+  port: number;
+}
+
+const config = JSON.parse("{}") as Config;
+const loose = config as any;
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function toPort(value: string | number) {
+  return typeof value === "number" ? value : Number(value);
+}
+
+const port = 3000 as string | number;
+const modes = ["dev", "prod"] as const;
+```
+
+## When not to use it
+
+Some values cannot be checked in a way TypeScript understands, such as the result of `document.querySelector()` when you know the markup. If your code has many of these, the rule reports assertions you cannot avoid.

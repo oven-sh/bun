@@ -1,0 +1,64 @@
+---
+title: "jest/prefer-to-be"
+description: "Require `toBe()` for primitive literals, and `toBeNull()`, `toBeUndefined()`, `toBeNaN()`"
+---
+
+`toEqual()` and `toStrictEqual()` compare objects property by property. A string, a number or a boolean has nothing to walk through, so `toBe()` does the same check and tells the reader that one plain value is expected. For `null`, `undefined` and `NaN` there are matchers that name the value.
+
+| Written                                      | Use instead                 |
+| -------------------------------------------- | --------------------------- |
+| `toEqual(2)`, `toStrictEqual("config")`      | `toBe(2)`, `toBe("config")` |
+| `toBe(null)`, `toEqual(null)`                | `toBeNull()`                |
+| `toBe(undefined)`, `not.toBeDefined()`       | `toBeUndefined()`           |
+| `not.toBe(undefined)`, `not.toBeUndefined()` | `toBeDefined()`             |
+| `toBe(NaN)`, `toEqual(NaN)`                  | `toBeNaN()`                 |
+
+`--fix` rewrites the matcher.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 5} */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("parses the header", () => {
+  expect(header.version).toEqual(2);
+  expect(header.name).toStrictEqual("config");
+  expect(header.parent).toBe(null);
+  expect(header.size).not.toBe(undefined);
+  expect(header.ratio).toEqual(NaN);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("parses the header", () => {
+  expect(header.version).toBe(2);
+  expect(header.name).toBe("config");
+  expect(header.parent).toBeNull();
+  expect(header.size).toBeDefined();
+  expect(header.ratio).toBeNaN();
+});
+```
+
+Only literals count. Objects, arrays and variables are left alone, and so is a number written with a decimal point:
+
+{/* good */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("parses the body", () => {
+  expect(body.tags).toEqual(["a", "b"]);
+  expect(body.length).toEqual(expectedLength);
+  expect(body.scale).toEqual(0.5);
+});
+```

@@ -1,0 +1,42 @@
+---
+title: "bun:test/prefer-todo"
+description: "Require `test.todo` for tests that have no body yet"
+---
+
+A test with an empty body passes, so the summary counts a test you have not written as one that works. `test.todo` says what it is, and `bun test` lists it apart from the passing tests until you write it.
+
+A test with only a title is reported too, and so is an empty `test.skip`.
+
+`--fix` rewrites the call to `test.todo` and removes the empty function. It leaves a test that has options, such as `{ timeout: 500 }`, for you to change.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+import { test } from "bun:test";
+
+test("rejects an expired token", () => {});
+
+test("refreshes the token");
+
+test.skip("logs out", function () {});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test.todo("rejects an expired token");
+
+test.todoIf(process.platform === "win32")("reads the keychain", () => {});
+
+test("accepts a valid token", () => {
+  expect(verify(token)).toBe(true);
+});
+```

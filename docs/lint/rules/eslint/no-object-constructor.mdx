@@ -1,0 +1,39 @@
+---
+title: "no-object-constructor"
+description: "Disallow `Object()` and `new Object()` without an argument"
+---
+
+`new Object()` and `Object()` without an argument make an empty object. `{}` does the same and is shorter.
+
+A call with an argument is not reported. It converts the argument to an object, which `{}` cannot do.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const cache = new Object();
+const totals = Object();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const cache = {};
+const totals = {};
+const wrapped = Object(value);
+```
+
+A call to your own `Object` is not reported either:
+
+{/* good */}
+
+```js
+function build(Object) {
+  return new Object();
+}
+```

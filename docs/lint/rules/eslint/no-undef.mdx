@@ -1,0 +1,87 @@
+---
+title: "no-undef"
+description: "Disallow variables that are not declared anywhere"
+---
+
+Using a name that no `import`, declaration, or parameter defines throws a `ReferenceError` when that line runs. It is usually a typo or a missing import, and you only find out when that code path runs.
+
+Without a config file, `bun lint` knows the globals of browsers and Node.js, and `Bun`. In test files such as `math.test.js` it also knows `test`, `expect`, `describe` and the like.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where the type checker reports the same thing.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function total(items) {
+  return items.reduce((sum, item) => sum + item.price, 0) * taxRate;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { taxRate } from "./config.js";
+
+function total(items) {
+  return items.reduce((sum, item) => sum + item.price, 0) * taxRate;
+}
+```
+
+In `math.test.js`:
+
+{/* good {"filename": "math.test.js"} */}
+
+```js
+test("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+```
+
+If a script tag or the host defines a global, declare it. For one file, use a comment:
+
+{/* good */}
+
+```js
+/* global analytics */
+
+analytics.track("signup");
+```
+
+For the whole project, use `bunfig.toml`:
+
+```toml bunfig.toml
+[lint.globals]
+analytics = "readonly"
+```
+
+`bun lint --infer-globals` also accepts the globals that your project's types declare.
+
+## Options
+
+| Option   | Default | What it does                                   |
+| -------- | ------- | ---------------------------------------------- |
+| `typeof` | `false` | Also report an undeclared name after `typeof`. |
+
+`typeof` never throws, so `typeof name === "undefined"` is a safe way to test for a global that may be missing. That is why it is allowed by default:
+
+{/* good */}
+
+```js
+if (typeof analytics !== "undefined") {
+  console.log("analytics is loaded");
+}
+```
+
+{/* bad {"options": [{"typeof": true}]} */}
+
+```js
+if (typeof analytics !== "undefined") {
+  console.log("analytics is loaded");
+}
+```

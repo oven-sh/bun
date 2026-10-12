@@ -1,0 +1,111 @@
+---
+title: "@typescript-eslint/prefer-readonly-parameter-types"
+description: "Require the types of function parameters to be read-only"
+---
+
+A function that sorts, pushes to, or assigns into its argument changes the caller's data. The caller cannot see that from the call. If the parameter has a read-only type, TypeScript rejects those changes in the function body, and the signature promises the caller that the value comes back as it was.
+
+The check is deep: a `readonly` array of objects that can be changed is still reported. Strings, numbers, and other primitives are always fine, and so are functions.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+function total(prices: number[]) {}
+
+function rename(user: { name: string }) {}
+
+function names(users: readonly { name: string }[]) {}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function total(prices: readonly number[]) {}
+
+function rename(user: Readonly<{ name: string }>) {}
+
+function names(users: readonly { readonly name: string }[]) {}
+
+function repeat(text: string, times: number, done: () => void) {}
+```
+
+## Options
+
+| Option                     | Default | What it does                                                                          |
+| -------------------------- | ------- | ------------------------------------------------------------------------------------- |
+| `allow`                    | `[]`    | Types that are accepted as they are.                                                  |
+| `checkParameterProperties` | `true`  | Check constructor parameters that declare a field, such as `private items: string[]`. |
+| `ignoreInferredTypes`      | `false` | Skip parameters that have no type annotation.                                         |
+| `treatMethodsAsReadonly`   | `false` | Accept methods that are not marked `readonly`.                                        |
+
+An entry of `allow` is a type name, or an object that also says where the type is from: `{ "from": "file", "name": "Draft" }`, `{ "from": "lib", "name": "Date" }`, or `{ "from": "package", "name": "Draft", "package": "some-package" }`.
+
+A `Date` is reported by default:
+
+{/* bad */}
+
+```ts
+function format(date: Date) {}
+```
+
+With `allow: [{ "from": "lib", "name": "Date" }]` it is accepted:
+
+{/* good {"options": [{"allow": [{"from": "lib", "name": "Date"}]}]} */}
+
+```ts
+function format(date: Date) {}
+```
+
+The parameter of a callback often gets its type from the function you pass it to, which you may not control. Here `row` is a `string[]`, so it is reported:
+
+{/* bad */}
+
+```ts
+const rows = [["a", "b"], ["c"]];
+rows.forEach(row => console.log(row.length));
+```
+
+With `ignoreInferredTypes: true` it is skipped:
+
+{/* good {"options": [{"ignoreInferredTypes": true}]} */}
+
+```ts
+const rows = [["a", "b"], ["c"]];
+rows.forEach(row => console.log(row.length));
+```
+
+A method written as `save(): void` can be assigned to, so it counts as something that can change:
+
+{/* bad */}
+
+```ts
+interface Store {
+  save(): void;
+}
+
+function flush(store: Store) {}
+```
+
+With `treatMethodsAsReadonly: true` it does not:
+
+{/* good {"options": [{"treatMethodsAsReadonly": true}]} */}
+
+```ts
+interface Store {
+  save(): void;
+}
+
+function flush(store: Store) {}
+```
+
+## When not to use it
+
+This rule is strict. Most types from libraries and from the DOM are not read-only, and every function that takes one is reported until you list the type under `allow`.

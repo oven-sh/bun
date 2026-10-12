@@ -1,0 +1,49 @@
+---
+title: "@typescript-eslint/no-implied-eval"
+description: "Disallow passing code as a string to `setTimeout`, `setInterval` and `new Function`"
+---
+
+In browsers, `setTimeout` and `setInterval` accept a string and run it as code, like `eval()`. `new Function()` does the same everywhere. The string is not type checked. It runs in the global scope, so it cannot see your local variables. If any part of it comes from a user, that user can run code in your program.
+
+The rule reports a first argument that is not a function, so it catches a variable of type `string` as well as a string literal. It checks `setTimeout`, `setInterval`, `setImmediate` and `execScript`, also when they are called through `window`, `global` or `globalThis`. A function of your own named `setTimeout` is not reported.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+setTimeout("refresh()", 1000);
+
+function schedule(code: string) {
+  globalThis.setInterval(code, 1000);
+}
+
+const add = new Function("a", "b", "return a + b");
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function refresh() {}
+
+setTimeout(refresh, 1000);
+setInterval(() => refresh(), 1000);
+
+const add = (a: number, b: number) => a + b;
+```
+
+{/* good */}
+
+```ts
+function setTimeout(label: string, ms: number) {
+  console.log(label, ms);
+}
+
+setTimeout("refresh", 1000);
+```

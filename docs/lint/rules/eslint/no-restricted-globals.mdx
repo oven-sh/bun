@@ -1,0 +1,73 @@
+---
+title: "no-restricted-globals"
+description: "Disallow the global variables you list"
+---
+
+Browsers define globals with everyday names: `event`, `name`, `status`, `length`. If you forget to declare a variable or a parameter with such a name, the code still runs and reads the global. Listing those names here turns the mistake into a report. The rule is also a way to keep a global that your project has replaced out of new code.
+
+The rule reports nothing until you give it names. A variable, parameter or import of your own with the same name is not reported.
+
+## Examples
+
+```toml bunfig.toml
+[lint.rules]
+no-restricted-globals = ["error", "event", { name = "fetch", message = "Use the client in api.js." }]
+```
+
+Reported:
+
+{/* bad {"options": ["event", {"name": "fetch", "message": "Use the client in api.js."}], "count": 2} */}
+
+```js
+button.addEventListener("click", () => {
+  fetch("/track?id=" + event.target.id);
+});
+```
+
+Not reported:
+
+{/* good {"options": ["event", {"name": "fetch", "message": "Use the client in api.js."}]} */}
+
+```js
+import { track } from "./api.js";
+
+button.addEventListener("click", event => {
+  track(event.target.id);
+});
+```
+
+## Options
+
+Each option is a name, or an object with a `name` and a `message` that is added to the report.
+
+To set more than the names, pass one object instead:
+
+| Option              | Default  | What it does                                                                      |
+| ------------------- | -------- | --------------------------------------------------------------------------------- |
+| `globals`           | required | The list of names, written as above.                                              |
+| `checkGlobalObject` | `false`  | Also report a listed name used as a property of `globalThis`, `self` or `window`. |
+| `globalObjects`     | `[]`     | More names of global objects for `checkGlobalObject`, such as `global`.           |
+
+With `"event"` alone, going through `window` is not reported:
+
+{/* good {"options": ["event"]} */}
+
+```js
+console.log(window.event);
+```
+
+With `{ globals: ["event"], checkGlobalObject: true }`, it is:
+
+{/* bad {"options": [{"globals": ["event"], "checkGlobalObject": true}]} */}
+
+```js
+console.log(window.event);
+```
+
+With `{ globals: ["fetch"], checkGlobalObject: true, globalObjects: ["global"] }`:
+
+{/* bad {"options": [{"globals": ["fetch"], "checkGlobalObject": true, "globalObjects": ["global"]}]} */}
+
+```js
+global.fetch("/status");
+```

@@ -1,0 +1,90 @@
+---
+title: "accessor-pairs"
+description: "Require a getter for every setter in objects and classes"
+---
+
+A property that has a setter and no getter can be written but never read: `user.name = "Ada"` works, and `user.name` is `undefined`. Most of the time the getter was forgotten.
+
+The rule looks at object literals, classes, and the descriptors passed to `Object.defineProperty()`, `Object.defineProperties()`, `Object.create()` and `Reflect.defineProperty()`. A getter without a setter is a read-only property, so it is allowed by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const user = {
+  set name(value) {
+    this._name = value.trim();
+  },
+};
+```
+
+{/* bad */}
+
+```js
+Object.defineProperty(user, "name", {
+  set(value) {
+    this._name = value.trim();
+  },
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const user = {
+  get name() {
+    return this._name;
+  },
+  set name(value) {
+    this._name = value.trim();
+  },
+};
+
+const config = {
+  get version() {
+    return 3;
+  },
+};
+```
+
+## Options
+
+| Option                   | Default | What it does                                                        |
+| ------------------------ | ------- | ------------------------------------------------------------------- |
+| `setWithoutGet`          | `true`  | Report a setter that has no getter.                                 |
+| `getWithoutSet`          | `false` | Report a getter that has no setter.                                 |
+| `enforceForClassMembers` | `true`  | Also check classes. A static accessor only pairs with a static one. |
+| `enforceForTSTypes`      | `false` | Also check TypeScript interfaces and object types.                  |
+
+{/* bad {"options": [{"getWithoutSet": true}]} */}
+
+```js
+const config = {
+  get version() {
+    return 3;
+  },
+};
+```
+
+{/* good {"options": [{"enforceForClassMembers": false}]} */}
+
+```js
+class User {
+  set name(value) {
+    this._name = value.trim();
+  }
+}
+```
+
+{/* bad {"options": [{"enforceForTSTypes": true}]} */}
+
+```ts
+interface User {
+  set name(value: string);
+}
+```

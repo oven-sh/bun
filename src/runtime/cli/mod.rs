@@ -2043,6 +2043,34 @@ To create a project with the official Next.js scaffolding tool, run\n\
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
+    /// The flags in the help of `bun lint` and `bun format`: the common ones, or all under their headings.
+    fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
+        if all {
+            for group in help.groups {
+                pretty!("\n<b>{}:<r>", group.title);
+                bun_clap::simple_help(group.params);
+                pretty!("\n");
+            }
+            return;
+        }
+        pretty!("\n<b>Flags:<r>");
+        bun_clap::simple_help(&help.common());
+        pretty!("\n");
+    }
+
+    /// At the end of the help of `bun <command>`, where a script of the project has its name.
+    fn print_note_about_script(command: &str) {
+        use crate::cli::script_or_command::{Runs, runs};
+        if runs(command.as_bytes()) == Runs::Script {
+            pretty!(
+                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command\n",
+                command,
+                command,
+                command,
+            );
+        }
+    }
+
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
@@ -2294,77 +2322,55 @@ Execute a shell script directly from Bun.
 Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
 "
                 );
+                print_note_about_script("check");
                 Output::flush();
             }
             Tag::FormatCommand => {
                 pretty!(
                     "\
 <b>Usage<r>: <b><green>bun format<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
-  Format JavaScript and TypeScript the way Prettier does, using all CPU cores.
-
-  Writes the files that change, unless <cyan>--check<r> or <cyan>--list-different<r> is given.
-  Uses the nearest <b>.prettierrc<r>, <b>prettier.config.js<r>, <b>package.json#prettier<r> or <b>.oxfmtrc.json<r>, and <b>.editorconfig<r>.
-
-<b>Flags:<r>"
+  Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
+"
                 );
-                Output::flush();
-                bun_clap::simple_help(crate::cli::format_command::PARAMS);
+                print_flags(&crate::cli::format_command::HELP, show_all_flags);
                 pretty!(
                     "
-
 <b>Examples:<r>
-  <d>Format the current directory<r>
   <b><green>bun format<r>
-
-  <d>Format some files and directories<r>
   <b><green>bun format<r> <blue>src test/a.test.ts<r>
-
-  <d>Fail if a file is not formatted, and write nothing<r>
   <b><green>bun format<r> <cyan>--check<r>
-
-  <d>Format what an editor has in a buffer<r>
-  <b><green>bun format<r> <cyan>--stdin-filepath<r> <blue>src/index.ts<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/runtime/format<r>
 "
                 );
+                if !show_all_flags {
+                    pretty!("See every flag with <b><green>bun format<r> <cyan>--help --all<r>\n");
+                }
+                print_note_about_script("format");
                 Output::flush();
             }
             Tag::LintCommand => {
                 pretty!(
                     "\
 <b>Usage<r>: <b><green>bun lint<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
-  Lint JavaScript and TypeScript with the rules of ESLint and typescript-eslint, using all CPU cores.
-
-  Uses the nearest <b>eslint.config.js<r>, <b>.oxlintrc.json<r> or <b>.eslintrc.json<r>, and takes the flags of <b>eslint<r> and <b>oxlint<r>.
-  Without a configuration file: <b>eslint:recommended<r>, <b>typescript-eslint/recommended<r> for TypeScript, and some of <b>bun:test/*<r> for tests.
-
-<b>Flags:<r>"
+  Find and fix problems in JavaScript and TypeScript.
+"
                 );
-                Output::flush();
-                bun_clap::simple_help(crate::cli::lint_command::PARAMS);
+                print_flags(&crate::cli::lint_command::HELP, show_all_flags);
                 pretty!(
                     "
-
 <b>Examples:<r>
-  <d>Lint the current directory<r>
   <b><green>bun lint<r>
-
-  <d>Lint some files and directories<r>
-  <b><green>bun lint<r> <blue>src test/a.test.ts<r>
-
-  <d>Fix what can be fixed<r>
-  <b><green>bun lint<r> <cyan>--fix<r>
-
-  <d>Fail on warnings too<r>
-  <b><green>bun lint<r> <cyan>--max-warnings 0<r>
-
-  <d>Try a rule without editing the configuration<r>
-  <b><green>bun lint<r> <cyan>--rule<r> <blue>'eqeqeq: error'<r>
+  <b><green>bun lint<r> <cyan>--fix<r> <blue>src<r>
+  <b><green>bun lint<r> <cyan>--rule<r> <blue>'no-console: error'<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/runtime/lint<r>
 "
                 );
+                if !show_all_flags {
+                    pretty!("See every flag with <b><green>bun lint<r> <cyan>--help --all<r>\n");
+                }
+                print_note_about_script("lint");
                 Output::flush();
             }
             Tag::DedupeCommand => {

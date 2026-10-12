@@ -1,0 +1,59 @@
+---
+title: "vitest/prefer-called-exactly-once-with"
+description: "Require `toHaveBeenCalledExactlyOnceWith()` over separate call count and argument checks"
+---
+
+`toHaveBeenCalledOnce()` followed by `toHaveBeenCalledWith(...)` on the same mock takes two assertions to say one thing: the mock ran once, with these arguments. `toHaveBeenCalledExactlyOnceWith(...)` says it in one line.
+
+The rule reports the pair when both assertions are statements of the same block, in either order. Assertions with `.not` are left alone.
+
+`--fix-dangerously` replaces the pair with one `toHaveBeenCalledExactlyOnceWith(...)` call. `--fix` does not change it.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test, vi } from "vitest";
+
+test("saves the draft", () => {
+  const save = vi.fn();
+  autosave("draft", save);
+  expect(save).toHaveBeenCalledOnce();
+  expect(save).toHaveBeenCalledWith("draft");
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test, vi } from "vitest";
+
+test("saves the draft", () => {
+  const save = vi.fn();
+  autosave("draft", save);
+  expect(save).toHaveBeenCalledExactlyOnceWith("draft");
+});
+```
+
+A `mockClear()`, `mockReset()`, or `mockRestore()` on the mock between the two assertions means they are about different calls, so they are not a pair:
+
+{/* good */}
+
+```ts
+import { expect, test, vi } from "vitest";
+
+test("saves again after an edit", () => {
+  const save = vi.fn();
+  autosave("draft", save);
+  expect(save).toHaveBeenCalledOnce();
+
+  save.mockClear();
+  autosave("edited", save);
+  expect(save).toHaveBeenCalledWith("edited");
+});
+```

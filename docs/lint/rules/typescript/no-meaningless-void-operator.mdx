@@ -1,0 +1,62 @@
+---
+title: "@typescript-eslint/no-meaningless-void-operator"
+description: "Disallow `void` in front of an expression that has no value to discard"
+---
+
+`void` in front of a call says "this returns something, and I ignore it on purpose". If the call returns nothing, or what follows is not a call at all, there is nothing to ignore, and the reader looks for a return value that is not there.
+
+`void 0`, `void` in front of a promise and `void` in front of an assignment are allowed.
+
+`--fix` removes the `void`. In front of something that is not a call, it only does so when the `void` expression is a whole statement.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+function log(message: string): void {
+  console.log(message);
+}
+
+void log("saved");
+
+const count = 3;
+void count;
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function log(message: string): void {
+  console.log(message);
+}
+
+async function save(): Promise<void> {}
+
+log("saved");
+void save();
+```
+
+## Options
+
+| Option       | Default | What it does                                                                            |
+| ------------ | ------- | --------------------------------------------------------------------------------------- |
+| `checkNever` | `false` | Also report `void` in front of a call that returns `never`. `--fix` leaves these alone. |
+
+Reported with `checkNever: true`:
+
+{/* bad {"options": [{"checkNever": true}]} */}
+
+```ts
+function fail(message: string): never {
+  throw new Error(message);
+}
+
+void fail("no config");
+```

@@ -1,0 +1,78 @@
+---
+title: "max-classes-per-file"
+description: "Enforce a maximum number of classes per file"
+---
+
+When a file holds several classes, its name can describe only one of them, and the others are hard to find.
+
+Class declarations and class expressions both count. The default maximum is 1.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+class User {}
+
+class Session {}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class User {}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+max-classes-per-file = ["error", { max = 2, ignoreExpressions = true }]
+```
+
+The option is either a number, the maximum, or an object:
+
+| Option              | Default | What it does                           |
+| ------------------- | ------- | -------------------------------------- |
+| `max`               | `1`     | The number of classes a file can have. |
+| `ignoreExpressions` | `false` | Do not count class expressions.        |
+
+{/* good {"options": [2]} */}
+
+```js
+class User {}
+
+class Session {}
+```
+
+{/* bad {"options": [{"max": 2}]} */}
+
+```js
+class User {}
+
+class Session {}
+
+class Token {}
+```
+
+### `ignoreExpressions`
+
+{/* bad */}
+
+```js
+class User {}
+
+const Guest = class extends User {};
+```
+
+{/* good {"options": [{"ignoreExpressions": true}]} */}
+
+```js
+class User {}
+
+const Guest = class extends User {};
+```

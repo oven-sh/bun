@@ -1,0 +1,38 @@
+---
+title: "jsx-a11y/aria-unsupported-elements"
+description: "Disallow `role` and `aria-*` attributes on elements that do not support them"
+---
+
+Elements such as `meta`, `script` and `style` are not part of what the page shows, so a screen reader never gets to them. A `role` or an `aria-*` attribute on them does nothing.
+
+The elements are `base`, `col`, `colgroup`, `head`, `html`, `link`, `meta`, `noembed`, `noscript`, `param`, `picture`, `script`, `source`, `style`, `title` and `track`.
+
+`--fix` removes the attribute.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const head = (
+  <head>
+    <meta charSet="utf-8" aria-hidden="true" />
+    <title role="heading">Dashboard</title>
+  </head>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const head = (
+  <head>
+    <meta charSet="utf-8" />
+    <title>Dashboard</title>
+  </head>
+);
+```

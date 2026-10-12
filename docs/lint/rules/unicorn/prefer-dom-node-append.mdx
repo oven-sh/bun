@@ -1,0 +1,35 @@
+---
+title: "unicorn/prefer-dom-node-append"
+description: "Require `.append()` instead of `.appendChild()` on DOM nodes"
+---
+
+`appendChild()` takes exactly one node. `append()` takes any number of nodes, and strings too, so you don't need `document.createTextNode()` or one call per child.
+
+The rule does not know types. It reports every call of a method named `appendChild` with one argument.
+
+`--fix` renames the method.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const item = document.createElement("li");
+list.appendChild(item);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const item = document.createElement("li");
+list.append(item);
+list.append("Total: ", count, footer);
+```
+
+## When not to use it
+
+`appendChild()` returns the node it added and `append()` returns `undefined`. `const item = list.appendChild(node)` is reported and fixed like any other call, and after the fix `item` is `undefined`.

@@ -3,13 +3,14 @@
 use crate::cli::{Options, Tool};
 use crate::configs::{self, Flavor, Loader};
 use crate::discover::{self, Status, Target};
+use crate::doctor::{self, Modules};
 use crate::format::{self, Format};
 use crate::inferred::Inferred;
 use crate::lint::{Context, elapsed};
 use crate::results::{Counts, FileResult};
 use crate::suppressions::{self, Suppressions};
 use crate::typed::{self, Typed};
-use crate::{Linter, fs, paths};
+use crate::{Linter, fs, git, paths};
 use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -78,6 +79,8 @@ pub struct Environment<'e> {
     pub cwd: Vec<u8>,
     pub stdout: Stream,
     pub stderr: Stream,
+    /// How many columns the terminal of standard output has.
+    pub columns: fn() -> u16,
     /// `Output::is_ai_agent()`
     pub is_ai_agent: bool,
     /// `Output::is_github_action()`
@@ -87,6 +90,8 @@ pub struct Environment<'e> {
     /// Runs a script to its end. `Ok`: what it has printed on standard output. `Err`: it failed, and
     /// this is why.
     pub run_script: &'e (dyn Fn(&Script) -> Result<Vec<u8>, Vec<u8>> + Sync),
+    /// Runs git to its end.
+    pub run_git: &'e (dyn Fn(&git::Command) -> Result<git::Finished, git::NotRun> + Sync),
     /// The command line of this process, without the executable.
     pub command_line: &'e [&'e [u8]],
     /// Where the rules that are written in JavaScript run.
@@ -105,23 +110,6 @@ pub struct Outcome {
     pub stderr: Vec<u8>,
     pub exit_code: u8,
 }
-
-/// What `oxlint --init` writes.
-const INITIAL_OXLINTRC: &[u8] = br#"{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "unicorn",
-    "oxc"
-  ],
-  "categories": {
-    "correctness": "error"
-  },
-  "rules": {},
-  "env": {
-    "builtin": true
-  }
-}"#;
 
 /// The variables that tell oxlint that an agent runs it. Any value counts but an empty one.
 const AGENTS_FOR_OXLINT: [&[u8]; 12] = [
@@ -283,6 +271,8 @@ struct Run<'r> {
     began: Instant,
     /// Whether it stands in for oxlint, once that is known.
     is_for_oxlint: Option<bool>,
+    /// `--doctor`
+    modules: Option<&'r Modules>,
 }
 
 /// What there is to say about the file of suppressions.
@@ -361,41 +351,15 @@ impl Run<'_> {
             .unwrap_or_else(|| configs::is_for_oxlint(self.options.flavor, &self.environment.cwd))
     }
 
-    /// oxlint's `--init`, which however writes over a file that is there.
-    fn write_initial_configuration(mut self) -> Outcome {
-        let path = paths::join(&self.environment.cwd, b".oxlintrc.json");
-        if fs::kind(&path).is_some() {
-            return self.fail(&[&path[..], b" exists already."].concat());
-        }
-        if self.options.flavor != Some(Tool::Oxlint)
-            && let Some(file) = configs::file_of_eslint(&self.environment.cwd)
-        {
-            return self.fail(
-                &[
-                    b"--init writes an .oxlintrc.json, which would count in place of ",
-                    &file[..],
-                    b". Use --flavor=oxlint to write it.",
-                ]
-                .concat(),
-            );
-        }
-        if let Err(error) = fs::write_new(&path, INITIAL_OXLINTRC) {
-            return self
-                .fail(&[b"Cannot write ", &path[..], b": ", &fs::describe(&error)].concat());
-        }
-        self.out.stdout = b"Configuration file created\n".to_vec();
-        self.out
-    }
-
-    /// `is_oxlint`: the configuration of the working directory is oxlint's.
-    fn format(&self, is_oxlint: bool) -> Result<Format, Vec<u8>> {
+    /// `is_oxlint`: the configuration of the working directory is oxlint's. `is_native`: there is none.
+    fn format(&self, is_oxlint: bool, is_native: bool) -> Result<Format, Vec<u8>> {
         let name: &[u8] = match &self.options.format {
             Some(name) => &name[..],
             // An agent is saved from opening the files.
             None if self.environment.is_ai_agent => b"agent",
             None if is_oxlint && is_agent_for_oxlint() => b"agent",
             None if is_oxlint && self.environment.is_github_action => b"github",
-            None if is_oxlint => b"default",
+            None if is_oxlint || is_native => b"default",
             None => b"stylish",
         };
         Format::by_name(name, is_oxlint).ok_or_else(|| Format::is_missing(name))
@@ -458,7 +422,7 @@ impl Run<'_> {
                 .without_effect
                 .iter()
                 .find(|flag| **flag != b"cache")?;
-            return Some([b"bun lint does not support --", *flag, b"."].concat());
+            return Some([b"bun lint does not support --", *flag].concat());
         };
         Some(text.to_vec())
     }
@@ -482,7 +446,7 @@ impl Run<'_> {
         );
         loader.name(paths::dirname(&path));
         let loaded = loader.for_directory(paths::dirname(&path))?;
-        let status: Status = loaded.config.get(loader.linter.registry(), &path).into();
+        let status: Status = loader.config_of(&loaded, &path).into();
         let Status::Matched(config) = &status else {
             let results = self
                 .options
@@ -577,6 +541,7 @@ impl Run<'_> {
         loader: &Loader,
         context: &Context,
         pool: &Pool,
+        only: Option<&git::Files>,
         phases: &mut Phases,
     ) -> Result<Linted, Fatal> {
         let dot = [b".".to_vec()];
@@ -604,12 +569,15 @@ impl Run<'_> {
         let is_oxlint = loader
             .for_directory(&self.environment.cwd)
             .is_ok_and(|it| it.flavor == Flavor::Oxlint);
-        let targets = discover::find_files(
+        let mut targets = discover::find_files(
             loader,
             pool,
             patterns,
             self.options.error_on_unmatched_pattern && !is_oxlint,
         )?;
+        if let Some(only) = only {
+            targets.retain(|it| only.has(&it.path));
+        }
         phases.discovery = started.elapsed().as_secs_f64();
         if self.options.list_files {
             let listed = targets
@@ -669,13 +637,13 @@ impl Run<'_> {
                 _ => false,
             };
             let hint: &[u8] = match unsupported.iter().any(is_for_eslint) {
-                true => b". The package \"eslint\" lints other languages, if it is installed",
+                true => b"\n  To lint other languages, install eslint: bun add -d eslint",
                 false => b"",
             };
             loader.cannot_do(&[
                 &count,
                 noun,
-                b" not linted, only JavaScript and TypeScript can be (",
+                b" not linted because bun lint only supports JavaScript and TypeScript (",
                 &kinds.join(&b", "[..]),
                 b"): ",
                 &first.join(&b", "[..]),
@@ -748,12 +716,12 @@ impl Run<'_> {
         // oxlint leaves them out too, and says nothing.
         if !rules_without_types.is_empty() && !is_oxlint {
             let count = format!("{}", rules_without_types.len()).into_bytes();
-            let noun: &[u8] = if rules_without_types.len() == 1 {
-                b" rule needs"
+            let rest: &[u8] = if rules_without_types.len() == 1 {
+                b" rule that needs type information\n  Use --type-aware to run it."
             } else {
-                b" rules need"
+                b" rules that need type information\n  Use --type-aware to run them."
             };
-            loader.warn(&[&count, noun, b" types, which the configuration does not ask for, and did not run. Use --type-aware to run them."]);
+            loader.warn(&[b"Skipped ", &count, rest]);
         }
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
         let most_engines = (pool.threads()).min(context.js_plugins.most_realms());
@@ -863,7 +831,7 @@ impl Run<'_> {
         if options.env_info {
             let _ = writeln!(
                 self.out.stdout,
-                "Environment Info:\n\nBun version: {}\nESLint version: {ESLINT_VERSION} (the version that bun lint matches)\nTypeScript version: {}",
+                "Environment Info:\n\nBun version: {}\nESLint version: {ESLINT_VERSION} (the version bun lint is compatible with)\nTypeScript version: {}",
                 BStr::new(environment.version),
                 BStr::new(bun_sema_driver::TYPESCRIPT_VERSION.to_bytes()),
             );
@@ -872,8 +840,8 @@ impl Run<'_> {
         if let Some(refusal) = self.refusal() {
             return self.refuse(&refusal);
         }
-        if options.init {
-            return self.write_initial_configuration();
+        if let Some(only) = options.only.as_ref().filter(|_| options.stdin) {
+            return self.refuse_flag(&only.refusal_of_stdin("--stdin"));
         }
         let registry = Registry::new(&[
             bun_lint_eslint::RULES,
@@ -903,16 +871,26 @@ impl Run<'_> {
         if let Some((of_eslint, of_oxlint)) = loader.undecided().filter(|_| !options.rules) {
             self.error(
                 &[
-                    b"Both ",
+                    b"Found both ",
                     &of_eslint[..],
                     b" and ",
                     &of_oxlint[..],
-                    b" are here. Say which one this run is for: --flavor=oxlint or --flavor=eslint.",
+                    b"\n  Choose one with --flavor=eslint or --flavor=oxlint",
                 ]
                 .concat(),
             );
             self.out.exit_code = 2;
             return self.out;
+        }
+        if options.init {
+            let flavor = options.flavor.map(|it| match it {
+                Tool::Eslint => "eslint",
+                Tool::Oxlint => "oxlint",
+            });
+            return match loader.for_directory(&environment.cwd) {
+                Ok(found) => crate::init::LINT.add(flavor, found.file.as_deref(), environment),
+                Err(Fatal(error)) => self.fail(&error),
+            };
         }
         // One that cannot be read is reported when a file is linted with it.
         let of_cwd = loader.for_directory(&environment.cwd).ok();
@@ -923,7 +901,8 @@ impl Run<'_> {
         if let Some(refusal) = loader.refused() {
             return self.refuse_flag(refusal);
         }
-        let format = match self.format(is_oxlint) {
+        let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
+        let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,
             Err(error) => return self.refuse(&error),
         };
@@ -938,6 +917,24 @@ impl Run<'_> {
             let as_json = matches!(format, Format::Json | Format::OxlintJson);
             format::oxlint::write_rules(&mut self.out.stdout, linter.registry(), as_json);
             return self.out;
+        }
+        if let Some(loaded) = self.modules {
+            let how = doctor::How {
+                as_json: matches!(format, Format::Json | Format::OxlintJson),
+                colors: options.color.unwrap_or(environment.stdout.colors),
+            };
+            let of_the_run = (
+                &loader,
+                options,
+                &modules as &dyn bun_lint::modules::Modules,
+            );
+            return match doctor::lint(of_the_run, &pool, &js_plugins, loaded, how) {
+                Ok(report) => {
+                    self.out.stdout = report;
+                    self.out
+                }
+                Err(Fatal(error)) => self.fail(&error),
+            };
         }
         let timing = Timing {
             is_on: options.timing,
@@ -1007,7 +1004,7 @@ impl Run<'_> {
                     let message = b"Value for 'print-config' of type 'path' required.";
                     return refuse_command_line(message, environment);
                 }
-                Ok(loaded) => loaded.config.get(linter.registry(), &path),
+                Ok(loaded) => loader.config_of(&loaded, &path),
                 Err(Fatal(error)) => return self.fail(&error),
             };
             self.out.stdout = crate::print_config::print(match &config {
@@ -1023,13 +1020,18 @@ impl Run<'_> {
                     pretty!(
                         &mut self.out.stderr,
                         environment.stderr.colors,
-                        "<blue>note<r><d>:<r> in JavaScript: {}. All other rules are built in.\n",
+                        "<blue>note<r><d>:<r> these rules run in JavaScript: {}. All other rules are built in.\n",
                         BStr::new(&ids.join(&b", "[..]))
                     );
                 }
             }
             return self.out;
         }
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, options.fix, environment));
+        let only = match only.transpose() {
+            Ok(only) => only,
+            Err(Fatal(error)) => return self.refuse_flag(&error),
+        };
         let mut phases = Phases::default();
         let linted = match options.stdin {
             true => match fs::read_stdin() {
@@ -1038,7 +1040,7 @@ impl Run<'_> {
                     [&b"Cannot read standard input: "[..], &fs::describe(&error)].concat(),
                 )),
             },
-            false => self.lint_files(&loader, &context, &pool, &mut phases),
+            false => self.lint_files(&loader, &context, &pool, only.as_ref(), &mut phases),
         };
         for warning in std::mem::take(&mut *loader.warnings.lock()) {
             self.warn(&warning);
@@ -1053,12 +1055,12 @@ impl Run<'_> {
             loader.cannot_do(&[
                 ids.len().to_string().as_bytes(),
                 noun,
-                b" in JavaScript did not run, only the built-in rules have types: ",
+                b" did not run because rules that run in JavaScript cannot use type information: ",
                 &ids.join(&b", "[..]),
                 match linter.registry().answers_for(b"@typescript-eslint") {
                     true => &b""[..],
                     false => {
-                        b". With --native-plugin-rules=@typescript-eslint the built-in ones run"
+                        b"\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions."
                     }
                 },
             ]);
@@ -1069,8 +1071,10 @@ impl Run<'_> {
                 let noun = if files == 1 { "file" } else { "files" };
                 let text = reason.text();
                 loader.advise(
-                    format!("prettier/prettier ran in JavaScript for {files} {noun}: {text}.")
-                        .into_bytes(),
+                    format!(
+                        "prettier/prettier ran in JavaScript for {files} {noun} because {text}"
+                    )
+                    .into_bytes(),
                 );
             }
         }
@@ -1078,15 +1082,15 @@ impl Run<'_> {
         bun_lint::utils::sort::sort_by(&mut broken, |a, b| a.0.cmp(&b.0));
         for (path, rules) in &broken {
             let rules: Vec<Vec<u8>> = rules.iter().map(RuleId::to_vec).collect();
-            let of: &[u8] = if rules.is_empty() { b"" } else { b" of " };
+            let of: &[u8] = if rules.is_empty() { b"" } else { b" from " };
             self.warn(
                 &[
                     b"Fixes",
                     of,
                     &rules.join(&b", "[..])[..],
-                    b" would leave ",
+                    b" were not applied to ",
                     &paths::relative(&environment.cwd, &paths::from_native(path))[..],
-                    b" with a syntax error. They are not applied.",
+                    b" because they would cause a syntax error",
                 ]
                 .concat(),
             );
@@ -1104,7 +1108,7 @@ impl Run<'_> {
                     b"The type checker ran out of stack in ",
                     &shown.join(&b", "[..])[..],
                     more,
-                    b". This is a bug in Bun: the rules that need types may have missed problems there.",
+                    b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
                 ]
                 .concat(),
             );
@@ -1115,14 +1119,15 @@ impl Run<'_> {
         if !in_comments.is_empty() {
             bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
             let noun: &[u8] = match in_comments.len() {
-                1 => b" rule that a comment turns on",
-                _ => b" rules that comments turn on",
+                1 => b" rule enabled in a comment",
+                _ => b" rules enabled in comments",
             };
             loader.cannot_do(&[
                 in_comments.len().to_string().as_bytes(),
                 noun,
-                b" did not run, the configuration has to turn on a rule of the plugin: ",
+                b" did not run: ",
                 &in_comments.join(&b", "[..]),
+                b"\n  Enable at least one rule from the same plugin in your config.",
             ]);
         }
         let mut unread: Vec<Vec<u8>> = std::mem::take(&mut *unread.lock());
@@ -1130,9 +1135,9 @@ impl Run<'_> {
             unread.sort_unstable();
             unread.dedup();
             let noun: &[u8] = match unread.len() {
-                1 => b" file was not linted, only the parser of the configuration can read it: ",
+                1 => b" file was not linted because only the parser in your config can read it: ",
                 _ => {
-                    b" files were not linted, only the parser of the configuration can read them: "
+                    b" files were not linted because only the parser in your config can read them: "
                 }
             };
             let first: Vec<Vec<u8>> = (unread.iter().take(3))
@@ -1143,7 +1148,7 @@ impl Run<'_> {
                 noun,
                 &first.join(&b", "[..]),
                 if unread.len() > 3 { b", .." } else { b"" },
-                b". The package \"eslint\" lints with that parser, if it is installed",
+                b"\n  To lint with that parser, install eslint: bun add -d eslint",
             ]);
         }
         let mut seen: Vec<&Arc<_>> = Vec::new();
@@ -1213,27 +1218,47 @@ impl Run<'_> {
             return self.fail(thrown);
         }
 
-        let mut fixed = 0;
+        let (mut fixed, mut fixes) = (0, 0);
         // Said after the report, which is about all the other files too.
         let mut not_written: Vec<Vec<u8>> = Vec::new();
+        let mut not_staged: Vec<Vec<u8>> = Vec::new();
         if options.fix {
-            let changed: Vec<&FileResult> = results.iter().filter(|it| it.is_fixed).collect();
-            let mut failures = Guarded::new(Vec::new());
+            let portable = |it: &FileResult| paths::from_native(&it.path);
+            let (refused, changed): (Vec<&FileResult>, Vec<&FileResult>) =
+                (results.iter().filter(|it| it.is_fixed)).partition(|it| {
+                    (only.as_ref()).is_some_and(|only| only.is_partly_staged(&portable(it)))
+                });
+            let (mut failures, mut written) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+            let in_written = AtomicU64::new(0);
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
-                let written = match result.written() {
+                let done = match result.written() {
                     // Not nothing in its place. Fixes that leave nothing of a file give an empty text, which is written.
-                    None => Err(b"The fixed text is lost. This is a bug in bun lint.".to_vec()),
+                    None => Err(b"the fixed code was lost. This is a bug in Bun.".to_vec()),
                     Some(text) => fs::write_atomically(&environment.cwd, &result.path, text),
                 };
-                if let Err(why) = written {
-                    let line = [b"Cannot write ", &result.path[..], b": ", &why].concat();
-                    failures.lock().push(line);
+                match done {
+                    Ok(()) => {
+                        written.lock().push(portable(result));
+                        in_written.fetch_add(result.fixes as u64, Ordering::Relaxed);
+                    }
+                    Err(why) => {
+                        let line = [b"Cannot write ", &result.path[..], b": ", &why].concat();
+                        failures.lock().push(line);
+                    }
                 }
             });
+            if let Some(only) = &only {
+                let mut refused: Vec<Vec<u8>> = refused.into_iter().map(portable).collect();
+                if !refused.is_empty() {
+                    not_staged.push(only.refusal_to_write(&mut refused));
+                }
+                not_staged.extend(only.stage(written.get_mut()).err().map(|it| it.0));
+            }
             not_written = std::mem::take(failures.get_mut());
             not_written.sort_unstable();
             fixed = changed.len() - not_written.len();
+            fixes = in_written.into_inner() as usize;
         }
 
         let suppressed = match options.stdin {
@@ -1286,15 +1311,20 @@ impl Run<'_> {
         if is_oxlint && options.silent {
             results.clear();
         }
-        let has_no_files =
-            is_oxlint && files == 0 && !options.stdin && !options.pass_on_no_patterns;
+        let has_no_files = is_oxlint
+            && files == 0
+            && !options.stdin
+            && !options.pass_on_no_patterns
+            && only.is_none();
 
         let started = Instant::now();
         let with_help: format::WithHelp = &|result: &FileResult| context.with_help(result);
+        let color = options.color.unwrap_or(environment.stdout.colors);
         let meta = format::Meta {
             help: (context.reads_help && context.help_on_demand).then_some(with_help),
             cwd: &environment.cwd,
-            color: options.color.unwrap_or(environment.stdout.colors),
+            color,
+            links: color && environment.stdout.is_tty && options.output_file.is_none(),
             color_option: options.color,
             max_warnings_exceeded: has_too_many_warnings.then_some((max_warnings, counts.warnings)),
             shows_all: options.all,
@@ -1316,6 +1346,7 @@ impl Run<'_> {
                 seconds: self.began.elapsed().as_secs_f64(),
             },
             is_oxlint,
+            is_native,
             pool: &pool,
             version: environment.version,
         };
@@ -1365,13 +1396,19 @@ impl Run<'_> {
         if !is_oxlint && counts.errors == 0 && has_too_many_warnings {
             self.error(&format::summary::too_many_warnings(max_warnings));
         }
-        if !is_oxlint && !options.stdin && !options.silent {
+        if !options.silent {
+            let colors = environment.stderr.colors;
+            format::summary::write_fixed(&mut self.out.stderr, colors, fixes, fixed);
+        }
+        if let Some(only) = (only.as_ref()).filter(|_| files == 0 && !options.silent) {
+            let _ = writeln!(self.out.stderr, "{}", only.nothing_left("lint"));
+        } else if !is_oxlint && !options.stdin && !options.silent {
             format::summary::write(
                 &mut self.out.stderr,
                 environment.stderr.colors,
                 counts,
                 files,
-                fixed,
+                0,
                 self.began.elapsed().as_secs_f64() * 1000.0,
             );
         }
@@ -1396,8 +1433,13 @@ impl Run<'_> {
         if options.timing {
             self.write_timing(&timing, &phases, &pool, &js_plugins.loading());
         }
+        not_staged.iter().for_each(|it| self.error(it));
         if !not_written.is_empty() {
             not_written.iter().for_each(|it| self.failed(it));
+            return self.out;
+        }
+        if !not_staged.is_empty() {
+            self.out.exit_code = 2;
             return self.out;
         }
         if has_unused && !is_oxlint {
@@ -1408,14 +1450,14 @@ impl Run<'_> {
             return self.out;
         }
         if !unsupported.is_empty() {
-            let mut text =
-                b"The configuration asks for what cannot be done yet. All else was linted."
-                    .to_vec();
-            for line in &unsupported {
-                text.extend_from_slice(&[b"\n  ", &line[..]].concat());
+            let hint: &[u8] =
+                b"\n  Everything else was linted. Use --allow-unsupported to make this a warning.";
+            for (at, line) in unsupported.iter().enumerate() {
+                match at + 1 == unsupported.len() {
+                    true => self.error(&[&line[..], hint].concat()),
+                    false => self.error(line),
+                }
             }
-            text.extend_from_slice(b"\n  --allow-unsupported makes this a warning.");
-            self.error(&text);
             self.out.exit_code = 2;
             return self.out;
         }
@@ -1493,7 +1535,7 @@ impl Run<'_> {
         let cpu = |nanos: &AtomicU64| nanos.load(Ordering::Relaxed) as f64 / 1e6;
         let _ = writeln!(
             self.out.stderr,
-            "  wall: {:.1}ms finding files and configurations, {:.1}ms type checking and linting, {:.1}ms linting without types, {:.1}ms formatting, {:.1}ms in all, on {} threads\n  summed over the threads: {:.1}ms reading, {:.1}ms parsing and binding, {:.1}ms in rules",
+            "  wall: {:.1}ms finding files and configs, {:.1}ms type checking and linting, {:.1}ms linting without types, {:.1}ms formatting, {:.1}ms total, {} threads\n  all threads: {:.1}ms reading, {:.1}ms parsing and binding, {:.1}ms in rules",
             phases.discovery * 1e3,
             phases.checking * 1e3,
             phases.linting * 1e3,
@@ -1506,7 +1548,7 @@ impl Run<'_> {
         );
         let _ = write!(
             self.out.stderr,
-            "  JavaScript: {} engines, which have loaded {} modules, {:.1} MB of source, in {:.1}ms",
+            "  JavaScript: {} engines loaded {} modules, {:.1} MB of source, in {:.1}ms",
             loading.realms,
             loading.modules,
             loading.bytes as f64 / 1e6,
@@ -1514,7 +1556,7 @@ impl Run<'_> {
         );
         for (i, plugin) in loading.need_the_configuration.iter().enumerate() {
             let before = match i {
-                0 => "; with the whole configuration file, which alone has ",
+                0 => "; loaded the whole config file for ",
                 _ => ", ",
             };
             let _ = write!(self.out.stderr, "{before}{}", BStr::new(plugin));
@@ -1522,15 +1564,15 @@ impl Run<'_> {
         if loading.linted_by_eslint > 0 {
             let _ = write!(
                 self.out.stderr,
-                "; the package eslint has linted {} texts",
+                "; the eslint package linted {} files",
                 loading.linted_by_eslint
             );
         }
         if let (most @ 1.., freed) = loading.sizes {
             let most = most as f64 / 1e6;
-            let _ = write!(self.out.stderr, "; they took {most:.0} MB");
+            let _ = write!(self.out.stderr, "; peak {most:.0} MB");
             if freed > 0 {
-                let _ = write!(self.out.stderr, ", freed to stay in the memory: {freed}");
+                let _ = write!(self.out.stderr, ", engines freed to save memory: {freed}");
             }
         }
         self.out.stderr.push(b'\n');
@@ -1538,19 +1580,19 @@ impl Run<'_> {
         let counts = &bun_sema_parser::COUNTS;
         let _ = write!(
             self.out.stderr,
-            "  parsed directly: {} files",
+            "  fast parser: {} files",
             counts.parsed.load(Ordering::Relaxed)
         );
         for (why, count) in bun_sema_parser::Refusal::ALL.iter().zip(&counts.refused) {
             match count.load(Ordering::Relaxed) {
                 0 => {}
-                count => _ = write!(self.out.stderr, ", refused ({why:?}): {count}"),
+                count => _ = write!(self.out.stderr, ", fell back ({why:?}): {count}"),
             }
         }
         let without_filter = timing.without_filter.load(Ordering::Relaxed);
         let _ = writeln!(
             self.out.stderr,
-            "\n  without a filter of the names they mention: {without_filter} files"
+            "\n  linted without the name filter: {without_filter} files"
         );
     }
 }
@@ -1589,24 +1631,23 @@ impl NotBuiltIn {
         let about_layout = match &self.about_layout[..] {
             [] => None,
             [one] => Some(format!(
-                "1 formatting rule that is deprecated did not run, bun format does its work: {one}"
+                "1 deprecated formatting rule did not run: {one}\n  Use bun format instead."
             )),
             all => Some(format!(
-                "{} formatting rules that are deprecated did not run, bun format does their work: {}{}",
+                "{} deprecated formatting rules did not run: {}{}\n  Use bun format instead.",
                 all.len(),
                 all[..all.len().min(3)].join(", "),
                 if all.len() > 3 { ", .." } else { "" },
             )),
         };
-        let did_not_run = "that the categories turn on did not run. None is built in: take";
         let plugins = match &self.plugins[..] {
             [] => None,
             [one] => Some(format!(
-                "The rules of the plugin \"{one}\" {did_not_run} it out of \"plugins\""
+                "bun lint has no \"{one}\" rules, so none of them ran\n  Remove \"{one}\" from \"plugins\"."
             )),
             all => Some(format!(
-                "The rules of the plugins \"{}\" {did_not_run} them out of \"plugins\"",
-                all.join("\" and \""),
+                "bun lint has no \"{}\" rules, so none of them ran\n  Remove them from \"plugins\".",
+                all.join("\" or \""),
             )),
         };
         [about_layout, plugins].into_iter().flatten()
@@ -1640,6 +1681,7 @@ pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome
         out: Outcome::default(),
         began: Instant::now(),
         is_for_oxlint: None,
+        modules: None,
     };
     let mut out = run.refuse(message);
     pretty!(
@@ -1651,12 +1693,21 @@ pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome
 }
 
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
-    let run = Run {
-        options,
-        environment,
-        out: Outcome::default(),
-        began: Instant::now(),
-        is_for_oxlint: None,
+    let execute = |environment: &Environment, modules: Option<&Modules>| {
+        let run = Run {
+            options,
+            environment,
+            out: Outcome::default(),
+            began: Instant::now(),
+            is_for_oxlint: None,
+            modules,
+        };
+        run.execute()
     };
-    run.execute()
+    match options.doctor {
+        true => doctor::watching(environment, |environment, modules| {
+            execute(environment, Some(modules))
+        }),
+        false => execute(environment, None),
+    }
 }

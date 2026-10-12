@@ -1,0 +1,31 @@
+---
+title: "no-sparse-arrays"
+description: "Disallow array literals with holes"
+---
+
+Two commas in a row leave a hole in the array: `["red",, "blue"]` has a length of 3 and nothing at index 1. `forEach`, `map` and `filter` skip the hole, so the array behaves differently from one that holds `undefined` there. Most of the time the extra comma is a typo.
+
+A trailing comma makes no hole and is not reported. Skipping an element in destructuring is not reported either.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const colors = ["red", , "blue"];
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const colors = ["red", "blue"];
+const sizes = ["small", undefined, "large"];
+const shapes = ["circle", "square"];
+const [, second] = colors;
+```

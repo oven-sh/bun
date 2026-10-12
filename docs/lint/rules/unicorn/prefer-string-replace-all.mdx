@@ -1,0 +1,32 @@
+---
+title: "unicorn/prefer-string-replace-all"
+description: "Require `replaceAll()` instead of `replace()` with a global regex"
+---
+
+`replace()` replaces every match only if the regex has the `g` flag, and one letter at the end of a pattern is easy to miss. `replaceAll()` says it in the name.
+
+The rule also reports a regex passed to `replaceAll()` when it matches only one fixed string, because a plain string does the same and needs no escaping.
+
+`--fix` renames the method, and turns the regex into a string where the regex matches one fixed string.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const slug = title.replace(/\s+/g, "-");
+const path = name.replaceAll(/\./g, "/");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const slug = title.replaceAll(/\s+/g, "-");
+const path = name.replaceAll(".", "/");
+
+const first = title.replace(/\s+/, "-");
+```

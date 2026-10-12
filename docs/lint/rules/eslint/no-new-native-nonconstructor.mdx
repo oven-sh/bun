@@ -1,0 +1,33 @@
+---
+title: "no-new-native-nonconstructor"
+description: "Disallow `new Symbol()` and `new BigInt()`"
+---
+
+`Symbol` and `BigInt` start with a capital letter but are not constructors. `new Symbol("id")` and `new BigInt(10)` throw a `TypeError` when they run. Call them without `new`.
+
+This rule is on by default in JavaScript files.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const id = new Symbol("id");
+```
+
+{/* bad */}
+
+```js
+const total = new BigInt(9007199254740991);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const id = Symbol("id");
+const total = BigInt(9007199254740991);
+```

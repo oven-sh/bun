@@ -1,0 +1,34 @@
+---
+title: "no-undef-init"
+description: "Disallow initializing a variable to `undefined`"
+---
+
+A `let` or `var` without a value already starts as `undefined`, so `= undefined` adds nothing.
+
+`const` and `using` need a value, so they are not reported.
+
+`--fix` removes `= undefined` from `let name = undefined`. It leaves `var` and destructuring alone.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+let selected = undefined;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+let selected;
+
+const missing = undefined;
+```
+
+## When not to use it
+
+In a loop, `var current = undefined` resets the variable on every pass, and `var current` keeps the value from the pass before. If your code relies on that, turn the rule off there or switch to `let`.

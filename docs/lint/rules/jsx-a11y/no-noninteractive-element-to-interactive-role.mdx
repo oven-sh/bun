@@ -1,0 +1,85 @@
+---
+title: "jsx-a11y/no-noninteractive-element-to-interactive-role"
+description: "Disallow interactive ARIA roles on non-interactive elements"
+---
+
+A `role` only changes what a screen reader announces. An `<h2 role="button">` is announced as a button, but it cannot be reached with the Tab key and does not react to Enter or Space, and it is no longer in the list of headings. Use the element that already behaves that way, or put it inside.
+
+Non-interactive elements include headings, `<p>`, `<li>`, `<img>`, `<article>`, `<main>` and `<table>`. `<div>` and `<span>` have no meaning of their own and may take any role. Only a `role` written as a string is checked.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const title = (
+  <h2 role="button" onClick={toggle}>
+    Details
+  </h2>
+);
+```
+
+{/* bad */}
+
+```jsx
+const avatar = <img src={user.photo} alt={user.name} role="link" />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const title = (
+  <h2>
+    <button onClick={toggle}>Details</button>
+  </h2>
+);
+
+const avatar = (
+  <a href={user.url}>
+    <img src={user.photo} alt={user.name} />
+  </a>
+);
+
+const custom = <div role="button" tabIndex={0} onClick={toggle} />;
+```
+
+## Options
+
+An object that maps an element to the roles it may have. The default allows lists to be menus, tabs and trees:
+
+```json
+{
+  "ul": ["menu", "menubar", "radiogroup", "tablist", "tree", "treegrid"],
+  "ol": ["menu", "menubar", "radiogroup", "tablist", "tree", "treegrid"],
+  "li": ["menuitem", "menuitemcheckbox", "menuitemradio", "row", "tab", "treeitem"],
+  "fieldset": ["radiogroup", "presentation"]
+}
+```
+
+What you give replaces the default, so repeat the entries you want to keep.
+
+{/* good */}
+
+```jsx
+const tabs = (
+  <ul role="tablist">
+    <li role="tab">Profile</li>
+  </ul>
+);
+```
+
+{/* good {"options": [{"table": ["grid"]}]} */}
+
+```jsx
+const sheet = <table role="grid" />;
+```
+
+{/* bad {"options": [{"table": ["grid"]}]} */}
+
+```jsx
+const tabs = <ul role="tablist" />;
+```

@@ -1,0 +1,30 @@
+---
+title: "unicorn/no-instanceof-array"
+description: "Require `Array.isArray()` instead of `instanceof Array`"
+---
+
+Every iframe and every `node:vm` context has its own `Array`. An array that was created in another one is not an instance of yours, so `instanceof Array` is `false` for it. `Array.isArray()` is `true` for every array.
+
+`--fix` rewrites `value instanceof Array` to `Array.isArray(value)`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function toList(value) {
+  return value instanceof Array ? value : [value];
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function toList(value) {
+  return Array.isArray(value) ? value : [value];
+}
+```

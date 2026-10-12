@@ -1,0 +1,67 @@
+---
+title: "@typescript-eslint/consistent-generic-constructors"
+description: "Require type arguments on the constructor call or on the type annotation, consistently"
+---
+
+When you create a generic class, the type arguments can go on the variable (`const users: Map<string, User> = new Map()`) or on the call (`const users = new Map<string, User>()`). Both give the same type. This rule picks one place. By default it is the call, which names the class once instead of twice.
+
+Variables, class fields, and parameters with a default value are checked, except the parameters of arrow functions. Code that has type arguments on both sides, or on neither, is left alone.
+
+`--fix` moves the type arguments to the other side.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+const scores: Map<string, number> = new Map();
+
+class Game {
+  players: Set<string> = new Set();
+}
+
+function start(seen: Set<string> = new Set()) {}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const scores = new Map<string, number>();
+
+class Game {
+  players = new Set<string>();
+}
+
+function start(seen = new Set<string>()) {}
+```
+
+The annotation has to name the same class as the call. Here it does not, so moving the type arguments would change the type of the variable:
+
+{/* good */}
+
+```ts
+const scores: ReadonlyMap<string, number> = new Map();
+```
+
+## Options
+
+| Option                    | What it does                                                              |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `"constructor"` (default) | Type arguments go on the call: `new Map<string, number>()`.               |
+| `"type-annotation"`       | Type arguments go on the annotation: `const scores: Map<string, number>`. |
+
+{/* bad {"options": ["type-annotation"]} */}
+
+```ts
+const scores = new Map<string, number>();
+```
+
+{/* good {"options": ["type-annotation"]} */}
+
+```ts
+const scores: Map<string, number> = new Map();
+```

@@ -1,0 +1,75 @@
+---
+title: "id-denylist"
+description: "Disallow the identifier names you list"
+---
+
+Names like `data`, `tmp` or `cb` say little about what they hold. This rule reports the names you list when they name a variable, parameter, function, class, import, object key or class member, or a property you assign to.
+
+Without a list, the rule reports nothing.
+
+## Examples
+
+```toml bunfig.toml
+[lint.rules]
+id-denylist = ["error", "data", "callback"]
+```
+
+Reported:
+
+{/* bad {"options": ["data", "callback"], "count": 4} */}
+
+```js
+const data = loadUser(id);
+
+function save(user, callback) {}
+
+const response = { data: 1 };
+response.data = 2;
+```
+
+Not reported:
+
+{/* good {"options": ["data", "callback"]} */}
+
+```js
+const user = loadUser(id);
+
+function save(user, onSaved) {}
+```
+
+A variable is reported where it is declared and again where it is used, except where it is called or passed as an argument. This has two reports, on lines 1 and 3:
+
+{/* bad {"options": ["data"], "count": 2} */}
+
+```js
+function render(data) {
+  log(data);
+  return data.title;
+}
+```
+
+Reading a property is allowed, because the object may come from code you do not control. So is an import or a destructured property that you rename:
+
+{/* good {"options": ["data", "callback"]} */}
+
+```js
+import { data as users } from "./api";
+
+const { data: orders } = await fetchOrders();
+
+console.log(response.data, users, orders);
+```
+
+Private names are compared without the `#`:
+
+{/* bad {"options": ["data"]} */}
+
+```js
+class Store {
+  #data = new Map();
+}
+```
+
+## Options
+
+Each option is a name to disallow. Names are compared exactly, so `"data"` does not match `userData`.

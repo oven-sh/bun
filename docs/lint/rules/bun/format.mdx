@@ -1,0 +1,62 @@
+---
+title: "bun/format"
+description: "Require code to be formatted the way `bun format` prints it"
+---
+
+This rule compares each file with what `bun format` prints and reports every place where they differ. Formatting problems then show up next to your lint problems, in the terminal and in the editor.
+
+It reads the same settings as `bun format`: your `.prettierrc`, `.editorconfig`, and the `[format]` section of `bunfig.toml`. It skips the files that `bun format` skips. The options and the messages are the same as for `prettier/prettier`, and you do not need Prettier installed.
+
+A file that Bun cannot format the way your config asks, for example because of a Prettier plugin that `bun format` does not have, gets one report that says why.
+
+`--fix` formats the file.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const user = { name: "Ada" };
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const user = { name: "Ada" };
+```
+
+## Options
+
+The first option is an object of formatting options, with the names they have in a `.prettierrc`. They win over your config files.
+
+```toml bunfig.toml
+[lint.rules]
+"bun/format" = ["error", { singleQuote = true, semi = false }]
+```
+
+{/* good {"options": [{"singleQuote": true, "semi": false}]} */}
+
+```js
+const user = { name: "Ada" };
+```
+
+{/* bad {"options": [{"singleQuote": true, "semi": false}]} */}
+
+```js
+const user = { name: "Ada" };
+```
+
+The second option is an object with these keys:
+
+| Option            | Default | What it does                                                                                                      |
+| ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `usePrettierrc`   | `true`  | Read config files such as `.prettierrc` and `.editorconfig`.                                                      |
+| `fileInfoOptions` | `{}`    | `ignorePath` names the ignore file or files to read. `withNodeModules: true` also checks files in `node_modules`. |
+
+## When not to use it
+
+If `bun format --check` already runs in CI, this rule does the same work a second time.

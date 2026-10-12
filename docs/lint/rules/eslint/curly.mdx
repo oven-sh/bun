@@ -1,0 +1,123 @@
+---
+title: "curly"
+description: "Require braces around the bodies of `if`, `else` and loops"
+---
+
+Without braces, only the next statement belongs to the `if` or the loop. Add a second line below it with the same indentation, and that line runs every time, whatever the condition says.
+
+`--fix` adds the missing braces, or removes the ones your style does not want.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+if (!user) redirect("/login");
+
+for (const item of items) total += item.price;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (!user) {
+  redirect("/login");
+}
+
+for (const item of items) {
+  total += item.price;
+}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+curly = ["error", "multi-line", "consistent"]
+```
+
+| Option            | What it does                                                                                              |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| `"all"` (default) | Braces everywhere.                                                                                        |
+| `"multi"`         | Braces only around more than one statement. Braces around a single statement are reported.                |
+| `"multi-line"`    | You can leave the braces out if the body is on the same line as the `if` or the loop.                     |
+| `"multi-or-nest"` | No braces around a single statement that fits on one line. Braces around a body that takes several lines. |
+
+{/* bad {"options": ["multi"]} */}
+
+```js
+if (!user) {
+  redirect("/login");
+}
+```
+
+Braces that the code needs are never reported, for example around a `const`:
+
+{/* good {"options": ["multi"]} */}
+
+```js
+if (!user) redirect("/login");
+
+if (debug) {
+  const started = Date.now();
+}
+```
+
+With `"multi-line"`, the first `if` is allowed and the second one is reported:
+
+{/* bad {"options": ["multi-line"], "count": 1} */}
+
+```js
+if (!user) redirect("/login");
+
+if (!user.active) redirect("/activate");
+```
+
+With `"multi-or-nest"`, the body below is one statement, but it takes three lines:
+
+{/* bad {"options": ["multi-or-nest"]} */}
+
+```js
+if (!user)
+  save({
+    name: "guest",
+  });
+```
+
+{/* good {"options": ["multi-or-nest"]} */}
+
+```js
+if (!user) redirect("/login");
+
+if (user.admin) {
+  save({
+    role: "admin",
+  });
+}
+```
+
+With any option but `"all"`, a second option `"consistent"` makes all branches of an `if` / `else` chain look the same. If one of them needs braces, all of them get braces.
+
+{/* bad {"options": ["multi", "consistent"]} */}
+
+```js
+if (user.admin) {
+  grant(user);
+  notify(user);
+} else deny(user);
+```
+
+{/* good {"options": ["multi", "consistent"]} */}
+
+```js
+if (user.admin) {
+  grant(user);
+  notify(user);
+} else {
+  deny(user);
+}
+```

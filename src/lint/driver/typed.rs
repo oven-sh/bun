@@ -627,10 +627,12 @@ struct Fixing {
     previous: Option<Vec<u8>>,
     passes: usize,
     is_fixed: bool,
+    /// How many fixes are in `current`.
+    fixes: usize,
     /// Nothing more is fixed: only the messages about `current` are missing.
     is_over: bool,
-    /// The rules whose fixes the last pass has applied, and whether the text had changed before it.
-    last_pass: Option<(Vec<RuleId>, bool)>,
+    /// The rules whose fixes the last pass has applied, whether the text had changed before it, and by how many fixes.
+    last_pass: Option<(Vec<RuleId>, bool, usize)>,
 }
 
 /// Lints `files` with types. `None` for a file that has to be linted without.
@@ -667,20 +669,22 @@ pub(crate) fn lint(
             };
             // The fixes of the last pass are taken back.
             if matches!(&result.messages[..], [only] if is_parse_error(only))
-                && let (Some(before), Some((rules, was_fixed))) =
+                && let (Some(before), Some((rules, was_fixed, fixes))) =
                     (state.previous.take(), state.last_pass.take())
             {
                 context.note_broken_fixes(file.path, rules);
                 *state = Fixing {
                     current: Some(before),
                     is_fixed: was_fixed,
+                    fixes,
                     is_over: true,
                     ..Fixing::default()
                 };
                 next.push(index);
                 continue;
             }
-            let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
+            let mut finish = |result: LintResult, text: Option<Vec<u8>>, fixed: (bool, usize)| {
+                let (is_fixed, fixes) = fixed;
                 // What is not there is not written.
                 let is_fixed = is_fixed && text.is_some();
                 let mut result = context.result(
@@ -691,6 +695,7 @@ pub(crate) fn lint(
                     file.config,
                 );
                 result.had_types = true;
+                result.fixes = if is_fixed { fixes } else { 0 };
                 done[index] = Some(result);
             };
             let has_fixes = context.fixes()
@@ -698,7 +703,7 @@ pub(crate) fn lint(
                 && result.messages.iter().any(|it| it.fix.is_some());
             let (true, Some(text)) = (has_fixes, &text) else {
                 let text = state.current.take().or(text);
-                finish(result, text, state.is_fixed);
+                finish(result, text, (state.is_fixed, state.fixes));
                 continue;
             };
             state.passes += 1;
@@ -712,7 +717,7 @@ pub(crate) fn lint(
             result.messages = fixed.remaining;
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));
-                finish(result, text, state.is_fixed);
+                finish(result, text, (state.is_fixed, state.fixes));
                 continue;
             }
             // oxlint fixes once.
@@ -727,14 +732,15 @@ pub(crate) fn lint(
                     next.push(index);
                     continue;
                 }
-                finish(result, Some(text.clone()), true);
+                finish(result, Some(text.clone()), (true, fixed.count));
                 if let Some(done) = &mut done[index] {
                     done.fixed_text = Some(fixed.output);
                 }
                 continue;
             }
-            state.last_pass = Some((fixed.applied, state.is_fixed));
+            state.last_pass = Some((fixed.applied, state.is_fixed, state.fixes));
             state.is_fixed = true;
+            state.fixes += fixed.count;
             let before_the_last = state.previous.replace(text.clone());
             let is_circular = state.passes > 1 && before_the_last.as_ref() == Some(&fixed.output);
             if is_circular {

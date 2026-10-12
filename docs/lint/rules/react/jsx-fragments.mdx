@@ -1,0 +1,87 @@
+---
+title: "react/jsx-fragments"
+description: "Enforce `<>` or `<React.Fragment>` for React fragments"
+---
+
+`<>...</>` and `<React.Fragment>...</React.Fragment>` do the same thing. By default the rule asks for the short form, which is less to read and needs no import.
+
+A fragment with a prop such as `key` is never reported, because the short form cannot take props. `Fragment` on its own counts if it is imported from `"react"`, required from it, or taken from `React`.
+
+`--fix` rewrites the fragment to the other form.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+import React, { Fragment } from "react";
+
+const name = (
+  <React.Fragment>
+    <First />
+    <Last />
+  </React.Fragment>
+);
+
+const address = (
+  <Fragment>
+    <Street />
+    <City />
+  </Fragment>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import React from "react";
+
+const name = (
+  <>
+    <First />
+    <Last />
+  </>
+);
+
+const rows = users.map(user => (
+  <React.Fragment key={user.id}>
+    <dt>{user.name}</dt>
+    <dd>{user.email}</dd>
+  </React.Fragment>
+));
+```
+
+## Options
+
+| Option               | What it does                                           |
+| -------------------- | ------------------------------------------------------ |
+| `"syntax"` (default) | Require `<>...</>` wherever the fragment has no props. |
+| `"element"`          | Require `<React.Fragment>...</React.Fragment>`.        |
+
+{/* bad {"options": ["element"]} */}
+
+```jsx
+const name = (
+  <>
+    <First />
+    <Last />
+  </>
+);
+```
+
+{/* good {"options": ["element"]} */}
+
+```jsx
+import React from "react";
+
+const name = (
+  <React.Fragment>
+    <First />
+    <Last />
+  </React.Fragment>
+);
+```

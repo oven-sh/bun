@@ -1,0 +1,37 @@
+---
+title: "prefer-rest-params"
+description: "Require rest parameters instead of `arguments`"
+---
+
+`arguments` looks like an array but is not one: it has no `map`, `slice` or `join`. And `function log(level)` does not show that the function takes more than one argument. A rest parameter such as `...parts` is a real array, and you can see it in the signature.
+
+Reading a named property, such as `arguments.length`, is not reported.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function log(level) {
+  const parts = Array.prototype.slice.call(arguments, 1);
+  console.log(level, parts.join(" "));
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function log(level, ...parts) {
+  console.log(level, parts.join(" "));
+}
+
+function hasOptions() {
+  return arguments.length > 1;
+}
+```

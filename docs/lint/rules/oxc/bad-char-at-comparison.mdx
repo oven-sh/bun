@@ -1,0 +1,39 @@
+---
+title: "oxc/bad-char-at-comparison"
+description: "Disallow comparing a single character with a longer string"
+---
+
+`text.charAt(0)` is one character at most. Comparing it with a string of two or more characters is always `false` with `===` and always `true` with `!==`, so the branch never does what it looks like it does.
+
+Every `.charAt(index)` is checked. `.at(index)` and an index written as a number, such as `[0]`, are checked only when the value is clearly a string: a string literal, a `const` set to one, or a variable declared with the type `string`. A parameter of type `string` does not count.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+if (path.charAt(0) === "./") {
+  resolveRelative(path);
+}
+
+const prefix = "https://example.com";
+if (prefix[0] === "ht") {
+  useTls();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (path.startsWith("./")) {
+  resolveRelative(path);
+}
+
+if (path.charAt(0) === "/") {
+  resolveAbsolute(path);
+}
+```

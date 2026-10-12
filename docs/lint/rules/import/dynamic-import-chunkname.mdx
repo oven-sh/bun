@@ -1,0 +1,93 @@
+---
+title: "import/dynamic-import-chunkname"
+description: "Require a `webpackChunkName` comment in every dynamic `import()`"
+---
+
+webpack puts the target of each `import()` in a file of its own. Without a `webpackChunkName` comment a production build names that file with a number, such as `472.js`, which tells you nothing in a network tab or a bundle report.
+
+The comment goes inside the parentheses, before the path. It must be a block comment with one space after `/*` and one before `*/`. An import with `webpackMode: "eager"` makes no chunk, so it needs no name, and giving it one is reported too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const settings = await import("./pages/settings.js");
+```
+
+{/* bad */}
+
+```js
+const settings = await import(
+  // webpackChunkName: "settings"
+  "./pages/settings.js"
+);
+```
+
+{/* bad */}
+
+```js
+const settings = await import(/*webpackChunkName: "settings"*/ "./pages/settings.js");
+```
+
+{/* bad */}
+
+```js
+const settings = await import(
+  /* webpackChunkName: "settings", webpackMode: "eager" */
+  "./pages/settings.js"
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const settings = await import(/* webpackChunkName: "settings" */ "./pages/settings.js");
+
+const admin = await import(
+  /* webpackChunkName: "admin", webpackPrefetch: true */
+  "./pages/admin.js"
+);
+
+const icons = await import(/* webpackMode: "eager" */ "./icons.js");
+```
+
+## Options
+
+| Option                   | Default                                      | What it does                                                                    |
+| ------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------- |
+| `importFunctions`        | `[]`                                         | Names of functions that are checked like `import()`.                            |
+| `allowEmpty`             | `false`                                      | Allow an import without a chunk name. A comment that is there is still checked. |
+| `webpackChunknameFormat` | `"([0-9a-zA-Z-_/.]\|\[(request\|index)\])+"` | A regular expression that the chunk name must match.                            |
+
+{/* bad {"options": [{"importFunctions": ["lazyLoad"]}]} */}
+
+```js
+const settings = lazyLoad("./pages/settings.js");
+```
+
+{/* good {"options": [{"allowEmpty": true}]} */}
+
+```js
+const settings = await import("./pages/settings.js");
+```
+
+{/* bad {"options": [{"webpackChunknameFormat": "page-[a-z]+"}]} */}
+
+```js
+const settings = await import(/* webpackChunkName: "settings" */ "./pages/settings.js");
+```
+
+{/* good {"options": [{"webpackChunknameFormat": "page-[a-z]+"}]} */}
+
+```js
+const settings = await import(/* webpackChunkName: "page-settings" */ "./pages/settings.js");
+```
+
+## When not to use it
+
+The comment only means something to webpack and to bundlers that read webpack's comments. If you bundle with `bun build`, leave this rule off.

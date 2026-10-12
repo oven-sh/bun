@@ -1,0 +1,113 @@
+---
+title: "id-length"
+description: "Enforce a minimum and a maximum length for identifier names"
+---
+
+A one-letter name such as `e`, `n` or `x` makes the reader go back to the declaration to learn what it holds. A very long name makes every line that uses it hard to scan.
+
+The rule checks a name where your code introduces it: variables, parameters, functions, classes, imports, object keys and class members. By default a name needs at least 2 characters, and there is no maximum.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+const n = items.length;
+
+const prices = items.map(x => x.price);
+
+try {
+  save();
+} catch (e) {
+  report(e);
+}
+
+const point = { y: 0 };
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const count = items.length;
+
+const prices = items.map(item => item.price);
+
+try {
+  save();
+} catch (error) {
+  report(error);
+}
+```
+
+Type parameters are not checked:
+
+{/* good */}
+
+```ts
+function first<T>(items: T[]): T {
+  return items[0];
+}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+id-length = ["error", { min = 3, max = 30, exceptions = ["i", "id"] }]
+```
+
+| Option              | Default    | What it does                                                                                                            |
+| ------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `min`               | `2`        | The shortest name allowed.                                                                                              |
+| `max`               | none       | The longest name allowed.                                                                                               |
+| `properties`        | `"always"` | `"never"` stops checking object keys and the properties you assign to.                                                  |
+| `exceptions`        | `[]`       | Names that are always allowed.                                                                                          |
+| `exceptionPatterns` | `[]`       | Regular expressions. A name that matches one is always allowed.                                                         |
+| `checkGeneric`      | `true`     | Only with an oxlint config, which also checks type parameters such as the `T` in `Box<T>`. `false` stops checking them. |
+
+{/* bad {"options": [{"max": 20}]} */}
+
+```js
+const numberOfItemsInTheShoppingCart = cart.items.length;
+```
+
+{/* good {"options": [{"exceptions": ["i"]}]} */}
+
+```js
+for (let i = 0; i < items.length; i++) {
+  render(items[i]);
+}
+```
+
+{/* good {"options": [{"exceptionPatterns": ["^[xyz]$"]}]} */}
+
+```js
+function move(x, y, z) {
+  return [x + 1, y + 1, z + 1];
+}
+```
+
+### `properties`
+
+{/* good {"options": [{"properties": "never"}]} */}
+
+```js
+const point = { x: 0, y: 0 };
+point.x = 10;
+```
+
+Variables and class members are still checked:
+
+{/* bad {"options": [{"properties": "never"}], "count": 2} */}
+
+```js
+const p = { x: 0, y: 0 };
+
+class Point {
+  x = 0;
+}
+```

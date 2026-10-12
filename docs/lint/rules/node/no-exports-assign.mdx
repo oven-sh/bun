@@ -1,0 +1,48 @@
+---
+title: "n/no-exports-assign"
+description: "Disallow assigning to `exports`"
+---
+
+In a CommonJS file, `exports` is a local variable that starts out as `module.exports`. Assigning to it only changes the variable. The module still exports the old `module.exports`, so `require()` gets an empty object.
+
+An assignment that sets `module.exports` in the same statement is allowed, because both then hold the same value.
+
+`--fix` rewrites `exports = ..` to `module.exports = ..`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+exports = {
+  parse,
+  stringify,
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+module.exports = {
+  parse,
+  stringify,
+};
+```
+
+{/* good */}
+
+```js
+exports.parse = parse;
+exports.stringify = stringify;
+```
+
+{/* good */}
+
+```js
+module.exports = exports = { parse };
+exports.stringify = stringify;
+```

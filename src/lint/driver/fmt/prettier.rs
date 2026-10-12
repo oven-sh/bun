@@ -5,6 +5,7 @@
 //! `bun lint`. What comes back is checked or written like what the formatter prints. It is as exact as it is slow.
 
 use super::cli::{Options, Precedence};
+use super::config::is_option_of_prettier;
 use crate::run::Environment;
 use crate::{fs, paths};
 use bun_lint::js_plugin::{Host, Unformatted};
@@ -43,6 +44,7 @@ impl<'e> Prettier<'e> {
             _ => Json::String(text.to_vec()),
         };
         let mut flags: Vec<(Vec<u8>, Json)> = (options.format.iter())
+            .filter(|it| is_option_of_prettier(it.0))
             .map(|it| (it.0.to_vec(), value(&it.1)))
             .collect();
         if !options.plugins.is_empty() {
@@ -119,7 +121,7 @@ impl<'e> Prettier<'e> {
 /// For the user, behind the name of the file.
 pub(crate) fn describe(why: Unformatted) -> Vec<u8> {
     match why {
-        Unformatted::NotInstalled => b"The package prettier is not installed.".to_vec(),
+        Unformatted::NotInstalled => b"prettier is not installed".to_vec(),
         Unformatted::Message(why) | Unformatted::Thrown(why) => why,
     }
 }

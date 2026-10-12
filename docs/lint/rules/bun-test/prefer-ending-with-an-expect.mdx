@@ -1,0 +1,114 @@
+---
+title: "bun:test/prefer-ending-with-an-expect"
+description: "Require the last statement of a test to be an assertion"
+---
+
+Nothing checks what a test does after its last assertion. If the test ends with a click, a request or a save, that step can break and the test still passes.
+
+The last statement of the test has to be a call to `expect`, with or without `await`. A test with an empty body is reported, and so is one that ends with an `if`, a loop or a `return`, even if there is an `expect` inside.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("renames the user", async () => {
+  const user = await createUser("Ada");
+  expect(user.name).toBe("Ada");
+  await user.rename("Grace");
+});
+```
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("loads the user", () => {
+  return expect(loadUser(1)).resolves.toBeDefined();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("renames the user", async () => {
+  const user = await createUser("Ada");
+  await user.rename("Grace");
+  expect(user.name).toBe("Grace");
+});
+
+test("loads the user", async () => {
+  await expect(loadUser(1)).resolves.toBeDefined();
+});
+```
+
+## Options
+
+| Option                         | Default   | What it does                                                                                                                                                   |
+| ------------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `assertFunctionNames`          | see below | The functions that count as an assertion, besides `expect` itself.                                                                                             |
+| `additionalTestBlockFunctions` | `[]`      | Other functions to check like `test`. Only names that `bun:test` defines have an effect, such as `afterEach`. Your own wrappers around `test` are not checked. |
+
+Without `assertFunctionNames`, any call with `expect` somewhere in its name counts:
+
+{/* good */}
+
+```ts
+import { test } from "bun:test";
+
+test("has a valid user", () => {
+  expectValidUser(loadUser(1));
+});
+
+test("responds with 200", async () => {
+  await request(app).get("/users").expect(200);
+});
+```
+
+With `assertFunctionNames`, only `expect` and the names in the list count. A name can be a dotted path. `*` stands for any letters and digits in one part of the path, and `**` for any number of parts.
+
+{/* good {"options": [{"assertFunctionNames": ["assert*", "request.**.expect"]}]} */}
+
+```ts
+import { test } from "bun:test";
+
+test("has a valid user", () => {
+  assertValidUser(loadUser(1));
+});
+
+test("responds with 200", async () => {
+  await request(app).get("/users").expect(200);
+});
+```
+
+{/* bad {"options": [{"assertFunctionNames": ["assert*"]}]} */}
+
+```ts
+import { test } from "bun:test";
+
+test("has a valid user", () => {
+  expectValidUser(loadUser(1));
+});
+```
+
+With `additionalTestBlockFunctions`, a hook can be held to the same rule:
+
+{/* bad {"options": [{"additionalTestBlockFunctions": ["afterEach"]}]} */}
+
+```ts
+import { afterEach, expect } from "bun:test";
+
+afterEach(() => {
+  expect(liveSockets()).toBe(0);
+  resetDatabase();
+});
+```

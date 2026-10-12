@@ -1,0 +1,101 @@
+---
+title: "bun:test/prefer-lowercase-title"
+description: "Require the titles of tests and `describe` blocks to start with a lowercase letter"
+---
+
+`bun test` prints a title after the titles of the blocks around it, as in `cart > adds an item`. A capital in the middle of that line reads like the start of a new sentence, and output where some titles have one and others do not is harder to scan.
+
+`--fix` makes the first letter lowercase. It leaves the titles alone in a file that calls `toMatchSnapshot()` or `toThrowErrorMatchingSnapshot()`, because snapshots are stored under the title of their test.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("Adds an item", () => {
+  expect(cart.add(item)).toBe(1);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("adds an item", () => {
+  expect(cart.add(item)).toBe(1);
+});
+```
+
+## Options
+
+| Option                        | Default | What it does                                                           |
+| ----------------------------- | ------- | ---------------------------------------------------------------------- |
+| `ignore`                      | `[]`    | Functions to leave alone: `"describe"`, `"test"`, `"it"`.              |
+| `allowedPrefixes`             | `[]`    | Allow a title that starts with one of these strings.                   |
+| `ignoreTopLevelDescribe`      | `false` | Allow a capital in a `describe` that is not inside another block.      |
+| `lowercaseFirstCharacterOnly` | `true`  | Set it to `false` to report an uppercase letter anywhere in the title. |
+
+`allowedPrefixes` is for titles that start with a name you cannot change:
+
+{/* good {"options": [{"allowedPrefixes": ["GET", "POST"]}]} */}
+
+```ts
+import { test } from "bun:test";
+
+test("GET /users returns a list", () => {});
+```
+
+With `ignoreTopLevelDescribe`, the outer `describe` can be named after a class or a component. Everything inside it is still checked:
+
+{/* good {"options": [{"ignoreTopLevelDescribe": true}]} */}
+
+```ts
+import { describe, test } from "bun:test";
+
+describe("Cart", () => {
+  test("adds an item", () => {});
+});
+```
+
+{/* bad {"options": [{"ignoreTopLevelDescribe": true}], "count": 1} */}
+
+```ts
+import { describe, test } from "bun:test";
+
+describe("Cart", () => {
+  describe("Checkout", () => {
+    test("adds an item", () => {});
+  });
+});
+```
+
+With `{ "ignore": ["describe"] }`, no `describe` is checked:
+
+{/* good {"options": [{"ignore": ["describe"]}]} */}
+
+```ts
+import { describe, test } from "bun:test";
+
+describe("Cart", () => {
+  describe("Checkout", () => {
+    test("adds an item", () => {});
+  });
+});
+```
+
+With `{ "lowercaseFirstCharacterOnly": false }`:
+
+{/* bad {"options": [{"lowercaseFirstCharacterOnly": false}]} */}
+
+```ts
+import { test } from "bun:test";
+
+test("adds an Item", () => {});
+```

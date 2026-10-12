@@ -1,0 +1,51 @@
+---
+title: "bun:test/padding-around-test-blocks"
+description: "Require a blank line before each `test` and `it` call"
+---
+
+Tests written right under each other, or right under setup code, are hard to tell apart when you scan a file. A blank line above each `test` or `it` call separates them.
+
+Only the line above the call is checked. Comments directly above the call belong to it, so the blank line goes above them. A test that is the first statement of a file or of a `describe` callback needs no blank line.
+
+`--fix` inserts the blank line.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { describe, expect, test } from "bun:test";
+
+describe("cart", () => {
+  const cart = createCart();
+  test("starts empty", () => {
+    expect(cart.items).toEqual([]);
+  });
+  test.skip("adds an item", () => {
+    expect(cart.add("apple").items).toEqual(["apple"]);
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { describe, expect, test } from "bun:test";
+
+describe("cart", () => {
+  const cart = createCart();
+
+  test("starts empty", () => {
+    expect(cart.items).toEqual([]);
+  });
+
+  // Waits for the new storage layer.
+  test.skip("adds an item", () => {
+    expect(cart.add("apple").items).toEqual(["apple"]);
+  });
+});
+```

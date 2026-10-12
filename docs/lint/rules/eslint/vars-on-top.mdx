@@ -1,0 +1,46 @@
+---
+title: "vars-on-top"
+description: "Require `var` declarations at the top of their function or file"
+---
+
+A `var` belongs to the whole function, wherever it is written. Inside an `if` or a loop it looks local to that block, but it exists, as `undefined`, from the first line of the function. Writing every `var` at the top shows the scope the variable really has.
+
+A `var` is at the top if only other variable declarations come before it. Directives such as `"use strict"` and `import` declarations may come first. A `var` in a block, or in the head of a `for` loop, is always reported. `let` and `const` are not checked.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function total(items) {
+  var sum = 0;
+  for (var i = 0; i < items.length; i++) {
+    var price = items[i].price;
+    sum += price;
+  }
+  return sum;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function total(items) {
+  var sum = 0;
+  var i;
+  var price;
+  for (i = 0; i < items.length; i++) {
+    price = items[i].price;
+    sum += price;
+  }
+  return sum;
+}
+```
+
+## When not to use it
+
+If your code uses `let` and `const`, which are scoped to their block, turn on `no-var` instead.

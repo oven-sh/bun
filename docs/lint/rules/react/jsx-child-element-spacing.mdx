@@ -1,0 +1,78 @@
+---
+title: "react/jsx-child-element-spacing"
+description: "Disallow a line break between text and an inline element in JSX, where a space may be lost"
+---
+
+JSX removes a line break between text and an element, together with the indentation around it. HTML would show a space there. So the first example below renders as "Read thedocs", and nothing in the code says if that was meant.
+
+The rule reports a line break between text and an inline element such as `a`, `b`, `code`, `em`, `span`, or `strong`. Block elements and your own components are not checked, and neither is `br`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const help = (
+  <p>
+    Read the
+    <a href="/docs">docs</a>
+  </p>
+);
+```
+
+{/* bad */}
+
+```jsx
+const help = (
+  <p>
+    <strong>Note:</strong>
+    this cannot be undone
+  </p>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const help = (
+  <p>
+    Read the <a href="/docs">docs</a>
+  </p>
+);
+
+const short = (
+  <p>
+    Read the <a href="/docs">docs</a>
+  </p>
+);
+```
+
+To say that you want no space, put a comment in between:
+
+{/* good */}
+
+```jsx
+const price = (
+  <p>
+    ${/* no space */}
+    <b>20</b>
+  </p>
+);
+```
+
+{/* good */}
+
+```jsx
+const address = (
+  <p>
+    1 Main Street
+    <br />
+    Springfield
+    <Badge />
+  </p>
+);
+```

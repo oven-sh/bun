@@ -1,0 +1,93 @@
+---
+title: "@typescript-eslint/consistent-type-imports"
+description: "Require `import type` for imports that are only used as types"
+---
+
+`import type` tells the reader, and every tool that compiles one file at a time, that the import is gone at runtime. A plain `import` of something that is only used as a type leaves that open: the module may be loaded for its side effects, or not, depending on the compiler and its settings.
+
+`--fix` adds the `type` keyword, and splits the import if it also brings in values.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { User } from "./models";
+
+export function greet(user: User) {
+  return `Hello, ${user.name}`;
+}
+```
+
+{/* bad */}
+
+```ts
+import { User, createUser } from "./models";
+
+export const admin: User = createUser("Ada");
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import type { User } from "./models";
+import { createUser } from "./models";
+
+export const admin: User = createUser("Ada");
+```
+
+{/* good */}
+
+```ts
+import { type User, createUser } from "./models";
+
+export const admin: User = createUser("Ada");
+```
+
+## Options
+
+| Option                    | Default                   | What it does                                                                                                                                                  |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prefer`                  | `"type-imports"`          | `"type-imports"` requires `import type`. `"no-type-imports"` reports it.                                                                                      |
+| `fixStyle`                | `"separate-type-imports"` | What `--fix` writes: `import type { User }`, or with `"inline-type-imports"`, `import { type User }`. Both forms are accepted in your code with either value. |
+| `disallowTypeAnnotations` | `true`                    | Also report `import("./models")` in a type.                                                                                                                   |
+
+{/* bad {"options": [{"prefer": "no-type-imports"}]} */}
+
+```ts
+import type { User } from "./models";
+
+export type Users = User[];
+```
+
+{/* good {"options": [{"prefer": "no-type-imports"}]} */}
+
+```ts
+import { User } from "./models";
+
+export type Users = User[];
+```
+
+By default, a type that is written as `import()` is reported:
+
+{/* bad */}
+
+```ts
+export type Users = import("./models").User[];
+```
+
+{/* good {"options": [{"disallowTypeAnnotations": false}]} */}
+
+```ts
+export type Users = import("./models").User[];
+```
+
+## When not to use it
+
+The `verbatimModuleSyntax` option of TypeScript makes a missing `import type` a compile error. If it is on, you need this rule only for its fix.
+
+With `experimentalDecorators` and `emitDecoratorMetadata` both on, TypeScript needs some imported types at runtime, and `import type` removes them. Run `bun lint --type-aware` in such a project: only then does the rule read both settings from your `tsconfig.json`, and it leaves the imports alone in files that have a decorator.

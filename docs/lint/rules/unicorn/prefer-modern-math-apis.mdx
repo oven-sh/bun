@@ -1,0 +1,30 @@
+---
+title: "unicorn/prefer-modern-math-apis"
+description: "Require `Math.log10()`, `Math.log2()`, `Math.hypot()` and `Math.abs()` over hand-written formulas"
+---
+
+Formulas built from `Math.log()` and `Math.sqrt()` are longer than the method that does the same, and less exact. `Math.log(1000) / Math.LN10` is `2.9999999999999996`, and `Math.log10(1000)` is `3`. `Math.sqrt(x * x + y * y)` is `Infinity` as soon as a square overflows, where `Math.hypot(x, y)` still has the answer.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+const digits = Math.log(value) * Math.LOG10E;
+const bits = Math.log(value) / Math.LN2;
+const distance = Math.sqrt(dx * dx + dy ** 2);
+const size = Math.sqrt(delta * delta);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const digits = Math.log10(value);
+const bits = Math.log2(value);
+const distance = Math.hypot(dx, dy);
+const size = Math.abs(delta);
+```

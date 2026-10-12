@@ -1,0 +1,44 @@
+---
+title: "unicorn/prefer-set-size"
+description: "Require `Set#size` instead of converting the `Set` to an array to read `length`"
+---
+
+`[...set].length` copies every item of the `Set` into a new array, reads one number and throws the array away. A `Set` already knows how many items it has: `set.size`.
+
+The rule reports `[...set].length` and `Array.from(set).length` where `set` is a `new Set()` or a `const` that is initialized with one.
+
+`--fix` rewrites it to `.size`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const uniqueCount = [...new Set(tags)].length;
+
+const visitors = new Set(ids);
+console.log(Array.from(visitors).length);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const uniqueCount = new Set(tags).size;
+
+const visitors = new Set(ids);
+console.log(visitors.size);
+```
+
+Where the rule cannot tell that the value is a `Set`, it reports nothing:
+
+{/* good */}
+
+```js
+function count(values) {
+  return [...values].length;
+}
+```

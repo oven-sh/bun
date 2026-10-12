@@ -1,0 +1,44 @@
+---
+title: "@typescript-eslint/no-non-null-asserted-nullish-coalescing"
+description: "Disallow `!` on the left side of `??`"
+---
+
+`??` gives a fallback for when the left side is `null` or `undefined`. A `!` on that side says it never is. If that is true, the fallback is dead code. If it is not, the `!` is wrong. `??` handles both cases without it, so remove the `!`.
+
+A `!` on the right side is allowed.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+declare const settings: { theme?: string };
+declare function findUser(id: string): { name: string } | null;
+
+const theme = settings.theme! ?? "light";
+const user = findUser("42")! ?? { name: "guest" };
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+declare const settings: { theme?: string };
+declare function findUser(id: string): { name: string } | null;
+
+const theme = settings.theme ?? "light";
+const user = findUser("42") ?? { name: "guest" };
+```
+
+Here the `!` is what lets you read `label` before it is assigned, so it is allowed:
+
+{/* good */}
+
+```ts
+let label: string;
+
+const text = label! ?? "untitled";
+```

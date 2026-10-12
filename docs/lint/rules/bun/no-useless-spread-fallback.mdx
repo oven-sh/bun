@@ -1,0 +1,75 @@
+---
+title: "bun/no-useless-spread-fallback"
+description: "Disallow an empty object as the fallback in `...(condition ? value : {})`"
+---
+
+Spreading `false`, `null` or `undefined` into an object does nothing. So the `{}` in `...(condition ? { a } : {})` is not needed, and `...(condition && { a })` does the same with less to read.
+
+The rule checks spreads in object literals and in JSX attributes.
+
+`--fix-suggestions` rewrites `condition ? value : {}` to `condition && value`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const headers = {
+  accept: "application/json",
+  ...(apiKey ? { "x-api-key": apiKey } : {}),
+};
+```
+
+{/* bad */}
+
+```jsx
+const link = (
+  <a href={url} {...(external ? { target: "_blank" } : {})}>
+    {label}
+  </a>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const headers = {
+  accept: "application/json",
+  ...(apiKey && { "x-api-key": apiKey }),
+};
+```
+
+An empty object in the first branch is reported too, without a suggestion:
+
+{/* bad */}
+
+```js
+const query = { page, ...(showAll ? {} : { limit: 20 }) };
+```
+
+{/* good */}
+
+```js
+const query = { page, ...(!showAll && { limit: 20 }) };
+```
+
+## Options
+
+| Option                     | Default | What it does                                                                          |
+| -------------------------- | ------- | ------------------------------------------------------------------------------------- |
+| `ignoreConditionsThatCall` | `[]`    | Names of functions. A conditional is not reported if its condition calls one of them. |
+
+Use it for a function that a build tool only understands as the condition of `? :`, such as a feature flag:
+
+{/* good {"options": [{"ignoreConditionsThatCall": ["feature"]}]} */}
+
+```js
+const routes = {
+  home,
+  ...(feature("ADMIN") ? { admin } : {}),
+};
+```

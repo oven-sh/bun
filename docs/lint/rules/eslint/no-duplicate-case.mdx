@@ -1,0 +1,63 @@
+---
+title: "no-duplicate-case"
+description: "Disallow two `case` labels with the same test in a `switch`"
+---
+
+A `switch` runs the first `case` that matches. A second `case` with the same test is never chosen, so its code only runs if the case above it falls through. It is usually a copied `case` where the label was not changed.
+
+Two labels are the same if their source text is the same, ignoring whitespace and comments.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+switch (event.key) {
+  case "ArrowUp":
+    moveUp();
+    break;
+  case "ArrowDown":
+    moveDown();
+    break;
+  case "ArrowUp":
+    selectPrevious();
+    break;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+switch (event.key) {
+  case "ArrowUp":
+    moveUp();
+    break;
+  case "ArrowDown":
+    moveDown();
+    break;
+  case "PageUp":
+    selectPrevious();
+    break;
+}
+```
+
+Labels do not have to be literals:
+
+{/* bad */}
+
+```js
+switch (true) {
+  case size > limit:
+    reject();
+    break;
+  case size > limit:
+    warn();
+    break;
+}
+```

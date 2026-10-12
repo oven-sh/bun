@@ -1,0 +1,47 @@
+---
+title: "react-hooks/preserve-manual-memoization"
+description: "Report `useMemo` and `useCallback` calls that React Compiler cannot keep memoized"
+---
+
+React Compiler replaces your `useMemo` and `useCallback` calls with its own caching. If it cannot cache a value that you memoized by hand, it skips the whole component rather than make it slower, and nothing in that component is optimized.
+
+The usual cause is a dependency that the compiler cannot cache, such as an object that is created before a hook call and changed after it. That object is new on every render, so the `useMemo` that depends on it never reuses its result.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import { useMemo } from "react";
+
+function Table({ rows }) {
+  const columns = ["name"];
+  const isWide = useIsWide();
+  if (isWide) {
+    columns.push("email");
+  }
+  const header = useMemo(() => columns.map(name => name.toUpperCase()), [columns]);
+  return <Grid header={header} rows={rows} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { useMemo } from "react";
+
+function Table({ rows }) {
+  const isWide = useIsWide();
+  const columns = isWide ? ["name", "email"] : ["name"];
+  const header = useMemo(() => columns.map(name => name.toUpperCase()), [columns]);
+  return <Grid header={header} rows={rows} />;
+}
+```
+
+## When not to use it
+
+The rule is only about React Compiler. If you do not use the compiler, nothing is skipped and the report has no effect on your app.

@@ -1,0 +1,46 @@
+---
+title: "unicorn/number-literal-case"
+description: "Require lowercase prefixes and exponents, and uppercase hexadecimal digits, in numbers"
+---
+
+`0XFF`, `0xff` and `0xFF` are the same number. This rule picks one spelling: a lowercase `0x`, `0b`, `0o` or `e`, and uppercase hexadecimal digits. The prefix then stands out from the digits.
+
+`--fix` rewrites the number.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 5} */}
+
+```js
+const mask = 0xff;
+const color = 0xff8800;
+const flags = 0b1010;
+const mode = 0o755;
+const big = 1.5e9;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const mask = 0xff;
+const color = 0xff8800;
+const flags = 0b1010;
+const mode = 0o755;
+const big = 1.5e9;
+```
+
+The `n` at the end of a `BigInt` stays lowercase:
+
+{/* good */}
+
+```js
+const id = 0xabcdefn;
+```
+
+## When not to use it
+
+Some formatters, such as Prettier, write hexadecimal digits in lowercase. If yours does, the two undo each other's work, so turn this rule off.

@@ -1,0 +1,42 @@
+---
+title: "bun:test/prefer-called-times"
+description: "Require `toHaveBeenCalledTimes(1)` instead of `toHaveBeenCalledOnce()`"
+---
+
+`toHaveBeenCalledOnce()` and `toHaveBeenCalledTimes(1)` assert the same thing. With `toHaveBeenCalledTimes()` every call count is written the same way, and a new expected count is a change of one number.
+
+`--fix` rewrites the matcher.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("does not retry after a success", () => {
+  const request = mock();
+  retryFetch(request);
+  expect(request).toHaveBeenCalledOnce();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("does not retry after a success", () => {
+  const request = mock();
+  retryFetch(request);
+  expect(request).toHaveBeenCalledTimes(1);
+});
+```
+
+## When not to use it
+
+`bun:test/prefer-called-once` asks for the opposite. Turn on one of the two, not both.

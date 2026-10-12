@@ -72,6 +72,14 @@ impl RuleId {
         self.write_to(&mut out);
         out
     }
+
+    /// [`Meta::docs_url`], if the rule is built in.
+    pub fn docs_url(&self) -> Option<Vec<u8>> {
+        match self {
+            RuleId::Known(meta) | RuleId::Named(meta, _) => Some(meta.docs_url()),
+            RuleId::Js(_) | RuleId::Unknown(_) => None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

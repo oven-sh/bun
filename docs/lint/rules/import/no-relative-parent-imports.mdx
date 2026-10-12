@@ -1,0 +1,92 @@
+---
+title: "import/no-relative-parent-imports"
+description: "Disallow relative imports from parent directories"
+---
+
+With this rule a directory only depends on what is inside it and on packages. You can then move or delete a directory without searching the rest of the project for `../` paths that point out of it.
+
+Only imports that resolve to a file are reported. A path that does not exist is left to `import/no-unresolved`.
+
+## Examples
+
+Reported:
+
+{/* file "src/api.js" */}
+
+```js src/api.js
+export function getUser() {}
+```
+
+{/* bad {"filename": "src/pages/home.js"} */}
+
+```js src/pages/home.js
+import { getUser } from "../api.js";
+```
+
+Not reported:
+
+{/* file "src/pages/header.js" */}
+
+```js src/pages/header.js
+export function Header() {}
+```
+
+{/* file "src/pages/parts/footer.js" */}
+
+```js src/pages/parts/footer.js
+export function Footer() {}
+```
+
+{/* good {"filename": "src/pages/home.js"} */}
+
+```js src/pages/home.js
+import path from "node:path";
+import { Header } from "./header.js";
+import { Footer } from "./parts/footer.js";
+```
+
+## Options
+
+| Option     | Default | What it does                                                         |
+| ---------- | ------- | -------------------------------------------------------------------- |
+| `esmodule` | `true`  | Check `import`, `export .. from` and `import()`.                     |
+| `commonjs` | `false` | Also check `require()`.                                              |
+| `amd`      | `false` | Also check the dependencies of `define()` and of `require([..])`.    |
+| `ignore`   | `[]`    | Regular expressions. A path that matches one of them is not checked. |
+
+With `commonjs`, this is reported:
+
+{/* file "src/api.js" */}
+
+```js src/api.js
+exports.getUser = function getUser() {};
+```
+
+{/* bad {"filename": "src/pages/home.js", "options": [{"commonjs": true}]} */}
+
+```js src/pages/home.js
+const { getUser } = require("../api.js");
+```
+
+With `ignore`, you can keep one shared directory reachable:
+
+```toml bunfig.toml
+[lint.rules]
+"import/no-relative-parent-imports" = ["error", { ignore = ["^\\.\\./shared/"] }]
+```
+
+{/* file "src/shared/format.js" */}
+
+```js src/shared/format.js
+export function formatDate() {}
+```
+
+{/* good {"filename": "src/pages/home.js", "options": [{"ignore": ["^\\.\\./shared/"]}]} */}
+
+```js src/pages/home.js
+import { formatDate } from "../shared/format.js";
+```
+
+## When not to use it
+
+Most projects share code between sibling directories through `../`. This rule fits a project that is built as a strict tree and reaches shared code through packages.

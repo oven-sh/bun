@@ -1,0 +1,139 @@
+---
+title: "jsx-a11y/label-has-associated-control"
+description: "Require every `<label>` to have text and a form control it belongs to"
+---
+
+A screen reader announces a form field by reading its label. A `<label>` that is not tied to a field is read as loose text, and clicking it does not focus anything. A `<label>` without text leaves the field without a name.
+
+A label is tied to a control by `htmlFor`, or by wrapping the control. By default either one is enough.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const form = (
+  <form>
+    <label>Email</label>
+    <input type="email" id="email" />
+
+    <label htmlFor="password" />
+    <input type="password" id="password" />
+  </form>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const form = (
+  <form>
+    <label htmlFor="email">Email</label>
+    <input type="email" id="email" />
+
+    <label>
+      Password
+      <input type="password" />
+    </label>
+  </form>
+);
+```
+
+## Options
+
+| Option              | Default    | What it does                                                                                                                                |
+| ------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `assert`            | `"either"` | How the label must be tied to its control: `"htmlFor"`, `"nesting"`, `"both"`, or `"either"`.                                               |
+| `depth`             | `2`        | How many levels of children to search for the text and the control. At most 25.                                                             |
+| `labelComponents`   | `[]`       | Components to check as if they were `<label>`.                                                                                              |
+| `labelAttributes`   | `[]`       | Attributes that count as the label's text, besides `alt`, `aria-label` and `aria-labelledby`.                                               |
+| `controlComponents` | `[]`       | Components that count as a control, besides `input`, `meter`, `output`, `progress`, `select` and `textarea`. Globs such as `"*Field"` work. |
+
+With `"both"`, a label that only wraps its control is reported:
+
+{/* bad {"options": [{"assert": "both"}]} */}
+
+```jsx
+const field = (
+  <label>
+    Password
+    <input type="password" />
+  </label>
+);
+```
+
+A control that sits deeper than `depth` is not found:
+
+{/* bad */}
+
+```jsx
+const field = (
+  <label>
+    Country
+    <div>
+      <span>
+        <select />
+      </span>
+    </div>
+  </label>
+);
+```
+
+{/* good {"options": [{"depth": 3}]} */}
+
+```jsx
+const field = (
+  <label>
+    Country
+    <div>
+      <span>
+        <select />
+      </span>
+    </div>
+  </label>
+);
+```
+
+Name your own label components to have them checked:
+
+{/* bad {"options": [{"labelComponents": ["FieldLabel"]}]} */}
+
+```jsx
+const field = <FieldLabel>Email</FieldLabel>;
+```
+
+A component inside a label is not taken for a control unless you name it:
+
+{/* bad */}
+
+```jsx
+const field = (
+  <label>
+    Email
+    <TextField type="email" />
+  </label>
+);
+```
+
+{/* good {"options": [{"controlComponents": ["*Field"]}]} */}
+
+```jsx
+const field = (
+  <label>
+    Email
+    <TextField type="email" />
+  </label>
+);
+```
+
+An attribute you name in `labelAttributes` counts as the text:
+
+{/* good {"options": [{"labelAttributes": ["text"]}]} */}
+
+```jsx
+const field = <label htmlFor="email" text="Email" />;
+```

@@ -1,0 +1,76 @@
+---
+title: "no-sync"
+description: "Disallow methods with a name that ends in `Sync`"
+---
+
+`fs.readFileSync()` and its relatives block the thread until the work is done. In a server, no other request is handled in the meantime.
+
+The rule goes by the name alone: it reports every `object.somethingSync`, called or not, whatever the object is. It does not see a function that is imported by name, such as `import { readFileSync } from "node:fs"`.
+
+ESLint has deprecated this rule. Use `n/no-sync` instead, which reports those calls too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import fs from "node:fs";
+
+function handle(request) {
+  const page = fs.readFileSync("index.html", "utf8");
+  return new Response(page);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import fs from "node:fs/promises";
+
+async function handle(request) {
+  const page = await fs.readFile("index.html", "utf8");
+  return new Response(page);
+}
+```
+
+This blocks the thread too, but the rule does not see it:
+
+{/* good */}
+
+```js
+import { readFileSync } from "node:fs";
+
+const page = readFileSync("index.html", "utf8");
+```
+
+## Options
+
+| Option             | Default | What it does                                                                    |
+| ------------------ | ------- | ------------------------------------------------------------------------------- |
+| `allowAtRootLevel` | `false` | Allow sync methods outside of functions, where they run once as the file loads. |
+
+{/* good {"options": [{"allowAtRootLevel": true}]} */}
+
+```js
+import fs from "node:fs";
+
+const config = JSON.parse(fs.readFileSync("config.json", "utf8"));
+```
+
+{/* bad {"options": [{"allowAtRootLevel": true}]} */}
+
+```js
+import fs from "node:fs";
+
+function loadConfig() {
+  return JSON.parse(fs.readFileSync("config.json", "utf8"));
+}
+```
+
+## When not to use it
+
+In a script or a command-line tool nothing else waits for the thread, and the sync methods are simpler.

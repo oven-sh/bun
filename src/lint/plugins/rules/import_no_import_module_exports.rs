@@ -1,5 +1,5 @@
+use crate::import_minimatch::Glob;
 use crate::import_package_path::read_pkg_up;
-use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::modules::{Lookup, Modules};
 use bun_lint::paths;
 use bun_lint::prelude::*;
@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 /// Forbid import statements with CommonJS module.exports.
 pub struct NoImportModuleExports {
-    exceptions: Vec<Pattern>,
+    exceptions: Vec<Glob>,
 }
 
 const NO_IMPORT: Message = Message::new(
@@ -84,7 +84,7 @@ impl Rule for NoImportModuleExports {
 
     fn new(options: &Options) -> Self {
         let exceptions = options.object(0).strings("exceptions");
-        let minimatch = |glob: &str| Pattern::new(&paths::from_native(glob.as_bytes()), GlobOptions::MINIMATCH_3);
+        let minimatch = |glob: &str| Glob::new(glob.as_bytes());
         NoImportModuleExports { exceptions: exceptions.into_iter().map(minimatch).collect() }
     }
 

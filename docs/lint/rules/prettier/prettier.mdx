@@ -1,0 +1,96 @@
+---
+title: "prettier/prettier"
+description: "Require code to be formatted the way Prettier prints it"
+---
+
+This rule compares each file with what Prettier prints and reports every place where they differ. Formatting problems then show up next to your lint problems, in the terminal and in the editor.
+
+It is the rule of `eslint-plugin-prettier`, for a project with an ESLint config that imports that package. Bun has it built in and compares with what `bun format` prints, which is what Prettier 3.9 prints, so it never starts Prettier. If Bun cannot be sure that its output is Prettier's, the rule of the package runs in JavaScript with your installed Prettier, and a note says why. That happens, for example, with another version of Prettier or with a Prettier plugin that `bun format` does not have.
+
+It reads your `.prettierrc` and `.editorconfig`. It skips files in `node_modules` and the files that the `.prettierignore` in the directory where you run `bun lint` names.
+
+`--fix` formats the file.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 1} */}
+
+```js
+const user = { name: "Ada" };
+```
+
+The message says what to change. In it, `·` is a space, `⏎` is a line break, and `↹` is a tab:
+
+```txt
+Replace `name:'Ada'}` with `·name:·"Ada"·};`
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const user = { name: "Ada" };
+```
+
+## Options
+
+The first option is an object of Prettier options, with the names they have in a `.prettierrc`. They win over your config files.
+
+{/* skip */}
+
+```js eslint.config.js
+import prettier from "eslint-plugin-prettier";
+
+export default [
+  {
+    plugins: { prettier },
+    rules: {
+      "prettier/prettier": ["error", { singleQuote: true, semi: false }],
+    },
+  },
+];
+```
+
+{/* good {"options": [{"singleQuote": true, "semi": false}]} */}
+
+```js
+const user = { name: "Ada" };
+```
+
+{/* bad {"options": [{"singleQuote": true, "semi": false}]} */}
+
+```js
+const user = { name: "Ada" };
+```
+
+The second option is an object with these keys:
+
+| Option            | Default | What it does                                                                                                                                   |
+| ----------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `usePrettierrc`   | `true`  | Read `.prettierrc` and `.editorconfig`.                                                                                                        |
+| `fileInfoOptions` | `{}`    | `ignorePath` names the ignore file or files to read instead of `.prettierignore`. `withNodeModules: true` also checks files in `node_modules`. |
+
+With this `.prettierrc`, Prettier prints single quotes:
+
+{/* file ".prettierrc" */}
+
+```json .prettierrc
+{ "singleQuote": true }
+```
+
+With `[{}, { "usePrettierrc": false }]` the file is not read, and the single quotes are reported:
+
+{/* bad {"options": [{}, {"usePrettierrc": false}]} */}
+
+```js
+const name = "Ada";
+```
+
+## When not to use it
+
+Without an ESLint config, or without Prettier, use `bun/format`. It is the same rule with nothing to install.
+
+If `bun format --check` or `prettier --check` already runs in CI, this rule does the same work a second time.

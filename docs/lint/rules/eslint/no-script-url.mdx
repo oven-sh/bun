@@ -1,0 +1,30 @@
+---
+title: "no-script-url"
+description: "Disallow `javascript:` URLs"
+---
+
+A browser runs the text after `javascript:` as code when the URL is opened. That is `eval` under another name: the code is a string that no tool checks, and if any part of it comes from a user, it is a way to inject a script.
+
+The rule reports a string or a template literal without `${}` that starts with `javascript:`, in upper or lower case.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+link.href = "javascript:void(0)";
+location.href = `JavaScript:save()`;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+link.addEventListener("click", event => {
+  event.preventDefault();
+  save();
+});
+```

@@ -1,0 +1,56 @@
+---
+title: "oxc/no-async-await"
+description: "Disallow `async` functions"
+---
+
+Some projects avoid `async` functions. They target engines that do not have them and do not want the helper code a compiler adds, or they use promise chains or callbacks everywhere.
+
+The rule reports the `async` keyword on function declarations, function expressions, arrow functions and methods. Since `await` needs an `async` function around it, that covers `await` too.
+
+Two things are not reported: `await` at the top level of a module, and a function without a name that is the value of an object property, as in `{ save: async function () {} }`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+async function loadUser(id) {
+  const response = await fetch(`/users/${id}`);
+  return response.json();
+}
+
+const refresh = async () => {
+  await loadUser(current.id);
+};
+
+class Store {
+  async save() {}
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function loadUser(id) {
+  return fetch(`/users/${id}`).then(response => response.json());
+}
+
+const refresh = () => loadUser(current.id);
+```
+
+Also not reported, although they use `async` or `await`:
+
+{/* good */}
+
+```js
+const config = await loadConfig();
+const handlers = { save: async function () {} };
+```
+
+## When not to use it
+
+`async` and `await` work in Bun, Node.js and every current browser. Turn this rule on only if your project has a reason to avoid them.

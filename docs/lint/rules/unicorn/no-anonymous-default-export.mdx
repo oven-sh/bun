@@ -1,0 +1,62 @@
+---
+title: "unicorn/no-anonymous-default-export"
+description: "Require a name for a function or class that is the default export"
+---
+
+A default export without a name gives you nothing to search for, and every file that imports it makes up its own name. Stack traces show it as `default` or `<anonymous>`.
+
+The rule looks at functions and classes, in `export default` and in `module.exports =`. Other values, such as objects and numbers, are not reported.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+export default function (user) {
+  return `${user.first} ${user.last}`;
+}
+```
+
+{/* bad */}
+
+```js
+export default user => `${user.first} ${user.last}`;
+```
+
+{/* bad */}
+
+```js
+module.exports = class {
+  items = [];
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+export default function fullName(user) {
+  return `${user.first} ${user.last}`;
+}
+```
+
+An arrow function has no name of its own. Give it one with a variable:
+
+{/* good */}
+
+```js
+const fullName = user => `${user.first} ${user.last}`;
+
+export default fullName;
+```
+
+{/* good */}
+
+```js
+module.exports = class Cart {
+  items = [];
+};
+```

@@ -11,6 +11,7 @@ use super::cli::{Options, Precedence};
 use super::{editorconfig, tailwind};
 use crate::configs::NAMES_OF_VITE;
 use crate::gitignore::{self, Chain};
+use crate::paths::package_of;
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_collections::index_sort::sort_slice;
@@ -96,6 +97,11 @@ const OPTIONS: [&[u8]; 28] = [
     b"vueIndentScriptAndStyle",
 ];
 
+/// Whether Prettier has the option `name`. What else a flag can set is Bun's own.
+pub(super) fn is_option_of_prettier(name: &[u8]) -> bool {
+    OPTIONS.contains(&name)
+}
+
 /// Those of [`OPTIONS`] whose value is a string.
 const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
     b"parser",
@@ -171,39 +177,33 @@ pub(crate) struct Scope {
     editorconfigs: Vec<Arc<editorconfig::File>>,
 }
 
+impl Scope {
+    pub(crate) fn has_editorconfig(&self) -> bool {
+        !self.editorconfigs.is_empty()
+    }
+}
+
 /// An element of oxc's `GlobSet`.
 pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
     bun_glob::Pattern::of_oxc_glob_set(pattern)
 }
 
 fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
-    let all = strings_of(json);
-    let pattern = |text: &&[u8]| Pattern {
+    patterns_of(strings_of(json).into_iter(), is_oxfmt)
+}
+
+fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<Pattern> {
+    let pattern = |text: &[u8]| Pattern {
         glob: if is_oxfmt {
             glob_of_oxc(text)
         } else {
             // `micromatch.isMatch(path, pattern, { dot: true })`
             bun_glob::Pattern::new(text, bun_glob::Options::MICROMATCH_DOT)
         },
-        text: (*text).into(),
+        text: text.into(),
         has_slash: strings::contains_char(text, b'/'),
     };
-    all.iter().map(pattern).collect()
-}
-
-/// The package of a plugin that is named, or is a path into `node_modules`.
-fn package_of(plugin: &[u8]) -> &[u8] {
-    let Some(at) = strings::last_index_of(plugin, b"node_modules/") else {
-        return plugin;
-    };
-    let rest = &plugin[at + b"node_modules/".len()..];
-    let slash_from =
-        |from: usize| Some(from + strings::index_of_char_usize(rest.get(from..)?, b'/')?);
-    let end = match rest.first() {
-        Some(b'@') => slash_from(0).and_then(|it| slash_from(it + 1)),
-        _ => slash_from(0),
-    };
-    &rest[..end.unwrap_or(rest.len())]
+    all.map(pattern).collect()
 }
 
 /// What the plugins that sort imports do is built in.
@@ -507,13 +507,6 @@ fn is_name_of_oxfmt(name: &[u8]) -> bool {
     strings::contains(name, b"oxfmt")
 }
 
-/// Whether one of oxfmt's configuration files is in `directory`.
-pub(super) fn has_configuration_of_oxfmt(directory: &[u8]) -> bool {
-    NAMES[..NAMES_OF_OXFMT]
-        .iter()
-        .any(|name| fs::is_file(&paths::join(directory, name)))
-}
-
 /// Which formatters are among the dependencies of a project. That tells what one without a configuration file is
 /// formatted with.
 #[derive(Copy, Clone, Default)]
@@ -717,6 +710,8 @@ pub(crate) struct Configs<'c> {
     options: Cow<'c, Options>,
     environment: &'c Environment<'c>,
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
+    /// `overrides` of `[format]`, whose patterns are from the working directory.
+    overrides: Vec<Override>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     /// [`Configs::name`]
@@ -757,8 +752,22 @@ impl<'c> Configs<'c> {
     ) -> Configs<'c> {
         let (is_like_oxfmt, reads_editorconfig) = (options.is_like_oxfmt, options.editorconfig);
         let named = options.config.clone();
+        // Read as oxfmt reads them: what is excluded is held against the path, whatever `files` looks like.
+        let strings = |all: &[Vec<u8>]| patterns_of(all.iter().map(|it| &it[..]), true);
+        let overrides = (options.overrides.iter())
+            .map(|it| Override {
+                files: strings(&it.files),
+                excluded: strings(&it.excluded),
+                settings: (it.format.iter())
+                    .map(|it| (it.0.to_vec(), it.1.clone()))
+                    .collect(),
+                plugins: None,
+                is_oxfmt: true,
+            })
+            .collect();
         let mut configs = Configs {
             options,
+            overrides,
             environment,
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
@@ -783,7 +792,7 @@ impl<'c> Configs<'c> {
                     let has_prettier = formatters.prettier;
                     if has_oxfmt && has_prettier {
                         configs.warn(&[
-                            b"There is no configuration file, and the project depends on both oxfmt and prettier: files are formatted like Prettier does. --flavor oxfmt, or an .oxfmtrc.json, which bun format --init writes, changes that.",
+                            b"No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like Prettier. Use --flavor=oxfmt to format like oxfmt.",
                         ]);
                     }
                     has_oxfmt && !has_prettier
@@ -951,7 +960,7 @@ impl<'c> Configs<'c> {
             .get(b"plugins")
             .is_some_and(|it| it.as_array().is_none())
         {
-            return Err(fail(b"\"plugins\" is not an array."));
+            return Err(fail(b"\"plugins\" must be an array"));
         }
         let is_override = |it: &Json| match it.get(b"files") {
             Some(Json::String(_)) => true,
@@ -964,7 +973,7 @@ impl<'c> Configs<'c> {
             .is_some_and(|it| !it.as_array().is_some_and(|it| it.iter().all(is_override)))
         {
             return Err(fail(
-                b"\"overrides\" is not an array of objects with \"files\", a pattern or an array of patterns.",
+                b"\"overrides\" must be an array of objects, each with \"files\" set to a pattern or an array of patterns",
             ));
         }
         if is_oxfmt
@@ -1015,9 +1024,9 @@ impl<'c> Configs<'c> {
             .any(|it| !it.missing.is_empty())
         {
             self.warn(&[
-                b"Plugins are not supported: \"plugins\" in ",
+                b"\"plugins\" in ",
                 path,
-                b" has no effect.",
+                b" has no effect because bun format does not load Prettier plugins",
             ]);
         }
         Ok(Some(Arc::new(config)))
@@ -1314,10 +1323,16 @@ impl<'c> Configs<'c> {
             .unwrap_or(false)
     }
 
+    /// `--toml`
+    pub(crate) fn formats_toml(&self) -> bool {
+        self.options.toml
+    }
+
     /// The option `parser` for the file at `path`, which has `scope`, if it is set.
     pub(crate) fn parser_for(&self, scope: &Scope, path: &[u8]) -> Option<Box<[u8]>> {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";
         let may_be_set = self.options.format.iter().any(|it| it.0 == b"parser")
+            || (self.overrides.iter()).any(|it| it.settings.iter().any(is_about_parser))
             || self.config_of(scope).ok().flatten().is_some_and(|config| {
                 config.settings.iter().any(is_about_parser)
                     || config
@@ -1376,12 +1391,20 @@ impl<'c> Configs<'c> {
         }
         from_files.extend(from_config);
         let has_files = config.is_some() || !from_editorconfig.is_empty();
-        let from_flags = self.options.format.iter().map(|it| (it.0, &it.1[..]));
+        let mut from_flags: Vec<(&[u8], &[u8])> =
+            (self.options.format.iter().map(|it| (it.0, &it.1[..]))).collect();
+        if !self.overrides.is_empty() {
+            let relative = paths::relative(&self.environment.cwd, path);
+            for it in self.overrides.iter().filter(|it| it.matches(&relative)) {
+                from_flags.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
+            }
+        }
+        let of_flags = from_flags.iter().copied();
         let all: Vec<(&[u8], &[u8])> = match self.options.config_precedence {
-            Precedence::CliOverride => from_files.into_iter().chain(from_flags).collect(),
-            Precedence::FileOverride => from_flags.chain(from_files).collect(),
+            Precedence::CliOverride => from_files.into_iter().chain(of_flags).collect(),
+            Precedence::FileOverride => of_flags.chain(from_files).collect(),
             Precedence::PreferFile if has_files => from_files,
-            Precedence::PreferFile => from_flags.collect(),
+            Precedence::PreferFile => of_flags.collect(),
         };
         // Prettier looks at the flags first, also at one that a file takes the place of.
         let mut flags = self.options.format.iter();
@@ -1397,6 +1420,7 @@ impl<'c> Configs<'c> {
         resolved.options.format_javascript = Some(super::format_javascript(self.options.verify));
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.embedded_html = true;
+        resolved.options.toml = self.options.toml;
         if is_oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // It sorts the keys of a `package.json` unless it is told not to.
@@ -1404,6 +1428,8 @@ impl<'c> Configs<'c> {
         }
         let mut sort_imports: Option<Vec<u8>> = None;
         let mut sort_tailwindcss: Option<Vec<u8>> = None;
+        // What oxfmt has and Prettier has not is known with every configuration if a flag or `[format]` sets it.
+        let is_known = |name: &[u8]| is_oxfmt || from_flags.iter().any(|it| it.0 == name);
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt
             && !(self.plugins_for(scope, path)).is_some_and(|it| it.names_others)
@@ -1420,10 +1446,10 @@ impl<'c> Configs<'c> {
                     sort_imports = Some(merged);
                 }
                 name if sort.set(name, value) => {}
-                b"insertFinalNewline" if is_oxfmt => {
+                b"insertFinalNewline" if is_known(name) => {
                     resolved.omits_final_newline = value == b"false"
                 }
-                b"sortPackageJson" | b"sortPackageJson.sortScripts" if is_oxfmt => {
+                b"sortPackageJson" | b"sortPackageJson.sortScripts" if is_known(name) => {
                     let _ = resolved.options.set(name, value);
                 }
                 b"experimentalSortPackageJson" if is_oxfmt => {
@@ -1437,7 +1463,7 @@ impl<'c> Configs<'c> {
                     }
                 }
                 // An override changes the keys that it has.
-                name if is_oxfmt && is_tailwind(name) => {
+                name if is_tailwind(name) && is_known(name) => {
                     sort_tailwindcss = Some(match &sort_tailwindcss {
                         Some(before) => merged_objects(before, value),
                         None => value.to_vec(),
@@ -1491,7 +1517,8 @@ impl<'c> Configs<'c> {
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
-            let of_config = config.map(|it| paths::dirname(&it.path));
+            // Only a configuration file of oxfmt has it. The paths in `[format]` are from the working directory.
+            let of_config = (config.filter(|it| it.is_oxfmt)).map(|it| paths::dirname(&it.path));
             let tailwind =
                 tailwind::for_file(&self.classes, self.environment, &value, (of_config, path));
             resolved.options.tailwind = Some(Arc::new(tailwind));

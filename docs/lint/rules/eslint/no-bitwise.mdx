@@ -1,0 +1,71 @@
+---
+title: "no-bitwise"
+description: "Disallow bitwise operators"
+---
+
+Most application code never needs `&`, `|`, `^`, `~`, `<<`, `>>` or `>>>`, so a single `&` or `|` is usually a typo for `&&` or `||`. The code still runs, but it evaluates both sides every time and gives a number instead of one of the operands.
+
+The assignment forms such as `|=` and `<<=` are reported too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+if (user.active & user.verified) {
+  grant(user);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (user.active && user.verified) {
+  grant(user);
+}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+no-bitwise = ["error", { allow = ["&", "|"] }]
+```
+
+| Option      | Default | What it does                                                        |
+| ----------- | ------- | ------------------------------------------------------------------- |
+| `allow`     | `[]`    | Operators that are not reported.                                    |
+| `int32Hint` | `false` | Allow `value \| 0`, a way to cut a number down to a 32-bit integer. |
+
+With `allow: ["&", "|"]`, this is not reported:
+
+{/* good {"options": [{"allow": ["&", "|"]}]} */}
+
+```js
+const mode = READ | WRITE;
+const canWrite = (mode & WRITE) !== 0;
+```
+
+With `int32Hint`, neither is this:
+
+{/* good {"options": [{"int32Hint": true}]} */}
+
+```js
+const whole = price | 0;
+```
+
+Any other number is still reported:
+
+{/* bad {"options": [{"int32Hint": true}]} */}
+
+```js
+const odd = price | 1;
+```
+
+## When not to use it
+
+Code that works with flags, binary formats, hashes or colors needs these operators. Turn the rule off for those files, or list the operators you use in `allow`.

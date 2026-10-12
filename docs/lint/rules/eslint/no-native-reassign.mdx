@@ -1,0 +1,46 @@
+---
+title: "no-native-reassign"
+description: "Disallow assignments to built-in and other read-only global variables"
+---
+
+Nothing stops you from writing `Object = null`. Every piece of code that runs afterwards, including libraries, sees the new value and breaks far from the assignment. Most of the time it is a typo or a missing `const`.
+
+The rule reports every write to a global that is marked as read-only, also with `+=`, `++` or destructuring. A variable of your own with the same name is fine.
+
+ESLint has deprecated this rule. `no-global-assign` is its current name and does the same.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+Promise = require("bluebird");
+```
+
+{/* bad {"count": 2} */}
+
+```js
+[Map, Set] = polyfills;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const Promise = require("bluebird");
+```
+
+## Options
+
+| Option       | Default | What it does                              |
+| ------------ | ------- | ----------------------------------------- |
+| `exceptions` | `[]`    | Names of globals that may be assigned to. |
+
+{/* good {"options": [{"exceptions": ["Promise"]}]} */}
+
+```js
+Promise = require("bluebird");
+```

@@ -100,8 +100,7 @@ fn run(
         b"" => SILENT.to_vec(),
         why => why.to_vec(),
     })?;
-    let json = strings::last_index_of(&printed, MARKER).map(|at| &printed[at + MARKER.len()..]);
-    let Some(Json::Object(entries)) = json.and_then(bun_lint::json::parse) else {
+    let Some(entries) = handed_to_finish(&printed) else {
         return Err(SILENT.to_vec());
     };
     let config = entries.into_iter().find(|it| it.0 == b"config");
@@ -109,6 +108,25 @@ fn run(
         read_what_is_no_number(&mut it.1);
         it.1
     }))
+}
+
+/// What `finish` has written, in all that a script has `printed`.
+fn handed_to_finish(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+    let at = strings::last_index_of(printed, MARKER)?;
+    match bun_lint::json::parse(&printed[at + MARKER.len()..])? {
+        Json::Object(entries) => Some(entries),
+        _ => None,
+    }
+}
+
+/// The files of the modules that a script has loaded, which it says under `--doctor`. `printed`: all that it has printed.
+pub(crate) fn modules_in(printed: &[u8]) -> Vec<Vec<u8>> {
+    let entries = handed_to_finish(printed).unwrap_or_default();
+    let modules = entries.iter().find(|it| it.0 == b"modules");
+    let modules = modules.and_then(|it| it.1.as_array()).unwrap_or_default();
+    (modules.iter().filter_map(Json::as_str))
+        .map(<[u8]>::to_vec)
+        .collect()
 }
 
 /// `NaN`, which JSON has no word for: `serialize` in evaluate-describe.js.

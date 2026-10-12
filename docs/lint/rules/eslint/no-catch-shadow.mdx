@@ -1,0 +1,42 @@
+---
+title: "no-catch-shadow"
+description: "Disallow a `catch` parameter with the name of a variable in the scope around it"
+---
+
+In Internet Explorer 8 and earlier, the parameter of a `catch` clause leaks into the scope around it. If a variable there has the same name, the caught error overwrites it.
+
+The rule reports a `catch` parameter that has the name of a variable, a function, a class or a global that is visible at the `try` statement.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const error = loadLastError();
+
+try {
+  save();
+} catch (error) {
+  console.log(error);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const error = loadLastError();
+
+try {
+  save();
+} catch (saveError) {
+  console.log(saveError);
+}
+```
+
+## When not to use it
+
+Every current browser and runtime keeps the parameter inside the `catch` clause, so this rule only matters for Internet Explorer 8. It is deprecated. To stop names from hiding each other, use `no-shadow`.

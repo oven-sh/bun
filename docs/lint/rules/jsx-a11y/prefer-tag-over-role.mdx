@@ -1,0 +1,43 @@
+---
+title: "jsx-a11y/prefer-tag-over-role"
+description: "Require the HTML element instead of a `role` that imitates it"
+---
+
+A `role` only changes what a screen reader announces. `<div role="button">` is not reached by the Tab key and does not react to Enter or Space until you add all of that by hand. `<button>` does it already, in every browser.
+
+A `role` is reported if HTML has an element with that role and you used another one. The message names the elements to choose from. Roles without an HTML element, such as `tab` or `alert`, are not reported. Only a `role` written as a string is checked.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const save = (
+  <div role="button" onClick={saveDraft}>
+    Save
+  </div>
+);
+const menu = <div role="navigation" />;
+const title = (
+  <span role="heading" aria-level={2}>
+    Settings
+  </span>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const save = <button onClick={saveDraft}>Save</button>;
+const menu = <nav />;
+const title = <h2>Settings</h2>;
+const tab = <div role="tab" />;
+```
+
+## When not to use it
+
+Some widgets cannot be built from the native element, for example a `listbox` with rich options that `<select>` cannot show. If you build many of those, this rule reports each one.

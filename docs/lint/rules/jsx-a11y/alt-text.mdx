@@ -1,0 +1,66 @@
+---
+title: "jsx-a11y/alt-text"
+description: 'Require alternative text on `img`, `area`, `object` and `input type="image"`'
+---
+
+A screen reader cannot describe a picture. It reads the `alt` text. Without one it reads the file name or says nothing.
+
+- `img`, `area` and `input type="image"` need `alt`, `aria-label` or `aria-labelledby`.
+- `object` needs `aria-label`, `aria-labelledby`, `title` or content between its tags. `alt` does not count there.
+
+For an image that is only decoration, write `alt=""`. `role="presentation"` without `alt` is reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```jsx
+const avatar = <img src={user.photo} />;
+const divider = <img src="/line.png" role="presentation" />;
+const search = <input type="image" src="/search.png" />;
+const report = <object data="/report.pdf" alt="Annual report" />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const avatar = <img src={user.photo} alt={user.name} />;
+const divider = <img src="/line.png" alt="" />;
+const search = <input type="image" src="/search.png" alt="Search" />;
+const report = <object data="/report.pdf">Annual report</object>;
+```
+
+An `alt` without a value, or with `undefined` or `null`, does not count:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const avatar = <img src={user.photo} alt />;
+const logo = <img src="/logo.png" alt={undefined} />;
+```
+
+## Options
+
+| Option                | Default  | What it does                                                                    |
+| --------------------- | -------- | ------------------------------------------------------------------------------- |
+| `elements`            | all four | Which kinds to check: `"img"`, `"object"`, `"area"`, `"input[type=\"image\"]"`. |
+| `img`                 | `[]`     | Components to check like `img`.                                                 |
+| `object`              | `[]`     | Components to check like `object`.                                              |
+| `area`                | `[]`     | Components to check like `area`.                                                |
+| `input[type="image"]` | `[]`     | Components to check like `input type="image"`.                                  |
+
+{/* bad {"options": [{"img": ["Avatar"]}]} */}
+
+```jsx
+const avatar = <Avatar src={user.photo} />;
+```
+
+{/* good {"options": [{"elements": ["img"]}]} */}
+
+```jsx
+const search = <input type="image" src="/search.png" />;
+```

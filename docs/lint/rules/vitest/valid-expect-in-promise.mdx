@@ -1,0 +1,110 @@
+---
+title: "vitest/valid-expect-in-promise"
+description: "Require a promise chain that contains `expect` to be awaited or returned from the test"
+---
+
+A callback passed to `.then()`, `.catch()` or `.finally()` runs later. If the test neither awaits nor returns the promise, Vitest marks the test as passed before the `expect` in the callback runs, and a failed assertion does not fail the test.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("loads the user", () => {
+  loadUser(1).then(user => {
+    expect(user.name).toBe("Ada");
+  });
+});
+```
+
+A promise kept in a variable has to be awaited or returned too:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("loads the user", () => {
+  const check = loadUser(1).then(user => {
+    expect(user.name).toBe("Ada");
+  });
+});
+```
+
+A chain written after the `return` of the test never starts:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("loads both users", () => {
+  return loadUser(1).then(user => {
+    expect(user.name).toBe("Ada");
+  });
+  loadUser(2).then(user => {
+    expect(user.name).toBe("Grace");
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("loads the user", () => {
+  return loadUser(1).then(user => {
+    expect(user.name).toBe("Ada");
+  });
+});
+
+test("loads the admin", async () => {
+  await loadUser(2).then(user => {
+    expect(user.role).toBe("admin");
+  });
+});
+
+test("loads the guest", async () => {
+  const user = await loadUser(3);
+  expect(user.role).toBe("guest");
+});
+```
+
+Several promises can be awaited together:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("loads both users", async () => {
+  const first = loadUser(1).then(user => {
+    expect(user.name).toBe("Ada");
+  });
+  const second = loadUser(2).then(user => {
+    expect(user.name).toBe("Grace");
+  });
+  await Promise.all([first, second]);
+});
+```
+
+A test with a parameter is not checked at all, so a mistake in a test that takes the test context goes unnoticed:
+
+{/* good */}
+
+```ts
+import { test } from "vitest";
+
+test("loads the user", ({ expect }) => {
+  loadUser(1).then(user => {
+    expect(user.name).toBe("Ada");
+  });
+});
+```

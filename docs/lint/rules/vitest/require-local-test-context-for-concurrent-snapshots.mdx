@@ -1,0 +1,48 @@
+---
+title: "vitest/require-local-test-context-for-concurrent-snapshots"
+description: "Require the `expect` of the test context for snapshots in concurrent tests"
+---
+
+Concurrent tests run at the same time, so the `expect` you import from `"vitest"` cannot tell which test a snapshot belongs to. The snapshot can be saved under, or compared with, the name of another test. The `expect` that Vitest passes to each test knows its test.
+
+The rule looks at `toMatchSnapshot`, `toMatchInlineSnapshot`, `toMatchFileSnapshot`, `toThrowErrorMatchingSnapshot` and `toThrowErrorMatchingInlineSnapshot`, in `test.concurrent`, `it.concurrent` and `describe.concurrent`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+import { describe, expect, test } from "vitest";
+
+test.concurrent("renders the header", () => {
+  expect(render("header")).toMatchSnapshot();
+});
+
+describe.concurrent("footer", () => {
+  test("renders the links", () => {
+    expect(render("links")).toMatchSnapshot();
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { expect, test } from "vitest";
+
+test.concurrent("renders the header", ({ expect }) => {
+  expect(render("header")).toMatchSnapshot();
+});
+
+test.concurrent("renders the footer", context => {
+  context.expect(render("footer")).toMatchSnapshot();
+});
+
+test("renders the sidebar", () => {
+  expect(render("sidebar")).toMatchSnapshot();
+});
+```

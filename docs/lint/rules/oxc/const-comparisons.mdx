@@ -1,0 +1,65 @@
+---
+title: "oxc/const-comparisons"
+description: "Disallow comparisons that are always true, always false, or repeated"
+---
+
+A condition such as `age > 65 && age < 18` can never be true, so the code behind it never runs. It is usually a swapped operator, a swapped number, or a copy of a line that was not edited.
+
+The rule reports:
+
+- Two comparisons of the same value with numbers, joined by `&&`, that cannot both be true: `age > 65 && age < 18`.
+- Two such comparisons where one already implies the other: `age > 18 && age > 65`.
+- A value compared with itself using `<`, `<=`, `>` or `>=`: `count < count`.
+- The same expression on both sides of `&&` or `||`: `isOpen && isOpen`, `a === b || b === a`.
+- An expression and its opposite: `isOpen && !isOpen`, `a === b || a !== b`.
+
+Two calls never count as the same expression, because each call can return something else.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+if (age > 65 && age < 18) {
+  addDiscount();
+}
+
+if (status >= 400 && status >= 500) {
+  retry();
+}
+
+while (index < index) {
+  index++;
+}
+```
+
+{/* bad {"count": 2} */}
+
+```js
+const ready = loaded && loaded;
+const known = role === "admin" || role !== "admin";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (age > 65 || age < 18) {
+  addDiscount();
+}
+
+if (status >= 500) {
+  retry();
+}
+
+while (index < length) {
+  index++;
+}
+
+const ready = loaded && visible;
+const known = role === "admin" || role === "editor";
+const twoLeft = queue.pop() && queue.pop();
+```

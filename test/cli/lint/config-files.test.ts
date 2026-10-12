@@ -133,7 +133,7 @@ describe.concurrent("a function in an eslint.config.js", () => {
       "b.js": code,
     });
     expect(problems).toEqual([]);
-    expect(stderr).toContain(`Config "mine": Key "${key}": A function is not supported, at user-defined index 1.`);
+    expect(stderr).toContain(`Config "mine": Key "${key}": Functions are not supported, at user-defined index 1.`);
     expect(exitCode).toBe(2);
   });
 
@@ -797,7 +797,7 @@ test.concurrent(
     const { problems, stderr, exitCode } = await lint(files, ["a.mjs", "b.mjs"]);
     expect(problems).toEqual(["a.mjs:1:1 no-var"]);
     expect(stderr).toContain(
-      `1 file was not linted, only the parser of the configuration can read it: b.mjs. The package "eslint" lints with that parser, if it is installed`,
+      "1 file was not linted because only the parser in your config can read it: b.mjs\n  To lint with that parser, install eslint: bun add -d eslint",
     );
     expect(exitCode).toBe(2);
     expect((await lint(files, ["--allow-unsupported", "a.mjs", "b.mjs"])).exitCode).toBe(1);
@@ -1084,10 +1084,10 @@ describe.concurrent("a note says that a plugin that is built in is installed in 
 
   test("by a minor version or more", async () => {
     expect(await notes(typescript("8.43.0"))).toEqual([
-      "note: @typescript-eslint/eslint-plugin 8.43.0 is installed; bun lint follows 8.71.1.",
+      "note: @typescript-eslint/eslint-plugin 8.43.0 is installed, but bun lint's built-in rules match 8.71.1",
     ]);
     expect(await notes(typescript("7.18.0"))).toEqual([
-      "note: @typescript-eslint/eslint-plugin 7.18.0 is installed; bun lint follows 8.71.1.",
+      "note: @typescript-eslint/eslint-plugin 7.18.0 is installed, but bun lint's built-in rules match 8.71.1",
     ]);
     expect(
       await notes(
@@ -1099,10 +1099,10 @@ describe.concurrent("a note says that a plugin that is built in is installed in 
         }),
       ),
     ).toEqual([
-      "note: eslint-plugin-n 17.16.2 is installed; bun lint follows 18.4.1.",
-      "note: eslint-plugin-import 2.31.0 is installed; bun lint follows 2.32.0.",
-      "note: eslint-plugin-react-hooks 5.2.0 is installed; bun lint follows 7.1.1.",
-      "note: eslint-plugin-react 7.33.2 is installed; bun lint follows 7.37.5.",
+      "note: eslint-plugin-n 17.16.2 is installed, but bun lint's built-in rules match 18.4.1",
+      "note: eslint-plugin-import 2.31.0 is installed, but bun lint's built-in rules match 2.32.0",
+      "note: eslint-plugin-react-hooks 5.2.0 is installed, but bun lint's built-in rules match 7.1.1",
+      "note: eslint-plugin-react 7.33.2 is installed, but bun lint's built-in rules match 7.37.5",
     ]);
   });
 
@@ -1130,7 +1130,7 @@ describe.concurrent("a note says that a plugin that is built in is installed in 
       "node_modules/@typescript-eslint/eslint-plugin/index.js": `module.exports = { rules: {} };`,
     };
     expect(await notes(files)).toEqual([
-      "note: @typescript-eslint/eslint-plugin 5.62.0 is installed; bun lint follows 8.71.1.",
+      "note: @typescript-eslint/eslint-plugin 5.62.0 is installed, but bun lint's built-in rules match 8.71.1",
     ]);
   });
 });
@@ -2538,8 +2538,7 @@ describe.concurrent("an .oxlintrc.json", () => {
       categories: { correctness: "warn" },
     };
     const named = (stderr: string) =>
-      /rules that the categories turn on do not exist here yet and did not run: (.*)/.exec(stderr)?.[1].split(", ") ??
-      [];
+      /rules enabled by "categories" are not supported yet and did not run: (.*)/.exec(stderr)?.[1].split(", ") ?? [];
     const { stderr, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.js": "export {};\n" });
     expect(exitCode).toBe(0);
     const lacking = named(stderr);
@@ -3258,15 +3257,15 @@ describe.concurrent("whose configuration files count", () => {
 
   // `oxlint --fix && eslint --fix .`, each replaced by `bun lint`: one of the two tools would be left out, in silence.
   test("where files of both tools count and nothing decides, nothing is linted", async () => {
-    const say = "Say which one this run is for: --flavor=oxlint or --flavor=eslint.";
+    const say = "\n  Choose one with --flavor=eslint or --flavor=oxlint";
     const { problems, stdout, stderr, exitCode } = await lint(both, ["--fix", "a.js", "sub/b.js"]);
     expect([problems, stdout]).toEqual([[], ""]);
-    expect(stderr).toBe(`error: Both <dir>/eslint.config.js and <dir>/.oxlintrc.json are here. ${say}`);
+    expect(stderr).toBe(`error: Found both eslint.config.js and .oxlintrc.json${say}`);
     expect(exitCode).toBe(2);
     // Also where one is further up than the other.
     const { "sub/.oxlintrc.json": _, ...above } = both;
     const below = await lint(above, ["."], { cwd: "sub" });
-    expect(below.stderr).toBe(`error: Both <dir>/sub/eslint.config.js and <dir>/.oxlintrc.json are here. ${say}`);
+    expect(below.stderr).toBe(`error: Found both eslint.config.js and ../.oxlintrc.json${say}`);
     expect(below.exitCode).toBe(2);
     expect((await lint(both, ["--nonsense"])).exitCode).toBe(1);
   });
@@ -3279,7 +3278,7 @@ describe.concurrent("whose configuration files count", () => {
     };
     const { stderr, exitCode } = await lint(files, ["a.js"]);
     expect(stderr).toStartWith(
-      "error: Both <dir>/eslint.config.js and the dependency on oxlint in <dir>/package.json are here. Say which one",
+      "error: Found both eslint.config.js and an oxlint dependency in package.json\n  Choose one",
     );
     expect(exitCode).toBe(2);
     expect((await lint(files, ["--flavor=eslint", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
@@ -3347,7 +3346,7 @@ describe.concurrent("whose configuration files count", () => {
     expect(eslint.exitCode).toBe(1);
     const both = await lint({ ...files, "package.json": dependsOn("eslint", "oxlint") });
     expect(both.stderr).toContain(
-      "No configuration file found, and <dir>/package.json has both eslint and oxlint: using the defaults of oxlint. Use --flavor=eslint for the other.",
+      "No config file found, and package.json depends on both eslint and oxlint\n  Using oxlint's defaults. Use --flavor=eslint for ESLint's.",
     );
     expect(both.exitCode).toBe(0);
     const chosen = await lint({ ...files, "package.json": dependsOn("eslint", "oxlint") }, ["--flavor=eslint", "."]);
@@ -3438,12 +3437,12 @@ describe.concurrent("whose configuration files count", () => {
     const [ofESLint, ofOxlint] = [[["a.js:1:1 no-var"], 1] as const, [["a.js:2:7 eqeqeq"], 1] as const];
     const [defaults, builtIn] = [[["a.js:2:13 no-debugger"], 0] as const, [["a.js:2:13 no-debugger"], 1] as const];
     const [nothing, failsInSilence] = [[[], 0] as const, [[], 1] as const];
-    const asks = [[], 2, "Say which one this run is for: --flavor=oxlint or --flavor=eslint."] as const;
+    const asks = [[], 2, "Choose one with --flavor=eslint or --flavor=oxlint"] as const;
     const refused = (flag: string, whose: string, where: string) =>
-      [[], 2, `error: ${flag} is a flag of ${whose}. It means nothing ${where}.`] as const;
-    const withFlat = "with <dir>/eslint.config.js, a configuration file of ESLint";
-    const withLegacy = "with <dir>/.eslintrc.json, a configuration file of ESLint 8";
-    const withOxlint = "with <dir>/.oxlintrc.json, a configuration file of oxlint";
+      [[], 2, `error: ${flag} is an ${whose} flag and has no effect here\n  This run uses ${where}.`] as const;
+    const withFlat = "eslint.config.js, an ESLint config";
+    const withLegacy = ".eslintrc.json, an ESLint 8 config";
+    const withOxlint = ".oxlintrc.json, an oxlint config";
 
     test.each<[keyof typeof projects, string[], readonly [readonly string[], number, string?]]>([
       ["eslint.config.js", [], ofESLint],
@@ -3504,23 +3503,11 @@ describe.concurrent("whose configuration files count", () => {
       ["no file", ["--deny-warnings"], [["a.js:2:13 no-debugger"], 1]],
       ["no file", ["--import-plugin"], defaults],
       ["no file", ["--env", "browser"], nothing],
-      [
-        "no file",
-        ["--flavor=eslint", "--import-plugin"],
-        refused("--import-plugin", "oxlint", "in a run that stands in for ESLint"),
-      ],
-      [
-        "no file",
-        ["--flavor=oxlint", "--env", "browser"],
-        refused("--env browser", "ESLint 8", "in a run that stands in for oxlint"),
-      ],
+      ["no file", ["--flavor=eslint", "--import-plugin"], refused("--import-plugin", "oxlint", "ESLint's defaults")],
+      ["no file", ["--flavor=oxlint", "--env", "browser"], refused("--env browser", "ESLint 8", "oxlint's defaults")],
       ["the dependency", [], defaults],
       ["the dependency", ["--cache"], defaults],
-      [
-        "the dependency",
-        ["--parser", "espree"],
-        refused("--parser espree", "ESLint", "in a run that stands in for oxlint"),
-      ],
+      ["the dependency", ["--parser", "espree"], refused("--parser espree", "ESLint", "oxlint's defaults")],
       ["both", [], asks],
       ["both", ["--silent"], failsInSilence],
       ["both", ["--deny-warnings"], ofOxlint],
@@ -3543,12 +3530,12 @@ describe.concurrent("whose configuration files count", () => {
       [
         "files by other names",
         ["-c", "mine.js", "--import-plugin"],
-        refused("--import-plugin", "oxlint", "with <dir>/mine.js, a configuration file of ESLint"),
+        refused("--import-plugin", "oxlint", "mine.js, an ESLint config"),
       ],
       [
         "files by other names",
         ["-c", "mine.json", "--ext", ".js"],
-        refused("--ext .js", "ESLint", "with <dir>/mine.json, a configuration file of oxlint"),
+        refused("--ext .js", "ESLint", "mine.json, an oxlint config"),
       ],
     ])("%s, %j", async (project, flags, [problems, exitCode, said]) => {
       const run = await lint({ ...projects[project], "a.js": code }, [...flags, "a.js"]);
@@ -3581,17 +3568,17 @@ describe.concurrent("whose configuration files count", () => {
         ]);
       }
       expect((await lint(files, ["--silent", "one"])).exitCode).toBe(1);
-      const withFile = "It means nothing with <dir>/one/eslint.config.js, a configuration file of ESLint.";
+      const withFile = "\n  This run uses one/eslint.config.js, an ESLint config.";
       for (const [flags, said] of [
-        [["--env", "browser"], "--env browser is a flag of ESLint 8"],
-        [["--no-eslintrc"], "--no-eslintrc is a flag of ESLint 8"],
-        [["--import-plugin"], "--import-plugin is a flag of oxlint"],
+        [["--env", "browser"], "--env browser is an ESLint 8 flag and has no effect here"],
+        [["--no-eslintrc"], "--no-eslintrc is an ESLint 8 flag and has no effect here"],
+        [["--import-plugin"], "--import-plugin is an oxlint flag and has no effect here"],
       ] as const) {
         for (const args of [["."], ["one/a.js"]]) {
           const { problems, stderr, exitCode } = await lint(one, [...flags, ...args]);
           expect({ problems, stderr, exitCode }).toEqual({
             problems: [],
-            stderr: `error: ${said}. ${withFile}`,
+            stderr: `error: ${said}${withFile}`,
             exitCode: 2,
           });
         }
@@ -3866,60 +3853,6 @@ describe.concurrent("the command line of oxlint", () => {
     });
   });
 
-  test("--init writes the defaults of oxlint, and not over a file", async () => {
-    using dir = tempDir("bun-lint-init", { "a.js": "debugger;\n" });
-    const run = async (...args: string[]) => {
-      await using proc = spawn({
-        cmd: [...command, ...args],
-        env,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
-    };
-    expect(await run("--init")).toEqual({ stdout: "Configuration file created\n", stderr: "", exitCode: 0 });
-    expect(JSON.parse(readFileSync(join(String(dir), ".oxlintrc.json"), "utf8"))).toEqual({
-      $schema: "./node_modules/oxlint/configuration_schema.json",
-      plugins: ["typescript", "unicorn", "oxc"],
-      categories: { correctness: "error" },
-      rules: {},
-      env: { builtin: true },
-    });
-    const again = await run("--init");
-    expect(normalizeBunSnapshot(again.stdout, String(dir))).toContain("<dir>/.oxlintrc.json exists already.");
-    expect(again.exitCode).toBe(1);
-    // It is one that can be used.
-    expect((await run("--allow-unsupported", "a.js")).exitCode).toBe(1);
-  });
-
-  test.each(["eslint.config.mjs", ".eslintrc.json"])(
-    "--init beside %s writes nothing unless --flavor=oxlint",
-    async name => {
-      using dir = tempDir("bun-lint-init", {
-        [name]: name.endsWith(".json") ? rc(noVar) : "export default [];",
-        "sub/a.js": code,
-      });
-      const run = async (...args: string[]) => {
-        await using proc = spawn({
-          cmd: [...command, ...args],
-          env,
-          cwd: join(String(dir), "sub"),
-          stderr: "pipe",
-        });
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
-      };
-      const refused = await run("--init");
-      expect(refused.stderr).toContain(`which would count in place of <dir>/${name}. Use --flavor=oxlint to write it.`);
-      expect(refused.exitCode).toBe(2);
-      expect(existsSync(join(String(dir), "sub", ".oxlintrc.json"))).toBe(false);
-      expect((await run("--init", "--flavor=oxlint")).exitCode).toBe(0);
-      expect(existsSync(join(String(dir), "sub", ".oxlintrc.json"))).toBe(true);
-    },
-  );
-
   test("node_modules is a directory like any other, which a .gitignore has", async () => {
     const files = {
       ".oxlintrc.json": oxlintrc,
@@ -3950,9 +3883,9 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
   test("a rule that does not exist: the rest is linted, and the run fails", async () => {
     const { problems, stderr, exitCode } = await lint(files);
     expect(problems).toEqual(["a.js:1:1 no-var"]);
-    expect(stderr).toContain("2 rules of ESLint did not run: require-jsdoc, valid-jsdoc");
+    expect(stderr).toContain("2 rules in your .eslintrc config are not supported: require-jsdoc, valid-jsdoc");
     expect(stderr).not.toContain("no-rule-that-is-off");
-    expect(stderr).toContain("--allow-unsupported makes this a warning.");
+    expect(stderr).toContain("\n  Everything else was linted. Use --allow-unsupported to make this a warning.");
     expect(exitCode).toBe(2);
   });
 
@@ -3965,7 +3898,7 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
   test("--allow-unsupported makes it a warning", async () => {
     const { problems, stderr, exitCode } = await lint(files, ["--allow-unsupported", "."]);
     expect(problems).toEqual(["a.js:1:1 no-var"]);
-    expect(stderr).toContain("warn: 2 rules of ESLint did not run: require-jsdoc, valid-jsdoc");
+    expect(stderr).toContain("warn: 2 rules in your .eslintrc config are not supported: require-jsdoc, valid-jsdoc");
     expect(exitCode).toBe(1);
     expect((await lint({ ...files, "a.js": "let x = 1;\nx;\n" }, ["--allow-unsupported", "."])).exitCode).toBe(0);
   });
@@ -3985,7 +3918,7 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     const { problems, stderr, exitCode } = await lint(files);
     expect(problems).toEqual(["a.js:1:1 no-var"]);
     expect(stderr).toContain(
-      "4 files were not linted, only JavaScript and TypeScript can be (3 *.one, 1 *.two): b.one, c.one, d.one, ..",
+      "4 files were not linted because bun lint only supports JavaScript and TypeScript (3 *.one, 1 *.two): b.one, c.one, d.one, ..",
     );
     expect(exitCode).toBe(2);
     expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);
@@ -4010,8 +3943,7 @@ describe.concurrent("the deprecated rules about layout", () => {
   ];
   const forPeople = ["-f", "stylish", "."];
   const notes = (stderr: string) => stderr.split("\n").filter(it => it.startsWith("note: "));
-  const note = (count: number, names: string) =>
-    `note: ${count} formatting rules that are deprecated did not run, bun format does their work: ${names}`;
+  const note = (count: number, names: string) => `note: ${count} deprecated formatting rules did not run: ${names}`;
 
   test.each(flavors)("%s: they do not run, which is a note and no error", async (name, config) => {
     const files = { [name]: config(rules), "a.js": untidy };
@@ -4045,9 +3977,7 @@ describe.concurrent("the deprecated rules about layout", () => {
 
   test("one alone", async () => {
     const { stderr } = await lint({ "eslint.config.mjs": flavors[0][1]({ semi: 2 }), "a.js": "a" }, forPeople);
-    expect(notes(stderr)).toEqual([
-      "note: 1 formatting rule that is deprecated did not run, bun format does its work: semi",
-    ]);
+    expect(notes(stderr)).toEqual(["note: 1 deprecated formatting rule did not run: semi"]);
   });
 
   // As after eslint-config-prettier.
@@ -4256,7 +4186,7 @@ describe.concurrent("the deprecated rules about layout", () => {
     expect(builtIn.problems).toEqual([]);
     expect(builtIn.exitCode).toBe(0);
     expect(notes(shown.stderr)).toEqual([
-      "note: 1 formatting rule that is deprecated did not run, bun format does its work: react/jsx-space-before-closing",
+      "note: 1 deprecated formatting rule did not run: react/jsx-space-before-closing",
     ]);
     expect(ofThePackage.problems).toEqual(["a.js:1:1 react/jsx-space-before-closing"]);
   });
@@ -4271,7 +4201,7 @@ describe.concurrent("the deprecated rules about layout", () => {
     };
     const { problems, stderr, exitCode } = await lint(files, ["a.js"]);
     expect(problems).toEqual(["a.js:1:1 no-debugger"]);
-    expect(stderr).toContain("2 rules of ESLint did not run: semi, quotes");
+    expect(stderr).toContain("2 rules in .oxlintrc.json are not supported: semi, quotes");
     expect(stderr).not.toContain("formatting");
     expect(exitCode).toBe(2);
   });
@@ -4288,16 +4218,16 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
   const clean = { "a.js": "export {};\n", "b.vue": "<script>\nexport {};\n</script>\n" };
   const quiet = { categories: { correctness: "off" }, rules: { "no-debugger": "warn" } };
   const named = (plugin: string, ...rules: string[]) =>
-    `${rules.length} rule${rules.length > 1 ? "s" : ""} of the plugin "${plugin}" did not run: ${rules.join(", ")}. None is built in: turn them off, or take them out of the configuration`;
+    `${rules.length} ${rules.length > 1 ? "rules" : "rule"} in .oxlintrc.json ${rules.length > 1 ? "are" : "is"} not supported: ${rules.join(", ")}`;
   const ofCategories = (...plugins: string[]) =>
-    `note: The rules of the plugin${plugins.length > 1 ? "s" : ""} "${plugins.join('" and "')}" that the categories turn on did not run. None is built in: take ${plugins.length > 1 ? "them" : "it"} out of "plugins"`;
+    `note: bun lint has no "${plugins.join('" or "')}" rules, so none of them ran`;
   const silent = { problems: found, exitCode: 0, said: [], notes: [] };
   /** What is reported, the exit code, what is said about what cannot be done, and the notes. */
   async function run(config: object, flags: string[] = [], more: Record<string, string> = {}) {
     const all = { ...files, ...more, ".oxlintrc.json": JSON.stringify(config) };
     const { problems, stderr, exitCode } = await lint(all, [...flags, "."]);
     const lines = stderr.split("\n");
-    const said = lines.slice(lines.findIndex(it => it.includes("cannot be done yet")) + 1 || lines.length, -1);
+    const said = lines.filter(it => it.startsWith("error: ")).map(it => it.slice("error: ".length));
     const notes = lines.filter(it => it.startsWith("note: "));
     return { problems, exitCode, said: said.map(it => it.trim()), notes };
   }
@@ -4320,7 +4250,9 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
       { ...files, ".oxlintrc.json": JSON.stringify({ ...quiet, plugins: ["jsdoc", "vue"], rules }) },
       ["--allow-unsupported", "."],
     );
-    expect(allowed.stderr).toContain(`warn: ${named("jsdoc", "jsdoc/require-param")}`);
+    expect(allowed.stderr).toContain(
+      `warn: ${named("jsdoc", "jsdoc/require-param")}\n  bun lint has no "jsdoc" rules. Turn it off or remove it.\n`,
+    );
     expect(allowed.exitCode).toBe(0);
   });
 

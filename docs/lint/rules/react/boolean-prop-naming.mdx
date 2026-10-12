@@ -1,0 +1,102 @@
+---
+title: "react/boolean-prop-naming"
+description: "Enforce a naming pattern such as `isOpen` or `hasIcon` for boolean props"
+---
+
+A prop called `open` could be a flag, a callback, or a label. `isOpen` can only be a flag. This rule checks the names of the props that a component declares as boolean, in `propTypes` or in a TypeScript type.
+
+The rule checks nothing until you give it an options object. An empty one, `{}`, is enough to get the default pattern.
+
+## Examples
+
+Reported:
+
+{/* bad {"options": [{}]} */}
+
+```tsx
+type Props = { open: boolean; title: string };
+
+function Dialog(props: Props) {
+  return <dialog open={props.open}>{props.title}</dialog>;
+}
+```
+
+{/* bad {"options": [{}]} */}
+
+```jsx
+function Dialog({ open }) {
+  return <dialog open={open} />;
+}
+Dialog.propTypes = { open: PropTypes.bool };
+```
+
+Not reported:
+
+{/* good {"options": [{}]} */}
+
+```tsx
+type Props = { isOpen: boolean; title: string };
+
+function Dialog(props: Props) {
+  return <dialog open={props.isOpen}>{props.title}</dialog>;
+}
+```
+
+Without options, nothing is reported:
+
+{/* good */}
+
+```tsx
+function Dialog(props: { open: boolean }) {
+  return <dialog open={props.open} />;
+}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"react/boolean-prop-naming" = ["error", { rule = "^(is|has|should)[A-Z]" }]
+```
+
+| Option           | Default                            | What it does                                                              |
+| ---------------- | ---------------------------------- | ------------------------------------------------------------------------- |
+| `rule`           | `"^(is\|has)[A-Z]([A-Za-z0-9]?)+"` | The regular expression that a boolean prop's name must match.             |
+| `propTypeNames`  | `["bool"]`                         | The names of the `propTypes` validators that count as boolean.            |
+| `message`        |                                    | The text of the report. `{{propName}}` and `{{pattern}}` are filled in.   |
+| `validateNested` | `false`                            | Also check the props inside `PropTypes.shape({ ... })` and similar calls. |
+
+With `rule`, you choose the prefixes:
+
+{/* good {"options": [{"rule": "^(is|has|should)[A-Z]"}]} */}
+
+```jsx
+function Dialog({ shouldAnimate }) {
+  return <dialog className={shouldAnimate ? "fade" : ""} />;
+}
+Dialog.propTypes = { shouldAnimate: PropTypes.bool };
+```
+
+With `propTypeNames`, a validator of your own counts as boolean too:
+
+{/* bad {"options": [{"propTypeNames": ["bool", "mutuallyExclusiveTrueProps"]}]} */}
+
+```jsx
+function Dialog({ modal }) {
+  return <dialog data-modal={modal} />;
+}
+Dialog.propTypes = { modal: mutuallyExclusiveTrueProps };
+```
+
+With `validateNested`, the fields of a shape are checked:
+
+{/* bad {"options": [{"validateNested": true}]} */}
+
+```jsx
+function Dialog({ settings }) {
+  return <dialog open={settings.open} />;
+}
+Dialog.propTypes = {
+  settings: PropTypes.shape({ open: PropTypes.bool }),
+};
+```

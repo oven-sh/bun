@@ -1,0 +1,48 @@
+---
+title: "@next/next/no-script-component-in-head"
+description: "Disallow `<Script>` as a child of `Head` from `next/head`"
+---
+
+`Head` from `next/head` is for plain tags such as `<title>`, `<meta>` and `<link>`. The `Script` component from `next/script` does not work inside it. `Script` decides by itself where its tag goes, so put it anywhere else in the page.
+
+The rule reports a `<Script>` that is a direct child of the default import of `next/head`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import Head from "next/head";
+import Script from "next/script";
+
+export default function Home() {
+  return (
+    <Head>
+      <title>Home</title>
+      <Script src="https://example.com/widget.js" />
+    </Head>
+  );
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import Head from "next/head";
+import Script from "next/script";
+
+export default function Home() {
+  return (
+    <>
+      <Head>
+        <title>Home</title>
+      </Head>
+      <Script src="https://example.com/widget.js" />
+    </>
+  );
+}
+```

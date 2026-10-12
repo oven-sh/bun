@@ -1,0 +1,54 @@
+---
+title: "react/forbid-elements"
+description: "Disallow the elements and components you choose"
+---
+
+If your project has its own `<Button>`, a plain `<button>` skips its styles, its loading state, and its tracking. This rule reports the elements you list, so that everyone uses the replacement.
+
+Nothing is forbidden until you fill in `forbid`. Both JSX and `React.createElement()` are checked.
+
+## Examples
+
+Reported:
+
+{/* bad {"options": [{"forbid": ["button"]}]} */}
+
+```jsx
+<button onClick={save}>Save</button>
+```
+
+{/* bad {"options": [{"forbid": ["button"]}]} */}
+
+```js
+React.createElement("button", { onClick: save }, "Save");
+```
+
+Not reported:
+
+{/* good {"options": [{"forbid": ["button"]}]} */}
+
+```jsx
+<Button onClick={save}>Save</Button>
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"react/forbid-elements" = ["error", { forbid = ["marquee", { element = "button", message = "use our Button component" }] }]
+```
+
+The one option is `forbid`, a list that is empty by default. An entry is the name of an element, or an object:
+
+| Key       | What it does                                                                    |
+| --------- | ------------------------------------------------------------------------------- |
+| `element` | The name, as it is written in the tag: `"button"`, `"Modal"`, `"legacy.Modal"`. |
+| `message` | Added to the report: `<button> is forbidden, use our Button component`.         |
+
+{/* bad {"count": 2, "options": [{"forbid": ["legacy.Modal", {"element": "button", "message": "use our Button component"}]}]} */}
+
+```jsx
+<legacy.Modal>
+  <button>Close</button>
+</legacy.Modal>
+```

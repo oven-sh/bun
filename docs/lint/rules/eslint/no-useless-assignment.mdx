@@ -1,0 +1,71 @@
+---
+title: "no-useless-assignment"
+description: "Disallow assigning a value to a variable that is never read afterwards"
+---
+
+A value that is overwritten or thrown away before anything reads it does nothing. Often it is left over from an edit, or the wrong variable was assigned.
+
+The rule follows every path through the function. An assignment is reported only if no path reads the value.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function label(user) {
+  let name = "guest";
+  name = user.name;
+  return name;
+}
+```
+
+{/* bad */}
+
+```js
+function finish(job) {
+  let status = job.status;
+  log(status);
+  status = "done";
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function label(user) {
+  let name = "guest";
+  if (user) {
+    name = user.name;
+  }
+  return name;
+}
+```
+
+A variable that an inner function reads is skipped, because that function can run at any time:
+
+{/* good */}
+
+```js
+function finish(job) {
+  let status = job.status;
+  job.onClose(() => log(status));
+  status = "done";
+}
+```
+
+A variable that is never read at all is left to `no-unused-vars`:
+
+{/* good */}
+
+```js
+function finish(job) {
+  let status = job.status;
+  status = "done";
+}
+```

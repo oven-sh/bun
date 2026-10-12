@@ -36,5 +36,9 @@ for (const name of ["oxlint", "oxfmt", "vite-plus"]) {
 function finish(config, stringify = JSON.stringify) {
   // A timer, a watcher or a server that the configuration has left behind would keep the process alive for ever. The answer is
   // there, whatever the configuration has made of `process.exitCode`.
-  process.stdout.write(marker + stringify({ config }), () => process.exit(0));
+  // `--doctor` says which packages the configuration cannot be read without.
+  const isDoctor = given.commandLine.includes("--doctor");
+  // Not what a script has put there in place of a module.
+  const modules = isDoctor ? Object.keys(require.cache).filter(file => fs.existsSync(file)) : undefined;
+  process.stdout.write(marker + stringify({ config, modules }), () => process.exit(0));
 }

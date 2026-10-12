@@ -1,0 +1,91 @@
+---
+title: "@typescript-eslint/class-literal-property-style"
+description: "Require constants on a class to be all `readonly` fields or all getters"
+---
+
+A class can expose a constant as a `readonly` field or as a getter that returns a literal. Both read the same from outside. This rule picks one, so the same thing is written the same way in every class. By default it is the `readonly` field, which is shorter.
+
+Only literals count: strings, numbers, booleans, `null`, regular expressions, and templates without `${}`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+class Server {
+  get host() {
+    return "localhost";
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Server {
+  readonly host = "localhost";
+
+  // Not a literal.
+  get url() {
+    return `http://${this.host}`;
+  }
+}
+```
+
+A getter that has a setter with the same name cannot become a `readonly` field, so it is left alone:
+
+{/* good */}
+
+```ts
+class Server {
+  get host() {
+    return "localhost";
+  }
+  set host(value: string) {
+    console.warn("host is fixed", value);
+  }
+}
+```
+
+## Options
+
+| Option               | What it does                                           |
+| -------------------- | ------------------------------------------------------ |
+| `"fields"` (default) | Report a getter that only returns a literal.           |
+| `"getters"`          | Report a `readonly` field with a literal as its value. |
+
+{/* bad {"options": ["getters"]} */}
+
+```ts
+class Server {
+  readonly host = "localhost";
+}
+```
+
+{/* good {"options": ["getters"]} */}
+
+```ts
+class Server {
+  get host() {
+    return "localhost";
+  }
+}
+```
+
+With `"getters"`, a field that the constructor assigns to is not reported:
+
+{/* good {"options": ["getters"]} */}
+
+```ts
+class Server {
+  readonly host = "localhost";
+
+  constructor(host?: string) {
+    if (host) this.host = host;
+  }
+}
+```

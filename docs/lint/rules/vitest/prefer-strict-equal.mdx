@@ -1,0 +1,38 @@
+---
+title: "vitest/prefer-strict-equal"
+description: "Require `toStrictEqual()` instead of `toEqual()`"
+---
+
+`toEqual()` skips properties that are `undefined`, treats a hole in an array like `undefined`, and does not compare the classes of the two objects. So `expect({ name: "Ada", email: undefined }).toEqual({ name: "Ada" })` passes. `toStrictEqual()` checks all three, and that test fails.
+
+The rewrite is a suggestion in your editor. `--fix` does not apply it, because a test that passes with `toEqual()` can fail with `toStrictEqual()`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("creates a user", () => {
+  expect(createUser("Ada")).toEqual({ name: "Ada" });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("creates a user", () => {
+  expect(createUser("Ada")).toStrictEqual({ name: "Ada" });
+});
+```
+
+## When not to use it
+
+If your code builds objects with optional properties set to `undefined`, or you compare class instances with plain objects on purpose, `toEqual()` is the matcher you want.

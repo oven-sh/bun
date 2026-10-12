@@ -1,0 +1,97 @@
+---
+title: "@typescript-eslint/dot-notation"
+description: 'Require `user.name` instead of `user["name"]`'
+---
+
+`user["name"]` and `user.name` read the same property. The dot form is shorter and easier to read. Brackets are for keys that are computed or that are not valid names, such as `headers["content-type"]`.
+
+This is `dot-notation` with types, which lets it make exceptions for private members, protected members, and index signatures. Turn the other rule off when you use this one.
+
+`--fix` rewrites the brackets to a dot.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+const user = { name: "Ada" };
+
+console.log(user["name"]);
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const user = { name: "Ada", "last-login": 0 };
+const key = "name" as const;
+
+console.log(user.name, user[key], user["last-login"]);
+```
+
+## Options
+
+| Option                              | Default | What it does                                                                                              |
+| ----------------------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `allowKeywords`                     | `true`  | `false` turns the rule around for reserved words: `obj.class` is reported, and `obj["class"]` is allowed. |
+| `allowPattern`                      | `""`    | A regular expression. Names that match it can be in brackets.                                             |
+| `allowPrivateClassPropertyAccess`   | `false` | Allow brackets for `private` members.                                                                     |
+| `allowProtectedClassPropertyAccess` | `false` | Allow brackets for `protected` members.                                                                   |
+| `allowIndexSignaturePropertyAccess` | `false` | Allow brackets for keys that only an index signature declares.                                            |
+
+{/* bad {"options": [{"allowKeywords": false}], "count": 1} */}
+
+```ts
+const styles: Record<string, string> = {};
+
+console.log(styles.class, styles["default"]);
+```
+
+{/* good {"options": [{"allowPattern": "^[a-z]+(_[a-z]+)+$"}]} */}
+
+```ts
+const row = { user_id: 1 };
+
+console.log(row["user_id"]);
+```
+
+TypeScript does not check `private` and `protected` on an access with brackets, which tests sometimes use to reach into a class:
+
+{/* good {"options": [{"allowPrivateClassPropertyAccess": true}]} */}
+
+```ts
+class Counter {
+  private count = 0;
+}
+
+console.log(new Counter()["count"]);
+```
+
+With `allowIndexSignaturePropertyAccess`, brackets can mark the keys that may not be there. `host` is declared, so it is still reported:
+
+{/* bad {"options": [{"allowIndexSignaturePropertyAccess": true}], "count": 1} */}
+
+```ts
+interface Env {
+  host: string;
+  [name: string]: string;
+}
+declare const env: Env;
+
+console.log(env["host"], env["PORT"]);
+```
+
+This option is always on when `noPropertyAccessFromIndexSignature` is set in your `tsconfig.json`, because TypeScript then rejects `env.PORT`:
+
+{/* good {"compilerOptions": {"noPropertyAccessFromIndexSignature": true}} */}
+
+```ts
+declare const env: Record<string, string>;
+
+console.log(env["PORT"]);
+```

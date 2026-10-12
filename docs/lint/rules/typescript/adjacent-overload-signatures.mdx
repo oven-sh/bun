@@ -1,0 +1,54 @@
+---
+title: "@typescript-eslint/adjacent-overload-signatures"
+description: "Require the overloads of a function to be next to each other"
+---
+
+When the overloads of a function are spread over a file, a reader who finds the first group thinks they have seen every way to call it, and misses the one further down.
+
+The rule looks at functions in a file, block, or namespace, and at the members of classes, interfaces, and object types. A static method and an instance method with the same name are different methods.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+interface Storage {
+  get(key: string): string;
+  clear(): void;
+  get(key: string, fallback: string): string;
+}
+```
+
+{/* bad */}
+
+```ts
+declare function parse(input: string): number;
+declare function format(value: number): string;
+declare function parse(input: Uint8Array): number;
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+interface Storage {
+  get(key: string): string;
+  get(key: string, fallback: string): string;
+  clear(): void;
+}
+```
+
+{/* good */}
+
+```ts
+class Cache {
+  static create(): Cache {
+    return new Cache();
+  }
+  size = 0;
+  create(): void {}
+}
+```

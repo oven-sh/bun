@@ -1,0 +1,58 @@
+---
+title: "vitest/no-restricted-vi-methods"
+description: "Disallow the `vi` methods you list"
+---
+
+Some `vi` methods do not fit every project. `vi.mock()` replaces a whole module for the file, and a team may want tests to pass fakes in as arguments instead. This rule reports calls of the `vi` methods you name in its options.
+
+Without options it reports nothing.
+
+## Examples
+
+Both examples use `{ "mock": "Pass a fake as an argument instead" }`.
+
+Reported:
+
+{/* bad {"options": [{"mock": "Pass a fake as an argument instead"}]} */}
+
+```ts
+import { vi } from "vitest";
+
+vi.mock("./mailer");
+```
+
+Not reported:
+
+{/* good {"options": [{"mock": "Pass a fake as an argument instead"}]} */}
+
+```ts
+import { expect, test, vi } from "vitest";
+import { signUp } from "./sign-up";
+
+test("sends a welcome mail", () => {
+  const send = vi.fn();
+  signUp("ada@example.com", { send });
+  expect(send).toHaveBeenCalledTimes(1);
+});
+```
+
+## Options
+
+One object. A key is the name of a method of `vi`. A value is the message of the report, or `null` for the standard message, ``Use of `mock` is not allowed``.
+
+```json
+{
+  "mock": "Pass a fake as an argument instead",
+  "useFakeTimers": null
+}
+```
+
+{/* bad {"options": [{"mock": "Pass a fake as an argument instead", "useFakeTimers": null}]} */}
+
+```ts
+import { beforeEach, vi } from "vitest";
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+```

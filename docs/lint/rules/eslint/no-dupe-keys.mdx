@@ -1,0 +1,63 @@
+---
+title: "no-dupe-keys"
+description: "Disallow two keys with the same name in an object literal"
+---
+
+When an object literal has the same key twice, the last value silently replaces the first. In a long object it is easy to add a key that is already there, and then one of the two has no effect.
+
+A getter and a setter with the same name are a pair and are allowed.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const options = {
+  timeout: 1000,
+  retries: 3,
+  timeout: 5000,
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const options = {
+  timeout: 5000,
+  retries: 3,
+};
+```
+
+Keys are compared by value, so `"timeout"` is the same key as `timeout`, and `0x1` is the same key as `1`:
+
+{/* bad {"count": 2} */}
+
+```js
+const options = {
+  timeout: 1000,
+  "timeout": 5000,
+};
+
+const labels = {
+  1: "one",
+  0x1: "uno",
+};
+```
+
+A computed key such as `[name]` and a spread are not compared, because their keys are only known at runtime:
+
+{/* good */}
+
+```js
+const options = {
+  timeout: 1000,
+  [name]: 5000,
+  ...overrides,
+};
+```

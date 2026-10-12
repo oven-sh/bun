@@ -1,0 +1,78 @@
+---
+title: "vitest/require-test-timeout"
+description: "Require every test to set a timeout"
+---
+
+A test without a timeout of its own gets the default, 5 seconds unless your config changes it. That is a long wait for a unit test that hangs, and too short for a test that starts a server, which then fails now and then on a slow machine. This rule makes you choose the limit for each test.
+
+You can give the timeout as a number after the test function, as `{ timeout }` in the options before it, or for all the tests below with `vi.setConfig({ testTimeout })`.
+
+Tests marked `.skip` or `.todo` are not checked.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { expect, test } from "vitest";
+
+test("loads the report", async () => {
+  expect(await loadReport()).toBeDefined();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { expect, test } from "vitest";
+
+test("loads the report", async () => {
+  expect(await loadReport()).toBeDefined();
+}, 10_000);
+
+test("exports the report", { timeout: 30_000 }, async () => {
+  expect(await exportReport()).toBeDefined();
+});
+```
+
+{/* good */}
+
+```js
+import { expect, test, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 10_000 });
+
+test("loads the report", async () => {
+  expect(await loadReport()).toBeDefined();
+});
+```
+
+The timeout has to be written as a number that is not negative. A variable is reported, and so are options without `timeout`:
+
+{/* bad {"count": 2} */}
+
+```js
+import { test } from "vitest";
+
+const SLOW = 30_000;
+
+test(
+  "exports the report",
+  async () => {
+    await exportReport();
+  },
+  SLOW,
+);
+
+test("prints the report", { retry: 2 }, async () => {
+  await printReport();
+});
+```
+
+## When not to use it
+
+If the default timeout, or the `testTimeout` in your Vitest config, suits all your tests, a number on each test adds nothing.

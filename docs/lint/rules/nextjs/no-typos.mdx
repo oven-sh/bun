@@ -1,0 +1,58 @@
+---
+title: "@next/next/no-typos"
+description: "Disallow misspellings of `getStaticProps`, `getStaticPaths` and `getServerSideProps`"
+---
+
+Next.js finds the data fetching functions of a page by their exact names. If you export `getStaticProp` or `getserverSideProps`, nothing complains: the function is never called and the page renders without its props.
+
+The rule checks files under a `pages` directory, except `pages/api`. It reports an exported function or variable with a name that is one character away from `getStaticProps`, `getStaticPaths` or `getServerSideProps`.
+
+`--fix-suggestions` corrects the name.
+
+## Examples
+
+Reported:
+
+{/* bad {"filename": "pages/posts.jsx"} */}
+
+```jsx
+export async function getStaticProp() {
+  return { props: { posts: await loadPosts() } };
+}
+
+export default function Posts({ posts }) {
+  return <PostList posts={posts} />;
+}
+```
+
+{/* bad {"filename": "pages/account.jsx"} */}
+
+```jsx
+export const getserverSideProps = async ({ req }) => {
+  return { props: { user: await loadUser(req) } };
+};
+```
+
+Not reported:
+
+{/* good {"filename": "pages/posts.jsx"} */}
+
+```jsx
+export async function getStaticProps() {
+  return { props: { posts: await loadPosts() } };
+}
+
+export default function Posts({ posts }) {
+  return <PostList posts={posts} />;
+}
+```
+
+Outside `pages`, the names mean nothing to Next.js:
+
+{/* good {"filename": "lib/posts.js"} */}
+
+```js
+export async function getStaticProp() {
+  return loadPosts();
+}
+```

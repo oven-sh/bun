@@ -1,0 +1,72 @@
+---
+title: "bun:test/no-restricted-jest-methods"
+description: "Disallow the `jest` and `vi` methods that you list"
+---
+
+Some teams agree not to use parts of the `jest` object: no module mocks, no fake timers, no spies. This rule reports the methods you list, with your own message if you give one, so the agreement does not depend on review.
+
+The rule does nothing until you give it a list.
+
+## Examples
+
+These examples restrict `advanceTimersByTime` and `spyOn`.
+
+Reported:
+
+{/* bad {"count": 2, "options": [{"advanceTimersByTime": null, "spyOn": "Pass the dependency in instead of spying on it"}]} */}
+
+```ts
+import { expect, jest, test } from "bun:test";
+
+test("retries after a second", () => {
+  const send = jest.spyOn(mailer, "send");
+  retry(send);
+  jest.advanceTimersByTime(1000);
+  expect(send).toHaveBeenCalledTimes(2);
+});
+```
+
+Not reported:
+
+{/* good {"options": [{"advanceTimersByTime": null, "spyOn": "Pass the dependency in instead of spying on it"}]} */}
+
+```ts
+import { expect, jest, test } from "bun:test";
+
+test("retries once", () => {
+  const send = jest.fn();
+  retry(send);
+  expect(send).toHaveBeenCalledTimes(2);
+});
+```
+
+`vi` is checked the same way as `jest`:
+
+{/* bad {"options": [{"spyOn": "Pass the dependency in instead of spying on it"}]} */}
+
+```ts
+import { vi } from "bun:test";
+
+const send = vi.spyOn(mailer, "send");
+```
+
+Only methods of `jest` and `vi` are checked. The `spyOn` and `mock` functions that `"bun:test"` exports are not:
+
+{/* good {"options": [{"spyOn": "Pass the dependency in instead of spying on it"}]} */}
+
+```ts
+import { spyOn } from "bun:test";
+
+const send = spyOn(mailer, "send");
+```
+
+## Options
+
+One object. Each key is the name of a method. The value is the message to report.
+
+```toml bunfig.toml
+[lint.rules]
+"bun:test/no-restricted-jest-methods" = ["error", { spyOn = "Pass the dependency in instead of spying on it" }]
+```
+
+Where the config format has `null`, a `null` value gives the default message, which is ``Use of `spyOn` is not allowed``.

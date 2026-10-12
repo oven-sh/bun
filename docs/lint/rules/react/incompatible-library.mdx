@@ -1,0 +1,57 @@
+---
+title: "react-hooks/incompatible-library"
+description: "Report calls to library APIs that the React Compiler cannot memoize safely"
+---
+
+The React Compiler reuses a value from the last render as long as its inputs are the same. A few libraries return objects and functions that stay the same while the data behind them changes. Memoized, they would show stale data, so the compiler leaves every component and hook that calls one of them unoptimized. This rule tells you where that happens.
+
+| Package                   | What is reported                                 |
+| ------------------------- | ------------------------------------------------ |
+| `react-hook-form`         | A call to the `watch()` that `useForm()` returns |
+| `@tanstack/react-table`   | `useReactTable()`                                |
+| `@tanstack/react-virtual` | `useVirtualizer()`                               |
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import { useForm } from "react-hook-form";
+
+function Signup() {
+  const { register, watch } = useForm();
+  const email = watch("email");
+  return <input {...register("email")} title={email} />;
+}
+```
+
+{/* bad */}
+
+```jsx
+import { useReactTable } from "@tanstack/react-table";
+
+function Table({ columns, data }) {
+  const table = useReactTable({ columns, data });
+  return <div>{table.getRowModel().rows.length} rows</div>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { useForm, useWatch } from "react-hook-form";
+
+function Signup() {
+  const { register, control } = useForm();
+  const email = useWatch({ control, name: "email" });
+  return <input {...register("email")} title={email} />;
+}
+```
+
+## When not to use it
+
+If you do not build with the React Compiler, nothing is memoized for you and these APIs work as usual.

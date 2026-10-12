@@ -1,48 +1,20 @@
 //! The command line of `bun format`: that of Prettier, but that files are written unless a flag
 //! says otherwise, and what `bun check` has (`--threads`, `--timing`, `--cwd`).
 
-pub use crate::args::UsageError;
-use crate::args::{Argument, Param, error};
+use crate::args::{Argument, Group, Param, error};
+pub use crate::args::{Help, UsageError};
 use bun_clap as clap;
+use bun_core::strings;
 
-/// A flag without a description is understood, and not listed in the help.
-pub const PARAMS: &[Param] = &[
-    clap::param!(
-        "-c, --check                     Do not write. Exit with 1 if a file is not formatted"
-    ),
-    clap::param!(
-        "-l, --list-different            Do not write. Print the files that are not formatted, and exit with 1 if there are any"
-    ),
-    clap::param!(
-        "--stdin-filepath <path>         Format standard input as that file, and print the result"
-    ),
-    clap::param!(
-        "--config <path>                 Use this configuration file instead of looking for one"
-    ),
-    clap::param!("--no-config                     Do not look for a configuration file"),
-    clap::param!(
-        "--disable-nested-config         Use the configuration file of the working directory for every file"
-    ),
+const OPTIONS: &[Param] = &[
+    clap::param!("--config <path>                 Use this config file instead of looking for one"),
+    clap::param!("--no-config                     Do not look for a config file"),
     clap::param!("--no-editorconfig               Do not read <b>.editorconfig<r>"),
     clap::param!(
-        "--config-precedence <which>     <b>cli-override<r> <d>(default)<r>, <b>file-override<r>, or <b>prefer-file<r>"
+        "--init                          Add a <b>[format]<r> section to <b>bunfig.toml<r>"
     ),
     clap::param!(
-        "--ignore-path <path>...         Files with patterns to ignore <d>(default: .gitignore and .prettierignore)<r>"
-    ),
-    clap::param!(
-        "--ignore-pattern <pattern>...   Ignore the files that match, as a line of <b>.prettierignore<r> does"
-    ),
-    clap::param!("--with-node-modules             Format files in <b>node_modules<r> too"),
-    clap::param!("--no-error-on-unmatched-pattern  Do not fail if an argument matches no file"),
-    clap::param!(
-        "-u, --ignore-unknown            Say nothing about a file that there is no parser for"
-    ),
-    clap::param!(
-        "--find-config-path <path>       Print the configuration file of a file, and format nothing"
-    ),
-    clap::param!(
-        "--log-level <level>             <b>silent<r>, <b>error<r>, <b>warn<r>, <b>log<r> <d>(default)<r>, or <b>debug<r>"
+        "--doctor                        Show which files are formatted natively and which packages you can remove"
     ),
     clap::param!("--print-width <n>               The line length to wrap at <d>(default: 80)<r>"),
     clap::param!("--tab-width <n>                 Spaces per indentation level <d>(default: 2)<r>"),
@@ -57,7 +29,7 @@ pub const PARAMS: &[Param] = &[
         "--trailing-comma <where>        <b>all<r> <d>(default)<r>, <b>es5<r>, or <b>none<r>"
     ),
     clap::param!(
-        "--no-bracket-spacing            No spaces between the braces of an object literal"
+        "--no-bracket-spacing            No spaces inside the braces of an object literal"
     ),
     clap::param!(
         "--bracket-same-line             Put the closing bracket of a multi-line element at the end of the last line"
@@ -71,7 +43,7 @@ pub const PARAMS: &[Param] = &[
         "--html-whitespace-sensitivity <how>  <b>css<r> <d>(default)<r>, <b>strict<r>, or <b>ignore<r>"
     ),
     clap::param!(
-        "--vue-indent-script-and-style   Indent what is in the script and style tags of Vue files"
+        "--vue-indent-script-and-style   Indent the code in the script and style tags of Vue files"
     ),
     clap::param!(
         "--prose-wrap <how>              <b>preserve<r> <d>(default)<r>, <b>always<r>, or <b>never<r>"
@@ -80,58 +52,186 @@ pub const PARAMS: &[Param] = &[
     clap::param!(
         "--end-of-line <which>           <b>lf<r> <d>(default)<r>, <b>crlf<r>, <b>cr<r>, or <b>auto<r>"
     ),
+    clap::param!("--no-insert-final-newline       Do not end files with a newline"),
+    clap::param!("--sort-imports                  Sort and group imports"),
+    clap::param!("--sort-tailwindcss              Sort Tailwind CSS classes"),
+    clap::param!("--sort-package-json             Sort the keys of <b>package.json<r>"),
+    clap::param!("--jsdoc                         Format JSDoc comments"),
+];
+
+const FILES: &[Param] = &[
     clap::param!(
-        "--require-pragma                Only format files that start with a comment that has <b>@format<r> or <b>@prettier<r>"
+        "--staged                        Only format files that are staged in git, and stage them again"
     ),
     clap::param!(
-        "--check-ignore-pragma           Do not format files that start with a comment that has <b>@noformat<r> or <b>@noprettier<r>"
+        "--changed <ref>?                Only format files that differ from a branch or commit <d>(default: the default branch)<r>"
     ),
     clap::param!(
-        "--insert-pragma                 Put a comment with <b>@format<r> at the top of the files that are formatted"
+        "--stdin-filepath <path>         Format standard input as this file and print the result"
     ),
-    clap::param!("--range-start <offset>          Only format the statements from this offset on"),
-    clap::param!("--range-end <offset>            Only format the statements up to this offset"),
+    clap::param!(
+        "--ignore-path <path>...         Read ignore patterns from these files <d>(default: .gitignore and .prettierignore)<r>"
+    ),
+    clap::param!("--ignore-pattern <pattern>...   Skip files that match this pattern"),
+    clap::param!("--with-node-modules             Format files in <b>node_modules<r> too"),
+    clap::param!("--toml                          Format TOML files too"),
+    clap::param!("--no-error-on-unmatched-pattern  Do not fail when an argument matches no file"),
+    clap::param!("-u, --ignore-unknown            Ignore files in an unknown language"),
+    clap::param!(
+        "--allow-unsupported             Warn instead of failing when the language of a file is not supported"
+    ),
+    clap::param!(
+        "--list-files                    Print the files that would be formatted and exit"
+    ),
+    clap::param!("--cwd <path>                    Set the working directory"),
+];
+
+const OUTPUT: &[Param] = &[
+    clap::param!(
+        "-c, --check                     Do not write. Exit with 1 if a file needs formatting"
+    ),
+    clap::param!(
+        "-l, --list-different            Do not write. Print the files that need formatting and exit with 1 if there are any"
+    ),
+    clap::param!(
+        "--log-level <level>             <b>silent<r>, <b>error<r>, <b>warn<r>, <b>log<r> <d>(default)<r>, or <b>debug<r>"
+    ),
+    clap::param!(
+        "-f, --format <name>             With <b>--doctor<r>, print the report as <b>json<r>"
+    ),
+    clap::param!("--color                         Always use colors"),
+    clap::param!("--no-color                      Never use colors"),
+    clap::param!("--timing                        Print how long each phase took"),
+];
+
+const OTHER: &[Param] = &[
     clap::param!(
         "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
     ),
     clap::param!(
-        "--allow-unsupported             Only warn about files in a language that is not supported"
+        "--no-verify                     Skip the check that formatted code still means the same"
+    ),
+    clap::param!("-v, --version                   Print the version of Bun"),
+    clap::param!(
+        "-h, --help                      Print the common flags. With <b>--all<r>, every flag"
+    ),
+    clap::param!("--all                           With <b>--help<r>, print every flag"),
+    clap::param!("--help-all                      The same as <b>--help --all<r>"),
+];
+
+const OF_PRETTIER: &[Param] = &[
+    clap::param!("-w, --write                     Write the files. This is the default"),
+    clap::param!(
+        "--config-precedence <which>     <b>cli-override<r> <d>(default)<r>, <b>file-override<r>, or <b>prefer-file<r>"
     ),
     clap::param!(
-        "--flavor <which>                Without a configuration file, format like <b>prettier<r> or like <b>oxfmt<r>"
+        "--find-config-path <path>       Print the path of the config for a file and exit"
+    ),
+    clap::param!("--parser <name>                 Read every file with this parser"),
+    clap::param!("--plugin <name>...              Load these plugins"),
+    clap::param!(
+        "--require-pragma                Only format files that start with a <b>@format<r> or <b>@prettier<r> comment"
     ),
     clap::param!(
-        "--init                          Write an <b>.oxfmtrc.json<r>, with which files are formatted like oxfmt does"
+        "--check-ignore-pragma           Skip files that start with a <b>@noformat<r> or <b>@noprettier<r> comment"
     ),
-    clap::param!("--timing                        Print how long each phase took"),
-    clap::param!("--cwd <path>                    Set the working directory"),
-    clap::param!("-h, --help                      Print this help menu"),
-    // The opposites of the above.
-    clap::param!("-w, --write"),
+    clap::param!(
+        "--insert-pragma                 Put a <b>@format<r> comment at the top of formatted files"
+    ),
+    clap::param!("--range-start <offset>          Only format the statements from this offset on"),
+    clap::param!("--range-end <offset>            Only format the statements up to this offset"),
+    clap::param!(
+        "--cursor-offset <offset>        With <b>--stdin-filepath<r>, print on stderr where this offset ends up"
+    ),
+    clap::param!(
+        "--experimental-ternaries        Put the question mark of a ternary after the condition"
+    ),
+    clap::param!(
+        "--experimental-operator-position <where>  <b>end<r> <d>(default)<r> or <b>start<r>"
+    ),
+    clap::param!("--jsx-bracket-same-line         The old name of <b>--bracket-same-line<r>"),
+    clap::param!("--cache                         No effect. Every run formats every file"),
+    clap::param!("--cache-location <path>         No effect"),
+    clap::param!("--cache-strategy <strategy>     No effect"),
+    clap::param!("--experimental-cli              No effect"),
+];
+
+const OF_OXFMT: &[Param] = &[
+    clap::param!(
+        "--flavor <which>                Without a config file, format like <b>prettier<r> or like <b>oxfmt<r>"
+    ),
+    clap::param!(
+        "--disable-nested-config         Use the config file in the working directory for every file"
+    ),
+    clap::param!("--migrate <source>              Not supported"),
+    clap::param!("--lsp                           Not supported"),
+];
+
+/// What the help has as `--no-..`.
+const OPPOSITES: &[Param] = &[
     clap::param!("--editorconfig"),
     clap::param!("--semi"),
     clap::param!("--bracket-spacing"),
     clap::param!("--error-on-unmatched-pattern"),
-    // Prettier's, with little or nothing to do here.
-    clap::param!("--experimental-ternaries"),
-    clap::param!("--experimental-operator-position <where>"),
-    clap::param!("--jsx-bracket-same-line"),
-    clap::param!("--cursor-offset <offset>"),
-    clap::param!("--parser <name>"),
-    clap::param!("--plugin <name>..."),
-    clap::param!("--cache"),
-    clap::param!("--cache-location <path>"),
-    clap::param!("--cache-strategy <strategy>"),
-    clap::param!("--experimental-cli"),
-    clap::param!("--color"),
-    clap::param!("-v, --version"),
-    // oxfmt's.
-    clap::param!("--migrate <source>"),
-    clap::param!("--lsp"),
-    // Ours.
-    clap::param!("--list-files"),
+    clap::param!("--insert-final-newline"),
     clap::param!("--verify"),
 ];
+
+pub const HELP: Help = Help {
+    groups: &[
+        Group {
+            title: "Options",
+            params: OPTIONS,
+        },
+        Group {
+            title: "Files",
+            params: FILES,
+        },
+        Group {
+            title: "Output",
+            params: OUTPUT,
+        },
+        Group {
+            title: "Other",
+            params: OTHER,
+        },
+        Group {
+            title: "Compatibility with Prettier",
+            params: OF_PRETTIER,
+        },
+        Group {
+            title: "Compatibility with oxfmt",
+            params: OF_OXFMT,
+        },
+    ],
+    common: &[
+        b"check",
+        b"staged",
+        b"changed",
+        b"stdin-filepath",
+        b"print-width",
+        b"use-tabs",
+        b"no-semi",
+        b"single-quote",
+        b"init",
+        b"doctor",
+    ],
+};
+
+const _: () = assert!(
+    HELP.describes_every_flag(),
+    "A flag of `bun format` has no description, so `--help --all` leaves it out."
+);
+
+pub const PARAMS: &[Param] = clap::concat_params!(
+    OPTIONS,
+    FILES,
+    OUTPUT,
+    OTHER,
+    OF_PRETTIER,
+    OF_OXFMT,
+    OPPOSITES
+);
 
 /// `--config-precedence`
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -153,6 +253,30 @@ pub enum LogLevel {
     #[default]
     Log,
     Debug,
+}
+
+/// An element of `overrides` in `[format]`.
+#[derive(Clone, Debug, Default)]
+pub struct Override {
+    /// Patterns for paths from the working directory. One without a slash is for a name in any directory.
+    pub files: Vec<Vec<u8>>,
+    pub excluded: Vec<Vec<u8>>,
+    /// As [`Options::format`].
+    pub format: Vec<(&'static [u8], Vec<u8>)>,
+}
+
+impl Override {
+    /// Takes out what the flag `name`, which is for every file, replaces. One that only turns something on leaves the
+    /// options for it.
+    fn give_way_to(&mut self, name: &[u8], value: &[u8]) {
+        self.format.retain(|it| {
+            let (whole, is_part) = match strings::split_once_char(it.0, b'.') {
+                Some((whole, _)) => (whole, true),
+                None => (it.0, false),
+            };
+            whole != name || (value == b"true" && (is_part || it.1 != b"false"))
+        });
+    }
 }
 
 /// What the command line says.
@@ -179,7 +303,11 @@ pub struct Options {
     pub ignore_path: Option<Vec<Vec<u8>>>,
     /// Lines of an ignore file that is in the working directory.
     pub ignore_pattern: Vec<Vec<u8>>,
+    /// `--staged`, `--changed`
+    pub only: Option<crate::git::Only>,
     pub with_node_modules: bool,
+    /// TOML is formatted, also where the run is not like oxfmt.
+    pub toml: bool,
     pub error_on_unmatched_pattern: bool,
     /// Nothing is said about a file that there is no parser for.
     pub ignore_unknown: bool,
@@ -187,16 +315,25 @@ pub struct Options {
     pub allow_unsupported: bool,
     /// `--flavor oxfmt`, or `false`: `--flavor prettier`.
     pub is_like_oxfmt: Option<bool>,
+    /// Add `[format]` to bunfig.toml.
     pub init: bool,
+    /// Says what a run would do with the configuration, and formats nothing.
+    pub doctor: bool,
+    /// `-f json`
+    pub as_json: bool,
     pub find_config_path: Option<Vec<u8>>,
     pub log_level: LogLevel,
-    /// The options of Prettier, by the names that they have in a configuration file, and their
-    /// values as they are written in JSON, a string without its quotes.
+    /// The options of Prettier, and what is built in besides, by the names that they have in a
+    /// configuration file, and their values as they are written in JSON, a string without its quotes.
     pub format: Vec<(&'static [u8], Vec<u8>)>,
+    /// Only `[format]` has them.
+    pub overrides: Vec<Override>,
     pub plugins: Vec<Vec<u8>>,
     pub color: Option<bool>,
     pub version: bool,
     pub help: bool,
+    /// With `help`: every flag.
+    pub all: bool,
     /// `0`: the number of cores.
     pub threads: usize,
     pub timing: bool,
@@ -224,19 +361,25 @@ impl Default for Options {
             config_precedence: Precedence::default(),
             ignore_path: None,
             ignore_pattern: Vec::new(),
+            only: None,
             with_node_modules: false,
+            toml: false,
             error_on_unmatched_pattern: true,
             ignore_unknown: false,
             allow_unsupported: false,
             is_like_oxfmt: None,
             init: false,
+            doctor: false,
+            as_json: false,
             find_config_path: None,
             log_level: LogLevel::default(),
             format: Vec::new(),
+            overrides: Vec::new(),
             plugins: Vec::new(),
             color: None,
             version: false,
             help: false,
+            all: false,
             threads: 0,
             timing: false,
             cwd: None,
@@ -247,7 +390,7 @@ impl Default for Options {
 }
 
 /// The name in a configuration file of the option that a flag sets.
-fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
     Some(match flag {
         b"print-width" => b"printWidth",
         b"tab-width" => b"tabWidth",
@@ -277,6 +420,11 @@ fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
         b"range-start" => b"rangeStart",
         b"range-end" => b"rangeEnd",
         b"jsx-bracket-same-line" => b"jsxBracketSameLine",
+        b"sort-imports" => b"sortImports",
+        b"sort-tailwindcss" => b"sortTailwindcss",
+        b"sort-package-json" => b"sortPackageJson",
+        b"jsdoc" => b"jsdoc",
+        b"insert-final-newline" => b"insertFinalNewline",
         _ => return None,
     })
 }
@@ -293,6 +441,11 @@ impl Options {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
         if let Some(option) = option_of(name) {
+            // What is on stays as it is: `[format]` may have a table with options for it.
+            let is_on_already = |it: &(&[u8], Vec<u8>)| it.0 == option && it.1 != b"false";
+            if value.is_none() && is_on && self.format.iter().any(is_on_already) {
+                return Ok(());
+            }
             let value: &[u8] = value.unwrap_or(if is_on { b"true" } else { b"false" });
             self.format.retain(|it| it.0 != option);
             self.format.push((option, value.to_vec()));
@@ -308,6 +461,11 @@ impl Options {
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"list-files" => self.list_files = is_on,
             b"init" => self.init = is_on,
+            b"doctor" => self.doctor = is_on,
+            b"format" if text == b"json" => self.as_json = true,
+            b"format" => {
+                return error(&[b"Option format: '", text, b"' is not json."]);
+            }
             b"flavor" => {
                 self.is_like_oxfmt = match text {
                     b"oxfmt" => Some(true),
@@ -341,7 +499,9 @@ impl Options {
             }
             b"ignore-path" => self.ignore_path.get_or_insert_default().push(text.to_vec()),
             b"ignore-pattern" => self.ignore_pattern.push(text.to_vec()),
+            b"staged" | b"changed" => crate::git::Only::set(&mut self.only, name, value, is_on)?,
             b"with-node-modules" => self.with_node_modules = is_on,
+            b"toml" => self.toml = is_on,
             b"error-on-unmatched-pattern" => self.error_on_unmatched_pattern = is_on,
             b"ignore-unknown" => self.ignore_unknown = is_on,
             b"allow-unsupported" => self.allow_unsupported = is_on,
@@ -366,6 +526,8 @@ impl Options {
             b"color" => self.color = Some(is_on),
             b"version" => self.version = is_on,
             b"help" => self.help = is_on,
+            b"all" => self.all = is_on,
+            b"help-all" => (self.help, self.all) = (is_on, is_on),
             b"threads" => match bun_core::fmt::parse_decimal::<usize>(text) {
                 Some(count) if count > 0 => self.threads = count,
                 _ => return error(&[b"--threads takes a number above zero, not \"", text, b"\"."]),
@@ -434,6 +596,9 @@ impl Options {
         if alone.config.is_some() || !alone.config_lookup {
             (defaults.config, defaults.config_lookup) = (None, true);
         }
+        for (name, value) in &alone.format {
+            (defaults.overrides.iter_mut()).for_each(|it| it.give_way_to(name, value));
+        }
         defaults.with(args)
     }
 
@@ -482,6 +647,9 @@ impl Options {
                 Ok(())
             }
         })?;
+        if options.all && !options.help {
+            return error(&[b"--all has no effect without --help"]);
+        }
         Ok(options)
     }
 }

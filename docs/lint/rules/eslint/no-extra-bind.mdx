@@ -1,0 +1,60 @@
+---
+title: "no-extra-bind"
+description: "Disallow `.bind()` on functions that do not use `this`"
+---
+
+`.bind(user)` sets what `this` is inside a function. On a function that never reads `this` it changes nothing, and on an arrow function it has no effect, because an arrow function takes `this` from where it is written. The call is usually left from a time when the function did use `this`.
+
+Only a function written right before the `.bind()` is checked, and only a call with one argument.
+
+`--fix` removes the `.bind()` call if its argument is a name, a literal or `this`. It leaves `.bind(getUser())` alone, because removing it would also remove the call to `getUser()`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const greet = function () {
+  return "Hello";
+}.bind(user);
+
+const log = (() => {
+  console.log(this.name);
+}).bind(user);
+```
+
+A `this` inside a nested `function` belongs to that function, not to the outer one:
+
+{/* bad */}
+
+```js
+const setup = function () {
+  button.onclick = function () {
+    this.disabled = true;
+  };
+}.bind(form);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const greet = function () {
+  return `Hello ${this.name}`;
+}.bind(user);
+
+const save = user.save.bind(user);
+```
+
+More arguments fill in parameters, which is useful without `this`:
+
+{/* good */}
+
+```js
+const addFive = function (a, b) {
+  return a + b;
+}.bind(null, 5);
+```

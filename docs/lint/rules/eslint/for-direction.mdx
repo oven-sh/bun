@@ -1,0 +1,56 @@
+---
+title: "for-direction"
+description: "Require the update clause of a `for` loop to move the counter toward the end of the loop"
+---
+
+A loop that tests `i < 10` and then runs `i--` moves away from 10, so the test stays true and the loop never ends. It is almost always a typo: `--` for `++`, or `<` for `>`.
+
+The rule looks at `++`, `--`, `+=` and `-=` on the counter. If it cannot tell whether the step is positive or negative, it reports nothing.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+for (let i = 0; i < items.length; i--) {
+  render(items[i]);
+}
+```
+
+{/* bad */}
+
+```js
+for (let i = items.length - 1; i >= 0; i += 1) {
+  render(items[i]);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+for (let i = 0; i < items.length; i++) {
+  render(items[i]);
+}
+
+for (let i = items.length - 1; i >= 0; i -= 1) {
+  render(items[i]);
+}
+```
+
+The sign of `step` is not known here, so the loop is left alone:
+
+{/* good */}
+
+```js
+function walk(items, step) {
+  for (let i = 0; i < items.length; i += step) {
+    render(items[i]);
+  }
+}
+```

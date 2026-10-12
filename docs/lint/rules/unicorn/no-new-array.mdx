@@ -1,0 +1,37 @@
+---
+title: "unicorn/no-new-array"
+description: "Disallow `new Array()` with a single argument"
+---
+
+`new Array(value)` does two different things. If `value` is a number, you get an array of that length with nothing in it. If it is anything else, you get an array with `value` as its only item. A reader cannot tell which one is meant without knowing the type of `value`.
+
+The rule suggests both readings: `Array.from({length: value})` and `[value]`. It cannot know which one you meant, so `--fix` leaves the code alone. `--fix-dangerously` applies the first one.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const slots = new Array(10);
+const list = new Array(input);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const slots = Array.from({ length: 10 });
+const list = [input];
+```
+
+Only the form with exactly one argument is ambiguous:
+
+{/* good */}
+
+```js
+const empty = new Array();
+const pair = new Array(1, 2);
+```

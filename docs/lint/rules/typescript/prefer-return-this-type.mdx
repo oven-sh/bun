@@ -1,0 +1,54 @@
+---
+title: "@typescript-eslint/prefer-return-this-type"
+description: "Require the return type `this` for a method that returns `this`"
+---
+
+A method that returns `this` lets you chain calls. If its return type is the name of the class, the chain breaks for subclasses: `new UserQuery().where("active")` has the type `Query`, and the methods that `UserQuery` adds are gone. With the return type `this`, the call keeps the type of the object it was called on.
+
+The rule checks methods, getters, and fields that hold a function. A member is reported if its return type names the class, it returns `this`, and it never returns another object of the class.
+
+`--fix` replaces the class name with `this`.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+class Query {
+  where(condition: string): Query {
+    return this;
+  }
+
+  limit = (count: number): Query => this;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Query {
+  where(condition: string): this {
+    return this;
+  }
+
+  limit = (count: number): this => this;
+
+  clone(): Query {
+    return new Query();
+  }
+}
+
+class UserQuery extends Query {
+  admins() {
+    return this.where("admin");
+  }
+}
+
+new UserQuery().where("active").admins();
+```

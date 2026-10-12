@@ -1,0 +1,83 @@
+---
+title: "react/forbid-component-props"
+description: "Disallow chosen props, by default `className` and `style`, on components"
+---
+
+A component that accepts `className` or `style` lets every caller restyle it, and soon no two uses look the same. This rule reports those props on components, so that looks are changed through props the component defines, such as `variant` or `size`.
+
+Only components are checked, which means elements with a capitalized name. DOM elements such as `<div>` are not.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+<Button className="wide" style={{ color: "red" }}>
+  Delete
+</Button>
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+<Button size="wide" variant="danger">
+  Delete
+</Button>;
+
+<div className="toolbar" />;
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"react/forbid-component-props" = ["error", { forbid = ["style", { propName = "className", allowedFor = ["Icon"] }] }]
+```
+
+The one option is `forbid`, a list that replaces the default `["className", "style"]`. An entry is the name of a prop, or an object:
+
+| Key                     | What it does                                                      |
+| ----------------------- | ----------------------------------------------------------------- |
+| `propName`              | The name of the prop.                                             |
+| `propNamePattern`       | Instead of `propName`: a glob for the names, such as `"data-*"`.  |
+| `allowedFor`            | Components that may have the prop. It is forbidden on all others. |
+| `allowedForPatterns`    | The same, as globs for the component's name.                      |
+| `disallowedFor`         | The prop is forbidden on these components only.                   |
+| `disallowedForPatterns` | The same, as globs.                                               |
+| `message`               | The text of the report.                                           |
+
+An entry has either the `allowed..` keys or the `disallowed..` keys, not both.
+
+{/* good {"options": [{"forbid": [{"propName": "className", "allowedFor": ["Icon"]}]}]} */}
+
+```jsx
+<Icon className="spin" />
+```
+
+{/* bad {"options": [{"forbid": [{"propName": "className", "allowedFor": ["Icon"]}]}]} */}
+
+```jsx
+<Button className="wide" />
+```
+
+{/* bad {"options": [{"forbid": [{"propName": "style", "disallowedForPatterns": ["*Button"]}]}]} */}
+
+```jsx
+<IconButton style={{ margin: 4 }} />
+```
+
+{/* good {"options": [{"forbid": [{"propName": "style", "disallowedForPatterns": ["*Button"]}]}]} */}
+
+```jsx
+<Card style={{ margin: 4 }} />
+```
+
+{/* bad {"options": [{"forbid": [{"propNamePattern": "data-*", "message": "Use the testId prop"}]}]} */}
+
+```jsx
+<Button data-testid="save" />
+```

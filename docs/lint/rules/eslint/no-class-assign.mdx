@@ -1,0 +1,40 @@
+---
+title: "no-class-assign"
+description: "Disallow assigning to the name of a class"
+---
+
+The name of a class declaration can be assigned to like a `let` variable. After that the class is gone, and every `new Logger()` and `instanceof Logger` in the file works with the new value. That is almost always a mistake.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+class Logger {}
+
+Logger = createLogger();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class Logger {}
+
+const logger = createLogger();
+```
+
+A variable that holds a class expression is an ordinary variable:
+
+{/* good */}
+
+```js
+let Store = class {};
+
+Store = class extends Store {};
+```

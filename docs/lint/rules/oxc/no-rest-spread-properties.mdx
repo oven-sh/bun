@@ -1,0 +1,63 @@
+---
+title: "oxc/no-rest-spread-properties"
+description: "Disallow `...` in object literals and object destructuring"
+---
+
+Engines older than ES2018 cannot parse `{ ...user }` or `const { id, ...rest } = user`, so a file that uses them fails to load there. If a compiler lowers them for such a target, it adds helper code to the output.
+
+Only objects are checked. `...` is allowed in arrays, call arguments, rest parameters such as `(...args)`, and JSX attributes.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const updated = { ...user, name: "Ada" };
+```
+
+{/* bad */}
+
+```js
+const { password, ...profile } = user;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const updated = Object.assign({}, user, { name: "Ada" });
+
+const profile = { id: user.id, name: user.name };
+```
+
+{/* good */}
+
+```jsx
+const all = [...admins, ...members];
+
+function log(...messages) {
+  console.log(...messages);
+}
+
+const row = <Row {...props} />;
+```
+
+## Options
+
+| Option                | Default | What it does                                                                      |
+| --------------------- | ------- | --------------------------------------------------------------------------------- |
+| `objectSpreadMessage` | `""`    | Text to add to the message for a spread, such as `{ ...user }`.                   |
+| `objectRestMessage`   | `""`    | Text to add to the message for a rest property, such as `{ id, ...rest } = user`. |
+
+{/* bad {"options": [{"objectSpreadMessage": "Use Object.assign(), we ship ES2017."}]} */}
+
+```js
+const updated = { ...user, name: "Ada" };
+```
+
+## When not to use it
+
+Every current browser and runtime supports both. Use this rule only if your code has to run on older ones.

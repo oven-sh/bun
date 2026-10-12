@@ -1,0 +1,29 @@
+---
+title: "unicorn/no-unnecessary-array-flat-depth"
+description: "Disallow passing `1` as the depth to `Array#flat()`"
+---
+
+`flat()` flattens one level by default, so the `1` in `flat(1)` does nothing.
+
+`--fix-suggestions` removes the argument.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const tags = posts.map(post => post.tags).flat(1);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const tags = posts.map(post => post.tags).flat();
+
+const leaves = tree.flat(2);
+const everything = tree.flat(Infinity);
+```

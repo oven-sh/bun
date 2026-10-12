@@ -1,0 +1,54 @@
+---
+title: "jsx-a11y/html-has-lang"
+description: "Require a `lang` attribute on the `html` element"
+---
+
+A screen reader picks its voice and pronunciation from the `lang` of the page. Without it, it uses the language of the person's system, so a French page is read aloud with English pronunciation.
+
+An empty string, `null`, `undefined`, a number, `true` and `false` do not count as a language.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+function Layout({ children }) {
+  return (
+    <html>
+      <body>{children}</body>
+    </html>
+  );
+}
+
+function EmptyLang({ children }) {
+  return (
+    <html lang="">
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Layout({ children }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+
+function Localized({ children, locale }) {
+  return (
+    <html lang={locale}>
+      <body>{children}</body>
+    </html>
+  );
+}
+```

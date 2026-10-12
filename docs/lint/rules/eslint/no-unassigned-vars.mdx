@@ -1,0 +1,50 @@
+---
+title: "no-unassigned-vars"
+description: "Disallow `let` and `var` variables that are read but never assigned"
+---
+
+A `let` or `var` that is declared without a value and never assigned is `undefined` everywhere you read it. Usually the assignment was forgotten, or a refactor removed it.
+
+A variable that is never read is left to `no-unused-vars`.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+let status;
+
+if (status === "ready") {
+  start();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+let status;
+
+if (isReady()) {
+  status = "ready";
+}
+
+if (status === "ready") {
+  start();
+}
+```
+
+In TypeScript, `declare` says that the value comes from somewhere else:
+
+{/* good */}
+
+```ts
+declare let version: string;
+
+console.log(version);
+```

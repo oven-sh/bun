@@ -1,0 +1,72 @@
+---
+title: "no-empty"
+description: "Disallow empty block statements"
+---
+
+An empty block is usually code that was never finished, or what a refactor left behind. An empty `catch` is worse: the error disappears and nothing tells you that the call failed.
+
+A block with a comment in it is not reported, so you can say why it is empty. Empty function bodies are not reported either. `no-empty-function` is the rule for those.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+try {
+  cache.clear();
+} catch (error) {}
+```
+
+{/* bad {"count": 2} */}
+
+```js
+if (user.active) {
+}
+
+switch (user.role) {
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+try {
+  cache.clear();
+} catch (error) {
+  // The cache is optional. A failure here changes nothing.
+}
+
+function noop() {}
+```
+
+## Options
+
+| Option            | Default | What it does                  |
+| ----------------- | ------- | ----------------------------- |
+| `allowEmptyCatch` | `false` | Allow an empty `catch` block. |
+
+{/* good {"options": [{"allowEmptyCatch": true}]} */}
+
+```js
+try {
+  cache.clear();
+} catch (error) {}
+```
+
+Other empty blocks are still reported, including the `finally` of the same statement:
+
+{/* bad {"options": [{"allowEmptyCatch": true}]} */}
+
+```js
+try {
+  cache.clear();
+} catch (error) {
+} finally {
+}
+```

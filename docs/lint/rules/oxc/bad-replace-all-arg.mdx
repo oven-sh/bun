@@ -1,0 +1,34 @@
+---
+title: "oxc/bad-replace-all-arg"
+description: "Require the `g` flag on a regular expression passed to `replaceAll()`"
+---
+
+`replaceAll()` throws a `TypeError` when its regular expression does not have the `g` flag. The code parses and only fails when that line runs.
+
+The rule checks a regular expression literal, `new RegExp()` and `RegExp()`, written in the call or kept in a variable. If the flags are not a plain string, it cannot tell and reports nothing. A string argument is fine: `replaceAll()` replaces every occurrence of it.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const slug = title.replaceAll(/\s+/, "-");
+
+const digits = new RegExp("\\d");
+const masked = cardNumber.replaceAll(digits, "*");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const slug = title.replaceAll(/\s+/g, "-");
+
+const digits = new RegExp("\\d", "g");
+const masked = cardNumber.replaceAll(digits, "*");
+
+const unixPath = path.replaceAll("\\", "/");
+```

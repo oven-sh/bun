@@ -1,0 +1,34 @@
+---
+title: "no-loss-of-precision"
+description: "Disallow number literals that cannot be stored exactly as written"
+---
+
+A JavaScript number holds 15 to 17 significant digits. A literal with more is rounded without a warning. `9007199254740993` becomes `9007199254740992`, so an ID typed into the code points at another record. A literal that is too large becomes `Infinity`, and one that is too small becomes `0`.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 5} */}
+
+```js
+const orderId = 9007199254740993;
+const pi = 3.14159265358979323846;
+const mask = 0x20000000000001;
+const huge = 1e400;
+const tiny = 1e-400;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const orderId = 9007199254740993n;
+const orderKey = "9007199254740993";
+const pi = 3.141592653589793;
+const mask = 0x1fffffffffffff;
+const huge = Infinity;
+```

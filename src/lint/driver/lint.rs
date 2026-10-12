@@ -296,9 +296,8 @@ impl Context<'_, '_> {
         };
         let path = paths::from_native(&result.path);
         let was_made = result.had_types || Framework::of(&path).is_some();
-        let is_of_bun_test = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.plugin == Plugin::BunTest);
-        let has_help =
-            linted.config.language.is_oxlint || result.messages.iter().any(is_of_bun_test);
+        let says_more = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.plugin == Plugin::BunTest || meta.follows_oxlint || meta.has_hints);
+        let has_help = linted.config.language.is_oxlint || result.messages.iter().any(says_more);
         if was_made || !has_help {
             return Vec::new();
         }
@@ -395,7 +394,7 @@ impl Context<'_, '_> {
             Some(framework) => self.verify_scripts(framework, &path, &text, &config),
             None => self.verify_as(&path, &text, &config, &how),
         };
-        let (had_types, was_fixed) = (result.had_types, result.is_fixed);
+        let (had_types, was_fixed, fixes) = (result.had_types, result.is_fixed, result.fixes);
         let fixed_text = result.fixed_text.take();
         let shown = std::mem::take(&mut result.path);
         // What the other files export is known now, so all rules can run on what the fixes make of the text. Its types are gone.
@@ -412,6 +411,7 @@ impl Context<'_, '_> {
             false => self.result(shown, linted, text, was_fixed, &config),
         };
         result.fixed_text = result.fixed_text.take().or(fixed_text);
+        result.fixes += fixes;
         result.had_types = had_types;
         Ok(())
     }
@@ -543,8 +543,8 @@ impl Context<'_, '_> {
         on_circular_fixes: &dyn Fn(&[u8]),
         verify: &mut dyn FnMut(&[u8]) -> LintResult,
     ) -> FileResult {
-        let (result, text, is_fixed) = match self.fixes() {
-            false => (verify(&text), text, false),
+        let (result, text, is_fixed, fixes) = match self.fixes() {
+            false => (verify(&text), text, false, 0),
             true if config.language.is_oxlint => {
                 let mut result = verify(&text);
                 let mut messages = std::mem::take(&mut result.messages);
@@ -558,6 +558,7 @@ impl Context<'_, '_> {
                 let is_fixed = fixed.is_fixed || was_fixed;
                 let mut result = self.result(path, result, text, is_fixed, config);
                 result.fixed_text = fixed.is_fixed.then_some(fixed.output);
+                result.fixes = fixed.count;
                 return result;
             }
             true => {
@@ -572,10 +573,12 @@ impl Context<'_, '_> {
                 if let Some(rules) = report.broken_by {
                     self.note_broken_fixes(path_to_verify, rules);
                 }
-                (report.result, report.output, report.is_fixed)
+                (report.result, report.output, report.is_fixed, report.fixes)
             }
         };
-        self.result(path, result, text, is_fixed || was_fixed, config)
+        let mut result = self.result(path, result, text, is_fixed || was_fixed, config);
+        result.fixes = fixes;
+        result
     }
 
     pub(crate) fn result(
@@ -616,6 +619,7 @@ impl Context<'_, '_> {
             thrown: result.thrown,
             had_types: false,
             is_fixed,
+            fixes: 0,
             fixed_text: None,
             linted: Some(Linted {
                 config: Arc::clone(config),

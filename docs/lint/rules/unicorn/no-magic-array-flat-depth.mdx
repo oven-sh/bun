@@ -1,0 +1,32 @@
+---
+title: "unicorn/no-magic-array-flat-depth"
+description: "Disallow an unexplained number as the depth of `.flat()`"
+---
+
+A reader of `rows.flat(3)` cannot tell why the depth is 3, or whether it was picked to mean "all the way down". Say why in a comment, give the number a name, or use `Infinity` to flatten every level.
+
+A depth of `1` is allowed, because it is the default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const cells = tables.flat(2);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const cells = tables.flat(2 /* table, then row */);
+
+const TABLE_DEPTH = 2;
+const sameCells = tables.flat(TABLE_DEPTH);
+
+const leaves = tree.flat(Infinity);
+const rows = tables.flat(1);
+```

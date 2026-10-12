@@ -1,0 +1,57 @@
+---
+title: "react-hooks/syntax"
+description: "Disallow invalid JavaScript in components and hooks, such as assigning to a `const`"
+---
+
+Some mistakes parse fine and only fail when the code runs. The one you are likely to see here is an assignment to a `const` variable, which throws a `TypeError` when the component renders. The React Compiler catches it when it analyzes the component.
+
+The rule only looks at components and hooks. `no-const-assign` reports the same mistake in all code.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Total({ items }) {
+  const total = 0;
+  total = items.length;
+  return <span>{total}</span>;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Total({ items }) {
+  const total = 0;
+  const update = () => {
+    total = items.length;
+  };
+  return <span onClick={update}>{total}</span>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Total({ items }) {
+  const total = items.length;
+  return <span>{total}</span>;
+}
+```
+
+This function is neither a component nor a hook, so the rule skips it:
+
+{/* good */}
+
+```jsx
+function countItems(items) {
+  const total = 0;
+  total = items.length;
+  return total;
+}
+```

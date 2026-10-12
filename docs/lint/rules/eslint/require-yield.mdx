@@ -1,0 +1,36 @@
+---
+title: "require-yield"
+description: "Require generator functions to contain `yield`"
+---
+
+A generator that never yields produces no values: a `for...of` loop over it ends at once. Either the `yield` is missing or the `*` is a mistake.
+
+A generator with an empty body is not reported. A `yield` in a nested generator does not count for the outer one.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function* ids() {
+  return nextId();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function* ids() {
+  while (true) {
+    yield nextId();
+  }
+}
+
+function* nothing() {}
+```

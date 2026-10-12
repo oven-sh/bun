@@ -1,0 +1,38 @@
+---
+title: "react/no-clone-element"
+description: "Disallow `React.cloneElement`"
+---
+
+`cloneElement` adds props to an element that was created somewhere else. Whoever reads `<Row />` cannot see that it receives `isSelected`, and the extra props are lost as soon as someone wraps the child in another component. Pass the data with a render prop or with context instead.
+
+Only a `cloneElement` that is imported from `"react"` is reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+import React, { cloneElement } from "react";
+
+function List({ children, selected }) {
+  return React.Children.map(children, (child, i) => React.cloneElement(child, { isSelected: i === selected }));
+}
+
+const disabled = cloneElement(<Button />, { disabled: true });
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function List({ items, selected, renderItem }) {
+  return items.map((item, i) => renderItem(item, i === selected));
+}
+
+const list = (
+  <List items={rows} selected={0} renderItem={(row, isSelected) => <Row key={row.id} isSelected={isSelected} />} />
+);
+```

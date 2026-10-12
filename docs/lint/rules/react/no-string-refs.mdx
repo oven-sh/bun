@@ -1,0 +1,62 @@
+---
+title: "react/no-string-refs"
+description: "Disallow strings as the value of the `ref` attribute"
+---
+
+`ref="input"` asks React to store the element in `this.refs.input`. String refs only work in class components, they are tied to the component that is rendering at that moment, and React 19 removed them. Use `createRef`, `useRef`, or a callback.
+
+If `settings.react.version` in your ESLint config is lower than 18.3, reading `this.refs` in a class component is reported too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class SearchBox extends React.Component {
+  componentDidMount() {
+    this.refs.input.focus();
+  }
+
+  render() {
+    return <input ref="input" />;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class SearchBox extends React.Component {
+  input = React.createRef();
+
+  componentDidMount() {
+    this.input.current.focus();
+  }
+
+  render() {
+    return <input ref={this.input} />;
+  }
+}
+```
+
+## Options
+
+| Option               | Default | What it does                                          |
+| -------------------- | ------- | ----------------------------------------------------- |
+| `noTemplateLiterals` | `false` | Also report a template literal as the value of `ref`. |
+
+{/* good */}
+
+```jsx
+const row = index => <li ref={`row${index}`} />;
+```
+
+{/* bad {"options": [{"noTemplateLiterals": true}]} */}
+
+```jsx
+const row = index => <li ref={`row${index}`} />;
+```

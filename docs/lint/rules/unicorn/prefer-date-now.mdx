@@ -1,0 +1,34 @@
+---
+title: "unicorn/prefer-date-now"
+description: "Require `Date.now()` to get the current time in milliseconds"
+---
+
+`new Date().getTime()` creates a `Date` object only to read one number from it. `Date.now()` returns the same number without the object.
+
+A `new Date()` that is turned into a number is reported too: `+new Date()`, `Number(new Date())`, or arithmetic such as `new Date() - start`.
+
+`--fix` rewrites everything except the arithmetic.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const start = new Date().getTime();
+const stamp = +new Date();
+const elapsed = new Date() - start;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const start = Date.now();
+const stamp = Date.now();
+const elapsed = Date.now() - start;
+
+const created = new Date(user.createdAt).getTime();
+```

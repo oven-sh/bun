@@ -1,0 +1,109 @@
+---
+title: "no-unmodified-loop-condition"
+description: "Disallow loop conditions that test variables the loop never changes"
+---
+
+If nothing in a `while`, `do...while`, or `for` loop changes the variables in its condition, the loop either never runs or never stops. Usually the update was forgotten, or it changes the wrong variable.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+let node = list.head;
+
+while (node) {
+  print(node.value);
+  list.next();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+let node = list.head;
+
+while (node) {
+  print(node.value);
+  node = node.next;
+}
+```
+
+In a comparison, it is enough that the loop changes one side:
+
+{/* good */}
+
+```js
+const limit = 3;
+let attempts = 0;
+
+while (attempts < limit) {
+  attempts++;
+}
+```
+
+A property or the result of a call can change without an assignment, so they are not checked. Neither is a comparison that contains one:
+
+{/* good */}
+
+```js
+let max = 10;
+
+while (queue.length > max) {
+  handle(queue);
+}
+```
+
+A variable also counts as changed if the loop uses a function declaration that assigns to it:
+
+{/* good */}
+
+```js
+let done = false;
+
+function finish() {
+  done = true;
+}
+
+while (!done) {
+  finish();
+}
+```
+
+## Options
+
+| Option                        | Default | What it does                                                |
+| ----------------------------- | ------- | ----------------------------------------------------------- |
+| `checkConditionalExpressions` | `false` | Check each variable of a `? :` in the condition on its own. |
+
+By default a `? :` is treated like a comparison: one changed variable is enough.
+
+{/* good */}
+
+```js
+let urgent = true;
+let high = 3;
+let low = 5;
+
+while (urgent ? high : low) {
+  urgent = isUrgent();
+}
+```
+
+With the option, `high` and `low` are reported:
+
+{/* bad {"options": [{"checkConditionalExpressions": true}], "count": 2} */}
+
+```js
+let urgent = true;
+let high = 3;
+let low = 5;
+
+while (urgent ? high : low) {
+  urgent = isUrgent();
+}
+```

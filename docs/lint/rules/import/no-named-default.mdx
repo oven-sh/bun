@@ -1,0 +1,44 @@
+---
+title: "import/no-named-default"
+description: "Disallow `import { default as name }` in favor of `import name`"
+---
+
+`import { default as React } from "react"` and `import React from "react"` do the same thing. The second is shorter and is the form that readers expect.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { default as React, useState } from "react";
+```
+
+{/* bad */}
+
+```ts
+import type { default as User } from "./user";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import React, { useState } from "react";
+```
+
+{/* good */}
+
+```ts
+import type User from "./user";
+```
+
+A name that is marked with `type` inside the braces is not reported either:
+
+{/* good */}
+
+```ts
+import { type default as User, loadUser } from "./user";
+```

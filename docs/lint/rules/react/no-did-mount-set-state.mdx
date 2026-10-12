@@ -1,0 +1,62 @@
+---
+title: "react-hooks/no-did-mount-set-state"
+description: "Disallow `this.setState()` in `componentDidMount`"
+---
+
+`componentDidMount` runs right after the first render. Calling `setState` there renders the component a second time before the user sees anything, so every mount costs two renders. Put the value in the initial state if you already know it.
+
+A `setState` in a callback inside `componentDidMount` is allowed by default, because it runs later: when a request finishes or an event fires.
+
+If your ESLint config sets `settings.react.version` to 16.3 or later, the rule reports nothing.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class Profile extends React.Component {
+  componentDidMount() {
+    this.setState({ name: this.props.name.toUpperCase() });
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Profile extends React.Component {
+  state = { name: this.props.name.toUpperCase() };
+
+  componentDidMount() {
+    loadUser(this.props.id).then(user => {
+      this.setState({ user });
+    });
+  }
+}
+```
+
+## Options
+
+| Option               | What it does                                                     |
+| -------------------- | ---------------------------------------------------------------- |
+| `"disallow-in-func"` | Also report `setState` in a function inside `componentDidMount`. |
+
+{/* bad {"options": ["disallow-in-func"]} */}
+
+```jsx
+class Profile extends React.Component {
+  componentDidMount() {
+    loadUser(this.props.id).then(user => {
+      this.setState({ user });
+    });
+  }
+}
+```
+
+## When not to use it
+
+Measuring the DOM needs this pattern: a tooltip has to render once before you can read its size and store the position. React flushes that second render before the browser paints.

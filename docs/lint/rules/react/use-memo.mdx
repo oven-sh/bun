@@ -1,0 +1,67 @@
+---
+title: "react-hooks/use-memo"
+description: "Require `useMemo()` callbacks to take no parameters, be synchronous, and not reassign outer variables"
+---
+
+React calls the function you pass to `useMemo()` with no arguments, keeps what it returns, and skips the call while the dependencies stay the same. Three kinds of callback do not fit that:
+
+- A callback with parameters. They are always `undefined`.
+- An `async` or generator function. The cached value is a promise or an iterator, not the result.
+- A callback that assigns to a variable declared outside of it. The assignment does not happen on a render where React reuses the cached value.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import { useMemo } from "react";
+
+function Report({ id }) {
+  const rows = useMemo(async () => {
+    return await loadRows(id);
+  }, [id]);
+  return <Table rows={rows} />;
+}
+```
+
+{/* bad */}
+
+```jsx
+import { useMemo } from "react";
+
+function Report({ rows }) {
+  const sorted = useMemo(list => list.toSorted(), [rows]);
+  return <Table rows={sorted} />;
+}
+```
+
+{/* bad */}
+
+```jsx
+import { useMemo } from "react";
+
+function Report({ rows }) {
+  let total = 0;
+  const visible = useMemo(() => {
+    total = rows.length;
+    return rows.filter(row => !row.hidden);
+  }, [rows]);
+  return <Table rows={visible} total={total} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { useMemo } from "react";
+
+function Report({ rows }) {
+  const sorted = useMemo(() => rows.toSorted(), [rows]);
+  const total = rows.length;
+  return <Table rows={sorted} total={total} />;
+}
+```

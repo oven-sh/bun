@@ -1,0 +1,86 @@
+---
+title: "unicorn/explicit-length-check"
+description: "Require `length` and `size` to be compared with a number"
+---
+
+`if (items.length)` relies on `0` being falsy. `if (items.length > 0)` says what is tested. It also keeps a number out of places where you want a boolean: `items.length && render(items)` evaluates to `0` for an empty list, not `false`.
+
+The rule also settles on one spelling of each check: `=== 0` for empty and `> 0` for not empty. It reports other ways to write them, such as `< 1`, `>= 1` and `!== 0`.
+
+`--fix` rewrites the check wherever only its truthiness matters. In `const first = items.length && items[0]` the value itself is used, so that is reported but not fixed.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+if (items.length) {
+  render(items);
+}
+
+if (!selected.size) {
+  disable(button);
+}
+
+const hasErrors = errors.length >= 1;
+const first = items.length && items[0];
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (items.length > 0) {
+  render(items);
+}
+
+if (selected.size === 0) {
+  disable(button);
+}
+
+const hasErrors = errors.length > 0;
+const first = items.length > 0 && items[0];
+```
+
+Optional chains, `this.length` and a fallback to a number are left alone:
+
+{/* good */}
+
+```js
+if (items?.length) {
+  render(items);
+}
+
+class Queue extends Array {
+  isEmpty() {
+    return !this.length;
+  }
+}
+
+const columns = headers.length || 1;
+```
+
+## Options
+
+| Option     | Default          | What it does                                                                               |
+| ---------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| `non-zero` | `"greater-than"` | How to write "not empty": `"greater-than"` requires `> 0`, `"not-equal"` requires `!== 0`. |
+
+{/* good {"options": [{"non-zero": "not-equal"}]} */}
+
+```js
+if (items.length !== 0) {
+  render(items);
+}
+```
+
+{/* bad {"options": [{"non-zero": "not-equal"}]} */}
+
+```js
+if (items.length > 0) {
+  render(items);
+}
+```

@@ -1,0 +1,32 @@
+---
+title: "no-dupe-args"
+description: "Disallow two parameters with the same name in a function"
+---
+
+When two parameters have the same name, the name refers to the last one. The argument passed for the first one can only be reached through `arguments`. It is nearly always a typo or a copy-paste mistake.
+
+In strict mode, in modules and in arrow functions this is already a syntax error. The rule catches it in the scripts where it is not, such as a `.cjs` file without `"use strict"`.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+
+## Examples
+
+Reported, in a `.cjs` file:
+
+{/* bad {"filename": "legacy.cjs"} */}
+
+```js
+function resize(width, height, width) {
+  return width * height;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function resize(width, height, depth) {
+  return width * height * depth;
+}
+```

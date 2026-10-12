@@ -1,0 +1,50 @@
+---
+title: "unicorn/no-array-reduce"
+description: "Disallow `reduce()` and `reduceRight()` in favor of a loop"
+---
+
+To read a `reduce()` you have to follow the accumulator through every return of the callback, and the value it starts with comes last, after the callback. The same code as a `for...of` loop names the result first and changes it in plain statements.
+
+A callback that only combines two values with an operator, such as a sum, is allowed by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const byId = users.reduce((result, user) => {
+  result[user.id] = user;
+  return result;
+}, {});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const byId = {};
+for (const user of users) {
+  byId[user.id] = user;
+}
+```
+
+{/* good */}
+
+```js
+const total = prices.reduce((sum, price) => sum + price, 0);
+```
+
+## Options
+
+| Option                  | Default | What it does                                                                        |
+| ----------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `allowSimpleOperations` | `true`  | Allow a callback that only returns a binary expression, such as `a + b` or `a * b`. |
+
+{/* bad {"options": [{"allowSimpleOperations": false}]} */}
+
+```js
+const total = prices.reduce((sum, price) => sum + price, 0);
+```

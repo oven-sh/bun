@@ -1,0 +1,48 @@
+---
+title: "no-empty-static-block"
+description: "Disallow empty `static {}` blocks in classes"
+---
+
+A `static` block runs once, when the class is defined. An empty one does nothing. It is usually what a refactor left behind, or setup code that was never written.
+
+A block with a comment in it is not reported.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+class Config {
+  static values = new Map();
+
+  static {}
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class Config {
+  static values = new Map();
+
+  static {
+    Config.values.set("mode", process.env.NODE_ENV);
+  }
+}
+```
+
+{/* good */}
+
+```js
+class Config {
+  static {
+    // Values are loaded on first use.
+  }
+}
+```

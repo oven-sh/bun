@@ -1,0 +1,131 @@
+---
+title: "import/no-cycle"
+description: "Disallow importing a module that imports this file back, directly or through other modules"
+---
+
+When two modules import each other, one of them runs before the other has finished. What it imported is not initialized yet, so reading it throws a `ReferenceError` or gives `undefined`. Which of the two breaks depends on which one is loaded first.
+
+The rule follows the imports of the imported module as far as they go. If the way back has more than one step, the message names it: `Dependency cycle via ./log:1` means that the imported module gets back to this file through its import of `./log` on line 1.
+
+Imports of types only (`import type`) are ignored, because they are gone at runtime.
+
+## Examples
+
+Reported:
+
+{/* file "session.js" */}
+
+```js session.js
+import { findUser } from "./user";
+
+// ReferenceError if user.js is loaded first
+export const currentUser = findUser(1);
+```
+
+{/* bad {"filename": "user.js"} */}
+
+```js user.js
+import { currentUser } from "./session";
+
+export const findUser = id => ({ id });
+export const isCurrent = user => user.id === currentUser.id;
+```
+
+Not reported, because what both files need is in a third one:
+
+{/* file "find-user.js" */}
+
+```js find-user.js
+export const findUser = id => ({ id });
+```
+
+{/* file "session.js" */}
+
+```js session.js
+import { findUser } from "./find-user";
+
+export const currentUser = findUser(1);
+```
+
+{/* good {"filename": "user.js"} */}
+
+```js user.js
+import { currentUser } from "./session";
+
+export const isCurrent = user => user.id === currentUser.id;
+```
+
+## Options
+
+| Option                               | Default | What it does                                                                                               |
+| ------------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `maxDepth`                           | `"∞"`   | How many imports to follow. With `1`, only a module that imports this file itself is reported.             |
+| `ignoreExternal`                     | `false` | Do not follow imports of packages.                                                                         |
+| `allowUnsafeDynamicCyclicDependency` | `false` | Allow a cycle that has an `import()` somewhere in it.                                                      |
+| `commonjs`                           | `false` | Also check the `require()` calls in this file.                                                             |
+| `amd`                                | `false` | Also check `define([...])` and `require([...])` in this file.                                              |
+| `esmodule`                           | `true`  | Check `import`, `export ... from` and `import()`.                                                          |
+| `ignore`                             | `[]`    | Regular expressions. An import path that matches one is not checked.                                       |
+| `disableScc`                         | `false` | Skip a first pass that groups the modules that can reach each other. It only changes how fast the rule is. |
+
+Here the way back takes two steps, through `./log`. `maxDepth: 2` finds it:
+
+{/* file "session.js" */}
+
+```js session.js
+import { log } from "./log";
+
+export const currentUser = log({ id: 1 });
+```
+
+{/* file "log.js" */}
+
+```js log.js
+import { isCurrent } from "./user";
+
+export function log(user) {
+  console.log(user.id, isCurrent(user));
+  return user;
+}
+```
+
+{/* bad {"filename": "user.js", "options": [{"maxDepth": 2}]} */}
+
+```js user.js
+import { currentUser } from "./session";
+
+export const isCurrent = user => user.id === currentUser.id;
+```
+
+With the same `session.js` and `log.js`, `maxDepth: 1` does not:
+
+{/* file "session.js" */}
+
+```js session.js
+import { log } from "./log";
+
+export const currentUser = log({ id: 1 });
+```
+
+{/* file "log.js" */}
+
+```js log.js
+import { isCurrent } from "./user";
+
+export function log(user) {
+  console.log(user.id, isCurrent(user));
+  return user;
+}
+```
+
+{/* good {"filename": "user.js", "options": [{"maxDepth": 1}]} */}
+
+```js user.js
+import { currentUser } from "./session";
+
+export const isCurrent = user => user.id === currentUser.id;
+```
+
+## When not to use it
+
+A cycle does no harm if the two modules only use each other inside functions that run later. If your project has many cycles like that, the reports are noise.

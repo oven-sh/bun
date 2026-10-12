@@ -1,0 +1,40 @@
+---
+title: "unicorn/escape-case"
+description: "Require uppercase hexadecimal digits in escape sequences"
+---
+
+`"\xa9"` and `"\xA9"` are the same string. With uppercase digits the value stands out from the lowercase `x` or `u` before it, and the same character is written the same way everywhere, so you can search for it.
+
+The rule checks `\x`, `\u` and `\u{...}` escapes in strings, template literals and regular expressions, and the letter of `\c` escapes in regular expressions. ``String.raw`...` `` is not checked.
+
+`--fix` changes the digits to uppercase.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+const copyright = "\xa9 2026";
+const price = `${amount}\u00a0EUR`;
+const smile = "\u{1f600}";
+const escape = /\x1b\[\d+m/;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const copyright = "\xA9 2026";
+const price = `${amount}\u00A0EUR`;
+const smile = "\u{1F600}";
+const escape = /\x1B\[\d+m/;
+```
+
+{/* good */}
+
+```js
+const source = String.raw`\xa9`;
+```

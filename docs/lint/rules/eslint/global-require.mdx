@@ -1,0 +1,55 @@
+---
+title: "global-require"
+description: "Require `require()` calls to be at the top level of the module"
+---
+
+`require()` loads a module synchronously. Inside a function, that work happens in the middle of the first call instead of at startup, and a missing module throws only when that call is made. The file's dependencies are also no longer listed in one place.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function readConfig(path) {
+  const fs = require("fs");
+  return fs.readFileSync(path, "utf8");
+}
+```
+
+{/* bad */}
+
+```js
+if (process.env.TRACE) {
+  require("./trace");
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const fs = require("fs");
+const { join } = require("path");
+const logger = process.env.TRACE ? require("./trace") : require("./quiet");
+
+function readConfig(path) {
+  return fs.readFileSync(join(path, "config.json"), "utf8");
+}
+```
+
+A function of your own that is named `require` is not reported:
+
+{/* good */}
+
+```js
+function load(require) {
+  return require("settings");
+}
+```
+
+## When not to use it
+
+Loading a heavy module only when it is needed makes startup faster, and an optional dependency has to be required inside `try`. If you do either often, leave this rule off.

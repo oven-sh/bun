@@ -1,0 +1,31 @@
+---
+title: "no-useless-concat"
+description: "Disallow joining two string literals with `+` on the same line"
+---
+
+`"a" + "b"` is `"ab"` written in a longer way. Two literals next to each other are usually what is left after a variable between them was removed.
+
+Both plain strings and template literals count. Strings on different lines are allowed, because that is a common way to break a long string.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const greeting = "Hello, " + "world";
+const path = base + "/api" + `/users`;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const greeting = "Hello, world";
+const path = base + "/api/users";
+const label = "user " + id;
+
+const message = "This sentence is too long for one line, " + "so it goes on here.";
+```

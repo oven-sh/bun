@@ -1,0 +1,48 @@
+---
+title: "@typescript-eslint/prefer-for-of"
+description: "Require `for...of` instead of a `for` loop that only uses its index to read the array"
+---
+
+A `for` loop with a counter has three places to get wrong: the start, the end, and the step. If the counter is only used to read `items[i]`, a `for...of` loop gives you the element directly and has none of them.
+
+A loop is reported if it starts at `0`, runs while `i < items.length`, goes up by one, and uses `i` in its body only to read `items[i]`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+for (let i = 0; i < items.length; i++) {
+  console.log(items[i]);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+for (const item of items) {
+  console.log(item);
+}
+```
+
+The loop is left alone when it needs the index for something else, or when it writes to the array:
+
+{/* good */}
+
+```ts
+for (let i = 0; i < items.length; i++) {
+  console.log(i, items[i]);
+}
+
+for (let i = 0; i < items.length; i++) {
+  items[i] = 0;
+}
+
+for (let i = 0; i < items.length; i++) {
+  console.log(items[i], others[i]);
+}
+```

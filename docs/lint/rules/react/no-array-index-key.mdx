@@ -1,0 +1,38 @@
+---
+title: "react/no-array-index-key"
+description: "Disallow the index of an array item as its `key`"
+---
+
+React uses `key` to tell which item of a list is which between two renders. An index names a position, not an item. After you insert, remove or sort items, React matches each component with the wrong data: an input keeps the text that was typed for another row, and components re-render that did not change.
+
+The rule looks at the index parameter of the callback of `map`, `flatMap`, `forEach`, `filter`, `find`, `findIndex`, `some`, `every`, `reduce` and `reduceRight`, and of `React.Children.map` and `React.Children.forEach`. It also finds the index in a template literal, in a concatenation, in `index.toString()` and in `String(index)`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const list = todos.map((todo, index) => <Todo key={index} {...todo} />);
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+const rows = users.map((user, index) => <Row key={`user-${index}`} user={user} />);
+
+const cells = users.map((user, index) => React.cloneElement(cell, { key: String(index) }));
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const list = todos.map(todo => <Todo key={todo.id} {...todo} />);
+```
+
+## When not to use it
+
+An index is a fine key for a list that is never reordered, filtered or added to.

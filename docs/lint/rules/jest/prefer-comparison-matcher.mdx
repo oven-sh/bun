@@ -1,0 +1,56 @@
+---
+title: "jest/prefer-comparison-matcher"
+description: "Require matchers such as `toBeGreaterThan()` instead of comparing inside `expect()`"
+---
+
+`expect(price < 100).toBe(true)` compares first and hands `expect` only the result. When it fails, the message says that `false` is not `true`, and you do not see the price. `expect(price).toBeLessThan(100)` prints both numbers.
+
+The rule reports `>`, `>=`, `<` and `<=` inside `expect()` when the result is checked against `true` or `false` with `toBe()`, `toEqual()` or `toStrictEqual()`.
+
+`--fix` rewrites the assertion to the matching comparison matcher.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+import { expect, test } from "@jest/globals";
+
+test("applies the discount", () => {
+  const price = discounted(100);
+  expect(price < 100).toBe(true);
+  expect(price < 0).toBe(false);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { expect, test } from "@jest/globals";
+
+test("applies the discount", () => {
+  const price = discounted(100);
+  expect(price).toBeLessThan(100);
+  expect(price).toBeGreaterThanOrEqual(0);
+});
+```
+
+The comparison matchers only take numbers and bigints, so a comparison with a string literal or a template literal is left alone:
+
+{/* good */}
+
+```js
+import { expect, test } from "@jest/globals";
+
+test("sorts after the first entry", () => {
+  expect(lastName() > "Adams").toBe(true);
+});
+```
+
+## When not to use it
+
+The rule cannot see types. It also reports comparisons of strings or dates that are held in variables, and the comparison matchers reject those values.

@@ -40,7 +40,8 @@ fn keyword(statement: Stmt) -> Span {
 impl Rule for NoCaseDeclarations {
     const META: Meta = Meta::eslint("no-case-declarations", Kind::Suggestion)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().cases();
     no_state!();
 
@@ -55,7 +56,8 @@ impl Rule for NoCaseDeclarations {
                 continue;
             }
             let place = if cx.language().is_oxlint { keyword(statement) } else { statement.span() };
-            cx.report(place, UNEXPECTED).suggest(ADD_BRACKETS, |fixer| {
+            let report = cx.report(place, UNEXPECTED).hint("Every case of the switch can see it. Wrap this case in { }.");
+            report.suggest(ADD_BRACKETS, |fixer| {
                 Some([
                     fixer.insert_before(body.first()?, "{ "),
                     fixer.insert_after(body.last()?, " }"),

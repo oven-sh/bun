@@ -1,0 +1,62 @@
+---
+title: "vitest/prefer-hooks-in-order"
+description: "Require hooks to be written in the order they run"
+---
+
+Vitest runs hooks in a fixed order: `beforeAll`, `beforeEach`, `afterEach`, `afterAll`. If a file lists them in another order, you read the teardown before the setup it undoes, and the order on the page is not the order that runs.
+
+Each `describe` block is checked on its own. Only hooks that follow each other are compared: any other call between two hooks, such as a test, starts a new group.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { afterEach, beforeEach } from "vitest";
+
+afterEach(() => {
+  db.rollback();
+});
+
+beforeEach(() => {
+  db.begin();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { afterEach, beforeEach } from "vitest";
+
+beforeEach(() => {
+  db.begin();
+});
+
+afterEach(() => {
+  db.rollback();
+});
+```
+
+The test between these two hooks starts a new group, so this rule says nothing. `vitest/prefer-hooks-on-top` reports it.
+
+{/* good */}
+
+```ts
+import { afterEach, beforeEach, test } from "vitest";
+
+afterEach(() => {
+  db.rollback();
+});
+
+test("saves a user", () => {
+  db.save(user);
+});
+
+beforeEach(() => {
+  db.begin();
+});
+```

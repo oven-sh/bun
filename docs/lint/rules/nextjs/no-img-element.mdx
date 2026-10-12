@@ -1,0 +1,49 @@
+---
+title: "@next/next/no-img-element"
+description: "Disallow the `<img>` element in favor of `Image` from `next/image`"
+---
+
+An `<img>` sends the same file to every device: a phone downloads the picture made for a desktop screen, in the format you happened to save it in. `Image` from `next/image` resizes the picture for the screen, serves a modern format, loads it only when it comes near the viewport, and reserves its space so the layout does not jump.
+
+An `<img>` that is a direct child of a `<picture>` is allowed.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+export default function Avatar({ user }) {
+  return <img src="/avatars/default.png" alt={user.name} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import Image from "next/image";
+
+export default function Avatar({ user }) {
+  return <Image src="/avatars/default.png" alt={user.name} width={64} height={64} />;
+}
+```
+
+{/* good */}
+
+```jsx
+export default function Hero() {
+  return (
+    <picture>
+      <source srcSet="/hero.avif" type="image/avif" />
+      <img src="/hero.jpg" alt="Our office" />
+    </picture>
+  );
+}
+```
+
+## When not to use it
+
+Image optimization runs on a server, and some hosts bill for it. If you export a static site or your images already come from an image CDN, a plain `<img>` can be the right choice.

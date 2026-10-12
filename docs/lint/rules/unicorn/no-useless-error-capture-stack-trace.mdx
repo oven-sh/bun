@@ -1,0 +1,58 @@
+---
+title: "unicorn/no-useless-error-capture-stack-trace"
+description: "Disallow `Error.captureStackTrace()` in the constructor of an `Error` subclass"
+---
+
+The `Error` constructor already records the stack when `super()` runs. Calling `Error.captureStackTrace(this, MyError)` in the constructor of the subclass does that work a second time.
+
+The rule checks classes that extend a built-in error such as `Error`, `TypeError` or `RangeError`. It reports the call when the second argument is the class itself: its name, `new.target` or `this.constructor`.
+
+`--fix-suggestions` removes the call.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+class ValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ValidationError";
+    Error.captureStackTrace(this, ValidationError);
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class ValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+```
+
+Hiding another function from the stack is a real use, and so is a class that does not extend a built-in error:
+
+{/* good */}
+
+```js
+class ParseError extends SyntaxError {
+  constructor(message) {
+    super(message);
+    Error.captureStackTrace(this, parse);
+  }
+}
+
+class Failure {
+  constructor() {
+    Error.captureStackTrace(this, Failure);
+  }
+}
+```

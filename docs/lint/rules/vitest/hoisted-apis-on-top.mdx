@@ -1,0 +1,57 @@
+---
+title: "vitest/hoisted-apis-on-top"
+description: "Require `vi.mock`, `vi.unmock` and `vi.hoisted` at the top level of the file"
+---
+
+Vitest moves `vi.mock()`, `vi.unmock()` and `vi.hoisted()` to the top of the file before it runs the file. A call written inside an `if`, a hook or a test looks as if it runs there, but it runs first, every time, and applies to the whole file.
+
+Write these calls at the top level, where they run anyway. If you want a mock that starts where it is written, use `vi.doMock()`.
+
+The report comes with a suggestion that moves the call to the top of the file. For `vi.mock` there is a second one that replaces it with `vi.doMock`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { beforeEach, vi } from "vitest";
+
+beforeEach(() => {
+  vi.mock("./database");
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { beforeEach, vi } from "vitest";
+
+vi.mock("./database");
+
+beforeEach(() => {
+  vi.doMock("./clock");
+});
+```
+
+The result of `vi.hoisted()` can be awaited and stored in a variable, as long as the variable is not exported:
+
+{/* good */}
+
+```ts
+import { vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({ send: vi.fn() }));
+const config = await vi.hoisted(async () => ({ retries: 3 }));
+```
+
+{/* bad */}
+
+```ts
+import { vi } from "vitest";
+
+export const mocks = vi.hoisted(() => ({ send: vi.fn() }));
+```

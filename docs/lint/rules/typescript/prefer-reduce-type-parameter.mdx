@@ -1,0 +1,68 @@
+---
+title: "@typescript-eslint/prefer-reduce-type-parameter"
+description: "Require a type argument on `reduce` instead of a type assertion on the initial value"
+---
+
+`reduce` takes the type of its result from the initial value, and `{}` or `[]` alone gives a type that is too narrow. `{} as Record<string, number>` fixes that, but an assertion also accepts a value that does not fit the type. `reduce<Record<string, number>>(..., {})` gives the same result type, and TypeScript still checks the initial value against it.
+
+Only arrays and tuples are checked. If the value cannot be assigned to the asserted type, the assertion is needed and the call is left alone.
+
+`--fix` moves the type from the assertion to the call.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+function count(words: string[]) {
+  return words.reduce(
+    (counts, word) => {
+      counts[word] = (counts[word] ?? 0) + 1;
+      return counts;
+    },
+    {} as Record<string, number>,
+  );
+}
+
+function lengths(words: string[]) {
+  return words.reduce((result, word) => result.concat(word.length), [] as number[]);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function count(words: string[]) {
+  return words.reduce<Record<string, number>>((counts, word) => {
+    counts[word] = (counts[word] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function lengths(words: string[]) {
+  return words.reduce<number[]>((result, word) => result.concat(word.length), []);
+}
+```
+
+Here `{}` is not a valid `Summary`, so moving the type would be a type error:
+
+{/* good */}
+
+```ts
+interface Summary {
+  longest: string;
+}
+
+function summarize(words: string[]) {
+  return words.reduce((summary, word) => {
+    summary.longest = word;
+    return summary;
+  }, {} as Summary);
+}
+```

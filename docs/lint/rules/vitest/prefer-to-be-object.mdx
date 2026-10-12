@@ -1,0 +1,43 @@
+---
+title: "vitest/prefer-to-be-object"
+description: "Require `toBeObject()` when `expectTypeOf()` checks for an object"
+---
+
+`expectTypeOf()` has its own matcher for object types, `toBeObject()`. Checking against `Object` with `toBeInstanceOf(Object)` or with `instanceof Object` is a longer way to ask the same question.
+
+Only `expectTypeOf()` is checked. `expect(value).toBeInstanceOf(Object)` is not reported.
+
+`--fix` rewrites the assertion to `toBeObject()`, and adds `.not` where the original tested for the opposite.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+import { expectTypeOf, test } from "vitest";
+
+test("the config is an object", () => {
+  const config = loadConfig();
+  expectTypeOf(config).toBeInstanceOf(Object);
+  expectTypeOf(config instanceof Object).toBeTruthy();
+  expectTypeOf(config.name instanceof Object).toBeFalsy();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, expectTypeOf, test } from "vitest";
+
+test("the config is an object", () => {
+  const config = loadConfig();
+  expectTypeOf(config).toBeObject();
+  expectTypeOf(config.name).not.toBeObject();
+  expectTypeOf(config.createdAt).toBeInstanceOf(Date);
+  expect(config).toBeInstanceOf(Object);
+});
+```

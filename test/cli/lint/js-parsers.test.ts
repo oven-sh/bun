@@ -432,7 +432,7 @@ describe.concurrent("bun lint with languages", () => {
         ["-f", "json", "--timing", "c.vue"],
       );
       expect(summary(result.raw)).toMatchInlineSnapshot(`"c.vue: 2:1 lines/no-tabs tab p 8 v c.vue [fix 11,12 " "]"`);
-      expect(result.stderr).toContain("the package eslint has linted 1 texts");
+      expect(result.stderr).toContain("the eslint package linted 1 files");
       expect(result.exitCode).toBe(1);
     },
     timeout,
@@ -517,7 +517,7 @@ describe.concurrent("bun lint with languages", () => {
         "phase.js: 2:1 lines/no-tabs tab q 2 b phase.js [fix 45,46 " "]
         plain.js: 1:1 members/objects Identifier"
       `);
-      expect(result.stderr).toContain("the package eslint has linted 1 texts");
+      expect(result.stderr).toContain("the eslint package linted 1 files");
       expect(result.exitCode).toBe(1);
     },
     timeout,
@@ -670,7 +670,7 @@ describe.concurrent("bun lint with languages", () => {
       const result = await lint(lines, ["-f", "unix", "a.js", "b.txt"]);
       expect(result.stdout).toContain("a.js:1:1: Unexpected var, use let or const instead. [Error/no-var]");
       expect(result.stderr).toContain(
-        `1 file was not linted, only JavaScript and TypeScript can be (1 *.txt): b.txt. The package "eslint" lints other languages, if it is installed`,
+        "1 file was not linted because bun lint only supports JavaScript and TypeScript (1 *.txt): b.txt\n  To lint other languages, install eslint: bun add -d eslint",
       );
       expect(result.exitCode).toBe(2);
     },

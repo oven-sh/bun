@@ -1,0 +1,29 @@
+---
+title: "@typescript-eslint/ban-tslint-comment"
+description: "Disallow `// tslint:disable` and `// tslint:enable` comments"
+---
+
+TSLint is no longer maintained. Once a project has moved off it, its `tslint:disable` and `tslint:enable` comments do nothing, and they look as if they still switch something off.
+
+`--fix` removes the comment.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+/* tslint:disable */
+const port = 3000;
+console.log(port); // tslint:disable-line:no-console
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const port = 3000;
+console.log(port); // the tslint config is gone
+```

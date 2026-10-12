@@ -1,0 +1,26 @@
+---
+title: "jsx-a11y/no-access-key"
+description: "Disallow the `accessKey` attribute"
+---
+
+`accessKey` adds a keyboard shortcut to an element. Screen readers and browsers already use many key combinations, and they differ from one to the next, so your shortcut can take over a command that a keyboard user depends on.
+
+The attribute is reported on any element or component, however it is capitalized. Your editor can remove it as a suggestion.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const save = <button accessKey="s">Save</button>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const save = <button>Save</button>;
+```

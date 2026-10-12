@@ -1,0 +1,64 @@
+---
+title: "jest/prefer-hooks-on-top"
+description: "Require hooks to come before the tests in their block"
+---
+
+A hook applies to every test in its block, wherever it is written. A `beforeEach` below a test still runs before that test, and someone who reads the file from the top does not know that yet.
+
+Each `describe` block is checked on its own.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { beforeEach, expect, test } from "@jest/globals";
+
+test("starts empty", () => {
+  expect(cart.items).toHaveLength(0);
+});
+
+beforeEach(() => {
+  cart.clear();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { beforeEach, expect, test } from "@jest/globals";
+
+beforeEach(() => {
+  cart.clear();
+});
+
+test("starts empty", () => {
+  expect(cart.items).toHaveLength(0);
+});
+```
+
+A hook at the top of a `describe` block is fine, even if there is a test before the block:
+
+{/* good */}
+
+```ts
+import { beforeEach, describe, expect, test } from "@jest/globals";
+
+test("loads the shop", () => {
+  expect(shop.ready).toBe(true);
+});
+
+describe("cart", () => {
+  beforeEach(() => {
+    cart.clear();
+  });
+
+  test("starts empty", () => {
+    expect(cart.items).toHaveLength(0);
+  });
+});
+```

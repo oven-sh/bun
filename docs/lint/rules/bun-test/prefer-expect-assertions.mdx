@@ -1,0 +1,121 @@
+---
+title: "bun:test/prefer-expect-assertions"
+description: "Require `expect.assertions()` or `expect.hasAssertions()` at the start of every test"
+---
+
+An `expect` in a `catch`, a callback or a loop may never run, and a test in which no `expect` runs passes. `expect.hasAssertions()` makes the test fail unless at least one assertion ran. `expect.assertions(2)` makes it fail unless exactly two ran.
+
+The first statement of every test has to be one of the two. The rule also reports `expect.hasAssertions()` with an argument, and `expect.assertions()` with anything but one number.
+
+`--fix-suggestions` adds `expect.hasAssertions()`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("rejects a wrong password", async () => {
+  try {
+    await login("ada", "wrong");
+  } catch (error) {
+    expect(error).toBeInstanceOf(AuthError);
+  }
+});
+```
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("adds", () => {
+  expect.assertions("1");
+  expect(1 + 1).toBe(2);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("rejects a wrong password", async () => {
+  expect.assertions(1);
+  try {
+    await login("ada", "wrong");
+  } catch (error) {
+    expect(error).toBeInstanceOf(AuthError);
+  }
+});
+```
+
+A `beforeEach` or `afterEach` hook that calls `expect.hasAssertions()` covers the tests after it in the same `describe`, or in the file if it is at the top level:
+
+{/* good */}
+
+```ts
+import { beforeEach, expect, test } from "bun:test";
+
+beforeEach(() => {
+  expect.hasAssertions();
+});
+
+test("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+```
+
+## Options
+
+Without options, every test is checked. With one or more of them, only the tests that match at least one are checked.
+
+| Option                              | Default | What it does                                             |
+| ----------------------------------- | ------- | -------------------------------------------------------- |
+| `onlyFunctionsWithAsyncKeyword`     | `false` | Check tests that are `async` functions.                  |
+| `onlyFunctionsWithExpectInCallback` | `false` | Check tests that call `expect` inside a nested function. |
+| `onlyFunctionsWithExpectInLoop`     | `false` | Check tests that call `expect` inside a loop.            |
+
+{/* bad {"options": [{"onlyFunctionsWithExpectInCallback": true}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("emits the saved user", () => {
+  store.on("save", user => {
+    expect(user.name).toBe("Ada");
+  });
+  store.save({ name: "Ada" });
+});
+```
+
+{/* bad {"options": [{"onlyFunctionsWithExpectInLoop": true}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("every price is positive", () => {
+  for (const price of loadPrices()) {
+    expect(price).toBeGreaterThan(0);
+  }
+});
+```
+
+{/* good {"options": [{"onlyFunctionsWithAsyncKeyword": true, "onlyFunctionsWithExpectInLoop": true}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+```
+
+## When not to use it
+
+In a test that calls `expect` directly, one statement after another, the extra line proves nothing. Use the options to check only the tests where an assertion can be skipped.

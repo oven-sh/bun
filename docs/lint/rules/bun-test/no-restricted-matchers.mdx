@@ -1,0 +1,82 @@
+---
+title: "bun:test/no-restricted-matchers"
+description: "Disallow the matchers and modifiers you list"
+---
+
+Some matchers are too loose for your tests. `toBeTruthy()` passes for `1`, `"no"` and `[]`, so it does not prove that a value is `true`. This rule reports the matchers and modifiers you name in its options.
+
+Without options it reports nothing.
+
+## Examples
+
+Both examples use `{ "toBeTruthy": "Use toBe(true) instead" }`.
+
+Reported:
+
+{/* bad {"options": [{"toBeTruthy": "Use toBe(true) instead"}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("a new user is active", () => {
+  const user = { active: true };
+  expect(user.active).toBeTruthy();
+});
+```
+
+Not reported:
+
+{/* good {"options": [{"toBeTruthy": "Use toBe(true) instead"}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("a new user is active", () => {
+  const user = { active: true };
+  expect(user.active).toBe(true);
+});
+```
+
+## Options
+
+One object. A key is everything you write after `expect(..)`, joined with dots. A value is a hint that is shown with the report, or `null` for no hint.
+
+```json
+{
+  "toBeTruthy": "Use toBe(true) instead",
+  "not.toHaveBeenCalledWith": null,
+  "resolves": "Await the promise, then check the value"
+}
+```
+
+| Key                                                   | What it reports                                       |
+| ----------------------------------------------------- | ----------------------------------------------------- |
+| A matcher, such as `"toBe"`                           | `expect(a).toBe(b)`, but not `expect(a).not.toBe(b)`. |
+| A chain, such as `"not.toBe"`                         | `expect(a).not.toBe(b)`, but not `expect(a).toBe(b)`. |
+| `"not"`, `"resolves"` or `"rejects"`                  | Every chain that starts with that modifier.           |
+| A chain that ends in `.not`, such as `"resolves.not"` | Every chain that starts with it.                      |
+
+A matcher is only matched as the whole chain, so `"toBe"` allows this:
+
+{/* good {"options": [{"toBe": null}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("ids differ", () => {
+  expect(createId()).not.toBe(createId());
+});
+```
+
+A modifier matches whatever comes after it:
+
+{/* bad {"options": [{"resolves": null}], "count": 2} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("loads the user", async () => {
+  await expect(loadUser(1)).resolves.toEqual({ id: 1 });
+  await expect(loadUser(2)).resolves.not.toBeNull();
+});
+```

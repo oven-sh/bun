@@ -1,0 +1,44 @@
+---
+title: "@typescript-eslint/no-unsafe-unary-minus"
+description: "Require the operand of unary `-` to be a number or a bigint"
+---
+
+`-value` converts `value` to a number first. For a string that is not numeric, an object, or an array with several items, the result is `NaN`. TypeScript accepts it without an error.
+
+A union is reported if any of its members is not a number or a bigint. `any` is not reported.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+function refund(amount: string) {
+  return -amount;
+}
+```
+
+{/* bad */}
+
+```ts
+function flip(offset: number | string) {
+  return -offset;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function refund(amount: string) {
+  return -Number(amount);
+}
+
+function flip(offset: number | bigint) {
+  return -offset;
+}
+```

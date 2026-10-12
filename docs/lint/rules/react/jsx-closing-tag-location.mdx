@@ -1,0 +1,63 @@
+---
+title: "react/jsx-closing-tag-location"
+description: "Enforce that the closing tag of a multiline JSX element lines up with its opening tag"
+---
+
+A closing tag at the end of the last line of content, or indented differently from its opening tag, makes it hard to see where an element ends. This rule wants the closing tag of an element that spans several lines on its own line, in the same column as the opening tag.
+
+An element that fits on one line is not checked.
+
+`--fix` moves the closing tag.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const card = <Card>Welcome back</Card>;
+```
+
+{/* bad */}
+
+```jsx
+const card = <Card>Welcome back</Card>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const card = <Card>Welcome back</Card>;
+
+const small = <Card>Welcome back</Card>;
+```
+
+## Options
+
+| Option                    | What it does                                                              |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `"tag-aligned"` (default) | The closing tag is in the column of the opening `<`.                      |
+| `"line-aligned"`          | The closing tag has the indentation of the line that has the opening `<`. |
+
+The option can also be written as `{ "location": "line-aligned" }`.
+
+The two differ when the opening tag does not start its line:
+
+{/* good {"options": ["line-aligned"]} */}
+
+```jsx
+const card = <Card>Welcome back</Card>;
+```
+
+{/* bad {"options": ["tag-aligned"]} */}
+
+```jsx
+const card = <Card>Welcome back</Card>;
+```
+
+## When not to use it
+
+A formatter such as Prettier already decides where the closing tag goes. If you use one, turn this rule off.

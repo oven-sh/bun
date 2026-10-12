@@ -199,7 +199,7 @@ describe.concurrent("bun lint", () => {
     const reports = (stdout: string) =>
       stdout
         .split("\n")
-        .flatMap(line => /^<dir>\/(\S+?:\d+:\d+): .*?'(\w+)'.* \[Error\/(.*)\]$/.exec(line)?.slice(1).join(" ") ?? []);
+        .flatMap(line => /^<dir>\/(\S+?:\d+:\d+): .*?'(\w+)'.* \[\w+\/(.*)\]$/.exec(line)?.slice(1).join(" ") ?? []);
     const union = ["a/a.js:1:35 nothing no-undef", "d/build.js:1:39 nothing no-undef"];
 
     test("without a configuration file, with --infer-globals", async () => {
@@ -300,7 +300,9 @@ describe.concurrent("bun lint", () => {
       }),
     ]);
     expect(read.stdout).toContain("<dir>/a.mjs:1:1: Unexpected var, use let or const instead. [Error/no-var]");
-    expect(unread.stderr).toContain("1 file was not linted, only the parser of the configuration can read it: b.mjs.");
+    expect(unread.stderr).toContain(
+      "1 file was not linted because only the parser in your config can read it: b.mjs\n",
+    );
     expect([read.exitCode, unread.exitCode]).toEqual([1, 2]);
   });
 
@@ -330,17 +332,17 @@ describe.concurrent("bun lint", () => {
         "vendor.min.js": "debugger;\n",
         ".gitignore": "dist\n",
       },
-      [],
+      ["-f", "stylish"],
     );
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
-        2:5  error  'unused' is defined but never used  no-unused-vars
-        3:1  error  'undefinedName' is not defined      no-undef
+        2:5  warning  'unused' is defined but never used  no-unused-vars
+        3:1  error    'undefinedName' is not defined      no-undef
 
       <dir>/b.ts
-        1:17  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+        1:17  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
 
-      ✖ 3 problems (3 errors, 0 warnings)"
+      ✖ 3 problems (1 error, 2 warnings)"
     `);
     expect(exitCode).toBe(1);
   });
@@ -2931,7 +2933,7 @@ describe.concurrent("bun lint", () => {
         const result = await lint(files, ["--fix", "-f", format, "."], { reads: ["a.js", "b.js"] });
         expect(result.files).toEqual({ "a.js": files["a.js"].replace("var", "let"), "b.js": files["b.js"] });
         expect(result.stderr).toContain(
-          "Fixes of mine/breaks would leave a.js with a syntax error. They are not applied.",
+          "Fixes from mine/breaks were not applied to a.js because they would cause a syntax error",
         );
         expect(result.exitCode).toBe(1);
       },
@@ -3436,7 +3438,7 @@ describe.concurrent("bun lint", () => {
 
     describe("fixes after which the text cannot be parsed are not written", () => {
       const warning = (rules: string, file: string) =>
-        `warn: Fixes of ${rules} would leave ${file} with a syntax error. They are not applied.`;
+        `warn: Fixes from ${rules} were not applied to ${file} because they would cause a syntax error`;
 
       // oxlint 1.87 writes `foo(,);`, `await x ^= y;` and "declare module String.raw`a\\b` {}".
       test.each([
@@ -4576,7 +4578,7 @@ describe.concurrent("bun lint", () => {
         return stderr.split("\n").filter(it => it.startsWith("note: "));
       };
       expect(await notes("5.8.3")).toEqual([
-        "note: typescript 5.8.3 is installed; bun lint checks types as TypeScript 7.",
+        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7",
       ]);
       expect(await notes("7.0.2")).toEqual([]);
       expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
@@ -4645,7 +4647,7 @@ describe.concurrent("bun lint", () => {
       const reported = (stdout: string, rule: string) =>
         stdout
           .split("\n")
-          .filter(it => it.endsWith(`[Error/${rule}]`))
+          .filter(it => it.endsWith(`/${rule}]`))
           .map(it => `${it.split(":")[0].replace("<dir>/", "")} ${/'([^']+)'/.exec(it)![1]}`);
 
       test.concurrent.each([
@@ -4686,7 +4688,7 @@ describe.concurrent("bun lint", () => {
           ["fromTypes", "mineConst", "mineFn", "MineClass", "Array"].map(it => `a.js ${it}`),
         );
         expect(reported(stdout, "no-undef")).toEqual([]);
-        expect(exitCode).toBe(1);
+        expect(exitCode).toBe(0);
       });
 
       test("a project in which no file can declare a global has its libraries and its types", async () => {
@@ -5879,7 +5881,7 @@ describe.concurrent("bun lint", () => {
         "c.tsx": "<c />;\n",
       };
       const { stderr, exitCode } = await lint(files, ["--timing"]);
-      expect(stderr).toContain("without a filter of the names they mention: 0 files");
+      expect(stderr).toContain("linted without the name filter: 0 files");
       expect(exitCode).toBe(0);
     });
 
@@ -6604,7 +6606,9 @@ describe.concurrent("regular expressions in a configuration", () => {
     // JavaScriptCore, which has the regular expressions, prints its options when it is started.
     const env = { BUN_JSC_dumpOptions: "1", JSC_dumpOptions: "1" };
     // Without a configuration file: eslint:recommended.
-    const { stdout, stderr, exitCode } = await lint(files, ["--rule", "no-warning-comments: error"], { env });
+    const { stdout, stderr, exitCode } = await lint(files, ["-f", "stylish", "--rule", "no-warning-comments: error"], {
+      env,
+    });
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
          4:11  error  Irregular whitespace not allowed            no-irregular-whitespace
@@ -8036,7 +8040,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   // A flag that only one of the two tools has says whom a command line was written for. A key was written for Bun.
   test("a key does not say which tool the run stands in for", async () => {
     const both = { ...eslint, ...oxlint };
-    const asks = "Say which one this run is for: --flavor=oxlint or --flavor=eslint.";
+    const asks = "Choose one with --flavor=eslint or --flavor=oxlint";
     const results = await Promise.all(
       [
         `denyWarnings = true`,
@@ -8202,9 +8206,9 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   });
 
   test("every flag in the help is a key, or is refused as a key with its name", async () => {
-    const help = await lint({}, ["--help"]);
-    const flags = [...help.stdout.matchAll(/^\s+(?:-\w, )?--([a-z-]+)/gm)].map(it => it[1]);
-    expect(flags.length).toBeGreaterThan(50);
+    const help = await lint({}, ["--help", "--all"]);
+    const flags = [...help.stdout.matchAll(/^\s+(?:-\w, )?--([a-z0-9-]+)/gm)].map(it => it[1]);
+    expect(flags.length).toBeGreaterThan(90);
     const renamed: Record<string, string> = {
       "ignore-pattern": "ignorePatterns",
       "report-unused-disable-directives-severity": "reportUnusedDisableDirectives",
@@ -8223,7 +8227,37 @@ describe.concurrent("[lint] in bunfig.toml", () => {
         return [flag, /expected .+ but received|cannot be set in bunfig\.toml/.test(stderr)];
       }),
     );
-    expect(answers.filter(it => !it[1])).toEqual([]);
+    // Flags of ESLint and oxlint that say nothing about a project, or have no effect.
+    expect(answers.filter(it => !it[1]).map(it => it[0])).toEqual([
+      "parser",
+      "plugin",
+      "concurrency",
+      "flag",
+      "cache",
+      "cache-file",
+      "cache-location",
+      "cache-strategy",
+      "mcp",
+      "no-eslintrc",
+      "env",
+      "rulesdir",
+      "resolve-plugins-relative-to",
+      "lsp",
+      "import-plugin",
+      "react-plugin",
+      "jsdoc-plugin",
+      "jest-plugin",
+      "vitest-plugin",
+      "jsx-a11y-plugin",
+      "nextjs-plugin",
+      "react-perf-plugin",
+      "promise-plugin",
+      "node-plugin",
+      "vue-plugin",
+      "disable-unicorn-plugin",
+      "disable-oxc-plugin",
+      "disable-typescript-plugin",
+    ]);
   });
 });
 
@@ -8672,7 +8706,9 @@ describe.concurrent("nativePluginRules", () => {
         lint({ ...flat, ...bunfig(`["import"]`) }, ["--print-config", "a.js"]),
       ]);
       expect(builtIn.stderr).toBe("");
-      expect(mixed.stderr).toBe("note: in JavaScript: react-hooks/rules-of-hooks. All other rules are built in.");
+      expect(mixed.stderr).toBe(
+        "note: these rules run in JavaScript: react-hooks/rules-of-hooks. All other rules are built in.",
+      );
       expect(JSON.parse(mixed.raw)).toEqual(JSON.parse(builtIn.raw));
     },
     timeout,
@@ -8690,7 +8726,7 @@ describe.concurrent("nativePluginRules", () => {
       };
       const result = await lint({ ...files, ...bunfig("false") }, ["a.js"], { mayFail: true });
       expect(result.stderr).toContain(
-        "1 rule in JavaScript did not run, only the built-in rules have types: @typescript-eslint/no-floating-promises. With --native-plugin-rules=@typescript-eslint the built-in ones run",
+        "1 rule did not run because rules that run in JavaScript cannot use type information: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
       );
       expect(result.exitCode).toBe(2);
     },
@@ -8703,7 +8739,7 @@ describe.concurrent("nativePluginRules", () => {
       lint(files, ["-f", "unix", "a.ts"]),
       lint({ ...files, ...bunfig("false") }, ["-f", "unix", "a.ts"]),
     ]);
-    expect(plain.stdout).toContain("[Error/@typescript-eslint/no-explicit-any]");
+    expect(plain.stdout).toContain("[Warning/@typescript-eslint/no-explicit-any]");
     expect(off.stdout).toBe(plain.stdout);
   });
 

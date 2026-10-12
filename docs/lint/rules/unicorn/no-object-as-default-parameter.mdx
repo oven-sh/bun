@@ -1,0 +1,34 @@
+---
+title: "unicorn/no-object-as-default-parameter"
+description: "Disallow an object literal with properties as the default value of a parameter"
+---
+
+A default value is used only when the whole argument is missing. As soon as the caller passes an object with one property, the default object is dropped and its other properties are `undefined`. Destructure the parameter and give each property its own default.
+
+An empty object, `options = {}`, is allowed.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function connect(options = { retries: 3, secure: true }) {
+  return open(options.retries, options.secure);
+}
+
+connect({ retries: 5 }); // options.secure is undefined
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function connect({ retries = 3, secure = true } = {}) {
+  return open(retries, secure);
+}
+
+connect({ retries: 5 }); // secure is true
+```

@@ -1,0 +1,30 @@
+---
+title: "no-proto"
+description: "Disallow the `__proto__` property"
+---
+
+`object.__proto__` is a getter and setter that objects inherit from `Object.prototype`. An object made with `Object.create(null)` does not have it, so there `__proto__` is an ordinary property and reading it gives `undefined`. `Object.getPrototypeOf()` and `Object.setPrototypeOf()` work on every object.
+
+`__proto__` as a key in an object literal, which sets the prototype of the new object, is not reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const parent = user.__proto__;
+user["__proto__"] = admin;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const parent = Object.getPrototypeOf(user);
+Object.setPrototypeOf(user, admin);
+
+const guest = { __proto__: user, name: "guest" };
+```

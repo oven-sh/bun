@@ -1,0 +1,67 @@
+---
+title: "promise/no-callback-in-promise"
+description: "Disallow calling a callback inside `then()` or `catch()`"
+---
+
+If a callback throws while it runs inside `then()` or `catch()`, the error does not reach the caller. The promise turns it into a rejection. In the example below, if `callback` throws in the `then()`, the `catch()` calls it a second time with that error.
+
+A callback is a function named `callback`, `cb`, `done` or `next`. Inside a function given to `then()` or `catch()`, the rule reports calling one and passing one as the first argument of another call. It also reports `.then(callback)` and `.catch(callback)`.
+
+A callback scheduled with `setImmediate`, `setTimeout`, `requestAnimationFrame` or `nextTick` runs after the promise handler has returned, so it is not reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function getUser(id, callback) {
+  fetchUser(id)
+    .then(user => callback(null, user))
+    .catch(callback);
+}
+```
+
+{/* bad */}
+
+```js
+fetchUser(id).then(user => finish(done, user));
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function getUser(id, callback) {
+  fetchUser(id)
+    .then(user => setImmediate(callback, null, user))
+    .catch(err => setImmediate(() => callback(err)));
+}
+```
+
+## Options
+
+| Option        | Default | What it does                                                                                              |
+| ------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `exceptions`  | `[]`    | Names from the list above that are not callbacks in your code.                                            |
+| `timeoutsErr` | `false` | Also report callbacks scheduled with `setImmediate`, `setTimeout`, `requestAnimationFrame` or `nextTick`. |
+
+{/* good {"options": [{"exceptions": ["next"]}]} */}
+
+```js
+app.get("/users/:id", (req, res, next) => {
+  fetchUser(req.params.id)
+    .then(user => res.json(user))
+    .catch(next);
+});
+```
+
+{/* bad {"options": [{"timeoutsErr": true}]} */}
+
+```js
+function getUser(id, callback) {
+  fetchUser(id).then(user => setImmediate(callback, null, user));
+}
+```

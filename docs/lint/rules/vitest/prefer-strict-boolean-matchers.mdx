@@ -1,0 +1,40 @@
+---
+title: "vitest/prefer-strict-boolean-matchers"
+description: "Require `toBe(true)` and `toBe(false)` instead of `toBeTruthy()` and `toBeFalsy()`"
+---
+
+`toBeTruthy()` passes for `1`, `"no"` and `{}`. `toBeFalsy()` passes for `0`, `""`, `null` and `undefined`. If a function should return a boolean and starts to return `undefined`, a test with `toBeFalsy()` still passes. `toBe(false)` fails.
+
+`--fix` rewrites `toBeTruthy()` to `toBe(true)` and `toBeFalsy()` to `toBe(false)`. A test that passed with a value that is not a boolean fails afterwards.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("checks the password", () => {
+  expect(isValid("correct horse")).toBeTruthy();
+  expect(isValid("")).toBeFalsy();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("checks the password", () => {
+  expect(isValid("correct horse")).toBe(true);
+  expect(isValid("")).toBe(false);
+});
+```
+
+## When not to use it
+
+Some tests only care that there is a value: a match from `String.prototype.match()`, a non-empty string. There `toBeTruthy()` says what you mean.

@@ -1,0 +1,96 @@
+---
+title: "@typescript-eslint/prefer-promise-reject-errors"
+description: "Require an `Error` as the reason when a promise is rejected"
+---
+
+A rejected promise turns into a `throw` at the `await`. If the reason is a string, the `catch` block gets a value with no stack trace and no `message`, and `error instanceof Error` is false.
+
+The rule checks `Promise.reject(...)` and calls to `reject` inside `new Promise((resolve, reject) => ...)`. Rejecting with nothing is reported too.
+
+This is `prefer-promise-reject-errors` with types: it looks at the type of the reason, so a variable that holds a string is reported and a class that extends `Error` is not. Turn the other rule off when you use this one.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+function load(url: string, reason: string) {
+  if (!url) return Promise.reject("missing url");
+  if (url === "/") return Promise.reject();
+
+  return new Promise((resolve, reject) => {
+    reject(reason);
+  });
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class HttpError extends Error {}
+
+function load(url: string) {
+  if (!url) return Promise.reject(new Error("missing url"));
+
+  return new Promise((resolve, reject) => {
+    reject(new HttpError("not found"));
+  });
+}
+```
+
+## Options
+
+| Option                 | Default | What it does                                              |
+| ---------------------- | ------- | --------------------------------------------------------- |
+| `allowEmptyReject`     | `false` | Allow `Promise.reject()` and `reject()` without a reason. |
+| `allowThrowingAny`     | `false` | Allow a reason of type `any`.                             |
+| `allowThrowingUnknown` | `false` | Allow a reason of type `unknown`.                         |
+| `allow`                | `[]`    | Other types that are allowed as a reason.                 |
+
+With `strict`, the value in a `catch` block is `unknown`, so passing it on is reported:
+
+{/* bad */}
+
+```ts
+async function retry(task: () => Promise<void>) {
+  try {
+    await task();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+```
+
+With `allowThrowingUnknown: true` it is allowed:
+
+{/* good {"options": [{"allowThrowingUnknown": true}]} */}
+
+```ts
+async function retry(task: () => Promise<void>) {
+  try {
+    await task();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+```
+
+An entry of `allow` is a type name, or an object that also says where the type is from: `{ "from": "file", "name": "Failure" }`, `{ "from": "lib", "name": "Date" }`, or `{ "from": "package", "name": "Failure", "package": "some-package" }`. With the first of these, this is allowed:
+
+{/* good {"options": [{"allow": [{"from": "file", "name": "Failure"}]}]} */}
+
+```ts
+interface Failure {
+  code: number;
+}
+
+function fail(failure: Failure) {
+  return Promise.reject(failure);
+}
+```

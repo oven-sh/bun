@@ -1,0 +1,58 @@
+---
+title: "unicorn/prefer-top-level-await"
+description: "Require top-level `await` instead of promise chains and async wrappers at the top of a module"
+---
+
+A module can use `await` outside of a function. An async wrapper or a `.then()` chain at the top level is more code for the same work. Modules that import the file do not wait for it, and a rejection becomes an unhandled rejection instead of a failed import.
+
+The rule reports three things outside of functions and classes:
+
+- a call of `.then()`, `.catch()` or `.finally()` that is not awaited
+- an async function that is called where it is written
+- a call of an async function declared in the file, if that call is its only use
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+(async () => {
+  await connect();
+})();
+
+loadConfig().then(config => start(config));
+
+async function main() {
+  await migrate();
+}
+main();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+await connect();
+
+const config = await loadConfig();
+start(config);
+
+await migrate();
+
+const [users, posts] = await Promise.all([loadUsers().catch(() => []), loadPosts()]);
+```
+
+## When not to use it
+
+Top-level `await` is a syntax error in CommonJS, and the rule does not look at how a file is loaded. It reports this in `main.cjs` too:
+
+{/* bad {"filename": "main.cjs"} */}
+
+```js
+loadConfig().then(config => start(config));
+```
+
+Turn the rule off for files that are loaded as CommonJS.

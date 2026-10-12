@@ -1,0 +1,34 @@
+---
+title: "unicorn/no-invalid-remove-event-listener"
+description: "Disallow passing a new function to `removeEventListener()`"
+---
+
+`removeEventListener()` only removes the exact function that was passed to `addEventListener()`. A function written inline and the result of `.bind()` are new functions each time, so the call removes nothing and the old listener keeps running.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+button.addEventListener("click", () => save());
+button.removeEventListener("click", () => save());
+
+window.addEventListener("resize", this.layout.bind(this));
+window.removeEventListener("resize", this.layout.bind(this));
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const onClick = () => save();
+button.addEventListener("click", onClick);
+button.removeEventListener("click", onClick);
+
+const onResize = this.layout.bind(this);
+window.addEventListener("resize", onResize);
+window.removeEventListener("resize", onResize);
+```

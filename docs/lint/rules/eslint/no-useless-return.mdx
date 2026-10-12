@@ -1,0 +1,50 @@
+---
+title: "no-useless-return"
+description: "Disallow a `return` without a value where the function ends anyway"
+---
+
+A bare `return;` is for leaving a function early. If nothing would run after it, it changes nothing and can go.
+
+`--fix` removes the statement.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function reset(form) {
+  form.clear();
+  return;
+}
+
+function notify(user) {
+  if (user.muted) {
+    return;
+  } else {
+    send(user);
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function reset(form) {
+  form.clear();
+}
+
+function notify(user) {
+  if (user.muted) {
+    return;
+  }
+  send(user);
+}
+
+function find(id) {
+  return undefined;
+}
+```

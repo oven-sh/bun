@@ -1,0 +1,73 @@
+---
+title: "import/no-relative-packages"
+description: "Disallow relative imports that reach into another package"
+---
+
+In a monorepo, `../ui/button.js` only works while both packages stay where they are on disk. It also skips the other package's `exports`, and the dependency never shows up in your `package.json`.
+
+A file belongs to the closest `package.json` above it that has a `name`. The rule reports a relative import that resolves to a file in a package with a different name.
+
+`--fix` replaces the relative path with the package's name.
+
+## Examples
+
+Reported:
+
+{/* file "packages/app/package.json" */}
+
+```json packages/app/package.json
+{ "name": "app" }
+```
+
+{/* file "packages/ui/package.json" */}
+
+```json packages/ui/package.json
+{ "name": "@acme/ui" }
+```
+
+{/* file "packages/ui/button.js" */}
+
+```js packages/ui/button.js
+export function Button() {}
+```
+
+{/* bad {"filename": "packages/app/index.js"} */}
+
+```js packages/app/index.js
+import { Button } from "../ui/button.js";
+```
+
+Not reported:
+
+{/* file "packages/app/package.json" */}
+
+```json packages/app/package.json
+{ "name": "app" }
+```
+
+{/* file "packages/app/theme.js" */}
+
+```js packages/app/theme.js
+export const theme = {};
+```
+
+{/* good {"filename": "packages/app/index.js"} */}
+
+```js packages/app/index.js
+import { Button } from "@acme/ui/button.js";
+import { theme } from "./theme.js";
+```
+
+## Options
+
+| Option     | Default | What it does                                                         |
+| ---------- | ------- | -------------------------------------------------------------------- |
+| `esmodule` | `true`  | Check `import`, `export .. from` and `import()`.                     |
+| `commonjs` | `false` | Also check `require()`.                                              |
+| `amd`      | `false` | Also check the dependencies of `define()` and of `require([..])`.    |
+| `ignore`   | `[]`    | Regular expressions. A path that matches one of them is not checked. |
+
+```toml bunfig.toml
+[lint.rules]
+"import/no-relative-packages" = ["error", { commonjs = true }]
+```

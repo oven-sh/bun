@@ -1,0 +1,84 @@
+---
+title: "no-irregular-whitespace"
+description: "Disallow whitespace characters other than the ordinary space, tab and line break"
+---
+
+A no-break space (U+00A0) looks exactly like a space, and a zero-width space (U+200B) looks like nothing. They get into a file when you paste from a web page or a chat, or press Option+Space on a Mac. The code may still run, but a search for `total = price` no longer finds the line, and diffs show changes that nobody can see.
+
+Reported characters: U+000B, U+000C, U+0085, U+00A0, U+1680, U+180E, U+2000 to U+200B, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF. A byte order mark at the very start of the file is fine.
+
+This rule is on by default.
+
+## Examples
+
+Reported. The character after `=` is a no-break space:
+
+{/* bad */}
+
+```js
+const total = price * quantity;
+```
+
+Not reported, with an ordinary space:
+
+{/* good */}
+
+```js
+const total = price * quantity;
+```
+
+Not reported either. The no-break space between `10` and `kg` is in a string, where it is likely there on purpose:
+
+{/* good */}
+
+```js
+const weight = "10 kg";
+```
+
+## Options
+
+Each option allows the characters in one kind of place.
+
+| Option          | Default | What it does                               |
+| --------------- | ------- | ------------------------------------------ |
+| `skipStrings`   | `true`  | Allow them in string literals.             |
+| `skipComments`  | `false` | Allow them in comments.                    |
+| `skipRegExps`   | `false` | Allow them in regular expression literals. |
+| `skipTemplates` | `false` | Allow them in template literals.           |
+| `skipJSXText`   | `false` | Allow them in JSX text.                    |
+
+Every example below has a no-break space between `10` and `kg`.
+
+{/* bad {"options": [{"skipStrings": false}]} */}
+
+```js
+const weight = "10 kg";
+```
+
+{/* bad {"count": 2} */}
+
+```js
+// At most 10 kg.
+const weight = `10 kg`;
+```
+
+{/* good {"options": [{"skipComments": true, "skipTemplates": true}]} */}
+
+```js
+// At most 10 kg.
+const weight = `10 kg`;
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+const label = <span>10 kg</span>;
+const pattern = /10 kg/;
+```
+
+{/* good {"options": [{"skipJSXText": true, "skipRegExps": true}]} */}
+
+```jsx
+const label = <span>10 kg</span>;
+const pattern = /10 kg/;
+```

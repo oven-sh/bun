@@ -3,7 +3,7 @@ use crate::jsx::{as_jsx_element, get_jsx_element_name};
 use crate::react::{is_create_element_call, is_jsx};
 use crate::util_jsx::is_dom_component;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_glob::Pattern;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use std::borrow::Cow;
@@ -23,7 +23,7 @@ impl Rule for NoDanger {
 
     fn new(options: &Options) -> Self {
         let names = options.object(0).strings("customComponentNames");
-        let minimatch = |name: &str| Pattern::new(name.as_bytes(), GlobOptions::MINIMATCH_3);
+        let minimatch = |name: &str| Pattern::with_extglob(name.as_bytes());
         NoDanger { custom_component_names: names.into_iter().map(minimatch).collect() }
     }
 

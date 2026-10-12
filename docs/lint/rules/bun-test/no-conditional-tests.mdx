@@ -1,0 +1,66 @@
+---
+title: "bun:test/no-conditional-tests"
+description: "Disallow `test` and `describe` inside an `if` statement"
+---
+
+A test declared inside an `if` only exists when the condition is true. When it is false, the test is missing from the output, so nobody sees that it did not run.
+
+Use `test.if(condition)` or `test.skipIf(condition)`. The test is always declared, and it is shown as skipped when it does not run. `describe` has the same two methods.
+
+The rule is about the `if` around a test. For an `if` inside a test, see `bun:test/no-conditional-in-test`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+if (process.platform === "linux") {
+  test("reads the kernel version", async () => {
+    expect(await Bun.file("/proc/version").text()).toContain("Linux");
+  });
+}
+```
+
+{/* bad */}
+
+```ts
+import { describe, expect, test } from "bun:test";
+import { connect } from "./database";
+
+describe("database", () => {
+  if (process.env.DATABASE_URL) {
+    test("connects", async () => {
+      expect(await connect()).toBeDefined();
+    });
+  }
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test.if(process.platform === "linux")("reads the kernel version", async () => {
+  expect(await Bun.file("/proc/version").text()).toContain("Linux");
+});
+```
+
+{/* good */}
+
+```ts
+import { describe, expect, test } from "bun:test";
+import { connect } from "./database";
+
+describe.skipIf(!process.env.DATABASE_URL)("database", () => {
+  test("connects", async () => {
+    expect(await connect()).toBeDefined();
+  });
+});
+```

@@ -1,0 +1,47 @@
+---
+title: "oxc/double-comparisons"
+description: "Disallow two comparisons of the same values that one operator can express"
+---
+
+`a === b || a < b` is a long way to write `a <= b`. The reader has to check that both halves compare the same two values before seeing what the condition means.
+
+| Written                                   | Means    |
+| ----------------------------------------- | -------- |
+| `a == b \|\| a < b`, `a === b \|\| a < b` | `a <= b` |
+| `a == b \|\| a > b`, `a === b \|\| a > b` | `a >= b` |
+| `a < b \|\| a > b`                        | `a != b` |
+| `a <= b && a >= b`                        | `a == b` |
+
+The halves can be in either order, and one of them can be flipped: `a < b || b < a` is reported too.
+
+`--fix-suggestions` rewrites the condition with the single operator.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+if (stock === minimum || stock < minimum) {
+  reorder();
+}
+
+const changed = before < after || before > after;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (stock <= minimum) {
+  reorder();
+}
+
+const changed = before !== after;
+```
+
+## When not to use it
+
+The short form is not always the same. `a < b || a > b` is `false` when one side is `NaN`, and `a != b` is `true`. For two `Date` objects, `a <= b && a >= b` compares the times, and `a == b` only tests whether they are the same object.

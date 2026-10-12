@@ -1,0 +1,117 @@
+---
+title: "react/sort-comp"
+description: "Enforce the order of methods and properties in a class component"
+---
+
+When every class component lists its members in the same order, you know where to look: lifecycle methods at the top, `render` at the bottom.
+
+The default order is static methods, then lifecycle methods, then everything else, then `render`. The lifecycle methods have an order among themselves too, roughly the order React calls them in: `constructor`, then `componentDidMount`, then `componentDidUpdate`, then `componentWillUnmount`.
+
+The rule checks classes and `createReactClass()` objects. It does not look at function components.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class Profile extends React.Component {
+  render() {
+    return <button onClick={this.handleClick}>{this.props.name}</button>;
+  }
+
+  handleClick() {
+    this.props.onSelect();
+  }
+
+  componentDidMount() {
+    this.props.load();
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Profile extends React.Component {
+  componentDidMount() {
+    this.props.load();
+  }
+
+  handleClick() {
+    this.props.onSelect();
+  }
+
+  render() {
+    return <button onClick={this.handleClick}>{this.props.name}</button>;
+  }
+}
+```
+
+## Options
+
+| Option   | Default                                                        | What it does                                                                                                                   |
+| -------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `order`  | `["static-methods", "lifecycle", "everything-else", "render"]` | The order. Each entry is a member name, a pattern such as `"/^handle.+$/"`, or the name of a group.                            |
+| `groups` | `{}`                                                           | Custom groups. Each key is a group name, and each value is a list of entries. Defining `lifecycle` replaces the built-in list. |
+
+These groups are built in:
+
+| Group                                    | What is in it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lifecycle`                              | `displayName`, `propTypes`, `contextTypes`, `childContextTypes`, `mixins`, `statics`, `defaultProps`, `constructor`, `getDefaultProps`, `state`, `getInitialState`, `getChildContext`, `getDerivedStateFromProps`, `componentWillMount`, `componentDidMount`, `componentWillReceiveProps`, `shouldComponentUpdate`, `componentWillUpdate`, `getSnapshotBeforeUpdate`, `componentDidUpdate`, `componentDidCatch`, `componentWillUnmount`, in this order. Each `UNSAFE_` name comes right after the name without the prefix. |
+| `static-variables`, `static-methods`     | Static fields, and static methods.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `instance-variables`, `instance-methods` | Class fields with a value that is not a function, and class fields with a function as the value.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `getters`, `setters`                     | `get` and `set` accessors.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `type-annotations`                       | Fields that have a type and no value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `everything-else`                        | What no other entry matches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+
+This config puts the event handlers right before the methods that render:
+
+```toml bunfig.toml
+[lint.rules]
+"react/sort-comp" = ["error", { order = ["lifecycle", "everything-else", "handlers", "rendering"], groups = { handlers = ["/^handle.+$/"], rendering = ["/^render.+$/", "render"] } }]
+```
+
+{/* bad {"options": [{"order": ["lifecycle", "everything-else", "handlers", "rendering"], "groups": {"handlers": ["/^handle.+$/"], "rendering": ["/^render.+$/", "render"]}}]} */}
+
+```jsx
+class Profile extends React.Component {
+  handleClick() {
+    this.props.onSelect();
+  }
+
+  fullName() {
+    return this.props.first + " " + this.props.last;
+  }
+
+  render() {
+    return <button onClick={this.handleClick}>{this.fullName()}</button>;
+  }
+}
+```
+
+{/* good {"options": [{"order": ["lifecycle", "everything-else", "handlers", "rendering"], "groups": {"handlers": ["/^handle.+$/"], "rendering": ["/^render.+$/", "render"]}}]} */}
+
+```jsx
+class Profile extends React.Component {
+  fullName() {
+    return this.props.first + " " + this.props.last;
+  }
+
+  handleClick() {
+    this.props.onSelect();
+  }
+
+  renderName() {
+    return <span>{this.fullName()}</span>;
+  }
+
+  render() {
+    return <button onClick={this.handleClick}>{this.renderName()}</button>;
+  }
+}
+```

@@ -1,0 +1,86 @@
+---
+title: "react/jsx-one-expression-per-line"
+description: "Require each child of a JSX element to be on its own line"
+---
+
+When tags, text and expressions share a line, it is hard to see how many children an element has, and a change to one of them shows up as a change to all of them in a diff. This rule puts every child on a line of its own, apart from the opening and closing tags.
+
+`--fix` adds the line breaks. Where a space between two children matters, it writes `{' '}` to keep it.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const greeting = <p>Hello</p>;
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+const greeting = (
+  <p>
+    Hello <b>{name}</b>
+  </p>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const greeting = (
+  <p>
+    Hello <b>{name}</b>
+  </p>
+);
+```
+
+## Options
+
+| `allow`            | What it does                                                        |
+| ------------------ | ------------------------------------------------------------------- |
+| `"none"` (default) | Every child goes on its own line.                                   |
+| `"literal"`        | Allow an element on one line if its only child is text.             |
+| `"single-child"`   | Allow an element on one line if it has only one child, of any kind. |
+| `"non-jsx"`        | Allow any layout in an element that has no elements as children.    |
+
+{/* good {"options": [{"allow": "literal"}]} */}
+
+```jsx
+const greeting = <p>Hello</p>;
+```
+
+{/* bad {"options": [{"allow": "literal"}]} */}
+
+```jsx
+const greeting = <p>{message}</p>;
+```
+
+{/* good {"options": [{"allow": "single-child"}]} */}
+
+```jsx
+const greeting = <p>{message}</p>;
+const wrapped = (
+  <p>
+    <b />
+  </p>
+);
+```
+
+{/* good {"options": [{"allow": "non-jsx"}]} */}
+
+```jsx
+const greeting = (
+  <p>
+    Hello {name}, you have {count} messages
+  </p>
+);
+```
+
+## When not to use it
+
+A formatter such as `bun format` or Prettier decides where JSX breaks, and the two disagree. Use one or the other.

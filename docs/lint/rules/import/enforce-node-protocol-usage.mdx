@@ -1,0 +1,68 @@
+---
+title: "import/enforce-node-protocol-usage"
+description: "Enforce either `node:fs` or `fs` when importing Node.js built-in modules"
+---
+
+`"node:fs"` and `"fs"` load the same module. With the prefix, a reader sees at once that the import is a built-in and not a package from `node_modules`, and no installed package can take its place. Without it, the code also runs on old versions of Node.js. This rule keeps a project on one of the two.
+
+It checks `import`, `export { } from`, `import()` and `require()`. Say in your config which of the two you want, `"always"` or `"never"`.
+
+`--fix` adds or removes the prefix.
+
+## Examples
+
+Reported:
+
+{/* bad {"options": ["always"], "count": 4} */}
+
+```js
+import fs from "fs";
+export { join } from "path";
+
+const os = require("os");
+const crypto = await import("crypto");
+```
+
+Not reported:
+
+{/* good {"options": ["always"]} */}
+
+```js
+import fs from "node:fs";
+export { join } from "node:path";
+
+const os = require("node:os");
+const crypto = await import("node:crypto");
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"import/enforce-node-protocol-usage" = ["error", "always"]
+```
+
+| Option     | What it does                                               |
+| ---------- | ---------------------------------------------------------- |
+| `"always"` | Report a built-in module that is imported without `node:`. |
+| `"never"`  | Report a built-in module that is imported with `node:`.    |
+
+{/* bad {"options": ["never"]} */}
+
+```js
+import fs from "node:fs";
+```
+
+{/* good {"options": ["never"]} */}
+
+```js
+import fs from "fs";
+```
+
+Some modules only exist with the prefix, such as `node:test` and `node:sqlite`. `"never"` leaves them alone:
+
+{/* good {"options": ["never"]} */}
+
+```js
+import { test } from "node:test";
+```

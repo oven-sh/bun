@@ -1,0 +1,44 @@
+---
+title: "n/no-process-exit"
+description: "Disallow `process.exit()`"
+---
+
+`process.exit()` stops the process at once. Output that has not been written yet is lost, `finally` blocks do not run, and the code that called yours gets no chance to handle the problem or clean up.
+
+Throw an error. If nothing catches it, the process ends with a stack trace and a failing exit code. To end with a certain exit code, set `process.exitCode` and let the process finish by itself.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+if (!config.valid) {
+  console.error("invalid config");
+  process.exit(1);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (!config.valid) {
+  throw new Error("invalid config");
+}
+```
+
+{/* good */}
+
+```js
+if (!config.valid) {
+  console.error("invalid config");
+  process.exitCode = 1;
+}
+```
+
+## When not to use it
+
+The entry file of a command line tool is a fair place for `process.exit()`, for example to stop while timers or sockets are still open.

@@ -1,0 +1,35 @@
+---
+title: "prefer-numeric-literals"
+description: "Require binary, octal and hexadecimal literals instead of `parseInt()` on a fixed string"
+---
+
+`parseInt("ff8800", 16)` parses a string every time it runs, to get a number that was known when you wrote it. Write the number itself: `0xff8800`. Binary literals start with `0b` and octal ones with `0o`.
+
+Only `parseInt` and `Number.parseInt` with a fixed string and a radix of `2`, `8` or `16` are reported.
+
+`--fix` replaces the call with the literal when the string has only digits of that radix.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const mask = parseInt("1010", 2);
+const mode = Number.parseInt("644", 8);
+const color = parseInt("ff8800", 16);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const mask = 0b1010;
+const mode = 0o644;
+const color = 0xff8800;
+
+const value = parseInt(input, 16);
+const count = parseInt("42", 10);
+```

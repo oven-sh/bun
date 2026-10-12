@@ -1,0 +1,96 @@
+---
+title: "complexity"
+description: "Enforce a maximum number of branches in a function"
+---
+
+Every branch in a function is one more path to keep in mind and to test. This rule counts them and reports a function that has more than 20.
+
+The count starts at 1. Each of these adds 1: `if`, `? :`, a loop, a `case`, a `catch`, `&&`, `||`, `??`, their assignment forms such as `||=`, `?.`, and a default value of a parameter or in destructuring. Nested functions are counted on their own. Class field initializers and static blocks are counted too.
+
+## Examples
+
+With a maximum of 3, this function is reported. It has a complexity of 4:
+
+{/* bad {"options": [3]} */}
+
+```js
+function shipping(order) {
+  if (order.total > 100) {
+    return 0;
+  } else if (order.express) {
+    return 15;
+  } else if (order.country !== "US") {
+    return 25;
+  }
+  return 5;
+}
+```
+
+Not reported:
+
+{/* good {"options": [3]} */}
+
+```js
+function shipping(order) {
+  if (order.total > 100) {
+    return 0;
+  }
+  return order.express ? 15 : standardRate(order.country);
+}
+
+function standardRate(country) {
+  return country === "US" ? 5 : 25;
+}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+complexity = ["error", 10]
+```
+
+The option is a number, which is the maximum, or an object:
+
+| Option    | Default     | What it does                                                               |
+| --------- | ----------- | -------------------------------------------------------------------------- |
+| `max`     | `20`        | The highest complexity that is allowed. `maximum` is an older name for it. |
+| `variant` | `"classic"` | `"modified"` counts a whole `switch` as 1, however many `case`s it has.    |
+
+Three `case`s give this function a complexity of 4. `default` does not count:
+
+{/* bad {"options": [{"max": 3}]} */}
+
+```js
+function label(status) {
+  switch (status) {
+    case "open":
+      return "Open";
+    case "merged":
+      return "Merged";
+    case "closed":
+      return "Closed";
+    default:
+      return "Unknown";
+  }
+}
+```
+
+With `"modified"`, the same function has a complexity of 2:
+
+{/* good {"options": [{"max": 2, "variant": "modified"}]} */}
+
+```js
+function label(status) {
+  switch (status) {
+    case "open":
+      return "Open";
+    case "merged":
+      return "Merged";
+    case "closed":
+      return "Closed";
+    default:
+      return "Unknown";
+  }
+}
+```

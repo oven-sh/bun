@@ -67,23 +67,21 @@ pub enum Reason {
 }
 
 impl Reason {
-    /// What follows "the rule ran in JavaScript for 12 files: ".
+    /// What follows "the rule ran in JavaScript for 12 files because ".
     pub fn text(self) -> &'static str {
         match self {
             Reason::Version => {
-                "the prettier that is installed is not 3.9, which bun format follows"
+                "the installed prettier is not version 3.9, which bun format matches"
             }
-            Reason::VersionOfPlugin => "the eslint-plugin-prettier that is installed is not 5",
-            Reason::PluginNotFound => {
-                "the eslint-plugin-prettier of the configuration is not found"
-            }
-            Reason::Plugin => "a plugin of Prettier that bun format does not have may print them",
-            Reason::Language => "bun format does not print their language itself",
-            Reason::Option => "bun format does not know one of the options",
-            Reason::Configuration => "the configuration of Prettier cannot be read",
-            Reason::SyntaxError => "bun format finds a syntax error in them",
-            Reason::Refused => "bun format does not stand by what it has printed",
-            Reason::Classes => "only bun format asks Tailwind CSS where their classes go",
+            Reason::VersionOfPlugin => "the installed eslint-plugin-prettier is not version 5",
+            Reason::PluginNotFound => "eslint-plugin-prettier was not found",
+            Reason::Plugin => "the Prettier config uses a plugin that bun format does not include",
+            Reason::Language => "bun format does not support the language",
+            Reason::Option => "bun format does not support one of the options",
+            Reason::Configuration => "the Prettier config cannot be read",
+            Reason::SyntaxError => "bun format found a syntax error",
+            Reason::Refused => "bun format could not verify its output",
+            Reason::Classes => "only bun format can sort Tailwind CSS classes",
             Reason::NoFormatter => "there is no formatter",
         }
     }

@@ -1,0 +1,102 @@
+---
+title: "react/jsx-indent"
+description: "Enforce consistent indentation of JSX elements and their children"
+---
+
+JSX reads as a tree, and the indentation is what shows which element is inside which. A child at the wrong depth looks like a sibling of its parent. The rule checks each tag, each `{...}` child and each line of text that starts a line. The default is 4 spaces for each level.
+
+Props are not checked. That is what `react/jsx-indent-props` does.
+
+`--fix` corrects the indentation.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const page = (
+  <main>
+    <Header />
+    <p>Welcome</p>
+  </main>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const page = (
+  <main>
+    <Header />
+    <p>Welcome</p>
+  </main>
+);
+```
+
+## Options
+
+The first option is the number of spaces for each level, or `"tab"` for one tab. The second is an object.
+
+```toml bunfig.toml
+[lint.rules]
+"react/jsx-indent" = ["error", 2, { checkAttributes = true }]
+```
+
+| Option                     | Default | What it does                                                                                                               |
+| -------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| a number or `"tab"`        | `4`     | The indentation of one level.                                                                                              |
+| `checkAttributes`          | `false` | Also check the closing `)}` of a prop's value that takes several lines. It has to line up with the prop's name.            |
+| `indentLogicalExpressions` | `false` | Require an element on its own line after `&&`, `\|\|` or `??` to be indented one level. Without it, both ways are allowed. |
+
+{/* good {"options": [2]} */}
+
+```jsx
+const page = (
+  <main>
+    <Header />
+  </main>
+);
+```
+
+{/* bad {"options": [2, {"checkAttributes": true}]} */}
+
+```jsx
+const page = <Layout header={<Header />} />;
+```
+
+{/* good {"options": [2, {"checkAttributes": true}]} */}
+
+```jsx
+const page = <Layout header={<Header />} />;
+```
+
+{/* good {"options": [2]} */}
+
+```jsx
+const page = (
+  <main>
+    {open && <Menu />}
+    {closed && <Hint />}
+  </main>
+);
+```
+
+{/* bad {"options": [2, {"indentLogicalExpressions": true}]} */}
+
+```jsx
+const page = <main>{open && <Menu />}</main>;
+```
+
+{/* good {"options": [2, {"indentLogicalExpressions": true}]} */}
+
+```jsx
+const page = <main>{open && <Menu />}</main>;
+```
+
+## When not to use it
+
+If `bun format` or another formatter lays out your code, it already decides the indentation.

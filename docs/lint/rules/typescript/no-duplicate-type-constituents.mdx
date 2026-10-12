@@ -1,0 +1,60 @@
+---
+title: "@typescript-eslint/no-duplicate-type-constituents"
+description: "Disallow the same type twice in a union or intersection"
+---
+
+`string | number | string` means the same as `string | number`. The repeat adds nothing, and in a long union it hides what the type really allows.
+
+The rule compares types, not only text, so an alias for a type that is already in the union is found too. It also reports `| undefined` on an optional parameter, where the `?` already says it.
+
+`--fix` removes the repeated type.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```ts
+type Id = string | number | string;
+
+type Name = string;
+type Label = Name | string;
+
+type Point = { x: number } & { x: number };
+
+function greet(name?: string | undefined) {}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+type Id = string | number;
+
+type Point = { x: number } & { y: number };
+
+function greet(name?: string) {}
+
+interface User {
+  nickname?: string | undefined;
+}
+```
+
+## Options
+
+| Option                | Default | What it does                                                                        |
+| --------------------- | ------- | ----------------------------------------------------------------------------------- |
+| `ignoreUnions`        | `false` | Do not check `\|` unions. This also allows `\| undefined` on an optional parameter. |
+| `ignoreIntersections` | `false` | Do not check `&` intersections.                                                     |
+
+{/* good {"options": [{"ignoreUnions": true}]} */}
+
+```ts
+type Id = string | number | string;
+
+function greet(name?: string | undefined) {}
+```

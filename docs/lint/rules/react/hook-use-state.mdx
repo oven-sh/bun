@@ -1,0 +1,71 @@
+---
+title: "react/hook-use-state"
+description: "Require `useState` to be destructured into a `[value, setValue]` pair"
+---
+
+`useState` returns a value and the function that updates it. When the two names do not match, as in `[color, setFlavor]`, a reader cannot tell which setter belongs to which state. When the result is kept in one variable, every use becomes `state[0]` and `state[1]`.
+
+The setter must be `set` followed by the name of the value with a capital first letter. The rule only looks at `useState` imported from `"react"`. A `useState()` call that is returned directly, as in a custom hook, is allowed.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+import { useState } from "react";
+
+function Picker() {
+  const color = useState("red");
+  const [size, updateSize] = useState(1);
+  const [open] = useState(false);
+  return <div />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { useState } from "react";
+
+function Picker() {
+  const [color, setColor] = useState("red");
+  const [size, setSize] = useState(1);
+  return <div />;
+}
+
+function useToggle() {
+  return useState(false);
+}
+```
+
+## Options
+
+| Option                   | Default | What it does                                                                   |
+| ------------------------ | ------- | ------------------------------------------------------------------------------ |
+| `allowDestructuredState` | `false` | Allow the value to be destructured further. The setter can then have any name. |
+
+{/* bad */}
+
+```jsx
+import { useState } from "react";
+
+function Profile() {
+  const [{ name, email }, setUser] = useState({ name: "", email: "" });
+  return <div />;
+}
+```
+
+{/* good {"options": [{"allowDestructuredState": true}]} */}
+
+```jsx
+import { useState } from "react";
+
+function Profile() {
+  const [{ name, email }, setUser] = useState({ name: "", email: "" });
+  return <div />;
+}
+```

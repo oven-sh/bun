@@ -1,0 +1,69 @@
+---
+title: "react/jsx-filename-extension"
+description: "Restrict the file extensions that may contain JSX"
+---
+
+If JSX can be in any file, you cannot tell from a file's name whether it holds components, and tools that choose a parser by extension have to treat every file as JSX. By default the rule only allows JSX in `.jsx` files.
+
+The first JSX element of the file is reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"filename": "Button.js"} */}
+
+```jsx
+export function Button({ label }) {
+  return <button>{label}</button>;
+}
+```
+
+Not reported:
+
+{/* good {"filename": "Button.jsx"} */}
+
+```jsx
+export function Button({ label }) {
+  return <button>{label}</button>;
+}
+```
+
+## Options
+
+| Option                   | Default    | What it does                                                                        |
+| ------------------------ | ---------- | ----------------------------------------------------------------------------------- |
+| `extensions`             | `[".jsx"]` | The extensions that may contain JSX, each with its dot.                             |
+| `allow`                  | `"always"` | With `"as-needed"`, also report a file that has one of these extensions and no JSX. |
+| `ignoreFilesWithoutCode` | `false`    | With `"as-needed"`, do not report a file that has no code at all.                   |
+
+A TypeScript project needs `.tsx` in the list:
+
+```toml bunfig.toml
+[lint.rules]
+"react/jsx-filename-extension" = ["error", { extensions = [".jsx", ".tsx"] }]
+```
+
+{/* good {"filename": "Button.tsx", "options": [{"extensions": [".jsx", ".tsx"]}]} */}
+
+```tsx
+export function Button({ label }: { label: string }) {
+  return <button>{label}</button>;
+}
+```
+
+With `"as-needed"`, a `.jsx` file without JSX is reported:
+
+{/* bad {"filename": "format.jsx", "options": [{"allow": "as-needed"}]} */}
+
+```jsx
+export function formatPrice(cents) {
+  return (cents / 100).toFixed(2);
+}
+```
+
+{/* good {"filename": "empty.jsx", "options": [{"allow": "as-needed", "ignoreFilesWithoutCode": true}]} */}
+
+```jsx
+// Nothing here yet.
+```

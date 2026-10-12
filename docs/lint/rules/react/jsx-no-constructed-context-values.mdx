@@ -1,0 +1,61 @@
+---
+title: "react/jsx-no-constructed-context-values"
+description: "Disallow context provider values that are created anew on every render"
+---
+
+React compares a context's `value` by identity. An object, array or function that is created while the component renders is a new value every time, so every consumer of the context renders again whenever the provider's parent does, even if nothing in the value changed.
+
+The rule looks at the `value` of `<Something.Provider>`, and of `<Something>` where `Something` is the result of `createContext()`. It reports objects, arrays, functions, classes, `new` expressions, regular expressions and JSX, written in the prop or kept in a variable of the component.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function App({ user, children }) {
+  return <UserContext.Provider value={{ user, isAdmin: user.role === "admin" }}>{children}</UserContext.Provider>;
+}
+```
+
+{/* bad */}
+
+```jsx
+function App({ user, children }) {
+  const logout = () => signOut(user);
+  return <LogoutContext.Provider value={logout}>{children}</LogoutContext.Provider>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function App({ user, children }) {
+  const value = useMemo(() => ({ user, isAdmin: user.role === "admin" }), [user]);
+  return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
+}
+```
+
+{/* good */}
+
+```jsx
+function App({ user, children }) {
+  const logout = useCallback(() => signOut(user), [user]);
+  return <LogoutContext.Provider value={logout}>{children}</LogoutContext.Provider>;
+}
+```
+
+A value that is created once, outside of the component, is fine too:
+
+{/* good */}
+
+```jsx
+const theme = { color: "blue" };
+
+function App({ children }) {
+  return <ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider>;
+}
+```

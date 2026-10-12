@@ -1,0 +1,96 @@
+---
+title: "import/no-commonjs"
+description: "Disallow `require()`, `module.exports` and `exports.*` in favor of `import` and `export`"
+---
+
+In a project that has moved to ES modules, a leftover `require()` or `module.exports` is easy to add by habit. Bundlers cannot tree-shake what is loaded with `require()`, and the other `import/*` rules cannot check names that are exported through `module.exports`.
+
+A `require()` is reported if it has one string as its argument and is not inside a function. By default it is also allowed inside an `if`, a `try`, a `? :` or an `&&`, `||` or `??`, because an `import` declaration cannot be conditional.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const { parse } = require("./parse");
+
+module.exports = { run: text => parse(text) };
+```
+
+{/* bad */}
+
+```js
+import { parse } from "./parse";
+
+exports.run = text => parse(text);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { parse } from "./parse";
+
+export const run = text => parse(text);
+
+let colors;
+try {
+  colors = require("colors");
+} catch {}
+
+export function loadMarkdown() {
+  return require("markdown-it");
+}
+```
+
+## Options
+
+| Option                    | Default | What it does                                                                                   |
+| ------------------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `allowRequire`            | `false` | Allow every `require()`. `module.exports` and `exports.*` are still reported.                  |
+| `allowConditionalRequire` | `true`  | Allow a `require()` inside an `if`, a `try`, a `? :` or a logical expression such as `a && b`. |
+| `allowPrimitiveModules`   | `false` | Allow `module.exports = value` if the value is not an object literal.                          |
+
+The string `"allow-primitive-modules"` in place of the object means `{ "allowPrimitiveModules": true }`.
+
+{/* good {"options": [{"allowRequire": true}]} */}
+
+```js
+const { parse } = require("./parse");
+
+export const run = text => parse(text);
+```
+
+{/* bad {"options": [{"allowConditionalRequire": false}]} */}
+
+```js
+let colors;
+try {
+  colors = require("colors");
+} catch {}
+
+export { colors };
+```
+
+With `allowPrimitiveModules`, a module may export one function or one string:
+
+{/* good {"options": [{"allowPrimitiveModules": true}]} */}
+
+```js
+module.exports = function run(text) {
+  return text.trim();
+};
+```
+
+{/* bad {"options": [{"allowPrimitiveModules": true}]} */}
+
+```js
+module.exports = { run };
+```
+
+## When not to use it
+
+Leave it off in a project that is written in CommonJS, and for config files that a tool loads with `require()`.

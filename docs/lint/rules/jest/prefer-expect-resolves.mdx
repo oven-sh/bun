@@ -1,0 +1,44 @@
+---
+title: "jest/prefer-expect-resolves"
+description: "Require `await expect(promise).resolves` instead of `expect(await promise)`"
+---
+
+In `expect(await promise)`, a rejected promise throws before `expect` is called. The test fails with that error alone, and nothing says which assertion it belongs to. With `.resolves`, the promise goes to `expect`, and a rejection fails that assertion.
+
+`--fix` rewrites the assertion.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("loads the user", async () => {
+  expect(await loadUser(1)).toEqual({ id: 1, name: "Ada" });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("loads the user", async () => {
+  await expect(loadUser(1)).resolves.toEqual({ id: 1, name: "Ada" });
+});
+
+test("loads the user and checks two fields", async () => {
+  const user = await loadUser(1);
+  expect(user.id).toBe(1);
+  expect(user.name).toBe("Ada");
+});
+```
+
+## When not to use it
+
+`await` accepts any value, but `.resolves` fails if it does not get a promise. If a function returns a plain value in some cases, keep `expect(await ...)` there.

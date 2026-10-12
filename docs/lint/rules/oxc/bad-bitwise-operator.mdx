@@ -1,0 +1,51 @@
+---
+title: "oxc/bad-bitwise-operator"
+description: "Disallow `&` and `|` where `&&` and `||` were probably meant"
+---
+
+`&` and `|` are one keystroke away from `&&` and `||`, and the code still runs. They convert both sides to 32-bit integers, so `"Ann" | "guest"` is `0`, not a name. They also evaluate both sides every time, so `user & user.city` throws when `user` is `undefined`.
+
+The rule reports three shapes:
+
+- `user & user.city`: a variable, and on the right a property of that variable.
+- `title | "Untitled"`: a variable, and on the right something that is clearly not a number.
+- `title |= "Untitled"`: the same for `|=`.
+
+A number, a variable, `null` and arithmetic can be numbers, so they are allowed on the right. A string, an object, an array, `typeof x`, `!x`, a call and a property access are reported.
+
+`--fix-suggestions` replaces the operator with the logical one.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const city = user & user.city;
+const label = title | "Untitled";
+options |= {};
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const city = user && user.city;
+const label = title || "Untitled";
+options ||= {};
+
+const mode = flags | 4;
+const both = read | write;
+```
+
+## When not to use it
+
+Code that combines flags is reported when the right side is a property or a call, even though `|` is what you mean. Leave the rule off in that code.
+
+{/* bad */}
+
+```js
+const mode = flags | Mode.Write;
+```

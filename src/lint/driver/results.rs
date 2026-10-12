@@ -64,6 +64,8 @@ pub(crate) struct FileResult {
     pub(crate) line_starts: Option<Vec<u32>>,
     /// The text has been changed by fixes: `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
+    /// By how many.
+    pub(crate) fixes: usize,
     /// What the fixes have made of the text, if that is not `text`: oxlint fixes once, and reports what is left where it was.
     pub(crate) fixed_text: Option<Vec<u8>>,
     /// `None` is ESLint's `createIgnoreResult`: the file is not linted, and the only message says
@@ -114,6 +116,7 @@ impl FileResult {
             text: None,
             line_starts: None,
             is_fixed: false,
+            fixes: 0,
             fixed_text: None,
             linted: None,
             deprecated: None,

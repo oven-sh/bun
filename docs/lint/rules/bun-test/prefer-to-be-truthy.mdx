@@ -1,0 +1,44 @@
+---
+title: "bun:test/prefer-to-be-truthy"
+description: "Require `toBeTruthy()` instead of `toBe(true)`"
+---
+
+`toBe(true)` passes only for the value `true`. `toBeTruthy()` passes for everything that counts as true in an `if`, such as `1`, `"yes"`, or an object. With this rule, a test does not depend on which of those values the code returns.
+
+The rule reports `toBe(true)`, `toEqual(true)`, and `toStrictEqual(true)`, with or without `.not`.
+
+`--fix-suggestions` replaces the matcher with `toBeTruthy()`. `--fix` does not, because the new matcher accepts more values.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("an admin can delete posts", () => {
+  const user = createUser({ role: "admin" });
+  expect(user.canDelete).toBe(true);
+  expect(user.isBanned).not.toEqual(true);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("an admin can delete posts", () => {
+  const user = createUser({ role: "admin" });
+  expect(user.canDelete).toBeTruthy();
+  expect(user.isBanned).not.toBeTruthy();
+});
+```
+
+## When not to use it
+
+If a function must return exactly `true`, and `1` or a string would be a bug, `toBe(true)` is the stricter and better check. Leave this rule off in that case.

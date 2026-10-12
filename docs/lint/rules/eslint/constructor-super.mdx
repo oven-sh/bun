@@ -1,0 +1,83 @@
+---
+title: "constructor-super"
+description: "Require `super()` to be called exactly once in the constructor of a derived class"
+---
+
+In a class with `extends`, the constructor has to call `super()` before it uses `this` or returns. Without the call, `new` throws a `ReferenceError`. A second call throws too. These errors only show up when that path of the constructor runs.
+
+The rule follows every path through the constructor. It reports a path that has no `super()`, a path that calls it twice, and a `super()` in a class that extends something that cannot be a constructor, such as `null`.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports a missing `super()` itself.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    this.name = name;
+  }
+}
+```
+
+{/* bad */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    if (name) {
+      super(name);
+    }
+  }
+}
+```
+
+{/* bad */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    super(name);
+    super(name.trim());
+  }
+}
+```
+
+{/* bad */}
+
+```js
+class Dictionary extends null {
+  constructor() {
+    super();
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    super(name);
+    this.role = "admin";
+  }
+}
+
+class Guest extends User {
+  constructor(name) {
+    if (name) {
+      super(name);
+    } else {
+      super("Guest");
+    }
+  }
+}
+
+// Without a constructor, `super()` is called for you.
+class Member extends User {}
+```

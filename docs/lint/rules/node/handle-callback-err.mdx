@@ -1,0 +1,72 @@
+---
+title: "n/handle-callback-err"
+description: "Require callbacks to use their error parameter"
+---
+
+A Node.js callback gets the error as its first argument. If the function never looks at it, a failure goes unnoticed, and the code goes on with a result that is `undefined`.
+
+The rule reports a function with a first parameter named `err` that is never used in its body. Any use counts: it does not check what you do with the error.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+fs.readFile("config.json", (err, data) => {
+  start(JSON.parse(data));
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+fs.readFile("config.json", (err, data) => {
+  if (err) {
+    throw err;
+  }
+  start(JSON.parse(data));
+});
+```
+
+## Options
+
+The option is the name of the error parameter. The default is `"err"`. If it starts with `^`, it is a regular expression.
+
+```toml bunfig.toml
+[lint.rules]
+"n/handle-callback-err" = ["error", "^(err|error)$"]
+```
+
+{/* bad {"options": ["error"]} */}
+
+```js
+server.close(function (error) {
+  console.log("closed");
+});
+```
+
+{/* bad {"options": ["^.*(e|E)rr"], "count": 2} */}
+
+```js
+server.close(function (closeError) {
+  console.log("closed");
+});
+
+socket.end(function (err) {
+  console.log("ended");
+});
+```
+
+With another name, `err` is no longer checked:
+
+{/* good {"options": ["error"]} */}
+
+```js
+socket.end(function (err) {
+  console.log("ended");
+});
+```

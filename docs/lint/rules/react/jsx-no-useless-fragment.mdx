@@ -1,0 +1,89 @@
+---
+title: "react/jsx-no-useless-fragment"
+description: "Disallow fragments that wrap a single child or sit directly in an HTML element"
+---
+
+A fragment groups several children where only one value fits, such as a `return`. Around a single child it groups nothing, and as a direct child of an HTML element its children could be written there without it.
+
+A fragment with a `key` is never reported, because the key needs an element to sit on.
+
+`--fix` removes the fragment where that is safe.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Avatar({ user }) {
+  return (
+    <>
+      <img src={user.photo} alt={user.name} />
+    </>
+  );
+}
+```
+
+{/* bad */}
+
+```jsx
+const card = (
+  <section>
+    <>
+      <h2>{title}</h2>
+      <p>{summary}</p>
+    </>
+  </section>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Avatar({ user }) {
+  return <img src={user.photo} alt={user.name} />;
+}
+
+function Card({ title, summary }) {
+  return (
+    <>
+      <h2>{title}</h2>
+      <p>{summary}</p>
+    </>
+  );
+}
+```
+
+A fragment that holds only text, or only a function call in braces, is allowed where it is not the child of another element. It turns the value into something a component can return:
+
+{/* good */}
+
+```jsx
+const label = <>Loading</>;
+const rows = <>{renderRows()}</>;
+```
+
+## Options
+
+| Option             | Default | What it does                                           |
+| ------------------ | ------- | ------------------------------------------------------ |
+| `allowExpressions` | `false` | Allow a fragment around a single expression in braces. |
+
+{/* bad */}
+
+```jsx
+function Slot({ children }) {
+  return <>{children}</>;
+}
+```
+
+{/* good {"options": [{"allowExpressions": true}]} */}
+
+```jsx
+function Slot({ children }) {
+  return <>{children}</>;
+}
+```

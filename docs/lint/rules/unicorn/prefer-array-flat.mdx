@@ -1,0 +1,38 @@
+---
+title: "unicorn/prefer-array-flat"
+description: "Require `.flat()` instead of flattening an array with `concat`, `reduce` or `flatMap`"
+---
+
+`concat`, `reduce` and `flatMap(x => x)` can all flatten an array of arrays, but a reader has to work out that this is what they do. `.flat()` says it.
+
+`--fix` rewrites the `flatMap` and `reduce` forms to `.flat()`. `--fix-dangerously` also rewrites `[].concat.apply([], array)`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 5} */}
+
+```js
+const a = pages.flatMap(items => items);
+const b = pages.reduce((all, items) => all.concat(items), []);
+const c = pages.reduce((all, items) => [...all, ...items], []);
+const d = [].concat(...pages);
+const e = [].concat.apply([], pages);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const items = pages.flat();
+```
+
+A `flatMap` that changes the elements is not reported:
+
+{/* good */}
+
+```js
+const tags = posts.flatMap(post => post.tags);
+```

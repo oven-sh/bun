@@ -1,0 +1,55 @@
+---
+title: "jsx-a11y/mouse-events-have-key-events"
+description: "Require `onFocus` with `onMouseOver` and `onBlur` with `onMouseOut`"
+---
+
+Someone who moves through the page with the keyboard never hovers. What only appears on hover, such as a tooltip or a preview, does not exist for them. Focus is the keyboard's equivalent of hover: `onFocus` goes with `onMouseOver`, and `onBlur` goes with `onMouseOut`.
+
+Only HTML elements are checked, not components.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const help = (
+  <button onMouseOver={showTooltip} onMouseOut={hideTooltip}>
+    Help
+  </button>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const help = (
+  <button onMouseOver={showTooltip} onFocus={showTooltip} onMouseOut={hideTooltip} onBlur={hideTooltip}>
+    Help
+  </button>
+);
+```
+
+## Options
+
+| Option             | Default           | What it does                                  |
+| ------------------ | ----------------- | --------------------------------------------- |
+| `hoverInHandlers`  | `["onMouseOver"]` | Handlers that need an `onFocus` next to them. |
+| `hoverOutHandlers` | `["onMouseOut"]`  | Handlers that need an `onBlur` next to them.  |
+
+A list you give replaces the default. `onMouseEnter` is not checked by default:
+
+{/* good */}
+
+```jsx
+const card = <div onMouseEnter={showPreview} />;
+```
+
+{/* bad {"options": [{"hoverInHandlers": ["onMouseOver", "onMouseEnter", "onPointerEnter"]}]} */}
+
+```jsx
+const card = <div onMouseEnter={showPreview} />;
+```

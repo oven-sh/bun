@@ -58,8 +58,9 @@ pub use message::{
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    Deprecated, NativePlugins, Registry, deprecated_rule, formatting_rule, formatting_rules,
-    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
+    Deprecated, Missing, Modes, Names, NativePlugins, Registry, deprecated_rule, formatting_rule,
+    formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
+    plugin_of_oxlint,
 };
 pub use resolved::{
     ConfiguredJsRule, ConfiguredRule, Entry, FormattingRule, LinterOptions, ResolvedConfig,
@@ -447,6 +448,7 @@ impl<S: RuleSet> Linter<S> {
         config: &ResolvedConfig,
         options: &LintOptions,
     ) -> LintResult {
+        let (whole, config) = (config, config.of(file));
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
         if let Some(fatal) = parse_error(file) {
@@ -936,6 +938,10 @@ impl<S: RuleSet> Linter<S> {
                 None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
             }
         };
+        let only_for_react: Vec<RuleId> = match has_directives && !std::ptr::eq(whole, config) {
+            true => whole.only_for_react().map(RuleId::Known).collect(),
+            false => Vec::new(),
+        };
         // Adds to each of `messages`, which are sorted by position, what suppresses it.
         let apply_comments =
             |report_unused, wants_fixes, wants_suppressions, messages: &mut Vec<LintMessage>| {
@@ -964,6 +970,7 @@ impl<S: RuleSet> Linter<S> {
                             wants_suppressions,
                             rules_to_ignore: &rules_to_ignore,
                             has_skipped_rules: config.has_skipped_rules,
+                            only_for_react: &only_for_react,
                         },
                         messages,
                     );

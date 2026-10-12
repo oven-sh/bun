@@ -1,0 +1,125 @@
+---
+title: "func-names"
+description: "Require or disallow names for `function` expressions"
+---
+
+A callback written as `function () {}` shows up as `<anonymous>` in stack traces and profiles. When several callbacks are involved, you cannot tell from the trace which one failed.
+
+Arrow functions and methods are not checked.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+button.addEventListener("click", function () {
+  save();
+});
+```
+
+{/* bad */}
+
+```js
+export default function () {
+  return "ready";
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+button.addEventListener("click", function onClick() {
+  save();
+});
+
+button.addEventListener("blur", () => save());
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+func-names = ["error", "as-needed"]
+```
+
+| Option               | What it does                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `"always"` (default) | Every function expression needs a name.                                               |
+| `"as-needed"`        | A name is needed only where JavaScript does not give the function one by itself.      |
+| `"never"`            | No function expression has a name, unless the function refers to itself by that name. |
+
+A second option, `{ "generators": "always" | "as-needed" | "never" }`, sets the same choice for generator functions only. Without it, generators follow the first option.
+
+### `"as-needed"`
+
+A function assigned to a variable, or written as the value of an object key, takes that name, so it does not need its own:
+
+{/* good {"options": ["as-needed"]} */}
+
+```js
+const save = function () {};
+
+const handlers = {
+  close: function () {},
+};
+```
+
+With `"always"`, both are reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const save = function () {};
+
+const handlers = {
+  close: function () {},
+};
+```
+
+A callback gets no name that way, and neither does a function assigned to `object.property`. Both are still reported:
+
+{/* bad {"options": ["as-needed"], "count": 2} */}
+
+```js
+items.forEach(function (item) {
+  render(item);
+});
+
+handlers.open = function () {};
+```
+
+### `"never"`
+
+{/* bad {"options": ["never"]} */}
+
+```js
+items.forEach(function renderItem(item) {
+  render(item);
+});
+```
+
+{/* good {"options": ["never"]} */}
+
+```js
+items.forEach(function (item) {
+  render(item);
+});
+
+const factorial = function fact(n) {
+  return n <= 1 ? 1 : n * fact(n - 1);
+};
+```
+
+### `generators`
+
+{/* good {"options": ["always", {"generators": "never"}]} */}
+
+```js
+run(function* () {
+  yield 1;
+});
+```

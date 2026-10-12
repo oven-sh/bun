@@ -1,0 +1,62 @@
+---
+title: "import/default"
+description: "Require a default import to match a default export in the imported file"
+---
+
+`import save from "./storage"` asks for the default export of `./storage`. If that file only has named exports, the import fails when the module loads, or a bundler hands you `undefined`. The usual cause is a pair of braces that were left out.
+
+The rule reads the imported file. It stays quiet when the file cannot be found and when the file has no `import` or `export` at all, as in a CommonJS module.
+
+## Examples
+
+Reported:
+
+{/* file "storage.js" */}
+
+```js
+export function save(item) {
+  localStorage.setItem(item.id, JSON.stringify(item));
+}
+```
+
+{/* bad */}
+
+```js
+import save from "./storage.js";
+
+save({ id: "draft" });
+```
+
+Not reported:
+
+{/* file "storage.js" */}
+
+```js
+export function save(item) {
+  localStorage.setItem(item.id, JSON.stringify(item));
+}
+```
+
+{/* good */}
+
+```js
+import { save } from "./storage.js";
+
+save({ id: "draft" });
+```
+
+{/* file "storage.js" */}
+
+```js
+export default function save(item) {
+  localStorage.setItem(item.id, JSON.stringify(item));
+}
+```
+
+{/* good */}
+
+```js
+import save from "./storage.js";
+
+save({ id: "draft" });
+```

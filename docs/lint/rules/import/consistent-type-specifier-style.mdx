@@ -1,0 +1,66 @@
+---
+title: "import/consistent-type-specifier-style"
+description: "Enforce one way to mark type-only imports: `import type { A }` or `import { type A }`"
+---
+
+TypeScript has two ways to say that an imported name is only a type: `import type { User }` for the whole statement, or `import { type User }` for one name. A codebase that mixes them is harder to scan. The two also compile differently with `verbatimModuleSyntax`: `import type { User } from "./user"` disappears, while `import { type User } from "./user"` stays behind as `import {} from "./user"` and still loads the module.
+
+By default the rule asks for `import type`. It only looks at imports with names in braces, so `import type User from "./user"` and `import type * as models from "./models"` are never reported.
+
+`--fix` rewrites the import in the style you chose.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { type User, type Session } from "./models";
+```
+
+{/* bad */}
+
+```ts
+import { createUser, type User } from "./models";
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import type { User, Session } from "./models";
+```
+
+{/* good */}
+
+```ts
+import { createUser } from "./models";
+import type { User } from "./models";
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"import/consistent-type-specifier-style" = ["error", "prefer-inline"]
+```
+
+| Option                         | What it does                                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `"prefer-top-level"` (default) | Report `import { type User }`. Types go in an `import type` statement of their own.                             |
+| `"prefer-inline"`              | Report `import type { User }`. Each type is marked where it is named, so one module needs one import statement. |
+
+{/* bad {"options": ["prefer-inline"]} */}
+
+```ts
+import { createUser } from "./models";
+import type { User } from "./models";
+```
+
+{/* good {"options": ["prefer-inline"]} */}
+
+```ts
+import { createUser, type User } from "./models";
+```

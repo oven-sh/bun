@@ -1,0 +1,36 @@
+---
+title: "react/forward-ref-uses-ref"
+description: "Require a component wrapped in `forwardRef` to take a `ref` parameter"
+---
+
+`forwardRef` passes the parent's `ref` to your component as a second parameter. A component that only takes `props` drops it, so the parent's `ref.current` is never set. Either the `ref` parameter is missing or the wrapper is not needed.
+
+The rule reports a function with exactly one parameter. Your editor offers two suggestions: add a `ref` parameter, or remove the `forwardRef` wrapper.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import { forwardRef } from "react";
+
+const TextInput = forwardRef(props => {
+  return <input type="text" value={props.value} />;
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { forwardRef } from "react";
+
+const TextInput = forwardRef((props, ref) => {
+  return <input type="text" value={props.value} ref={ref} />;
+});
+
+const Label = props => <label>{props.text}</label>;
+```

@@ -1,0 +1,41 @@
+---
+title: "promise/prefer-catch"
+description: "Require `catch()` instead of a second argument to `then()`"
+---
+
+The second argument of `then(a, b)` only handles a rejection from before the `then()`. If `a` itself throws, `b` is not called. A `catch()` after the `then()` handles both.
+
+The rule only reports a `then()` call with two arguments that is a statement of its own. One that is returned, awaited, assigned, or followed by more of the chain is not reported.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+loadItems().then(render, showError); // an error in render is not handled
+```
+
+{/* bad */}
+
+```js
+loadItems().then(null, showError);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+loadItems().then(render).catch(showError);
+loadItems().catch(showError);
+```
+
+{/* good */}
+
+```js
+function refresh() {
+  return loadItems().then(render, showError);
+}
+```

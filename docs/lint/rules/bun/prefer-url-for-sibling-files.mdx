@@ -1,0 +1,72 @@
+---
+title: "bun/prefer-url-for-sibling-files"
+description: 'Prefer `new URL("./file", import.meta.url)` to a path joined onto the module''s directory'
+---
+
+Bundlers such as Vite and webpack recognize `new URL("./file", import.meta.url)`. They copy the file to the output and point the URL at the copy. A path that is joined onto `import.meta.dirname` or `__dirname` is only a string to them, so after bundling it names a file that is not there.
+
+The rule reports `join()` and `resolve()` from `node:path`, `+` and template literals, if the first part is the directory of the module and the rest is string literals. The directory can be `__dirname`, `import.meta.dirname`, `import.meta.dir`, `dirname(fileURLToPath(import.meta.url))`, or a `const` that holds one of them.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { join } from "node:path";
+
+const schema = await Bun.file(join(import.meta.dirname, "schema.sql")).text();
+```
+
+{/* bad {"count": 2} */}
+
+```js
+import { readFileSync } from "node:fs";
+
+const logo = readFileSync(`${import.meta.dirname}/assets/logo.svg`);
+const icon = readFileSync(import.meta.dirname + "/assets/icon.svg");
+```
+
+{/* bad */}
+
+```js
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const folder = dirname(fileURLToPath(import.meta.url));
+export const template = resolve(folder, "templates", "email.html");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const schema = await Bun.file(new URL("./schema.sql", import.meta.url)).text();
+```
+
+A path with a part that is only known at run time, or one that ends in `.`, `..` or `/`, is not reported:
+
+{/* good */}
+
+```js
+import { join } from "node:path";
+
+export const translations = language => join(import.meta.dirname, "locales", `${language}.json`);
+export const root = join(import.meta.dirname, "..");
+```
+
+CommonJS files are not checked, because they have no `import.meta.url`:
+
+{/* good {"filename": "load.cjs"} */}
+
+```js
+const { join } = require("node:path");
+
+module.exports = join(__dirname, "schema.sql");
+```
+
+## When not to use it
+
+Your code is never bundled, or your bundler does not follow `new URL(.., import.meta.url)`.

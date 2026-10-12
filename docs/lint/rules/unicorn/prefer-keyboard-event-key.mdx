@@ -1,0 +1,52 @@
+---
+title: "unicorn/prefer-keyboard-event-key"
+description: "Require `event.key` instead of `keyCode`, `charCode` and `which`"
+---
+
+`keyCode`, `charCode` and `which` are deprecated. They are numbers that you have to look up, and they differ between browsers and keyboard layouts. `key` is a string that names the key: `"Enter"`, `"Escape"`, `"a"`.
+
+The rule looks at the event parameter of a function written inside the `addEventListener()` call, both where a property is read and where it is destructured. A handler that is defined somewhere else and passed by name is not checked. The event type is not checked either, so `event.which` in a `"mousedown"` listener is reported too.
+
+`--fix` rewrites a `==` or `===` comparison with a number: `event.keyCode === 13` becomes `event.key === 'Enter'`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+input.addEventListener("keydown", event => {
+  if (event.keyCode === 13) {
+    submit();
+  }
+});
+```
+
+{/* bad */}
+
+```js
+dialog.addEventListener("keyup", ({ which }) => {
+  if (which === 27) {
+    dialog.close();
+  }
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+input.addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    submit();
+  }
+});
+
+dialog.addEventListener("keyup", ({ key }) => {
+  if (key === "Escape") {
+    dialog.close();
+  }
+});
+```

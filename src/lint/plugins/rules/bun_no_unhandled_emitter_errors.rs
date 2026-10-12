@@ -15,7 +15,7 @@ pub struct NoUnhandledEmitterErrors {
 
 const NO_LISTENER: Message = Message::new(
     "noListener",
-    "What `{{name}}()` returns emits `error` when it fails, and without a listener for that event the process ends.",
+    "`{{name}}()` emits `error` when it fails, which crashes the process if nothing listens. Add an `error` listener.",
 );
 
 const FORK: TraceMap<'static, ()> = TraceMap::new(&[("fork", CALLED)]);

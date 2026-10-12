@@ -1,0 +1,74 @@
+---
+title: "prefer-arrow-callback"
+description: "Require arrow functions for callbacks"
+---
+
+A `function` passed as a callback gets its own `this`, so `this.save()` inside it only works if you add `.bind(this)`. An arrow function uses the `this` of the code around it, and it is shorter.
+
+A callback is left alone if an arrow function cannot replace it: a generator, a function that calls itself by name, or one that uses `arguments` or `new.target`. By default a callback that uses `this` without `.bind(this)` is left alone too.
+
+`--fix` rewrites the callback as an arrow function and removes `.bind(this)`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const prices = items.map(function (item) {
+  return item.price;
+});
+
+button.addEventListener(
+  "click",
+  function () {
+    this.save();
+  }.bind(this),
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const prices = items.map(item => item.price);
+
+button.addEventListener("click", () => {
+  this.save();
+});
+
+// `this` is the button here. An arrow function would change that.
+button.addEventListener("click", function () {
+  this.classList.add("active");
+});
+
+// Calls itself by name
+walk(tree, function visit(node) {
+  node.children.forEach(visit);
+});
+```
+
+## Options
+
+| Option                | Default | What it does                                                                                        |
+| --------------------- | ------- | --------------------------------------------------------------------------------------------------- |
+| `allowNamedFunctions` | `false` | Allow a callback that has a name, which shows up in stack traces.                                   |
+| `allowUnboundThis`    | `true`  | Allow a callback that uses `this` without `.bind(this)`. With `false` it is reported but not fixed. |
+
+{/* good {"options": [{"allowNamedFunctions": true}]} */}
+
+```js
+items.forEach(function logItem(item) {
+  console.log(item);
+});
+```
+
+{/* bad {"options": [{"allowUnboundThis": false}]} */}
+
+```js
+button.addEventListener("click", function () {
+  this.classList.add("active");
+});
+```

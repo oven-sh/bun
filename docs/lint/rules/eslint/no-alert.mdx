@@ -1,0 +1,46 @@
+---
+title: "no-alert"
+description: "Disallow `alert`, `confirm`, and `prompt`"
+---
+
+`alert`, `confirm` and `prompt` stop all JavaScript on the page until the user answers, and the box they show cannot be styled. They are often left over from debugging.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+alert("Saved");
+
+if (window.confirm("Delete this file?")) {
+  remove(file);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+showToast("Saved");
+
+if (await dialog.confirm("Delete this file?")) {
+  remove(file);
+}
+```
+
+A function of your own with one of these names is fine:
+
+{/* good */}
+
+```js
+import { alert } from "./ui/dialogs.js";
+
+alert("Saved");
+```
+
+## When not to use it
+
+In Bun, `alert`, `confirm` and `prompt` work in the terminal, which makes them a quick way to ask a question in a command-line script. Turn the rule off for those scripts.

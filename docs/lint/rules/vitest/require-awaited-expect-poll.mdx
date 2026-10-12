@@ -1,0 +1,40 @@
+---
+title: "vitest/require-awaited-expect-poll"
+description: "Require `expect.poll` and `expect.element` assertions to be awaited or returned"
+---
+
+`expect.poll` and `expect.element` retry until the assertion holds, so they return a promise. If you do not await it, the test ends before the assertion has run, and it passes whatever the result would have been.
+
+Returning the promise from the test works as well as `await`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { expect, test } from "vitest";
+
+test("shows the saved message", () => {
+  expect.poll(() => status.text).toBe("Saved");
+  expect.element(banner).toBeVisible();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { expect, test } from "vitest";
+
+test("shows the saved message", async () => {
+  await expect.poll(() => status.text).toBe("Saved");
+  await expect.element(banner).toBeVisible();
+});
+
+test("hides the spinner", () => {
+  return expect.poll(() => spinner.hidden).toBe(true);
+});
+```

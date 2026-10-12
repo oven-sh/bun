@@ -1,0 +1,54 @@
+---
+title: "react/no-react-children"
+description: "Disallow the `React.Children` methods"
+---
+
+`Children.map`, `Children.count`, and the other `Children` methods look at the JSX a component was given, not at what it renders. Wrap one of the children in another component or a fragment, and the count and the mapping change. Passing the data as a prop, or a function that renders one item, does not break this way.
+
+The rule reports a call on `Children` when `Children`, or the object it is read from, is imported from `"react"`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import { Children } from "react";
+
+function Menu({ children }) {
+  return (
+    <ul>
+      {Children.map(children, child => (
+        <li>{child}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+{/* bad */}
+
+```jsx
+import React from "react";
+
+function Tabs({ children }) {
+  return <p>{React.Children.count(children)} tabs</p>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Menu({ items }) {
+  return (
+    <ul>
+      {items.map(item => (
+        <li key={item.id}>{item.label}</li>
+      ))}
+    </ul>
+  );
+}
+```

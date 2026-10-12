@@ -1,0 +1,58 @@
+---
+title: "react-hooks/no-deriving-state-in-effects"
+description: "Disallow effects that only compute state from props or other state"
+---
+
+An effect runs after the component has rendered. If all it does is compute a value from props or state and store it with a `useState` setter, React renders once with the stale value, runs the effect, and renders again. Compute the value while rendering: it is always up to date, and the extra state and the extra render go away.
+
+An effect is reported if it uses nothing but its dependencies and state setters, and the value it stores is made from all of its dependencies.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import { useEffect, useState } from "react";
+
+function Greeting({ firstName, lastName }) {
+  const [fullName, setFullName] = useState("");
+
+  useEffect(() => {
+    setFullName(firstName + " " + lastName);
+  }, [firstName, lastName]);
+
+  return <h1>{fullName}</h1>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Greeting({ firstName, lastName }) {
+  const fullName = firstName + " " + lastName;
+
+  return <h1>{fullName}</h1>;
+}
+```
+
+An effect that talks to something outside of React is what effects are for:
+
+{/* good */}
+
+```jsx
+import { useEffect, useState } from "react";
+
+function Profile({ userId }) {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    fetchUser(userId).then(setUser);
+  }, [userId]);
+
+  return <h1>{user?.name}</h1>;
+}
+```

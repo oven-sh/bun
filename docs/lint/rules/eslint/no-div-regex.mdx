@@ -1,0 +1,26 @@
+---
+title: "no-div-regex"
+description: "Disallow regular expressions that start with `=`"
+---
+
+A regular expression literal that starts with `=` begins with `/=`, which is also the division assignment operator. You have to look twice to see which one it is.
+
+`--fix` rewrites the `=` to `[=]`, which matches the same text.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const value = line.replace(/=\s*/, "");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const value = line.replace(/[=]\s*/, "");
+```

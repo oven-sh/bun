@@ -1,0 +1,45 @@
+---
+title: "unicorn/prefer-node-protocol"
+description: "Require the `node:` prefix when importing Node.js built-in modules"
+---
+
+`import fs from "fs"` looks like an import of an npm package. `node:fs` shows at once that the module is built in.
+
+The rule checks `import`, `export { ... } from`, `import()`, `require()` and TypeScript's `import fs = require("fs")`.
+
+`--fix` adds the prefix.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+import fs from "fs";
+import { readFile } from "fs/promises";
+export { EventEmitter } from "events";
+
+const os = await import("os");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import fs from "node:fs";
+import { readFile } from "node:fs/promises";
+export { EventEmitter } from "node:events";
+
+const os = await import("node:os");
+```
+
+Packages and your own files are not reported:
+
+{/* good */}
+
+```js
+import express from "express";
+import fs from "./fs.js";
+```

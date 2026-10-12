@@ -1,0 +1,42 @@
+---
+title: "unicorn/empty-brace-spaces"
+description: "Disallow spaces and line breaks inside empty braces"
+---
+
+An empty pair of braces can be written `{}`, `{ }` or over two lines. This rule keeps `{}`, so that empty objects, blocks, function bodies and class bodies look the same everywhere.
+
+Braces with a comment in them are not empty and are left alone.
+
+`--fix` removes the whitespace.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const cache = {};
+
+function noop() {}
+
+class Store {}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const cache = {};
+
+function noop() {}
+
+class Store {}
+
+try {
+  cache.clear();
+} catch {
+  // Nothing to clean up.
+}
+```

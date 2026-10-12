@@ -2291,7 +2291,7 @@ describe.concurrent("the plugin bun", () => {
     const options = { patterns: [{ pattern: "(" }] };
     const files = { "eslint.config.mjs": flat({ "bun/no-restricted-text": ["error", options] }), "a.js": eager };
     const { stderr, exitCode } = await lint(files, ["a.js"]);
-    expect(stderr).toContain(`The pattern "(" is not a regular expression`);
+    expect(stderr).toContain(`Invalid regular expression "(": `);
     expect(exitCode).toBe(2);
   });
 
@@ -2593,10 +2593,10 @@ expect(1).toBe(1);
         "8 bun:test/valid-expect-in-promise",
       ]);
       expect(own(reported(stdout, "quiet.test.js"))).toEqual([]);
-      // Errors, as what else is on, but for one.
+      // Errors, but for one.
       const files = JSON.parse(stdout) as { messages: { ruleId: string; severity: number }[] }[];
-      const warnings = files.flatMap(it => it.messages).filter(it => it.severity !== 2);
-      expect(warnings.map(it => it.ruleId)).toEqual(["bun:test/no-disabled-tests"]);
+      const ofBunTest = files.flatMap(it => it.messages).filter(it => it.ruleId.startsWith("bun:test/"));
+      expect(ofBunTest.filter(it => it.severity !== 2).map(it => it.ruleId)).toEqual(["bun:test/no-disabled-tests"]);
     }
     // A test that is skipped on purpose does not fail the run.
     expect(unix(skipped.stdout)).toEqual(["2 Warning/bun:test/no-disabled-tests"]);
@@ -2937,7 +2937,7 @@ var a = b;
     expect(taken.stderr).not.toContain("Key");
     expect(taken.exitCode).toBe(0);
     const missing = await check({ "bun:test/no-mocks-import": "error" });
-    expect(missing.stderr).toContain(`1 rule of the plugin "bun:test" did not run: bun:test/no-mocks-import`);
+    expect(missing.stderr).toContain("1 rule in eslint.config.mjs is not supported: bun:test/no-mocks-import");
     expect(missing.exitCode).toBe(2);
   });
 

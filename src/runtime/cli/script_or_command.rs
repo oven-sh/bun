@@ -7,11 +7,29 @@ use bun_core::{UnwrapOrOom, env_var};
 
 use super::check_command::working_directory;
 
-/// Whether `bun <command>` runs something of the project, as it did before `command` was one: a script
-/// of the nearest `package.json`, which is where `bun run` looks, a file, or what a package installs.
+/// What `bun <command>` runs.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Runs {
+    Command,
+    /// That of the nearest `package.json`, which is where `bun run` looks.
+    Script,
+    /// A file, what a package installs, or the scripts of other packages.
+    Other,
+}
+
+/// Whether `bun <command>` runs something of the project, as it did before `command` was one. The help is always the command's,
+/// and so is `--doctor`, which none of the tools has that such a script runs.
 #[cold]
 #[inline(never)]
 pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
+    let args = bun_core::argv().into_iter();
+    let mut of_command = (args.skip_while(|arg| *arg != command)).take_while(|arg| *arg != b"--");
+    !of_command.any(|arg| matches!(arg, b"--help" | b"-h" | b"--help-all" | b"--doctor"))
+        && runs(command) != Runs::Command
+}
+
+/// Whatever the arguments of `command` are.
+pub(crate) fn runs(command: &[u8]) -> Runs {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::join_abs_string;
     let mut cwd = working_directory();
@@ -28,7 +46,7 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
         ) || arg.starts_with(b"--filter")
             || arg.starts_with(b"-F")
         {
-            return true;
+            return Runs::Other;
         }
         let given = match arg.strip_prefix(b"--cwd") {
             Some(b"") => args.next(),
@@ -39,27 +57,32 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
             cwd = join_abs_string::<Auto>(&cwd, &[given]).to_vec();
         }
     }
+    let other_if = |found: bool| if found { Runs::Other } else { Runs::Command };
     let Some((dir, path, contents)) = nearest_package_json(&cwd) else {
-        return is_file_or_executable(command, &cwd);
+        return other_if(is_file_or_executable(command, &cwd));
     };
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
     if running
         .is_some_and(|running| running_package_scripts(running).any(|it| it == (command, dir)))
     {
-        return false;
+        return Runs::Command;
     }
     let by_an_older_bun =
         env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().filter(|_| command == b"check");
     if by_an_older_bun.is_some_and(|running| running_check_scripts(running).any(|it| it == dir)) {
-        return false;
+        return Runs::Command;
     }
     if package_of_inherited_script(command).is_some_and(|it| it == dir) {
-        return false;
+        return Runs::Command;
     }
-    has_script(command, &path, &contents)
-        || is_file_or_executable(command, &cwd)
-        || is_executable_beside_package_json(command, dir, &cwd)
+    if has_script(command, &path, &contents) {
+        return Runs::Script;
+    }
+    other_if(
+        is_file_or_executable(command, &cwd)
+            || is_executable_beside_package_json(command, dir, &cwd),
+    )
 }
 
 /// `bun run` puts the directory of the `package.json` in `PATH`, in front of every `node_modules/.bin`.

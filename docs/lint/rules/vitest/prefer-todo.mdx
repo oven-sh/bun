@@ -1,0 +1,40 @@
+---
+title: "vitest/prefer-todo"
+description: "Require `test.todo` for tests that have no body yet"
+---
+
+A test with an empty body passes, so the summary counts a test you have not written as one that works. `test.todo` says what it is, and Vitest lists it apart from the passing tests until you write it.
+
+A test with only a title is reported too, and so is an empty `test.skip`.
+
+`--fix` rewrites the call to `test.todo` and removes the empty function.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+import { test } from "vitest";
+
+test("rejects an expired token", () => {});
+
+test("refreshes the token");
+
+test.skip("logs out", function () {});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { expect, test } from "vitest";
+
+test.todo("rejects an expired token");
+
+test("accepts a valid token", () => {
+  expect(verify(token)).toBe(true);
+});
+```

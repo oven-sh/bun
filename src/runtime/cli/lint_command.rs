@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
-use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig};
+use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
 
 use super::check_command::working_directory;
@@ -15,8 +15,7 @@ use super::command::{ContextData, Tag};
 
 pub(crate) struct LintCommand;
 
-/// For the help.
-pub(crate) use bun_lint_driver::cli::PARAMS;
+pub(crate) use bun_lint_driver::cli::HELP;
 
 /// Whether `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release
 /// build has none of it.
@@ -113,17 +112,8 @@ pub(crate) fn read_program_of_script(ctx: &mut ContextData) {
 
 /// Runs `script` with this executable, to its end.
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
-    use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(b"Could not find the path of the running executable.".to_vec());
-    };
-    let mut variables = bun_dotenv::Loader::init();
-    let read = variables.load_process();
-    for name in Script::NOT_INHERITED {
-        variables.map.remove(name);
-    }
-    let Ok(envp) = read.and_then(|()| variables.map.create_null_delimited_env_map()) else {
-        return Err(b"Could not start a process: out of memory".to_vec());
     };
     let mut argv: Vec<Box<[u8]>> = vec![
         Box::from(exe.as_bytes()),
@@ -154,6 +144,64 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     // Linux.
     argv.push(Box::from(&b"-e"[..]));
     argv.push(Box::from(PROGRAM_IS_ON_STDIN));
+    let parts = script.source.iter().map(|it| it.as_bytes());
+    let input = std::iter::once(script.head).chain(parts);
+    let adapt = |variables: &mut bun_dotenv::Map| {
+        Script::NOT_INHERITED
+            .iter()
+            .for_each(|name| variables.remove(name));
+        true
+    };
+    match run_to_end(argv, script.cwd, adapt, input)? {
+        result if result.is_ok() => Ok(result.stdout),
+        result => Err(result.stderr),
+    }
+}
+
+/// Runs git to its end.
+fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let path = bun_core::env_var::PATH.get().unwrap_or(b"");
+    let Some(found) = bun_which::which(&mut buffer, path, command.cwd, b"git") else {
+        return Err(git::NotRun::NotFound);
+    };
+    let argv = std::iter::once(found.as_bytes())
+        .chain(command.args.iter().copied())
+        .map(Box::<[u8]>::from)
+        .collect();
+    let adapt = |variables: &mut bun_dotenv::Map| {
+        git::Command::VARIABLES
+            .iter()
+            .all(|(name, value)| variables.put(name, value).is_ok())
+    };
+    let input = std::iter::once(command.input);
+    match run_to_end(argv, command.cwd, adapt, input) {
+        Ok(result) => Ok(git::Finished {
+            is_ok: result.is_ok(),
+            stdout: result.stdout,
+            stderr: result.stderr,
+        }),
+        Err(why) => Err(git::NotRun::Failed(why)),
+    }
+}
+
+/// Runs `argv` in `cwd` to its end, with `input` on its standard input, and with the environment of this process once `adapt`
+/// has changed it, which returns whether it could. `Err`: why it has not run.
+fn run_to_end<'i>(
+    argv: Vec<Box<[u8]>>,
+    cwd: &[u8],
+    adapt: impl FnOnce(&mut bun_dotenv::Map) -> bool,
+    mut input: impl Iterator<Item = &'i [u8]> + Send,
+) -> Result<crate::api::bun::process::sync::Result, Vec<u8>> {
+    use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
+    let mut variables = bun_dotenv::Loader::init();
+    let is_ready = variables.load_process().is_ok() && adapt(&mut variables.map);
+    let Some(envp) = is_ready
+        .then(|| variables.map.create_null_delimited_env_map().ok())
+        .flatten()
+    else {
+        return Err(b"Could not start a process: out of memory".to_vec());
+    };
     let [read, written] = match bun_sys::pipe() {
         Ok(ends) => ends.map(File::from_fd),
         Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
@@ -168,7 +216,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         stdout: SyncStdio::Buffer,
         stderr: SyncStdio::Buffer,
         stdin: SyncStdio::Pipe(read.handle()),
-        cwd: Box::<[u8]>::from(script.cwd),
+        cwd: Box::<[u8]>::from(cwd),
         envp: Some(envp.as_ptr()),
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
@@ -181,20 +229,14 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     };
     // It is written while what the program prints is read, so neither waits for the other.
     let spawned = std::thread::scope(|scope| {
-        scope.spawn(move || {
-            let parts = script.source.iter().map(|it| it.as_bytes());
-            std::iter::once(script.head)
-                .chain(parts)
-                .try_for_each(|it| written.write_all(it))
-        });
+        scope.spawn(move || input.try_for_each(|it| written.write_all(it)));
         let spawned = spawn(&options);
         // Who still writes is told that nobody reads any more.
         drop(read);
         spawned
     });
     match spawned {
-        Ok(Ok(result)) if result.is_ok() => Ok(result.stdout),
-        Ok(Ok(result)) => Err(result.stderr),
+        Ok(Ok(result)) => Ok(result),
         Ok(Err(err)) => Err([&b"Could not start a process: "[..], err.name()].concat()),
         Err(err) => Err([&b"Could not start a process: "[..], err.name().as_bytes()].concat()),
     }
@@ -228,6 +270,10 @@ pub(crate) fn run_and_exit(
         let _turn = turn.lock();
         run_script(script)
     };
+    let run_git = |command: &git::Command| {
+        let _turn = turn.lock();
+        run_git(command)
+    };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` asks for it where a path names another drive than its base.
@@ -242,10 +288,12 @@ pub(crate) fn run_and_exit(
             is_tty: Output::is_stderr_tty(),
             colors: Output::enable_ansi_colors_stderr(),
         },
+        columns: super::run_command::RunCommand::columns_of_stdout,
         is_ai_agent: Output::is_ai_agent(),
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         run_script: &run_script,
+        run_git: &run_git,
         command_line: &command_line,
         js_engine: &js_engine,
         version: Global::package_json_version.as_bytes(),
@@ -290,7 +338,7 @@ impl LintCommand {
             }),
         };
         if options.help {
-            crate::cli::command::tag_print_help(Tag::LintCommand, true);
+            crate::cli::command::tag_print_help(Tag::LintCommand, options.all);
             Global::exit(0);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {

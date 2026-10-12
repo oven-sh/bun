@@ -1,0 +1,53 @@
+---
+title: "unicorn/prefer-global-this"
+description: "Require `globalThis` instead of `window`, `self` and `global`"
+---
+
+A worker has no `window`, a browser has no `global`, and Node.js has no `self`. Code that names one of them throws a `ReferenceError` where it does not exist. `globalThis` is the same object and exists everywhere.
+
+Properties that only make sense on one of them are allowed, such as `window.innerWidth`, `window.addEventListener("resize", ...)` and `self.postMessage()`. So is a computed access such as `window[name]`, and a variable of your own with one of these names.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+global.cache = new Map();
+window.setTimeout(refresh, 1000);
+
+if (typeof window !== "undefined") {
+  start();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+globalThis.cache = new Map();
+globalThis.setTimeout(refresh, 1000);
+
+if (typeof globalThis.window !== "undefined") {
+  start();
+}
+```
+
+{/* good */}
+
+```js
+const width = window.innerWidth;
+window.addEventListener("resize", layout);
+self.postMessage({ done: true });
+const handler = window[name];
+```
+
+An event that is not specific to the window is reported:
+
+{/* bad */}
+
+```js
+window.addEventListener("click", close);
+```

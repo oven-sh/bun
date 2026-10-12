@@ -1,0 +1,56 @@
+---
+title: "@typescript-eslint/no-duplicate-enum-values"
+description: "Disallow two enum members with the same value"
+---
+
+Two enum members with the same value cannot be told apart at runtime: `Status.Active === Status.Enabled` is `true`, a `switch` only ever reaches the first `case`, and for numbers the reverse lookup `Status[1]` gives only the last name.
+
+Only values written as a number, a string or a template without `${}` are compared, with or without a `+` or `-` sign. Members without a value and computed values are skipped.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+enum Status {
+  Active = 1,
+  Enabled = 1,
+}
+
+enum Color {
+  Red = "red",
+  Crimson = "red",
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+enum Status {
+  Active = 1,
+  Disabled = 2,
+}
+
+enum Color {
+  Red = "red",
+  Crimson = "crimson",
+}
+```
+
+A value that TypeScript fills in is not compared. Here `Third` is `1` as well:
+
+{/* good */}
+
+```ts
+enum Rank {
+  First = 1,
+  Second = 0,
+  Third,
+}
+```

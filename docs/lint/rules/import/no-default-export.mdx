@@ -1,0 +1,42 @@
+---
+title: "import/no-default-export"
+description: "Disallow default exports"
+---
+
+A default export has no name of its own, so every file that imports it picks one. The same component ends up as `Button` here and `Btn` there, a search for its name misses some of its uses, and renaming it does not rename the imports. A named export has one name everywhere.
+
+`export { name as default }` is reported too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+export default function formatPrice(cents) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+```
+
+{/* bad */}
+
+```js
+const formatPrice = cents => `$${(cents / 100).toFixed(2)}`;
+
+export { formatPrice as default };
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+export function formatPrice(cents) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+```
+
+## When not to use it
+
+Some tools look for a default export: pages and layouts of a framework, config files, stories. Turn the rule off for those files.

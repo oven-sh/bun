@@ -1,0 +1,44 @@
+---
+title: "@typescript-eslint/related-getter-setter-pairs"
+description: "Require the type of a getter to be assignable to the type of its setter"
+---
+
+TypeScript lets a getter and a setter of the same property have different types. If the getter can return something that the setter does not accept, then `field.value = field.value` is a type error, which nobody expects of a property.
+
+The other direction is fine: a setter may accept more than the getter returns. A getter without a return type annotation is not checked.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+interface Field {
+  get value(): string | undefined;
+  set value(next: string);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+interface Field {
+  get value(): string;
+  set value(next: string | undefined);
+}
+
+class Width {
+  #px = 0;
+  get size(): number {
+    return this.#px;
+  }
+  set size(next: number | string) {
+    this.#px = Number(next);
+  }
+}
+```

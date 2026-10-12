@@ -1,0 +1,77 @@
+---
+title: "n/exports-style"
+description: "Enforce either `module.exports` or `exports` in CommonJS files"
+---
+
+A CommonJS file can export through `module.exports` or through its shorthand `exports`. Both start as the same object, but once `module.exports` is assigned a new value, what you add to `exports` is no longer exported. Using one of the two everywhere avoids that.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+exports.parse = function parse(text) {
+  return JSON.parse(text);
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+module.exports.parse = function parse(text) {
+  return JSON.parse(text);
+};
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"n/exports-style" = ["error", "exports", { allowBatchAssign = true }]
+```
+
+| Option                       | What it does                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| `"module.exports"` (default) | Report every use of `exports`.                                                  |
+| `"exports"`                  | Report every use of `module.exports`, and every assignment to `exports` itself. |
+
+A second option is an object:
+
+| Option             | Default | What it does                                                                          |
+| ------------------ | ------- | ------------------------------------------------------------------------------------- |
+| `allowBatchAssign` | `false` | Allow one statement that assigns to both, such as `module.exports = exports = value`. |
+
+With `"exports"`:
+
+{/* bad {"options": ["exports"], "count": 2} */}
+
+```js
+module.exports = { parse };
+exports = { parse };
+```
+
+{/* good {"options": ["exports"]} */}
+
+```js
+exports.parse = parse;
+```
+
+With `allowBatchAssign`, you can replace the exported object and keep `exports` pointing at it:
+
+{/* good {"options": ["exports", {"allowBatchAssign": true}]} */}
+
+```js
+module.exports = exports = function parse(text) {};
+exports.version = "1.0.0";
+```
+
+{/* bad {"options": ["exports"]} */}
+
+```js
+module.exports = exports = function parse(text) {};
+exports.version = "1.0.0";
+```

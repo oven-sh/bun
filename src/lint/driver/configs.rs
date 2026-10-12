@@ -16,13 +16,13 @@ use crate::embedded::Framework;
 use crate::gitignore::{self, Files, OfGit};
 use crate::print_config::object;
 use crate::run::{Environment, Fatal};
-use crate::{Linter, eslintrc, evaluate, fs, paths, rulesdir};
+use crate::{Linter, eslintrc, evaluate, fs, native, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::language::InferGlobals;
 use bun_lint::linter::{
-    Config, InJavaScript, LegacyFile, LegacyOptions, ResolvedConfig, formatting_rules,
+    Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, ResolvedConfig, formatting_rules,
     oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
@@ -83,17 +83,20 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
     (b"oxlint.config.mts", Flavor::Oxlint, Syntax::Program),
 ];
 
-/// What is linted, and how, if there is no configuration file.
+/// What is linted, and how, if there is no configuration file. `$severityByKind`: see `Reader::grade_by_kind`. `$forReact`: see
+/// `ResolvedConfig::of`. `$withoutWarnings`: see `Reader::without_warnings`.
 const BUILT_IN: &[u8] = br#"[
     { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
     {
         "extends": ["eslint:recommended"],
+        "$severityByKind": true,
         "languageOptions": {
             "$env": { "browser": true, "node": true },
             "globals": { "Bun": "readonly" },
             "parserOptions": { "ecmaFeatures": { "jsx": true } }
-        }
+        },
+        "plugins": { "react": "eslint-plugin-react", "react-hooks": "eslint-plugin-react-hooks" }
     },
     {
         "files": ["**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"],
@@ -106,7 +109,11 @@ const BUILT_IN: &[u8] = br#"[
             }
         }
     },
-    { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/TYPESCRIPT"] },
+    {
+        "files": ["**/*.{ts,mts,cts,tsx}"],
+        "extends": ["typescript-eslint/TYPESCRIPT"],
+        "$severityByKind": true
+    },
     {
         "rules": {
             "bun:test/no-disabled-tests": "warn",
@@ -116,6 +123,19 @@ const BUILT_IN: &[u8] = br#"[
             "bun:test/valid-expect": "error",
             "bun:test/valid-expect-in-promise": "error"
         }
+    },
+    {
+        "$forReact": true,
+        "rules": {
+            "react-hooks/rules-of-hooks": "error",
+            "react-hooks/exhaustive-deps": "warn",
+            "react/jsx-key": "error"
+        }
+    },
+    {
+        "files": ["**/*.d.{ts,mts,cts}", "**/*.d.*.ts"],
+        "$withoutWarnings": true,
+        "linterOptions": { "reportUnusedDisableDirectives": "off" }
     }
 ]"#;
 
@@ -191,6 +211,8 @@ fn is_written_for_oxlint(path: &[u8]) -> bool {
 pub(crate) struct Loaded {
     pub(crate) config: Config,
     pub(crate) flavor: Flavor,
+    /// The file that it was read from. With ESLint 8: the nearest of them.
+    pub(crate) file: Option<Vec<u8>>,
     /// Whether the rules that need types run, where that is the same for all files:
     /// `options.typeAware` of an `.oxlintrc.json`. `None`: the configuration of each file says.
     pub(crate) wants_types: Option<bool>,
@@ -277,6 +299,8 @@ pub(crate) struct Loader<'l> {
     /// `Inferred` need not ask the system for them.
     pub(crate) searched_from: Guarded<Vec<Vec<u8>>>,
     pub(crate) tsconfigs: Guarded<Vec<Vec<u8>>>,
+    /// [`Loader::is_of_react`], by directory.
+    of_react: Guarded<FxHashMap<Vec<u8>, bool>>,
 }
 
 fn strings_of(items: &[Vec<u8>]) -> Json {
@@ -485,6 +509,7 @@ impl<'l> Loader<'l> {
             is_of_vite: OnceLock::new(),
             searched_from: Default::default(),
             tsconfigs: Default::default(),
+            of_react: Default::default(),
         }
     }
 
@@ -528,7 +553,7 @@ impl<'l> Loader<'l> {
             let line = [
                 b"typescript ",
                 &installed[..],
-                b" is installed; bun lint checks types as TypeScript 7.",
+                b" is installed, but bun lint checks types like TypeScript 7",
             ];
             self.advise(line.concat());
         }
@@ -556,39 +581,44 @@ impl<'l> Loader<'l> {
             let native = crate::format::oxlint::plugin(prefix);
             let mut line = [
                 built_in.to_string().as_bytes(),
-                rules,
-                b" of \"",
+                b" \"",
                 prefix,
-                b"\" ran in JavaScript (",
+                b"\"",
+                rules,
+                b" ran in JavaScript from ",
                 &specifier[..],
             ]
             .concat();
             if let Some(installed) = &installed {
                 line.extend_from_slice(&[b" ", &installed[..]].concat());
             }
-            line.extend_from_slice(
-                &[b", from \"jsPlugins\"). bun lint has ", them, b" built in"].concat(),
-            );
+            line.extend_from_slice(&[b", but bun lint has ", them, b" built in"].concat());
             if let Some(ours) = ours {
-                line.extend_from_slice(&[b", as of ", ours.as_bytes()].concat());
+                line.extend_from_slice(&[b" (version ", ours.as_bytes(), b")"].concat());
             }
+            line.extend_from_slice(&[b"\n  To use the built-in", rules, b", "].concat());
+            let other_rules: &[u8] = if others == 1 { b" rule." } else { b" rules." };
             line.extend_from_slice(&match others {
                 0 => [
-                    b": remove it from \"jsPlugins\" and add \"",
+                    b"remove ",
+                    &specifier[..],
+                    b" from \"jsPlugins\" and add \"",
                     native,
                     b"\" to \"plugins\".",
                 ]
                 .concat(),
                 _ => [
-                    b": write ",
+                    b"rename ",
                     them,
-                    b" \"",
+                    b" to \"",
                     native,
                     b"/..\" and add \"",
                     native,
-                    b"\" to \"plugins\". Keep it for the other ",
+                    b"\" to \"plugins\". Keep ",
+                    &specifier[..],
+                    b" for the other ",
                     others.to_string().as_bytes(),
-                    b".",
+                    other_rules,
                 ]
                 .concat(),
             });
@@ -747,8 +777,14 @@ impl<'l> Loader<'l> {
         })
     }
 
-    /// ESLint's `calculateConfigArray`. `file_config`: what the configuration file exports.
-    fn flat(&self, base_path: &[u8], file_config: Json) -> Result<Config, Fatal> {
+    /// ESLint's `calculateConfigArray`. `file_config`: what the configuration file exports. `is_of_eslint`: it is not what is
+    /// built in.
+    fn flat(
+        &self,
+        base_path: &[u8],
+        file_config: Json,
+        is_of_eslint: bool,
+    ) -> Result<Config, Fatal> {
         let mut all = vec![file_config];
         all.extend(self.added());
         let mut all = Json::Array(all);
@@ -757,12 +793,13 @@ impl<'l> Loader<'l> {
         }
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
-        let mut config = Config::from_flat_json_with_plugins(
-            self.linter.registry(),
-            base_path,
-            &all,
-            &mut load_plugin,
-        )
+        let registry = self.linter.registry();
+        let mut config = match is_of_eslint {
+            true => {
+                Config::from_flat_json_with_plugins(registry, base_path, &all, &mut load_plugin)
+            }
+            false => Config::without_a_file(registry, base_path, &all),
+        }
         .map_err(|error| Fatal(error.message))?;
         let installed = installed_version(base_path, b"eslint");
         if installed.is_some_and(|it| minor_of(&it).is_some_and(|it| it.0 < 10)) {
@@ -914,6 +951,7 @@ impl<'l> Loader<'l> {
             return Ok(Arc::new(Loaded {
                 config: self.rc(&path, Json::Object(Vec::new()))?,
                 flavor: Flavor::Oxlint,
+                file: None,
                 wants_types: Some(false),
                 denies_warnings: false,
                 max_warnings: None,
@@ -923,13 +961,16 @@ impl<'l> Loader<'l> {
             }));
         }
         self.check_flags(Flavor::BuiltIn, None)?;
+        native::check_rules(self.linter.registry(), self.options)?;
         let preset: &[u8] = match self.options.type_aware {
             Some(true) => b"recommended-type-checked",
             _ => b"recommended",
         };
         let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
         // Every file is in it, on whatever drive.
-        let mut config = self.flat(b"/", bun_lint::json::parse(&text).unwrap_or(Json::Null))?;
+        let mut objects = vec![bun_lint::json::parse(&text).unwrap_or(Json::Null)];
+        objects.extend(native::categories(self.linter.registry(), self.options));
+        let mut config = self.flat(b"/", Json::Array(objects), false)?;
         // Without a word: where the run has types, which then cost nothing more.
         config.infer_globals(match self.options.infer_globals {
             Some(true) => InferGlobals::Instead,
@@ -940,6 +981,7 @@ impl<'l> Loader<'l> {
         Ok(Arc::new(Loaded {
             config,
             flavor: Flavor::BuiltIn,
+            file: None,
             wants_types: Some(false),
             denies_warnings: false,
             max_warnings: None,
@@ -1046,6 +1088,7 @@ impl<'l> Loader<'l> {
                     } else {
                         json
                     },
+                    true,
                 )?
             }
             Flavor::Oxlint => self.rc(path, json)?,
@@ -1056,7 +1099,7 @@ impl<'l> Loader<'l> {
         for line in config.advice() {
             self.advise(line.clone());
         }
-        self.warn_about_unknown_rules(&config);
+        self.warn_about_unknown_rules(&config, &paths::relative(self.cwd(), path));
         let option = |name: &[u8]| config.option_of_oxlint(name);
         let is_on = |name: &[u8]| option(name).and_then(Json::as_bool) == Some(true);
         let wants_types = match flavor {
@@ -1079,6 +1122,7 @@ impl<'l> Loader<'l> {
         Ok(Arc::new(Loaded {
             config,
             flavor,
+            file: Some(path.to_vec()),
             wants_types,
             denies_warnings,
             max_warnings,
@@ -1088,8 +1132,8 @@ impl<'l> Loader<'l> {
         }))
     }
 
-    /// One line for each plugin that has rules which are configured and do not exist here, with all of them.
-    fn warn_about_unknown_rules(&self, config: &Config) {
+    /// One line for each plugin that has rules which are configured and do not exist here, with all of them. `file`: where.
+    fn warn_about_unknown_rules(&self, config: &Config, file: &[u8]) {
         let mut by_plugin: Vec<(&[u8], Vec<&[u8]>)> = Vec::new();
         for id in config.unknown_rules() {
             let (plugin, _) = bun_lint::linter::parse_rule_id(id);
@@ -1100,30 +1144,31 @@ impl<'l> Loader<'l> {
         }
         for (plugin, rules) in by_plugin {
             let count = format!("{}", rules.len()).into_bytes();
-            let of: Vec<u8> = match plugin {
-                b"" => b"ESLint".to_vec(),
-                b"@typescript-eslint" | b"typescript" | b"typescript-eslint" => {
-                    b"typescript-eslint".to_vec()
-                }
-                plugin => [b"the plugin \"", plugin, b"\""].concat(),
+            let (noun, is, it): (&[u8], &[u8], &[u8]) = match rules.len() {
+                1 => (b" rule in ", b" is", b"it"),
+                _ => (b" rules in ", b" are", b"them"),
             };
-            let noun: &[u8] = match rules.len() {
-                1 => b" rule of ",
-                _ => b" rules of ",
+            let hint = match Plugin::of_oxlint_prefix(plugin).is_some_and(Plugin::has_no_rules) {
+                true => [
+                    b"\n  bun lint has no \"",
+                    plugin,
+                    b"\" rules. Turn ",
+                    it,
+                    b" off or remove ",
+                    it,
+                    b".",
+                ]
+                .concat(),
+                false => Vec::new(),
             };
-            let has_no_rules = Plugin::of_oxlint_prefix(plugin).is_some_and(Plugin::has_no_rules);
             self.cannot_do(&[
                 &count,
                 noun,
-                &of,
-                b" did not run: ",
+                file,
+                is,
+                b" not supported: ",
                 &rules.join(&b", "[..]),
-                match has_no_rules {
-                    true => {
-                        b". None is built in: turn them off, or take them out of the configuration"
-                    }
-                    false => &b""[..],
-                },
+                &hint,
             ]);
         }
     }
@@ -1136,8 +1181,9 @@ impl<'l> Loader<'l> {
             b"" if !self.options.config_lookup => {
                 self.check_flags(Flavor::Eslint, None)?;
                 Ok(Arc::new(Loaded {
-                    config: self.flat(base_path, Json::Array(Vec::new()))?,
+                    config: self.flat(base_path, Json::Array(Vec::new()), true)?,
                     flavor: Flavor::Eslint,
+                    file: None,
                     wants_types: None,
                     denies_warnings: false,
                     max_warnings: None,
@@ -1202,13 +1248,15 @@ impl<'l> Loader<'l> {
                         return Some(Flavor::Oxlint);
                     }
                     (Some(of_eslint), Some(of_oxlint), None) => {
-                        let _ = self.undecided.set((of_eslint, of_oxlint));
+                        let shown = |it: &[u8]| paths::relative(self.cwd(), it);
+                        let _ = self.undecided.set((shown(&of_eslint), shown(&of_oxlint)));
                     }
                     // Most flags of oxlint mean something with the file too.
                     (Some(of_eslint), None, None | Some(Flavor::Oxlint)) => {
                         if let Some((package, true, _)) = self.tools_of_the_package() {
-                            let dependency = [&b"the dependency on oxlint in "[..], &package];
-                            let _ = self.undecided.set((of_eslint, dependency.concat()));
+                            let shown = |it: &[u8]| paths::relative(self.cwd(), it);
+                            let dependency = [&b"an oxlint dependency in "[..], &shown(&package)];
+                            let _ = (self.undecided).set((shown(&of_eslint), dependency.concat()));
                         }
                     }
                     _ => {}
@@ -1259,20 +1307,22 @@ impl<'l> Loader<'l> {
             Flavor::EslintRc => b"ESLint 8",
             Flavor::Eslint | Flavor::BuiltIn => b"ESLint",
         };
-        let (before, after): (&[u8], &[u8]) = match file {
-            Some(_) => (b"with ", b", a configuration file of "),
-            None => (b"in a run that stands in for ", b""),
+        let uses = match file {
+            Some(file) => [
+                &paths::relative(self.cwd(), file)[..],
+                b", an ",
+                tool,
+                b" config.",
+            ]
+            .concat(),
+            None => [tool, b"'s defaults."].concat(),
         };
         let refusal = [
             &flag[..],
-            b" is a flag of ",
+            b" is an ",
             whose,
-            b". It means nothing ",
-            before,
-            file.unwrap_or_default(),
-            after,
-            tool,
-            b".",
+            b" flag and has no effect here\n  This run uses ",
+            &uses,
         ]
         .concat();
         Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
@@ -1300,9 +1350,9 @@ impl<'l> Loader<'l> {
         let (path, has_oxlint, has_eslint) = self.tools_of_the_package()?;
         if has_oxlint && has_eslint && !is_decided {
             self.warn(&[
-                b"No configuration file found, and ",
-                &path,
-                b" has both eslint and oxlint: using the defaults of oxlint. Use --flavor=eslint for the other.",
+                b"No config file found, and ",
+                &paths::relative(self.cwd(), &path),
+                b" depends on both eslint and oxlint\n  Using oxlint's defaults. Use --flavor=eslint for ESLint's.",
             ]);
         }
         has_oxlint.then_some(Flavor::Oxlint)
@@ -1526,11 +1576,12 @@ impl<'l> Loader<'l> {
         for line in config.advice() {
             self.advise(line.clone());
         }
-        self.warn_about_unknown_rules(&config);
+        self.warn_about_unknown_rules(&config, b"your .eslintrc config");
         config.infer_globals(self.infers_globals_besides());
         Ok(Arc::new(Loaded {
             config,
             flavor: Flavor::EslintRc,
+            file,
             wants_types: None,
             denies_warnings: false,
             max_warnings: None,
@@ -1655,9 +1706,9 @@ impl<'l> Loader<'l> {
             found = Some(match self.flat_config {
                 Some(true) => Err(Fatal(
                     [
-                        b"ESLINT_USE_FLAT_CONFIG is true, and ",
+                        b"ESLINT_USE_FLAT_CONFIG is true, but ",
                         last.unwrap_or_default(),
-                        b" has a configuration file of ESLint 8 and no eslint.config.js.",
+                        b" has an .eslintrc config and no eslint.config.js",
                     ]
                     .concat(),
                 )),
@@ -1746,6 +1797,36 @@ impl<'l> Loader<'l> {
             self.tool() == Some(Flavor::Eslint) && paths::ancestors(self.cwd()).any(is_there)
         };
         loaded.flavor == Flavor::BuiltIn && *self.has_file_of_eslint.get_or_init(has_one)
+    }
+
+    /// Whether the `package.json` that is closest to `directory`, whose files have `loaded`, depends on React. Only the defaults ask.
+    pub(crate) fn is_of_react(&self, loaded: &Loaded, directory: &[u8]) -> bool {
+        if loaded.flavor != Flavor::BuiltIn {
+            return false;
+        }
+        if let Some(known) = self.of_react.lock().get(directory) {
+            return *known;
+        }
+        let depends = |directory: &[u8]| {
+            let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
+            let package = bun_lint::json::parse(&package).filter(|it| it.as_object().is_some())?;
+            let fields: [&[u8]; 3] = [b"dependencies", b"devDependencies", b"peerDependencies"];
+            let has = |it: &&[u8]| package.get(it).is_some_and(|it| it.get(b"react").is_some());
+            Some(fields.iter().any(has))
+        };
+        let found = paths::ancestors(directory).find_map(depends) == Some(true);
+        self.of_react.lock().insert(directory.to_vec(), found);
+        found
+    }
+
+    /// What `loaded` has for the file at `path`.
+    pub(crate) fn config_of(&self, loaded: &Loaded, path: &[u8]) -> FileConfig {
+        match loaded.config.get(self.linter.registry(), path) {
+            FileConfig::Matched(config) if !self.is_of_react(loaded, paths::dirname(path)) => {
+                FileConfig::Matched(config.outside_of_react())
+            }
+            config => config,
+        }
     }
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.

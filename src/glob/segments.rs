@@ -138,6 +138,10 @@ impl<'p> Candidate<'p> {
         self.whole
     }
 
+    pub(crate) fn name_at(&self) -> usize {
+        self.name_at
+    }
+
     fn split(&self) -> &Split<'p> {
         self.split.get_or_init(|| {
             let names = split_path(self.whole);

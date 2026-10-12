@@ -1,0 +1,93 @@
+---
+title: "@typescript-eslint/class-methods-use-this"
+description: "Require class methods to use `this`"
+---
+
+A method that never reads `this` does not need an instance. Callers still have to create one to reach it. Make it `static`, or move it out of the class.
+
+Methods, getters, setters, and functions stored in instance fields are checked. Constructors, static members, and abstract members are not.
+
+It is the TypeScript version of `class-methods-use-this` and reports the same code. Turn on one of the two, not both.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+class Invoice {
+  total = 0;
+
+  format(amount: number) {
+    return amount.toFixed(2);
+  }
+
+  round = (amount: number) => Math.round(amount);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Invoice {
+  total = 0;
+
+  static format(amount: number) {
+    return amount.toFixed(2);
+  }
+
+  print() {
+    return Invoice.format(this.total);
+  }
+}
+```
+
+## Options
+
+| Option                                  | Default | What it does                                                                                                                                |
+| --------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exceptMethods`                         | `[]`    | Names of methods to skip. Write a private method as `"#name"`.                                                                              |
+| `enforceForClassFields`                 | `true`  | Also check functions stored in instance fields, such as `round` above.                                                                      |
+| `ignoreOverrideMethods`                 | `false` | Skip members marked `override`.                                                                                                             |
+| `ignoreClassesThatImplementAnInterface` | `false` | `true` skips every member of a class that has an `implements` clause. `"public-fields"` still checks its `private` and `protected` members. |
+
+A subclass has to keep the shape of the method it overrides, so it cannot make it `static`:
+
+{/* good {"options": [{"ignoreOverrideMethods": true}]} */}
+
+```ts
+class Widget {
+  name = "widget";
+  render() {
+    return this.name;
+  }
+}
+
+class Spinner extends Widget {
+  override render() {
+    return "...";
+  }
+}
+```
+
+The same holds for a method that an interface asks for. With `"public-fields"`, `render` is skipped and `frame` is reported. With `true`, neither is reported.
+
+{/* bad {"options": [{"ignoreClassesThatImplementAnInterface": "public-fields"}], "count": 1} */}
+
+```ts
+interface Renderable {
+  render(): string;
+}
+
+class Spinner implements Renderable {
+  render() {
+    return "...";
+  }
+  private frame() {
+    return 0;
+  }
+}
+```

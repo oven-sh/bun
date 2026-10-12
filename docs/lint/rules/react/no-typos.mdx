@@ -1,0 +1,79 @@
+---
+title: "react/no-typos"
+description: "Disallow misspelled lifecycle methods, static properties, and prop types"
+---
+
+React finds `componentDidMount`, `propTypes`, and `defaultProps` by name. If you write `componentDidmount` or `PropTypes`, nothing fails: React never calls the method and never checks the props.
+
+The rule reports four kinds of mistakes in a component:
+
+- A lifecycle method, such as `componentDidMount` or `shouldComponentUpdate`, with the wrong upper and lower case.
+- `getDerivedStateFromProps` without `static`.
+- `propTypes`, `contextTypes`, `childContextTypes`, or `defaultProps` with the wrong upper and lower case.
+- A type that the `prop-types` package does not have, such as `PropTypes.boolean`, or anything other than `.isRequired` after a type. This needs an import of `prop-types` or `react` in the file.
+
+It also reports `import "react"` and `import "prop-types"` that import no name.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+class Clock extends React.Component {
+  static DefaultProps = { interval: 1000 };
+
+  componentDidmount() {
+    this.start();
+  }
+}
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+import PropTypes from "prop-types";
+
+class Clock extends React.Component {
+  static propTypes = {
+    running: PropTypes.boolean,
+    interval: PropTypes.number.isrequired,
+  };
+}
+```
+
+{/* bad */}
+
+```jsx
+class Clock extends React.Component {
+  getDerivedStateFromProps(props, state) {
+    return { interval: props.interval };
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import PropTypes from "prop-types";
+
+class Clock extends React.Component {
+  static propTypes = {
+    running: PropTypes.bool,
+    interval: PropTypes.number.isRequired,
+  };
+
+  static defaultProps = { interval: 1000 };
+
+  static getDerivedStateFromProps(props, state) {
+    return { interval: props.interval };
+  }
+
+  componentDidMount() {
+    this.start();
+  }
+}
+```

@@ -1,0 +1,40 @@
+---
+title: "unicorn/no-useless-fallback-in-spread"
+description: "Disallow an empty object as the fallback when spreading into an object literal"
+---
+
+Spreading `undefined` or `null` into an object literal adds nothing and does not throw. So `{ ...(options || {}) }` and `{ ...(options ?? {}) }` give the same object as `{ ...options }`.
+
+This is only true for objects. Spreading `undefined` into an array or into the arguments of a call throws, so `[...(items || [])]` is not reported.
+
+`--fix` removes the fallback.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function request(url, options, extraHeaders) {
+  const headers = { accept: "application/json", ...(extraHeaders || {}) };
+  return fetch(url, { ...(options ?? {}), headers });
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function request(url, options, extraHeaders) {
+  const headers = { accept: "application/json", ...extraHeaders };
+  return fetch(url, { ...options, headers });
+}
+
+// the fallback has something in it
+const settings = { ...(saved || { theme: "light" }) };
+
+// arrays need the fallback
+const all = [...(items || [])];
+```

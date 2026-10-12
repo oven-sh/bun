@@ -1,0 +1,43 @@
+---
+title: "@typescript-eslint/prefer-as-const"
+description: "Require `as const` instead of repeating a literal as its own type"
+---
+
+`"dark" as "dark"` and `let theme: "dark" = "dark"` write the same literal twice, and you have to change both every time. `as const` gives the same narrow type and takes it from the value.
+
+The rule checks every `as` assertion, and the type annotations of variables and class fields. It only reports a type that is the same literal as the value.
+
+`--fix` rewrites `"dark" as "dark"` to `"dark" as const`. A type annotation is reported but not fixed.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+let theme = "dark" as "dark";
+let retries: 3 = 3;
+
+class Request {
+  method: "GET" = "GET";
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+let theme = "dark" as const;
+let retries = 3 as const;
+
+class Request {
+  method = "GET" as const;
+}
+
+let mode: "dark" | "light" = "dark";
+let size = "small" as "small" | "large";
+```

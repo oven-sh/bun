@@ -1,0 +1,103 @@
+---
+title: "import/newline-after-import"
+description: "Require an empty line between the last import and the code that follows"
+---
+
+An empty line after the imports shows where the list of dependencies ends and the code of the file begins.
+
+The rule looks at the last `import` of each run of imports, and does the same for top-level `require()` calls. A `require()` inside a function or a block is not checked.
+
+`--fix` adds the missing empty lines.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+const root = join(import.meta.dirname, "..");
+```
+
+{/* bad */}
+
+```js
+const { join } = require("node:path");
+const root = join(__dirname, "..");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const root = join(import.meta.dirname, "..");
+```
+
+{/* good */}
+
+```js
+const { join } = require("node:path");
+
+const root = join(__dirname, "..");
+
+function loadPlugin(name) {
+  const plugin = require("./plugins.js");
+  return plugin[name];
+}
+```
+
+## Options
+
+| Option             | Default | What it does                                                                                                                                                           |
+| ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `count`            | `1`     | How many empty lines there must be, at least.                                                                                                                          |
+| `exactCount`       | `false` | Report more than `count` empty lines too.                                                                                                                              |
+| `considerComments` | `false` | Require the empty lines before a comment that follows the imports. By default a comment can come right after them, and only the distance to the next statement counts. |
+
+{/* bad {"options": [{"count": 2}]} */}
+
+```js
+import { join } from "node:path";
+
+const root = join(import.meta.dirname, "..");
+```
+
+{/* good {"options": [{"count": 1}]} */}
+
+```js
+import { join } from "node:path";
+
+const root = join(import.meta.dirname, "..");
+```
+
+{/* bad {"options": [{"count": 1, "exactCount": true}]} */}
+
+```js
+import { join } from "node:path";
+
+const root = join(import.meta.dirname, "..");
+```
+
+{/* good */}
+
+```js
+import { join } from "node:path";
+// The root of the repository.
+
+const root = join(import.meta.dirname, "..");
+```
+
+{/* bad {"options": [{"considerComments": true}]} */}
+
+```js
+import { join } from "node:path";
+// The root of the repository.
+
+const root = join(import.meta.dirname, "..");
+```

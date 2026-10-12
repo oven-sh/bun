@@ -1,0 +1,46 @@
+---
+title: "@typescript-eslint/non-nullable-type-assertion-style"
+description: "Require `value!` instead of `value as T` when the assertion only removes `null` and `undefined`"
+---
+
+If `name` is a `string | undefined`, then `name as string` and `name!` do the same thing. The `!` is shorter, and it says exactly what you claim: the value is there. It also does not repeat the type, so there is nothing to update when the type changes.
+
+`--fix` rewrites the assertion to `!`.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+function nameOf(names: Map<string, string>, id: string) {
+  return names.get(id) as string;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function nameOf(names: Map<string, string>, id: string) {
+  return names.get(id)!;
+}
+```
+
+An assertion that does more than remove `null` and `undefined` cannot be written with `!`, so it is allowed:
+
+{/* good */}
+
+```ts
+function toText(value: string | number | null) {
+  return value as string;
+}
+```
+
+## When not to use it
+
+`@typescript-eslint/no-non-null-assertion` reports every `!`. Do not turn on both.

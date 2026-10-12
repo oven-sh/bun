@@ -13,7 +13,7 @@ use crate::util_is_create_element::{is_create_element, is_member_called};
 use crate::util_jsx::Branches;
 use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_glob::Pattern;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -84,7 +84,7 @@ impl Rule for NoUnstableNestedComponents {
         NoUnstableNestedComponents {
             allow_as_props: options.bool_or("allowAsProps", false),
             prop_name_pattern: prop_name_pattern.unwrap_or("render*").as_bytes().into(),
-            minimatch: Pattern::new(minimatch.as_bytes(), GlobOptions::MINIMATCH_3),
+            minimatch: Pattern::with_extglob(minimatch.as_bytes()),
         }
     }
 

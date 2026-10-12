@@ -1,0 +1,36 @@
+---
+title: "unicorn/consistent-date-clone"
+description: "Require `new Date(date)` instead of `new Date(date.getTime())` to copy a date"
+---
+
+The `Date` constructor accepts another `Date` and copies it exactly. Converting it to a number first with `.getTime()` adds a call and gives the same result.
+
+`--fix` removes the `.getTime()` call.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const deadline = new Date(start.getTime());
+deadline.setDate(deadline.getDate() + 7);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const deadline = new Date(start);
+deadline.setDate(deadline.getDate() + 7);
+```
+
+Arithmetic on the timestamp is not a plain copy, so it is allowed:
+
+{/* good */}
+
+```js
+const deadline = new Date(start.getTime() + 60_000);
+```

@@ -1,0 +1,72 @@
+---
+title: "react/no-unknown-property"
+description: "Disallow attributes on DOM elements that React does not know"
+---
+
+React names DOM attributes in its own way: `className` and not `class`, `htmlFor` and not `for`, `tabIndex` and not `tabindex`, `strokeWidth` and not `stroke-width`. Markup pasted from an HTML or SVG file has the other spelling, and React warns about it in the console when the page runs.
+
+The rule checks elements with a lowercase name and reports three things:
+
+- A name that React spells differently.
+- A name that is not a DOM attribute at all.
+- An attribute on an element it does not belong to, such as `checked` on a `<div>`.
+
+Your own components, custom elements (a hyphen in the name, or an `is` attribute), and `data-*` and `aria-*` attributes are not checked.
+
+`--fix` renames an attribute when React has another spelling for it.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const field = (
+  <label class="field" for="email">
+    Email <input id="email" tabindex="1" />
+  </label>
+);
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+const box = <div checked tooltip="Saved" />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const field = (
+  <label className="field" htmlFor="email">
+    Email <input id="email" tabIndex="1" data-testid="email" />
+  </label>
+);
+
+const card = <Card class="wide" tooltip="Saved" />;
+const player = <video-player autostart="yes" />;
+```
+
+## Options
+
+| Option                 | Default | What it does                                                      |
+| ---------------------- | ------- | ----------------------------------------------------------------- |
+| `ignore`               | `[]`    | Names of attributes to accept as they are.                        |
+| `requireDataLowercase` | `false` | Report a `data-*` attribute with an uppercase letter in its name. |
+
+Use `ignore` for attributes that a library adds, such as the `css` prop of Emotion:
+
+{/* good {"options": [{"ignore": ["css"]}]} */}
+
+```jsx
+const box = <div css={{ display: "flex" }} />;
+```
+
+{/* bad {"options": [{"requireDataLowercase": true}]} */}
+
+```jsx
+const button = <button data-testID="save">Save</button>;
+```

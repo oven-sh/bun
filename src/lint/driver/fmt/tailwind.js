@@ -110,7 +110,7 @@ function orderFor({ root, config, stylesheet }) {
   if (stylesheet) config = null;
   if (isV4 ? config : stylesheet) {
     const [option, major] = isV4 ? ["config", 3] : ["stylesheet", 4];
-    throw new Error(`\`${option}\` is for Tailwind CSS ${major}, and ${root} is another.`);
+    throw new Error(`\`${option}\` only works with Tailwind CSS ${major}, and ${root} is another version`);
   }
   const key = JSON.stringify([root, config, stylesheet]);
   if (!loaded.has(key)) {

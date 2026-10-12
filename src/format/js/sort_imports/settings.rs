@@ -206,7 +206,7 @@ impl Settings {
                 .unwrap_or_default()
                 .iter())
             .map(|pattern| Exclude {
-                glob: bun_glob::Pattern::new(pattern, bun_glob::Options::MINIMATCH),
+                glob: bun_glob::Pattern::with_extglob(pattern),
                 has_slash: strings::contains_char(pattern, b'/'),
             })
             .collect(),

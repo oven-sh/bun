@@ -109,7 +109,10 @@ impl NoFallthrough {
         }
         match self.get_fallthrough_comment(previous, case) {
             None if is_fallthrough => {
-                cx.report(case, if case.is_default() { DEFAULT } else { CASE });
+                let report = cx.report(case, if case.is_default() { DEFAULT } else { CASE });
+                if self.fallthrough_comment_pattern.is_none() {
+                    report.hint("Add break, or the comment // falls through if this is meant.");
+                }
             }
             Some(comment) if !is_fallthrough => {
                 let place = match cx.language().is_oxlint {
@@ -140,7 +143,7 @@ fn place_of_oxlint<'a>(previous: Case<'a>, case: Case<'a>, comment: Span) -> Spa
 }
 
 impl Rule for NoFallthrough {
-    const META: Meta = Meta::eslint("no-fallthrough", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-fallthrough", Kind::Problem).recommended().hints();
     const ON: On = On::new().stmts(&[StmtTag::Switch]);
     no_state!();
 

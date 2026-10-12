@@ -1,0 +1,44 @@
+---
+title: "n/global-require"
+description: "Require `require()` calls to be at the top level of the file"
+---
+
+`require()` loads a module synchronously. Inside a function, it reads from disk and blocks the first time that function runs, and a missing module throws then and not at startup. It also hides what the file depends on.
+
+A `require()` inside a function, an `if`, a `try` or any other block is reported. A `require` that the file declares itself is not.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function readConfig(file) {
+  const fs = require("fs");
+  return fs.readFileSync(file, "utf8");
+}
+
+if (process.env.DEBUG) {
+  require("./debug");
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const fs = require("fs");
+const join = require("path").join;
+const log = require("./log")("config");
+const debug = process.env.DEBUG ? require("./debug") : null;
+
+function readConfig(file) {
+  return fs.readFileSync(file, "utf8");
+}
+```
+
+## When not to use it
+
+Loading a heavy or optional module only when it is needed is a reason to call `require()` inside a function. Turn the rule off for that line.

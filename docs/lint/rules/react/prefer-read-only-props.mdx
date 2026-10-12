@@ -1,0 +1,58 @@
+---
+title: "react/prefer-read-only-props"
+description: "Require the props in a component's type to be `readonly`"
+---
+
+A component must not change its props: they belong to the parent, and React does not render again when they are assigned to. If every prop in the type is `readonly`, TypeScript rejects `props.name = "..."` when you compile.
+
+`--fix` adds `readonly` in front of the prop.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```tsx
+type Props = {
+  name: string;
+  age?: number;
+};
+
+function Profile(props: Props) {
+  return (
+    <p>
+      {props.name} ({props.age})
+    </p>
+  );
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```tsx
+type Props = {
+  readonly name: string;
+  readonly age?: number;
+};
+
+function Profile(props: Props) {
+  return (
+    <p>
+      {props.name} ({props.age})
+    </p>
+  );
+}
+```
+
+The parameters of a function that is not a component are left alone:
+
+{/* good */}
+
+```tsx
+function fullName(user: { first: string; last: string }) {
+  return `${user.first} ${user.last}`;
+}
+```

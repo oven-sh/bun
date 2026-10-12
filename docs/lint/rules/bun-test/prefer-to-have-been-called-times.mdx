@@ -1,0 +1,40 @@
+---
+title: "bun:test/prefer-to-have-been-called-times"
+description: "Require `toHaveBeenCalledTimes()` instead of checking the length of `mock.calls`"
+---
+
+`expect(save.mock.calls).toHaveLength(2)` treats the mock as a plain array. When it fails, the message is about the length of an array. `expect(save).toHaveBeenCalledTimes(2)` says what you test, and its failure message is about the number of calls.
+
+`--fix` rewrites the assertion and keeps `.not`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("saves each item once", () => {
+  const save = mock();
+  saveAll(["a", "b"], save);
+  expect(save.mock.calls).toHaveLength(2);
+  expect(save.mock.calls).not.toHaveLength(0);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("saves each item once", () => {
+  const save = mock();
+  saveAll(["a", "b"], save);
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save.mock.calls[0]).toHaveLength(1);
+});
+```

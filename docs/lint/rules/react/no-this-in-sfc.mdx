@@ -1,0 +1,45 @@
+---
+title: "react/no-this-in-sfc"
+description: "Disallow `this` in function components"
+---
+
+A function component gets its props as an argument. React calls it without a `this`, so `this.props` throws a `TypeError`. This often happens when a class component is rewritten as a function and one `this.` is left behind.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Greeting(props) {
+  return <h1>Hello, {this.props.name}</h1>;
+}
+```
+
+{/* bad */}
+
+```jsx
+const Badge = ({ count }) => {
+  if (this.state.hidden) {
+    return null;
+  }
+  return <span>{count}</span>;
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Greeting(props) {
+  return <h1>Hello, {props.name}</h1>;
+}
+
+class Welcome extends React.Component {
+  render() {
+    return <h1>Welcome, {this.props.name}</h1>;
+  }
+}
+```

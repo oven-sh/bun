@@ -1,0 +1,80 @@
+---
+title: "react/no-multi-comp"
+description: "Disallow more than one React component in a file"
+---
+
+In a file with several components, you cannot find a component by its file name, and unrelated components end up in the same diff.
+
+The first component in the file is accepted. Every component after it is reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 1} */}
+
+```jsx
+function Avatar({ user }) {
+  return <img src={user.photo} alt={user.name} />;
+}
+
+function Profile({ user }) {
+  return <Avatar user={user} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { Avatar } from "./Avatar";
+
+export function Profile({ user }) {
+  return <Avatar user={user} />;
+}
+```
+
+## Options
+
+| Option            | Default | What it does                                                                                                                           |
+| ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ignoreStateless` | `false` | Do not count function components, or components wrapped in `memo` or `forwardRef`. Only class components and `createReactClass` count. |
+
+With `ignoreStateless`, a class component can have small function components next to it:
+
+{/* good {"options": [{"ignoreStateless": true}]} */}
+
+```jsx
+function Avatar({ user }) {
+  return <img src={user.photo} alt={user.name} />;
+}
+
+class Profile extends React.Component {
+  render() {
+    return <Avatar user={this.props.user} />;
+  }
+}
+```
+
+Two class components are still reported:
+
+{/* bad {"options": [{"ignoreStateless": true}]} */}
+
+```jsx
+class Avatar extends React.Component {
+  render() {
+    return <img src={this.props.user.photo} alt={this.props.user.name} />;
+  }
+}
+
+class Profile extends React.Component {
+  render() {
+    return <Avatar user={this.props.user} />;
+  }
+}
+```
+
+## When not to use it
+
+Small helper components that only one component uses often read better in the same file. If that is how you work, leave the rule off or turn on `ignoreStateless`.

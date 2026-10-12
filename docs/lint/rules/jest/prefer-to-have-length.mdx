@@ -1,0 +1,41 @@
+---
+title: "jest/prefer-to-have-length"
+description: "Require `toHaveLength()` instead of comparing the `length` property"
+---
+
+When `expect(users.length).toBe(2)` fails, the message shows two numbers. `expect(users).toHaveLength(2)` also prints the value it measured, so you see which items are missing or extra.
+
+The rule reports `.length` inside `expect()` when the matcher is `toBe()`, `toEqual()`, or `toStrictEqual()`.
+
+`--fix` rewrites the assertion.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("finds the active users", () => {
+  const users = findUsers({ active: true });
+  expect(users.length).toBe(2);
+  expect(users[0].roles.length).not.toEqual(0);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("finds the active users", () => {
+  const users = findUsers({ active: true });
+  expect(users).toHaveLength(2);
+  expect(users[0].roles).not.toHaveLength(0);
+  expect(users.length).toBeGreaterThan(1);
+});
+```

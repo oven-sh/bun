@@ -1,0 +1,97 @@
+---
+title: "no-empty-function"
+description: "Disallow functions with an empty body"
+---
+
+An empty function reads like something that was never finished. A reader cannot tell whether it does nothing on purpose, as a default callback does, or whether the body is missing.
+
+A comment in the body answers that question, and the rule accepts it.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function onClose() {}
+
+const handlers = {
+  onError: () => {},
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function onClose() {
+  // Nothing to clean up.
+}
+
+const handlers = {
+  onError: () => {
+    // Errors are reported by the caller.
+  },
+};
+```
+
+In TypeScript, a constructor that declares fields in its parameters does its work without a body:
+
+{/* good */}
+
+```ts
+class User {
+  constructor(private name: string) {}
+}
+```
+
+## Options
+
+| Option  | Default | What it does                              |
+| ------- | ------- | ----------------------------------------- |
+| `allow` | `[]`    | The kinds of functions that may be empty. |
+
+| Kind                      | Allows                                    |
+| ------------------------- | ----------------------------------------- |
+| `"functions"`             | `function noop() {}` and `function () {}` |
+| `"arrowFunctions"`        | `() => {}`, also if it is `async`         |
+| `"generatorFunctions"`    | `function* items() {}`                    |
+| `"asyncFunctions"`        | `async function load() {}`                |
+| `"methods"`               | `render() {}` in a class or an object     |
+| `"generatorMethods"`      | `*items() {}`                             |
+| `"asyncMethods"`          | `async load() {}`                         |
+| `"getters"`               | `get name() {}`                           |
+| `"setters"`               | `set name(value) {}`                      |
+| `"constructors"`          | `constructor() {}`                        |
+| `"privateConstructors"`   | `private constructor() {}`                |
+| `"protectedConstructors"` | `protected constructor() {}`              |
+| `"decoratedFunctions"`    | a method with a decorator                 |
+| `"overrideMethods"`       | `override render() {}`                    |
+
+Each kind allows only what its row shows. `"methods"` does not cover `async load() {}`, and `"arrowFunctions"` does not cover an empty `function`:
+
+{/* good {"options": [{"allow": ["arrowFunctions"]}]} */}
+
+```js
+const noop = () => {};
+const wait = async () => {};
+```
+
+{/* bad {"options": [{"allow": ["arrowFunctions"]}]} */}
+
+```js
+function noop() {}
+```
+
+A private constructor is a common way to stop `new Registry()` from outside the class:
+
+{/* good {"options": [{"allow": ["privateConstructors"]}]} */}
+
+```ts
+class Registry {
+  static shared = new Registry();
+  private constructor() {}
+}
+```

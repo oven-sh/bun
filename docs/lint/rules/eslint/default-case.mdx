@@ -1,0 +1,90 @@
+---
+title: "default-case"
+description: "Require a `default` case in every `switch`"
+---
+
+A `switch` without `default` does nothing when no `case` matches. When a new value shows up, it is silently skipped. A `default` makes you decide what happens then, even if the answer is to throw.
+
+If you leave it out on purpose, say so with a `// no default` comment after the last `case`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+switch (status) {
+  case "open":
+    show();
+    break;
+  case "closed":
+    hide();
+    break;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+switch (status) {
+  case "open":
+    show();
+    break;
+  case "closed":
+    hide();
+    break;
+  default:
+    throw new Error("Unknown status: " + status);
+}
+```
+
+{/* good */}
+
+```js
+switch (status) {
+  case "open":
+    show();
+    break;
+  case "closed":
+    hide();
+    break;
+  // no default
+}
+```
+
+## Options
+
+| Option           | Default                       | What it does                                                                                                                   |
+| ---------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `commentPattern` | `"^no default$"`, in any case | A regular expression for the comment that excuses a missing `default`. It is tested on the last comment after the last `case`. |
+
+{/* good {"options": [{"commentPattern": "^skip default"}]} */}
+
+```js
+switch (status) {
+  case "open":
+    show();
+    break;
+  // skip default: other statuses are not shown
+}
+```
+
+With your own pattern, `// no default` no longer counts:
+
+{/* bad {"options": [{"commentPattern": "^skip default"}]} */}
+
+```js
+switch (status) {
+  case "open":
+    show();
+    break;
+  // no default
+}
+```
+
+## When not to use it
+
+In TypeScript, `@typescript-eslint/switch-exhaustiveness-check` reports every member of a union that has no `case`. It finds a new value when you lint. A `default` only finds it when the code runs.

@@ -1,0 +1,99 @@
+---
+title: "react/function-component-definition"
+description: "Enforce one way to write function components: declaration, expression, or arrow function"
+---
+
+A function component can be a function declaration, a function expression, or an arrow function. A codebase that mixes all three is harder to scan and to search. This rule picks one style for components that have a name and one for components that do not.
+
+By default a named component must be a function declaration, and an unnamed one must be a function expression.
+
+`--fix` rewrites the component in the expected style where it can.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const Greeting = props => {
+  return <h1>Hello, {props.name}</h1>;
+};
+
+const Footer = function (props) {
+  return <footer>{props.text}</footer>;
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Greeting(props) {
+  return <h1>Hello, {props.name}</h1>;
+}
+
+function Footer(props) {
+  return <footer>{props.text}</footer>;
+}
+```
+
+## Options
+
+| Option              | Default                  | What it does                                                                                                                                           |
+| ------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `namedComponents`   | `"function-declaration"` | The style of a function declaration or of a function assigned to a variable: `"function-declaration"`, `"function-expression"`, or `"arrow-function"`. |
+| `unnamedComponents` | `"function-expression"`  | The style of any other component, such as one returned from a function: `"function-expression"` or `"arrow-function"`.                                 |
+
+Each option also takes a list of styles. Every style in the list is allowed, and `--fix` rewrites to the first one.
+
+{/* bad {"options": [{"namedComponents": "arrow-function"}]} */}
+
+```jsx
+function Greeting(props) {
+  return <h1>Hello, {props.name}</h1>;
+}
+```
+
+{/* good {"options": [{"namedComponents": "arrow-function"}]} */}
+
+```jsx
+const Greeting = props => {
+  return <h1>Hello, {props.name}</h1>;
+};
+```
+
+{/* good {"options": [{"namedComponents": ["function-declaration", "arrow-function"]}]} */}
+
+```jsx
+function Greeting(props) {
+  return <h1>Hello, {props.name}</h1>;
+}
+
+const Footer = props => {
+  return <footer>{props.text}</footer>;
+};
+```
+
+An unnamed component:
+
+{/* bad {"options": [{"unnamedComponents": "arrow-function"}]} */}
+
+```jsx
+function withTheme(theme) {
+  return function (props) {
+    return <div className={theme}>{props.children}</div>;
+  };
+}
+```
+
+{/* good {"options": [{"unnamedComponents": "arrow-function"}]} */}
+
+```jsx
+function withTheme(theme) {
+  return props => {
+    return <div className={theme}>{props.children}</div>;
+  };
+}
+```

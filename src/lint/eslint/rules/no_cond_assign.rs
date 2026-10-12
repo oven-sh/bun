@@ -38,6 +38,17 @@ fn place<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
     }
 }
 
+/// `can_stay`: one more pair of parentheses allows it.
+fn hint(assignment: Expr<'_>, can_stay: bool) -> &'static str {
+    let is_plain = matches!(assignment.kind(), ExprKind::Assign { op: None, .. });
+    match (is_plain, can_stay) {
+        (true, true) => "Did you mean ===? To keep the assignment, wrap it in another pair of parentheses.",
+        (true, false) => "Did you mean ===?",
+        (false, true) => "To keep the assignment, wrap it in another pair of parentheses.",
+        (false, false) => "",
+    }
+}
+
 impl NoCondAssign {
     /// `"always"`: an assignment anywhere in a test.
     #[inline(never)]
@@ -53,7 +64,7 @@ impl NoCondAssign {
         if let Some(Some(kind)) = kind
             && !utils::is_assignment_target(e)
         {
-            cx.report(place(e, cx), UNEXPECTED).data("type", kind);
+            cx.report(place(e, cx), UNEXPECTED).data("type", kind).hint(hint(e, false));
         }
     }
 
@@ -90,13 +101,13 @@ impl NoCondAssign {
             _ => 1,
         };
         if test.parens().len() < needed {
-            cx.report(place(test, cx), MISSING);
+            cx.report(place(test, cx), MISSING).hint(hint(test, needed == 1));
         }
     }
 }
 
 impl Rule for NoCondAssign {
-    const META: Meta = Meta::eslint("no-cond-assign", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-cond-assign", Kind::Problem).recommended().hints();
     const ON: On = On::new()
         .exprs(&[ExprTag::Assign, ExprTag::Cond])
         .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);

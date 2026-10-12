@@ -1,0 +1,100 @@
+---
+title: "react-hooks/todo"
+description: "Report valid syntax that the React Compiler does not support yet"
+---
+
+The React Compiler does not handle all of JavaScript yet. When it finds something it cannot handle in a component or hook, it skips that function. The code is valid and still works, but it gets no automatic memoization. Turn this rule on to find those components.
+
+Some of what it reports:
+
+- `try` with `finally`, and `throw` inside `try`
+- `var`
+- `??=`, `||=` and `&&=`
+- `count++` on a variable that a nested function also uses
+- `this`, class expressions, and getters in object literals
+- BigInt literals, tagged templates with `${}`, dynamic `import()`
+- `for await`, and `for (;;)` without a condition
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Report({ load }) {
+  let rows = [];
+  try {
+    rows = load();
+  } finally {
+    log("loaded");
+  }
+  return <Table rows={rows} />;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Report(props) {
+  let rows = props.rows;
+  rows ??= [];
+  return <Table rows={rows} />;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Report({ rows }) {
+  let clicks = 0;
+  const onClick = () => {
+    clicks++;
+  };
+  return <Table rows={rows} onClick={onClick} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Report({ load }) {
+  let rows = [];
+  try {
+    rows = load();
+  } catch (error) {
+    rows = [];
+  }
+  log("loaded");
+  return <Table rows={rows} />;
+}
+```
+
+{/* good */}
+
+```jsx
+function Report(props) {
+  const rows = props.rows ?? [];
+  return <Table rows={rows} />;
+}
+```
+
+A function that is neither a component nor a hook is never compiled, so it can use anything:
+
+{/* good */}
+
+```jsx
+function loadRows(load) {
+  try {
+    return load();
+  } finally {
+    log("loaded");
+  }
+}
+```
+
+## When not to use it
+
+If you do not use the React Compiler, there is nothing to fix here. Even if you do, rewriting working code is only worth it for components that are slow to render.

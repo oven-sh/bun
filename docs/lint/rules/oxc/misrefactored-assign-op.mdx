@@ -1,0 +1,36 @@
+---
+title: "oxc/misrefactored-assign-op"
+description: "Disallow `a += a + b`, where the target is repeated on the right"
+---
+
+Changing `total = total + price` to use `+=` and forgetting to remove `total` from the right side gives `total += total + price`. That adds `total` twice.
+
+The rule reports a compound assignment when the right side uses the same operator and the target is its left operand. For `+`, `*`, `&`, `|` and `^`, where the order does not matter, the target as the right operand is reported too. The target can be a variable or a property such as `cart.total`.
+
+`--fix-suggestions` removes the repeated target: `total += total + price` becomes `total += price`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+total += total + price;
+scale *= 2 * scale;
+cart.remaining -= cart.remaining - used;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+total += price;
+scale *= 2;
+cart.remaining -= used;
+
+// A different operator, or an order that matters
+total += total * rate;
+remaining -= limit - remaining;
+```

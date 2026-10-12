@@ -1,0 +1,72 @@
+---
+title: "react/state-in-constructor"
+description: "Enforce where a class component sets its initial state: in the constructor or in a class field"
+---
+
+A class component can set its initial state in two places: with `this.state = ...` in the constructor, or with a `state = ...` class field. Both work. In a codebase that mixes them, you have to look in two places to find the initial state of a component.
+
+By default the rule asks for the constructor.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class Counter extends React.Component {
+  state = { count: 0 };
+
+  render() {
+    return <span>{this.state.count}</span>;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Counter extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { count: 0 };
+  }
+
+  render() {
+    return <span>{this.state.count}</span>;
+  }
+}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"react/state-in-constructor" = ["error", "never"]
+```
+
+| Option               | What it does                                                                  |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `"always"` (default) | Report a `state` class field. Set the state in the constructor.               |
+| `"never"`            | Report `this.state = ...` in the constructor. Set the state in a class field. |
+
+{/* bad {"options": ["never"]} */}
+
+```jsx
+class Counter extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { count: 0 };
+  }
+}
+```
+
+{/* good {"options": ["never"]} */}
+
+```jsx
+class Counter extends React.Component {
+  state = { count: 0 };
+}
+```

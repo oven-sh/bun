@@ -1,0 +1,65 @@
+---
+title: "no-useless-computed-key"
+description: "Disallow brackets around a property key that is a plain string or number"
+---
+
+`{ ["name"]: value }` is the same as `{ "name": value }`. The brackets are for keys that are computed when the code runs. Around a string or a number they do nothing.
+
+`--fix` removes the brackets.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+const headers = { ["content-type"]: "text/plain", [0]: "first" };
+
+const { ["content-type"]: type } = headers;
+
+class Cache {
+  ["clear"]() {}
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const headers = { "content-type": "text/plain", 0: "first", [name]: value };
+
+const { "content-type": type } = headers;
+
+class Cache {
+  clear() {}
+}
+```
+
+Where the brackets change the meaning, they are allowed. `{ "__proto__": base }` sets the prototype and `{ ["__proto__"]: base }` adds a normal property. In a class, `["constructor"]() {}` is a normal method, and `static prototype() {}` without brackets is a syntax error.
+
+{/* good */}
+
+```js
+const settings = { ["__proto__"]: base };
+
+class Cache {
+  ["constructor"]() {}
+  static ["prototype"]() {}
+}
+```
+
+## Options
+
+| Option                   | Default | What it does                                  |
+| ------------------------ | ------- | --------------------------------------------- |
+| `enforceForClassMembers` | `true`  | Also check the methods and fields of classes. |
+
+{/* good {"options": [{"enforceForClassMembers": false}]} */}
+
+```js
+class Cache {
+  ["clear"]() {}
+}
+```

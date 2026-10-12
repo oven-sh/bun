@@ -1,0 +1,52 @@
+---
+title: "import/no-named-as-default-member"
+description: "Disallow reading a property of a default import that is also a named export of the module"
+---
+
+After `import config from "./config"`, `config.load` is a property of the default export. It is not the named export `load` of the module. If the default export has no such property, you get `undefined`. If it has one, a named import says the same thing more directly and lets bundlers drop the exports you do not use.
+
+The rule reads the imported module and reports `config.load` and `const { load } = config` if the module has a named export `load`.
+
+## Examples
+
+Reported:
+
+{/* file "config.js" */}
+
+```js config.js
+export function load(path) {
+  return JSON.parse(read(path));
+}
+
+export default { port: 3000 };
+```
+
+{/* bad {"count": 2} */}
+
+```js
+import config from "./config";
+
+config.load("./app.json");
+const { load } = config;
+```
+
+Not reported:
+
+{/* file "config.js" */}
+
+```js config.js
+export function load(path) {
+  return JSON.parse(read(path));
+}
+
+export default { port: 3000 };
+```
+
+{/* good */}
+
+```js
+import config, { load } from "./config";
+
+load("./app.json");
+listen(config.port);
+```

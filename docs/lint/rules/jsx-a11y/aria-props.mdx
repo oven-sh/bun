@@ -1,0 +1,30 @@
+---
+title: "jsx-a11y/aria-props"
+description: "Disallow `aria-*` attributes that do not exist"
+---
+
+Browsers and screen readers ignore an `aria-*` attribute they do not know. A typo such as `aria-labeledby` gives no error anywhere. The element loses its label, and you only find out by testing with a screen reader.
+
+The rule checks every attribute that starts with `aria-`, on elements and on components.
+
+`--fix` corrects five common mistakes: `aria-labeledby`, `aria-lable`, `aria-sorted`, `aria-value` and `aria-role`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const name = <input aria-labeledby="name-label" />;
+const menu = <button aria-open={isOpen}>Menu</button>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const name = <input aria-labelledby="name-label" />;
+const menu = <button aria-expanded={isOpen}>Menu</button>;
+```

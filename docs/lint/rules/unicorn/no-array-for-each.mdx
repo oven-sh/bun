@@ -1,0 +1,60 @@
+---
+title: "unicorn/no-array-for-each"
+description: "Require a `for...of` loop instead of `.forEach()`"
+---
+
+You cannot leave a `forEach` early: `break` is a syntax error in the callback, and `return` only ends the current call. An `await` in the callback does not make the loop wait either. A `for...of` loop has `break`, `continue`, `return`, and `await`.
+
+The rule cannot tell what is an array. It reports every method call named `forEach`, including on a `Map`, a `Set`, or a `NodeList`. Those work with `for...of` too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+users.forEach(user => {
+  if (!user.active) return;
+  notify(user);
+});
+```
+
+{/* bad */}
+
+```js
+lines.forEach((line, index) => {
+  console.log(index + 1, line);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+for (const user of users) {
+  if (!user.active) continue;
+  notify(user);
+}
+```
+
+Use `.entries()` when you need the index:
+
+{/* good */}
+
+```js
+for (const [index, line] of lines.entries()) {
+  console.log(index + 1, line);
+}
+```
+
+`Children.forEach()` and `React.Children.forEach()` are not reported:
+
+{/* good */}
+
+```js
+React.Children.forEach(children, child => {
+  register(child);
+});
+```

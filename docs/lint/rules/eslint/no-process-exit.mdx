@@ -1,0 +1,46 @@
+---
+title: "no-process-exit"
+description: "Disallow calls to `process.exit()`"
+---
+
+`process.exit()` stops the process at once. Code further up the call stack gets no chance to handle the problem, `finally` blocks do not run, and output that is still being written can be cut off. A function deep in a library that calls it takes the whole application down.
+
+Throw an error instead, and let the caller decide. To end with a failure code without stopping early, set `process.exitCode`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function loadConfig(path) {
+  if (!exists(path)) {
+    console.error("No config file");
+    process.exit(1);
+  }
+  return read(path);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function loadConfig(path) {
+  if (!exists(path)) {
+    throw new Error(`No config file at ${path}`);
+  }
+  return read(path);
+}
+
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
+```
+
+## When not to use it
+
+The entry file of a command line tool is often the right place for `process.exit()`. Turn the rule off for that file.

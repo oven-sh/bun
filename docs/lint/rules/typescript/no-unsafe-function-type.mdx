@@ -1,0 +1,62 @@
+---
+title: "@typescript-eslint/no-unsafe-function-type"
+description: "Disallow the built-in `Function` type"
+---
+
+A value of type `Function` can be called with any arguments, and the result is `any`, so TypeScript checks nothing about the call. `Function` also accepts classes, which throw when you call them without `new`.
+
+Write the parameters and the return type instead.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+function onChange(listener: Function) {
+  listener("name", 1, 2, 3);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function onChange(listener: (field: string) => void) {
+  listener("name");
+}
+```
+
+An interface that extends `Function` is reported too:
+
+{/* bad */}
+
+```ts
+interface Handler extends Function {
+  priority: number;
+}
+```
+
+To accept any function at all, use a signature that every function matches:
+
+{/* good */}
+
+```ts
+function nameOf(task: (...args: never[]) => unknown) {
+  return task.name;
+}
+```
+
+A type of your own that is named `Function` is not reported:
+
+{/* good */}
+
+```ts
+import type { Function } from "./ast";
+
+export function visit(node: Function) {}
+```

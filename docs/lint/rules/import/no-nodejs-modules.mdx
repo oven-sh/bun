@@ -1,0 +1,48 @@
+---
+title: "import/no-nodejs-modules"
+description: "Disallow importing Node.js builtin modules such as `fs` and `path`"
+---
+
+Code that runs in a browser has no `fs`, `path` or `crypto` module. An import of one either breaks the bundle or pulls in a large polyfill. Turn this rule on for the files that ship to the client.
+
+It checks `import`, `export ... from`, `import()` and `require()`, with and without the `node:` prefix.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+import fs from "fs";
+import { join } from "node:path";
+
+const os = require("os");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { format } from "date-fns";
+import { cart } from "./cart";
+```
+
+## Options
+
+| Option  | Default | What it does                                                                                           |
+| ------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| `allow` | `[]`    | Builtin modules that may be imported, spelled as in the import: `"path"` does not allow `"node:path"`. |
+
+{/* good {"options": [{"allow": ["node:path"]}]} */}
+
+```js
+import { join } from "node:path";
+```
+
+{/* bad {"options": [{"allow": ["node:path"]}]} */}
+
+```js
+import { join } from "path";
+```

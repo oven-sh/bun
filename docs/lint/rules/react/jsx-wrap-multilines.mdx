@@ -1,0 +1,127 @@
+---
+title: "react/jsx-wrap-multilines"
+description: "Require parentheses around JSX that spans several lines"
+---
+
+Without parentheses, JSX that spans several lines has to start on the line of the `return` or the `=`, so its first tag does not line up with its last. Move it down a line to fix that, and `return` followed by a line break returns `undefined`. Parentheses let the JSX start on its own line.
+
+JSX on one line never needs parentheses.
+
+`--fix` adds the parentheses.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Card({ title }) {
+  return (
+    <section>
+      <h2>{title}</h2>
+    </section>
+  );
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Card({ title }) {
+  return (
+    <section>
+      <h2>{title}</h2>
+    </section>
+  );
+}
+
+const empty = <section />;
+```
+
+## Options
+
+Each option is a place where JSX can stand:
+
+| Option        | Default    | Where                                     |
+| ------------- | ---------- | ----------------------------------------- |
+| `declaration` | `"parens"` | `const card = <section>`                  |
+| `assignment`  | `"parens"` | `card = <section>`                        |
+| `return`      | `"parens"` | `return <section>`                        |
+| `arrow`       | `"parens"` | `() => <section>`                         |
+| `condition`   | `"ignore"` | The branches of `open ? <section> : null` |
+| `logical`     | `"ignore"` | The right side of `&&`, `\|\|` and `??`   |
+| `prop`        | `"ignore"` | `<Page header={<section>} />`             |
+
+And each takes one of these values:
+
+| Value                 | What it does                                            |
+| --------------------- | ------------------------------------------------------- |
+| `"parens"` or `true`  | Require parentheses.                                    |
+| `"parens-new-line"`   | Require parentheses, each on a line apart from the JSX. |
+| `"never"`             | Report parentheses around the JSX.                      |
+| `"ignore"` or `false` | Do not check this place.                                |
+
+{/* bad {"options": [{"declaration": "parens-new-line"}]} */}
+
+```jsx
+const card = (
+  <section>
+    <h2>{title}</h2>
+  </section>
+);
+```
+
+{/* good {"options": [{"declaration": "parens-new-line"}]} */}
+
+```jsx
+const card = (
+  <section>
+    <h2>{title}</h2>
+  </section>
+);
+```
+
+{/* bad {"options": [{"logical": "parens"}]} */}
+
+```jsx
+const panel = (
+  <main>
+    {open && (
+      <section>
+        <h2>{title}</h2>
+      </section>
+    )}
+  </main>
+);
+```
+
+{/* bad {"options": [{"return": "never"}]} */}
+
+```jsx
+function Card({ title }) {
+  return (
+    <section>
+      <h2>{title}</h2>
+    </section>
+  );
+}
+```
+
+While `condition` is `"ignore"`, the branches of a conditional that is declared or assigned are checked under `declaration` or `assignment`:
+
+{/* bad */}
+
+```jsx
+const card = open ? (
+  <section>
+    <h2>{title}</h2>
+  </section>
+) : null;
+```
+
+## When not to use it
+
+A formatter such as `bun format` or Prettier already adds these parentheses.

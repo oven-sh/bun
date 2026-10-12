@@ -1,0 +1,44 @@
+---
+title: "unicorn/no-negation-in-equality-check"
+description: "Disallow `!` on the left side of `===`, `!==`, `==`, and `!=`"
+---
+
+`!` binds tighter than `===`, so `!a === b` means `(!a) === b`. It turns `a` into `true` or `false` and compares that with `b`. What was meant is almost always `a !== b`.
+
+`--fix-suggestions` removes the `!` and flips the operator.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+if (!user.role === "admin") {
+  deny();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (user.role !== "admin") {
+  deny();
+}
+```
+
+If you do want to compare the negated value, say so with parentheses. `!!value`, which converts to a boolean, is also allowed:
+
+{/* good */}
+
+```js
+if (!isOpen === wasOpen) {
+  toggle();
+}
+
+if (!!selected === expected) {
+  confirm();
+}
+```

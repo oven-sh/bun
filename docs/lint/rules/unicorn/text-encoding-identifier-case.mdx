@@ -1,0 +1,66 @@
+---
+title: "unicorn/text-encoding-identifier-case"
+description: "Enforce one spelling for the encoding names `utf8` and `ascii`"
+---
+
+`"UTF-8"`, `"utf-8"`, `"Utf8"` and `"utf8"` all name the same encoding in most APIs. With one spelling, a search finds every use. The rule wants `"utf8"` and `"ascii"`.
+
+In three places it wants `"utf-8"`, the name the web standards use: `new TextDecoder("utf-8")`, `<meta charset="utf-8" />` and `<form acceptCharset="utf-8">`.
+
+The rule reports any string that is exactly one of these names, wherever it is, and JSX text such as `<span>UTF-8</span>`. Template literals are not checked.
+
+`--fix` rewrites the string.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const text = await fs.readFile(file, "UTF-8");
+const bytes = Buffer.from(name, "ASCII");
+const decoder = new TextDecoder("utf8");
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+const head = <meta charset="utf8" />;
+const label = <span>UTF-8</span>;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const text = await fs.readFile(file, "utf8");
+const bytes = Buffer.from(name, "ascii");
+const decoder = new TextDecoder("utf-8");
+```
+
+{/* good */}
+
+```jsx
+const head = <meta charset="utf-8" />;
+const label = <span>{`UTF-8`}</span>;
+```
+
+## Options
+
+| Option     | Default | What it does                                      |
+| ---------- | ------- | ------------------------------------------------- |
+| `withDash` | `false` | Require `"utf-8"` everywhere instead of `"utf8"`. |
+
+{/* bad {"options": [{"withDash": true}]} */}
+
+```js
+const text = await fs.readFile(file, "utf8");
+```
+
+{/* good {"options": [{"withDash": true}]} */}
+
+```js
+const text = await fs.readFile(file, "utf-8");
+```

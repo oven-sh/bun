@@ -1,0 +1,48 @@
+---
+title: "no-self-compare"
+description: "Disallow comparing a value with itself"
+---
+
+`user.id === user.id` has the same answer every time, so the condition around it tests nothing. It is almost always a typo for a comparison with another value.
+
+The rule looks at `==`, `===`, `!=`, `!==`, `<`, `>`, `<=` and `>=`, and reports when both sides are written the same way.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function isSameUser(user, other) {
+  return user.id === user.id;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function isSameUser(user, other) {
+  return user.id === other.id;
+}
+```
+
+`value !== value` is `true` only for `NaN`. It is reported too. Say what you mean instead:
+
+{/* bad */}
+
+```js
+if (price !== price) {
+  price = 0;
+}
+```
+
+{/* good */}
+
+```js
+if (Number.isNaN(price)) {
+  price = 0;
+}
+```

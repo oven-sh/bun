@@ -1,0 +1,50 @@
+---
+title: "import/exports-last"
+description: "Require all exports to come after every other statement in the file"
+---
+
+When exports are spread through a file, you have to read all of it to learn what it offers. With every export at the bottom, the last lines of the file are its public interface.
+
+An export is reported if any statement that is not an export comes after it. That counts for `export const`, `export function`, `export default`, `export { }` and `export * from`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+export const retries = 3;
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export { wait };
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const retries = 3;
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export { retries, wait };
+```
+
+{/* good */}
+
+```js
+const cache = new Map();
+
+export const retries = 3;
+export function clear() {
+  cache.clear();
+}
+export default cache;
+```

@@ -1,0 +1,78 @@
+---
+title: "react/no-invalid-html-attribute"
+description: "Disallow values of the `rel` attribute that HTML does not define"
+---
+
+Browsers ignore a `rel` value they do not know. A typo such as `rel="noopenner"` looks like it protects the link, and does nothing.
+
+The rule checks `rel` on HTML elements in JSX and in `React.createElement`. It reports:
+
+- a value that is not a link type at all, or not one for this element: `stylesheet` is for `<link>`, `noopener` is for `<a>`, `<area>` and `<form>`
+- `rel` on an element other than `<a>`, `<area>`, `<form>` and `<link>`
+- an empty `rel`, or one that is not a string
+- `shortcut` without `icon` after it
+- extra whitespace around or between the values
+
+Your own components are not checked. Most reports come with a suggestion that removes the invalid part.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const docs = (
+  <a href="https://example.com" rel="noopenner">
+    Docs
+  </a>
+);
+
+const home = (
+  <a href="/" rel="stylesheet">
+    Home
+  </a>
+);
+
+const logo = <img src="/logo.png" rel="preload" />;
+```
+
+{/* bad {"count": 3} */}
+
+```jsx
+const empty = (
+  <a href="/" rel="">
+    Home
+  </a>
+);
+
+const spaced = (
+  <a href="https://example.com" rel="noopener  noreferrer">
+    Docs
+  </a>
+);
+
+const icon = <link rel="shortcut" href="/favicon.ico" />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const docs = (
+  <a href="https://example.com" rel="noopener noreferrer">
+    Docs
+  </a>
+);
+
+const styles = <link rel="stylesheet" href="/main.css" />;
+
+const icon = <link rel="shortcut icon" href="/favicon.ico" />;
+
+const next = <PageLink rel="following" to="/page/2" />;
+```
+
+## Options
+
+The option is the list of attributes to check. `"rel"` is the only attribute the rule knows, and it is the default: `["rel"]`.

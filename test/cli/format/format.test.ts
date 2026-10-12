@@ -144,7 +144,6 @@ describe.concurrent("bun format", () => {
       ["oxfmt", oxfmt, ["--stdin-filepath", "a.js", "--check"], second("--check", "--stdin-filepath")],
       ["oxfmt", oxfmt, ["--check", "--stdin-filepath=a.js"], second("--stdin-filepath", "--check")],
       ["oxfmt", oxfmt, ["--init", "--check"], second("--check", "--init")],
-      ["oxfmt", {}, ["--write", "--init"], second("--init", "--write")],
       ["oxfmt", { ".oxfmtrc.json": "{" }, ["--list-different", "--write", "."], second("--write", "--list-different")],
     ])("%s: %j %j", async (_, configuration, args, stderr) => {
       const files = { ...configuration, "good.js": formatted, "bad.js": ugly };
@@ -562,79 +561,83 @@ describe.concurrent("bun format", () => {
   test("a syntax error says what is wrong and where, in every language", async () => {
     // One for each language and kind of refusal: the file, and what is said about it.
     const cases: [string, string, string][] = [
-      ["string.css", 'a {\n  b: "x\n}\n', "This string is not closed (2:6)"],
-      ["block.css", "a {\n  b: c;\n", "This block is not closed (1:1)"],
+      ["string.css", 'a {\n  b: "x\n}\n', "Unclosed string (2:6)"],
+      ["block.css", "a {\n  b: c;\n", "Unclosed block (1:1)"],
       ["brace.css", "a {\n}\n}\n", 'Unexpected "}" (3:1)'],
-      ["comment.css", "a {\n  /* b\n}\n", "This comment is not closed (2:3)"],
-      ["bracket.css", "a {\n  b: c(1;\n}\n", "This bracket is not closed (2:7)"],
-      ["url.css", "a {\n  b: url(c;\n}\n", "This bracket is not closed (2:9)"],
-      ["word.css", "a {\n  b c;\n}\n", "This is neither a declaration nor a rule (2:3)"],
+      ["comment.css", "a {\n  /* b\n}\n", "Unclosed comment (2:3)"],
+      ["bracket.css", "a {\n  b: c(1;\n}\n", "Unclosed bracket (2:7)"],
+      ["url.css", "a {\n  b: url(c;\n}\n", "Unclosed bracket (2:9)"],
+      ["word.css", "a {\n  b c;\n}\n", "Expected a declaration or a rule (2:3)"],
       ["at.css", "@ a;\n", 'Expected a name after "@" (1:1)'],
       ["colon.css", "a {\n  b: c: d;\n}\n", 'Unexpected ":" (2:7)'],
       ["first-colon.css", "a {\n  : b;\n  c: d:\n}\n", 'Unexpected ":" (3:7)'],
-      ["no-name.css", "a {\n  (): ;\n}\n", "Expected the name of a property (2:3)"],
+      ["no-name.css", "a {\n  (): ;\n}\n", "Expected a property name (2:3)"],
       ["two-words.css", "a {\n  b c: d;\n}\n", 'Expected ":" (2:5)'],
       ["selector.css", "{\n  a: b;\n}\n", "Expected a selector (1:1)"],
-      ["custom-selector.css", "@custom-selector a;\n", "The parameters of this at-rule cannot be read (1:1)"],
-      ["value.css", "a {\n  b: c);\n}\n", "This value cannot be read (2:6)"],
-      ["interpolation.scss", "a {\n  b: #{$c;\n", "This interpolation is not closed (2:6)"],
-      ["string.scss", 'a {\n  b: "x;\n}\n', "This string is not closed (2:6)"],
+      ["custom-selector.css", "@custom-selector a;\n", "Invalid at-rule parameters (1:1)"],
+      ["value.css", "a {\n  b: c);\n}\n", "Invalid value (2:6)"],
+      ["interpolation.scss", "a {\n  b: #{$c;\n", "Unclosed interpolation (2:6)"],
+      ["string.scss", 'a {\n  b: "x;\n}\n', "Unclosed string (2:6)"],
       ["nested.scss", "a {\n  b: c: {\n    d: e;\n  }\n}\n", 'Unexpected ":" (2:7)'],
-      ["mixin.less", "a {\n  .b(;\n}\n", "This bracket is not closed (2:5)"],
-      ["each.less", "each(@a, {\n", "This bracket is not closed (1:5)"],
-      ["word.less", "a {\n  b c;\n}\n", "This is neither a declaration nor a rule (2:3)"],
+      ["mixin.less", "a {\n  .b(;\n}\n", "Unclosed bracket (2:5)"],
+      ["each.less", "each(@a, {\n", "Unclosed bracket (1:5)"],
+      ["word.less", "a {\n  b c;\n}\n", "Expected a declaration or a rule (2:3)"],
       ["end.graphql", "query {\n  a\n", "Unexpected end of file (3:1)"],
       ["name.graphql", "query {\n}\n", "Expected a name (2:1)"],
       ["value.graphql", "query { a(b: ) }\n", "Expected a value (1:14)"],
-      ["string.graphql", 'query { a(b: "x) }\n', "This string is not closed (1:14)"],
-      ["block-string.graphql", '"""\na\n', "This string is not closed (1:1)"],
+      ["string.graphql", 'query { a(b: "x) }\n', "Unclosed string (1:14)"],
+      ["block-string.graphql", '"""\na\n', "Unclosed string (1:1)"],
       ["escape.graphql", 'query { a(b: "\\x") }\n', "Invalid escape sequence (1:15)"],
       ["definition.graphql", "foo A { b }\n", "Expected a definition (1:1)"],
       ["colon.graphql", "query ($a) { b }\n", 'Expected ":" (1:10)'],
       ["character.graphql", "query { a ? }\n", "Unexpected character (1:11)"],
       ["number.graphql", "query { a(b: 01) }\n", "Invalid number (1:14)"],
       ["digit.graphql", "query { a(b: 1.) }\n", "Expected a digit (1:16)"],
-      ["extension.graphql", "extend type A\n", "This extension adds nothing (1:14)"],
-      ["location.graphql", "directive @a on B\n", "Expected a place where a directive can be (1:17)"],
+      ["extension.graphql", "extend type A\n", "This extension is empty (1:14)"],
+      ["location.graphql", "directive @a on B\n", "Expected a directive location (1:17)"],
       ["brace.graphql", "fragment A on B\n@c d\n", 'Expected "{" (2:4)'],
       ["parenthesis.graphql", "query { a(b: 1 }\n", "Expected a name (1:16)"],
       ["bracket.graphql", "type A { b: [C }\n", 'Expected "]" (1:16)'],
       ["closing-brace.graphql", "schema { query: A ]\n", "Expected a name (1:19)"],
-      ["block.hbs", "<div>\n  {{#if a}}\n</div>\n", "This block is not closed (2:3)"],
+      ["block.hbs", "<div>\n  {{#if a}}\n</div>\n", "Unclosed block (2:3)"],
       ["mustache.hbs", "<div>\n  {{a\n</div>\n", "Unexpected character (3:1)"],
       ["end.hbs", "{{a", "Unexpected end of file (1:4)"],
-      ["end-tag.hbs", "<div>\n<p>\n</div>\n", "This end tag does not close the element that is open (3:1)"],
-      ["name.hbs", "{{#if a}}b{{/each}}\n", "This is not the name of the block that is open (1:11)"],
+      ["end-tag.hbs", "<div>\n<p>\n</div>\n", "This end tag does not match the open element (3:1)"],
+      ["name.hbs", "{{#if a}}b{{/each}}\n", "This name does not match the open block (1:11)"],
       ["no-start.hbs", "</div>\n", "This end tag has no start tag (1:1)"],
       ["hash.hbs", "{{a b=}}\n", "Unexpected token (1:6)"],
-      ["in-tag.hbs", "<div {{#if a}}b{{/if}}></div>\n", "A block can only be in an element or in another block (1:6)"],
+      ["in-tag.hbs", "<div {{#if a}}b{{/if}}></div>\n", "A block can only be inside an element or another block (1:6)"],
       ["partial.hbs", "{{> a}}\n", "Partials, decorators and raw blocks are not supported (1:1)"],
-      ["void.hbs", "<input></input>\n", "This element has no end tag (1:8)"],
-      ["element.hbs", "{{#if a}}<div>{{/if}}\n", "This element is not closed (1:10)"],
-      ["comment.hbs", "{{!-- a\n", "This comment is not closed (1:1)"],
-      ["short-comment.hbs", "{{! a\n", "This comment is not closed (1:1)"],
-      ["string.hbs", '{{a "b}}\n', "This string is not closed (1:5)"],
-      ["segment.hbs", "{{a [b}}\n", "This bracket is not closed (1:5)"],
+      ["void.hbs", "<input></input>\n", "This element cannot have an end tag (1:8)"],
+      ["element.hbs", "{{#if a}}<div>{{/if}}\n", "Unclosed element (1:10)"],
+      ["comment.hbs", "{{!-- a\n", "Unclosed comment (1:1)"],
+      ["short-comment.hbs", "{{! a\n", "Unclosed comment (1:1)"],
+      ["string.hbs", '{{a "b}}\n', "Unclosed string (1:5)"],
+      ["segment.hbs", "{{a [b}}\n", "Unclosed bracket (1:5)"],
       ["path.hbs", "{{a/../b}}\n", '"..", "." and "this" can only be at the start of a path (1:8)'],
       ["params.hbs", "{{#each a as ||}}{{/each}}\n", "Expected a name (1:15)"],
-      ["tag-params.hbs", "<A as |b>\n</A>\n", "These block parameters cannot be read (1:9)"],
+      ["tag-params.hbs", "<A as |b>\n</A>\n", "Invalid block parameters (1:9)"],
       ["attribute.hbs", '<div></div a="b">\n', "An end tag cannot have attributes (1:12)"],
-      ["self-closing.hbs", "<div></div/>\n", "An end tag cannot close itself (1:6)"],
-      ["unquoted.hbs", "<div a=b{{c}}></div>\n", "A value with a mustache and text in it needs quotes (1:8)"],
-      ["tag-name.hbs", "<{{a}}></a>\n", "A mustache cannot be here (1:2)"],
+      ["self-closing.hbs", "<div></div/>\n", "An end tag cannot be self-closing (1:6)"],
+      [
+        "unquoted.hbs",
+        "<div a=b{{c}}></div>\n",
+        "An attribute value that mixes text and a mustache needs quotes (1:8)",
+      ],
+      ["tag-name.hbs", "<{{a}}></a>\n", "A mustache is not allowed here (1:2)"],
       ["equals.hbs", "<div =a></div>\n", "Unexpected character (1:6)"],
       ["sexpr.hbs", "{{a (b}}\n", 'Expected ")" (1:7)'],
-      ["doctype.hbs", "<!DOCTYPE a PUBLIC b>\n", "This doctype cannot be read (1:20)"],
+      ["doctype.hbs", "<!DOCTYPE a PUBLIC b>\n", "Invalid doctype (1:20)"],
       ["close.hbs", "{{a b=c d}}\n", 'Expected "}}" (1:9)'],
-      ["mustache-comment.hbs", "<div a={{! b }}></div>\n", "A comment cannot be here (1:8)"],
-      ["raw.hbs", "{{{{a}}}} b\n", "This block is not closed (1:10)"],
-      ["colon.hbs", "<:></:>\n", "This is not the name of an element (1:1)"],
+      ["mustache-comment.hbs", "<div a={{! b }}></div>\n", "A comment is not allowed here (1:8)"],
+      ["raw.hbs", "{{{{a}}}} b\n", "Unclosed block (1:10)"],
+      ["colon.hbs", "<:></:>\n", "Invalid element name (1:1)"],
       ["mapping.yaml", "a: b: c\n", "Unexpected token (1:5)"],
       ["flow.yaml", "a: [1, 2\nb: 3\n", "Unexpected token (2:1)"],
       ["string.yaml", 'a: "x\n', "Unexpected character (2:1)"],
       ["single.yaml", "a: 'x\n", "Unexpected character (2:1)"],
-      ["tab.yaml", "\ta: 1\n", "A tab cannot be indentation (1:3)"],
-      ["anchors.yaml", "a: &x &y 1\n", "A node has one anchor and one tag at most (1:7)"],
+      ["tab.yaml", "\ta: 1\n", "Tabs cannot be used for indentation (1:3)"],
+      ["anchors.yaml", "a: &x &y 1\n", "A node can have at most one anchor and one tag (1:7)"],
       ["token.yaml", "- a\nb: 1\n", "Unexpected token (2:1)"],
       ["directive.yaml", "%YAML 1.2\na: 1\n", "Unexpected token (2:1)"],
       ["directive-end.yaml", "%YAML 1.2\n", "Unexpected token (2:1)"],
@@ -648,7 +651,7 @@ describe.concurrent("bun format", () => {
       ["comma.yaml", "a: [b c: d e]\n[a b]\n", "Unexpected token (3:1)"],
       ["missing-comma.yaml", "[a: b c: d]\n", "Unexpected token (1:8)"],
       ["comment.yaml", 'a: "b"#c\n', "Unexpected character (1:7)"],
-      ["key.yaml", "[a\nb: c]\n", 'A key without "?" has to be on one line (2:2)'],
+      ["key.yaml", "[a\nb: c]\n", 'A key without "?" must be on one line (2:2)'],
       ["colon.yaml", "a: 1\nb\n", "Unexpected token (3:1)"],
       ["indent.yaml", "a:\n  - b\n - c\n", "Unexpected token (3:2)"],
       ["block-in-flow.yaml", "[a: |\n  b\n]\n", "Unexpected token (1:5)"],
@@ -661,10 +664,10 @@ describe.concurrent("bun format", () => {
       ["set.yaml", "{!!set}\n", "This cannot be formatted (1:2)"],
       ["token.json", '{"a": }\n', "Unexpected token (1:7)"],
       ["end.json", '{"a": 1\n', "Unexpected end of file (2:1)"],
-      ["string.json", '{"a": "x\n}\n', "This string is not closed (1:7)"],
+      ["string.json", '{"a": "x\n}\n', "Unclosed string (1:7)"],
       ["escape.json", '{"a": "\\x"}\n', "Invalid escape sequence (1:7)"],
-      ["comment.json", '{"a": 1} /* b\n', "This comment is not closed (1:10)"],
-      ["more.json", '{"a": 1} 2\n', "Expected the end of the file (1:10)"],
+      ["comment.json", '{"a": 1} /* b\n', "Unclosed comment (1:10)"],
+      ["more.json", '{"a": 1} 2\n', "Expected end of file (1:10)"],
       ["only-comments.json", "// a\n", "Unexpected end of file (2:1)"],
       ["word.json", "nul\n", "Unexpected token (1:1)"],
       ["sign-before-a-string.json", "+''\n", "Unexpected token (1:2)"],
@@ -686,13 +689,13 @@ describe.concurrent("bun format", () => {
     };
     const result = await format(files, []);
     expect(result.stderr).toMatchInlineSnapshot(`
-      "[error] a.css: SyntaxError: This string is not closed (2:16)
+      "[error] a.css: SyntaxError: Unclosed string (2:16)
       [error]   1 | a {
       [error] > 2 |   /* é😀 */ b: "x
       [error]     |                ^
       [error]   3 | }
       [error]   4 |
-      [error] b.css: SyntaxError: This string is not closed (7:6)
+      [error] b.css: SyntaxError: Unclosed string (7:6)
       [error]    5 |
       [error]    6 | d {
       [error] >  7 |   e: "f
@@ -704,7 +707,7 @@ describe.concurrent("bun format", () => {
       [error] > 1 | const a = ;
       [error]     |           ^
       [error]   2 |
-      [error] d.yaml: SyntaxError: A tab cannot be indentation (2:2)
+      [error] d.yaml: SyntaxError: Tabs cannot be used for indentation (2:2)
       [error]   1 | a:
       [error] > 2 | 	- b
       [error]     | 	^
@@ -714,7 +717,7 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(2);
     const stdin = await format({}, ["--stdin-filepath", "a.css"], { stdin: "a {\n" });
     expect(stdin.stderr).toMatchInlineSnapshot(`
-      "[error] a.css: SyntaxError: This block is not closed (1:1)
+      "[error] a.css: SyntaxError: Unclosed block (1:1)
       [error] > 1 | a {
       [error]     | ^
       [error]   2 |"
@@ -746,7 +749,7 @@ describe.concurrent("bun format", () => {
       reads: ["a.js"],
     });
     expect(result.files).toEqual({ "a.js": text });
-    expect(result.stderr).toContain("[error] a.js: formatting would change what the code means.");
+    expect(result.stderr).toContain("[error] a.js: formatting would change what the code does.");
     expect(result.exitCode).toBe(2);
   });
 
@@ -814,9 +817,7 @@ describe.concurrent("bun format", () => {
     };
     const files = Object.fromEntries(Object.entries(damaged).map(([name, text]) => [`${name}.hbs`, text]));
     const errors = Object.keys(files)
-      .map(
-        name => `[error] ${name}: formatting it the way Prettier does would change what it means. It is left as it is.`,
-      )
+      .map(name => `[error] ${name}: formatting like Prettier would change its meaning. It was not formatted.`)
       .sort();
     const errorsIn = (stderr: string) =>
       stderr
@@ -837,7 +838,7 @@ describe.concurrent("bun format", () => {
       const result = await format({}, ["--stdin-filepath", "a.hbs"], { stdin: damaged.doctype });
       expect(result.raw).toBe("");
       expect(errorsIn(result.stderr)).toEqual([
-        "[error] a.hbs: formatting it the way Prettier does would change what it means. It is left as it is.",
+        "[error] a.hbs: formatting like Prettier would change its meaning. It was not formatted.",
       ]);
       expect(result.exitCode).toBe(2);
     });
@@ -969,7 +970,7 @@ describe.concurrent("bun format", () => {
     // Prettier 3.9.9 writes a media query in lower case, which makes a `k` of the Kelvin sign.
     const lossy = "<style>@media (\u212Aa){a{b:c}}</style>\n";
     const error = (name: string) =>
-      `[error] ${name}: formatting it the way Prettier does would change what is in it. It is left as it is.`;
+      `[error] ${name}: formatting like Prettier would change its contents. It was not formatted.`;
 
     test.each([[[] as string[]], [["--check"]], [["-l"]]])("%j", async args => {
       const result = await format({ "a.html": lossy, "b.html": "<p   >a</p>\n" }, args, {
@@ -1050,7 +1051,7 @@ describe.concurrent("bun format", () => {
     const text = "const a = html`<${b}>c`;\n";
     const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": text });
-    expect(result.stderr).toContain("[error] a.js: formatting would change what the code means.");
+    expect(result.stderr).toContain("[error] a.js: formatting would change what the code does.");
     expect(result.exitCode).toBe(2);
   });
 
@@ -1085,12 +1086,13 @@ describe.concurrent("bun format", () => {
     const left = { "a.astro": "<p   >a</p>\n", "b.astro": "<p   >b</p>\n" };
     const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n', ...left, "c.js": ugly };
     const reads = [...Object.keys(left), "c.js"];
-    const text = "2 files are in a language that bun format does not support yet, and left as they are: 2 .astro";
+    const text = "2 files were not formatted because bun format does not support their language yet: 2 .astro";
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ ...left, "c.js": formatted });
-    expect(result.stderr.trimEnd().split("\n").at(-1)).toBe(
-      `[error] ${text}. With --allow-unsupported this is a warning.`,
-    );
+    expect(result.stderr.trimEnd().split("\n").slice(-2)).toEqual([
+      `[error] ${text}`,
+      "[error]   Use --allow-unsupported to make this a warning.",
+    ]);
     expect(result.exitCode).toBe(2);
     const checked = await format({ ...files, "c.js": formatted }, ["--check"], { reads });
     expect(checked.stderr).toContain(`[error] ${text}`);
@@ -1143,7 +1145,7 @@ exports.format = async (text, options) => {
         const paths = [JSON.parse(calls[0]).filepath, ...result.files[reads[3]]!.trim().split("\n")];
         expect(paths.map(it => basename(it))).toEqual(["a.svelte", "a.svelte", ".prettierrc"]);
         expect(paths).toEqual(paths.map(it => resolve(it)));
-        expect(result.stderr).toContain("1 file was handed to the Prettier of the project");
+        expect(result.stderr).toContain("Used your installed Prettier for 1 file in a language that needs a plugin");
         expect(result.exitCode).toBe(0);
       },
       timeout,
@@ -1242,13 +1244,15 @@ exports.format = async (text, options) => {
         ...Object.fromEntries(installed.map(name => [name, "{}"])),
       };
       const stdin = "<p   >c</p>\n";
-      const unsupported = "1 file is in a language that bun format does not support yet, and left as it is: 1 .svelte";
+      const unsupported = "1 file was not formatted because bun format does not support its language yet: 1 .svelte";
       test.each([[[]], [["--check"]], [["--list-different"]]])("%j", async flags => {
         const result = await format(project, [...flags, "--stdin-filepath", "c.svelte"], { stdin });
         expect(result.raw).toBe("");
         expect(result.stderr.split("\n")).toEqual([
-          `[warn] Not installed: ${missing}. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.`,
-          `[error] ${unsupported}. With --allow-unsupported this is a warning.`,
+          `[warn] Not installed: ${missing}`,
+          "[warn]   Install prettier and every plugin in your config, and bun format will use them for these files.",
+          `[error] ${unsupported}`,
+          "[error]   Use --allow-unsupported to make this a warning.",
         ]);
         expect(result.exitCode).toBe(2);
       });
@@ -1391,9 +1395,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         const result = await format(others, [], { reads: ["a.svelte"] });
         expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
         expect(result.stderr).toContain(
-          "[warn] Not installed: prettier-plugin-svelte. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+          "[warn] Not installed: prettier-plugin-svelte\n[warn]   Install prettier and every plugin in your config, and bun format will use them for these files.",
         );
-        expect(result.stderr).toContain("and left as it is: 1 .svelte.");
+        expect(result.stderr).toContain("does not support its language yet: 1 .svelte\n");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -1412,18 +1416,18 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const reads = Object.keys(files);
     const result = await format({ ...files, ".oxfmtrc.json": '{ "svelte": {} }\n' }, [], { reads });
     expect(result.files).toEqual(after);
-    expect(result.stderr).toContain("does not support yet, and left as it is: 1 .svelte.");
+    expect(result.stderr).toContain("does not support its language yet: 1 .svelte\n");
     expect(result.exitCode).toBe(2);
     const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
     expect(without.files).toEqual(after);
-    expect(without.stderr).not.toContain("does not support yet");
+    expect(without.stderr).not.toContain("does not support");
     expect(without.exitCode).toBe(0);
     // oxfmt 0.72 formats the one, and gives the other back.
     const piped = (config: string) =>
       format({ ".oxfmtrc.json": config }, ["--stdin-filepath", "a.svelte"], { stdin: files["a.svelte"] });
     expect(await piped('{ "svelte": {} }\n')).toMatchObject({
       raw: "",
-      stderr: expect.stringContaining("does not support yet, and left as it is: 1 .svelte."),
+      stderr: expect.stringContaining("does not support its language yet: 1 .svelte\n"),
       exitCode: 2,
     });
     expect(await piped("{}\n")).toMatchObject({ raw: files["a.svelte"], stderr: "", exitCode: 0 });
@@ -1498,10 +1502,10 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     ['{ "semi": null }', "Invalid semi value: null."],
     ['{ "semi": "true" }', 'Invalid semi value: "true".'],
     ['{ "endOfLine": null }', "Invalid endOfLine value: null."],
-    ['{ "plugins": "x" }', '"plugins" is not an array.'],
-    ['{ "overrides": 1 }', '"overrides" is not an array of objects with "files"'],
-    ['{ "overrides": [{ "options": {} }] }', '"overrides" is not an array of objects with "files"'],
-    ['{ "overrides": [{ "files": 1 }] }', '"overrides" is not an array of objects with "files"'],
+    ['{ "plugins": "x" }', '"plugins" must be an array'],
+    ['{ "overrides": 1 }', '"overrides" must be an array of objects, each with "files"'],
+    ['{ "overrides": [{ "options": {} }] }', '"overrides" must be an array of objects, each with "files"'],
+    ['{ "overrides": [{ "files": 1 }] }', '"overrides" must be an array of objects, each with "files"'],
   ])("a .prettierrc that Prettier cannot use is an error: %s", async (config, message) => {
     const result = await format({ ".prettierrc": config, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe(ugly);
@@ -1605,23 +1609,25 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ "a.js": ugly, "b.astro": files["b.astro"], "other/c.js": formatted });
     expect(result.stderr).toContain(
-      "[error] 2 files are left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: prettier-plugin-brace-style, ./own.js. With --allow-unsupported they are formatted without.",
+      "[error] 2 files were not formatted because the Prettier config uses plugins that bun format does not include: prettier-plugin-brace-style, ./own.js\n[error]   Use --allow-unsupported to format them without the plugins.",
     );
-    expect(result.stderr).toContain("[error] 1 file is in a language that bun format does not support yet");
+    expect(result.stderr).toContain(
+      "[error] 1 file was not formatted because bun format does not support its language yet",
+    );
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
     expect(allowed.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "other/c.js": formatted });
-    expect(allowed.stderr).toContain("[warn] Plugins are not supported");
+    expect(allowed.stderr).toContain("has no effect because bun format does not load Prettier plugins");
     expect(allowed.exitCode).toBe(0);
     const flag = await format({ "a.js": ugly }, ["--plugin", "prettier-plugin-brace-style"], { reads: ["a.js"] });
     expect(flag.files["a.js"]).toBe(ugly);
-    expect(flag.stderr).toContain("bun format does not have the plugin prettier-plugin-brace-style");
+    expect(flag.stderr).toContain("bun format does not include the plugin prettier-plugin-brace-style\n");
     expect(flag.exitCode).toBe(2);
     for (const flags of [[], ["--check"], ["--list-different"]]) {
       const piped = await format(files, [...flags, "--stdin-filepath", "d.js"], { stdin: ugly });
       expect(piped.raw).toBe("");
       expect(piped.stderr).toBe(
-        "[error] 1 file is left as it is: the configuration names plugins that bun format does not have, and that may print it in another way: prettier-plugin-brace-style, ./own.js. With --allow-unsupported it is formatted without.",
+        "[error] 1 file was not formatted because the Prettier config uses plugins that bun format does not include: prettier-plugin-brace-style, ./own.js\n[error]   Use --allow-unsupported to format it without the plugins.",
       );
       expect(piped.exitCode).toBe(2);
     }
@@ -1635,7 +1641,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const result = await format(files, [], { reads: ["a.js", "legacy/b.js"] });
     expect(result.files).toEqual({ "a.js": formatted, "legacy/b.js": ugly });
     expect(result.stderr).toContain(
-      "[error] 1 file is left as it is: the configuration names plugins that bun format does not have, and that may print it in another way: prettier-plugin-brace-style.",
+      "[error] 1 file was not formatted because the Prettier config uses plugins that bun format does not include: prettier-plugin-brace-style\n",
     );
     expect(result.exitCode).toBe(2);
     // An override that empties the list takes its files out.
@@ -1659,7 +1665,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     };
     const result = await format(files, [], { reads: ["a.js", "b.astro", "c.svelte"] });
     expect(result.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "c.svelte": files["c.svelte"] });
-    expect(result.stderr).toContain("and left as it is: 1 .astro.");
+    expect(result.stderr).toContain("does not support its language yet: 1 .astro\n");
     expect(result.exitCode).toBe(2);
   });
 
@@ -1731,7 +1737,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       );
       expect(both.files["a.ts"]).toBe(asPrettier);
       expect(both.stderr).toContain(
-        "[warn] There is no configuration file, and the project depends on both oxfmt and prettier",
+        "[warn] No config file found, and package.json depends on both oxfmt and prettier\n[warn]   Formatting like Prettier.",
       );
       // A configuration file says more than that.
       expect(
@@ -1806,17 +1812,6 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       const result = await format(files, ["--config", "config/oxfmtrc.json"], { reads: ["a.ts", "pnpm-lock.yaml"] });
       expect(result.files).toEqual({ "a.ts": asOxfmt, "pnpm-lock.yaml": "a:   1\n" });
       expect(result.exitCode).toBe(0);
-    });
-
-    test("--init writes an .oxfmtrc.json, as oxfmt does, and not over one that is there", async () => {
-      const result = await format({ "a.ts": asOxfmt }, ["--init"], { reads: [".oxfmtrc.json", "a.ts"] });
-      expect(result.files).toEqual({ ".oxfmtrc.json": '{\n  "ignorePatterns": []\n}\n', "a.ts": asOxfmt });
-      expect(result.stdout).toBe("Created `.oxfmtrc.json`.");
-      expect(result.exitCode).toBe(0);
-      const again = await format({ ".oxfmtrc.jsonc": "{}\n" }, ["--init"], { reads: [".oxfmtrc.jsonc"] });
-      expect(again.files[".oxfmtrc.jsonc"]).toBe("{}\n");
-      expect(again.stderr).toContain("A configuration file of oxfmt already exists.");
-      expect(again.exitCode).toBe(1);
     });
   });
 
@@ -1920,21 +1915,25 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       const result = await format({ ...files, ".prettierrc": config }, [], { reads });
       expect(result.files).toEqual({ ...files, "d.js": "d;\n" });
       expect(result.stderr).toContain(
-        "3 files are in a language that bun format does not support yet, and left as they are: 1 .astro, 1 .foo, 1 .js",
+        "3 files were not formatted because bun format does not support their language yet: 1 .astro, 1 .foo, 1 .js",
       );
       expect(result.exitCode).toBe(2);
       const checked = await format({ ...files, ".prettierrc": config, "d.js": "d;\n" }, ["--check", ...reads], {
         reads,
       });
       expect(checked.files).toEqual({ ...files, "d.js": "d;\n" });
-      expect(checked.stderr).toContain("3 files are in a language that bun format does not support yet");
+      expect(checked.stderr).toContain(
+        "3 files were not formatted because bun format does not support their language yet",
+      );
       expect(checked.exitCode).toBe(2);
     });
 
     test("at the top of a .prettierrc: every file is left as it is", async () => {
       const result = await format({ ...files, ".prettierrc": '{ "parser": "nonsense" }\n' }, [], { reads });
       expect(result.files).toEqual(files);
-      expect(result.stderr).toContain("files are in a language that bun format does not support yet");
+      expect(result.stderr).toContain(
+        "files were not formatted because bun format does not support their language yet",
+      );
       expect(result.exitCode).toBe(2);
     });
 
@@ -1945,7 +1944,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       });
       expect(result.raw).toBe("");
       expect(result.stderr).toBe(
-        "[error] 1 file is in a language that bun format does not support yet, and left as it is: 1 .astro. With --allow-unsupported this is a warning.",
+        "[error] 1 file was not formatted because bun format does not support its language yet: 1 .astro\n[error]   Use --allow-unsupported to make this a warning.",
       );
       expect(result.exitCode).toBe(2);
     });
@@ -3858,7 +3857,7 @@ try {
     test("--help", async () => {
       const result = await format({}, ["--help"]);
       expect(result.stdout).toContain("bun format");
-      expect(result.stdout).toContain("--list-different");
+      expect(result.stdout).toContain("--check");
       expect(result.exitCode).toBe(0);
     });
   });
@@ -5644,7 +5643,6 @@ describe.concurrent("[format] in bunfig.toml", () => {
     ["printwidth = 80", `unknown key "printwidth" in [format]. Did you mean "printWidth"?`],
     [`plugins = ["a"]`, `unknown key "plugins" in [format].`],
     [`parser = "babel"`, `unknown key "parser" in [format].`],
-    ["overrides = []", `unknown key "overrides" in [format].`],
   ])("%s is refused: %s", async (line, message) => {
     const result = await run({ "bunfig.toml": `[format]\n${line}\n`, "a.js": ugly }, ["a.js"]);
     expect(result.stderr).toContain(message);
@@ -5665,19 +5663,29 @@ describe.concurrent("[format] in bunfig.toml", () => {
   });
 
   test("every flag in the help is a key, or is refused as a key with its name", async () => {
-    const help = await format({}, ["--help"]);
+    const help = await format({}, ["--help", "--all"]);
     const flags = [...help.stdout.matchAll(/^\s+(?:-\w, )?--([a-z-]+)/gm)].map(it => it[1]);
-    expect(flags.length).toBeGreaterThan(40);
+    expect(flags.length).toBeGreaterThan(60);
     const answers = await Promise.all(
       flags.map(async flag => {
         const positive = flag.replace(/^no-/, "");
         const key =
           positive === "ignore-pattern" ? "ignorePatterns" : positive.replace(/-(\w)/g, (_, it) => it.toUpperCase());
         // Of a type that no key takes: one that exists says what it expects.
-        const { stderr } = await run({ "bunfig.toml": `[format]\n${key} = {}\n` }, ["--list-files"]);
-        return [flag, /expected \w+ but received object|cannot be set in bunfig\.toml/.test(stderr)];
+        const { stderr } = await run({ "bunfig.toml": `[format]\n${key} = [[]]\n` }, ["--list-files"]);
+        return [flag, /expected [\w ]+ but received array|cannot be set in bunfig\.toml/.test(stderr)];
       }),
     );
-    expect(answers.filter(it => !it[1])).toEqual([]);
+    // Flags of Prettier and oxfmt that say nothing about a project, or have no effect.
+    expect(answers.filter(it => !it[1]).map(it => it[0])).toEqual([
+      "parser",
+      "plugin",
+      "jsx-bracket-same-line",
+      "cache",
+      "cache-location",
+      "cache-strategy",
+      "experimental-cli",
+      "lsp",
+    ]);
   });
 });

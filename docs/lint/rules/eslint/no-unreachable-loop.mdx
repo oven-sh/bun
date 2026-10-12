@@ -1,0 +1,67 @@
+---
+title: "no-unreachable-loop"
+description: "Disallow loops with a body that can only run once"
+---
+
+If every path through the body of a loop ends in `break`, `return`, or `throw`, the loop never gets to a second pass. Usually a condition is missing around the exit, or `continue` was meant.
+
+## Examples
+
+Reported. Only the first result is ever looked at:
+
+{/* bad */}
+
+```js
+function firstError(results) {
+  for (const result of results) {
+    if (result.ok) {
+      return null;
+    } else {
+      return result.error;
+    }
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function firstError(results) {
+  for (const result of results) {
+    if (!result.ok) {
+      return result.error;
+    }
+  }
+  return null;
+}
+```
+
+## Options
+
+| Option   | Default | What it does                                                                                                                |
+| -------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ignore` | `[]`    | Kinds of loops to skip: `"WhileStatement"`, `"DoWhileStatement"`, `"ForStatement"`, `"ForInStatement"`, `"ForOfStatement"`. |
+
+A `for...of` loop that returns at once is a short way to get the first item of an iterable. By default it is reported:
+
+{/* bad */}
+
+```js
+function first(items) {
+  for (const item of items) {
+    return item;
+  }
+}
+```
+
+{/* good {"options": [{"ignore": ["ForOfStatement"]}]} */}
+
+```js
+function first(items) {
+  for (const item of items) {
+    return item;
+  }
+}
+```

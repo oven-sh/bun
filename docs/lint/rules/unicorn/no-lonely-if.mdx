@@ -1,0 +1,53 @@
+---
+title: "unicorn/no-lonely-if"
+description: "Disallow an `if` as the only statement in another `if` when neither has an `else`"
+---
+
+Two nested `if` statements with nothing else between them test one combined condition. Joined with `&&`, the code loses a level of indentation and the whole condition is in one place.
+
+`no-lonely-if` without the `unicorn/` prefix is a different rule. It reports an `if` that is alone in an `else` block.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+if (user) {
+  if (user.isAdmin) {
+    showSettings();
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (user && user.isAdmin) {
+  showSettings();
+}
+```
+
+The two cannot be merged when either one has an `else`, or when the outer block does something more:
+
+{/* good */}
+
+```js
+if (user) {
+  if (user.isAdmin) {
+    showSettings();
+  }
+} else {
+  showLogin();
+}
+
+if (user) {
+  greet(user);
+  if (user.isAdmin) {
+    showSettings();
+  }
+}
+```

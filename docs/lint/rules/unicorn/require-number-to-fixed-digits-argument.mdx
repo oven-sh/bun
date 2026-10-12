@@ -1,0 +1,29 @@
+---
+title: "unicorn/require-number-to-fixed-digits-argument"
+description: "Require the digits argument of `Number#toFixed()`"
+---
+
+Without an argument, `toFixed()` rounds to zero decimals: `(1.5).toFixed()` is `"2"`. A reader may expect two decimals, or the number unchanged. Writing the number of digits removes the guess.
+
+The rule looks at the method name only, so it reports `.toFixed()` without arguments on any object.
+
+`--fix` adds `0`, which keeps the result the same.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const total = price.toFixed();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const total = price.toFixed(2);
+const rounded = price.toFixed(0);
+```

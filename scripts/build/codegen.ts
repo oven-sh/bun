@@ -339,6 +339,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
   emitBindgen(ctx);
   emitJsSink(ctx);
   emitObjectLuts(ctx);
+  emitLintDocs(ctx);
   emitCompressedEmbeds(ctx);
 
   n.phony("codegen", o.all);
@@ -473,13 +474,14 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       "completions/bun.fish",
       "src/runtime/bake/bun-framework-react/client.tsx",
     ].map(rel => ({ input: resolve(cfg.cwd, rel), name: rel })),
-    // Codegen outputs (browser bundles), named `codegen/<path in codegenDir>`.
+    // Codegen outputs (browser bundles, the docs of the lint rules), named `codegen/<path in codegenDir>`.
     ...[
       "bake.client.js",
       "bake.error.js",
       "bun-error/index.js",
       "bun-error/bun-error.css",
       "node-fallbacks/react-refresh.js",
+      ...LINT_DOCS,
     ].map(rel => ({ input: resolve(cfg.codegenDir, rel), name: `codegen/${rel}` })),
   ];
   for (const { input, name } of assets) {
@@ -495,6 +497,27 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
     // Debug reads the originals at runtime; only release embeds these.
     o.rustInputs.push(out);
   }
+}
+
+/** What `bun lint --rules` and `bun lint --explain` print, in `codegenDir`. */
+const LINT_DOCS = ["lint-rule-descriptions.txt", "lint-rule-pages.txt"];
+
+function emitLintDocs({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-lint-docs.ts");
+  const outputs = LINT_DOCS.map(name => resolve(cfg.codegenDir, name));
+  n.build({
+    outputs,
+    rule: "codegen",
+    inputs: [script, ...sources.lintRuleDocs],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "lint-rule-*.txt",
+      args: shJoin(cfg, [script, resolve(cfg.cwd, "docs", "lint", "rules"), ...outputs]),
+    },
+  });
+  o.all.push(...outputs);
+  o.rustInputs.push(...outputs);
 }
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {

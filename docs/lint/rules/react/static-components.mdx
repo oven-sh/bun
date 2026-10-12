@@ -1,0 +1,55 @@
+---
+title: "react-hooks/static-components"
+description: "Disallow components that are created while another component renders"
+---
+
+React decides whether an element is the same one as last time by comparing the component function. A component that is created inside another component is a new function on every render. React then throws the old subtree away and mounts a new one, so its state is lost, its DOM nodes are rebuilt, and an input in it loses focus.
+
+The rule reports a JSX tag that is a local variable holding a function written in the component, the result of a call, or the result of `new`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Form({ label }) {
+  const Field = () => <input placeholder={label} />;
+  return <Field />;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Page({ theme }) {
+  const Panel = createPanel(theme);
+  return <Panel />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Field({ label }) {
+  return <input placeholder={label} />;
+}
+
+function Form({ label }) {
+  return <Field label={label} />;
+}
+```
+
+Choosing between components that exist already is fine:
+
+{/* good */}
+
+```jsx
+function Heading({ large, children }) {
+  const Tag = large ? BigTitle : SmallTitle;
+  return <Tag>{children}</Tag>;
+}
+```

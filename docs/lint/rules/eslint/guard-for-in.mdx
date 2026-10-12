@@ -1,0 +1,59 @@
+---
+title: "guard-for-in"
+description: "Require the body of a `for...in` loop to be guarded by an `if`"
+---
+
+`for...in` visits the enumerable properties an object inherits from its prototype chain as well as its own. If anything was added to a prototype, the loop body runs for keys the object does not have itself.
+
+The rule looks only at the shape of the loop. The body has to be a single `if`, or start with an `if` that does nothing but `continue`. It does not check what the condition tests.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+for (const key in settings) {
+  apply(key, settings[key]);
+}
+```
+
+{/* bad */}
+
+```js
+for (const key in settings) {
+  if (Object.hasOwn(settings, key)) {
+    apply(key, settings[key]);
+  }
+  count++;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+for (const key in settings) {
+  if (Object.hasOwn(settings, key)) {
+    apply(key, settings[key]);
+  }
+}
+
+for (const key in settings) {
+  if (!Object.hasOwn(settings, key)) continue;
+  apply(key, settings[key]);
+  count++;
+}
+```
+
+`Object.keys()` returns only the object's own keys, so a `for...of` loop over it needs no guard:
+
+{/* good */}
+
+```js
+for (const key of Object.keys(settings)) {
+  apply(key, settings[key]);
+}
+```

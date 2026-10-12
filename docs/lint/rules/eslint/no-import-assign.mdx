@@ -1,0 +1,36 @@
+---
+title: "no-import-assign"
+description: "Disallow assigning to imported bindings"
+---
+
+An import is a read-only view of what the other module exports. Assigning to it throws a `TypeError` when the line runs. The members of a namespace import (`import * as name`) are read-only too.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 5} */}
+
+```js
+import config, { retries } from "./config.js";
+import * as settings from "./settings.js";
+
+config = {};
+retries += 1;
+settings.debug = true;
+delete settings.debug;
+Object.assign(settings, { debug: true });
+```
+
+Not reported. The object that a default or a named import points to is an ordinary object, so you can change its properties. To change a variable of another module, call a function that the module exports for that:
+
+{/* good */}
+
+```js
+import config, { setRetries } from "./config.js";
+
+config.debug = true;
+setRetries(3);
+```

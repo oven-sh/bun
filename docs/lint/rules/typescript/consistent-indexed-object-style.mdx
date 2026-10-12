@@ -1,0 +1,72 @@
+---
+title: "@typescript-eslint/consistent-indexed-object-style"
+description: "Require either `Record<K, V>` or an index signature, consistently"
+---
+
+`Record<string, number>` and `{ [key: string]: number }` describe the same object: any string key, with a number as its value. This rule picks one way to write it. By default it is `Record`.
+
+`--fix` rewrites the type to the other form where that is safe.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+type Scores = { [player: string]: number };
+
+interface Prices {
+  [product: string]: number;
+}
+```
+
+A mapped type that does not use its key is also a `Record`:
+
+{/* bad */}
+
+```ts
+type Flags = { [Name in "debug" | "verbose"]: boolean };
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+type Scores = Record<string, number>;
+type Prices = Record<string, number>;
+type Flags = Record<"debug" | "verbose", boolean>;
+```
+
+An index signature next to other members cannot be a `Record`. Neither can a type that refers to itself, because a type alias for `Record` cannot be circular:
+
+{/* good */}
+
+```ts
+interface Headers {
+  [name: string]: string;
+  host: string;
+}
+
+type Tree = { [name: string]: Tree };
+```
+
+## Options
+
+| Option               | What it does               |
+| -------------------- | -------------------------- |
+| `"record"` (default) | Require `Record<K, V>`.    |
+| `"index-signature"`  | Require `{ [key: K]: V }`. |
+
+{/* bad {"options": ["index-signature"]} */}
+
+```ts
+type Scores = Record<string, number>;
+```
+
+{/* good {"options": ["index-signature"]} */}
+
+```ts
+type Scores = { [player: string]: number };
+```

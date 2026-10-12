@@ -1,0 +1,28 @@
+---
+title: "no-buffer-constructor"
+description: "Disallow the deprecated `Buffer()` constructor"
+---
+
+`Buffer(value)` does different things depending on the type of `value`: a string is copied, a number allocates that many bytes. If `value` comes from a request, a caller who sends a number where you expect a string decides how much memory your server allocates.
+
+Node.js has deprecated the constructor. `Buffer.from()`, `Buffer.alloc()` and `Buffer.allocUnsafe()` each do one thing, and `Buffer.from()` throws if it gets a number.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const header = new Buffer(16);
+const name = Buffer("Ada", "utf8");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const header = Buffer.alloc(16);
+const name = Buffer.from("Ada", "utf8");
+```

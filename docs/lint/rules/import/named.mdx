@@ -1,0 +1,64 @@
+---
+title: "import/named"
+description: "Require each named import to match a named export in the imported file"
+---
+
+`import { formatDate } from "./dates"` fails when the module loads if `./dates` has no export with that name. The usual causes are a typo, a rename that missed a file, or braces around what is really the default export.
+
+The rule reads the imported file and follows its `export * from` lines. It also checks `export { name } from`. It stays quiet when the file cannot be found and when the file has no `import` or `export` at all, as in a CommonJS module. Type-only imports are not checked.
+
+## Examples
+
+Reported:
+
+{/* file "dates.js" */}
+
+```js
+export function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+```
+
+{/* bad {"count": 2} */}
+
+```js
+import { fromatDate } from "./dates.js";
+export { parseDate } from "./dates.js";
+
+console.log(fromatDate(new Date()));
+```
+
+Not reported:
+
+{/* file "dates.js" */}
+
+```js
+export function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+```
+
+{/* file "index.js" */}
+
+```js
+export * from "./dates.js";
+```
+
+{/* good */}
+
+```js
+import { formatDate } from "./dates.js";
+import { formatDate as format } from "./index.js";
+
+console.log(formatDate(new Date()), format(new Date()));
+```
+
+## Options
+
+| Option     | Default | What it does                                                                                                       |
+| ---------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
+| `commonjs` | `false` | Also check names that are destructured from a `require()` call, as in `const { formatDate } = require("./dates")`. |
+
+## When not to use it
+
+TypeScript reports an import of a name that is not exported by itself. In a project that is type checked, this rule finds nothing new.

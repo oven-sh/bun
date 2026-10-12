@@ -1,0 +1,72 @@
+---
+title: "no-unsafe-negation"
+description: "Disallow negating the left operand of `in` and `instanceof`"
+---
+
+`!` binds tighter than `in` and `instanceof`. So `!key in cache` means `(!key) in cache`, which asks if `cache` has a property called `"true"` or `"false"`. And `!error instanceof TypeError` is always `false`, because a boolean is not an instance of anything.
+
+The rule cannot tell which meaning you want, so it suggests both: negate the whole expression, or put the negation in parentheses.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where the type checker reports the same thing.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+if ((!key) in cache) {
+  cache[key] = load(key);
+}
+
+if ((!error) instanceof TypeError) {
+  throw error;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (!(key in cache)) {
+  cache[key] = load(key);
+}
+
+if (!(error instanceof TypeError)) {
+  throw error;
+}
+```
+
+If you do want to negate the left operand, say so with parentheses:
+
+{/* good */}
+
+```js
+const hasFlag = (!enabled) in counts;
+```
+
+## Options
+
+| Option                        | Default | What it does                        |
+| ----------------------------- | ------- | ----------------------------------- |
+| `enforceForOrderingRelations` | `false` | Also check `<`, `>`, `<=` and `>=`. |
+
+`!count < limit` compares `true` or `false` with `limit`:
+
+{/* bad {"options": [{"enforceForOrderingRelations": true}]} */}
+
+```js
+if (!count < limit) {
+  stop();
+}
+```
+
+{/* good {"options": [{"enforceForOrderingRelations": true}]} */}
+
+```js
+if (!(count < limit)) {
+  stop();
+}
+```

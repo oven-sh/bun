@@ -1,0 +1,30 @@
+---
+title: "no-new"
+description: "Disallow `new` when the created object is thrown away"
+---
+
+`new Thing()` as a statement of its own creates an object and drops it. Either a variable is missing, or the constructor is only called for what it does on the side. In that case a plain function says so more clearly.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+new Router(routes);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const router = new Router(routes);
+
+startRouter(routes);
+```
+
+## When not to use it
+
+Some libraries start working from the constructor, for example `new Vue({ el: "#app" })`. If you use one, disable the rule on that line or turn it off.

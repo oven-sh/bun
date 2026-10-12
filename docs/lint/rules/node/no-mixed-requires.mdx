@@ -1,0 +1,83 @@
+---
+title: "n/no-mixed-requires"
+description: "Disallow `require()` calls mixed with other variables in one declaration"
+---
+
+A declaration that lists modules and ordinary variables together makes it hard to see what the file depends on. This rule wants the `require()` calls in a declaration of their own.
+
+Only declarations with two or more variables are checked. `require("x")` and a property of it, such as `require("x").y`, count as a `require()`. Anything else does not, and neither does a variable without a value.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const fs = require("fs"),
+  retries = 3;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const fs = require("fs"),
+  join = require("path").join;
+
+const retries = 3;
+```
+
+## Options
+
+| Option      | Default | What it does                                                                                                                      |
+| ----------- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `grouping`  | `false` | Also report a declaration that mixes kinds of modules: Node.js built-ins, packages, files (`./`, `../`, `/`), and computed names. |
+| `allowCall` | `false` | Count a module that is called right away, such as `require("debug")("app")`, as a `require()`.                                    |
+
+You can write `true` in place of `{ "grouping": true }`.
+
+{/* bad {"options": [{"grouping": true}]} */}
+
+```js
+const fs = require("fs"),
+  express = require("express"),
+  routes = require("./routes");
+```
+
+{/* good {"options": [{"grouping": true}]} */}
+
+```js
+const fs = require("fs"),
+  path = require("path");
+
+const express = require("express");
+
+const routes = require("./routes");
+```
+
+A name with the `node:` prefix counts as a package, not as a built-in:
+
+{/* bad {"options": [{"grouping": true}]} */}
+
+```js
+const fs = require("node:fs"),
+  path = require("path");
+```
+
+Without `allowCall`, a module that is called is an ordinary variable:
+
+{/* bad */}
+
+```js
+const express = require("express"),
+  debug = require("debug")("app");
+```
+
+{/* good {"options": [{"allowCall": true}]} */}
+
+```js
+const express = require("express"),
+  debug = require("debug")("app");
+```

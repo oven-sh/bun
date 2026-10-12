@@ -566,9 +566,9 @@ impl Rc<'_, '_> {
                 .unwrap_or(b"?");
             let Some(load) = &mut self.load_plugin else {
                 self.reader.note(&[
-                    b"jsPlugins are not supported: \"",
+                    b"\"jsPlugins\" is not supported here, so the rules of \"",
                     specifier,
-                    b"\". Its rules are skipped.",
+                    b"\" were skipped",
                 ]);
                 continue;
             };
@@ -1122,6 +1122,7 @@ impl Config {
                 registry,
                 base_path: base_path.clone(),
                 prefers_typescript_rules: true,
+                has_every_rule: false,
                 objects: Vec::new(),
                 notes: Vec::new(),
                 advice: Vec::new(),
@@ -1172,7 +1173,10 @@ impl Config {
         if !lacking.is_empty() {
             rc.reader.note(&[
                 lacking.len().to_string().as_bytes(),
-                b" rules that the categories turn on do not exist here yet and did not run: ",
+                match lacking.len() {
+                    1 => &b" rule enabled by \"categories\" is not supported yet and did not run: "[..],
+                    _ => b" rules enabled by \"categories\" are not supported yet and did not run: ",
+                },
                 &lacking.join(&b", "[..]),
             ]);
         }

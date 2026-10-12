@@ -1,0 +1,60 @@
+---
+title: "bun:test/no-done-callback"
+description: "Disallow the `done` callback in tests and hooks in favor of promises"
+---
+
+A test that takes a `done` parameter waits until `done()` is called. If some code path never calls it, the test hangs until it times out, and the timeout does not say why. An `async` test, or one that returns a promise, ends when the promise settles and fails with the error it rejects with.
+
+The name of the parameter does not matter. Any test or hook callback with exactly one parameter is reported.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("reads the config", done => {
+  readConfig((error, config) => {
+    expect(config.port).toBe(3000);
+    done();
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("reads the config", async () => {
+  const config = await readConfig();
+  expect(config.port).toBe(3000);
+});
+```
+
+If the API only takes a callback, wrap it in a promise:
+
+{/* good */}
+
+```ts
+import { afterAll } from "bun:test";
+
+afterAll(() => new Promise(resolve => server.close(resolve)));
+```
+
+The callback of `test.each([...])` is not checked, because its parameters are the values of the row:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test.each([1, 2, 3])("%i is positive", value => {
+  expect(value).toBeGreaterThan(0);
+});
+```

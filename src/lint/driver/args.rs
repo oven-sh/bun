@@ -6,6 +6,46 @@ use bun_core::strings;
 
 pub type Param = clap::Param<clap::Help>;
 
+/// The flags under one heading of `--help --all`.
+pub struct Group {
+    pub title: &'static str,
+    pub params: &'static [Param],
+}
+
+/// What `--help` says about the flags of a command.
+pub struct Help {
+    /// `--help --all` shows all of them.
+    pub groups: &'static [Group],
+    /// The long names of the flags that `--help` shows, in this order.
+    pub common: &'static [&'static [u8]],
+}
+
+impl Help {
+    pub fn common(&self) -> Vec<Param> {
+        let find = |name: &&[u8]| {
+            let mut params = self.groups.iter().flat_map(|group| group.params);
+            params.find(|param| param.names.long == Some(*name))
+        };
+        self.common.iter().filter_map(find).copied().collect()
+    }
+
+    pub(crate) const fn describes_every_flag(&self) -> bool {
+        let mut group = 0;
+        while group < self.groups.len() {
+            let params = self.groups[group].params;
+            let mut at = 0;
+            while at < params.len() {
+                if params[at].id.msg.is_empty() {
+                    return false;
+                }
+                at += 1;
+            }
+            group += 1;
+        }
+        true
+    }
+}
+
 /// Why the command line cannot be used: a line for the user. The exit code is 2, as ESLint's.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct UsageError(pub Vec<u8>);
@@ -141,6 +181,9 @@ pub(crate) fn parse<'a>(
                     ]);
                 }
                 (false, Some(value)) => take(flag(param, Some(value), true))?,
+                (false, None) if param.takes_value == clap::Values::OneOptional => {
+                    take(flag(param, None, true))?
+                }
                 (false, None) => awaited = Some(param),
             }
         } else if let [b'-', number @ ..] = arg

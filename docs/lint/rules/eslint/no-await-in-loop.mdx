@@ -1,0 +1,60 @@
+---
+title: "no-await-in-loop"
+description: "Disallow `await` inside of loops"
+---
+
+An `await` in a loop makes every round wait for the one before it. Ten requests of 100 ms each take a second, where starting them together and awaiting them with `Promise.all` takes about 100 ms.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+async function loadAll(urls) {
+  const pages = [];
+  for (const url of urls) {
+    pages.push(await fetch(url));
+  }
+  return pages;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+async function loadAll(urls) {
+  return Promise.all(urls.map(url => fetch(url)));
+}
+```
+
+A `for await` loop is meant to wait, so an `await` in its body is not reported:
+
+{/* good */}
+
+```js
+async function copy(stream, file) {
+  for await (const chunk of stream) {
+    await file.write(chunk);
+  }
+}
+```
+
+The list a `for ... of` loop runs over is only evaluated once:
+
+{/* good */}
+
+```js
+async function printUsers() {
+  for (const user of await loadUsers()) {
+    console.log(user.name);
+  }
+}
+```
+
+## When not to use it
+
+Some loops have to run one step at a time: each page of results gives the cursor for the next, a retry waits for the attempt before it, or you do not want to send a server 500 requests at once. Disable the rule for those loops with a comment.

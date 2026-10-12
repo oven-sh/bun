@@ -1,0 +1,59 @@
+---
+title: "jsx-a11y/aria-role"
+description: "Require `role` to be a real ARIA role that is not abstract"
+---
+
+A screen reader ignores a `role` it does not know, so an element with `role="datepicker"` is announced as a plain `div`. Abstract roles such as `range`, `widget` and `input` exist only to define other roles in the ARIA specification. Browsers ignore them too.
+
+A `role` can hold several roles separated by spaces, and each one has to be valid. A `role` without a value, or with `""`, `null` or `undefined`, is reported. Any other expression is not checked.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```jsx
+const picker = <div role="datepicker">{days}</div>;
+const slider = <div role="range" />;
+const panel = <div role="">{children}</div>;
+const toggle = <div role="switch toggle" aria-checked={isOn} tabIndex={0} />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const picker = <div role="dialog">{days}</div>;
+const slider = <div role="slider" aria-valuenow={volume} tabIndex={0} />;
+const panel = <div role={panelRole}>{children}</div>;
+const toggle = <div role="switch checkbox" aria-checked={isOn} tabIndex={0} />;
+```
+
+## Options
+
+| Option                | Default | What it does                                                   |
+| --------------------- | ------- | -------------------------------------------------------------- |
+| `allowedInvalidRoles` | `[]`    | Other values to accept.                                        |
+| `ignoreNonDOM`        | `false` | Do not check components, where `role` may be an ordinary prop. |
+
+{/* good {"options": [{"allowedInvalidRoles": ["text"]}]} */}
+
+```jsx
+const price = <span role="text">{amount} per month</span>;
+```
+
+Components are checked by default:
+
+{/* bad */}
+
+```jsx
+const member = <UserCard role="admin" />;
+```
+
+{/* good {"options": [{"ignoreNonDOM": true}]} */}
+
+```jsx
+const member = <UserCard role="admin" />;
+```

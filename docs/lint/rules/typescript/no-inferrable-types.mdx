@@ -1,0 +1,74 @@
+---
+title: "@typescript-eslint/no-inferrable-types"
+description: "Disallow type annotations that repeat what the initial value already says"
+---
+
+In `const retries: number = 3`, TypeScript already infers that `retries` is a number. The annotation only repeats it.
+
+The rule looks at variables, parameters with a default value and class properties. It reports `bigint`, `boolean`, `number`, `null`, `string`, `symbol`, `undefined` and `RegExp` when the value is a literal of that type or a call such as `Number(input)` or `Symbol("id")`.
+
+A `readonly` or optional property is not reported. Without its annotation, `readonly limit = 10` has the type `10`, not `number`.
+
+`--fix` removes the annotation.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```ts
+const retries: number = 3;
+const pattern: RegExp = /\d+/;
+
+function greet(name: string = "world") {}
+
+class Cart {
+  isOpen: boolean = false;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const retries = 3;
+const pattern = /\d+/;
+
+function greet(name = "world") {}
+
+class Cart {
+  isOpen = false;
+  readonly limit: number = 10;
+}
+```
+
+An annotation that is wider than the value is not reported:
+
+{/* good */}
+
+```ts
+let selected: string | null = null;
+```
+
+## Options
+
+| Option             | Default | What it does                    |
+| ------------------ | ------- | ------------------------------- |
+| `ignoreParameters` | `false` | Do not report parameters.       |
+| `ignoreProperties` | `false` | Do not report class properties. |
+
+{/* good {"options": [{"ignoreParameters": true}]} */}
+
+```ts
+function greet(name: string = "world") {}
+```
+
+{/* good {"options": [{"ignoreProperties": true}]} */}
+
+```ts
+class Cart {
+  isOpen: boolean = false;
+}
+```

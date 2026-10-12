@@ -1,0 +1,61 @@
+---
+title: "import/first"
+description: "Require all imports to come before every other statement in the file"
+---
+
+Imports are hoisted: the imported modules load and run before any line of the file that imports them, wherever the `import` is written. An import below other code reads as if it ran later, which it does not.
+
+Directives such as `"use client"` may come before the imports.
+
+`--fix` moves the imports to the top, after the ones that are already there.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { loadConfig } from "./config.js";
+
+loadConfig(); // runs after "./server.js" has loaded, not before
+
+import { startServer } from "./server.js";
+
+startServer();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+"use client";
+
+import { loadConfig } from "./config.js";
+import { startServer } from "./server.js";
+
+loadConfig();
+startServer();
+```
+
+## Options
+
+| Option                               | What it does                                                                                                |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `"disable-absolute-first"` (default) | Imports can be in any order.                                                                                |
+| `"absolute-first"`                   | Also report an import of a package that comes after an import of a relative path, one that starts with `.`. |
+
+{/* bad {"options": ["absolute-first"]} */}
+
+```js
+import { loadConfig } from "./config.js";
+import express from "express";
+```
+
+{/* good {"options": ["absolute-first"]} */}
+
+```js
+import express from "express";
+import { loadConfig } from "./config.js";
+```

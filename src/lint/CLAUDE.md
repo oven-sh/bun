@@ -16,6 +16,101 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 | `src/lint/conformance/`                | `bun_lint_conformance`    | Runs the test cases below, in `bun lint --run-eslint-tests` (debug and canary builds)                                                                                                                                                                              |
 | `test/cli/lint/conformance/bundle.zst` |                           | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                                                                                                                                          |
 
+## Add a rule: the checklist
+
+A rule is done when all four are done. CI fails if 2, 3 or 4 is missing.
+
+### 1. Write it
+
+One file, `src/lint/<crate>/rules/<name_in_snake_case>.rs`. See [Writing a rule](#writing-a-rule). Pick the crate by where the rule comes from:
+
+| The rule is                       | Crate                                 | `Meta`                                          |
+| --------------------------------- | ------------------------------------- | ----------------------------------------------- |
+| An ESLint core rule               | `eslint`                              | `Meta::eslint("no-foo", kind)`                  |
+| A typescript-eslint rule          | `typescript`                          | `Meta::typescript("no-foo", kind)`              |
+| A port of an ESLint plugin's rule | `plugins`, `react`                    | `Meta::plugin(Plugin::Import, "no-foo", kind)`  |
+| A port of an oxlint rule          | `unicorn`, `react`, `jest`, `plugins` | `Meta::oxlint(Plugin::Unicorn, "no-foo", kind)` |
+| Bun's own                         | `plugins`, file `bun_no_foo.rs`       | `Meta::plugin(Plugin::Bun, "no-foo", kind)`     |
+
+`kind` decides the default severity: `Kind::Problem` is for code that misbehaves, `Kind::Suggestion` for code that could be better.
+
+### 2. Register it
+
+- Add `module::Struct,` to the `bun_lint::rules! { .. }` list in the crate's `lib.rs`, in alphabetical order. That is the only list. `--rules`, name lookup, aliases, config validation and the docs URL all come from `META`.
+- **Options**: the JSON schema is data, not code.
+  - Bun's own rule: add `"bun/no-foo": [<schema of each option>]` to `src/lint/linter/schema/own.json`. `[]` means no options.
+  - A port: the schema comes from upstream. See the header of `src/lint/linter/schema/generate-schemas.mjs`.
+  - Then regenerate `data.rs` with that script.
+- **On by default?** Almost never. `.recommended()` / `.presets(..)` mirror what upstream's presets turn on. What is on with no config file is `BUILT_IN` in `src/lint/driver/configs.rs`.
+
+### 3. Document it
+
+Every rule has a page: `docs/lint/rules/<plugin>/<rule>.mdx`. It shows up on the website, in `bun lint --explain <rule>` and in editors. Copy a good one: `eslint/eqeqeq.mdx` (options), `eslint/no-var.mdx` (short), `typescript/no-floating-promises.mdx` (types), `bun-test/no-focused-tests.mdx`.
+
+````mdx
+---
+title: "bun/no-foo"
+description: "Disallow `foo()` outside of tests"
+---
+
+What goes wrong without the rule, concretely. One short paragraph.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+foo();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+bar();
+```
+
+## Options
+````
+
+- You write `title` (the ID as reports print it), `description` (one line, at most 110 characters, no full stop) and the text. The rest of the frontmatter and `index.mdx` are generated:
+  ```sh
+  bun src/codegen/lint-rule-docs.ts --write --bun=./build/debug/bun-debug
+  ```
+- **Every example is run.** Each `js` / `jsx` / `ts` / `tsx` block needs a marker on the line before it:
+
+  | Marker                                   | Meaning                                            |
+  | ---------------------------------------- | -------------------------------------------------- |
+  | `{/* bad */}`                            | The rule reports this code                         |
+  | `{/* good */}`                           | The rule reports nothing here, and the code parses |
+  | `{/* bad {"options": ["smart"]} */}`     | With these options                                 |
+  | `{/* bad {"count": 2} */}`               | Exactly two reports                                |
+  | `{/* good {"filename": "a.test.ts"} */}` | The file has this name                             |
+  | `{/* file "other.js" */}`                | Another file next to the next example              |
+  | `{/* skip */}`                           | Not run. For a fragment that cannot stand alone    |
+
+- Say the problem, not "This rule enforces ..". Use normal programmer English. Be succinct. Small realistic examples (`user`, `items`, `save()`, not `foo`). The good example shows how to fix the bad one.
+- Every claim is shown by an example or read in the source. Do not write what you remember about the rule from another linter, and do not copy another tool's docs.
+- An options table (`Option | Default | What it does`) plus an example for each option that is not obvious.
+
+### 4. Test it
+
+| The rule is | Where its tests are                                                                                                                            |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| A port      | Upstream's own cases, in `test/cli/lint/conformance/bundle.zst`, with what the real tool reports. See [Testing](#testing) and the README there |
+| Bun's own   | A table in `test/cli/lint/bun-rules.test.ts`: `«` and `»` mark what is reported, a plain string without them is a case with no report          |
+
+```sh
+bun bd test test/cli/lint/bun-rules.test.ts -t no-foo
+bun bd test test/cli/lint/rule-docs.test.ts   # a page for every rule, frontmatter up to date, every example runs
+bun bd test test/cli/lint/conformance.test.ts
+```
+
+Test what the rule must NOT report as hard as what it must: a false positive costs more trust than a miss. If the message alone leaves a reader puzzled, add a hint (see `test/cli/lint/hints.test.ts`).
+
 ## Writing a rule
 
 Read `rule.rs` (module docs) first, then `ast/mod.rs`. `eslint/rules/{no_debugger,eqeqeq,no_labels,max_classes_per_file,no_cond_assign}.rs` are the examples to imitate.

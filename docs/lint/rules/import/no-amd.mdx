@@ -1,0 +1,49 @@
+---
+title: "import/no-amd"
+description: "Disallow AMD `define()` and `require()` calls"
+---
+
+AMD is the module format of RequireJS: `define(["dep"], function (dep) { ... })`. Bun, Node.js and browsers do not run it without a loader, and tools cannot follow its dependencies the way they follow `import`. In a project that uses ES modules, an AMD call is a leftover.
+
+A call to `define` or `require` is reported if it has exactly two arguments and the first is an array. Only calls at the top level of a module are reported, not calls inside a function. A CommonJS `require("name")` is fine.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+define(["./logger"], function (logger) {
+  logger.info("ready");
+});
+```
+
+{/* bad */}
+
+```js
+require(["./logger", "./config"], function (logger, config) {
+  logger.info(config.name);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import logger from "./logger.js";
+import config from "./config.js";
+
+logger.info(config.name);
+```
+
+{/* good */}
+
+```js
+const logger = require("./logger");
+
+function loadLegacyPlugin(done) {
+  require(["./legacy-plugin"], done);
+}
+```

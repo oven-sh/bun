@@ -1,0 +1,60 @@
+---
+title: "bun/no-console-window-flash"
+description: "Require `windowsHide` for a child process that does not share a stream with its parent"
+---
+
+On Windows, a child process that is started from an app without a console gets a console window of its own. The window opens and closes again as the process runs, which users see as a black flash. `windowsHide: true` prevents it, and has no effect on other systems.
+
+The rule looks at `exec`, `execSync`, `execFile`, `execFileSync`, `spawn`, and `spawnSync` of `node:child_process`, and at `Bun.spawn` and `Bun.spawnSync`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { execFile } from "node:child_process";
+
+execFile("git", ["status", "--short"], (error, stdout) => {
+  show(stdout);
+});
+```
+
+{/* bad */}
+
+```js
+const git = Bun.spawn(["git", "status", "--short"], { stdout: "pipe" });
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { execFile } from "node:child_process";
+
+execFile("git", ["status", "--short"], { windowsHide: true }, (error, stdout) => {
+  show(stdout);
+});
+
+const git = Bun.spawn(["git", "status", "--short"], { stdout: "pipe", windowsHide: true });
+```
+
+A process that inherits a stream writes to the terminal of its parent, so it is not reported. Any value for `windowsHide` counts, because writing `false` is a deliberate choice. Options that are not an object literal in the call, or that spread another object, are not checked:
+
+{/* good */}
+
+```js
+import { spawn } from "node:child_process";
+
+spawn("bun", ["test"], { stdio: "inherit" });
+spawn("bun", ["test"], { stdio: ["ignore", "inherit", "pipe"] });
+spawn("notepad", [file], { windowsHide: false });
+spawn("bun", ["test"], options);
+spawn("bun", ["test"], { ...options, cwd });
+```
+
+## When not to use it
+
+Code that never runs on Windows does not need the option.

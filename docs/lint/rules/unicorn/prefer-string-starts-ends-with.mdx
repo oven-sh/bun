@@ -1,0 +1,33 @@
+---
+title: "unicorn/prefer-string-starts-ends-with"
+description: "Require `startsWith()` and `endsWith()` instead of a regex with `^` or `$`"
+---
+
+`/^https:/.test(url)` asks whether a string starts with a fixed text. `url.startsWith("https:")` asks the same in plain words, and the text needs no regex escaping.
+
+The rule reports `.test()` on a regex literal that is only `^` followed by plain characters, or plain characters followed by `$`. A regex with the `m` flag, or with the `i` flag and letters, is not reported.
+
+`--fix` rewrites the call when the argument is a name, a string, a property access or a call.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const secure = /^https:/.test(url);
+const isScript = /\.js$/.test(file);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const secure = url.startsWith("https:");
+const isScript = file.endsWith(".js");
+
+const isImage = /\.(png|jpg)$/.test(file);
+const isHeader = /^x-/i.test(name);
+```

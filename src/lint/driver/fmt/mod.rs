@@ -6,14 +6,16 @@
 
 pub mod cli;
 mod config;
+mod doctor;
 mod editorconfig;
 mod files;
 mod for_rules;
 mod prettier;
 mod tailwind;
 
+use crate::doctor::{Modules, watching};
 use crate::run::{Environment, Fatal, Outcome, Pool};
-use crate::{fs, paths};
+use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
@@ -54,6 +56,7 @@ macro_rules! pretty {
 const NESTED_TOO_DEEPLY: &[u8] = b"RangeError: The code is nested too deeply.";
 /// In the words of Prettier.
 const TOO_LONG: &[u8] = b"RangeError: Invalid string length";
+const MAKE_IT_A_WARNING: &[u8] = b"\n  Use --allow-unsupported to make this a warning.";
 
 /// Why a file is left as it is.
 enum Failure {
@@ -77,12 +80,12 @@ fn message_of(error: &[u8]) -> &[u8] {
 
 /// Tailwind has been asked, and the order of the classes in the file that is shown as `shown` is still not known.
 fn has_classes_without_order(shown: &[u8]) -> Vec<u8> {
-    let what = b": sortTailwindcss: The order of some classes cannot be found.";
+    let what = b": sortTailwindcss could not find the order of some classes.";
     [shown, what].concat()
 }
 
 /// `.svelte` of `src/a.svelte`. The name of a file that has no ending.
-fn ending_of(path: &[u8]) -> &[u8] {
+pub(crate) fn ending_of(path: &[u8]) -> &[u8] {
     let name = paths::basename(path);
     strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..])
 }
@@ -253,7 +256,7 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
     out
 }
 
-/// `SyntaxError: This string is not closed (3:6)`, of a file that is not a script.
+/// `SyntaxError: Unclosed string (3:6)`, of a file that is not a script.
 #[cold]
 fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Vec<u8> {
     syntax_error_in_words(text, message.text().as_bytes(), offset)
@@ -448,7 +451,7 @@ fn format(
     // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
     if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
         return Err(Failure::Syntax(
-            b"SyntaxError: It is encoded as UTF-16. Only UTF-8 is read.".to_vec(),
+            b"SyntaxError: This file is UTF-16. bun format only reads UTF-8.".to_vec(),
         ));
     }
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
@@ -466,7 +469,7 @@ fn format(
             Ok((out, cursor))
         }
         Err(FormatError::SyntaxError) => Err(Failure::Syntax(
-            format!("SyntaxError: It is not {what}.").into_bytes(),
+            format!("SyntaxError: This is not valid {what}.").into_bytes(),
         )),
         Err(FormatError::SyntaxErrorAt(error)) => {
             Err(Failure::Syntax(syntax_error_at(text, error)))
@@ -498,7 +501,7 @@ fn format(
         }
         Some(Kind::Css(parser)) => {
             let done = bun_format::css::format(text, parser, options, &mut scratch.css, &mut out);
-            return finish(done, out, "a style sheet");
+            return finish(done, out, "CSS");
         }
         Some(Kind::Yaml) => {
             let done = bun_format::yaml::format(text, options, &mut scratch.yaml, &mut out);
@@ -553,9 +556,7 @@ fn format(
                 )));
             }
             if verifies && done.is_ok() && out != text && !is_same_toml(text, &out) {
-                return Err(Failure::Loss(
-                    "formatting it the way oxfmt does would change what is in it",
-                ));
+                return Err(Failure::Loss("formatting would change its contents"));
             }
             return finish(done, out, "TOML");
         }
@@ -564,7 +565,7 @@ fn format(
                 bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
             if verifies && done.is_ok() && scratch.handlebars.is_damaged() {
                 return Err(Failure::Loss(
-                    "formatting it the way Prettier does would change what it means",
+                    "formatting like Prettier would change its meaning",
                 ));
             }
             return finish(done, out, "Handlebars");
@@ -589,7 +590,7 @@ fn format(
                 && !bun_format::html::has_same_content(text, &out, parser, options)
             {
                 return Err(Failure::Loss(
-                    "formatting it the way Prettier does would change what is in it",
+                    "formatting like Prettier would change its contents",
                 ));
             }
             if matches!(done, Err(FormatError::SyntaxError))
@@ -729,7 +730,7 @@ fn print<'a>(
             bun_format::verify::compare(file, program, &after, options, &mut scratch.verify).is_ok()
         });
         if !is_same {
-            return Err(Failure::Bug("formatting would change what the code means"));
+            return Err(Failure::Bug("formatting would change what the code does"));
         }
     }
     Ok((out, cursor))
@@ -800,6 +801,8 @@ enum Done {
     Unchanged,
     /// It is not formatted. With `--write`, it was not. And how long that took to find out.
     Different(Duration),
+    /// It is not formatted, and not written: [`git::Files::is_partly_staged`].
+    PartlyStaged,
     /// It has classes of Tailwind CSS whose order is not known yet.
     PutAside,
     /// For the user. The exit code is 2.
@@ -813,6 +816,8 @@ struct Run<'r> {
     environment: &'r Environment<'r>,
     out: Outcome,
     began: Instant,
+    /// `--doctor`
+    modules: Option<&'r Modules>,
 }
 
 /// What the file at `path`, which has `scope`, is to the tool that the run stands in for.
@@ -826,6 +831,9 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         }
         None => match files::language_of(path) {
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
+            Language::Unknown if configs.formats_toml() && files::is_toml(path) => {
+                Language::Supported
+            }
             Language::Unknown if files::parser_by_interpreter(path).is_some() => {
                 Language::Supported
             }
@@ -946,11 +954,11 @@ impl Run<'_> {
                 shown,
                 b": ",
                 what.as_bytes(),
-                b". It is left as it is. This is a bug in Bun.",
+                b". It was not formatted. This is a bug in Bun.",
             ]
             .concat(),
             Failure::Loss(what) => {
-                [shown, b": ", what.as_bytes(), b". It is left as it is."].concat()
+                [shown, b": ", what.as_bytes(), b". It was not formatted."].concat()
             }
         }
     }
@@ -1134,6 +1142,16 @@ impl Run<'_> {
         // Files are written unless a flag says otherwise.
         let only_looks = (options.check || options.list_different) && !options.write;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
+        let only =
+            (options.only.as_ref()).map(|it| git::Files::read(it, !only_looks, self.environment));
+        let only = match only.transpose() {
+            Ok(only) => only,
+            Err(Fatal(error)) => return self.fail(&error),
+        };
+        let is_partly_staged = |target: &Target| {
+            only.as_ref()
+                .is_some_and(|it| it.is_partly_staged(&target.path))
+        };
         if options.check {
             self.log(b"Checking formatting...");
             if is_oxfmt {
@@ -1152,7 +1170,7 @@ impl Run<'_> {
             Flavor::Prettier => files::expand,
             Flavor::Oxfmt => files::expand_as_oxfmt,
         };
-        let expanded = match expand(
+        let mut expanded = match expand(
             configs,
             &pool,
             ignored,
@@ -1162,6 +1180,18 @@ impl Run<'_> {
             Ok(expanded) => expanded,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
+        if let Some(only) = &only {
+            expanded.retain(|it| match it {
+                Expanded::File(target) => only.has(&target.path),
+                Expanded::Error(_) => true,
+            });
+            if expanded.is_empty() {
+                if options.log_level >= LogLevel::Log {
+                    let _ = writeln!(self.out.stderr, "{}", only.nothing_left("format"));
+                }
+                return self.out;
+            }
+        }
         let finding = started.elapsed();
 
         // What is not to be formatted after all.
@@ -1247,6 +1277,27 @@ impl Run<'_> {
                 }
             }
         }
+        if let Some(modules) = self.modules {
+            let sorted = doctor::Sorted {
+                found: &expanded,
+                formatted: &work,
+                handed_over: &handed_over,
+                others: &others,
+                left_for_plugins: left_for_plugins.0,
+                not_installed: &not_installed,
+            };
+            let how = crate::doctor::How {
+                as_json: options.as_json,
+                colors: (options.color).unwrap_or(self.environment.stdout.colors),
+            };
+            return match doctor::report((configs, cwd), &pool, &sorted, modules, how) {
+                Ok(report) => {
+                    self.out.stdout = report;
+                    self.out
+                }
+                Err(Fatal(error)) => self.fail_to_start(configs.flavor, &error),
+            };
+        }
         if options.list_files {
             for (_, target) in work.iter().chain(&handed_over) {
                 self.out
@@ -1331,6 +1382,9 @@ impl Run<'_> {
                 if formatted == text {
                     return Ok(Done::Unchanged);
                 }
+                if !only_looks && is_partly_staged(target) {
+                    return Ok(Done::PartlyStaged);
+                }
                 if !only_looks {
                     fs::write_atomically(cwd, &target.path, &formatted).map_err(|why| {
                         [b"Unable to write file \"", &shown[..], b"\":\n", &why].concat()
@@ -1355,13 +1409,14 @@ impl Run<'_> {
                 let left: Vec<usize> = (put_aside.iter().copied())
                     .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::PutAside)))
                     .collect();
-                let files = if left.len() == 1 { "file" } else { "files" };
-                let what = match (options.allow_unsupported, left.len()) {
-                    (true, _) => "The classes are not sorted in",
-                    (false, 1) => "Left as it is:",
-                    (false, _) => "Left as they are:",
+                let count = left.len();
+                let said = match (options.allow_unsupported, count) {
+                    (true, 1) => "\nClasses were not sorted in 1 file.".to_owned(),
+                    (true, _) => format!("\nClasses were not sorted in {count} files."),
+                    (false, 1) => "\n1 file was not formatted.".to_owned(),
+                    (false, _) => format!("\n{count} files were not formatted."),
                 };
-                error.extend_from_slice(format!("\n{what} {} {files}.", left.len()).as_bytes());
+                error.extend_from_slice(said.as_bytes());
                 if options.allow_unsupported {
                     leaves_classes.store(true, Ordering::Relaxed);
                     pool.for_each(left.len(), 1, &|at| format_at(left[at]));
@@ -1375,7 +1430,9 @@ impl Run<'_> {
                 let shown = paths::relative(cwd, &target.path);
                 let config = configs.path_of_config(&target.scope);
                 let file = (&target.path[..], &shown[..]);
-                results.lock()[index] = Some(match bridge.format_file(file, config, !only_looks) {
+                let writes = !only_looks && !is_partly_staged(target);
+                results.lock()[index] = Some(match bridge.format_file(file, config, writes) {
+                    Ok(true) if !only_looks && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,
                     Err(error) => Done::Failed(error),
@@ -1385,6 +1442,7 @@ impl Run<'_> {
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
+        let (mut written, mut partly_staged) = (Vec::new(), Vec::new());
         for (it, done) in expanded.iter().zip(std::mem::take(results.get_mut())) {
             let target = match it {
                 Expanded::Error(error) => {
@@ -1414,10 +1472,17 @@ impl Run<'_> {
                 Some(Done::PutAside) => {
                     failed += 1;
                     let text = has_classes_without_order(&shown);
-                    self.error(&[&text[..], b" It is left as it is."].concat());
+                    self.error(&[&text[..], b" It was not formatted."].concat());
+                }
+                Some(Done::PartlyStaged) => {
+                    failed += 1;
+                    partly_staged.push(target.path.clone());
                 }
                 Some(Done::Different(took)) => {
                     different += 1;
+                    if !only_looks && only.is_some() {
+                        written.push(target.path.clone());
+                    }
                     match (is_oxfmt, options.check) {
                         (true, true) => self.log_with_time(&shown, took),
                         // oxfmt does not name the files that it writes.
@@ -1426,6 +1491,14 @@ impl Run<'_> {
                         (_, false) => self.log(&shown),
                     }
                 }
+            }
+        }
+        if let Some(only) = &only {
+            if !partly_staged.is_empty() {
+                self.error(&only.refusal_to_write(&mut partly_staged));
+            }
+            if let Err(Fatal(error)) = only.stage(&written) {
+                self.error(&error);
             }
         }
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
@@ -1486,20 +1559,20 @@ impl Run<'_> {
         }
         if options.log_level >= LogLevel::Log && !handed_over.is_empty() {
             let noun = if handed_over.len() == 1 {
-                "file was"
+                "file"
             } else {
-                "files were"
+                "files"
             };
             let _ = writeln!(
                 self.out.stderr,
-                "{} {noun} handed to the Prettier of the project, for a language that only a plugin reads.",
+                "Used your installed Prettier for {} {noun} in a language that needs a plugin",
                 handed_over.len(),
             );
         }
         if options.timing {
             let _ = writeln!(
                 self.out.stderr,
-                "  wall: {:.1}ms finding files and configurations, {:.1}ms formatting, {:.1}ms in all, on {} threads",
+                "  wall: {:.1}ms finding files and configs, {:.1}ms formatting, {:.1}ms total, {} threads",
                 finding.as_secs_f64() * 1e3,
                 formatting.as_secs_f64() * 1e3,
                 self.began.elapsed().as_secs_f64() * 1e3,
@@ -1510,16 +1583,15 @@ impl Run<'_> {
         if !unsupported_options.is_empty() {
             let text = [
                 &unsupported_options.join(&b", "[..])[..],
-                b" is not supported yet, and has no effect",
+                match unsupported_options.len() {
+                    1 => &b" is not supported yet and has no effect"[..],
+                    _ => b" are not supported yet and have no effect",
+                },
             ]
             .concat();
             match options.allow_unsupported {
-                true => self.warn(&[&text[..], b"."].concat()),
-                false => {
-                    self.error(
-                        &[&text[..], b". With --allow-unsupported this is a warning."].concat(),
-                    );
-                }
+                true => self.warn(&text),
+                false => self.error(&[&text[..], MAKE_IT_A_WARNING].concat()),
             }
         }
         match classes_are_unknown {
@@ -1539,14 +1611,14 @@ impl Run<'_> {
 
     /// So many files are left alone because of plugins that are not there: `names`.
     fn say_left_for_plugins(&mut self, count: usize, names: &[&[u8]]) {
-        let (noun, it_is, it) = match count {
-            1 => ("file is", "it is", "it"),
-            _ => ("files are", "they are", "them"),
+        let (noun, it) = match count {
+            1 => ("file was", "it"),
+            _ => ("files were", "them"),
         };
         let text = format!(
-            "{count} {noun} left as {it_is}: the configuration names plugins that bun format does not have, and that may print {it} in another way: "
+            "{count} {noun} not formatted because the Prettier config uses plugins that bun format does not include: "
         );
-        let end = format!(". With --allow-unsupported {it_is} formatted without.");
+        let end = format!("\n  Use --allow-unsupported to format {it} without the plugins.");
         self.error(&[text.as_bytes(), &names.join(&b", "[..]), end.as_bytes()].concat());
     }
 
@@ -1555,16 +1627,16 @@ impl Run<'_> {
     fn say_unsupported(&mut self, others: &mut [(&[u8], usize)], not_installed: &[&[u8]]) {
         sort_slice_by(others, |a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
         let count: usize = others.iter().map(|it| it.1).sum();
-        let (noun, it_is) = match count {
-            1 => ("file is", "it is"),
-            _ => ("files are", "they are"),
+        let (noun, its) = match count {
+            1 => ("file was", "its"),
+            _ => ("files were", "their"),
         };
         let kinds: Vec<Vec<u8>> = others
             .iter()
             .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
             .collect();
         let text = format!(
-            "{count} {noun} in a language that bun format does not support yet, and left as {it_is}: "
+            "{count} {noun} not formatted because bun format does not support {its} language yet: "
         );
         let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
         if !not_installed.is_empty() {
@@ -1573,7 +1645,7 @@ impl Run<'_> {
                 &[
                     &b"Not installed: "[..],
                     &plugins,
-                    b". With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+                    b"\n  Install prettier and every plugin in your config, and bun format will use them for these files.",
                 ]
                 .concat(),
             );
@@ -1581,38 +1653,24 @@ impl Run<'_> {
         match self.options.allow_unsupported {
             true => self.warn(&text),
             false => {
-                self.error(&[&text[..], b". With --allow-unsupported this is a warning."].concat());
+                self.error(&[&text[..], MAKE_IT_A_WARNING].concat());
             }
         }
     }
 
-    /// `oxfmt --init`
-    fn init(mut self) -> Outcome {
-        let environment = self.environment;
-        let cwd = &environment.cwd;
-        if config::has_configuration_of_oxfmt(cwd) {
-            let mut out = self.fail(b"A configuration file of oxfmt already exists.");
-            out.exit_code = 1;
-            return out;
-        }
-        let schema = &b"node_modules/oxfmt/configuration_schema.json"[..];
-        let text = match fs::is_file(&paths::join(cwd, schema)) {
-            true => [
-                b"{\n  \"$schema\": \"./",
-                schema,
-                b"\",\n  \"ignorePatterns\": []\n}\n",
-            ]
-            .concat(),
-            false => b"{\n  \"ignorePatterns\": []\n}\n".to_vec(),
-        };
-        match fs::write_new(&paths::join(cwd, b".oxfmtrc.json"), &text) {
-            Ok(()) => {
-                self.out.stdout = b"Created `.oxfmtrc.json`.\n".to_vec();
-                self.out
+    fn init(self, configs: &Configs) -> Outcome {
+        let flavor = self.options.is_like_oxfmt.map(|it| match it {
+            true => "oxfmt",
+            false => "prettier",
+        });
+        let scope = configs.for_directory(&self.environment.cwd);
+        match scope.as_ref().map(|scope| configs.config_of(scope)) {
+            Ok(Ok(other)) => {
+                let other = other.map(|it| &it.path[..]);
+                crate::init::FORMAT.add(flavor, other, self.environment)
             }
-            Err(error) => {
-                self.fail(&[&b"Cannot write .oxfmtrc.json: "[..], &fs::describe(&error)].concat())
-            }
+            Ok(Err(Fatal(error))) => self.fail_to_start(configs.flavor, &error),
+            Err(Fatal(error)) => self.fail_to_start(configs.flavor, error),
         }
     }
 
@@ -1627,31 +1685,34 @@ impl Run<'_> {
         {
             return self.fail(
                 &[
-                    b"bun format does not have the plugin ",
+                    b"bun format does not include the plugin ",
                     &name[..],
-                    b", which may print files in another way. With --allow-unsupported they are formatted without.",
+                    b"\n  Use --allow-unsupported to format without it.",
                 ]
                 .concat(),
             );
         }
         if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
-            self.warn(b"Plugins are not supported: --plugin has no effect.");
+            self.warn(b"--plugin has no effect because bun format does not load Prettier plugins");
         }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");
             out.exit_code = 1;
             return out;
         }
+        if let Some(only) = (options.only.as_ref()).filter(|_| options.stdin_filepath.is_some()) {
+            return self.fail(&only.refusal_of_stdin("--stdin-filepath"));
+        }
         let configs = Configs::new(options, environment);
-        // Both say it before they look at the files, the patterns or the configuration. `--init` is a flag of oxfmt.
-        let is_oxfmt = configs.flavor == Flavor::Oxfmt || options.init;
+        // Both say it before they look at the files, the patterns or the configuration.
+        let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         if let Some(refusal) = options.refusal_of_modes(is_oxfmt) {
             let mut out = self.fail(&refusal);
             out.exit_code = 1;
             return out;
         }
         if options.init {
-            return self.init();
+            return self.init(&configs);
         }
         if let Some(file) = &options.find_config_path {
             let path = paths::resolve(&environment.cwd, &paths::from_native(file));
@@ -1694,6 +1755,15 @@ impl Run<'_> {
 
 /// Does what `bun format` does. `options.help` and `options.cwd` are for the caller to see to.
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
+    match options.doctor {
+        true => watching(environment, |environment, modules| {
+            run_in(options, environment, Some(modules))
+        }),
+        false => run_in(options, environment, None),
+    }
+}
+
+fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules>) -> Outcome {
     let as_oxfmt = options
         .as_oxfmt_reads_it()
         .filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
@@ -1703,6 +1773,7 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
         environment,
         out: Outcome::default(),
         began: Instant::now(),
+        modules,
     };
     run.execute()
 }

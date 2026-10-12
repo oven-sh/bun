@@ -1,0 +1,50 @@
+---
+title: "react/no-unused-class-component-methods"
+description: "Disallow methods and properties of a class component that the class never uses"
+---
+
+A handler that is no longer wired to any element stays in the class and looks as if it still mattered. This rule reports a method or a property of a class component, or of a `createReactClass` component, that is never read through `this` in the same component.
+
+Lifecycle methods such as `render` and `componentDidMount`, `state`, and static members are never reported, because React uses them.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+class SearchBox extends React.Component {
+  timeout = 300;
+
+  handleChange(event) {
+    this.props.onSearch(event.target.value);
+  }
+
+  render() {
+    return <input />;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class SearchBox extends React.Component {
+  timeout = 300;
+
+  handleChange = event => {
+    setTimeout(() => this.props.onSearch(event.target.value), this.timeout);
+  };
+
+  render() {
+    return <input onChange={this.handleChange} />;
+  }
+}
+```
+
+## When not to use it
+
+The rule only sees one file. If a parent calls a method of the component through a ref, such as `searchBox.current.focus()`, the method is reported although it is used.

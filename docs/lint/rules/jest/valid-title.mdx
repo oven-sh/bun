@@ -1,0 +1,111 @@
+---
+title: "jest/valid-title"
+description: "Require the titles of tests and `describe` blocks to be clean, non-empty strings"
+---
+
+The title is how you find a test in the output when it fails. The rule reports a title that is not a string, an empty title, a space at the start or the end, and a title that starts with the name of the function it is passed to, as in `test("test adds an item")`. With options, it also holds titles to your own naming rules.
+
+`--fix` removes the spaces and the repeated word.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 5} */}
+
+```ts
+import { describe, test } from "@jest/globals";
+
+describe("describe cart", () => {
+  test("", () => {});
+  test(" adds an item", () => {});
+  test("test removes an item", () => {});
+  test(404, () => {});
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { describe, test } from "@jest/globals";
+
+describe("cart", () => {
+  test("adds an item", () => {});
+  test(`removes ${count} items`, () => {});
+  test("responds to " + path, () => {});
+});
+```
+
+## Options
+
+| Option                     | Default | What it does                                                                |
+| -------------------------- | ------- | --------------------------------------------------------------------------- |
+| `allowArguments`           | `false` | Allow a title that is a plain variable, such as `title`.                    |
+| `ignoreTypeOfDescribeName` | `false` | Allow a `describe` title that is not a string.                              |
+| `ignoreTypeOfTestName`     | `false` | Allow a `test` or `it` title that is not a string.                          |
+| `ignoreSpaces`             | `false` | Allow spaces at the start and the end.                                      |
+| `disallowedWords`          | `[]`    | Whole words that a title cannot contain. Upper and lower case are the same. |
+| `mustMatch`                | none    | A pattern that every title has to match.                                    |
+| `mustNotMatch`             | none    | A pattern that no title can match.                                          |
+
+A variable is reported by default, because the rule cannot tell what it holds:
+
+{/* bad */}
+
+```ts
+import { test } from "@jest/globals";
+
+test(title, () => {});
+```
+
+{/* good {"options": [{"allowArguments": true}]} */}
+
+```ts
+import { test } from "@jest/globals";
+
+test(title, () => {});
+```
+
+`ignoreTypeOfDescribeName` lets you name a block after the class or function it tests:
+
+{/* good {"options": [{"ignoreTypeOfDescribeName": true}]} */}
+
+```ts
+import { describe, test } from "@jest/globals";
+
+describe(Cart.name, () => {
+  test("adds an item", () => {});
+});
+```
+
+{/* bad {"options": [{"disallowedWords": ["should"]}]} */}
+
+```ts
+import { test } from "@jest/globals";
+
+test("Should add an item", () => {});
+```
+
+`mustMatch` and `mustNotMatch` take a regular expression written as a string, `"^adds "` or `"/^adds /"`. Flags after the last `/` are ignored. To choose the message of the report, give a pair:
+
+{/* bad {"options": [{"mustNotMatch": ["\\.$", "Do not end a title with a period"]}]} */}
+
+```ts
+import { test } from "@jest/globals";
+
+test("adds an item.", () => {});
+```
+
+To have a pattern for only some functions, give an object with the keys `describe`, `test` and `it`:
+
+{/* bad {"options": [{"mustMatch": {"it": "^should "}}], "count": 1} */}
+
+```ts
+import { it, test } from "@jest/globals";
+
+it("adds an item", () => {});
+
+test("adds an item", () => {});
+```

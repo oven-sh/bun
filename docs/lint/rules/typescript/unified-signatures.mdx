@@ -1,0 +1,73 @@
+---
+title: "@typescript-eslint/unified-signatures"
+description: "Disallow overloads that can be written as one signature"
+---
+
+Two overloads that return the same type and differ in one parameter say the same as one signature with a union type or an optional parameter. The overloads are longer, and they are also stricter than they look: a caller that has a `string | number` matches neither `(id: string)` nor `(id: number)`.
+
+Overloads that return different types are not reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+function find(id: string): void;
+function find(id: number): void;
+function find(id: string | number) {}
+
+interface Logger {
+  log(message: string): void;
+  log(message: string, level: number): void;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function find(id: string | number): void {}
+
+interface Logger {
+  log(message: string, level?: number): void;
+}
+
+interface Parser {
+  parse(text: string): object;
+  parse(bytes: Uint8Array): Promise<object>;
+}
+```
+
+## Options
+
+| Option                              | Default | What it does                                                                            |
+| ----------------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| `ignoreDifferentlyNamedParameters`  | `false` | Do not report overloads where the parameters at the same position have different names. |
+| `ignoreOverloadsWithDifferentJSDoc` | `false` | Do not report overloads that have different `/** */` comments.                          |
+
+Different names often mean different things, which one signature cannot say. Not reported with `ignoreDifferentlyNamedParameters`:
+
+{/* good {"options": [{"ignoreDifferentlyNamedParameters": true}]} */}
+
+```ts
+interface Users {
+  remove(id: number): void;
+  remove(email: string): void;
+}
+```
+
+The same goes for overloads that are documented separately. Not reported with `ignoreOverloadsWithDifferentJSDoc`:
+
+{/* good {"options": [{"ignoreOverloadsWithDifferentJSDoc": true}]} */}
+
+```ts
+interface Users {
+  /** Removes the user with this ID. */
+  remove(key: number): void;
+  /** @deprecated Look up the ID first. */
+  remove(key: string): void;
+}
+```

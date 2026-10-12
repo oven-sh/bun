@@ -18,7 +18,10 @@ impl NoEmpty {
         if !strings::is_all_js_whitespace(cx.slice(inside)) {
             return;
         }
-        let report = cx.report(place, UNEXPECTED).data("type", kind);
+        let report = cx
+            .report(place, UNEXPECTED)
+            .data("type", kind)
+            .hint("Remove it, or put a comment in it that says why it is empty.");
         if cx.language().is_oxlint {
             report.fix(|fixer| removed().map(|it| fixer.remove(it)));
             return;
@@ -95,7 +98,8 @@ fn removed_by_oxlint(block: Stmt) -> Option<Span> {
 impl Rule for NoEmpty {
     const META: Meta = Meta::eslint("no-empty", Kind::Suggestion)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().stmts(&[StmtTag::Block, StmtTag::Switch]);
     no_state!();
 

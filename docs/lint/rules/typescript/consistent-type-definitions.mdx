@@ -1,0 +1,64 @@
+---
+title: "@typescript-eslint/consistent-type-definitions"
+description: "Require either `interface` or `type` for object types, consistently"
+---
+
+The shape of an object can be declared with `interface User { ... }` or with `type User = { ... }`. For most code the two work the same. This rule picks one. By default it is `interface`.
+
+Only a `type` that is an object type is reported. Unions, functions, and other types cannot be written as an `interface`.
+
+`--fix` rewrites the declaration to the other form.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+type User = {
+  name: string;
+  email: string;
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+interface User {
+  name: string;
+  email: string;
+}
+
+type Id = string | number;
+type Handler = (user: User) => void;
+```
+
+## Options
+
+| Option                  | What it does                  |
+| ----------------------- | ----------------------------- |
+| `"interface"` (default) | Report `type User = { ... }`. |
+| `"type"`                | Report every `interface`.     |
+
+{/* bad {"options": ["type"]} */}
+
+```ts
+interface User {
+  name: string;
+}
+```
+
+{/* good {"options": ["type"]} */}
+
+```ts
+type User = {
+  name: string;
+};
+```
+
+## When not to use it
+
+The two differ in a few ways. Two `interface` declarations with the same name merge, which is how you add to a global type such as `Window`. A `type` can be passed where a `Record<string, unknown>` is expected, and an `interface` cannot. If your code depends on both, leave this rule off.

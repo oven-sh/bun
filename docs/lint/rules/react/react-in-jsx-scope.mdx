@@ -1,0 +1,47 @@
+---
+title: "react/react-in-jsx-scope"
+description: "Require `React` to be in scope in files that use JSX"
+---
+
+With the classic JSX transform, `<App />` compiles to `React.createElement(App)`. If the file does not import `React`, that line throws `ReferenceError: React is not defined` when it runs.
+
+If the file has a `@jsx` comment, or the `react.pragma` setting is set, the rule looks for that name instead of `React`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+export function App() {
+  return <h1>Hello</h1>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import React from "react";
+
+export function App() {
+  return <h1>Hello</h1>;
+}
+```
+
+{/* good */}
+
+```jsx
+/** @jsx h */
+import { h } from "preact";
+
+export function App() {
+  return <h1>Hello</h1>;
+}
+```
+
+## When not to use it
+
+Turn it off if you use the automatic JSX transform (`"jsx": "react-jsx"` in `tsconfig.json`), which is what Bun does by default. That transform imports what it needs by itself, so `React` does not have to be in scope.

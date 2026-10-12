@@ -16,7 +16,7 @@ const REPLACE: Message = Message::new(
 );
 const UNCHECKED: Message = Message::new(
     "unchecked",
-    "Files like this are not checked: {{ reason }}.",
+    "This file was not checked because {{ reason }}.",
 );
 
 fn show_invisibles(shown: &[u8]) -> Vec<u8> {

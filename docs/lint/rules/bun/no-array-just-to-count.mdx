@@ -1,0 +1,66 @@
+---
+title: "bun/no-array-just-to-count"
+description: "Disallow `.split(separator).length` with a one-character separator"
+---
+
+`text.split("\n").length` copies every line of `text` into a new array, reads the length, and throws the array away. For a large string that is a lot of memory for one number. A loop that counts the separator allocates nothing.
+
+Only a literal separator of one character is reported, not a variable or a regular expression.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const lineCount = source.split("\n").length;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function count(text, separator) {
+  let found = 0;
+  for (let at = text.indexOf(separator); at !== -1; at = text.indexOf(separator, at + 1)) {
+    found++;
+  }
+  return found;
+}
+
+const lineCount = count(source, "\n") + 1;
+```
+
+An array that is used for more than its length is fine, and so is a longer separator:
+
+{/* good */}
+
+```js
+const lines = source.split("\n");
+console.log(lines.length, lines[0]);
+
+const paragraphCount = source.split("\n\n").length;
+```
+
+## Options
+
+| Option          | Default | What it does                                                                                                            |
+| --------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `countFunction` | none    | The name of a function that is called as `countFunction(string, separator)` and returns how often the separator occurs. |
+
+Without `countFunction`, the rule only reports. With it, `--fix` rewrites `source.split("\n").length` to `count(source, "\n") + 1`, and `source.split("\n").length - 1` to `count(source, "\n")`. The fix applies only where a function of that name is in scope.
+
+```toml bunfig.toml
+[lint.rules]
+"bun/no-array-just-to-count" = ["error", { countFunction = "count" }]
+```
+
+{/* bad {"options": [{"countFunction": "count"}]} */}
+
+```js
+import { count } from "./strings.js";
+
+const commas = row.split(",").length - 1;
+```

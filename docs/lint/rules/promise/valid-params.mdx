@@ -1,0 +1,44 @@
+---
+title: "promise/valid-params"
+description: "Require the right number of arguments for `Promise` methods"
+---
+
+`Promise` methods do not complain about extra or missing arguments. `Promise.all(a, b)` ignores `b`, and rejects unless `a` is iterable. `promise.catch()` without a handler catches nothing.
+
+| Method                                                             | Arguments |
+| ------------------------------------------------------------------ | --------- |
+| `Promise.resolve`, `Promise.reject`                                | 0 or 1    |
+| `Promise.all`, `Promise.allSettled`, `Promise.any`, `Promise.race` | 1         |
+| `then`                                                             | 1 or 2    |
+| `catch`, `finally`                                                 | 1         |
+
+A `then`, `catch` or `finally` method of something that is clearly not a promise, such as an object literal or `new Parser()`, is not reported.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const results = Promise.all(loadUser(), loadOrders());
+```
+
+{/* bad {"count": 2} */}
+
+```js
+save(draft).then().catch();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const results = Promise.all([loadUser(), loadOrders()]);
+
+save(draft).then(notify, retry).catch(showError);
+
+const parser = new Parser();
+parser.then();
+```

@@ -1,0 +1,67 @@
+---
+title: "unicorn/no-process-exit"
+description: "Disallow `process.exit()`"
+---
+
+`process.exit()` stops the process at once. Work that is still pending is dropped, `finally` blocks do not run, and the code that called yours gets no chance to handle the failure. Throw an error instead, or set `process.exitCode` and let the process end when it has nothing left to do.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function loadConfig(path) {
+  if (!exists(path)) {
+    console.error("config not found");
+    process.exit(1);
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function loadConfig(path) {
+  if (!exists(path)) {
+    throw new Error("config not found");
+  }
+}
+```
+
+The rule allows `process.exit()` in three places. A file that starts with `#!` is a command-line program, which decides for itself when to end:
+
+{/* good */}
+
+```js
+#!/usr/bin/env bun
+if (!(await run())) {
+  process.exit(1);
+}
+```
+
+A handler passed to `process.on()` or `process.once()`:
+
+{/* good */}
+
+```js
+process.on("SIGINT", () => {
+  closeServer();
+  process.exit(130);
+});
+```
+
+And a file that imports something from `node:worker_threads`, where `process.exit()` ends the worker thread and not the process:
+
+{/* good */}
+
+```js
+import { parentPort } from "node:worker_threads";
+
+parentPort.on("message", message => {
+  if (message === "stop") process.exit(0);
+});
+```

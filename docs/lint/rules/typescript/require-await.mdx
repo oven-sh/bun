@@ -1,0 +1,45 @@
+---
+title: "@typescript-eslint/require-await"
+description: "Disallow `async` functions that never `await` and do not return a promise"
+---
+
+An `async` function with no `await` in it does its work right away and then wraps the result in a promise for nothing. Often the `async` is left over from a refactor, or an `await` is missing.
+
+This is `require-await` with types, which lets it allow a function that returns a promise: there `async` turns an error thrown before the `return` into a rejection. Turn the other rule off when you use this one. `for await` and `await using` count as an `await`, and a function with an empty body is not reported.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+async function total(prices: number[]) {
+  return prices.reduce((sum, price) => sum + price, 0);
+}
+
+const log = async (message: string) => {
+  console.log(message);
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function total(prices: number[]) {
+  return prices.reduce((sum, price) => sum + price, 0);
+}
+
+async function readConfig(path: string) {
+  const text = await Bun.file(path).text();
+  return JSON.parse(text);
+}
+
+async function loadUser(id: string) {
+  return fetch(`/users/${id}`);
+}
+```

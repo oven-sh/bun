@@ -76,7 +76,7 @@ describe.concurrent("sortTailwindcss", () => {
   const input = '<a className="p-4 flex m-2" />;\n';
   const [sorted, reversed] = ['<a className="m-2 flex p-4" />;\n', '<a className="p-4 flex m-2" />;\n'];
 
-  const unknown = "sortTailwindcss: The order of some classes cannot be found.";
+  const unknown = "sortTailwindcss could not find the order of some classes.";
 
   const listed = (root: string) => readdirSync(root, { recursive: true, encoding: "utf8" }).sort();
 
@@ -193,16 +193,17 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
   test("without the package it is an error, and the files with classes are left as they are", async () => {
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "a.jsx": `${input}a  ;\n`, "b.js": "b  ;\n" };
     const result = await format(files, ["a.jsx", "b.js"]);
-    expect(result.stderr).toContain("[error] sortTailwindcss: It needs the package tailwindcss");
-    expect(result.stderr).toContain(`[error] a.jsx: ${unknown} It is left as it is.\n`);
+    expect(result.stderr).toContain("[error] sortTailwindcss: the tailwindcss package was not found from ");
+    expect(result.stderr).toContain("[error]   Run bun add -d tailwindcss\n");
+    expect(result.stderr).toContain(`[error] a.jsx: ${unknown} It was not formatted.\n`);
     expect(result.files).toEqual([`${input}a  ;\n`, "b;\n"]);
     expect(result.exitCode).toBe(2);
     // The first directory in the order of the names, not the one whose file has come first.
     const many = Object.fromEntries(["z", "c", "x", "b", "y"].map(name => [`${name}/a.jsx`, input]));
     const inMany = await format({ ".oxfmtrc.json": files[".oxfmtrc.json"], ...many }, []);
-    expect(inMany.stderr).toMatch(/which cannot be found from \S*[\\/]b\. Install it\./);
+    expect(inMany.stderr).toMatch(/was not found from \S*[\\/]b\n/);
     const allowed = await format(files, ["a.jsx", "b.js"], ["--allow-unsupported"]);
-    expect(allowed.stderr).toContain("[warn] sortTailwindcss: It needs the package tailwindcss");
+    expect(allowed.stderr).toContain("[warn] sortTailwindcss: the tailwindcss package was not found from ");
     expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
     expect(allowed.exitCode).toBe(0);
   });
@@ -262,8 +263,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     });
     const result = await formatIn(String(dir), ["a.jsx", "b.jsx", "c.jsx"]);
     expect(result.stderr.split("\n").filter(line => line.startsWith("[error]"))).toEqual([
-      `[error] b.jsx: ${unknown} It is left as it is.`,
-      `[error] c.jsx: ${unknown} It is left as it is.`,
+      `[error] b.jsx: ${unknown} It was not formatted.`,
+      `[error] c.jsx: ${unknown} It was not formatted.`,
     ]);
     expect(result.files).toEqual([
       sorted,
@@ -291,9 +292,9 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         writeFileSync(inside(`/${name}`), text);
       const result = await formatIn(String(dir), ["a.jsx"]);
       expect(result.stderr.split("\n").filter(line => line.startsWith("[error]"))).toEqual([
-        `[error] caf\uFFFD/b.jsx: ${unknown} It is left as it is.`,
-        `[error] sortTailwindcss: ${String(dir)}/caf\uFFFD/node_modules/tailwindcss: It cannot be loaded from a path that is not UTF-8.`,
-        "[error] Left as it is: 1 file.",
+        `[error] caf\uFFFD/b.jsx: ${unknown} It was not formatted.`,
+        `[error] sortTailwindcss: ${String(dir)}/caf\uFFFD/node_modules/tailwindcss: cannot load Tailwind CSS from a path that is not UTF-8`,
+        "[error] 1 file was not formatted.",
       ]);
       expect(result.files).toEqual([sorted]);
       expect(readFileSync(inside("/b.jsx"), "utf8")).toBe(`${input}b  ;\n`);
@@ -315,10 +316,10 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     using dir = tempDir("bun-format-tailwind", { ".oxfmtrc.json": '{ "sortTailwindcss": true }' });
     const from = ["--stdin-filepath", "a.jsx"];
     const refused = await formatIn(String(dir), [], from, `${input}a  ;\n`);
-    expect(refused.stderr).toContain("[error] sortTailwindcss: It needs the package tailwindcss");
+    expect(refused.stderr).toContain("[error] sortTailwindcss: the tailwindcss package was not found from ");
     expect(refused).toMatchObject({ stdout: "", exitCode: 2 });
     const allowed = await formatIn(String(dir), [], ["--allow-unsupported", ...from], `${input}a  ;\n`);
-    expect(allowed.stderr).toContain("[warn] sortTailwindcss: It needs the package tailwindcss");
+    expect(allowed.stderr).toContain("[warn] sortTailwindcss: the tailwindcss package was not found from ");
     expect(allowed).toMatchObject({ stdout: `${input}a;\n`, exitCode: 0 });
   });
 
@@ -395,9 +396,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(lists[0].stderr).toContain(
         `[${allows ? "warn" : "error"}] sortTailwindcss: ${join(String(dir), "three/tailwind.config.js").replaceAll("\\", "/")}: It has no such plugin.`,
       );
-      expect(lists[0].stderr).toContain(
-        allows ? "The classes are not sorted in 7 files." : "Left as they are: 7 files.",
-      );
+      expect(lists[0].stderr).toContain(allows ? "Classes were not sorted in 7 files." : "7 files were not formatted.");
       expect(Array.from(lists[0].stderr.matchAll(/(\w+)\/tailwind\.config\.js: /g), it => it[1])).toEqual([
         "a",
         "b",

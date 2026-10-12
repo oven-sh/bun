@@ -200,7 +200,7 @@ impl Known {
                 if group.is_some_and(|it| !it.missing.is_empty()) {
                     let error: &[u8] = match which.is_utf8() {
                         true => error,
-                        false => b"It cannot be loaded from a path that is not UTF-8.",
+                        false => b"cannot load Tailwind CSS from a path that is not UTF-8",
                     };
                     let loaded = which.config.or(which.stylesheet).unwrap_or(which.root);
                     failures.push([&loaded[..], b": ", error].concat());
@@ -296,9 +296,9 @@ impl Classes {
         let needs_package = |directory: &[u8]| {
             fail(
                 &[
-                    &b"It needs the package tailwindcss, which cannot be found from "[..],
+                    &b"the tailwindcss package was not found from "[..],
                     directory,
-                    b". Install it.",
+                    b"\n  Run bun add -d tailwindcss",
                 ]
                 .concat(),
             )

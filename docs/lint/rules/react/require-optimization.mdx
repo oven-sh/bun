@@ -1,0 +1,64 @@
+---
+title: "react/require-optimization"
+description: "Require class components to define `shouldComponentUpdate` or extend `PureComponent`"
+---
+
+A class component renders again each time its parent renders, even if its props and state are the same. `shouldComponentUpdate` lets it skip those renders. `React.PureComponent` does the comparison for you.
+
+Function components are not checked. A `createReactClass` component also passes if `PureRenderMixin` is in its `mixins`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class Row extends React.Component {
+  render() {
+    return <li>{this.props.label}</li>;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Row extends React.PureComponent {
+  render() {
+    return <li>{this.props.label}</li>;
+  }
+}
+
+class Cell extends React.Component {
+  shouldComponentUpdate(nextProps) {
+    return nextProps.value !== this.props.value;
+  }
+  render() {
+    return <td>{this.props.value}</td>;
+  }
+}
+```
+
+## Options
+
+| Option            | Default | What it does                                                                                    |
+| ----------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `allowDecorators` | `[]`    | Names of decorators that add `shouldComponentUpdate`. A class with one of them is not reported. |
+
+{/* good {"options": [{"allowDecorators": ["pureRender"]}]} */}
+
+```tsx
+@pureRender
+class Row extends React.Component {
+  render() {
+    return <li>{this.props.label}</li>;
+  }
+}
+```
+
+## When not to use it
+
+Comparing props has a cost too. For a component that nearly always gets new props, the check is wasted work on top of the render.

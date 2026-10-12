@@ -1,0 +1,82 @@
+---
+title: "no-restricted-syntax"
+description: "Disallow the syntax you describe with selectors"
+---
+
+Sometimes you want to ban one piece of the language in your project and no rule exists for it: `for..in` loops, TypeScript enums, a call to one function with one kind of argument. This rule takes a list of selectors and reports every node of the syntax tree that matches one.
+
+A selector names a node type of the ESTree format, such as `ForInStatement`, and can narrow it down the way a CSS selector does: by attribute (`[name="eval"]`), by parent (`A > B`), by ancestor (`A B`), with `:not()`, `:is()` and `:has()`. TypeScript syntax has the node types of typescript-eslint, such as `TSEnumDeclaration`.
+
+The rule reports nothing until you give it a selector.
+
+## Examples
+
+```toml bunfig.toml
+[lint.rules]
+"no-restricted-syntax" = ["error", "ForInStatement"]
+```
+
+Reported:
+
+{/* bad {"options": ["ForInStatement"]} */}
+
+```js
+for (const key in settings) {
+  apply(key, settings[key]);
+}
+```
+
+Not reported:
+
+{/* good {"options": ["ForInStatement"]} */}
+
+```js
+for (const key of Object.keys(settings)) {
+  apply(key, settings[key]);
+}
+```
+
+## Options
+
+Each option is a selector, or an object with a selector and the message to show.
+
+| Option                                  | What it does                                                               |
+| --------------------------------------- | -------------------------------------------------------------------------- |
+| `"<selector>"`                          | Report what matches, with the message `Using '<selector>' is not allowed.` |
+| `{ "selector": "..", "message": ".." }` | Report what matches, with your message.                                    |
+
+This selector matches a literal, such as a string, that is the first argument of `setTimeout`:
+
+```toml bunfig.toml
+[lint.rules]
+"no-restricted-syntax" = ["error", { selector = "CallExpression[callee.name='setTimeout'] > Literal:first-child", message = "Pass a function to setTimeout." }]
+```
+
+{/* bad {"options": [{"selector": "CallExpression[callee.name='setTimeout'] > Literal:first-child", "message": "Pass a function to setTimeout."}]} */}
+
+```js
+setTimeout("refresh()", 1000);
+```
+
+{/* good {"options": [{"selector": "CallExpression[callee.name='setTimeout'] > Literal:first-child", "message": "Pass a function to setTimeout."}]} */}
+
+```js
+setTimeout(refresh, 1000);
+```
+
+In a TypeScript file:
+
+{/* bad {"options": [{"selector": "TSEnumDeclaration", "message": "Use a union of strings."}]} */}
+
+```ts
+enum Color {
+  Red,
+  Blue,
+}
+```
+
+{/* good {"options": [{"selector": "TSEnumDeclaration", "message": "Use a union of strings."}]} */}
+
+```ts
+type Color = "red" | "blue";
+```

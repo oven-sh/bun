@@ -53,6 +53,43 @@ impl NativePlugins {
     }
 }
 
+/// With which configurations a rule here can be named.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Modes {
+    /// Where neither ESLint nor oxlint has a configuration.
+    pub native: bool,
+    pub eslint: bool,
+    pub oxlint: bool,
+}
+
+/// [`Registry::names_of`]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Names {
+    /// What reports call the rule, but for the formats of oxlint.
+    pub id: Vec<u8>,
+    /// What else a configuration or a comment can call it where neither ESLint nor oxlint has a configuration.
+    pub aliases: Vec<Vec<u8>>,
+    pub modes: Modes,
+}
+
+/// [`Registry::why_missing`]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Missing {
+    /// It is about the layout of the code, which is left to `bun format`.
+    Formatting,
+    /// It is of a plugin [none of whose rules is here](Plugin::has_no_rules).
+    OfPluginWithoutRules(Plugin),
+    /// Nobody has such a rule. The name of a rule that is close to it, if one is.
+    Unknown(Option<Vec<u8>>),
+}
+
+fn written(prefix: &str, name: &str) -> Vec<u8> {
+    match prefix {
+        "" => name.into(),
+        prefix => [prefix, "/", name].concat().into(),
+    }
+}
+
 /// `conf/replacements.json`: rules that ESLint has removed, and what replaces them.
 const REPLACEMENTS: &[(&str, &str)] = &[
     ("generator-star", "generator-star-spacing"),
@@ -345,6 +382,56 @@ impl Registry {
             false => Plugin::of_prefix(prefix),
         };
         self.get_preferring(plugin?, name, prefers_typescript)
+    }
+
+    /// The rule that `id` names where neither ESLint nor oxlint has a configuration: every rule here, by every
+    /// [spelling](Plugin::spellings) of its plugin. Of the rule of a plugin for ESLint and oxlint's of the same name, the first.
+    pub fn find_by_any_name(&self, id: &[u8]) -> Option<&'static RuleEntry> {
+        let (prefix, name) = parse_rule_id(id);
+        let found = Plugin::spelled(prefix).filter_map(|it| self.get(it, name));
+        found.min_by_key(|it| it.meta.follows_oxlint)
+    }
+
+    /// What the rule is called that `meta` is of, or that stands in its place where [any name](Registry::find_by_any_name)
+    /// counts.
+    pub fn names_of(&self, meta: &Meta) -> Names {
+        let own = written(meta.plugin.prefix(), meta.name);
+        let meta = self.find_by_any_name(&own).map_or(meta, |it| it.meta);
+        let prefixes = meta.plugin.spellings().iter();
+        let mut names = prefixes.map(|it| written(it, meta.name));
+        let id = names.next().unwrap_or(own);
+        Names {
+            modes: Modes {
+                native: self.find_by_any_name(&id).is_some(),
+                eslint: self.find_preferring(&id, false).is_some(),
+                oxlint: self.find_preferring(&id, true).is_some(),
+            },
+            aliases: names.collect(),
+            id,
+        }
+    }
+
+    /// Why [`Registry::find_by_any_name`] finds no `id`.
+    pub fn why_missing(&self, id: &[u8]) -> Missing {
+        let (prefix, name) = parse_rule_id(id);
+        let of_eslint = if prefix == b"eslint" { name } else { id };
+        if formatting_rule(of_eslint).is_some() || prefix.starts_with(b"@stylistic") {
+            return Missing::Formatting;
+        }
+        if let Some(plugin) = Plugin::spelled(prefix).find(|it| it.has_no_rules()) {
+            return Missing::OfPluginWithoutRules(plugin);
+        }
+        let most = id.len().max(3) / 3;
+        let all = self.rules.iter().map(|it| it.meta);
+        let names = all.flat_map(|meta| {
+            let prefixes = meta.plugin.spellings().iter();
+            prefixes.map(|it| (written(it, meta.name), meta.name.as_bytes() == name))
+        });
+        let close = names.filter_map(|(other, has_same_name)| {
+            let distance = strings::edit_distance(id.iter().copied(), &other);
+            (has_same_name || distance <= most).then_some((distance, other))
+        });
+        Missing::Unknown(close.min_by_key(|it| it.0).map(|it| it.1))
     }
 
     /// The rule that a configuration or a comment calls `id`: `no-debugger`,

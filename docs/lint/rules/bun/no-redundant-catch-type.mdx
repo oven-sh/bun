@@ -1,0 +1,38 @@
+---
+title: "bun/no-redundant-catch-type"
+description: "Disallow `: unknown` on the variable of a `catch` clause"
+---
+
+With `strict` or `useUnknownInCatchVariables` in `tsconfig.json`, the variable of a `catch` clause is already `unknown`. Writing `: unknown` adds nothing.
+
+`--fix` removes the annotation.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+try {
+  await save(draft);
+} catch (error: unknown) {
+  report(error);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+try {
+  await save(draft);
+} catch (error) {
+  report(error);
+}
+```
+
+## When not to use it
+
+The rule does not read your `tsconfig.json`. Without `strict` or `useUnknownInCatchVariables`, the variable is `any`, and `: unknown` is what makes it safe. Leave the rule off in such a project.

@@ -1,0 +1,44 @@
+---
+title: "bun:test/prefer-to-be-falsy"
+description: "Require `toBeFalsy()` instead of `toBe(false)`"
+---
+
+`toBe(false)` passes only for the value `false`. `toBeFalsy()` passes for everything that counts as false in an `if`: `false`, `0`, `""`, `null`, `undefined`, and `NaN`. With this rule, a test does not depend on which of those values the code returns.
+
+The rule reports `toBe(false)`, `toEqual(false)`, and `toStrictEqual(false)`, with or without `.not`.
+
+`--fix-suggestions` replaces the matcher with `toBeFalsy()`. `--fix` does not, because the new matcher accepts more values.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("a new cart has no discount", () => {
+  const cart = createCart();
+  expect(cart.hasDiscount).toBe(false);
+  expect(cart.isOpen).not.toEqual(false);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("a new cart has no discount", () => {
+  const cart = createCart();
+  expect(cart.hasDiscount).toBeFalsy();
+  expect(cart.isOpen).not.toBeFalsy();
+});
+```
+
+## When not to use it
+
+If a function must return exactly `false`, and `undefined` or `0` would be a bug, `toBe(false)` is the stricter and better check. Leave this rule off in that case.

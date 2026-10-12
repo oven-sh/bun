@@ -1,0 +1,127 @@
+---
+title: "react/no-unused-prop-types"
+description: "Disallow props that are declared but never used in the component"
+---
+
+A prop that is declared but never read misleads whoever uses the component: they pass a value and nothing happens. It is usually left over from a change to the component.
+
+The rule compares the props a component declares with the props it reads. It knows `propTypes` and, in TypeScript, the type of the props parameter.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 1} */}
+
+```jsx
+function Avatar({ name }) {
+  return <span>{name}</span>;
+}
+
+Avatar.propTypes = {
+  name: PropTypes.string,
+  size: PropTypes.number,
+};
+```
+
+{/* bad {"count": 1} */}
+
+```tsx
+type Props = {
+  name: string;
+  size?: number;
+};
+
+function Avatar({ name }: Props) {
+  return <span>{name}</span>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Avatar({ name, size }) {
+  return <span style={{ fontSize: size }}>{name}</span>;
+}
+
+Avatar.propTypes = {
+  name: PropTypes.string,
+  size: PropTypes.number,
+};
+```
+
+## Options
+
+| Option             | Default | What it does                                                                                                    |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `ignore`           | `[]`    | Names of props that are never reported.                                                                         |
+| `skipShapeProps`   | `true`  | Do not look inside `PropTypes.shape()` and `PropTypes.exact()`.                                                 |
+| `customValidators` | `[]`    | Names of objects that hold your own validators. The rule does not look inside a call such as `MyTypes.shape()`. |
+
+{/* good {"options": [{"ignore": ["size"]}]} */}
+
+```jsx
+function Avatar({ name }) {
+  return <span>{name}</span>;
+}
+
+Avatar.propTypes = {
+  name: PropTypes.string,
+  size: PropTypes.number,
+};
+```
+
+With `skipShapeProps` set to `false`, the fields of a shape are checked too. Here `user.email` is reported, and by default it is not:
+
+{/* bad {"count": 1, "options": [{"skipShapeProps": false}]} */}
+
+```jsx
+function Avatar(props) {
+  return <span>{props.user.name}</span>;
+}
+
+Avatar.propTypes = {
+  user: PropTypes.shape({
+    name: PropTypes.string,
+    email: PropTypes.string,
+  }),
+};
+```
+
+{/* good */}
+
+```jsx
+function Avatar(props) {
+  return <span>{props.user.name}</span>;
+}
+
+Avatar.propTypes = {
+  user: PropTypes.shape({
+    name: PropTypes.string,
+    email: PropTypes.string,
+  }),
+};
+```
+
+With `MyTypes` in `customValidators`, the fields of `MyTypes.shape()` are left alone:
+
+{/* good {"options": [{"skipShapeProps": false, "customValidators": ["MyTypes"]}]} */}
+
+```jsx
+function Avatar(props) {
+  return <span>{props.user.name}</span>;
+}
+
+Avatar.propTypes = {
+  user: MyTypes.shape({
+    name: PropTypes.string,
+    email: PropTypes.string,
+  }),
+};
+```
+
+## When not to use it
+
+The rule only follows props inside the component. If you hand the whole `props` object to a helper function that reads them, the props it reads are reported as unused.

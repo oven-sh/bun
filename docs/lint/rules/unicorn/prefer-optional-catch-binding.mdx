@@ -1,0 +1,50 @@
+---
+title: "unicorn/prefer-optional-catch-binding"
+description: "Require `catch {}` without a parameter when the error is not used"
+---
+
+`catch` does not need a parameter. A name that is never read makes a reader look for where the error is handled.
+
+`--fix` removes the parameter and its parentheses.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function parse(text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return undefined;
+  }
+}
+
+try {
+  await upload(file);
+} catch ({ message }) {
+  retry(file);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function parse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+try {
+  await upload(file);
+} catch ({ message }) {
+  console.error(message);
+}
+```

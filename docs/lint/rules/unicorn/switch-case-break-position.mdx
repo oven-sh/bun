@@ -1,0 +1,40 @@
+---
+title: "unicorn/switch-case-break-position"
+description: "Require `break`, `return`, `continue` and `throw` inside the braces of a `case`"
+---
+
+When the body of a `case` is in braces and the `break` comes after the closing brace, the `break` is easy to overlook, and easy to leave behind when the block is moved.
+
+The rule reports a `case` that is a block followed by only a `break`, `return`, `continue` or `throw`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+switch (event.type) {
+  case "open":
+    {
+      show(event.target);
+    }
+    break;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+switch (event.type) {
+  case "open": {
+    show(event.target);
+    break;
+  }
+  case "close":
+    hide(event.target);
+    break;
+}
+```

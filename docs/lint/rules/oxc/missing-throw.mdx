@@ -1,0 +1,41 @@
+---
+title: "oxc/missing-throw"
+description: "Require `throw` before a `new Error()` that is not used"
+---
+
+A statement that is only `new Error("...")` creates an error and discards it. Nothing is thrown, and the code carries on as if the check passed.
+
+An error that is assigned, returned or passed to a function is not reported. Only `Error` itself is checked, not other classes such as `TypeError`.
+
+`--fix-suggestions` adds the `throw`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function setAge(age) {
+  if (age < 0) {
+    new Error("age must not be negative");
+  }
+  user.age = age;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function setAge(age) {
+  if (age < 0) {
+    throw new Error("age must not be negative");
+  }
+  user.age = age;
+}
+
+const timeout = new Error("timed out");
+reject(new Error("canceled"));
+```

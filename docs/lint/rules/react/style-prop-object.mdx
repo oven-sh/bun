@@ -1,0 +1,60 @@
+---
+title: "react/style-prop-object"
+description: "Require the value of the `style` prop to be an object"
+---
+
+In HTML, `style` is a string of CSS. In React it is an object with camelCased properties, and React throws an error when it renders a DOM element with a string as its `style`.
+
+The rule reports a `style` that is a string, a number or a boolean, in JSX and in `React.createElement()`. It also follows a variable to the literal it was declared with. It does not report `null`, `undefined`, or anything it cannot see the value of, such as a prop or the result of a call.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const title = <h1 style="color: red">Settings</h1>;
+
+const css = "margin-top: 8px";
+const body = <p style={css}>Saved</p>;
+
+const footer = React.createElement("footer", { style: "padding: 4px" });
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const title = <h1 style={{ color: "red" }}>Settings</h1>;
+
+const css = { marginTop: 8 };
+const body = <p style={css}>Saved</p>;
+
+const footer = React.createElement("footer", { style: { padding: 4 } });
+
+function Card({ style }) {
+  return <div style={style} />;
+}
+```
+
+## Options
+
+| Option  | Default | What it does                                         |
+| ------- | ------- | ---------------------------------------------------- |
+| `allow` | `[]`    | Names of components that can take any `style` value. |
+
+Use `allow` for a component that gives `style` a meaning of its own:
+
+{/* good {"options": [{"allow": ["FormattedNumber"]}]} */}
+
+```jsx
+const price = <FormattedNumber value={total} style="currency" />;
+```
+
+{/* bad {"options": [{"allow": ["FormattedNumber"]}]} */}
+
+```jsx
+const price = <Price value={total} style="currency" />;
+```

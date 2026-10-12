@@ -1,0 +1,34 @@
+---
+title: "unicorn/require-module-attributes"
+description: "Disallow an empty attribute list in `import`, `export` and `import()`"
+---
+
+`with {}` after an import does nothing. It is usually left over after an attribute was deleted, or a placeholder for one that was never written, such as `type: "json"`.
+
+In `import()`, both an empty second argument and an empty `with` inside it are reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+import settings from "./settings.json" with {};
+export { version } from "./package.json" with {};
+
+const en = await import("./en.json", {});
+const de = await import("./de.json", { with: {} });
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import settings from "./settings.json" with { type: "json" };
+export { start } from "./server.js";
+
+const en = await import("./en.json", { with: { type: "json" } });
+const app = await import("./app.js");
+```

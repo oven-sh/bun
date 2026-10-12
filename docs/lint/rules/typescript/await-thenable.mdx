@@ -1,0 +1,76 @@
+---
+title: "@typescript-eslint/await-thenable"
+description: "Disallow `await` on a value that is not a promise"
+---
+
+`await` on a value that has no `then` method gives back the same value one tick later. It is usually a mistake: the function was never async, or you forgot to call it.
+
+The same goes for `for await...of` over something that is not async iterable, `await using` with something that is not async disposable, and values that are not promises in the array passed to `Promise.all`, `Promise.allSettled`, `Promise.any`, or `Promise.race`.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+function readConfig(): string {
+  return "{}";
+}
+
+const config = await readConfig();
+```
+
+{/* bad */}
+
+```ts
+const ports = [3000, 3001];
+
+for await (const port of ports) {
+  console.log(port);
+}
+```
+
+{/* bad */}
+
+```ts
+async function load(id: number): Promise<string> {
+  return String(id);
+}
+
+await Promise.all([load(1), 2]);
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+async function readConfig(): Promise<string> {
+  return "{}";
+}
+
+const config = await readConfig();
+```
+
+{/* good */}
+
+```ts
+const ports = [3000, 3001];
+
+for (const port of ports) {
+  console.log(port);
+}
+```
+
+A value that may or may not be a promise can be awaited, and so can `any` and `unknown`:
+
+{/* good */}
+
+```ts
+async function resolve(value: string | Promise<string>, other: unknown) {
+  return [await value, await other];
+}
+```

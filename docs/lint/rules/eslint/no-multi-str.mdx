@@ -1,0 +1,42 @@
+---
+title: "no-multi-str"
+description: "Disallow strings that continue on the next line with a backslash"
+---
+
+A backslash at the end of a line lets a quoted string continue on the next line. The line break is dropped, but the indentation of the next line becomes part of the string. One space after the backslash is a syntax error that is hard to see.
+
+Strings in JSX attributes can span lines without a backslash. They are not reported.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const help =
+  "Usage: deploy <target> \
+  --dry-run";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const help = "Usage: deploy <target> " + "--dry-run";
+
+const usage = `Usage: deploy <target>
+  --dry-run`;
+```
+
+{/* good */}
+
+```jsx
+const banner = (
+  <Banner
+    text="Deploys are paused
+  until Monday"
+  />
+);
+```

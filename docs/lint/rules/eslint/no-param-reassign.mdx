@@ -1,0 +1,76 @@
+---
+title: "no-param-reassign"
+description: "Disallow assigning to function parameters"
+---
+
+After `price = price * 1.2`, the name `price` no longer holds what the caller passed, and a reader further down the function has to notice that. In a function that is not in strict mode, the assignment also changes `arguments[0]`.
+
+Use a new variable for the new value.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function total(price, count) {
+  price = price * 1.2;
+  count++;
+  return price * count;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function total(price, count) {
+  const withTax = price * 1.2;
+  return withTax * (count + 1);
+}
+```
+
+## Options
+
+| Option                                | Default | What it does                                                                                                                                       |
+| ------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `props`                               | `false` | Also report a change to a property of a parameter: an assignment, `++`, `--`, `delete`, or use as the variable of a `for...in` or `for...of` loop. |
+| `ignorePropertyModificationsFor`      | `[]`    | With `props`: names of parameters that may have their properties changed.                                                                          |
+| `ignorePropertyModificationsForRegex` | `[]`    | With `props`: the same, as regular expressions.                                                                                                    |
+
+By default, changing a property is allowed:
+
+{/* good */}
+
+```js
+function activate(user) {
+  user.active = true;
+}
+```
+
+With `{ props: true }`, it is reported, because the caller's object changes:
+
+{/* bad {"options": [{"props": true}], "count": 2} */}
+
+```js
+function activate(user) {
+  user.active = true;
+  delete user.pending;
+}
+```
+
+The two lists make exceptions for parameters that exist to be changed. With `{ props: true, ignorePropertyModificationsFor: ["res"], ignorePropertyModificationsForRegex: ["^draft"] }`:
+
+{/* good {"options": [{"props": true, "ignorePropertyModificationsFor": ["res"], "ignorePropertyModificationsForRegex": ["^draft"]}]} */}
+
+```js
+function notFound(req, res) {
+  res.statusCode = 404;
+}
+
+function rename(draftUser, name) {
+  draftUser.name = name;
+}
+```

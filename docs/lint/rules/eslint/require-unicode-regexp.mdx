@@ -1,0 +1,49 @@
+---
+title: "require-unicode-regexp"
+description: "Require the `u` or `v` flag on regular expressions"
+---
+
+Without the `u` or `v` flag, a regular expression works on 16-bit units, not on characters. `/^.$/` does not match a single emoji such as `"\u{1F600}"`, because it takes two units. The flags also make the pattern strict: a useless escape such as `\a` is a syntax error instead of being silently read as `a`.
+
+The rule checks regular expression literals and calls to `RegExp`, with or without `new`. If the flags are not a constant string, the call is not reported.
+
+The report comes with a suggestion that adds the flag, if the pattern is still valid with it.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const oneCharacter = /^.$/;
+const word = new RegExp("\\w+", "g");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const oneCharacter = /^.$/u;
+const word = new RegExp("\\w+", "gu");
+const emoji = /^\p{RGI_Emoji}$/v;
+
+function search(pattern, flags) {
+  return new RegExp(pattern, flags);
+}
+```
+
+## Options
+
+| Option        | Default | What it does                                                                        |
+| ------------- | ------- | ----------------------------------------------------------------------------------- |
+| `requireFlag` | not set | `"u"` or `"v"`: accept only that flag. When it is not set, either flag is accepted. |
+
+With `requireFlag` set to `"v"`, the `u` flag is reported:
+
+{/* bad {"options": [{"requireFlag": "v"}]} */}
+
+```js
+const oneCharacter = /^.$/u;
+```

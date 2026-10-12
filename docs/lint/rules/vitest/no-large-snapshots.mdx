@@ -1,0 +1,88 @@
+---
+title: "vitest/no-large-snapshots"
+description: "Disallow snapshots that are longer than a set number of lines"
+---
+
+Nobody reads a snapshot of several hundred lines in a review. When it changes, it gets updated without a look, and then the test passes whatever the code does. A short snapshot, or an assertion on the few values that matter, still tells you something when it fails.
+
+The rule counts the lines of the first argument of `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`, so a snapshot that comes after a property matcher is not counted. If your config includes `.snap` files, it also counts the lines of each `exports[...] = ...` statement in them. The limit is 50 lines.
+
+## Examples
+
+These examples set `inlineMaxSize` to `3` to stay short.
+
+Reported:
+
+{/* bad {"options": [{"inlineMaxSize": 3}]} */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("loads the user", () => {
+  expect(loadUser(1)).toMatchInlineSnapshot(`
+    {
+      "email": "ada@example.com",
+      "id": 1,
+      "name": "Ada",
+    }
+  `);
+});
+```
+
+Not reported:
+
+{/* good {"options": [{"inlineMaxSize": 3}]} */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("loads the user", () => {
+  const user = loadUser(1);
+  expect(user.name).toBe("Ada");
+  expect(user.email).toMatchInlineSnapshot(`"ada@example.com"`);
+});
+```
+
+## Options
+
+| Option             | Default                | What it does                                          |
+| ------------------ | ---------------------- | ----------------------------------------------------- |
+| `maxSize`          | `50`                   | The most lines a snapshot in a `.snap` file can have. |
+| `inlineMaxSize`    | the value of `maxSize` | The most lines an inline snapshot can have.           |
+| `allowedSnapshots` | `{}`                   | Snapshots in `.snap` files that can have any length.  |
+
+```json
+{
+  "rules": {
+    "vitest/no-large-snapshots": ["error", { "maxSize": 100, "inlineMaxSize": 20 }]
+  }
+}
+```
+
+Without `inlineMaxSize`, `maxSize` applies to inline snapshots too:
+
+{/* bad {"options": [{"maxSize": 3}]} */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("lists the roles", () => {
+  expect(roles()).toMatchInlineSnapshot(`
+    [
+      "admin",
+      "editor",
+      "viewer",
+    ]
+  `);
+});
+```
+
+In `allowedSnapshots`, a key is the absolute path of a `.snap` file. Its value is a list of strings. Each one is read as a regular expression and tested against the name of the snapshot.
+
+```json
+{
+  "allowedSnapshots": {
+    "/app/src/__snapshots__/report.test.ts.snap": ["renders the full report 1", "^renders page \\d+"]
+  }
+}
+```

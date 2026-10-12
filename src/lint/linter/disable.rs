@@ -63,6 +63,9 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) rules_to_ignore: &'i [RuleId],
     /// There are more of them, which have no name here.
     pub(crate) has_skipped_rules: bool,
+    /// [`ResolvedConfig::only_for_react`](super::ResolvedConfig::only_for_react), in a file that they are not for. What names one is
+    /// not reported.
+    pub(crate) only_for_react: &'i [RuleId],
 }
 
 impl Input<'_, '_> {
@@ -74,7 +77,7 @@ impl Input<'_, '_> {
         match rule {
             // What applies to all rules may be used by one that did not run.
             None => !self.rules_to_ignore.is_empty() || self.has_skipped_rules,
-            Some(rule) => self.rules_to_ignore.contains(rule),
+            Some(rule) => self.rules_to_ignore.contains(rule) || self.only_for_react.contains(rule),
         }
     }
 

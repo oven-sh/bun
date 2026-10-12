@@ -1,0 +1,80 @@
+---
+title: "react/jsx-first-prop-new-line"
+description: "Enforce the position of the first prop of a JSX element"
+---
+
+When a tag is spread over several lines and its first prop stays next to the tag name, that prop is easy to miss and the props do not line up. By default the rule reports this for a tag that has more than one prop.
+
+`--fix` moves the first prop.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const field = <Input name="email" value={email} />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const field = <Input name="email" value={email} />;
+
+const short = <Input name="email" value={email} />;
+```
+
+## Options
+
+| Option                            | The first prop goes on a new line                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `"multiline-multiprop"` (default) | If the tag takes several lines and has more than one prop.                                  |
+| `"multiline"`                     | If the tag takes several lines.                                                             |
+| `"multiprop"`                     | If the tag has more than one prop. With one prop, it has to be on the line of the tag name. |
+| `"always"`                        | Always.                                                                                     |
+| `"never"`                         | Never. It has to be on the line of the tag name.                                            |
+
+A single prop that takes several lines is reported with `"multiline"`, not with the default:
+
+{/* bad {"options": ["multiline"]} */}
+
+```jsx
+const box = (
+  <Box
+    style={{
+      color: "red",
+    }}
+  />
+);
+```
+
+{/* good */}
+
+```jsx
+const box = (
+  <Box
+    style={{
+      color: "red",
+    }}
+  />
+);
+```
+
+With `"multiprop"`:
+
+{/* bad {"options": ["multiprop"]} */}
+
+```jsx
+const field = <Input name="email" value={email} />;
+```
+
+With `"never"`:
+
+{/* bad {"options": ["never"]} */}
+
+```jsx
+const field = <Input name="email" value={email} />;
+```

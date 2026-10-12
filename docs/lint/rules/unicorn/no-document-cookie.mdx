@@ -1,0 +1,36 @@
+---
+title: "unicorn/no-document-cookie"
+description: "Disallow assigning to `document.cookie`"
+---
+
+`document.cookie = "..."` looks like it replaces all cookies, but it adds or changes one. You build the string by hand: you have to encode the value and spell `path`, `max-age`, and the other attributes correctly, and the browser silently ignores what it does not understand. The Cookie Store API and cookie libraries take an object instead.
+
+Only assignments are reported. Reading `document.cookie` is allowed.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+document.cookie = "theme=dark; path=/";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+await cookieStore.set({ name: "theme", value: "dark", path: "/" });
+```
+
+{/* good */}
+
+```js
+const isDark = document.cookie.includes("theme=dark");
+```
+
+## When not to use it
+
+The Cookie Store API only works on pages served over HTTPS, and older browsers do not have it. If you can use neither it nor a cookie library, turn the rule off.

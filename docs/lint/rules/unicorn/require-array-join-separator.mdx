@@ -1,0 +1,31 @@
+---
+title: "unicorn/require-array-join-separator"
+description: "Require the separator argument of `Array#join()`"
+---
+
+Without an argument, `join()` puts a comma between the items. A reader may expect no separator at all, or a comma and a space. Writing the separator removes the guess.
+
+The rule looks at the method name only, so it reports `.join()` without arguments on any object. It also reports `Array.prototype.join.call(items)` and `[].join.call(items)`.
+
+`--fix` adds `","`, which keeps the result the same.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const header = columns.join();
+const names = Array.prototype.join.call(arguments);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const header = columns.join(",");
+const names = Array.prototype.join.call(arguments, ", ");
+const word = letters.join("");
+```

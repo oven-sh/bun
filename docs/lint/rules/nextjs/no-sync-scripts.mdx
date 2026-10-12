@@ -1,0 +1,40 @@
+---
+title: "@next/next/no-sync-scripts"
+description: "Disallow `<script src>` without `async` or `defer`"
+---
+
+When the browser meets a `<script>` with a `src`, it stops reading the HTML until the file is downloaded and run. Nothing below the tag is shown in the meantime. A slow third-party server then holds up your whole page.
+
+With `async` or `defer`, the browser keeps reading the HTML while the file downloads. `Script` from `next/script` does not block either, and lets you pick when the script loads.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+export default function Checkout() {
+  return <script src="https://example.com/payments.js" />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+export default function Checkout() {
+  return <script src="https://example.com/payments.js" defer />;
+}
+```
+
+{/* good */}
+
+```jsx
+import Script from "next/script";
+
+export default function Checkout() {
+  return <Script src="https://example.com/payments.js" />;
+}
+```

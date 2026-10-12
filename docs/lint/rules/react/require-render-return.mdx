@@ -1,0 +1,36 @@
+---
+title: "react/require-render-return"
+description: "Require the `render` method of a class component to return something"
+---
+
+A `render` method without `return` gives React `undefined`, so the component shows nothing. The usual cause is JSX written as a statement with the `return` forgotten.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class Greeting extends React.Component {
+  render() {
+    <h1>Hello {this.props.name}</h1>;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Greeting extends React.Component {
+  render() {
+    return <h1>Hello {this.props.name}</h1>;
+  }
+}
+
+class Footer extends React.Component {
+  render = () => <footer>{this.props.text}</footer>;
+}
+```

@@ -1,0 +1,90 @@
+---
+title: "react/display-name"
+description: "Require every component to have a name that React can show"
+---
+
+React DevTools, warnings, and component stacks show a component by its name. A component without one shows up as `Anonymous` or `Unknown`, and you cannot tell which of them failed.
+
+React takes the name from the function or class, or from the variable it is assigned to. So the rule mostly reports anonymous functions that are exported directly or passed to `memo` or `forwardRef`. A `displayName` property also counts.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+export default () => <nav>Menu</nav>;
+```
+
+{/* bad */}
+
+```jsx
+import { forwardRef } from "react";
+
+export const TextField = forwardRef((props, ref) => <input ref={ref} {...props} />);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+export default function Menu() {
+  return <nav>Menu</nav>;
+}
+```
+
+{/* good */}
+
+```jsx
+import { forwardRef } from "react";
+
+export const TextField = forwardRef(function TextField(props, ref) {
+  return <input ref={ref} {...props} />;
+});
+
+export const Search = forwardRef((props, ref) => <input type="search" ref={ref} {...props} />);
+Search.displayName = "Search";
+```
+
+## Options
+
+| Option                 | Default | What it does                                                                                      |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `ignoreTranspilerName` | `false` | Do not count the name of the function, class, or variable. Only an explicit `displayName` counts. |
+| `checkContextObjects`  | `false` | Also require a `displayName` on the result of `createContext()`.                                  |
+
+{/* bad {"options": [{"ignoreTranspilerName": true}]} */}
+
+```jsx
+export default function Menu() {
+  return <nav>Menu</nav>;
+}
+```
+
+{/* good {"options": [{"ignoreTranspilerName": true}]} */}
+
+```jsx
+export default function Menu() {
+  return <nav>Menu</nav>;
+}
+Menu.displayName = "Menu";
+```
+
+{/* bad {"options": [{"checkContextObjects": true}]} */}
+
+```jsx
+import { createContext } from "react";
+
+const ThemeContext = createContext("light");
+```
+
+{/* good {"options": [{"checkContextObjects": true}]} */}
+
+```jsx
+import { createContext } from "react";
+
+const ThemeContext = createContext("light");
+ThemeContext.displayName = "ThemeContext";
+```

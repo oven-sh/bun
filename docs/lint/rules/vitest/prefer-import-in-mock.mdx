@@ -1,0 +1,50 @@
+---
+title: "vitest/prefer-import-in-mock"
+description: "Require `import()` instead of a string path in `vi.mock()` and `vi.doMock()`"
+---
+
+A path written as a string tells TypeScript nothing. With `vi.mock(import("./api"))`, TypeScript and your editor know which module is mocked: a wrong path is an error, and `importOriginal()` in the factory has the type of the module.
+
+`--fix` wraps the string in `import()`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { vi } from "vitest";
+
+vi.mock("./api", async importOriginal => {
+  const api = await importOriginal();
+  return { ...api, fetchUser: vi.fn() };
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { vi } from "vitest";
+
+vi.mock(import("./api"), async importOriginal => {
+  const api = await importOriginal();
+  return { ...api, fetchUser: vi.fn() };
+});
+```
+
+## Options
+
+| Option    | Default | What it does                                                                |
+| --------- | ------- | --------------------------------------------------------------------------- |
+| `fixable` | `true`  | Set it to `false` to keep the report but leave the code alone with `--fix`. |
+
+{/* bad {"options": [{"fixable": false}]} */}
+
+```ts
+import { vi } from "vitest";
+
+vi.doMock("./api");
+```

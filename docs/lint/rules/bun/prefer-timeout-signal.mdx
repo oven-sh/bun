@@ -1,0 +1,67 @@
+---
+title: "bun/prefer-timeout-signal"
+description: "Prefer `AbortSignal.timeout()` to an `AbortController` that only a timer aborts"
+---
+
+`AbortSignal.timeout(ms)` does in one call what an `AbortController` and a `setTimeout` that aborts it do together. Its signal also aborts with a `TimeoutError` instead of an `AbortError`, so the code that catches the error can tell a timeout from a cancellation.
+
+A controller is reported if one `setTimeout(() => controller.abort(), ms)` is the only thing that aborts it, and the rest of the code only reads `controller.signal`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 5000);
+
+const response = await fetch(url, { signal: controller.signal });
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+```
+
+A controller that something else can abort too is not reported:
+
+{/* good */}
+
+```js
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 5000);
+cancelButton.addEventListener("click", () => controller.abort());
+
+const response = await fetch(url, { signal: controller.signal });
+```
+
+Neither is one that aborts with a reason of its own:
+
+{/* good */}
+
+```js
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("The upload took too long")), 5000);
+
+await upload(file, { signal: controller.signal });
+```
+
+## Options
+
+| Option      | Default | What it does                                                                                                            |
+| ----------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `factories` | `[]`    | Names of your own functions that return an `AbortController`. What they return is checked like `new AbortController()`. |
+
+{/* bad {"options": [{"factories": ["createController"]}]} */}
+
+```js
+const controller = createController();
+setTimeout(() => controller.abort(), 5000);
+
+const response = await fetch(url, { signal: controller.signal });
+```

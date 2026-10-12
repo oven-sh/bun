@@ -1,0 +1,62 @@
+---
+title: "import/unambiguous"
+description: "Require a module to have an `import` or `export` so it cannot be read as a script"
+---
+
+A file with no `import` and no `export` is valid both as a script and as a module, and the two run differently: a module is in strict mode, its top-level `this` is `undefined`, and its top-level declarations are not global. A tool that has to guess from the content can guess wrong.
+
+One `import` or `export` statement settles it. `import()`, `import.meta`, top-level `await` and `require()` do not count.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function greet(name) {
+  console.log(`Hello, ${name}`);
+}
+
+greet("Ada");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+export function greet(name) {
+  console.log(`Hello, ${name}`);
+}
+```
+
+If the file has nothing to export, an empty export marks it as a module:
+
+{/* good */}
+
+```js
+function greet(name) {
+  console.log(`Hello, ${name}`);
+}
+
+greet("Ada");
+
+export {};
+```
+
+A `.cjs` file is never a module, so it is not checked:
+
+{/* good {"filename": "greet.cjs"} */}
+
+```js greet.cjs
+function greet(name) {
+  console.log(`Hello, ${name}`);
+}
+
+greet("Ada");
+```
+
+## When not to use it
+
+If every tool you use decides by the file extension or by `"type"` in `package.json`, the content of the file does not matter and this rule is noise.

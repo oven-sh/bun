@@ -1,0 +1,98 @@
+---
+title: "bun/prefer-lazy-schema"
+description: "Disallow building a validation schema while the module loads"
+---
+
+A Zod schema at the top level of a module is built as soon as the module is imported, even if nothing is ever validated with it. With hundreds of schemas, that makes every start slower.
+
+The rule reports a chain of calls that starts with `z`, where `z` is imported or global, if it runs while the module loads. That includes static class fields and functions that are called where they are written. A schema inside another schema is not reported again.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 1} */}
+
+```ts
+import { z } from "zod";
+
+export const User = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { z } from "zod";
+
+let user: z.ZodType | undefined;
+
+export function userSchema() {
+  return (user ??= z.object({
+    name: z.string().min(1),
+    email: z.string().email(),
+  }));
+}
+```
+
+`z.lazy()` builds nothing until it is used, so it is allowed:
+
+{/* good */}
+
+```ts
+import { z } from "zod";
+
+export const Comment = z.lazy(() => z.object({ text: z.string() }));
+```
+
+## Options
+
+| Option          | Default | What it does                                                                                      |
+| --------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `roots`         | `["z"]` | The names that a schema starts with, such as the `z` of `z.object()`.                             |
+| `methods`       | `[]`    | Methods that build a schema, whatever they are called on, such as `extend`.                       |
+| `factorySuffix` | none    | Also report calls to functions with a name that ends in this string.                              |
+| `lazyWrapper`   | none    | The name of your helper that builds a schema on first use. The message then shows how to call it. |
+
+{/* bad {"options": [{"roots": ["v"]}]} */}
+
+```ts
+import * as v from "valibot";
+
+export const Email = v.pipe(v.string(), v.email());
+```
+
+{/* bad {"options": [{"methods": ["extend"]}]} */}
+
+```ts
+import { User } from "./user";
+
+export const Admin = User.extend({ level: 1 });
+```
+
+{/* bad {"options": [{"factorySuffix": "Schema"}]} */}
+
+```ts
+import { createUserSchema } from "./user";
+
+export const User = createUserSchema();
+```
+
+`lazyWrapper` does not change what is reported. A schema in a function that you pass to a helper is allowed with or without it:
+
+{/* good {"options": [{"lazyWrapper": "once"}]} */}
+
+```ts
+import { z } from "zod";
+import { once } from "./once";
+
+export const user = once(() => z.object({ name: z.string() }));
+```
+
+## When not to use it
+
+In a small program, or a server that starts once and runs for days, the time to build the schemas does not matter.

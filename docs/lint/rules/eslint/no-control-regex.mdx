@@ -1,0 +1,57 @@
+---
+title: "no-control-regex"
+description: "Disallow control characters in regular expressions"
+---
+
+The characters U+0000 to U+001F are invisible and rarely appear in text you want to match. In a regular expression, one is often a typo in an escape, such as `\x0C` where `\xC0` was meant.
+
+The rule reports a raw control character and the escapes `\x0A`, `\u000A` and, with the `u` or `v` flag, `\u{A}`. It checks regular expression literals and strings passed to `RegExp`. Named escapes such as `\t`, `\n` and `\cJ` are allowed.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const lineBreak = /\x0A/;
+
+const separator = new RegExp("\x1F");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const lineBreak = /\n/;
+
+const space = /\x20/;
+```
+
+In a string, `"\n"` is the raw character by the time `RegExp` sees it. Escape the backslash:
+
+{/* bad */}
+
+```js
+const lineBreak = new RegExp("\n");
+```
+
+{/* good */}
+
+```js
+const lineBreak = new RegExp("\\n");
+```
+
+## When not to use it
+
+Some formats are built on control characters. Terminal color codes start with `\x1B`, so a pattern that strips them has to contain it. Disable the rule for that line:
+
+{/* good */}
+
+```js
+// eslint-disable-next-line no-control-regex
+const colorCodes = /\x1B\[[0-9;]*m/g;
+```

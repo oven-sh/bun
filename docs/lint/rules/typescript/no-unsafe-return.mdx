@@ -1,0 +1,67 @@
+---
+title: "@typescript-eslint/no-unsafe-return"
+description: "Disallow returning a value of type `any` from a function"
+---
+
+A function that returns `any` hands it to every caller. TypeScript stops checking whatever they do with the result, and nothing at the call shows it.
+
+The rule reports a returned `any` or `any[]`, a `Promise<any>` returned from an `async` function, and an `any` inside a generic type, such as a `Set<any>` returned as a `Set<string>`.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+function loadConfig(text: string) {
+  return JSON.parse(text);
+}
+```
+
+{/* bad */}
+
+```ts
+async function fetchUser(url: string) {
+  const response = await fetch(url);
+  return response.json();
+}
+```
+
+{/* bad */}
+
+```ts
+function uniqueNames(): Set<string> {
+  return new Set<any>();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+interface Config {
+  port: number;
+}
+
+function loadConfig(text: string) {
+  return JSON.parse(text) as Config;
+}
+```
+
+A function with the return type `unknown` may return `any`, because callers have to check the value before they use it. A return type of `any` that you wrote yourself is allowed too:
+
+{/* good */}
+
+```ts
+function parse(text: string): unknown {
+  return JSON.parse(text);
+}
+
+function parseUnchecked(text: string): any {
+  return JSON.parse(text);
+}
+```

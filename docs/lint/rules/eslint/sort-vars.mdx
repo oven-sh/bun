@@ -1,0 +1,53 @@
+---
+title: "sort-vars"
+description: "Require the variables of one declaration to be sorted"
+---
+
+When one `let`, `const` or `var` declares several variables, alphabetical order makes a name quick to find in the list.
+
+Only names in the same declaration are compared. Destructuring patterns are skipped. Capital letters sort before lowercase letters unless you set `ignoreCase`.
+
+`--fix` sorts the names if every initializer is a literal such as `0` or `"px"`. Other initializers can depend on the order they run in, so the declaration is left as it is.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+let width, height, depth;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+let depth, height, width;
+
+let total = 0;
+let count = 0;
+```
+
+## Options
+
+| Option       | Default | What it does                          |
+| ------------ | ------- | ------------------------------------- |
+| `ignoreCase` | `false` | Compare names without regard to case. |
+
+By default `Button` sorts before `app`, so this is reported:
+
+{/* bad */}
+
+```js
+let app, Button, config;
+```
+
+With `ignoreCase` it is not:
+
+{/* good {"options": [{"ignoreCase": true}]} */}
+
+```js
+let app, Button, config;
+```

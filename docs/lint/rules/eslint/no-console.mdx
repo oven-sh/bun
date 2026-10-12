@@ -1,0 +1,65 @@
+---
+title: "no-console"
+description: "Disallow the use of `console`"
+---
+
+`console.log()` calls added while debugging are easy to forget. In a web page they show up in every visitor's console, and in a library they write to the output of someone else's program.
+
+Any property of the global `console` is reported, whether it is called or not. A local variable named `console` is not.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+console.log("loaded", items.length);
+
+items.forEach(console.warn);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { logger } from "./logger.js";
+
+logger.info("loaded", items.length);
+```
+
+{/* good */}
+
+```js
+function report(console) {
+  console.log("done");
+}
+```
+
+## Options
+
+| Option  | Default | What it does                            |
+| ------- | ------- | --------------------------------------- |
+| `allow` | none    | The `console` methods that are allowed. |
+
+```toml bunfig.toml
+[lint.rules]
+no-console = ["error", { allow = ["warn", "error"] }]
+```
+
+{/* good {"options": [{"allow": ["warn", "error"]}]} */}
+
+```js
+console.error("could not save", reason);
+```
+
+{/* bad {"options": [{"allow": ["warn", "error"]}]} */}
+
+```js
+console.log("saved");
+```
+
+## When not to use it
+
+In a CLI tool or a script, `console` is how the program talks to its user. Turn the rule off there.

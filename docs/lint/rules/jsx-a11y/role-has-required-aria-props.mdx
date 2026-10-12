@@ -1,0 +1,47 @@
+---
+title: "jsx-a11y/role-has-required-aria-props"
+description: "Require the `aria-*` attributes that an element's `role` needs"
+---
+
+Some roles only make sense together with a state. A screen reader announces `role="checkbox"` as "checked" or "not checked", and it reads that from `aria-checked`. Without the attribute the user hears a checkbox and cannot tell which state it is in.
+
+| Role                                                               | Needs                            |
+| ------------------------------------------------------------------ | -------------------------------- |
+| `checkbox`, `radio`, `switch`, `menuitemcheckbox`, `menuitemradio` | `aria-checked`                   |
+| `combobox`                                                         | `aria-controls`, `aria-expanded` |
+| `heading`                                                          | `aria-level`                     |
+| `meter`, `slider`                                                  | `aria-valuenow`                  |
+| `option`                                                           | `aria-selected`                  |
+| `scrollbar`                                                        | `aria-controls`, `aria-valuenow` |
+
+Only a `role` written as a string is checked.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const dark = <span role="switch" tabIndex={0} onClick={toggleTheme} />;
+```
+
+{/* bad */}
+
+```jsx
+const title = <div role="heading">Settings</div>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const dark = <span role="switch" aria-checked={isDark} tabIndex={0} onClick={toggleTheme} />;
+
+const title = (
+  <div role="heading" aria-level={2}>
+    Settings
+  </div>
+);
+```

@@ -3,7 +3,7 @@ use crate::jsx::get_jsx_element_name;
 use crate::react::is_jsx;
 use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_glob::Pattern;
 use bun_lint::context::interpolate_text;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -147,7 +147,7 @@ impl ForbidComponentProps {
 
 impl Glob {
     fn new(written: &[u8]) -> Glob {
-        Glob { written: written.into(), minimatch: Pattern::new(written, GlobOptions::MINIMATCH_3) }
+        Glob { written: written.into(), minimatch: Pattern::with_extglob(written) }
     }
 
     fn matches(&self, name: &[u8], is_oxlint: bool) -> bool {

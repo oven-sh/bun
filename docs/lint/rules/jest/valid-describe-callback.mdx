@@ -1,0 +1,108 @@
+---
+title: "jest/valid-describe-callback"
+description: "Require `describe` to get a title and a plain synchronous callback"
+---
+
+Jest calls the callback of `describe` once, right away, to collect the tests inside it. It does not wait for a promise, so a test declared after an `await` is not collected. It passes nothing to the callback and has no use for a value the callback returns.
+
+The rule reports a `describe` with no title or no callback, a second argument that is not a function, an `async` callback, a callback with parameters, and a `return` in the callback.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { describe, expect, test } from "@jest/globals";
+
+describe("cart", async () => {
+  const items = await loadItems();
+
+  test("has items", () => {
+    expect(items.length).toBeGreaterThan(0);
+  });
+});
+```
+
+{/* bad */}
+
+```ts
+import { describe, test } from "@jest/globals";
+
+describe("cart", done => {
+  test("adds an item", () => {});
+  done();
+});
+```
+
+An arrow function with a call as its body returns the result of that call:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { describe, test } from "@jest/globals";
+
+describe("cart", () => test("adds an item", () => {}));
+
+describe("checkout", () => {
+  return test("adds the tax", () => {});
+});
+```
+
+{/* bad {"count": 2} */}
+
+```ts
+import { describe } from "@jest/globals";
+
+describe("cart");
+
+describe("checkout", "adds the tax");
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { beforeAll, describe, expect, test } from "@jest/globals";
+
+describe("cart", () => {
+  let items;
+
+  beforeAll(async () => {
+    items = await loadItems();
+  });
+
+  test("has items", () => {
+    expect(items.length).toBeGreaterThan(0);
+  });
+});
+```
+
+The callback of `describe.each` gets the values of a row, so it can have parameters:
+
+{/* good */}
+
+```ts
+import { describe, expect, test } from "@jest/globals";
+
+describe.each([1, 2, 3])("cart with %i items", count => {
+  test("counts them", () => {
+    expect(fill(count).length).toBe(count);
+  });
+});
+```
+
+## When not to use it
+
+The rule only looks at what is written. If you share groups of tests between files and pass the callback by name, it is reported as not being a function:
+
+{/* bad */}
+
+```ts
+import { describe } from "@jest/globals";
+import { cartTests } from "./shared";
+
+describe("cart", cartTests);
+```

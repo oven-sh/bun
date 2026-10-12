@@ -201,7 +201,8 @@ impl<'a> CxBase<'a> {
     fn report(&self, span: Span, message: Message) -> Report<'a> {
         let (language, sink) = (self.file.language(), &self.file.sink);
         // The rules of `bun:test` say what those of oxlint say, whatever the configuration.
-        let has_help = language.is_oxlint || self.meta.plugin == Plugin::BunTest;
+        let has_help =
+            language.is_oxlint || self.meta.follows_oxlint || self.meta.plugin == Plugin::BunTest;
         let wants_help = has_help && sink.wants_help.get();
         let wants_text = !sink.drops_messages.get();
         let message = match language.is_oxlint {
@@ -239,6 +240,7 @@ impl<'a> CxBase<'a> {
             message,
             data: SmallVec::new(),
             reads_data: wants_text && message.may_have_placeholders || help.is_some(),
+            reads_hints: self.meta.has_hints && !language.is_oxlint && sink.wants_help.get(),
             diagnostic: Some(diagnostic),
         }
     }
@@ -285,6 +287,8 @@ pub struct Report<'a> {
     data: Data<'a>,
     /// A text is made of `data`.
     reads_data: bool,
+    /// [`Report::hint`]
+    reads_hints: bool,
     diagnostic: Option<Diagnostic>,
 }
 
@@ -432,6 +436,28 @@ impl<'a> Report<'a> {
             true => self.help(text()),
             false => self,
         }
+    }
+
+    /// Bun's own sentence under a message of ESLint that does not tell what is wrong and what to do. It is shown where
+    /// [`Report::help`] is, in its place, and not with a configuration of oxlint. The rule has [`Meta::hints`].
+    pub fn hint(mut self, text: &'static str) -> Self {
+        if self.reads_hints
+            && let Some(details) = self.details()
+        {
+            details.help = Cow::Borrowed(text);
+        }
+        self
+    }
+
+    /// The same for a text that has to be made. `text` is called at once, and only if the hint is read.
+    pub fn hint_with(mut self, text: impl FnOnce() -> Option<String>) -> Self {
+        if self.reads_hints
+            && let Some(text) = text()
+            && let Some(details) = self.details()
+        {
+            details.help = Cow::Owned(text);
+        }
+        self
     }
 
     /// oxlint's `note`

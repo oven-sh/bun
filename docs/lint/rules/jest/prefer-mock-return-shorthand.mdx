@@ -1,0 +1,58 @@
+---
+title: "jest/prefer-mock-return-shorthand"
+description: "Require `mockReturnValue()` for a mock that only returns a value"
+---
+
+`mockImplementation(() => value)` wraps a value in a function that does nothing but return it. `mockReturnValue(value)` says the same with less to read. The same goes for `mockImplementationOnce()` and `mockReturnValueOnce()`.
+
+`--fix` rewrites the call. If the returned value contains a function call or `new`, the mock is reported but not rewritten, because `mockReturnValue(createUser())` runs `createUser()` once instead of on every call.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { jest } from "@jest/globals";
+
+const getPort = jest.fn().mockImplementation(() => 3000);
+
+const getUser = jest.fn().mockImplementationOnce(() => {
+  return { name: "Ada" };
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { jest } from "@jest/globals";
+
+const getPort = jest.fn().mockReturnValue(3000);
+
+const getUser = jest.fn().mockReturnValueOnce({ name: "Ada" });
+```
+
+A function that takes parameters, is `async`, does more than return, or returns a variable that can change needs `mockImplementation()`, so it is not reported:
+
+{/* good */}
+
+```ts
+import { jest } from "@jest/globals";
+
+let visits = 0;
+
+const double = jest.fn().mockImplementation((n: number) => n * 2);
+const load = jest.fn().mockImplementation(async () => "done");
+const countVisits = jest.fn().mockImplementation(() => visits);
+const nextVisit = jest.fn().mockImplementation(() => {
+  visits += 1;
+  return "ok";
+});
+```
+
+## When not to use it
+
+`mockReturnValue({ name: "Ada" })` returns the same object on every call, and `mockImplementation(() => ({ name: "Ada" }))` returns a new one. If the code under test changes what the mock returns, keep the function and disable the rule on that line.

@@ -1,0 +1,70 @@
+---
+title: "@typescript-eslint/no-useless-constructor"
+description: "Disallow constructors that do what the default constructor does"
+---
+
+A class without a constructor gets one for free. In a base class it is empty, and in a subclass it passes all arguments to `super()`. Writing that out by hand adds lines that do nothing.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+class Store {
+  constructor() {}
+}
+
+class HttpError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Store {}
+
+class HttpError extends Error {}
+
+class NotFoundError extends Error {
+  constructor(path: string) {
+    super(`${path} was not found`);
+  }
+}
+```
+
+An empty constructor is allowed if TypeScript gives it a job. A `private` or `protected` constructor limits who can create the class, a parameter property declares a field, and a decorator on a parameter runs code:
+
+{/* good */}
+
+```ts
+class Config {
+  private constructor() {}
+}
+
+class User {
+  constructor(public name: string) {}
+}
+```
+
+So is a `public` constructor in a subclass, which can open up a `protected` one:
+
+{/* good */}
+
+```ts
+class Shape {
+  protected constructor() {}
+}
+
+class Circle extends Shape {
+  public constructor() {
+    super();
+  }
+}
+```

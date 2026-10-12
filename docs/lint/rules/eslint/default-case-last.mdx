@@ -1,0 +1,38 @@
+---
+title: "default-case-last"
+description: "Require `default` to be the last clause of a `switch`"
+---
+
+`default` runs when no `case` matches, wherever it is written. Placed first or in the middle, it reads as if it were tested in order, and without a `break` it falls through into the `case` below it. At the end, it reads like the `else` that it is.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+switch (level) {
+  default:
+    log(message);
+    break;
+  case "error":
+    alert(message);
+    break;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+switch (level) {
+  case "error":
+    alert(message);
+    break;
+  default:
+    log(message);
+    break;
+}
+```

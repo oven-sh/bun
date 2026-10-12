@@ -1,0 +1,60 @@
+---
+title: "react/no-children-prop"
+description: "Disallow passing `children` as a prop"
+---
+
+Children can be written in two places: between the tags, or as a prop named `children`. If an element has both, what is between the tags wins and the prop is dropped without a warning. Nesting also shows the shape of the tree, which a prop hides.
+
+With `React.createElement`, pass children as the third and later arguments.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const card = <Card children={<Avatar user={user} />} />;
+```
+
+{/* bad */}
+
+```jsx
+const title = React.createElement("h1", { children: "Settings" });
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const card = (
+  <Card>
+    <Avatar user={user} />
+  </Card>
+);
+
+const title = React.createElement("h1", {}, "Settings");
+```
+
+## Options
+
+| Option           | Default | What it does                                                                                                   |
+| ---------------- | ------- | -------------------------------------------------------------------------------------------------------------- |
+| `allowFunctions` | `false` | Require a function to be passed as the `children` prop, and report a function that is nested between the tags. |
+
+With `allowFunctions`, a render function goes in the prop:
+
+{/* good {"options": [{"allowFunctions": true}]} */}
+
+```jsx
+const size = <Measure children={width => <Chart width={width} />} />;
+```
+
+And the nested form is reported:
+
+{/* bad {"options": [{"allowFunctions": true}]} */}
+
+```jsx
+const size = <Measure>{width => <Chart width={width} />}</Measure>;
+```

@@ -1,0 +1,62 @@
+---
+title: "no-ex-assign"
+description: "Disallow assigning to the error parameter of a `catch` clause"
+---
+
+Assigning to the parameter of a `catch` clause overwrites the error that was caught. From that line on, nothing in the block can read the original message or stack.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+try {
+  upload(file);
+} catch (error) {
+  error = new Error("Upload failed");
+  report(error);
+}
+```
+
+Names that the parameter destructures count as well:
+
+{/* bad */}
+
+```js
+try {
+  upload(file);
+} catch ({ message }) {
+  message = "Upload failed";
+  report(message);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+try {
+  upload(file);
+} catch (error) {
+  const wrapped = new Error("Upload failed", { cause: error });
+  report(wrapped);
+}
+```
+
+Setting a property keeps the error, so it is allowed:
+
+{/* good */}
+
+```js
+try {
+  upload(file);
+} catch (error) {
+  error.file = file;
+  report(error);
+}
+```

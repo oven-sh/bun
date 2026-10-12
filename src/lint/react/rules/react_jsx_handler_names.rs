@@ -2,7 +2,7 @@ use crate::jsx::{AttributeValue, get_jsx_element_name, get_prop_value};
 use crate::util_version::string_of;
 use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_glob::Pattern;
 use bun_lint::prelude::*;
 use bun_lint::regex::SyntaxError;
 use bun_lint::rule::Plugin;
@@ -161,7 +161,7 @@ impl Original {
             ignore_component_names: options
                 .strings("ignoreComponentNames")
                 .into_iter()
-                .map(|it| Pattern::new(it.as_bytes(), GlobOptions::MINIMATCH_3))
+                .map(|it| Pattern::with_extglob(it.as_bytes()))
                 .collect(),
         })
     }

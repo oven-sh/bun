@@ -1,0 +1,68 @@
+---
+title: "vitest/no-conditional-tests"
+description: "Disallow `test` and `describe` inside an `if` statement"
+---
+
+A test declared inside an `if` only exists when the condition is true. When it is false, the test is missing from the output, so nobody sees that it did not run.
+
+Use `test.runIf(condition)` or `test.skipIf(condition)`. The test is always declared, and it is shown as skipped when it does not run. `describe` has the same two methods.
+
+The rule is about the `if` around a test. For an `if` inside a test, see `vitest/no-conditional-in-test`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "vitest";
+import { readFile } from "node:fs/promises";
+
+if (process.platform === "linux") {
+  test("reads the kernel version", async () => {
+    expect(await readFile("/proc/version", "utf8")).toContain("Linux");
+  });
+}
+```
+
+{/* bad */}
+
+```ts
+import { describe, expect, test } from "vitest";
+import { connect } from "./database";
+
+describe("database", () => {
+  if (process.env.DATABASE_URL) {
+    test("connects", async () => {
+      expect(await connect()).toBeDefined();
+    });
+  }
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+import { readFile } from "node:fs/promises";
+
+test.runIf(process.platform === "linux")("reads the kernel version", async () => {
+  expect(await readFile("/proc/version", "utf8")).toContain("Linux");
+});
+```
+
+{/* good */}
+
+```ts
+import { describe, expect, test } from "vitest";
+import { connect } from "./database";
+
+describe.skipIf(!process.env.DATABASE_URL)("database", () => {
+  test("connects", async () => {
+    expect(await connect()).toBeDefined();
+  });
+});
+```

@@ -1,0 +1,35 @@
+---
+title: "unicorn/consistent-template-literal-escape"
+description: "Enforce one way to escape `${` in template literals"
+---
+
+To write a literal `${` in a template literal you have to escape it, and three spellings work: a backslash before the `$`, before the `{`, or before both. All three give the same string. This rule keeps the first one, `\${`, so an escaped placeholder looks the same everywhere.
+
+Tagged templates are not checked, because a tag can read the raw text.
+
+`--fix` rewrites the escape.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const usage = `Write $\{name} to insert the name`;
+const help = `Write \$\{name} to insert the name`;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const usage = `Write \${name} to insert the name`;
+```
+
+{/* good */}
+
+```js
+const pattern = String.raw`$\{name}`;
+```

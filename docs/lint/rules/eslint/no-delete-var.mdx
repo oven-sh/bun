@@ -1,0 +1,32 @@
+---
+title: "no-delete-var"
+description: "Disallow `delete` on variables"
+---
+
+`delete` removes a property from an object. It does not remove a variable: on one declared with `var`, `let` or `const` it does nothing and returns `false`.
+
+In strict mode and in modules this is already a syntax error. The rule catches it in the scripts where it is not, such as a `.cjs` file without `"use strict"`.
+
+This rule is on by default.
+
+## Examples
+
+Reported, in a `.cjs` file:
+
+{/* bad {"filename": "legacy.cjs"} */}
+
+```js
+var session = createSession();
+delete session;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+var session = createSession();
+session = undefined;
+
+delete cache.session;
+```

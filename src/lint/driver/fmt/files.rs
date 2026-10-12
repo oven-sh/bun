@@ -80,7 +80,7 @@ pub(crate) enum Kind {
     Mdx,
     GraphQl,
     Handlebars,
-    /// Only for oxfmt.
+    /// For oxfmt, and with `--toml`.
     Toml,
     /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
     Html(bun_format::html::Parser),
@@ -109,7 +109,9 @@ impl Kind {
     pub(crate) fn with_options(path: &[u8], options: &bun_format::FormatOptions) -> Option<Kind> {
         // No configuration file of oxfmt has `parser`. Its tests do.
         if !options.flavor.is_oxfmt() || options.parser.is_some() {
-            return Kind::of(path, options.parser.as_deref());
+            let is_toml = || options.toml && options.parser.is_none() && is_toml(path);
+            return Kind::of(path, options.parser.as_deref())
+                .or_else(|| is_toml().then_some(Kind::Toml));
         }
         classify_for_oxfmt(path)
     }
@@ -190,6 +192,14 @@ fn is_javascript_by_another_name(name: &[u8], extension: &[u8]) -> bool {
         || name.ends_with(b".end.frag")
 }
 
+/// What is TOML for oxfmt.
+pub(crate) fn is_toml(path: &[u8]) -> bool {
+    let name = paths::basename(path);
+    name.strip_suffix(b".toml").is_some_and(|it| !it.is_empty())
+        || matches!(name, b"Pipfile" | b"Cargo.toml.orig")
+        || name.ends_with(b".toml.example")
+}
+
 /// oxfmt's `classify_file_kind`. Unlike Prettier it tells upper case from lower case.
 fn classify_for_oxfmt(path: &[u8]) -> Option<Kind> {
     use bun_format::{css, html, json};
@@ -209,10 +219,7 @@ fn classify_for_oxfmt(path: &[u8]) -> Option<Kind> {
     if is_script || is_javascript_by_another_name(name, extension) {
         return Some(Kind::Script);
     }
-    if extension == b"toml"
-        || matches!(name, b"Pipfile" | b"Cargo.toml.orig")
-        || name.ends_with(b".toml.example")
-    {
+    if is_toml(path) {
         return Some(Kind::Toml);
     }
     let by_name = match name {

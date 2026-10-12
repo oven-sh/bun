@@ -1,0 +1,69 @@
+---
+title: "unicorn/prefer-number-properties"
+description: "Require `Number.isNaN`, `Number.parseInt` and the like instead of the globals"
+---
+
+The global `isNaN` and `isFinite` convert their argument to a number first, so `isNaN("abc")` is `true` and `isFinite("1")` is `true`. `Number.isNaN` and `Number.isFinite` do not convert: they are `false` for anything that is not a number.
+
+`Number.parseInt`, `Number.parseFloat` and `Number.NaN` are the same as the globals. The rule reports the globals so that everything about numbers is written the same way.
+
+`--fix` rewrites `parseInt`, `parseFloat`, `NaN` and `Infinity`. It does not touch `isNaN` and `isFinite`, because the result can change. `--fix-dangerously` rewrites those too.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+const width = parseInt(style.width, 10);
+
+if (isNaN(width)) {
+  reset(NaN);
+}
+
+const isValid = window.isFinite(width);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const width = Number.parseInt(style.width, 10);
+
+if (Number.isNaN(width)) {
+  reset(Number.NaN);
+}
+
+const isValid = Number.isFinite(width);
+```
+
+## Options
+
+| Option          | Default | What it does                                                                                             |
+| --------------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| `checkInfinity` | `false` | Also report `Infinity` and `-Infinity`. Write `Number.POSITIVE_INFINITY` and `Number.NEGATIVE_INFINITY`. |
+| `checkNaN`      | `true`  | Report `NaN`.                                                                                            |
+
+`Infinity` is only reported with `checkInfinity`:
+
+{/* good */}
+
+```js
+let lowest = Infinity;
+```
+
+{/* bad {"options": [{"checkInfinity": true}]} */}
+
+```js
+let lowest = Infinity;
+```
+
+With `checkNaN: false`, `NaN` is allowed:
+
+{/* good {"options": [{"checkNaN": false}]} */}
+
+```js
+const missing = NaN;
+```

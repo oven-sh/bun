@@ -1,0 +1,62 @@
+---
+title: "react/button-has-type"
+description: "Require an explicit, valid `type` on every `button` element"
+---
+
+A `<button>` without a `type` is a submit button. Inside a `<form>`, a click on it submits the form and reloads the page, even if the button was only meant to open a menu.
+
+The value has to be readable from the code: a string, or a ternary between two strings. `React.createElement("button", ...)` is checked too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+<form>
+  <button onClick={openMenu}>Options</button>
+</form>
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+const close = <button type="close">Close</button>;
+const save = <button type={kind}>Save</button>;
+```
+
+{/* bad */}
+
+```js
+React.createElement("button", { onClick: openMenu }, "Options");
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+<form>
+  <button type="button" onClick={openMenu}>
+    Options
+  </button>
+  <button type={isLast ? "submit" : "button"}>Next</button>
+</form>
+```
+
+## Options
+
+| Option   | Default | What it does           |
+| -------- | ------- | ---------------------- |
+| `button` | `true`  | Allow `type="button"`. |
+| `submit` | `true`  | Allow `type="submit"`. |
+| `reset`  | `true`  | Allow `type="reset"`.  |
+
+Set one to `false` to forbid that type:
+
+{/* bad {"options": [{"reset": false}]} */}
+
+```jsx
+<button type="reset">Clear</button>
+```

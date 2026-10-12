@@ -1,0 +1,39 @@
+---
+title: "n/no-path-concat"
+description: "Disallow joining `__dirname` and `__filename` to a path with `+` or a template"
+---
+
+A path glued together by hand has the separator written into it. On Windows, `__dirname + "/data.json"` gives `C:\app/data.json`, which is not equal to the same path from `path.join()`. `path.join()` and `path.resolve()` use the separator of the platform and clean up `..` and doubled separators.
+
+The rule reports `__dirname` or `__filename` followed by text that starts with `/` or `\`, or by `path.sep`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const config = __dirname + "/config.json";
+const cache = `${__dirname}/cache/${name}`;
+const logs = __dirname + path.sep + "logs";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const path = require("path");
+
+const config = path.join(__dirname, "config.json");
+const cache = path.resolve(__dirname, "cache", name);
+```
+
+Adding something that is not a new path segment is fine:
+
+{/* good */}
+
+```js
+const sourceMap = __filename + ".map";
+```

@@ -1,0 +1,40 @@
+---
+title: "jsx-a11y/lang"
+description: "Require the `lang` attribute of `<html>` to be a valid language tag"
+---
+
+A screen reader picks its voice and pronunciation from the `lang` of the page. With a value that is not a language, such as a typo or a country name, it falls back to the user's default and may read the text with the wrong pronunciation.
+
+The value must be a registered BCP 47 tag such as `en`, `en-US` or `zh-Hans`. An `<html>` without `lang` is reported too. A value that is only known at run time, such as `lang={locale}`, is not checked.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const page = <html lang="english" />;
+```
+
+{/* bad */}
+
+```jsx
+const page = <html lang="" />;
+```
+
+{/* bad */}
+
+```jsx
+const page = <html />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const page = <html lang="en" />;
+const brazilian = <html lang="pt-BR" />;
+const dynamic = <html lang={locale} />;
+```

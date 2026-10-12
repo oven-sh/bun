@@ -1,0 +1,107 @@
+---
+title: "@typescript-eslint/prefer-destructuring"
+description: "Require destructuring to read a property or an element into a variable"
+---
+
+`const name = user.name` writes `name` twice. `const { name } = user` writes it once, and the next property you need goes into the same statement.
+
+This is `prefer-destructuring` with types. `const [first] = items` only works if `items` can be iterated, so `items[0]` is reported only when the type of `items` is iterable or `any`. A declaration with a type annotation is left alone by default. Turn the other rule off when you use this one.
+
+A property is only reported if the variable has the same name. An element is only reported if the index is a whole number written out, such as `items[0]`.
+
+`--fix` rewrites `const name = user.name`. Elements and plain assignments are reported but not fixed.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+declare const user: { name: string; email: string };
+declare const items: string[];
+let email: string;
+
+const name = user.name;
+const first = items[0];
+email = user.email;
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+declare const user: { name: string; email: string };
+declare const items: string[];
+declare const scores: { 0: number; 1: number };
+let email: string;
+
+const { name } = user;
+const [first] = items;
+({ email } = user);
+
+const best = scores[0]; // not iterable
+const label: string = user.name; // has a type annotation
+```
+
+## Options
+
+The rule takes two objects. The first says what to check, the second has the two `enforceFor` options.
+
+```toml bunfig.toml
+[lint.rules]
+"@typescript-eslint/prefer-destructuring" = ["error", { object = true, array = false }, { enforceForRenamedProperties = true }]
+```
+
+| Option                                    | Default | What it does                                                                                                                            |
+| ----------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `object`                                  | `true`  | Report properties: `const name = user.name`.                                                                                            |
+| `array`                                   | `true`  | Report elements: `const first = items[0]`.                                                                                              |
+| `enforceForRenamedProperties`             | `false` | Also report a property that goes into a variable with another name, a computed key, and a number key of an object that is not iterable. |
+| `enforceForDeclarationWithTypeAnnotation` | `false` | Also report declarations that have a type annotation. They are not fixed.                                                               |
+
+If you pass the first object, a key you leave out is `false`. With `{ object: true }`, elements are not reported:
+
+{/* good {"options": [{"object": true}]} */}
+
+```ts
+declare const items: string[];
+
+const first = items[0];
+```
+
+With `enforceForRenamedProperties`, both of these are reported:
+
+{/* bad {"options": [{"object": true}, {"enforceForRenamedProperties": true}], "count": 2} */}
+
+```ts
+declare const user: { name: string };
+declare const scores: { 0: number; 1: number };
+
+const label = user.name;
+const best = scores[0];
+```
+
+With `enforceForDeclarationWithTypeAnnotation`, so is this:
+
+{/* bad {"options": [{"object": true}, {"enforceForDeclarationWithTypeAnnotation": true}]} */}
+
+```ts
+declare const user: { name: string };
+
+const name: string = user.name;
+```
+
+To treat declarations and assignments differently, give the first object the keys `VariableDeclarator` and `AssignmentExpression`, each with its own `object` and `array`. With both off for `AssignmentExpression`, this is not reported:
+
+{/* good {"options": [{"VariableDeclarator": {"object": true, "array": true}, "AssignmentExpression": {"object": false, "array": false}}]} */}
+
+```ts
+declare const user: { email: string };
+let email: string;
+
+email = user.email;
+```

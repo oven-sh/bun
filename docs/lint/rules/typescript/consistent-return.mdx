@@ -1,0 +1,82 @@
+---
+title: "@typescript-eslint/consistent-return"
+description: "Require every `return` in a function to return a value, or none of them"
+---
+
+A function that returns a value on one path and nothing on another gives its caller `undefined` some of the time. Often that path was forgotten.
+
+This is `consistent-return` with types. A function with the return type `void`, or an async function that returns `Promise<void>`, can mix `return;` with `return value;`. Turn the other rule off when you use this one.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+function findUser(id: number) {
+  if (id < 0) {
+    return;
+  }
+  return { id };
+}
+```
+
+The end of the function counts as a `return` without a value:
+
+{/* bad */}
+
+```ts
+function label(count: number) {
+  if (count > 0) {
+    return `${count} items`;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function findUser(id: number) {
+  if (id < 0) {
+    return undefined;
+  }
+  return { id };
+}
+```
+
+{/* good */}
+
+```ts
+function log(message: string): void {
+  if (!message) {
+    return;
+  }
+  return console.log(message);
+}
+```
+
+## Options
+
+| Option                        | Default | What it does                                                                                    |
+| ----------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `treatUndefinedAsUnspecified` | `false` | Treat `return undefined`, and the return of any expression of type `undefined`, like `return;`. |
+
+{/* bad {"options": [{"treatUndefinedAsUnspecified": true}]} */}
+
+```ts
+function findUser(id: number) {
+  if (id < 0) {
+    return undefined;
+  }
+  return { id };
+}
+```
+
+## When not to use it
+
+The `noImplicitReturns` option of TypeScript catches the forgotten path too. If it is on, you may not need this rule.

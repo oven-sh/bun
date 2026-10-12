@@ -1,0 +1,52 @@
+---
+title: "vitest/padding-around-after-all-blocks"
+description: "Require a blank line before each `afterAll` call"
+---
+
+An `afterAll` hook written right under another statement is easy to miss when you look for a file's cleanup code. A blank line above it sets it apart.
+
+Only the line above the call is checked. Comments directly above the call belong to it, so the blank line goes above them. An `afterAll` that is the first statement of a file or of a `describe` callback needs no blank line.
+
+`--fix` inserts the blank line.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { afterAll, describe } from "vitest";
+
+describe("database", () => {
+  const db = connect();
+  afterAll(() => db.close());
+});
+```
+
+Two `afterAll` calls in a row need a blank line between them too:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { afterAll } from "vitest";
+
+const server = startServer();
+afterAll(() => server.stop());
+afterAll(() => removeTempFiles());
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { afterAll, describe } from "vitest";
+
+describe("database", () => {
+  const db = connect();
+
+  // Close the connection so the process can exit.
+  afterAll(() => db.close());
+});
+```

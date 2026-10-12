@@ -1,0 +1,28 @@
+---
+title: "unicorn/prefer-string-trim-start-end"
+description: "Require `trimStart()` and `trimEnd()` instead of `trimLeft()` and `trimRight()`"
+---
+
+`trimLeft()` and `trimRight()` are old aliases of `trimStart()` and `trimEnd()`. The names are also wrong for text written from right to left, where the start of the string is on the right.
+
+`--fix` renames the method.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const command = input.trimLeft();
+const line = text.trimRight();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const command = input.trimStart();
+const line = text.trimEnd();
+```

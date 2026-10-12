@@ -10,7 +10,7 @@ pub struct PreferTimeoutSignal {
 
 const ONLY_A_TIMER: Message = Message::new(
     "onlyATimer",
-    "Nothing but a timer aborts this controller, and nothing but its signal is used. `AbortSignal.timeout(ms)` makes such a signal.",
+    "Only a timer aborts this controller. Use `AbortSignal.timeout(ms)` instead.",
 );
 
 /// Whether `e`, a call, is all that the function does which the global `setTimeout()` gets first.

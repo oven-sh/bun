@@ -1542,6 +1542,41 @@ pub fn github_action(utf8: &[u8]) -> GithubActionFormatter<'_> {
     GithubActionFormatter { text: utf8 }
 }
 
+/// `text`, which a terminal opens `link` for: OSC 8. `enabled`: not only `text`.
+pub struct TerminalHyperlink<'a> {
+    link: &'a [u8],
+    text: &'a [u8],
+    enabled: bool,
+}
+
+impl<'a> TerminalHyperlink<'a> {
+    pub fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+        TerminalHyperlink {
+            link,
+            text,
+            enabled,
+        }
+    }
+}
+
+impl Display for TerminalHyperlink<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.enabled {
+            const ESC: &str = "\x1b";
+            // OSC8 = ESC ]8;; ; ST = ESC \
+            write!(
+                f,
+                "{esc}]8;;{link}{esc}\\{text}{esc}]8;;{esc}\\",
+                esc = ESC,
+                link = bstr::BStr::new(self.link),
+                text = bstr::BStr::new(self.text),
+            )
+        } else {
+            write!(f, "{}", bstr::BStr::new(self.text))
+        }
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // QuotedFormatter
 // ───────────────────────────────────────────────────────────────────────────

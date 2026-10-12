@@ -1,0 +1,43 @@
+---
+title: "@typescript-eslint/no-non-null-assertion"
+description: "Disallow the non-null assertion `value!`"
+---
+
+`value!` tells TypeScript that `value` is not `null` or `undefined`. Nothing checks that when the code runs. If you are wrong, or the code around it changes, `value!.name` throws a `TypeError`, which is the error that strict null checks are there to prevent.
+
+Check the value, or use `?.` or `??`, which do their work at runtime.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+const users = new Map<string, { name: string }>();
+
+function greet(id: string) {
+  const form = document.querySelector("form")!;
+  form.title = users.get(id)!.name;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const users = new Map<string, { name: string }>();
+
+function greet(id: string) {
+  const form = document.querySelector("form");
+  if (!form) {
+    throw new Error("The page has no form");
+  }
+  form.title = users.get(id)?.name ?? "guest";
+}
+```
+
+## When not to use it
+
+Sometimes you know more than the type checker, for example right after `map.has(key)`. If your code has many such places and you trust them, this rule is noise.

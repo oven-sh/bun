@@ -1,0 +1,79 @@
+---
+title: "n/callback-return"
+description: "Require a `return` with every call to a callback"
+---
+
+Calling a callback does not end the function. Without a `return`, the code after the call keeps running, and the callback is often called a second time.
+
+The rule looks at calls to `callback`, `cb` and `next` inside functions. A call is fine if it is returned, if a `return` follows it directly, or if it is the last statement of the function.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function loadUser(id, callback) {
+  if (!id) {
+    callback(new Error("missing id"));
+  }
+  db.find(id, callback);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function loadUser(id, callback) {
+  if (!id) {
+    return callback(new Error("missing id"));
+  }
+  db.find(id, callback);
+}
+
+function saveUser(user, callback) {
+  if (!user.id) {
+    callback(new Error("missing id"));
+    return;
+  }
+  callback(null, db.save(user));
+}
+```
+
+## Options
+
+The option is the list of names that count as callbacks. It replaces the default, `["callback", "cb", "next"]`. A name can be a path such as `"res.send"`.
+
+```toml bunfig.toml
+[lint.rules]
+"n/callback-return" = ["error", ["done", "res.send"]]
+```
+
+{/* bad {"options": [["done", "res.send"]]} */}
+
+```js
+function show(req, res) {
+  if (!req.user) {
+    res.send(401);
+  }
+  res.render("profile");
+}
+```
+
+{/* good {"options": [["done", "res.send"]]} */}
+
+```js
+function show(req, res, next) {
+  if (!req.user) {
+    next();
+  }
+  res.render("profile");
+}
+```
+
+## When not to use it
+
+The rule only reads names. It cannot tell that a function named `next` is not a callback, or that a callback has another name. In code that uses promises and `async` functions there is nothing for it to find.

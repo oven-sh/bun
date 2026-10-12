@@ -1,0 +1,59 @@
+---
+title: "react-hooks/unsupported-syntax"
+description: "Disallow syntax that the React Compiler cannot compile, such as `eval()`"
+---
+
+The React Compiler has to know everything a component reads and writes. `eval()` runs code that it cannot see, so it skips the whole component. The component still works, but it gets no automatic memoization.
+
+The rule reports `eval()` and `class` declarations inside components and hooks.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Calculator({ formula }) {
+  const result = eval(formula);
+  return <output>{result}</output>;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Editor({ text }) {
+  class Cursor {
+    position = 0;
+  }
+  return <textarea defaultValue={text} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Calculator({ formula }) {
+  const result = evaluate(parse(formula));
+  return <output>{result}</output>;
+}
+```
+
+{/* good */}
+
+```jsx
+class Cursor {
+  position = 0;
+}
+
+function Editor({ text }) {
+  return <textarea defaultValue={text} />;
+}
+```
+
+## When not to use it
+
+If you do not use the React Compiler, a skipped component costs you nothing.

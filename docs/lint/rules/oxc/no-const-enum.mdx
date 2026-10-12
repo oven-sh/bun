@@ -1,0 +1,43 @@
+---
+title: "oxc/no-const-enum"
+description: "Disallow TypeScript `const enum`"
+---
+
+A `const enum` does not exist at runtime. TypeScript replaces each use with the member's value, and for that it has to read the file that declares the enum. A tool that compiles one file at a time cannot do that for an imported enum. If the enum is in a published `.d.ts` file, its values are copied into every package compiled against it, and they go stale when the enum changes.
+
+`--fix` removes `const`, which makes it a regular enum.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+export const enum Status {
+  Active,
+  Archived,
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+export enum Status {
+  Active,
+  Archived,
+}
+```
+
+An object with `as const` gives you plain values without an enum:
+
+{/* good */}
+
+```ts
+export const Status = {
+  Active: 0,
+  Archived: 1,
+} as const;
+```

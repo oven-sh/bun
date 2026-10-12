@@ -1,0 +1,83 @@
+---
+title: "@typescript-eslint/no-unsafe-enum-comparison"
+description: "Disallow comparing an enum value with a plain number or string"
+---
+
+Comparing an enum with a raw value, as in `status === 1`, ties the code to the number behind the member. Reorder the enum or insert a member and the comparison means something else, with no compile error.
+
+The rule checks `==`, `!=`, `===`, `!==`, `<`, `<=`, `>`, `>=` and the `case` labels of a `switch`. Comparing members of two different enums is reported too.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+enum Status {
+  Open,
+  Closed,
+}
+
+enum Color {
+  Red = "red",
+}
+
+function describe(status: Status, color: Color) {
+  if (status === 1) {
+    return "closed";
+  }
+  if (color === "red") {
+    return "red";
+  }
+  switch (status) {
+    case 0:
+      return "open";
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+enum Status {
+  Open,
+  Closed,
+}
+
+enum Color {
+  Red = "red",
+}
+
+function describe(status: Status, color: Color) {
+  if (status === Status.Closed) {
+    return "closed";
+  }
+  if (color === Color.Red) {
+    return "red";
+  }
+  switch (status) {
+    case Status.Open:
+      return "open";
+  }
+}
+```
+
+A comparison with a value of another kind, such as `undefined`, is not reported:
+
+{/* good */}
+
+```ts
+enum Status {
+  Open,
+  Closed,
+}
+
+function isSet(status?: Status) {
+  return status !== undefined;
+}
+```

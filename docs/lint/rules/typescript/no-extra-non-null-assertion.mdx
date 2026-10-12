@@ -1,0 +1,40 @@
+---
+title: "@typescript-eslint/no-extra-non-null-assertion"
+description: "Disallow a non-null assertion that has no effect"
+---
+
+`!` after an expression tells TypeScript that the value is not `null` or `undefined`. Writing it twice, as in `user!!`, says nothing more. Writing it right before `?.` contradicts itself: `user!?.name` first claims that `user` is there and then checks whether it is.
+
+`--fix` removes the extra `!`.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+function nameOf(user?: { name: string }) {
+  return user!!.name;
+}
+
+function lengthOf(items?: string[]) {
+  return items!?.length;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+function nameOf(user?: { name: string }) {
+  return user!.name;
+}
+
+function lengthOf(items?: string[]) {
+  return items?.length;
+}
+```

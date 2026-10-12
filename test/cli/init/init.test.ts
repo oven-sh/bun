@@ -60,6 +60,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
     expect(readme).toInclude("index.ts");
     expect(readme).toInclude("bun check");
+    expect(readme).toInclude("`bun lint`");
+    expect(readme).toInclude("`bun format`");
 
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
@@ -413,6 +415,34 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
+
+  test.each(["--react", "--react=tailwind", "--react=shadcn"])(
+    "the bunfig.toml of bun init %s has the section that bun lint --init adds",
+    async flag => {
+      await using temp = tempDir("bun-init-lint-section", { "alone/a.js": "" });
+      const run = async (cwd: string, ...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd,
+          stdio: ["ignore", "pipe", "inherit"],
+          env: initEnv,
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return { stdout, exitCode };
+      };
+      expect((await run(path.join(temp, "alone"), "lint", "--init")).exitCode).toBe(0);
+      expect((await run(String(temp), "init", flag, "app")).exitCode).toBe(0);
+      expect(fs.readFileSync(path.join(temp, "app/bunfig.toml"), "utf8")).toEndWith(
+        'env = "BUN_PUBLIC_*"\n\n' + fs.readFileSync(path.join(temp, "alone/bunfig.toml"), "utf8"),
+      );
+      expect(await run(path.join(temp, "app"), "lint", "--init")).toEqual({
+        stdout: "bunfig.toml already has a [lint] section\n",
+        exitCode: 0,
+      });
+      expect(fs.readFileSync(path.join(temp, "app/README.md"), "utf8")).toInclude("`bun lint`");
+    },
+    30_000,
+  );
 
   // Every template declares `typescript: "^7"`, so the `bun install` that
   // `bun init` runs installs TypeScript 7. Typecheck and build with that

@@ -1,0 +1,52 @@
+---
+title: "import/no-self-import"
+description: "Disallow a module from importing itself"
+---
+
+A file that imports itself is almost always a mistake left by a rename, a move, or an editor's auto-import. You get the file's own exports, and some of them are not initialized yet when the import runs.
+
+The rule resolves each path, so it also finds the file under another spelling, such as `.` in an `index.js`. It checks `import`, `export .. from`, `import()` and `require()`.
+
+## Examples
+
+Reported:
+
+{/* bad {"filename": "cart.js"} */}
+
+```js cart.js
+import * as cart from "./cart.js";
+
+export function total(items) {
+  return items.length;
+}
+
+export function print(items) {
+  console.log(cart.total(items));
+}
+```
+
+{/* bad {"filename": "index.js"} */}
+
+```js index.js
+const { version } = require(".");
+
+exports.name = "cart";
+```
+
+Not reported:
+
+{/* file "prices.js" */}
+
+```js prices.js
+export function priceOf(item) {}
+```
+
+{/* good {"filename": "cart.js"} */}
+
+```js cart.js
+import { priceOf } from "./prices.js";
+
+export function total(items) {
+  return items.reduce((sum, item) => sum + priceOf(item), 0);
+}
+```

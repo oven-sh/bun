@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 mod braces;
 mod class;
+mod filtered;
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
 pub mod ignore;

@@ -1,0 +1,51 @@
+---
+title: "no-return-await"
+description: "Disallow `return await` where the `await` changes nothing for the caller"
+---
+
+An `async` function already wraps what it returns in a promise, so the caller gets the same result from `return load()` and from `return await load()`.
+
+Inside a `try` block the `await` does matter: without it, a rejection is not caught by the `catch`. The rule does not report that.
+
+`--fix-suggestions` removes the `await`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+async function getUser(id) {
+  return await db.find(id);
+}
+
+const getItems = async () => await db.all();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+async function getUser(id) {
+  return db.find(id);
+}
+
+async function getUserOrNull(id) {
+  try {
+    return await db.find(id);
+  } catch {
+    return null;
+  }
+}
+
+async function getName(id) {
+  const user = await db.find(id);
+  return user.name;
+}
+```
+
+## When not to use it
+
+With `return await`, the function is still running when the promise rejects, so it shows up in the stack trace of the error. If you want that, leave the rule off. ESLint has deprecated this rule.

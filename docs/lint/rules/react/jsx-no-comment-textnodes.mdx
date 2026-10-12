@@ -1,0 +1,46 @@
+---
+title: "react/jsx-no-comment-textnodes"
+description: "Disallow `//` and `/* */` comments written as text between JSX tags"
+---
+
+Between JSX tags, `//` and `/* */` do not start a comment. They are text, and your users see it on the page. A comment there has to be inside braces.
+
+The rule reports text that has a line starting with `//` or `/*`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const header = (
+  <header>
+    // TODO: add the logo
+    <h1>Welcome</h1>
+    /* the subtitle goes here */
+  </header>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const header = (
+  <header>
+    {/* TODO: add the logo */}
+    <h1>Welcome</h1>
+    <a href="https://bun.com">See https://bun.com</a>
+  </header>
+);
+```
+
+To show such text on purpose, write it as a string in braces:
+
+{/* good */}
+
+```jsx
+const hint = <code>{"// a comment in JavaScript"}</code>;
+```

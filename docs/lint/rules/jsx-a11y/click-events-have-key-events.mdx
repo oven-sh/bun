@@ -1,0 +1,35 @@
+---
+title: "jsx-a11y/click-events-have-key-events"
+description: "Require a keyboard handler next to `onClick` on elements that are not controls"
+---
+
+A `div` with an `onClick` works with a mouse and with nothing else. People who use a keyboard, a switch or a screen reader cannot trigger it, because Enter and Space do nothing on a `div`.
+
+The best answer is usually a `button`: it takes the focus and turns Enter and Space into a click by itself. If it has to be another element, add `onKeyDown`, `onKeyUp` or `onKeyPress`.
+
+Not checked: components, controls such as `button`, `input`, `select` and `a` with an `href`, elements with `aria-hidden`, and elements with `role="presentation"` or `role="none"`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const row = <div onClick={openDetails}>{item.name}</div>;
+const more = <a onClick={loadMore}>Load more</a>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const row = <button onClick={openDetails}>{item.name}</button>;
+
+const card = (
+  <div role="button" tabIndex={0} onClick={openDetails} onKeyDown={openOnEnter}>
+    {item.name}
+  </div>
+);
+```

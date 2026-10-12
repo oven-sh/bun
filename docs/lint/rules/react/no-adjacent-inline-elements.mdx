@@ -1,0 +1,63 @@
+---
+title: "react/no-adjacent-inline-elements"
+description: "Disallow inline elements that touch each other without whitespace between them"
+---
+
+JSX drops the line break and the indentation between two elements. Two inline elements such as `<a>` or `<span>` that touch in the source are rendered with nothing between them, so their text runs together on the page.
+
+The rule knows the inline elements of HTML, among them `a`, `b`, `button`, `code`, `em`, `i`, `img`, `input`, `label`, `select`, `small`, `span`, `strong` and `textarea`. It also checks an array of children passed to `React.createElement`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const nav = (
+  <div>
+    <a href="/login">Log in</a>
+    <a href="/signup">Sign up</a>
+  </div>
+);
+```
+
+{/* bad */}
+
+```jsx
+const nav = React.createElement("div", undefined, [
+  React.createElement("a", { href: "/login" }, "Log in"),
+  React.createElement("a", { href: "/signup" }, "Sign up"),
+]);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const nav = (
+  <div>
+    <a href="/login">Log in</a> <a href="/signup">Sign up</a>
+  </div>
+);
+```
+
+Only elements that touch in the source are reported. Elements on separate lines are not, although nothing is rendered between them. Write `{" "}` at the end of the line if you want a space there:
+
+{/* good */}
+
+```jsx
+const joined = (
+  <div>
+    <a href="/login">Log in</a>
+    <a href="/signup">Sign up</a>
+  </div>
+);
+
+const spaced = (
+  <div>
+    <a href="/login">Log in</a> <a href="/signup">Sign up</a>
+  </div>
+);
+```

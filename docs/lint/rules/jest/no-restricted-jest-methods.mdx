@@ -1,0 +1,59 @@
+---
+title: "jest/no-restricted-jest-methods"
+description: "Disallow the `jest` methods that you list"
+---
+
+Some teams agree not to use parts of the `jest` object: no module mocks, no fake timers, no spies. This rule reports the methods you list, with your own message if you give one, so the agreement does not depend on review.
+
+The rule does nothing until you give it a list.
+
+## Examples
+
+These examples restrict `advanceTimersByTime` and `spyOn`.
+
+Reported:
+
+{/* bad {"count": 2, "options": [{"advanceTimersByTime": null, "spyOn": "Pass the dependency in instead of spying on it"}]} */}
+
+```ts
+import { expect, jest, test } from "@jest/globals";
+
+test("retries after a second", () => {
+  const send = jest.spyOn(mailer, "send");
+  retry(send);
+  jest.advanceTimersByTime(1000);
+  expect(send).toHaveBeenCalledTimes(2);
+});
+```
+
+Not reported:
+
+{/* good {"options": [{"advanceTimersByTime": null, "spyOn": "Pass the dependency in instead of spying on it"}]} */}
+
+```ts
+import { expect, jest, test } from "@jest/globals";
+
+test("retries once", () => {
+  const send = jest.fn();
+  retry(send);
+  expect(send).toHaveBeenCalledTimes(2);
+});
+```
+
+## Options
+
+One object. Each key is the name of a method. The value is the message to report, or `null` for the default message, which is ``Use of `spyOn` is not allowed``.
+
+```json
+{
+  "rules": {
+    "jest/no-restricted-jest-methods": [
+      "error",
+      {
+        "advanceTimersByTime": null,
+        "spyOn": "Pass the dependency in instead of spying on it"
+      }
+    ]
+  }
+}
+```

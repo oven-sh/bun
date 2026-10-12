@@ -1,0 +1,40 @@
+---
+title: "import/no-empty-named-blocks"
+description: "Disallow `import {} from` with nothing between the braces"
+---
+
+Empty braces in an import are usually what is left after the last name was deleted. The import still loads and runs the module, but it does not say whether that is on purpose.
+
+`--fix` removes the braces if the import also has a default import. An import that has nothing but `{}` is not fixed, because deleting it would stop the module from being loaded. It comes with two suggestions instead: delete the import, or keep it as `import "./setup"`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import {} from "./setup";
+```
+
+{/* bad */}
+
+```js
+import React from "react";
+```
+
+{/* bad */}
+
+```ts
+import type {} from "./types";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import "./setup";
+import React from "react";
+import { useState } from "react";
+```

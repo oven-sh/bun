@@ -1,0 +1,50 @@
+---
+title: "jest/prefer-each"
+description: "Require `test.each` and `describe.each` instead of a loop around tests"
+---
+
+A `for` loop that declares tests works, but the table of cases is hidden in the loop and every title has to be built by hand. `test.each` and `describe.each` take the table as an argument and fill in the title for each row.
+
+The rule reports `for`, `for...of` and `for...in` loops that contain a `test`, a `describe` or a hook such as `beforeEach`. A loop inside a test is fine, and `cases.forEach(...)` around a test is not reported.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+const cases = [
+  [1, 2],
+  [2, 4],
+];
+
+for (const [input, expected] of cases) {
+  test(`doubles ${input}`, () => {
+    expect(input * 2).toBe(expected);
+  });
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test.each([
+  [1, 2],
+  [2, 4],
+])("doubles %i", (input, expected) => {
+  expect(input * 2).toBe(expected);
+});
+
+test("every price is positive", () => {
+  for (const price of [5, 10]) {
+    expect(price).toBeGreaterThan(0);
+  }
+});
+```

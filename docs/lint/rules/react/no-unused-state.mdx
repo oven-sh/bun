@@ -1,0 +1,67 @@
+---
+title: "react/no-unused-state"
+description: "Disallow fields of a class component's state that are never read"
+---
+
+A state field that is set but never read still makes the component render again each time it changes, and it makes the component look as if it depended on that value.
+
+The rule collects the fields from `state = { .. }`, `this.state = { .. }` in the constructor, `getInitialState`, and `this.setState({ .. })`. It reports a field that nothing in the component reads from `this.state`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 1} */}
+
+```jsx
+class Counter extends React.Component {
+  state = { count: 0, lastClick: null };
+
+  render() {
+    return <button>{this.state.count}</button>;
+  }
+}
+```
+
+{/* bad {"count": 1} */}
+
+```jsx
+class Counter extends React.Component {
+  handleClick = () => {
+    this.setState({ lastClick: Date.now() });
+  };
+
+  render() {
+    return <button onClick={this.handleClick}>Click</button>;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Counter extends React.Component {
+  state = { count: 0, lastClick: null };
+
+  render() {
+    const { count, lastClick } = this.state;
+    return <button title={lastClick}>{count}</button>;
+  }
+}
+```
+
+If the whole state goes somewhere the rule cannot follow, such as a spread or a key that is computed, it reports nothing for that component:
+
+{/* good */}
+
+```jsx
+class Counter extends React.Component {
+  state = { count: 0, lastClick: null };
+
+  render() {
+    return <CounterView {...this.state} />;
+  }
+}
+```

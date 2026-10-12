@@ -1,0 +1,56 @@
+---
+title: "prefer-regex-literals"
+description: "Require regular expression literals instead of `RegExp()` with a fixed pattern"
+---
+
+In `new RegExp("\\d+")` you write every backslash twice. Forget one and the pattern changes without an error: `"\d+"` is the string `d+`. In the literal `/\d+/` you write the pattern as it is, and a mistake in it is a syntax error, not an exception when that line runs.
+
+A call is reported if the pattern and the flags are fixed strings: a string literal, a template literal without `${}`, or `String.raw` without `${}`. A pattern that is built at run time needs the constructor and is not reported.
+
+The report comes with a suggestion that replaces the call with the literal.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const digits = new RegExp("\\d+");
+const word = RegExp("hello", "gi");
+const path = new RegExp(String.raw`\.tsx?$`);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const digits = /\d+/;
+const word = /hello/gi;
+const path = /\.tsx?$/;
+
+const search = new RegExp(escape(query), "i");
+const prefix = new RegExp(`^${name}:`);
+```
+
+## Options
+
+| Option                      | Default | What it does                                                                            |
+| --------------------------- | ------- | --------------------------------------------------------------------------------------- |
+| `disallowRedundantWrapping` | `false` | Also report a regular expression literal passed to `RegExp`, alone or with fixed flags. |
+
+{/* bad {"options": [{"disallowRedundantWrapping": true}], "count": 2} */}
+
+```js
+const digits = new RegExp(/\d+/);
+const word = new RegExp(/hello/, "gi");
+```
+
+{/* good {"options": [{"disallowRedundantWrapping": true}]} */}
+
+```js
+const digits = /\d+/;
+const word = /hello/gi;
+const custom = new RegExp(/hello/, flags);
+```

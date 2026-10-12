@@ -1,0 +1,119 @@
+---
+title: "react-hooks/set-state-in-effect"
+description: "Disallow calling a state setter directly in the body of an effect"
+---
+
+An effect runs after React has rendered. If its body sets state right away, React has to render the component a second time before the user sees anything new. Most of the time the state is not needed at all: a value that depends only on props and other state can be computed while rendering.
+
+The rule checks `useEffect`, `useLayoutEffect` and `useInsertionEffect`. Setting state later is fine: in an event listener, a timer, or after a `fetch()`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import { useEffect, useState } from "react";
+
+function FullName({ first, last }) {
+  const [fullName, setFullName] = useState("");
+
+  useEffect(() => {
+    setFullName(first + " " + last);
+  }, [first, last]);
+
+  return <span>{fullName}</span>;
+}
+```
+
+Moving the call into a helper does not change anything:
+
+{/* bad */}
+
+```jsx
+import { useEffect, useState } from "react";
+
+function Search({ query }) {
+  const [results, setResults] = useState([]);
+  const clear = () => setResults([]);
+
+  useEffect(() => {
+    clear();
+  }, [query]);
+
+  return <List items={results} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function FullName({ first, last }) {
+  const fullName = first + " " + last;
+  return <span>{fullName}</span>;
+}
+```
+
+The effect subscribes to something outside React, and the state is set when that changes:
+
+{/* good */}
+
+```jsx
+import { useEffect, useState } from "react";
+
+function OnlineStatus() {
+  const [online, setOnline] = useState(true);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    return () => window.removeEventListener("online", update);
+  }, []);
+
+  return <span>{online ? "Online" : "Offline"}</span>;
+}
+```
+
+{/* good */}
+
+```jsx
+import { useEffect, useState } from "react";
+
+function Profile({ id }) {
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    fetch("/users/" + id)
+      .then(response => response.json())
+      .then(data => setUser(data));
+  }, [id]);
+
+  return <span>{user?.name}</span>;
+}
+```
+
+A value read from a ref is only known after rendering, so storing it in state is allowed:
+
+{/* good */}
+
+```jsx
+import { useLayoutEffect, useRef, useState } from "react";
+
+function Tooltip({ text }) {
+  const ref = useRef(null);
+  const [height, setHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    setHeight(ref.current.offsetHeight);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ top: -height }}>
+      {text}
+    </div>
+  );
+}
+```

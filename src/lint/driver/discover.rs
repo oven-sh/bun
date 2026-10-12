@@ -153,6 +153,8 @@ struct Directory {
     /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
     /// alone about what it is nearest to.
     is_hidden: bool,
+    /// [`Loader::is_of_react`] for the directory that it is in or, for the one that is searched, for itself.
+    is_of_react: bool,
 }
 
 fn no_files_found(pattern: &[u8]) -> Fatal {
@@ -277,6 +279,7 @@ fn search(
                 relative: Vec::new(),
                 seen: None,
                 ignores,
+                is_of_react: loader.is_of_react(&inherited, &search.base_path),
                 inherited,
                 is_hidden,
             });
@@ -326,6 +329,11 @@ fn search(
                 return;
             }
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
+            let has_package = || entries.iter().any(|it| it.name == b"package.json");
+            let is_of_react = match directory.relative.is_empty() || !has_package() {
+                true => directory.is_of_react,
+                false => loader.is_of_react(&own, &directory.path),
+            };
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
@@ -414,6 +422,7 @@ fn search(
                             inherited: Arc::clone(&own),
                             ignores: ignores.clone(),
                             is_hidden,
+                            is_of_react,
                         });
                     }
                     continue;
@@ -446,7 +455,10 @@ fn search(
                         path,
                         size,
                         loaded: Arc::clone(&own),
-                        status: Status::Matched(config),
+                        status: Status::Matched(match is_of_react {
+                            true => config,
+                            false => config.outside_of_react(),
+                        }),
                     });
                 }
             }
@@ -570,7 +582,7 @@ pub(crate) fn find_files(
                 }
                 let status = match loader.ignores_named_file(&pattern, &loaded) {
                     true => Status::Ignored,
-                    false => loaded.config.get(loader.linter.registry(), &path).into(),
+                    false => loader.config_of(&loaded, &path).into(),
                 };
                 found.push(Target {
                     path,

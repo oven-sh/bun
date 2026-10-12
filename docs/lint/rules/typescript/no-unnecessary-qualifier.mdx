@@ -1,0 +1,65 @@
+---
+title: "@typescript-eslint/no-unnecessary-qualifier"
+description: "Disallow naming the enclosing namespace or enum where the short name works"
+---
+
+Inside a `namespace` or an `enum`, its own members are in scope. Writing `Shapes.Circle` inside `Shapes` means the same as `Circle`.
+
+`--fix` removes the qualifier.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+namespace Shapes {
+  export interface Circle {
+    radius: number;
+  }
+  export const unit: Shapes.Circle = { radius: 1 };
+}
+
+enum Level {
+  Low = 1,
+  Default = Level.Low,
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+namespace Shapes {
+  export interface Circle {
+    radius: number;
+  }
+  export const unit: Circle = { radius: 1 };
+}
+
+enum Level {
+  Low = 1,
+  Default = Low,
+}
+
+const circle: Shapes.Circle = Shapes.unit;
+```
+
+Here `limit` alone would be the local constant, so `Config.limit` stays:
+
+{/* good */}
+
+```ts
+namespace Config {
+  export const limit = 10;
+
+  export function clamp(value: number) {
+    const limit = value * 2;
+    return Math.min(limit, Config.limit);
+  }
+}
+```

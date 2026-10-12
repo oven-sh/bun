@@ -1,0 +1,32 @@
+---
+title: "promise/no-new-statics"
+description: "Disallow `new` on static `Promise` methods such as `Promise.all`"
+---
+
+`Promise.all`, `Promise.resolve` and the other static methods are plain functions, not constructors. Calling one with `new` throws a `TypeError` at run time.
+
+The rule covers `all`, `allSettled`, `any`, `race`, `reject`, `resolve`, `try` and `withResolvers`.
+
+`--fix` removes the `new`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+async function loadPage() {
+  return await new Promise.all([loadUser(), loadOrders()]);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+async function loadPage() {
+  return await Promise.all([loadUser(), loadOrders()]);
+}
+```

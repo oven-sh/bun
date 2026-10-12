@@ -1,0 +1,50 @@
+---
+title: "no-extra-label"
+description: "Disallow labels on `break` and `continue` that name the innermost loop or `switch`"
+---
+
+`break` and `continue` without a label already apply to the innermost loop or `switch`. Naming the label of that same statement changes nothing, and it sends the reader looking for an outer loop that is not there.
+
+`--fix` removes the label after `break` or `continue`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+search: for (const item of items) {
+  if (item.id === id) {
+    select(item);
+    break search;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+for (const item of items) {
+  if (item.id === id) {
+    select(item);
+    break;
+  }
+}
+```
+
+A label is needed to leave an outer loop from an inner one:
+
+{/* good */}
+
+```js
+rows: for (const row of table) {
+  for (const cell of row) {
+    if (cell === target) {
+      break rows;
+    }
+  }
+}
+```

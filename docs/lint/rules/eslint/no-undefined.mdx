@@ -1,0 +1,50 @@
+---
+title: "no-undefined"
+description: "Disallow the use of `undefined` as a variable"
+---
+
+`undefined` is not a keyword. It is a global variable, and a function can declare a parameter or a local variable with the same name that holds something else. Code that never writes `undefined` cannot be fooled by that.
+
+The rule reports every place where `undefined` is read, assigned, or declared.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+let selected = undefined;
+
+if (selected === undefined) {
+  selected = first();
+}
+```
+
+{/* bad */}
+
+```js
+function render(options, undefined) {
+  return options.title;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+let selected;
+
+if (selected == null) {
+  selected = first();
+}
+
+if (typeof selected === "undefined" || selected === void 0) {
+  selected = first();
+}
+```
+
+## When not to use it
+
+The global `undefined` is read-only, and `no-shadow-restricted-names`, which is on by default, reports a local variable with that name. With that rule on, `x === undefined` is safe, and this rule is a matter of taste.

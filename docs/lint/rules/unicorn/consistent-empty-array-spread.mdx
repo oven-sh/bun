@@ -1,0 +1,34 @@
+---
+title: "unicorn/consistent-empty-array-spread"
+description: "Require both branches of a spread ternary in an array to have the same type"
+---
+
+Spreading `[]` and spreading `""` both add nothing to an array, so either works as the "nothing" branch of `...(condition ? items : fallback)`. But when one branch is an array and the other a string, a reader has to stop and work out that the mismatch is harmless.
+
+The rule reports an array followed by `""`, and a string followed by `[]`. It only looks at the fallback after the `:`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const args = ["build", ...(watch ? ["--watch", "--hot"] : "")];
+```
+
+{/* bad */}
+
+```js
+const letters = ["a", ...(more ? "bc" : [])];
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const args = ["build", ...(watch ? ["--watch", "--hot"] : [])];
+
+const letters = ["a", ...(more ? "bc" : "")];
+```

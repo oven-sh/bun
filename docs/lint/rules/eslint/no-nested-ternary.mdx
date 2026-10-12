@@ -1,0 +1,40 @@
+---
+title: "no-nested-ternary"
+description: "Disallow a ternary inside the branch of another ternary"
+---
+
+One `a ? b : c` reads at a glance. With a second one inside a branch, you have to work out which `?` goes with which `:` before you know what the value is.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const size = width > 1200 ? "large" : width > 600 ? "medium" : "small";
+```
+
+{/* bad */}
+
+```js
+const price = user ? (user.isMember ? 8 : 10) : 12;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function sizeOf(width) {
+  if (width > 1200) return "large";
+  if (width > 600) return "medium";
+  return "small";
+}
+
+const size = sizeOf(width);
+```
+
+## When not to use it
+
+A chain of `a ? x : b ? y : z` with one condition a line reads like `if` / `else if` to many people. If your team likes that style, leave the rule off.

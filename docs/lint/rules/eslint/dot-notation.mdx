@@ -1,0 +1,62 @@
+---
+title: "dot-notation"
+description: 'Require `user.name` instead of `user["name"]`'
+---
+
+`user["name"]` and `user.name` read the same property. The dot form is shorter, and it leaves brackets for the cases that need them: a key in a variable, or a name that is not a valid identifier.
+
+`--fix` rewrites the brackets to a dot.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const name = user["name"];
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const name = user.name;
+const value = user[key];
+const header = headers["content-type"];
+const first = items[0];
+```
+
+## Options
+
+| Option          | Default | What it does                                                                                                                                  |
+| --------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allowKeywords` | `true`  | With `false`, reserved words go in brackets: `node.class` is reported, and `node["class"]` is allowed. Only engines older than ES5 need this. |
+| `allowPattern`  | `""`    | A regular expression. Property names that match it can be written in brackets.                                                                |
+
+{/* bad {"options": [{"allowKeywords": false}]} */}
+
+```js
+const kind = node.class;
+```
+
+{/* good {"options": [{"allowKeywords": false}]} */}
+
+```js
+const kind = node["class"];
+```
+
+To allow brackets for names that have an underscore:
+
+{/* good {"options": [{"allowPattern": "_"}]} */}
+
+```js
+const firstName = row["first_name"];
+```
+
+{/* bad {"options": [{"allowPattern": "_"}]} */}
+
+```js
+const firstName = row["name"];
+```

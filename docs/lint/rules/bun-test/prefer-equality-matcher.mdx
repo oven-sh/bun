@@ -1,0 +1,48 @@
+---
+title: "bun:test/prefer-equality-matcher"
+description: "Require `toBe` or `toEqual` instead of comparing with `===` inside `expect`"
+---
+
+`expect(a === b).toBe(true)` compares the values before `expect` sees them. When the test fails, the output says that `false` is not `true`. It does not show the two values that differ.
+
+The rule reports `===` and `!==` inside `expect` when the result is matched against `true` or `false` with `toBe`, `toEqual` or `toStrictEqual`. `==` and `!=` are not reported.
+
+`--fix-suggestions` rewrites the assertion with `toBe`. Your editor also offers `toEqual` and `toStrictEqual`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("the session belongs to the user", () => {
+  expect(session.userId === user.id).toBe(true);
+  expect(user.role !== "admin").toBe(true);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("the session belongs to the user", () => {
+  expect(session.userId).toBe(user.id);
+  expect(user.role).not.toBe("admin");
+});
+```
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("the port matches the string in the config", () => {
+  expect(server.port == config.port).toBe(true);
+});
+```

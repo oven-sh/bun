@@ -1,0 +1,69 @@
+// Puts the pages about the lint rules, `docs/lint/rules/<plugin>/<rule>.mdx`, into two files for the executable:
+//
+// - descriptions: a line for each page, `<plugin>/<rule>\t<the description of its frontmatter>`, for `bun lint --rules`
+// - pages: for each page a NUL, `<plugin>/<rule>`, a newline and its Markdown, for `bun lint --explain <rule>`:
+//   the description, then the text without the frontmatter and the MDX comments
+//
+// Both are sorted by `<plugin>/<rule>`. `src/lint/driver/explain.rs` reads them.
+//
+// usage: bun generate-lint-docs.ts <docs/lint/rules> <descriptions> <pages>
+import { readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { readdirRecursive, writeIfNotChanged } from "./helpers.ts";
+
+const [root, descriptionsPath, pagesPath] = process.argv.slice(2);
+if (!root || !descriptionsPath || !pagesPath) {
+  console.error("usage: generate-lint-docs.ts <docs/lint/rules> <descriptions> <pages>");
+  process.exit(1);
+}
+
+/** The value of `key` in `frontmatter`: one line, with or without double quotes. */
+function field(frontmatter: string, key: string): string {
+  const value = new RegExp(`^${key}:[ \\t]*(.*?)[ \\t]*$`, "m").exec(frontmatter)?.[1] ?? "";
+  if (!value.startsWith('"')) return value;
+  try {
+    return String(JSON.parse(value));
+  } catch {
+    return value;
+  }
+}
+
+/** Without the comments of MDX. What is in a code block is code: `{/* .. *\/}` is a comment of JSX there. */
+function withoutComments(markdown: string): string {
+  const lines: string[] = [];
+  let fence = "";
+  for (const line of markdown.split("\n")) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (fence) {
+      if (marker?.startsWith(fence) && line.trim() === marker) fence = "";
+    } else if (marker) {
+      fence = marker;
+    } else if (line.includes("{/*")) {
+      const rest = line.replace(/\{\/\*.*?\*\/\}/g, "");
+      if (rest.trim()) lines.push(rest);
+      continue;
+    }
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+const names = readdirRecursive(root)
+  .filter(path => path.endsWith(".mdx"))
+  .map(path => relative(root, path).slice(0, -".mdx".length).split(sep).join("/"))
+  // What is not in the directory of a plugin is about no rule.
+  .filter(name => name.includes("/"))
+  .sort((a, b) => (a < b ? -1 : 1));
+
+let descriptions = "";
+let pages = "";
+for (const name of names) {
+  const text = readFileSync(join(root, name + ".mdx"), "utf8").replaceAll("\r\n", "\n");
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  const description = field(frontmatter?.[1] ?? "", "description").replace(/\s+/g, " ");
+  const body = withoutComments(text.slice(frontmatter?.[0].length ?? 0)).replaceAll("\0", "");
+  descriptions += `${name}\t${description}\n`;
+  pages += `\0${name}\n${description}\n\n${body.trim()}\n`;
+}
+writeIfNotChanged(descriptionsPath, descriptions);
+writeIfNotChanged(pagesPath, pages);

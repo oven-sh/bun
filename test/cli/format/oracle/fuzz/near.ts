@@ -310,7 +310,7 @@ if (process.argv[2] == "--child") {
     if (flags.has("texts") && ours !== undefined && expected !== undefined)
       writeFileSync(join(flag("texts"), name), text);
     if (verdict == "only we refuse: a check") {
-      const key = `${ending} | ${refusal!.replace(/\. It is left as it is.*$/, "")}`;
+      const key = `${ending} | ${refusal!.replace(/\. It was not formatted.*$/, "")}`;
       const alarm = alarms.get(key) ?? { texts: 0, isTrue: 0 };
       alarms.set(key, alarm);
       alarm.texts++;

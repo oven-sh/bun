@@ -1,0 +1,51 @@
+---
+title: "no-label-var"
+description: "Disallow labels that share a name with a variable"
+---
+
+Labels and variables live in separate namespaces, so a label can have the name of a variable that is in scope. Then the same word means two things a few lines apart: `continue rows` jumps to the label, `rows.length` reads the variable.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const rows = table.rows;
+
+rows: for (const row of rows) {
+  for (const cell of row.cells) {
+    if (cell.isEmpty) continue rows;
+  }
+  print(row);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const rows = table.rows;
+
+eachRow: for (const row of rows) {
+  for (const cell of row.cells) {
+    if (cell.isEmpty) continue eachRow;
+  }
+  print(row);
+}
+```
+
+Globals count as variables too. `top` is a global in browsers:
+
+{/* bad */}
+
+```js
+top: for (const row of table.rows) {
+  for (const cell of row.cells) {
+    if (cell.isEmpty) continue top;
+  }
+  print(row);
+}
+```

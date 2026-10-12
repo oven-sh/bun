@@ -1,0 +1,28 @@
+---
+title: "prefer-exponentiation-operator"
+description: "Require the `**` operator instead of `Math.pow()`"
+---
+
+`Math.pow(base, exponent)` and `base ** exponent` compute the same number. The operator is shorter, reads like the arithmetic around it, and also works with `BigInt`, where `Math.pow` throws.
+
+`--fix` rewrites the call and adds parentheses where the result needs them.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const area = Math.PI * Math.pow(radius, 2);
+const distance = Math.sqrt(Math.pow(dx, 2) + Math.pow(dy, 2));
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const area = Math.PI * radius ** 2;
+const distance = Math.sqrt(dx ** 2 + dy ** 2);
+```

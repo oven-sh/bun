@@ -1,0 +1,100 @@
+---
+title: "import/no-unresolved"
+description: "Require every import to point to a file or package that exists"
+---
+
+A misspelled path, a file that was moved, or a package that is not installed only fails when the code runs or is bundled. This rule looks up each import on disk and reports the ones it cannot find.
+
+Paths resolve the way `require()` does in Node.js:
+
+- A path without an extension is tried with `.mjs`, `.js`, `.json` and `.node`, then as a folder with an `index` file.
+- Node.js built-in modules always resolve.
+- `import type` and `export type` are not checked.
+
+## Examples
+
+Reported:
+
+{/* file "utils/format.js" */}
+
+```js utils/format.js
+export function formatDate() {}
+```
+
+{/* bad {"count": 2} */}
+
+```js
+import { formatDate } from "./utils/fromat.js";
+import leftPad from "a-package-that-is-not-installed";
+```
+
+Not reported:
+
+{/* file "utils/format.js" */}
+
+```js utils/format.js
+export function formatDate() {}
+```
+
+{/* good */}
+
+```js
+import fs from "node:fs";
+import { formatDate } from "./utils/format.js";
+import { formatDate as format } from "./utils/format";
+```
+
+`.ts` is not one of the extensions that are tried, so only the first import here is reported:
+
+{/* file "user.ts" */}
+
+```ts user.ts
+export const user = { name: "Ada" };
+```
+
+{/* bad {"count": 1} */}
+
+```ts
+import { user } from "./user";
+import { user as sameUser } from "./user.ts";
+```
+
+In an ESLint config, the `import/resolver` setting changes how paths resolve. `node` with its `extensions` option and `typescript` are both supported.
+
+## Options
+
+| Option     | Default | What it does                                                         |
+| ---------- | ------- | -------------------------------------------------------------------- |
+| `esmodule` | `true`  | Check `import`, `export .. from` and `import()`.                     |
+| `commonjs` | `false` | Also check `require()`.                                              |
+| `amd`      | `false` | Also check the dependencies of `define()` and of `require([..])`.    |
+| `ignore`   | `[]`    | Regular expressions. A path that matches one of them is not checked. |
+
+{/* bad {"options": [{"commonjs": true}]} */}
+
+```js
+const config = require("./confg.json");
+```
+
+`bun` and `bun:test` are not Node.js modules, so they are reported:
+
+{/* bad {"count": 2} */}
+
+```js
+import { serve } from "bun";
+import { test } from "bun:test";
+```
+
+Use `ignore` for them, and for paths that only a bundler understands:
+
+{/* good {"options": [{"ignore": ["^bun(:|$)", "\\.svg$"]}]} */}
+
+```js
+import { serve } from "bun";
+import { test } from "bun:test";
+import logo from "./logo.svg";
+```
+
+## When not to use it
+
+In a TypeScript project the type checker already reports imports it cannot find.

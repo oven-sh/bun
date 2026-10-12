@@ -1,0 +1,81 @@
+---
+title: "react/jsx-props-no-spreading"
+description: "Disallow `{...props}` in JSX"
+---
+
+`{...props}` passes on everything in the object, including props the element does not know. You cannot tell from the tag what it receives, and on an HTML element the extras end up as unknown attributes in the page. Naming each prop shows what is passed.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Avatar(props) {
+  return <img {...props} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Avatar({ src, alt }) {
+  return <img src={src} alt={alt} />;
+}
+```
+
+## Options
+
+| Option           | Default     | What it does                                                                       |
+| ---------------- | ----------- | ---------------------------------------------------------------------------------- |
+| `html`           | `"enforce"` | `"ignore"` allows spreading on HTML elements such as `<img>`.                      |
+| `custom`         | `"enforce"` | `"ignore"` allows spreading on components such as `<Avatar>`.                      |
+| `explicitSpread` | `"enforce"` | `"ignore"` allows spreading an object written in place, where every prop is named. |
+| `exceptions`     | `[]`        | Tag names that get the opposite of what `html` or `custom` says for them.          |
+
+{/* good {"options": [{"html": "ignore"}]} */}
+
+```jsx
+const field = <input {...inputProps} />;
+```
+
+{/* bad {"options": [{"html": "ignore"}]} */}
+
+```jsx
+const field = <TextField {...inputProps} />;
+```
+
+{/* good {"options": [{"custom": "ignore"}]} */}
+
+```jsx
+const field = <TextField {...inputProps} />;
+```
+
+{/* good {"options": [{"explicitSpread": "ignore"}]} */}
+
+```jsx
+const avatar = <Avatar {...{ src, alt }} />;
+```
+
+An exception allows a tag that is otherwise checked:
+
+{/* good {"options": [{"exceptions": ["TextField"]}]} */}
+
+```jsx
+const field = <TextField {...inputProps} />;
+```
+
+And it checks a tag that is otherwise ignored:
+
+{/* bad {"options": [{"custom": "ignore", "exceptions": ["TextField"]}]} */}
+
+```jsx
+const field = <TextField {...inputProps} />;
+```
+
+## When not to use it
+
+Wrapper components that pass the rest of their props to one element, as in `<button {...rest}>`, are a common and reasonable pattern. If you write many of them, turn the rule off or list them in `exceptions`.

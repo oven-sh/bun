@@ -1,0 +1,47 @@
+---
+title: "react/no-arrow-function-lifecycle"
+description: "Disallow arrow functions in class fields as React lifecycle methods"
+---
+
+An arrow function in a class field is created again for every instance, and it is not on the prototype. A subclass cannot call it with `super.componentDidMount()`, and a test cannot replace it on `Component.prototype`. React always calls lifecycle methods on the instance, so binding `this` with an arrow function gains nothing.
+
+The rule covers `render`, every `component*` and `UNSAFE_component*` method, `shouldComponentUpdate`, `getSnapshotBeforeUpdate`, `getChildContext`, `getDefaultProps`, `getInitialState` and the static `getDerivedStateFromProps`, in classes and in `createReactClass`.
+
+`--fix` rewrites the arrow function to a method.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+class Clock extends React.Component {
+  componentDidMount = () => {
+    this.timer = setInterval(this.tick, 1000);
+  };
+
+  render = () => <time>{this.state.now}</time>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Clock extends React.Component {
+  componentDidMount() {
+    this.timer = setInterval(this.tick, 1000);
+  }
+
+  // Not a lifecycle method: an arrow function keeps `this` when it is passed around.
+  tick = () => {
+    this.setState({ now: Date.now() });
+  };
+
+  render() {
+    return <time>{this.state.now}</time>;
+  }
+}
+```

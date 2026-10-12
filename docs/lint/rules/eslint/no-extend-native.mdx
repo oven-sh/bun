@@ -1,0 +1,70 @@
+---
+title: "no-extend-native"
+description: "Disallow adding properties to the prototypes of built-in objects"
+---
+
+A property added to `Array.prototype` or `Object.prototype` shows up on every array or object in the program, including those inside libraries. It appears in their `for...in` loops, and it breaks when a library or a later version of JavaScript defines the same name with a different meaning.
+
+Both plain assignment and `Object.defineProperty()` / `Object.defineProperties()` are reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+Array.prototype.last = function () {
+  return this[this.length - 1];
+};
+
+Object.defineProperty(String.prototype, "shout", {
+  value() {
+    return this.toUpperCase() + "!";
+  },
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function last(items) {
+  return items[items.length - 1];
+}
+
+class Stack extends Array {
+  last() {
+    return this[this.length - 1];
+  }
+}
+
+Stack.prototype.peek = Stack.prototype.last;
+```
+
+## Options
+
+| Option       | Default | What it does                                   |
+| ------------ | ------- | ---------------------------------------------- |
+| `exceptions` | `[]`    | Names of built-in objects that you may extend. |
+
+{/* good {"options": [{"exceptions": ["Array"]}]} */}
+
+```js
+Array.prototype.last = function () {
+  return this[this.length - 1];
+};
+```
+
+{/* bad {"options": [{"exceptions": ["Array"]}]} */}
+
+```js
+String.prototype.shout = function () {
+  return this.toUpperCase() + "!";
+};
+```
+
+## When not to use it
+
+A polyfill has to add to built-in prototypes. List what it extends in `exceptions`, or turn the rule off for that file.

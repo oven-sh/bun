@@ -1,0 +1,94 @@
+---
+title: "import/no-internal-modules"
+description: "Disallow importing a file from inside another directory or package"
+---
+
+A directory with an `index.js`, like a package, decides what it shows to the outside. An import that reaches past it, such as `./api/users` or `lodash/get`, depends on how the inside is laid out and breaks when a file in there is moved or renamed.
+
+An import path may have one step: `./api`, `../api`, `lodash`, `@scope/package`. A longer path is reported if the file exists. `require()` calls are checked too.
+
+## Examples
+
+Reported:
+
+{/* file "api/index.js" */}
+
+```js api/index.js
+export { listUsers } from "./users";
+```
+
+{/* file "api/users.js" */}
+
+```js api/users.js
+export const listUsers = () => fetch("/users");
+```
+
+{/* bad */}
+
+```js
+import { listUsers } from "./api/users";
+```
+
+Not reported:
+
+{/* file "api/index.js" */}
+
+```js api/index.js
+export { listUsers } from "./users";
+```
+
+{/* file "api/users.js" */}
+
+```js api/users.js
+export const listUsers = () => fetch("/users");
+```
+
+{/* good */}
+
+```js
+import { listUsers } from "./api";
+```
+
+## Options
+
+| Option   | Default | What it does                                                                                 |
+| -------- | ------- | -------------------------------------------------------------------------------------------- |
+| `allow`  | `[]`    | Globs. A longer path is allowed if the import path or the full path of the file matches one. |
+| `forbid` | none    | Globs. Only what matches one is reported, and every other path is allowed.                   |
+
+Use `allow` or `forbid`, not both.
+
+With `{ "allow": ["api/*"] }`:
+
+{/* file "api/users.js" */}
+
+```js api/users.js
+export const listUsers = () => fetch("/users");
+```
+
+{/* good {"options": [{"allow": ["api/*"]}]} */}
+
+```js
+import { listUsers } from "./api/users";
+```
+
+With `{ "forbid": ["db/*"] }`, only the second import is reported:
+
+{/* file "api/users.js" */}
+
+```js api/users.js
+export const listUsers = () => fetch("/users");
+```
+
+{/* file "db/pool.js" */}
+
+```js db/pool.js
+export const pool = [];
+```
+
+{/* bad {"count": 1, "options": [{"forbid": ["db/*"]}]} */}
+
+```js
+import { listUsers } from "./api/users";
+import { pool } from "./db/pool";
+```

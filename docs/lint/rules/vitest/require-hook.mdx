@@ -1,0 +1,78 @@
+---
+title: "vitest/require-hook"
+description: "Require setup and teardown code to be inside a hook"
+---
+
+Code at the top level of a test file, or directly in the body of a `describe`, runs once while Vitest collects the tests. It runs even if every test in that block is skipped, and the state it builds is shared by all tests, so one test can break the next. Code in `beforeEach`, `beforeAll`, `afterEach` or `afterAll` runs when the tests do.
+
+Two things are reported in those places: a function call that stands alone as a statement, and a `let` or `var` that starts with a value other than `null` or `undefined`.
+
+`const` declarations, calls of `describe`, `test`, `it`, `bench` and the hooks, and calls on `vi`, such as `vi.mock()`, are allowed.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+import { describe, expect, test } from "vitest";
+
+let db = connect();
+db.seed(["ada", "grace"]);
+
+describe("users", () => {
+  clearCache();
+
+  test("finds a user", () => {
+    expect(db.find("ada")).toBeDefined();
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+
+vi.mock("./mailer");
+
+const names = ["ada", "grace"];
+let db;
+
+beforeAll(() => {
+  db = connect();
+  db.seed(names);
+});
+
+describe("users", () => {
+  beforeEach(() => {
+    clearCache();
+  });
+
+  test("finds a user", () => {
+    expect(db.find("ada")).toBeDefined();
+  });
+});
+```
+
+## Options
+
+| Option                 | Default | What it does                                                                                      |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `allowedFunctionCalls` | `[]`    | Names of functions that you can call outside a hook. Write a method with its object: `"db.seed"`. |
+
+{/* good {"options": [{"allowedFunctionCalls": ["installMatchers", "db.seed"]}]} */}
+
+```js
+import { expect, test } from "vitest";
+
+installMatchers();
+db.seed(["ada"]);
+
+test("finds a user", () => {
+  expect(db.find("ada")).toBeUser();
+});
+```

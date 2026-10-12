@@ -1,0 +1,165 @@
+---
+title: Migrate from Prettier to bun format
+sidebarTitle: Migrate from Prettier
+mode: center
+---
+
+`bun format` reads your `.prettierrc` and prints what Prettier 3 prints. In most projects you only change the command.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "format": "prettier --write .", // [!code --]
+    "format:check": "prettier --check .", // [!code --]
+    "format": "bun format", // [!code ++]
+    "format:check": "bun format --check" // [!code ++]
+  }
+}
+```
+
+`bun format` writes by default and formats the current directory, so `--write .` goes away. Other flags and arguments stay the same. Change CI and Git hooks too.
+
+Edit the script first. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get Prettier.
+
+---
+
+Check that nothing changes. With a Prettier config, `--check` prints what Prettier prints.
+
+```sh terminal icon="terminal"
+bun format --check
+```
+
+```txt
+$ bun format --check
+Checking formatting...
+All matched files use Prettier code style!
+```
+
+---
+
+Run `--doctor` to see what Bun does with your config. It doesn't format or write anything.
+
+```sh terminal icon="terminal"
+bun format --doctor
+```
+
+```txt
+$ bun format --doctor
+Using .prettierrc (Prettier config)
+
+    4 files are formatted natively
+
+Built-in plugins: @ianvs/prettier-plugin-sort-imports
+
+You can remove: @ianvs/prettier-plugin-sort-imports, prettier
+```
+
+---
+
+Uninstall what `--doctor` says you can remove. Leave `.prettierrc` as it is, including `plugins`.
+
+```sh terminal icon="terminal"
+bun remove prettier @ianvs/prettier-plugin-sort-imports
+```
+
+Keep `prettier` if your editor's Prettier extension uses it, or switch the editor to [Bun's formatter](/runtime/format#editors).
+
+---
+
+Bun reads everything Prettier reads:
+
+- `.prettierrc` in JSON, YAML, TOML, JavaScript, or TypeScript, `prettier.config.*`, and `"prettier"` in `package.json`, with `overrides`
+- `.editorconfig`, `.prettierignore`, and `.gitignore`
+- `// prettier-ignore` comments and the `@format` and `@noformat` pragmas
+- Every flag of Prettier 3 except `--file-info` and `--support-info`
+
+---
+
+Bun doesn't load Prettier plugins. The three that sort imports are built in, with all their options:
+
+- `@trivago/prettier-plugin-sort-imports`
+- `@ianvs/prettier-plugin-sort-imports`
+- `prettier-plugin-organize-imports`
+
+---
+
+If you use `prettier-plugin-tailwindcss`, take it out of `.prettierrc` and turn on Bun's own [class sorting](/runtime/format#sort-tailwind-css-classes).
+
+```json .prettierrc icon="file-json"
+{
+  "plugins": ["prettier-plugin-tailwindcss"], // [!code --]
+  "tailwindFunctions": ["clsx"], // [!code --]
+  "semi": false
+}
+```
+
+```toml bunfig.toml icon="settings"
+[format.sortTailwindcss]
+functions = ["clsx"]
+```
+
+---
+
+Svelte, Astro, and other languages that come from a plugin go to your installed Prettier. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.
+
+```txt
+Using .prettierrc (Prettier config)
+
+    3 files are formatted natively
+    1 file goes to your installed Prettier: 1 *.svelte
+
+Built-in plugins: @ianvs/prettier-plugin-sort-imports
+Plugins that use your installed Prettier: prettier-plugin-svelte
+
+Still needed:   @ianvs/prettier-plugin-sort-imports, prettier, prettier-plugin-svelte (some files go to them)
+```
+
+---
+
+With any other plugin, Bun skips the files that config covers and exits with code `2`. A plugin could print them differently, and Bun won't guess. Pass `--allow-unsupported` to format them without the plugin.
+
+```txt
+[error] 3 files were not formatted because the Prettier config uses plugins that bun format does not include: prettier-plugin-brace-style
+[error]   Use --allow-unsupported to format them without the plugins.
+```
+
+---
+
+You don't have to keep `.prettierrc`. The same options work in [`bunfig.toml`](/runtime/format#options).
+
+```json .prettierrc icon="file-json"
+{
+  "semi": false, // [!code --]
+  "singleQuote": true // [!code --]
+}
+```
+
+```toml bunfig.toml icon="settings"
+[format]
+semi = false
+singleQuote = true
+```
+
+---
+
+## Differences from Prettier
+
+If `bun format` and Prettier 3 print different code, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
+
+- **It writes by default.** `--write` is accepted and does nothing.
+- **No arguments means the current directory.**
+- **Only changed files are listed**, followed by a summary on stderr.
+- **An unknown flag is an error.** Prettier warns and continues.
+- **`--cache` does nothing.** Every run formats every file.
+- **Exit code `2` means something went wrong**, like a syntax error or a skipped file. Prettier uses `1` for some of these.
+- **A file is verified before it's written.** If the result isn't the same program or document, Bun leaves the file alone and reports it. That covers a few inputs where Prettier drops code, like `<!DOCTYPE html>` in a Handlebars template.
+- **Bytes that aren't valid UTF-8 are kept.** Prettier replaces them.
+- **Symlinks that lead out of the repository aren't written through.**
+- **`console.log` in your config file is hidden** unless the config fails to load.
+
+---
+
+See also:
+
+- [`bun format`](/runtime/format)
+- [Migrate from ESLint to bun lint](/guides/lint/migrate-from-eslint)

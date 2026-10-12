@@ -1,0 +1,43 @@
+---
+title: "no-case-declarations"
+description: "Disallow `let`, `const`, `function` and `class` declarations directly in a `case` clause"
+---
+
+All the `case` clauses of a `switch` share one scope. A `let`, `const` or `class` that you declare in one clause is visible in the others, but it only gets its value if its own clause runs. Reading it from another clause throws a `ReferenceError`, and declaring the same name in two clauses is a syntax error.
+
+Put braces around the clause to give it a scope of its own. A `function` declaration in a clause is reported too. `var` is not.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+switch (action.type) {
+  case "add":
+    const item = action.item;
+    list.push(item);
+    break;
+  default:
+    list.length = 0;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+switch (action.type) {
+  case "add": {
+    const item = action.item;
+    list.push(item);
+    break;
+  }
+  default:
+    list.length = 0;
+}
+```

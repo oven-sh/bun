@@ -1,0 +1,141 @@
+---
+title: "func-style"
+description: "Enforce one way to define functions: declarations, or expressions assigned to variables"
+---
+
+A function declaration can be called above the line that defines it. A function assigned to a variable exists only after that line has run. If a project mixes both, you have to check how each function is written to know where it can be called.
+
+This rule makes you pick one. By default it asks for expressions.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function formatName(user) {
+  return `${user.first} ${user.last}`;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const formatName = function (user) {
+  return `${user.first} ${user.last}`;
+};
+
+const initials = user => user.first[0] + user.last[0];
+```
+
+`export default function` is never reported, and neither is a TypeScript function that has overload signatures:
+
+{/* good */}
+
+```ts
+export default function main() {}
+
+function parse(input: string): string;
+function parse(input: number): number;
+function parse(input: string | number) {
+  return input;
+}
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+func-style = ["error", "declaration", { allowArrowFunctions = true }]
+```
+
+| Option                   | What it does                                                  |
+| ------------------------ | ------------------------------------------------------------- |
+| `"expression"` (default) | Report function declarations.                                 |
+| `"declaration"`          | Report functions assigned to a variable where it is declared. |
+
+| Option                   | Default | What it does                                                                                                   |
+| ------------------------ | ------- | -------------------------------------------------------------------------------------------------------------- |
+| `allowArrowFunctions`    | `false` | With `"declaration"`, allow arrow functions.                                                                   |
+| `allowTypeAnnotation`    | `false` | With `"declaration"`, allow a function if its variable has a type annotation.                                  |
+| `overrides.namedExports` | not set | The style for `export function` and `export const`: `"declaration"`, `"expression"`, or `"ignore"` for either. |
+
+### `"declaration"`
+
+{/* bad {"options": ["declaration"], "count": 2} */}
+
+```js
+const formatName = function (user) {
+  return `${user.first} ${user.last}`;
+};
+
+const initials = user => user.first[0] + user.last[0];
+```
+
+{/* good {"options": ["declaration"]} */}
+
+```js
+function formatName(user) {
+  return `${user.first} ${user.last}`;
+}
+```
+
+An arrow function that uses `this` is not reported, because `this` would mean something else in a declaration:
+
+{/* good {"options": ["declaration"]} */}
+
+```js
+function Timer() {
+  const tick = () => {
+    this.seconds++;
+  };
+  setInterval(tick, 1000);
+}
+```
+
+### `allowArrowFunctions`
+
+{/* good {"options": ["declaration", {"allowArrowFunctions": true}]} */}
+
+```js
+const initials = user => user.first[0] + user.last[0];
+```
+
+### `allowTypeAnnotation`
+
+A declaration cannot be given a function type as a whole, so this option lets such functions stay expressions:
+
+{/* good {"options": ["declaration", {"allowTypeAnnotation": true}]} */}
+
+```ts
+type Handler = (event: Event) => void;
+
+const onClick: Handler = event => {
+  event.preventDefault();
+};
+```
+
+### `overrides.namedExports`
+
+{/* good {"options": ["expression", {"overrides": {"namedExports": "declaration"}}]} */}
+
+```js
+export function formatName(user) {
+  return user.name;
+}
+
+const trim = function (text) {
+  return text.trim();
+};
+```
+
+{/* bad {"options": ["expression", {"overrides": {"namedExports": "declaration"}}]} */}
+
+```js
+export const formatName = function (user) {
+  return user.name;
+};
+```

@@ -11,7 +11,7 @@ pub struct NoArrayJustToCount {
 
 const ARRAY_TO_COUNT: Message = Message::new(
     "arrayToCount",
-    "`split()` makes an array of all the pieces, and only their number is used. Count how often the separator occurs.",
+    "`split()` builds an array only to read its length. Count the separators instead.",
 );
 
 /// The string and the separator of `string.split(separator)`, if the separator is one character that is written out.

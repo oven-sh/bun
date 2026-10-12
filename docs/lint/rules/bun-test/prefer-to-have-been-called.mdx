@@ -1,0 +1,45 @@
+---
+title: "bun:test/prefer-to-have-been-called"
+description: "Require `toHaveBeenCalled()` instead of `toHaveBeenCalledTimes(0)`"
+---
+
+"Called zero times" is a roundabout way to say "not called", and `.not.toHaveBeenCalledTimes(0)` is a double negative for "called". `toHaveBeenCalled()` and `not.toHaveBeenCalled()` say it directly.
+
+The alias `toBeCalledTimes(0)` is reported too. Any other count is fine.
+
+`--fix` rewrites `toHaveBeenCalledTimes(0)` to `not.toHaveBeenCalled()`, and `not.toHaveBeenCalledTimes(0)` to `toHaveBeenCalled()`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("only notifies on failure", () => {
+  const onError = mock();
+  const onDone = mock();
+  run(task, { onError, onDone });
+  expect(onError).toHaveBeenCalledTimes(0);
+  expect(onDone).not.toHaveBeenCalledTimes(0);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("only notifies on failure", () => {
+  const onError = mock();
+  const onDone = mock();
+  run(task, { onError, onDone });
+  expect(onError).not.toHaveBeenCalled();
+  expect(onDone).toHaveBeenCalled();
+  expect(onDone).toHaveBeenCalledTimes(1);
+});
+```

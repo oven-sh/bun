@@ -1,0 +1,53 @@
+---
+title: "react-hooks/purity"
+description: "Disallow calls such as `Math.random()` and `Date.now()` while a component renders"
+---
+
+React can render a component more than once for one update, and it can reuse an earlier result. So a component must return the same output for the same props and state. A call that gives a new value each time breaks that: the id, the time, or the random number changes on every render, and the server and the browser disagree during hydration.
+
+The rule reports `Math.random()`, `Date.now()`, and `performance.now()` in the body of a component or a hook. Calls in event handlers and effects are fine, because they do not run during render.
+
+With an oxlint config, `new Date()` and `Date()` without arguments are reported too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Clock() {
+  const now = Date.now();
+  return <time>{now}</time>;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Field({ label }) {
+  const id = Math.random();
+  return <input id={id} aria-label={label} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { useEffect, useId, useState } from "react";
+
+function Clock() {
+  const [now, setNow] = useState(null);
+  useEffect(() => {
+    setNow(Date.now());
+  }, []);
+  return <time onClick={() => setNow(Date.now())}>{now}</time>;
+}
+
+function Field({ label }) {
+  const id = useId();
+  return <input id={id} aria-label={label} />;
+}
+```

@@ -1,0 +1,36 @@
+---
+title: "unicorn/prefer-query-selector"
+description: "Require `querySelector()` and `querySelectorAll()` instead of the `getElement...` methods"
+---
+
+`getElementById`, `getElementsByClassName`, `getElementsByTagName` and `getElementsByName` each find elements in one way. `querySelector()` and `querySelectorAll()` take any CSS selector, so a lookup can grow from `.item` to `.item:not(.hidden)` without changing the method.
+
+`--fix` rewrites the call when the argument is a string without `${}`. `getElementById(id)` becomes ``querySelector(`#${id}`)``.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+const menu = document.getElementById("menu");
+const items = menu.getElementsByClassName("item active");
+const links = menu.getElementsByTagName("a");
+const emails = document.getElementsByName("email");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const menu = document.querySelector("#menu");
+const items = menu.querySelectorAll(".item.active");
+const links = menu.querySelectorAll("a");
+const emails = document.querySelectorAll("[name='email']");
+```
+
+## When not to use it
+
+The results are not quite the same. The `getElementsBy...` methods return a live collection that follows the document, and `querySelectorAll()` returns a list that does not change. An id is not always a valid selector: `getElementById("1.a")` works, and `querySelector("#1.a")` throws unless you pass the id through `CSS.escape()`.

@@ -1,0 +1,73 @@
+---
+title: "import/no-import-module-exports"
+description: "Disallow `import` declarations in a file that exports with `module.exports` or `exports.*`"
+---
+
+In Node.js a file is either an ES module or a CommonJS module. A file with an `import` declaration is an ES module, where `module` and `exports` do not exist, so `module.exports = ...` throws a `ReferenceError`. Bundlers and transpilers that accept the mix do not agree on what such a file exports.
+
+The import declarations are what is reported. The entry point of a package is exempt: the file that `main` in the closest `package.json` points to, or its `index.js`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { parse } from "./parse";
+
+module.exports = { run: text => parse(text) };
+```
+
+{/* bad */}
+
+```js
+import { parse } from "./parse";
+
+exports.run = text => parse(text);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { parse } from "./parse";
+
+export const run = text => parse(text);
+```
+
+{/* good */}
+
+```js
+const { parse } = require("./parse");
+
+module.exports = { run: text => parse(text) };
+```
+
+The entry point:
+
+{/* file "package.json" */}
+
+```json package.json
+{ "name": "runner", "main": "lib/runner.js" }
+```
+
+{/* good {"filename": "lib/runner.js"} */}
+
+```js lib/runner.js
+import { parse } from "./parse";
+
+module.exports = { run: text => parse(text) };
+```
+
+## Options
+
+| Option       | Default | What it does                                                                              |
+| ------------ | ------- | ----------------------------------------------------------------------------------------- |
+| `exceptions` | `[]`    | Globs, matched against the full path of the file. A file that matches one is not checked. |
+
+```toml bunfig.toml
+[lint.rules]
+"import/no-import-module-exports" = ["error", { exceptions = ["**/*.config.js"] }]
+```

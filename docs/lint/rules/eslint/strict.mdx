@@ -1,0 +1,96 @@
+---
+title: "strict"
+description: 'Require or disallow `"use strict"` directives'
+---
+
+Strict mode turns silent mistakes into errors: assigning to a variable that was never declared throws instead of creating a global. ES modules and class bodies are always strict, so a `"use strict"` directive there does nothing. CommonJS files and plain scripts are strict only if they say so.
+
+In a module, every `"use strict"` is reported, whatever the option. In other files, the option decides where the directive goes. By default a `.js` file is linted as a module and a `.cjs` file as CommonJS.
+
+`--fix` removes directives that do nothing: in a module, in a class, in a function that is already strict, or written twice. It never adds one.
+
+## Examples
+
+Reported, because the file is a module:
+
+{/* bad */}
+
+```js
+"use strict";
+
+export function run() {
+  save();
+}
+```
+
+Reported, because a CommonJS file needs the directive at the top:
+
+{/* bad {"filename": "server.cjs"} */}
+
+```js
+const { save } = require("./store.cjs");
+
+save();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+export function run() {
+  save();
+}
+```
+
+In a `.cjs` file:
+
+{/* good {"filename": "server.cjs"} */}
+
+```js
+"use strict";
+
+const { save } = require("./store.cjs");
+
+save();
+```
+
+## Options
+
+| Option             | What it does                                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"safe"` (default) | The same as `"global"` in a CommonJS file, and the same as `"function"` in any other script.                                                                                                            |
+| `"global"`         | Require one directive at the top of the file, and report directives inside functions.                                                                                                                   |
+| `"function"`       | Require a directive in every outermost function, and report one at the top of the file. Use it for scripts that are joined with other scripts, where a directive at the top would apply to all of them. |
+| `"never"`          | Report every directive.                                                                                                                                                                                 |
+
+With `"function"` in a `.cjs` file, functions nested in a strict function need no directive of their own:
+
+{/* good {"filename": "widget.cjs", "options": ["function"]} */}
+
+```js
+function setup() {
+  "use strict";
+
+  function render() {
+    draw();
+  }
+  render();
+}
+```
+
+Here both the directive at the top and `setup` are reported:
+
+{/* bad {"filename": "widget.cjs", "options": ["function"], "count": 2} */}
+
+```js
+"use strict";
+
+function setup() {
+  draw();
+}
+```
+
+## When not to use it
+
+If all your files are ES modules, there is nothing to decide. The rule then only catches a leftover `"use strict"`.

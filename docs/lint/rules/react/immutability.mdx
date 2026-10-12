@@ -1,0 +1,107 @@
+---
+title: "react-hooks/immutability"
+description: "Disallow modifying props, state, and other values that React expects to stay unchanged"
+---
+
+React compares values by identity to decide what to render again. If you change an object in place, it is still the same object, so React sees no change and the screen keeps showing the old data. A changed prop also changes the parent's copy.
+
+The rule reports an assignment to, or a `delete` of, a property of:
+
+- props and the arguments of a hook
+- a value returned by `useState`, `useContext`, and other hooks
+- a value that was already passed to a hook or used in JSX
+- a variable declared outside the component
+
+It also reports a local variable that is reassigned after render, for example in an event handler.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Price({ product }) {
+  product.price = product.price / 2;
+  return <span>{product.price}</span>;
+}
+```
+
+{/* bad */}
+
+```jsx
+import { useState } from "react";
+
+function Profile() {
+  const [user, setUser] = useState({ name: "" });
+  const rename = name => {
+    user.name = name;
+    setUser(user);
+  };
+  return <button onClick={() => rename("Ada")}>{user.name}</button>;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Box() {
+  const style = { color: "red" };
+  const box = <div style={style} />;
+  style.color = "blue";
+  return box;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Counter() {
+  let count = 0;
+  const onClick = () => {
+    count = count + 1;
+  };
+  return <button onClick={onClick}>{count}</button>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Price({ product }) {
+  const discounted = { ...product, price: product.price / 2 };
+  discounted.label = "Sale";
+  return (
+    <span>
+      {discounted.label}: {discounted.price}
+    </span>
+  );
+}
+```
+
+{/* good */}
+
+```jsx
+import { useState } from "react";
+
+function Profile() {
+  const [user, setUser] = useState({ name: "" });
+  const rename = name => {
+    setUser({ ...user, name });
+  };
+  return <button onClick={() => rename("Ada")}>{user.name}</button>;
+}
+```
+
+The rule does not know what a method does to a prop. This modifies the parent's array and is not reported:
+
+{/* good */}
+
+```jsx
+function Tags({ tags }) {
+  tags.push("new");
+  return <span>{tags.length}</span>;
+}
+```

@@ -10,8 +10,7 @@ use super::lint_command::{defaults_of_bunfig, run_and_exit, usage_error};
 
 pub(crate) struct FormatCommand;
 
-/// For the help.
-pub(crate) use bun_lint_driver::fmt::cli::PARAMS;
+pub(crate) use bun_lint_driver::fmt::cli::HELP;
 
 /// Whether `bun format --run-prettier-tests` exists, for `test/cli/format/conformance.test.ts`. A
 /// release build has none of it.
@@ -55,7 +54,7 @@ impl FormatCommand {
             Err(UsageError(message)) => usage_error("format", &message),
         };
         if options.help {
-            crate::cli::command::tag_print_help(Tag::FormatCommand, true);
+            crate::cli::command::tag_print_help(Tag::FormatCommand, options.all);
             Global::exit(0);
         }
         let cwd = options.cwd.clone();

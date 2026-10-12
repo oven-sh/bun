@@ -1,0 +1,38 @@
+---
+title: "@next/next/no-assign-module-variable"
+description: "Disallow declaring a variable named `module`"
+---
+
+The bundler gives every file a `module` object, and the code that Next.js adds for hot reloading uses it. Your own variable named `module` hides it, which can break the build or hot reloading.
+
+The rule reports `var`, `let`, `const` and `using` declarations of `module`, anywhere in the file. It does not report parameters, destructuring, or an assignment to the existing `module`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const module = await import("./charts.js");
+module.render();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const charts = await import("./charts.js");
+charts.render();
+```
+
+{/* good */}
+
+```js
+module.exports = { reactStrictMode: true };
+
+function describe(module) {
+  return module.id;
+}
+```

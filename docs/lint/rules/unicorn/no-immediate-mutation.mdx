@@ -1,0 +1,72 @@
+---
+title: "unicorn/no-immediate-mutation"
+description: "Disallow changing an array, object, `Set`, or `Map` in the statement right after creating it"
+---
+
+A value that is created on one line and filled on the next takes two statements to say one thing. Put everything in the initializer, so the whole value can be read in one place.
+
+The rule looks at the statement directly after the one that creates the value:
+
+| Created with                 | Reported next                           |
+| ---------------------------- | --------------------------------------- |
+| An array literal             | `.push()`, `.unshift()`                 |
+| An object literal            | Assigning a property, `Object.assign()` |
+| `new Set()`, `new WeakSet()` | `.add()`                                |
+| `new Map()`, `new WeakMap()` | `.set()`                                |
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const fruits = ["apple", "pear"];
+fruits.push("plum");
+
+const user = { name: "Ada" };
+user.role = "admin";
+```
+
+{/* bad {"count": 2} */}
+
+```js
+const seen = new Set(["apple"]);
+seen.add("pear");
+
+const prices = new Map([["apple", 1]]);
+prices.set("pear", 2);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const fruits = ["apple", "pear", "plum"];
+const user = { name: "Ada", role: "admin" };
+const seen = new Set(["apple", "pear"]);
+const prices = new Map([
+  ["apple", 1],
+  ["pear", 2],
+]);
+```
+
+A change that reads the variable itself cannot move into the initializer, so it is allowed:
+
+{/* good */}
+
+```js
+const fruits = ["apple", "pear"];
+fruits.push(fruits.length);
+```
+
+So is a change that comes after another statement:
+
+{/* good */}
+
+```js
+const fruits = ["apple", "pear"];
+console.log(fruits);
+fruits.push("plum");
+```

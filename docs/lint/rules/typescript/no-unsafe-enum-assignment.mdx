@@ -1,0 +1,74 @@
+---
+title: "@typescript-eslint/no-unsafe-enum-assignment"
+description: "Disallow giving a plain number or string to a place typed as an enum"
+---
+
+The compiler accepts a plain number where a numeric enum is expected, and `as` turns a number or a string into an enum. The code then depends on the raw values behind the members, and the variable can hold a value that no `switch` over the enum handles.
+
+The rule checks variables, assignments, default values, arguments, return values, class properties, JSX attributes, the elements of array and object literals, and `as` assertions. It also reports arithmetic on an enum variable, such as `current++`, and a plain number or string used as a key of an object with enum keys.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 6} */}
+
+```ts
+enum Status {
+  Open,
+  Closed,
+}
+
+declare function setStatus(next: Status): void;
+declare const labels: { [key in Status]: string };
+
+let current: Status = 1;
+current++;
+setStatus(0);
+console.log(labels[0]);
+const parsed = Number("1") as Status;
+const all: Status[] = [Status.Open, 1];
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+enum Status {
+  Open,
+  Closed,
+}
+
+declare function setStatus(next: Status): void;
+declare const labels: { [key in Status]: string };
+
+let current: Status = Status.Closed;
+current = Status.Open;
+setStatus(Status.Open);
+console.log(labels[Status.Open]);
+const all: Status[] = [Status.Open, Status.Closed];
+
+// This type accepts any number, so a plain number is fine.
+const code: Status | number = 404;
+```
+
+Combining members of the same enum with `|`, `&`, `^` and `~` is allowed, because that is how flag enums are used:
+
+{/* good */}
+
+```ts
+enum Access {
+  Read = 1,
+  Write = 2,
+}
+
+let access: Access = Access.Read | Access.Write;
+access &= ~Access.Write;
+```
+
+## When not to use it
+
+Values that come from outside, such as JSON or a database, arrive as plain numbers and strings. If you turn them into enums with `as` in many places, this rule reports each one. Converting in one checked function keeps the reports to that function.

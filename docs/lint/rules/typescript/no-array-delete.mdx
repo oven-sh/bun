@@ -1,0 +1,35 @@
+---
+title: "@typescript-eslint/no-array-delete"
+description: "Disallow `delete` on an element of an array"
+---
+
+`delete items[1]` does not remove the element. It leaves a hole: the array keeps its length, and `items[1]` reads as `undefined`. To take the element out and close the gap, use `splice`.
+
+The report comes with a suggestion that rewrites the `delete` as a `splice` call.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+const items = ["a", "b", "c"];
+
+delete items[1]; // ["a", <empty>, "c"], length 3
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const items = ["a", "b", "c"];
+
+items.splice(1, 1); // ["a", "c"], length 2
+
+const scores: Record<string, number> = { ada: 1 };
+delete scores["ada"];
+```

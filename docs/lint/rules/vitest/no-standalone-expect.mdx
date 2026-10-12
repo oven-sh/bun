@@ -1,0 +1,69 @@
+---
+title: "vitest/no-standalone-expect"
+description: "Disallow `expect` outside of a `test` or `it` block"
+---
+
+An `expect` written directly in a `describe` block or at the top of the file is not part of any test. It runs while the file is loaded, before the first test starts, and a failure there does not show up as a failed test with a name. Most of the time a `test(..)` around it was forgotten. An `expect` in a hook such as `beforeEach` is reported too.
+
+An `expect` in a function declaration, or in a function stored in a variable, is allowed, because a test can call that helper. So are `expect.extend()` and asymmetric matchers such as `expect.any(String)`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { beforeEach, describe, expect } from "vitest";
+
+describe("cart", () => {
+  const cart = createCart();
+  expect(cart.items).toHaveLength(0);
+
+  beforeEach(() => {
+    expect(cart.total).toBe(0);
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { describe, expect, test } from "vitest";
+
+function expectEmpty(cart: Cart) {
+  expect(cart.items).toHaveLength(0);
+}
+
+describe("cart", () => {
+  test("starts empty", () => {
+    const cart = createCart();
+    expectEmpty(cart);
+    expect(cart.total).toBe(0);
+  });
+});
+```
+
+## Options
+
+| Option                         | Default | What it does                                                                                               |
+| ------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `additionalTestBlockFunctions` | `[]`    | Names of other functions to treat like `test`. An `expect` in a callback passed to one of them is allowed. |
+
+Use it for your own wrappers around `test`, or to allow `expect` in a hook. A name can have dots.
+
+{/* good {"options": [{"additionalTestBlockFunctions": ["beforeEach", "admin.test"]}]} */}
+
+```ts
+import { beforeEach, expect } from "vitest";
+
+beforeEach(() => {
+  expect(database.isConnected()).toBe(true);
+});
+
+admin.test("can delete a user", () => {
+  expect(deleteUser(1)).toBe(true);
+});
+```

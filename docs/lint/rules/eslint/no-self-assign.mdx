@@ -1,0 +1,49 @@
+---
+title: "no-self-assign"
+description: "Disallow assigning a variable or a property to itself"
+---
+
+`name = name` does nothing. It is usually what is left of a refactoring, or a typo for `this.name = name`.
+
+The rule looks at `=`, `&&=`, `||=` and `??=`, and into destructuring. `count += count` is not reported, because it changes the value.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+function rename(user, name) {
+  name = name;
+  user.name = user.name;
+  [user, name] = [user, "guest"];
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function rename(user, name) {
+  user.name = name;
+  [user, name] = [name, user];
+}
+```
+
+## Options
+
+| Option  | Default | What it does                                             |
+| ------- | ------- | -------------------------------------------------------- |
+| `props` | `true`  | Also report properties, such as `user.name = user.name`. |
+
+Turn `props` off if your code assigns a property to itself to run its setter:
+
+{/* good {"options": [{"props": false}]} */}
+
+```js
+video.src = video.src; // loads the video again
+```

@@ -1,0 +1,42 @@
+---
+title: "jsx-a11y/no-distracting-elements"
+description: "Disallow `<marquee>` and `<blink>`"
+---
+
+Text that scrolls or flashes by itself is hard to read for people with low vision or a cognitive disability, and the reader has no way to pause it. Both elements are also deprecated, and browsers no longer make `<blink>` blink.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const banner = <marquee>Free shipping this week</marquee>;
+```
+
+{/* bad */}
+
+```jsx
+const warning = <blink>Sale ends today</blink>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const banner = <p className="banner">Free shipping this week</p>;
+```
+
+## Options
+
+| Option     | Default                | What it does                         |
+| ---------- | ---------------------- | ------------------------------------ |
+| `elements` | `["marquee", "blink"]` | Which of the two elements to report. |
+
+{/* good {"options": [{"elements": ["blink"]}]} */}
+
+```jsx
+const banner = <marquee>Free shipping this week</marquee>;
+```

@@ -1,0 +1,32 @@
+---
+title: "unicorn/no-zero-fractions"
+description: "Disallow numbers with a zero fraction or a dangling dot"
+---
+
+`1.0`, `1.` and `1` are the same number. JavaScript has no separate integer and float types, so the extra zeros and the dot suggest a difference that is not there.
+
+`--fix` removes the zeros and the dot.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+const scale = 1.0;
+const opacity = 0.5;
+const total = 10;
+const limit = 2.0e3;
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const scale = 1;
+const opacity = 0.5;
+const total = 10;
+const limit = 2e3;
+```

@@ -1,0 +1,85 @@
+---
+title: "no-duplicate-imports"
+description: "Disallow importing from the same module more than once in a file"
+---
+
+Two `import` statements for the same module split one list of names over two places. A reader has to find both to know what the file takes from that module, and the next person to add a name has to pick one.
+
+Only statements that can be merged are reported. `import * as path` and `import { join }` cannot be written as one statement, so they can stand side by side.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+```
+
+{/* good */}
+
+```js
+import * as path from "node:path";
+import { join } from "node:path";
+```
+
+## Options
+
+| Option                     | Default | What it does                                                                   |
+| -------------------------- | ------- | ------------------------------------------------------------------------------ |
+| `includeExports`           | `false` | Also look at `export ... from` statements.                                     |
+| `allowSeparateTypeImports` | `false` | Allow an `import type` statement next to a normal import from the same module. |
+
+With `includeExports`, an `export ... from` a module that the file already imports or exports from is reported:
+
+{/* bad {"options": [{"includeExports": true}]} */}
+
+```js
+import { parse } from "./parser.js";
+export { tokenize } from "./parser.js";
+```
+
+`export * from` cannot be merged with an import of names, so it is still allowed:
+
+{/* good {"options": [{"includeExports": true}]} */}
+
+```js
+import { parse } from "./parser.js";
+export * from "./parser.js";
+```
+
+Without `allowSeparateTypeImports`, types and values from one module belong in one statement:
+
+{/* bad */}
+
+```ts
+import type { User } from "./user";
+import { loadUser } from "./user";
+```
+
+{/* good */}
+
+```ts
+import { loadUser, type User } from "./user";
+```
+
+With it, the two statements are allowed:
+
+{/* good {"options": [{"allowSeparateTypeImports": true}]} */}
+
+```ts
+import type { User } from "./user";
+import { loadUser } from "./user";
+```

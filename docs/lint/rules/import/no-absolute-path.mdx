@@ -1,0 +1,63 @@
+---
+title: "import/no-absolute-path"
+description: "Disallow importing a module by an absolute file system path"
+---
+
+An absolute path such as `/home/ana/app/src/config.js` only exists on the machine where it was written. The import breaks for everyone else who clones the project, in CI, and in production.
+
+`--fix` rewrites the path to one that is relative to the importing file.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+import config from "/home/ana/app/src/config.js";
+
+const logger = require("/home/ana/app/src/logger.js");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import config from "./config.js";
+import express from "express";
+
+const logger = require("../lib/logger.js");
+```
+
+## Options
+
+| Option     | Default | What it does                                                         |
+| ---------- | ------- | -------------------------------------------------------------------- |
+| `esmodule` | `true`  | Check `import`, `export ... from` and `import()`.                    |
+| `commonjs` | `true`  | Check `require()`.                                                   |
+| `amd`      | `false` | Check the dependency lists of AMD `define()` and `require()` calls.  |
+| `ignore`   | `[]`    | Regular expressions. A path that matches one of them is not checked. |
+
+{/* good {"options": [{"commonjs": false}]} */}
+
+```js
+const logger = require("/home/ana/app/src/logger.js");
+```
+
+{/* bad {"options": [{"amd": true}]} */}
+
+```js
+define(["/home/ana/app/src/logger.js"], function (logger) {
+  logger.info("ready");
+});
+```
+
+## When not to use it
+
+Some dev servers and bundlers read a path that starts with `/` as relative to the project or its public folder. Exempt those paths with `ignore`, or leave the rule off.
+
+```toml bunfig.toml
+[lint.rules]
+"import/no-absolute-path" = ["error", { ignore = ["^/assets/"] }]
+```

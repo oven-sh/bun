@@ -1,0 +1,75 @@
+---
+title: "jest/prefer-snapshot-hint"
+description: "Require a hint on `toMatchSnapshot()` and `toThrowErrorMatchingSnapshot()`"
+---
+
+Snapshots in a `.snap` file are named after the test and numbered: `renders the menu 1`, `renders the menu 2`. With several in one test, a reviewer cannot tell which snapshot belongs to which `expect`, and a new one in the middle renumbers the ones after it. A hint becomes part of the name: `renders the menu: closed 1`.
+
+By default a hint is only required in a test that has more than one snapshot. Inline snapshots are not checked.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("renders the menu", () => {
+  expect(renderMenu({ open: false })).toMatchSnapshot();
+  expect(renderMenu({ open: true })).toMatchSnapshot();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("renders the menu", () => {
+  expect(renderMenu({ open: false })).toMatchSnapshot("closed");
+  expect(renderMenu({ open: true })).toMatchSnapshot("open");
+});
+
+test("renders the footer", () => {
+  expect(renderFooter()).toMatchSnapshot();
+});
+```
+
+If `toMatchSnapshot()` gets property matchers, the hint is the second argument:
+
+{/* good */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("creates users", () => {
+  expect(createUser("Ada")).toMatchSnapshot({ id: expect.any(Number) }, "first user");
+  expect(createUser("Grace")).toMatchSnapshot({ id: expect.any(Number) }, "second user");
+});
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"jest/prefer-snapshot-hint" = ["error", "always"]
+```
+
+| Option              | What it does                                           |
+| ------------------- | ------------------------------------------------------ |
+| `"multi"` (default) | Require a hint if the test has more than one snapshot. |
+| `"always"`          | Require a hint on every snapshot.                      |
+
+{/* bad {"options": ["always"]} */}
+
+```ts
+import { expect, test } from "@jest/globals";
+
+test("renders the footer", () => {
+  expect(renderFooter()).toMatchSnapshot();
+});
+```

@@ -1,0 +1,86 @@
+---
+title: "@typescript-eslint/consistent-type-exports"
+description: "Require `export type` for exports that are only types"
+---
+
+`export { User } from "./models"` does not say whether `User` is a type or a value. A tool that compiles one file at a time cannot open `./models` to find out whether to keep the export or drop it. `export type { User }` says it: the export is a type, and it is removed from the JavaScript output.
+
+`--fix` adds the `type` keyword.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+interface User {
+  name: string;
+}
+
+export { User };
+```
+
+{/* file "models.ts" */}
+
+```ts
+export interface User {
+  name: string;
+}
+export type Id = string;
+```
+
+{/* bad {"count": 2} */}
+
+```ts
+export { User } from "./models";
+export * from "./models";
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+interface User {
+  name: string;
+}
+const admin: User = { name: "Ada" };
+
+export type { User };
+export { admin };
+```
+
+## Options
+
+| Option                                   | Default | What it does                                               |
+| ---------------------------------------- | ------- | ---------------------------------------------------------- |
+| `fixMixedExportsWithInlineTypeSpecifier` | `false` | How `--fix` repairs an export that mixes types and values. |
+
+An export that mixes the two is reported with either setting:
+
+{/* bad */}
+
+```ts
+interface User {
+  name: string;
+}
+const admin: User = { name: "Ada" };
+
+export { User, admin };
+```
+
+With `false`, `--fix` splits it into `export type { User }` and `export { admin }`. With `true`, it marks the type inside the braces. Both forms are accepted with either setting.
+
+{/* good */}
+
+```ts
+interface User {
+  name: string;
+}
+const admin: User = { name: "Ada" };
+
+export { type User, admin };
+```

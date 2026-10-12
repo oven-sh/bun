@@ -1,0 +1,56 @@
+---
+title: "@typescript-eslint/no-unnecessary-type-arguments"
+description: "Disallow a type argument that is the same as the default of its type parameter"
+---
+
+A type parameter can have a default: `<T = string>`. Passing that same type yourself changes nothing.
+
+Only the last type argument is checked, because the ones before it cannot be left out while it is there.
+
+`--fix` removes the type argument.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+class Store<Value = string> {
+  items: Value[] = [];
+}
+
+const labels: Store<string> = new Store<string>();
+
+class TagStore extends Store<string> {}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Store<Value = string> {
+  items: Value[] = [];
+}
+
+const labels: Store = new Store();
+const counts = new Store<number>();
+
+class TagStore extends Store {}
+```
+
+With several type parameters, the first argument stays if the last one differs from its default:
+
+{/* good */}
+
+```ts
+interface Result<Data = unknown, Failure = Error> {
+  data?: Data;
+  failure?: Failure;
+}
+
+let result: Result<unknown, string>;
+```

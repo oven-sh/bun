@@ -1760,7 +1760,7 @@ impl<'c> Legacy<'_, '_, 'c> {
         self.reader.note(&[
             b"typescript-eslint ",
             &version,
-            b" is installed. Its rules are those of version 8 here, with the default options of the version that is installed.",
+            b" is installed. bun lint runs version 8 of its rules, with the default options of the installed version.",
         ]);
         Ok(())
     }
@@ -2211,6 +2211,7 @@ impl Config {
                 registry,
                 base_path: paths::absolute(options.root),
                 prefers_typescript_rules: false,
+                has_every_rule: false,
                 objects: Vec::new(),
                 notes: Vec::new(),
                 advice: Vec::new(),

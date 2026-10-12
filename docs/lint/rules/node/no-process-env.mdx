@@ -1,0 +1,56 @@
+---
+title: "n/no-process-env"
+description: "Disallow `process.env`"
+---
+
+`process.env` is global state that any file can read. When reads are spread over the code, nobody can list what the program needs to be configured with, a misspelled name gives `undefined` without an error, and tests have to change the environment of the process. Read the environment in one config file and import the values from there.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+if (process.env.NODE_ENV === "development") {
+  enableLogging();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { config } from "./config";
+
+if (config.env === "development") {
+  enableLogging();
+}
+```
+
+## Options
+
+| Option             | Default | What it does                                            |
+| ------------------ | ------- | ------------------------------------------------------- |
+| `allowedVariables` | `[]`    | Names of variables that can be read from `process.env`. |
+
+{/* good {"options": [{"allowedVariables": ["NODE_ENV"]}]} */}
+
+```js
+const isProduction = process.env.NODE_ENV === "production";
+const mode = process.env["NODE_ENV"];
+```
+
+Other variables are still reported, and so is `process.env` on its own:
+
+{/* bad {"options": [{"allowedVariables": ["NODE_ENV"]}], "count": 2} */}
+
+```js
+const port = process.env.PORT;
+const { NODE_ENV } = process.env;
+```
+
+## When not to use it
+
+Turn it off for the one file that reads the environment, and in scripts and small tools where a config file is more than you need.

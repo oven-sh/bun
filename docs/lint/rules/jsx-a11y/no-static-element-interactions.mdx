@@ -1,0 +1,81 @@
+---
+title: "jsx-a11y/no-static-element-interactions"
+description: "Require a `role` on `<div>`, `<span>` and similar elements that have event handlers"
+---
+
+A `<div>` or a `<span>` says nothing about what it is. With a click handler it works like a button for mouse users, but a screen reader announces only its text, so nobody else learns that it can be pressed.
+
+Use the real element, such as `<button>` or `<a href>`. If you cannot, give the element a `role` that says what it is. An `<a>` without an `href` counts as static too.
+
+Not reported: components, elements with `aria-hidden`, and elements with `role="presentation"` or `role="none"`, which is how you mark a handler that only catches events from children. Elements that describe content, such as `<li>` or `<p>`, are the business of `jsx-a11y/no-noninteractive-element-interactions`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const close = (
+  <div className="close" onClick={closeDialog}>
+    Close
+  </div>
+);
+```
+
+{/* bad */}
+
+```jsx
+const more = <a onClick={loadMore}>Show more</a>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const close = (
+  <button className="close" onClick={closeDialog}>
+    Close
+  </button>
+);
+
+const custom = (
+  <div role="button" tabIndex={0} onClick={closeDialog} onKeyDown={closeOnEnter}>
+    Close
+  </div>
+);
+
+const backdrop = <div role="presentation" onClick={closeDialog} />;
+```
+
+## Options
+
+| Option                  | Default                                                                         | What it does                                                           |
+| ----------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `handlers`              | `["onClick", "onMouseDown", "onMouseUp", "onKeyPress", "onKeyDown", "onKeyUp"]` | The handlers to report. Your list replaces the default.                |
+| `allowExpressionValues` | `false`                                                                         | Accept a `role` that is only known at run time, such as `role={role}`. |
+
+{/* good */}
+
+```jsx
+const card = <div onMouseEnter={showPreview} />;
+```
+
+{/* bad {"options": [{"handlers": ["onClick", "onMouseEnter"]}]} */}
+
+```jsx
+const card = <div onMouseEnter={showPreview} />;
+```
+
+{/* bad */}
+
+```jsx
+const cell = <div role={cellRole} onClick={selectCell} />;
+```
+
+{/* good {"options": [{"allowExpressionValues": true}]} */}
+
+```jsx
+const cell = <div role={cellRole} onClick={selectCell} />;
+```

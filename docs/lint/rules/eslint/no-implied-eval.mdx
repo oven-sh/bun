@@ -1,0 +1,47 @@
+---
+title: "no-implied-eval"
+description: "Disallow passing a string of code to `setTimeout()`, `setInterval()` or `execScript()`"
+---
+
+When the first argument of `setTimeout()` or `setInterval()` is a string, browsers compile and run it like `eval()` does. The code runs in the global scope, so it cannot see your local variables, and anything a user typed that ends up in the string gets executed.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+setTimeout("refresh()", 1000);
+setInterval("poll('" + url + "')", 5000);
+window.setTimeout(`save(${id})`, 0);
+```
+
+A constant that holds a string is followed:
+
+{/* bad */}
+
+```js
+const code = "refresh()";
+setTimeout(code, 1000);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+setTimeout(refresh, 1000);
+setInterval(() => poll(url), 5000);
+window.setTimeout(() => save(id), 0);
+```
+
+A function of your own with the same name is not reported:
+
+{/* good */}
+
+```js
+import { setTimeout } from "./fake-timers.js";
+
+setTimeout("tick", 1000);
+```

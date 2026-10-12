@@ -1,0 +1,59 @@
+---
+title: "jsx-a11y/no-redundant-roles"
+description: "Disallow a `role` that the element already has"
+---
+
+Most HTML elements come with a role: a `<button>` is a `button`, a `<ul>` is a `list`. Writing that role again changes nothing for anyone and is one more thing to keep in sync when the element changes.
+
+The role of `<input>`, `<select>` and `<img>` depends on their other attributes, and the rule takes that into account: `<input type="checkbox">` is a `checkbox`, `<input type="range">` is a `slider`. Only a `role` written as a string is checked.
+
+`--fix` removes the `role` attribute.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const save = <button role="button">Save</button>;
+const items = <ul role="list" />;
+const volume = <input type="range" role="slider" />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const save = <button>Save</button>;
+const items = <ul />;
+const toggle = <button role="switch" aria-checked={enabled} />;
+```
+
+## Options
+
+An object that maps an element to the roles that may be repeated on it. By default only `<nav role="navigation">` is allowed.
+
+{/* good */}
+
+```jsx
+const menu = <nav role="navigation" />;
+```
+
+Safari with VoiceOver stops announcing a list once CSS removes its bullets, and `role="list"` brings that back. To allow it:
+
+{/* good {"options": [{"ul": ["list"], "ol": ["list"]}]} */}
+
+```jsx
+const items = <ul role="list" className="plain" />;
+const menu = <nav role="navigation" />;
+```
+
+To report `<nav role="navigation">` as well, give `nav` an empty list:
+
+{/* bad {"options": [{"nav": []}]} */}
+
+```jsx
+const menu = <nav role="navigation" />;
+```

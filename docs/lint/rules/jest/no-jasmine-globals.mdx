@@ -1,0 +1,70 @@
+---
+title: "jest/no-jasmine-globals"
+description: "Disallow Jasmine globals such as `jasmine.any`, `spyOn`, `fail` and `pending`"
+---
+
+Jest's default test runner does not define Jasmine's globals. A test that was moved over from Jasmine and still calls `fail()`, `spyOn()` or `jasmine.createSpy()` stops with a `ReferenceError` when it gets there. Jest has its own API for each of them.
+
+| Jasmine                                                                            | Jest                      |
+| ---------------------------------------------------------------------------------- | ------------------------- |
+| `spyOn`, `spyOnProperty`                                                           | `jest.spyOn`              |
+| `fail`                                                                             | Throw an error            |
+| `pending`                                                                          | `test.skip`               |
+| `jasmine.any`, `anything`, `arrayContaining`, `objectContaining`, `stringMatching` | The same name on `expect` |
+| `jasmine.createSpy`                                                                | `jest.fn`                 |
+| `jasmine.addMatchers`                                                              | `expect.extend`           |
+| `jasmine.DEFAULT_TIMEOUT_INTERVAL = 5000`                                          | `jest.setTimeout(5000)`   |
+
+Every other call of a `jasmine` method and every other assignment to a `jasmine` property is reported too.
+
+`--fix` rewrites the matchers such as `jasmine.any` to `expect.any`, and `jasmine.DEFAULT_TIMEOUT_INTERVAL = 5000` to `jest.setTimeout(5000)`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```js
+jasmine.DEFAULT_TIMEOUT_INTERVAL = 5000;
+
+test("saves the user", () => {
+  spyOn(db, "insert");
+  save({ name: "Ada" });
+  expect(db.insert).toHaveBeenCalledWith(jasmine.any(Object));
+});
+
+test("exports to PDF", () => {
+  pending();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+jest.setTimeout(5000);
+
+test("saves the user", () => {
+  jest.spyOn(db, "insert");
+  save({ name: "Ada" });
+  expect(db.insert).toHaveBeenCalledWith(expect.any(Object));
+});
+
+test.skip("exports to PDF", () => {});
+```
+
+A function of your own with one of these names is not reported:
+
+{/* good */}
+
+```js
+import { fail } from "./helpers";
+
+test("rejects an empty name", () => {
+  if (validate("")) {
+    fail("an empty name passed");
+  }
+});
+```

@@ -1,6 +1,6 @@
 //! A pattern that has been read, in the syntax of Bun or of another tool.
 
-use crate::matcher;
+use crate::filtered::{Filtered, last_name_at};
 use crate::node::Program;
 use crate::read_ignore;
 use crate::read_minimatch3;
@@ -149,14 +149,7 @@ enum Kind {
     Never,
     /// The empty pattern of minimatch, which matches the empty path.
     Empty,
-    /// There is no second reading of Bun's syntax: it is `matcher::match`, behind two filters.
-    Bun {
-        pattern: Box<[u8]>,
-        /// The names at the start that are without magic, joined by slashes: what matches starts with them.
-        head: Box<[u8]>,
-        /// What matches ends with.
-        tail: Box<[u8]>,
-    },
+    Bun(Filtered),
     /// One for each expansion of the braces, and the option `dot`.
     Minimatch(Vec<Expansion>, bool),
     /// `is_asked_directly`: as fast-glob asks the expressions themselves, without what `picomatch.test` puts before them.
@@ -176,31 +169,11 @@ pub struct Pattern {
 /// minimatch and picomatch throw beyond it. They count UTF-16 units.
 pub(crate) const MAX_PATTERN_LENGTH: usize = 65_536;
 
-fn bun(pattern: &[u8]) -> Pattern {
-    let bangs = pattern.iter().take_while(|b| **b == b'!').count();
-    let head = match strings::index_of_any(pattern, b"*?[{\\") {
-        _ if bangs > 0 => &b""[..],
-        None => pattern,
-        Some(magic) => {
-            &pattern[..strings::last_index_of_char(&pattern[..magic], b'/').unwrap_or(0)]
-        }
-    };
-    // What is behind a group can be part of one that is not closed. `**/` can be nothing.
-    let tail = match strings::index_of_any(pattern, b"{}\\") {
-        None if bangs == 0 => {
-            let tail =
-                &pattern[strings::last_index_of_any(pattern, b"*?]").map_or(0, |at| at + 1)..];
-            tail.strip_prefix(b"/").unwrap_or(tail)
-        }
-        _ => &b""[..],
-    };
+fn bun(pattern: &[u8], has_extglob: bool) -> Pattern {
+    let read = Filtered::read(pattern, has_extglob);
     Pattern {
-        kind: Kind::Bun {
-            pattern: pattern.into(),
-            head: head.into(),
-            tail: tail.into(),
-        },
-        is_negated: bangs % 2 == 1,
+        is_negated: read.is_negated(),
+        kind: Kind::Bun(read),
     }
 }
 
@@ -220,7 +193,7 @@ impl Pattern {
             _ => pattern,
         };
         match options.syntax {
-            Syntax::Bun => bun(pattern),
+            Syntax::Bun => bun(pattern, false),
             _ if pattern.len() > MAX_PATTERN_LENGTH => of(Kind::Never),
             Syntax::Minimatch | Syntax::Minimatch3
                 if pattern.starts_with(b"#") && !options.nocomment =>
@@ -276,6 +249,11 @@ impl Pattern {
         }
     }
 
+    /// [`crate::matcher::match_with`] with `EXTGLOB`.
+    pub fn with_extglob(pattern: &[u8]) -> Pattern {
+        bun(pattern, true)
+    }
+
     /// `Glob::new(written)` of globset 0.4.18: a `*` crosses `/`. `None`: it is refused. A section of `.editorconfig` for oxfmt.
     pub fn of_globset(written: &[u8]) -> Option<Pattern> {
         Some(Pattern {
@@ -295,9 +273,9 @@ impl Pattern {
     /// `GlobSet::new` of oxc for one element: `./` is dropped, a pattern without `/` is for a name in any directory.
     pub fn of_oxc_glob_set(written: &[u8]) -> Pattern {
         match written.strip_prefix(b"./") {
-            Some(rest) => bun(rest),
-            None if strings::contains_char(written, b'/') => bun(written),
-            None => bun(&[b"**/", written].concat()),
+            Some(rest) => bun(rest, false),
+            None if strings::contains_char(written, b'/') => bun(written, false),
+            None => bun(&[b"**/", written].concat(), false),
         }
     }
 
@@ -334,6 +312,9 @@ impl Pattern {
                 let hit = segments::matches(set, path, how.partial, *dot);
                 hit != (self.is_negated && !how.flip_negate)
             }
+            Kind::Bun(read) if !how.partial => {
+                read.matches(path.path(), || path.name_at()) != (self.is_negated && how.flip_negate)
+            }
             _ => self.matches_path(path.path(), how),
         }
     }
@@ -341,14 +322,9 @@ impl Pattern {
     /// For a syntax that does not split the path.
     fn matches_path(&self, path: &[u8], how: How) -> bool {
         match &self.kind {
-            // It does not say what can match in a directory, so anything can.
-            Kind::Bun { .. } if how.partial => true,
-            Kind::Bun { pattern, tail, .. } => {
-                if !path.ends_with(tail) {
-                    return false;
-                }
-                let result = matcher::r#match(pattern, path);
-                result.matches() != (how.flip_negate && result.is_negated())
+            Kind::Bun(read) if how.partial => read.may_match_inside(path),
+            Kind::Bun(read) => {
+                read.matches(path, || last_name_at(path)) != (self.is_negated && how.flip_negate)
             }
             Kind::Picomatch { alternatives, .. } if how.partial => {
                 let directory = Subject {
@@ -398,7 +374,7 @@ impl Pattern {
     pub fn heads(&self) -> Option<Vec<&[u8]>> {
         let heads: Vec<&[u8]> = match &self.kind {
             _ if self.is_negated => return None,
-            Kind::Bun { head, .. } => vec![&head[..]],
+            Kind::Bun(read) => return read.heads(),
             Kind::Minimatch(set, _) => set.iter().map(Expansion::head).collect(),
             _ => return None,
         };

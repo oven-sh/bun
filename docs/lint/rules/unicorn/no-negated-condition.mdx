@@ -1,0 +1,56 @@
+---
+title: "unicorn/no-negated-condition"
+description: "Disallow a negated condition in an `if` with an `else` and in a ternary"
+---
+
+When both branches are written out, a negated condition makes you read "if not this, else that" and turn it around in your head. Test the positive case and swap the branches.
+
+A condition counts as negated if it is `!value`, `a != b`, or `a !== b`.
+
+`--fix` removes the negation and swaps the two branches.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+if (!user) {
+  showLogin();
+} else {
+  showProfile(user);
+}
+
+const label = count !== 1 ? "items" : "item";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (user) {
+  showProfile(user);
+} else {
+  showLogin();
+}
+
+const label = count === 1 ? "item" : "items";
+```
+
+An `if` without an `else` has no branches to swap, and neither does one that goes on with `else if`:
+
+{/* good */}
+
+```js
+if (!user) {
+  showLogin();
+}
+
+if (!user) {
+  showLogin();
+} else if (user.isAdmin) {
+  showSettings();
+}
+```

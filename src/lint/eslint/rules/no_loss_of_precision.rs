@@ -104,12 +104,18 @@ pub fn check<'a, R: Rule>(literal: Literal<'a>, cx: &Cx<'a, R>) {
     let raw = literal.text();
     // An exponent takes three characters.
     if raw.len() > 2 && !raw.ends_with(b"n") && loses_precision(raw) {
-        cx.report(literal, NO_LOSS_OF_PRECISION);
+        cx.report(literal, NO_LOSS_OF_PRECISION).hint_with(|| {
+            let Node::Expr(number) = literal.owner() else {
+                return None;
+            };
+            let value = text::number_to_string(number.as_number()?);
+            Some(format!("At runtime it is {}.", bstr::BStr::new(&value)))
+        });
     }
 }
 
 impl Rule for NoLossOfPrecision {
-    const META: Meta = Meta::eslint("no-loss-of-precision", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-loss-of-precision", Kind::Problem).recommended().hints();
     const ON: On = On::new().number_literals();
     no_state!();
 

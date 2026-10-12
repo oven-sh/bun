@@ -1,0 +1,52 @@
+---
+title: "vitest/prefer-to-contain"
+description: "Require `toContain()` instead of comparing the result of `includes()` with a boolean"
+---
+
+When `expect(tags.includes("new")).toBe(true)` fails, the message only says that `false` is not `true`. `expect(tags).toContain("new")` prints the array and the item it looked for, so you see what is wrong without a debugger.
+
+The rule reports `includes()` with one argument inside `expect()`, compared with `true` or `false` by `toBe()`, `toEqual()`, or `toStrictEqual()`.
+
+`--fix` rewrites the assertion, and adds or drops `.not` so that it still tests the same thing.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("a draft is tagged", () => {
+  const tags = getTags(draft);
+  expect(tags.includes("draft")).toBe(true);
+  expect(tags.includes("published")).toEqual(false);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("a draft is tagged", () => {
+  const tags = getTags(draft);
+  expect(tags).toContain("draft");
+  expect(tags).not.toContain("published");
+});
+```
+
+A start index has no equivalent in `toContain()`, so this is allowed:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+
+test("the tag is not first", () => {
+  expect(getTags(draft).includes("draft", 1)).toBe(true);
+});
+```

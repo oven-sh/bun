@@ -1,0 +1,64 @@
+---
+title: "no-shadow-restricted-names"
+description: "Disallow variables named `undefined`, `NaN`, `Infinity`, `eval`, `arguments` or `globalThis`"
+---
+
+`undefined`, `NaN` and `Infinity` look like keywords, but they are ordinary globals, so a variable or a parameter can take their name. After `const undefined = "none"`, every `value === undefined` in that scope compares with `"none"`.
+
+The rule reports variables, parameters, functions, classes and imports with one of these names.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const undefined = "none";
+
+function toNumber(text, NaN) {
+  return text === "" ? NaN : Number(text);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const missing = "none";
+
+function toNumber(text, fallback) {
+  return text === "" ? fallback : Number(text);
+}
+```
+
+A variable named `undefined` that never gets a value is allowed, because it is the same as the global:
+
+{/* good */}
+
+```js
+var undefined;
+```
+
+## Options
+
+| Option             | Default | What it does              |
+| ------------------ | ------- | ------------------------- |
+| `reportGlobalThis` | `true`  | Also report `globalThis`. |
+
+If your project has an ESLint config and ESLint 9 or older installed, the default is `false`, as it is there.
+
+{/* bad */}
+
+```js
+const globalThis = window;
+```
+
+{/* good {"options": [{"reportGlobalThis": false}]} */}
+
+```js
+const globalThis = window;
+```

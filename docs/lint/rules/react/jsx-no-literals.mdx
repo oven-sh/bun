@@ -1,0 +1,111 @@
+---
+title: "react/jsx-no-literals"
+description: "Disallow text written directly in JSX"
+---
+
+Text typed straight into JSX never goes through your translation function, so users of every language see it as written. This rule finds that text while an app is being translated, and keeps new text from slipping in.
+
+By default only bare text between tags is reported. A string in braces, such as `{"Save"}`, counts as written on purpose. The `noStrings` option reports those too.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function Greeting() {
+  return <p>Welcome back</p>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Greeting({ t }) {
+  return <p>{t("greeting.welcome")}</p>;
+}
+```
+
+## Options
+
+| Option               | Default | What it does                                                               |
+| -------------------- | ------- | -------------------------------------------------------------------------- |
+| `noStrings`          | `false` | Also report strings and template literals in braces, and strings in props. |
+| `ignoreProps`        | `false` | Never report anything in props.                                            |
+| `noAttributeStrings` | `false` | Also report props with a plain string value, such as `alt="Logo"`.         |
+| `allowedStrings`     | `[]`    | Strings that are never reported. Spaces around the text do not count.      |
+| `elementOverrides`   | `{}`    | Other options for some components, by name.                                |
+
+With `noStrings`, braces do not help:
+
+{/* bad {"options": [{"noStrings": true}], "count": 2} */}
+
+```jsx
+function Greeting() {
+  return <p title="Greeting">{"Welcome back"}</p>;
+}
+```
+
+{/* good {"options": [{"noStrings": true, "ignoreProps": true}]} */}
+
+```jsx
+function Greeting({ t }) {
+  return <p title="Greeting">{t("greeting.welcome")}</p>;
+}
+```
+
+`noAttributeStrings` looks at props without the rest of `noStrings`:
+
+{/* bad {"options": [{"noAttributeStrings": true}]} */}
+
+```jsx
+const logo = <img src={logoUrl} alt="Company logo" />;
+```
+
+`allowedStrings` is for punctuation and other text that is the same in every language:
+
+{/* good {"options": [{"allowedStrings": ["|"]}]} */}
+
+```jsx
+const links = (
+  <nav>
+    {home} | {about}
+  </nav>
+);
+```
+
+### `elementOverrides`
+
+The keys are component names, which start with a capital letter. Each value takes the options above, and two more:
+
+| Option                  | Default | What it does                                                 |
+| ----------------------- | ------- | ------------------------------------------------------------ |
+| `allowElement`          | `false` | Allow text in this component.                                |
+| `applyToNestedElements` | `true`  | Use these options for the elements inside the component too. |
+
+{/* good {"options": [{"elementOverrides": {"Trans": {"allowElement": true}}}]} */}
+
+```jsx
+const message = (
+  <Trans>
+    Welcome <b>back</b>
+  </Trans>
+);
+```
+
+{/* bad {"options": [{"elementOverrides": {"Trans": {"allowElement": true, "applyToNestedElements": false}}}], "count": 1} */}
+
+```jsx
+const message = (
+  <Trans>
+    Welcome <b>back</b>
+  </Trans>
+);
+```
+
+## When not to use it
+
+If your app is in one language and stays that way, text in JSX is fine.

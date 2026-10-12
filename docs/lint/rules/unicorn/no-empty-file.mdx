@@ -1,0 +1,50 @@
+---
+title: "unicorn/no-empty-file"
+description: "Disallow files that contain no code"
+---
+
+A file without code does nothing. It is usually left over from a refactor, or it was created and never filled in. It still shows up in searches and in the file tree, and importing it works but gives you nothing.
+
+A file counts as empty if it only has whitespace, comments, directives such as `"use strict"`, lone semicolons, or empty blocks.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+// TODO: move the date helpers here
+```
+
+{/* bad */}
+
+```js
+"use strict";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+export function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+```
+
+A file with a `///` comment is not reported, because `/// <reference>` does something in TypeScript:
+
+{/* good */}
+
+```ts
+/// <reference types="bun" />
+```
+
+`export {}` is code. It makes the file a module:
+
+{/* good */}
+
+```ts
+export {};
+```

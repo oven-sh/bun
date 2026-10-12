@@ -1,0 +1,72 @@
+---
+title: "jsx-a11y/no-noninteractive-tabindex"
+description: "Disallow `tabIndex` of 0 or more on non-interactive elements"
+---
+
+Every element with `tabIndex={0}` is one more stop for the Tab key. A keyboard user expects to be able to do something at each stop. A stop on plain content makes the way to the real controls longer, and a screen reader announces nothing to do there.
+
+`tabIndex={-1}` is not reported: it lets your code call `focus()` on the element and does not add a stop. Elements that are interactive, or that have an interactive role such as `button`, may have any `tabIndex`. Components are not checked.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const summary = <article tabIndex={0}>{post.summary}</article>;
+```
+
+{/* bad */}
+
+```jsx
+const box = <div tabIndex="0" />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const summary = <article>{post.summary}</article>;
+const heading = <h1 tabIndex={-1}>{post.title}</h1>;
+const toggle = <div role="button" tabIndex={0} onClick={expand} />;
+```
+
+## Options
+
+| Option                  | Default        | What it does                                                                       |
+| ----------------------- | -------------- | ---------------------------------------------------------------------------------- |
+| `tags`                  | `[]`           | Elements that may have a `tabIndex`.                                               |
+| `roles`                 | `["tabpanel"]` | Non-interactive roles that may have a `tabIndex`. Your list replaces the default.  |
+| `allowExpressionValues` | `true`         | Allow a `tabIndex` or a `role` that is only known at run time, such as a variable. |
+
+{/* good {"options": [{"tags": ["pre"]}]} */}
+
+```jsx
+const code = <pre tabIndex={0}>{source}</pre>;
+```
+
+{/* good */}
+
+```jsx
+const panel = <div role="tabpanel" tabIndex={0} />;
+```
+
+{/* bad {"options": [{"roles": ["region"]}]} */}
+
+```jsx
+const panel = <div role="tabpanel" tabIndex={0} />;
+```
+
+{/* good */}
+
+```jsx
+const row = <div tabIndex={rowTabIndex} />;
+```
+
+{/* bad {"options": [{"allowExpressionValues": false}]} */}
+
+```jsx
+const row = <div tabIndex={rowTabIndex} />;
+```

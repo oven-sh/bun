@@ -1,0 +1,101 @@
+# CLI Usage
+
+```bash
+bun format [flags] [files, directories, or globs]
+```
+
+### Modes
+
+<ParamField path="-c, --check" type="boolean">
+  Write nothing. Exit with code 1 if a file needs formatting
+</ParamField>
+
+<ParamField path="-l, --list-different" type="boolean">
+  Like <code>--check</code>, but print only the file names
+</ParamField>
+
+<ParamField path="--stdin-filepath" type="string">
+  Format standard input as this file and print the result
+</ParamField>
+
+<ParamField path="--init" type="boolean">
+  Add a <code>[format]</code> section to <code>bunfig.toml</code>
+</ParamField>
+
+<ParamField path="--doctor" type="boolean">
+  Show what Bun does with your Prettier or oxfmt config, and which packages you can remove
+</ParamField>
+
+### Files
+
+<ParamField path="--staged" type="boolean">
+  Format only the files staged in Git, and stage them again
+</ParamField>
+
+<ParamField path="--changed" type="string">
+  Format only the files that differ from a Git ref. Defaults to the default branch
+</ParamField>
+
+<ParamField path="--ignore-pattern" type="string">
+  Skip files that match this glob. Can be repeated
+</ParamField>
+
+<ParamField path="--ignore-path" type="string" default=".gitignore, .prettierignore">
+  Read ignore patterns from this file. Can be repeated
+</ParamField>
+
+<ParamField path="--with-node-modules" type="boolean">
+  Format files in <code>node_modules</code> too
+</ParamField>
+
+### Options
+
+<ParamField path="--print-width" type="number" default="80">
+  Wrap lines at this column
+</ParamField>
+
+<ParamField path="--tab-width" type="number" default="2">
+  Spaces per indentation level
+</ParamField>
+
+<ParamField path="--use-tabs" type="boolean">
+  Indent with tabs
+</ParamField>
+
+<ParamField path="--no-semi" type="boolean">
+  Only print semicolons where they are needed
+</ParamField>
+
+<ParamField path="--single-quote" type="boolean">
+  Use single quotes
+</ParamField>
+
+<ParamField path="--trailing-comma" type="string" default="all">
+  <code>all</code>, <code>es5</code>, or <code>none</code>
+</ParamField>
+
+<ParamField path="--sort-imports" type="boolean">
+  Sort and group imports
+</ParamField>
+
+<ParamField path="--sort-tailwindcss" type="boolean">
+  Sort Tailwind CSS classes
+</ParamField>
+
+<ParamField path="--no-editorconfig" type="boolean">
+  Do not read <code>.editorconfig</code>
+</ParamField>
+
+Every other key of <a href="/runtime/bunfig#formatter"><code>[format]</code></a> is a flag too.
+
+### Output
+
+<ParamField path="--log-level" type="string" default="log">
+  <code>silent</code>, <code>error</code>, <code>warn</code>, <code>log</code>, or <code>debug</code>
+</ParamField>
+
+<ParamField path="--threads" type="number">
+  Number of threads. Defaults to one per CPU core
+</ParamField>
+
+`bun format` also accepts the flags of Prettier and oxfmt. Run `bun format --help --all` to see them.

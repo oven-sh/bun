@@ -1,0 +1,67 @@
+---
+title: "@typescript-eslint/no-require-imports"
+description: "Disallow `require()` in favor of `import`"
+---
+
+In a TypeScript file, a call to `require()` returns `any`, so you lose checking and completion for everything you take from the module. The call can also sit anywhere in the code, which hides what the file depends on. An `import` is typed and stands at the top level.
+
+`import name = require("..")` is reported too. A `require` that the file declares itself is not.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+const path = require("node:path");
+import fs = require("node:fs");
+
+console.log(path.join("a", "b"), fs.existsSync("a"));
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import path from "node:path";
+import * as fs from "node:fs";
+
+console.log(path.join("a", "b"), fs.existsSync("a"));
+```
+
+{/* good */}
+
+```ts
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const addon = require("./addon.node");
+```
+
+## Options
+
+| Option          | Default | What it does                                                                      |
+| --------------- | ------- | --------------------------------------------------------------------------------- |
+| `allow`         | `[]`    | Regular expressions. A `require()` of a path that matches one of them is allowed. |
+| `allowAsImport` | `false` | Allow `import name = require("..")`.                                              |
+
+Not reported with `allow: ["/package\\.json$"]`:
+
+{/* good {"options": [{"allow": ["/package\\.json$"]}]} */}
+
+```ts
+const { version } = require("../package.json");
+```
+
+With `allowAsImport`, the first line is allowed and the second is still reported:
+
+{/* bad {"options": [{"allowAsImport": true}], "count": 1} */}
+
+```ts
+import fs = require("node:fs");
+const path = require("node:path");
+```

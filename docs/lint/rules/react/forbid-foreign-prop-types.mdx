@@ -1,0 +1,78 @@
+---
+title: "react/forbid-foreign-prop-types"
+description: "Disallow reading the `propTypes` of another component"
+---
+
+Many production builds strip `propTypes` from components to save bytes. Code that reads `Button.propTypes` then gets `undefined`: it works in development and throws in production.
+
+Every read of a `.propTypes` property is reported, and so is taking it out with destructuring. Assigning to `propTypes` is fine. To share prop types between components, export them as a plain object.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+import Button from "./Button";
+
+function IconButton(props) {
+  return <Button {...props} />;
+}
+IconButton.propTypes = {
+  ...Button.propTypes,
+  icon: PropTypes.string,
+};
+```
+
+{/* bad */}
+
+```js
+import Button from "./Button";
+
+const { propTypes } = Button;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import Button, { buttonPropTypes } from "./Button";
+
+function IconButton(props) {
+  return <Button {...props} />;
+}
+IconButton.propTypes = {
+  ...buttonPropTypes,
+  icon: PropTypes.string,
+};
+```
+
+## Options
+
+| Option             | Default | What it does                                                                                                   |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------- |
+| `allowInPropTypes` | `false` | Allow the read inside the `propTypes` of another component, which is stripped from the build together with it. |
+
+{/* good {"options": [{"allowInPropTypes": true}]} */}
+
+```jsx
+import Button from "./Button";
+
+function IconButton(props) {
+  return <Button {...props} />;
+}
+IconButton.propTypes = {
+  ...Button.propTypes,
+  icon: PropTypes.string,
+};
+```
+
+{/* bad {"options": [{"allowInPropTypes": true}]} */}
+
+```js
+import Button from "./Button";
+
+const names = Object.keys(Button.propTypes);
+```

@@ -1,0 +1,42 @@
+---
+title: "jest/no-focused-tests"
+description: "Disallow `test.only`, `describe.only`, `fit` and `fdescribe`"
+---
+
+`.only` makes Jest run that test and skip every other one in the file. It is useful while debugging. Committed by accident, it hides failures in the tests that no longer run.
+
+The `f` prefix does the same, so `fit` and `fdescribe` are reported too.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { expect, fit, test } from "@jest/globals";
+
+test.only("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+
+fit("subtracts", () => {
+  expect(2 - 1).toBe(1);
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, it, test } from "@jest/globals";
+
+test("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+
+it("subtracts", () => {
+  expect(2 - 1).toBe(1);
+});
+```

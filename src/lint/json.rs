@@ -93,7 +93,16 @@ pub enum Notation {
 /// is `null`, a date of TOML is a string, as it is written. No document of YAML is `null`, several are
 /// an array. A repeated key is there as often as it is written. `Err`: what is wrong with `text`.
 pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
-    with_parsed(notation, text, from_parsed)?.ok_or_else(|| b"It is nested too deeply".to_vec())
+    with_parsed(notation, text, from_parsed)
+        .map_err(|error| error.message)?
+        .ok_or_else(|| b"It is nested too deeply".to_vec())
+}
+
+/// What is wrong with a text, and where. The first line and the first column are 1.
+pub struct SyntaxError {
+    pub message: Vec<u8>,
+    pub line: i32,
+    pub column: i32,
 }
 
 /// Calls `read` with the value that `text` is in `notation` as Bun's parser makes it, where each part knows its place in
@@ -102,7 +111,7 @@ pub fn with_parsed<T>(
     notation: Notation,
     text: &[u8],
     read: impl FnOnce(&Expr) -> T,
-) -> Result<T, Vec<u8>> {
+) -> Result<T, SyntaxError> {
     let arena = bun_alloc::Arena::new();
     let mut allocator = ASTMemoryAllocator::borrowing(&arena);
     let _scope = allocator.enter();
@@ -115,8 +124,13 @@ pub fn with_parsed<T>(
         Notation::Yaml => YAML::parse(&source, &mut log, &arena, CyclicAliases::Reject).ok(),
     };
     let Some(root) = root else {
-        let message = log.msgs.first().map(|it| it.data.text.to_vec());
-        return Err(message.unwrap_or_else(|| b"Syntax error".to_vec()));
+        let first = log.msgs.first().map(|it| &it.data);
+        let place = first.and_then(|it| it.location.as_ref());
+        return Err(SyntaxError {
+            message: first.map_or_else(|| b"Syntax error".to_vec(), |it| it.text.to_vec()),
+            line: place.map_or(1, |it| it.line),
+            column: place.map_or(1, |it| it.column),
+        });
     };
     Ok(read(&root))
 }

@@ -1,0 +1,67 @@
+---
+title: "no-this-before-super"
+description: "Disallow `this` and `super.x` before `super()` in a constructor"
+---
+
+In the constructor of a class that extends another, `this` does not exist until `super()` has returned. Using `this` or `super.method()` before that throws a `ReferenceError` when the object is created.
+
+The rule follows the branches of the constructor: `super()` has to be called on every path that leads to the `this`. Classes without `extends` are not checked.
+
+This rule is on by default in JavaScript files. In TypeScript files it is off by default, because TypeScript reports the same mistake.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    this.role = "admin";
+    super.validate(name);
+    super(name);
+  }
+}
+```
+
+{/* bad */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    if (name) {
+      super(name);
+    }
+    this.role = "admin";
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    super(name);
+    this.role = "admin";
+  }
+}
+```
+
+{/* good */}
+
+```js
+class Admin extends User {
+  constructor(name) {
+    if (name) {
+      super(name);
+    } else {
+      super("admin");
+    }
+    this.role = "admin";
+  }
+}
+```

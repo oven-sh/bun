@@ -37,7 +37,7 @@ const RESTRICTED_WITH_MESSAGE: Message = Message::new("restrictedWithMessage", "
 fn regex_of(pattern: &Object) -> Result<Regex, Vec<u8>> {
     let source = pattern.str("pattern").unwrap_or_default();
     Regex::new(source, pattern.str("flags").unwrap_or("u"))
-        .map_err(|error| format!("The pattern \"{source}\" is not a regular expression: {error}").into_bytes())
+        .map_err(|error| format!("Invalid regular expression \"{source}\": {error}").into_bytes())
 }
 
 fn patterns_of<'o>(options: &Options<'o>) -> impl Iterator<Item = Object<'o>> {

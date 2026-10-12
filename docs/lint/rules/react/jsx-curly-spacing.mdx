@@ -1,0 +1,85 @@
+---
+title: "react/jsx-curly-spacing"
+description: "Enforce or disallow spaces inside the curly braces of JSX attributes and children"
+---
+
+`value={ name }` and `value={name}` mean the same. A file that mixes the two is harder to scan, and every reformatting shows up in diffs. By default the rule allows no space inside the braces of an attribute or a spread, and does not look at children.
+
+`--fix` adds or removes the spaces.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const field = <Input value={name} {...rest} />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const field = <Input value={name} {...rest} />;
+
+const label = <Label>{name}</Label>;
+```
+
+## Options
+
+The option is `"never"` (default), `"always"`, or an object:
+
+| Option                   | Default        | What it does                                                                                                             |
+| ------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `when`                   | `"never"`      | `"never"` allows no space inside the braces. `"always"` requires one on each side.                                       |
+| `allowMultiline`         | `true`         | Allow a line break right after `{` and right before `}`.                                                                 |
+| `spacing.objectLiterals` | same as `when` | `"always"` or `"never"` for braces that hold an object literal, as in `style={{ color }}`.                               |
+| `attributes`             | `true`         | Check attributes and spreads. `false` turns that off. An object with the three options above applies to attributes only. |
+| `children`               | `false`        | Check children. `true` turns that on. An object with the three options above applies to children only.                   |
+
+After `"always"` or `"never"`, a second object can hold `allowMultiline` and `spacing`.
+
+```toml bunfig.toml
+[lint.rules]
+"react/jsx-curly-spacing" = ["error", { when = "always", children = true }]
+```
+
+With `"always"`:
+
+{/* bad {"options": ["always"]} */}
+
+```jsx
+const field = <Input value={name} />;
+```
+
+{/* good {"options": ["always"]} */}
+
+```jsx
+const field = <Input value={name} />;
+```
+
+With `children` set to `true`, children follow the same setting as attributes:
+
+{/* bad {"options": [{"children": true}]} */}
+
+```jsx
+const label = <Label>{name}</Label>;
+```
+
+With `allowMultiline` set to `false`:
+
+{/* bad {"options": [{"allowMultiline": false}]} */}
+
+```jsx
+const field = <Input value={name} />;
+```
+
+`spacing.objectLiterals` lets `{{` and `}}` stay together while other braces get spaces:
+
+{/* good {"options": ["always", {"spacing": {"objectLiterals": "never"}}]} */}
+
+```jsx
+const box = <Box style={{ color: "red" }} title={name} />;
+```

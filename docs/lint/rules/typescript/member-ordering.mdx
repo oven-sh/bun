@@ -1,0 +1,139 @@
+---
+title: "@typescript-eslint/member-ordering"
+description: "Require a consistent order for the members of classes, interfaces and type literals"
+---
+
+When every class lists its members in the same order, you know where to look: fields at the top, then the constructor, then the methods. Without an agreed order, a field declared between two methods is easy to miss.
+
+By default the order is: index signatures, call signatures, fields, static blocks, constructors, `accessor` properties, getters, setters, methods. Within each kind, static members come first, then decorated, instance and abstract ones. Within each of those, `public` comes before `protected`, `private` and `#private`.
+
+A field with a function as its value counts as a method.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+class Timer {
+  start(): void {}
+
+  constructor() {}
+
+  private elapsed = 0;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Timer {
+  static readonly limit = 60;
+  private elapsed = 0;
+
+  constructor() {}
+
+  get seconds(): number {
+    return this.elapsed;
+  }
+
+  start(): void {}
+  stop = (): void => {};
+}
+```
+
+## Options
+
+One object. Each key sets the order for one kind of container.
+
+| Option             | What it applies to                            |
+| ------------------ | --------------------------------------------- |
+| `default`          | Everything that has no setting of its own.    |
+| `classes`          | Class declarations.                           |
+| `classExpressions` | Class expressions.                            |
+| `interfaces`       | Interfaces.                                   |
+| `typeLiterals`     | Type literals such as `type Point = { ... }`. |
+
+A value is `"never"` (do not check), a list of member groups, or an object:
+
+| Key                | Default                                     | What it does                                                                                                                    |
+| ------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `memberTypes`      | `"never"`. Under `default`, the order above | The groups, in the order you want them, or `"never"` to ignore groups.                                                          |
+| `order`            | `"as-written"`                              | How to sort inside a group: `"alphabetically"`, `"alphabetically-case-insensitive"`, `"natural"`, `"natural-case-insensitive"`. |
+| `optionalityOrder` | not set                                     | `"required-first"` or `"optional-first"`.                                                                                       |
+
+A group is a kind of member: `signature`, `readonly-signature`, `call-signature`, `field`, `readonly-field`, `static-initialization`, `constructor`, `accessor`, `get`, `set`, `method`. In classes you can narrow it with an accessibility, a scope, or both: `private-field`, `static-method`, `public-static-method`, `protected-abstract-get`, `decorated-field`.
+
+- A member goes to the most specific group that is listed.
+- A member that fits no listed group can stand anywhere.
+- Groups in an inner list have the same rank.
+
+Methods before fields:
+
+{/* good {"options": [{"default": ["method", "constructor", "field"]}]} */}
+
+```ts
+class Timer {
+  start(): void {}
+
+  constructor() {}
+
+  private elapsed = 0;
+}
+```
+
+Only sort by name:
+
+{/* bad {"options": [{"default": {"memberTypes": "never", "order": "alphabetically"}}]} */}
+
+```ts
+interface Point {
+  y: number;
+  x: number;
+}
+```
+
+`"natural"` compares numbers inside names by value, so `item2` comes before `item10`:
+
+{/* good {"options": [{"default": {"memberTypes": "never", "order": "natural"}}]} */}
+
+```ts
+interface Row {
+  item2: string;
+  item10: string;
+}
+```
+
+{/* bad {"options": [{"default": {"memberTypes": "never", "order": "alphabetically"}}]} */}
+
+```ts
+interface Row {
+  item2: string;
+  item10: string;
+}
+```
+
+Required members first:
+
+{/* bad {"options": [{"default": {"memberTypes": "never", "optionalityOrder": "required-first"}}]} */}
+
+```ts
+interface User {
+  nickname?: string;
+  name: string;
+}
+```
+
+Check classes only:
+
+{/* good {"options": [{"default": "never", "classes": ["field", "method"]}]} */}
+
+```ts
+interface Store {
+  save(): void;
+  size: number;
+}
+```

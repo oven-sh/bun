@@ -1,0 +1,28 @@
+---
+title: "react/no-namespace"
+description: "Disallow namespaced element names such as `<svg:circle>`"
+---
+
+JSX syntax allows a name with a colon in it, such as `<svg:circle>`, but React does not support namespaced elements. The same goes for a name with a colon passed to `React.createElement`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const dot = <svg:circle r="4" />;
+
+const line = React.createElement("svg:line");
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const dot = <circle r="4" />;
+
+const line = React.createElement("line");
+```

@@ -92,9 +92,18 @@ use std::sync::Arc;
 
 /// A pattern in `files` or `ignores`.
 struct Pattern {
+    /// Of ESLint: without the `!` at its start.
     matcher: bun_glob::Pattern,
     /// It starts with `!`.
     is_negated: bool,
+    /// With an odd number of them: it matches what it would not match without.
+    is_inverted: bool,
+    /// It starts with `#`, so it matches nothing.
+    is_comment: bool,
+    /// A directory has a `/` at its end. Whether the pattern is asked about the path without it: `a` matches `a/`.
+    asks_without_slash: bool,
+    /// Whether it is asked about the path with it: of ESLint only `a/` and `a/**` are. The `*` of `a/*` takes something.
+    asks_with_slash: bool,
     /// `*`, `!..`, `../*`, `../**`: it does not make ESLint lint a file that nothing else matches.
     is_universal: bool,
 }
@@ -107,9 +116,14 @@ impl Pattern {
             [b'!', b'.', b'/', rest @ ..] => [b"!", rest].concat(),
             written => written.to_vec(),
         };
+        let bangs = normalized.iter().take_while(|it| **it == b'!').count();
         Pattern {
-            matcher: bun_glob::Pattern::new(&normalized, bun_glob::Options::MINIMATCH_DOT),
-            is_negated: normalized.starts_with(b"!"),
+            matcher: bun_glob::Pattern::with_extglob(&normalized[bangs..]),
+            is_negated: bangs > 0,
+            is_inverted: bangs % 2 == 1,
+            is_comment: normalized.starts_with(b"#"),
+            asks_without_slash: true,
+            asks_with_slash: normalized.ends_with(b"/") || normalized.ends_with(b"**"),
             is_universal: normalized == b"*"
                 || normalized.starts_with(b"!")
                 || normalized.ends_with(b"/*")
@@ -123,17 +137,25 @@ impl Pattern {
         Pattern {
             matcher: bun_glob::Pattern::of_oxc_glob_set(written),
             is_negated: false,
+            is_inverted: false,
+            is_comment: false,
+            asks_without_slash: false,
+            asks_with_slash: true,
             is_universal: true,
         }
     }
 
     /// `flip_negate`: a `!` at the start of the pattern is left out of the answer. Only ESLint asks for that.
     fn matches(&self, path: &Candidate, flip_negate: bool) -> bool {
-        let how = How {
-            flip_negate,
-            partial: false,
+        let as_it_is = || self.matcher.matches_candidate(path, How::default());
+        let hit = match path.path().strip_suffix(b"/") {
+            Some(directory) => {
+                self.asks_without_slash && self.matcher.matches(directory)
+                    || self.asks_with_slash && as_it_is()
+            }
+            None => as_it_is(),
         };
-        self.matcher.matches_candidate(path, how)
+        !self.is_comment && hit != (self.is_inverted && !flip_negate)
     }
 }
 
@@ -176,6 +198,8 @@ struct ConfigObject {
     parser_location: Option<Json>,
     /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
     changes_linter: bool,
+    /// `$forReact`, which the defaults of `bun lint` have: see [`ResolvedConfig::of`].
+    is_for_react: bool,
     /// Of an override of oxlint that has `plugins`: those, and those of the files, as sets. The settings at the start of its
     /// `rules` that yield are what `categories` turn on.
     plugins_of_override: Option<(u32, u32)>,
@@ -237,6 +261,7 @@ impl Default for ConfigObject {
             source: None,
             parser_location: None,
             changes_linter: false,
+            is_for_react: false,
             plugins_of_override: None,
             without_rules: Vec::new(),
         }
@@ -291,7 +316,11 @@ struct Listed {
 
 /// What a path starts with that all of `patterns` match. One of them that says so is enough.
 fn heads_of(patterns: &[Pattern]) -> Option<Vec<&[u8]>> {
-    (patterns.iter()).find_map(|it| it.matcher.heads())
+    let says = |it: &&Pattern| !it.is_inverted && !it.is_comment;
+    patterns
+        .iter()
+        .filter(says)
+        .find_map(|it| it.matcher.heads())
 }
 
 impl Heads {
@@ -375,6 +404,8 @@ pub struct Config {
     dot_patterns: Option<usize>,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     prefers_typescript_rules: bool,
+    /// [`ResolvedConfig::has_every_rule`]
+    has_every_rule: bool,
     /// `options` of an `.oxlintrc.json` and of what it extends.
     options_of_oxlint: Vec<(Vec<u8>, Json)>,
     /// [`Config::printed_for_oxlint`]
@@ -841,8 +872,16 @@ impl Config {
 
     /// What the objects at `indices` make.
     fn resolved(&self, registry: &Registry, indices: &[u32]) -> Arc<ResolvedConfig> {
-        self.cache
-            .resolved(indices, || self.merge(registry, indices))
+        let is_for_all =
+            |index: &u32| !(self.objects.get(*index as usize)).is_some_and(|it| it.is_for_react);
+        self.cache.resolved(indices, || {
+            let mut config = self.merge(registry, indices);
+            if !indices.iter().all(is_for_all) {
+                let others: Indices = indices.iter().copied().filter(is_for_all).collect();
+                config.without_react = Some(self.resolved(registry, &others));
+            }
+            config
+        })
     }
 
     /// The objects that are for `file`. `parts`: [`Config::relative`] of it. `None`: it has no configuration.
@@ -1025,6 +1064,7 @@ impl Config {
         let mut config = ResolvedConfig {
             skips_unknown_rules: self.accepts_all_plugins,
             prefers_typescript_rules: self.prefers_typescript_rules,
+            has_every_rule: self.has_every_rule,
             understands_oxlint_comments: self.prefers_typescript_rules,
             ..ResolvedConfig::default()
         };
@@ -1181,6 +1221,7 @@ impl Config {
             // ESLint's `throwRuleNotFoundError`, where it can be known that ESLint has no such rule.
             if setting.severity != Severity::Off
                 && !self.accepts_all_plugins
+                && !self.has_every_rule
                 && config.error.is_none()
             {
                 let problem = match &setting.plugin[..] {
@@ -1323,7 +1364,7 @@ impl Config {
             ));
         }
         // From here on: a rule that is turned off can be configured without its plugin.
-        if !self.accepts_all_plugins {
+        if !self.accepts_all_plugins && !self.has_every_rule {
             let mut implemented: Vec<Plugin> = Vec::new();
             let is_foreign =
                 |it: &&&[u8]| config.foreign_plugins.iter().any(|other| **other == ***it);

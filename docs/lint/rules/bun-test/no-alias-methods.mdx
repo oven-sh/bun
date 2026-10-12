@@ -1,0 +1,54 @@
+---
+title: "bun:test/no-alias-methods"
+description: "Disallow matcher aliases such as `toBeCalled` in favor of `toHaveBeenCalled`"
+---
+
+Some matchers have two names: `toBeCalled` is the same matcher as `toHaveBeenCalled`. If a project uses both, a search for one name misses the tests that use the other.
+
+`--fix` renames the matcher.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("saves the draft", () => {
+  const save = mock();
+  save("draft");
+  expect(save).toBeCalledWith("draft");
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, mock, test } from "bun:test";
+
+test("saves the draft", () => {
+  const save = mock();
+  save("draft");
+  expect(save).toHaveBeenCalledWith("draft");
+});
+```
+
+The full list:
+
+| Reported           | Write instead              |
+| ------------------ | -------------------------- |
+| `toBeCalled`       | `toHaveBeenCalled`         |
+| `toBeCalledTimes`  | `toHaveBeenCalledTimes`    |
+| `toBeCalledWith`   | `toHaveBeenCalledWith`     |
+| `lastCalledWith`   | `toHaveBeenLastCalledWith` |
+| `nthCalledWith`    | `toHaveBeenNthCalledWith`  |
+| `toReturn`         | `toHaveReturned`           |
+| `toReturnTimes`    | `toHaveReturnedTimes`      |
+| `toReturnWith`     | `toHaveReturnedWith`       |
+| `lastReturnedWith` | `toHaveLastReturnedWith`   |
+| `nthReturnedWith`  | `toHaveNthReturnedWith`    |
+| `toThrowError`     | `toThrow`                  |

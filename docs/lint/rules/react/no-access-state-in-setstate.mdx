@@ -1,0 +1,47 @@
+---
+title: "react/no-access-state-in-setstate"
+description: "Disallow reading `this.state` in the argument of `this.setState()`"
+---
+
+React batches `setState` calls, so `this.state` may still hold the old value when you build the next one from it. Two `this.setState({ count: this.state.count + 1 })` calls in the same event add 1, not 2.
+
+Pass a function instead. React calls it with the state as it is after all earlier updates.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class Counter extends React.Component {
+  increment() {
+    this.setState({ count: this.state.count + 1 });
+  }
+}
+```
+
+A variable that holds `this.state`, or a part of it, is followed too:
+
+{/* bad */}
+
+```jsx
+class Counter extends React.Component {
+  increment() {
+    const { state } = this;
+    this.setState({ count: state.count + 1 });
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Counter extends React.Component {
+  increment() {
+    this.setState(previous => ({ count: previous.count + 1 }));
+  }
+}
+```

@@ -1,0 +1,67 @@
+---
+title: "no-sequences"
+description: "Disallow the comma operator"
+---
+
+`a, b` evaluates both expressions and keeps only the value of the last one. In `if (load(), ready)` the result of `load()` is thrown away, which is easy to miss, and a comma typed in place of a `.` or a `;` still parses.
+
+The first and the last part of a `for` header are always allowed, since `for (i = 0, j = 10; i < j; i++, j--)` is the usual way to drive two counters.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+(count++, save());
+
+while (((item = queue.shift()), item)) {
+  handle(item);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+count++;
+save();
+
+for (let i = 0, j = items.length - 1; i < j; i++, j--) {
+  swap(items, i, j);
+}
+```
+
+## Options
+
+| Option               | Default | What it does                                             |
+| -------------------- | ------- | -------------------------------------------------------- |
+| `allowInParentheses` | `true`  | Allow a sequence that is wrapped in its own parentheses. |
+
+The parentheses say that the comma is on purpose. Those that belong to the statement, as in `while (..)`, do not count, so you need a second pair there. The same goes for the body of an arrow function.
+
+{/* good */}
+
+```js
+const last = (step(), result());
+
+while (((item = queue.shift()), item)) {
+  handle(item);
+}
+
+const log = value => (console.log(value), value);
+```
+
+{/* bad */}
+
+```js
+const log = value => (console.log(value), value);
+```
+
+{/* bad {"options": [{"allowInParentheses": false}]} */}
+
+```js
+const last = (step(), result());
+```

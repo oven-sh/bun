@@ -1,0 +1,136 @@
+---
+title: "@typescript-eslint/no-use-before-define"
+description: "Disallow using a variable, function, class, enum, or type above the line that declares it"
+---
+
+Reading a `let`, `const`, or `class` before its declaration runs throws a `ReferenceError`. Reading a `var` early gives `undefined` without any error. Function declarations do work before their line, but a reader has to scroll down to find out what is being called.
+
+A variable used in its own initializer, such as `const total = total + 1`, is reported too. Unlike ESLint's `no-use-before-define`, this rule also checks enums, type aliases, and interfaces.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+console.log(limit);
+const limit = 10;
+
+start(Mode.Fast);
+function start(mode: Mode) {}
+
+enum Mode {
+  Fast,
+  Slow,
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const limit = 10;
+console.log(limit);
+
+enum Mode {
+  Fast,
+  Slow,
+}
+
+function start(mode: Mode) {}
+start(Mode.Fast);
+```
+
+## Options
+
+| Option                 | Default | What it does                                                                                                                                 |
+| ---------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `functions`            | `true`  | Report function declarations that are used early. `false` allows every early use of them.                                                    |
+| `variables`            | `true`  | With `false`, a function may mention a `var`, `let`, or `const` that is declared below it. An early use in the same scope is still reported. |
+| `classes`              | `true`  | The same as `variables`, for classes.                                                                                                        |
+| `enums`                | `true`  | The same as `variables`, for enums.                                                                                                          |
+| `typedefs`             | `true`  | Report type aliases and interfaces that are used early. This only has an effect with `ignoreTypeReferences: false`.                          |
+| `ignoreTypeReferences` | `true`  | Allow early uses in a type position, such as `let user: User` or `typeof config`.                                                            |
+| `allowNamedExports`    | `false` | Allow `export { name }` above the declaration of `name`.                                                                                     |
+
+The string `"nofunc"` is short for `{ "functions": false }`.
+
+With `functions: false`, calling a function declaration early is allowed, because it is already defined when the file starts to run:
+
+{/* good {"options": [{"functions": false}]} */}
+
+```ts
+start();
+
+function start() {}
+```
+
+By default, the position in the file is all that counts, even in a function that only runs later:
+
+{/* bad */}
+
+```ts
+function isFull(count: number) {
+  return count >= limit;
+}
+
+const limit = 10;
+```
+
+{/* good {"options": [{"variables": false}]} */}
+
+```ts
+function isFull(count: number) {
+  return count >= limit;
+}
+
+const limit = 10;
+```
+
+An early use in the same scope runs before the declaration, so it is still reported:
+
+{/* bad {"options": [{"variables": false}]} */}
+
+```ts
+console.log(limit);
+
+const limit = 10;
+```
+
+Types do not exist when the code runs, so by default their order does not matter where they are used as types:
+
+{/* good */}
+
+```ts
+let current: User;
+
+type User = { name: string };
+```
+
+{/* bad {"options": [{"ignoreTypeReferences": false}]} */}
+
+```ts
+let current: User;
+
+type User = { name: string };
+```
+
+{/* good {"options": [{"ignoreTypeReferences": false, "typedefs": false}]} */}
+
+```ts
+let current: User;
+
+type User = { name: string };
+```
+
+With `allowNamedExports: true`, you can keep the list of exports at the top of the file:
+
+{/* good {"options": [{"allowNamedExports": true}]} */}
+
+```ts
+export { limit };
+
+const limit = 10;
+```

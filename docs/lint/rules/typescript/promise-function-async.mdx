@@ -1,0 +1,85 @@
+---
+title: "@typescript-eslint/promise-function-async"
+description: "Require functions that return a promise to be `async`"
+---
+
+A function that returns a promise but is not `async` can fail in two ways: it can return a rejected promise, or it can throw before it gets that far. The caller then needs both a `try` and a `.catch()`. An `async` function always returns a promise, so every failure is a rejection.
+
+Without a return type annotation, a function is reported if any part of what it returns is a promise. With one, it is reported only if every part of the annotation is a promise.
+
+`--fix` adds `async`.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+function loadUser(id: string) {
+  if (!id) throw new Error("missing id");
+  return fetch(`/users/${id}`);
+}
+
+const cached = (hit?: string) => hit ?? Promise.resolve("miss");
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+async function loadUser(id: string) {
+  if (!id) throw new Error("missing id");
+  return fetch(`/users/${id}`);
+}
+
+const cached = (hit?: string): string | Promise<string> => hit ?? Promise.resolve("miss");
+```
+
+## Options
+
+| Option                      | Default | What it does                                                        |
+| --------------------------- | ------- | ------------------------------------------------------------------- |
+| `allowAny`                  | `true`  | With `false`, also report functions that return `any` or `unknown`. |
+| `allowedPromiseNames`       | `[]`    | Names of other classes or interfaces to treat as promises.          |
+| `checkArrowFunctions`       | `true`  | Check arrow functions.                                              |
+| `checkFunctionDeclarations` | `true`  | Check function declarations.                                        |
+| `checkFunctionExpressions`  | `true`  | Check function expressions, and methods of object literals.         |
+| `checkMethodDeclarations`   | `true`  | Check methods of classes.                                           |
+
+Reported with `allowAny: false`:
+
+{/* bad {"options": [{"allowAny": false}]} */}
+
+```ts
+function parse(text: string): unknown {
+  return JSON.parse(text);
+}
+```
+
+Reported with `allowedPromiseNames: ["Task"]`:
+
+{/* bad {"options": [{"allowedPromiseNames": ["Task"]}]} */}
+
+```ts
+class Task {}
+
+function start() {
+  return new Task();
+}
+```
+
+Not reported with `checkFunctionExpressions: false`:
+
+{/* good {"options": [{"checkFunctionExpressions": false}]} */}
+
+```ts
+const api = {
+  ping() {
+    return fetch("/ping");
+  },
+};
+```

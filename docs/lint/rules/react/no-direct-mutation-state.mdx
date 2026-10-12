@@ -1,0 +1,62 @@
+---
+title: "react/no-direct-mutation-state"
+description: "Disallow assigning to `this.state` outside of the constructor"
+---
+
+React only renders a component again when you call `setState`. If you assign to `this.state` or to something inside it, the screen keeps showing the old value, and the next `setState` may overwrite your change.
+
+The constructor is the one place where `this.state` can be assigned, because nothing has rendered yet.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+class Counter extends React.Component {
+  increment() {
+    this.state.count++;
+  }
+
+  rename(name) {
+    this.state.user.name = name;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Counter extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { count: 0, user: props.user };
+  }
+
+  increment() {
+    this.setState(state => ({ count: state.count + 1 }));
+  }
+
+  rename(name) {
+    this.setState(state => ({ user: { ...state.user, name } }));
+  }
+}
+```
+
+A callback in the constructor runs later, so an assignment there is reported:
+
+{/* bad */}
+
+```jsx
+class Counter extends React.Component {
+  constructor(props) {
+    super(props);
+    props.store.subscribe(() => {
+      this.state.count = props.store.count;
+    });
+  }
+}
+```

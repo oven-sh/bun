@@ -1,0 +1,34 @@
+---
+title: "unicorn/no-await-in-promise-methods"
+description: "Disallow `await` on the elements of the array passed to `Promise.all()` and similar methods"
+---
+
+`Promise.all([await loadUser(), await loadPosts()])` waits for the user before it starts to load the posts. The requests run one after the other, and `Promise.all()` only receives finished values, so it has nothing left to do. With `Promise.race()` and `Promise.any()` there is no race either.
+
+The rule checks `Promise.all()`, `Promise.allSettled()`, `Promise.any()`, and `Promise.race()`.
+
+`--fix-suggestions` removes the `await`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+async function loadPage(id) {
+  const [user, posts] = await Promise.all([await loadUser(id), await loadPosts(id)]);
+  render(user, posts);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+async function loadPage(id) {
+  const [user, posts] = await Promise.all([loadUser(id), loadPosts(id)]);
+  render(user, posts);
+}
+```

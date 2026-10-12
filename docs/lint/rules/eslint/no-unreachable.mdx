@@ -1,0 +1,69 @@
+---
+title: "no-unreachable"
+description: "Disallow code after `return`, `throw`, `break`, and `continue` that can never run"
+---
+
+Statements that follow a `return`, `throw`, `break`, or `continue` in the same block never run. Neither does code after a loop that never ends. It is either dead code to delete, or code that was meant to run and sits in the wrong place.
+
+Function declarations and `var` declarations without a value are hoisted, so they are not reported.
+
+This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript finds unreachable code itself.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function price(item) {
+  return item.price * item.quantity;
+  console.log("computed", item.id);
+}
+```
+
+{/* bad */}
+
+```js
+while (true) {
+  poll();
+}
+cleanUp();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function price(item) {
+  console.log("computing", item.id);
+  return item.price * item.quantity;
+}
+```
+
+{/* good */}
+
+```js
+function area(shape) {
+  return width() * shape.height;
+
+  function width() {
+    return shape.width;
+  }
+}
+```
+
+`super()` creates the fields of a subclass. If the constructor never calls it, the fields are reported:
+
+{/* bad */}
+
+```js
+class Admin extends User {
+  role = "admin";
+
+  constructor() {
+    return loadAdmin();
+  }
+}
+```

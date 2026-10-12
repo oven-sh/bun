@@ -1,0 +1,66 @@
+---
+title: "unicorn/no-instanceof-builtins"
+description: "Disallow `instanceof` with built-in constructors such as `Array`, `String`, and `Function`"
+---
+
+`instanceof` gives the wrong answer for built-ins in two ways. A primitive is never an instance: `"text" instanceof String` is `false`. And every iframe and every `node:vm` context has its own built-ins, so an array or a function that comes from another one is not an instance of your `Array` or `Function`.
+
+By default the rule reports `instanceof` with `Array`, `Function`, `String`, `Number`, `Boolean`, `BigInt`, and `Symbol`. `--fix-suggestions` rewrites these to `Array.isArray(value)` or a `typeof` check.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function describe(value) {
+  if (value instanceof String) return "text";
+  if (value instanceof Function) return "callback";
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function describe(value) {
+  if (typeof value === "string") return "text";
+  if (typeof value === "function") return "callback";
+  if (value instanceof Map) return "map";
+}
+```
+
+## Options
+
+| Option            | Default   | What it does                                                                                                                                  |
+| ----------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `strategy`        | `"loose"` | `"strict"` also reports the error classes, `Map`, `Set`, `Date`, `RegExp`, `Promise`, `Object`, the typed arrays, and other built-in classes. |
+| `useErrorIsError` | `false`   | Also report `instanceof Error`, and suggest `Error.isError(value)`.                                                                           |
+| `include`         | `[]`      | More constructor names to report.                                                                                                             |
+| `exclude`         | `[]`      | Constructor names to never report.                                                                                                            |
+
+{/* bad {"options": [{"strategy": "strict"}], "count": 2} */}
+
+```js
+if (value instanceof Date || value instanceof TypeError) {
+  log(value);
+}
+```
+
+{/* bad {"options": [{"useErrorIsError": true}]} */}
+
+```js
+if (reason instanceof Error) {
+  log(reason.message);
+}
+```
+
+{/* bad {"options": [{"include": ["HTMLElement"]}]} */}
+
+```js
+if (target instanceof HTMLElement) {
+  target.focus();
+}
+```

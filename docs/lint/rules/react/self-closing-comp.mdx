@@ -1,0 +1,67 @@
+---
+title: "react/self-closing-comp"
+description: "Require elements without children to be self-closing"
+---
+
+`<Avatar></Avatar>` and `<Avatar />` render the same thing. The closing tag is more to read, and it makes you look for children that are not there.
+
+An element counts as empty if there is nothing between its tags, or only whitespace that includes a line break.
+
+`--fix` rewrites the element to the self-closing form.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const avatar = <Avatar user={user}></Avatar>;
+
+const spacer = <div className="spacer"></div>;
+
+const list = <UserList users={users}></UserList>;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const avatar = <Avatar user={user} />;
+
+const spacer = <div className="spacer" />;
+
+const list = <UserList users={users} />;
+```
+
+A space on one line is a child, and so is an expression:
+
+{/* good */}
+
+```jsx
+const gap = <span> </span>;
+
+const nonBreaking = <span>&nbsp;</span>;
+
+const space = <span> </span>;
+```
+
+## Options
+
+| Option      | Default | What it does                          |
+| ----------- | ------- | ------------------------------------- |
+| `component` | `true`  | Check components, such as `<Avatar>`. |
+| `html`      | `true`  | Check DOM elements, such as `<div>`.  |
+
+{/* good {"options": [{"html": false}]} */}
+
+```jsx
+const spacer = <div className="spacer"></div>;
+```
+
+{/* good {"options": [{"component": false}]} */}
+
+```jsx
+const avatar = <Avatar user={user}></Avatar>;
+```

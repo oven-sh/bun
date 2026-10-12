@@ -1,0 +1,82 @@
+---
+title: "bun/react-no-local-render-helpers"
+description: "Disallow `renderItem()` functions that are defined inside a component and used in its JSX"
+---
+
+A `renderItem()` function inside a component does the job of a component, but React does not see it as one. It is created again on every render, it does not show up in React DevTools, and React cannot skip it when its input stays the same. Move it out and make it a component.
+
+The rule reports a function if its name is `render` followed by a capital letter, it is defined inside another function, and it is called or passed to a call in the JSX of that function.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function UserList({ users }) {
+  const renderUser = user => <li key={user.id}>{user.name}</li>;
+
+  return <ul>{users.map(renderUser)}</ul>;
+}
+```
+
+{/* bad */}
+
+```jsx
+function Page({ title }) {
+  function renderHeader() {
+    return <h1>{title}</h1>;
+  }
+
+  return <main>{renderHeader()}</main>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function User({ user }) {
+  return <li>{user.name}</li>;
+}
+
+function UserList({ users }) {
+  return (
+    <ul>
+      {users.map(user => (
+        <User key={user.id} user={user} />
+      ))}
+    </ul>
+  );
+}
+```
+
+A function that is passed as a prop is not reported:
+
+{/* good */}
+
+```jsx
+function UserList({ users }) {
+  const renderUser = user => <User user={user} />;
+
+  return <List items={users} renderItem={renderUser} />;
+}
+```
+
+## Options
+
+| Option    | Default | What it does                                                                             |
+| --------- | ------- | ---------------------------------------------------------------------------------------- |
+| `pattern` | none    | A regular expression for the names to report, in place of `render` and a capital letter. |
+
+{/* bad {"options": [{"pattern": "^(render|draw)[A-Z]"}]} */}
+
+```jsx
+function Chart({ points }) {
+  const drawPoint = point => <circle key={point.id} cx={point.x} cy={point.y} r="2" />;
+
+  return <svg>{points.map(drawPoint)}</svg>;
+}
+```

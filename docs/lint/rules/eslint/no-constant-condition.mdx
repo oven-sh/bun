@@ -1,0 +1,93 @@
+---
+title: "no-constant-condition"
+description: "Disallow conditions that are always truthy or always falsy"
+---
+
+If a condition never changes, one branch always runs and the other is dead code. It is often a mistake: `role === "admin" || "owner"` is always truthy, because `"owner"` is a non-empty string.
+
+The rule checks the test of `if`, `? :`, `while`, `do...while` and `for`. `while (true)` is allowed by default.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+if (role === "admin" || "owner") {
+  showSettings();
+}
+
+const title = "" ? "Draft" : "Published";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+if (role === "admin" || role === "owner") {
+  showSettings();
+}
+
+while (true) {
+  const job = queue.shift();
+  if (!job) break;
+  run(job);
+}
+```
+
+## Options
+
+`checkLoops` controls how loops are checked:
+
+| Value                            | What it does                           |
+| -------------------------------- | -------------------------------------- |
+| `"allExceptWhileTrue"` (default) | Check loops, but allow `while (true)`. |
+| `"all"` or `true`                | Check loops, including `while (true)`. |
+| `"none"` or `false`              | Do not check loops.                    |
+
+{/* bad {"options": [{"checkLoops": "all"}]} */}
+
+```js
+while (true) {
+  poll();
+}
+```
+
+The default only allows the literal `true` in a `while`:
+
+{/* bad {"count": 2} */}
+
+```js
+while (1) {
+  poll();
+}
+
+do {
+  poll();
+} while (true);
+```
+
+{/* good {"options": [{"checkLoops": "none"}]} */}
+
+```js
+while (1) {
+  poll();
+}
+```
+
+A loop in a generator function is not reported if it contains a `yield`, because the caller decides when to stop:
+
+{/* good {"options": [{"checkLoops": "all"}]} */}
+
+```js
+function* ids() {
+  let next = 0;
+  while (true) {
+    yield next++;
+  }
+}
+```

@@ -1,0 +1,61 @@
+---
+title: "@typescript-eslint/no-unused-private-class-members"
+description: "Disallow private class members that are never used"
+---
+
+Only the class itself can use its private members. If it never uses one, that member is dead code, often left behind after a refactor.
+
+The rule checks `#private` members, members marked `private`, and `private` parameter properties. A field that is only assigned to counts as unused, because nothing ever reads the value.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+class Cache {
+  #size = 0;
+  private hits = 0;
+
+  constructor(private limit: number) {}
+
+  add() {
+    this.hits = 1;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Cache {
+  #size = 0;
+  private hits = 0;
+
+  constructor(private limit: number) {}
+
+  add() {
+    this.hits += 1;
+    return this.#size < this.limit ? this.hits : 0;
+  }
+}
+```
+
+A private setter can run code, so assigning to it counts as a use:
+
+{/* good */}
+
+```ts
+class Cache {
+  set #limit(value: number) {
+    console.log("limit is now", value);
+  }
+
+  reset() {
+    this.#limit = 0;
+  }
+}
+```

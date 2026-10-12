@@ -1,0 +1,60 @@
+---
+title: "bun/no-negative-repeat-count"
+description: "Disallow a `repeat()` count that comes from a subtraction and can be negative"
+---
+
+`" ".repeat(width - label.length)` works until a label is longer than `width`. Then the count is negative and `repeat()` throws a `RangeError`. Tests with short labels do not catch it.
+
+The rule reports a count that contains a subtraction or a negation, unless `Math.max()` with a literal of zero or more, as in `Math.max(0, n)`, keeps it from going negative.
+
+The rule suggests wrapping the count in `Math.max(0, ...)`. `--fix-suggestions` applies that.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function pad(label, width) {
+  return label + " ".repeat(width - label.length);
+}
+```
+
+Rounding does not help, and neither does an upper bound:
+
+{/* bad {"count": 2} */}
+
+```js
+const left = " ".repeat(Math.floor((width - title.length) / 2));
+const bar = "#".repeat(Math.min(total - done, 40));
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function pad(label, width) {
+  return label + " ".repeat(Math.max(0, width - label.length));
+}
+```
+
+For padding, use `padEnd()` or `padStart()`. They return a string that is already long enough unchanged:
+
+{/* good */}
+
+```js
+function pad(label, width) {
+  return label.padEnd(width);
+}
+```
+
+Only the expression in the call is looked at. A count that is computed earlier is not followed:
+
+{/* good */}
+
+```js
+const missing = width - label.length;
+const padding = " ".repeat(missing);
+```

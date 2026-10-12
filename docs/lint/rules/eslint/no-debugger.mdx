@@ -1,0 +1,31 @@
+---
+title: "no-debugger"
+description: "Disallow `debugger` statements"
+---
+
+`debugger` pauses the program when a debugger is attached, for example when the browser's developer tools are open. It is useful while you track down a bug. Committed by accident, it freezes the page for anyone who has the tools open.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function total(items) {
+  debugger;
+  return items.reduce((sum, item) => sum + item.price, 0);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function total(items) {
+  return items.reduce((sum, item) => sum + item.price, 0);
+}
+```

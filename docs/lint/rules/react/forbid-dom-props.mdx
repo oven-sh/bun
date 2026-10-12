@@ -1,0 +1,55 @@
+---
+title: "react/forbid-dom-props"
+description: "Disallow the props you choose on DOM elements such as `div`"
+---
+
+Some projects do not want certain attributes in their markup: `id`, because two copies of a component then share one, or `style`, because all styling goes through classes. This rule reports the props you list when they are on a DOM element.
+
+Nothing is forbidden until you fill in `forbid`. Components, which means elements with a capitalized name, are not checked.
+
+## Examples
+
+Reported:
+
+{/* bad {"options": [{"forbid": ["id"]}]} */}
+
+```jsx
+<div id="sidebar" />
+```
+
+Not reported:
+
+{/* good {"options": [{"forbid": ["id"]}]} */}
+
+```jsx
+<div className="sidebar" />;
+
+<Sidebar id="main" />;
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+"react/forbid-dom-props" = ["error", { forbid = ["id", { propName = "style", message = "Use a class" }] }]
+```
+
+The one option is `forbid`, a list that is empty by default. An entry is the name of a prop, or an object:
+
+| Key             | What it does                                                                   |
+| --------------- | ------------------------------------------------------------------------------ |
+| `propName`      | The name of the prop.                                                          |
+| `disallowedFor` | The prop is forbidden on these elements only. Without it, on all DOM elements. |
+| `message`       | The text of the report.                                                        |
+
+{/* bad {"options": [{"forbid": [{"propName": "style", "disallowedFor": ["span"]}]}]} */}
+
+```jsx
+<span style={{ color: "red" }}>Error</span>
+```
+
+{/* good {"options": [{"forbid": [{"propName": "style", "disallowedFor": ["span"]}]}]} */}
+
+```jsx
+<div style={{ color: "red" }}>Error</div>
+```

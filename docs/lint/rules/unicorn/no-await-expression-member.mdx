@@ -1,0 +1,51 @@
+---
+title: "unicorn/no-await-expression-member"
+description: "Disallow reading a property directly from an `await` expression"
+---
+
+`(await getUser(id)).name` needs parentheses that are easy to forget: `await getUser(id).name` reads `name` from the promise and gives `undefined`. Destructuring, or a variable for the awaited value, needs no parentheses and reads from left to right.
+
+`--fix-dangerously` rewrites `const name = (await getUser(id)).name` and `const first = (await getPosts(id))[0]` to destructuring. Rewrite other forms by hand.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+async function show(id) {
+  const name = (await getUser(id)).name;
+  const first = (await getPosts(id))[0];
+  render(name, first);
+}
+```
+
+{/* bad */}
+
+```js
+async function load(url) {
+  return (await fetch(url)).json();
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+async function show(id) {
+  const { name } = await getUser(id);
+  const [first] = await getPosts(id);
+  render(name, first);
+}
+```
+
+{/* good */}
+
+```js
+async function load(url) {
+  const response = await fetch(url);
+  return response.json();
+}
+```

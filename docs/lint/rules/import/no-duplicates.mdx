@@ -1,0 +1,82 @@
+---
+title: "import/no-duplicates"
+description: "Disallow importing the same module more than once in a file"
+---
+
+Two `import` lines for one module make it harder to see what a file takes from it, and they are often left over from a merge. One line says it all.
+
+The rule compares the files that the paths resolve to, so `./utils` and `./utils.js` count as the same module. Each of the imports is reported.
+
+A namespace import (`import * as`) cannot be merged with named imports, so it may stand next to one. The same goes for `import type` next to an import of values.
+
+`--fix` merges the imports into the first one.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+```
+
+{/* file "utils.js" */}
+
+```js utils.js
+export const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+export const sum = items => items.reduce((a, b) => a + b, 0);
+```
+
+{/* bad */}
+
+```js
+import { clamp } from "./utils";
+import { sum } from "./utils.js";
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+```
+
+{/* good */}
+
+```ts
+import * as React from "react";
+import { useState } from "react";
+import type { ReactNode } from "react";
+```
+
+## Options
+
+| Option                | Default | What it does                                                                                                           |
+| --------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `considerQueryString` | `false` | Compare what follows a `?` in the path too, so that `./logo.svg?url` and `./logo.svg?raw` are two modules.             |
+| `prefer-inline`       | `false` | Report `import type { A }` next to `import { b }` from the same module. `--fix` merges them as `import { type A, b }`. |
+
+{/* good {"options": [{"considerQueryString": true}]} */}
+
+```js
+import logoUrl from "./logo.svg?url";
+import logoText from "./logo.svg?raw";
+```
+
+{/* bad {"options": [{"prefer-inline": true}]} */}
+
+```ts
+import { useState } from "react";
+import type { ReactNode } from "react";
+```
+
+{/* good {"options": [{"prefer-inline": true}]} */}
+
+```ts
+import { useState, type ReactNode } from "react";
+```

@@ -12,6 +12,8 @@ use bun_ast::{Expr, Loc};
 use bun_clap::Values;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::linter::config::glob_refusal;
+use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_lint::utils::text::number_to_string;
 
@@ -50,6 +52,8 @@ struct Table {
     flags: &'static [&'static [u8]],
     /// The same, with a key that is called otherwise, or that is read by hand.
     renamed: &'static [(&'static [u8], &'static [u8])],
+    /// The keys that no flag says.
+    without_flag: &'static [&'static [u8]],
     /// The flags that say what one run does. A file that rewrites code without a word, or that prints something else than
     /// the report, is a trap: the key is refused with the name of the flag.
     actions: &'static [&'static [u8]],
@@ -135,8 +139,9 @@ impl Table {
     }
 
     fn keys(&self) -> impl Iterator<Item = Vec<u8>> {
-        let renamed = self.renamed.iter().map(|it| it.0.to_vec());
-        renamed.chain(self.flags.iter().map(|flag| key_of(flag)))
+        let renamed = self.renamed.iter().map(|it| it.0);
+        let written = renamed.chain(self.without_flag.iter().copied());
+        (written.map(<[u8]>::to_vec)).chain(self.flags.iter().map(|flag| key_of(flag)))
     }
 
     /// The flag that `key` is the default of.
@@ -159,29 +164,37 @@ impl Table {
                 ],
             );
         }
-        let section = self.section.as_bytes();
-        let closest = self
-            .keys()
-            .min_by_key(|it| strings::edit_distance(key.iter().copied(), &it[..]))
-            .unwrap_or_default();
-        refuse(
-            at,
-            &[
-                b"unknown key \"",
-                key,
-                b"\" in [",
-                section,
-                b"]. Did you mean \"",
-                &closest,
-                b"\"?",
-            ],
-        )
+        unknown_key(key, at, self.section.as_bytes(), self.keys())
     }
 
     /// Takes in `key = value`, as the flag.
     fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
         give(self.param_of(&key.name, key.at)?, value, set)
     }
+}
+
+/// `key` is none of `keys`, which are those of the table `section`.
+fn unknown_key<T>(
+    key: &[u8],
+    at: Loc,
+    section: &[u8],
+    keys: impl Iterator<Item = Vec<u8>>,
+) -> Result<T, Refusal> {
+    let closest = keys
+        .min_by_key(|it| strings::edit_distance(key.iter().copied(), &it[..]))
+        .unwrap_or_default();
+    refuse(
+        at,
+        &[
+            b"unknown key \"",
+            key,
+            b"\" in [",
+            section,
+            b"]. Did you mean \"",
+            &closest,
+            b"\"?",
+        ],
+    )
 }
 
 fn at(value: &Expr) -> impl Fn(UsageError) -> Refusal {
@@ -245,6 +258,7 @@ const FORMAT: Table = Table {
         b"config-precedence",
         b"ignore-path",
         b"with-node-modules",
+        b"toml",
         b"error-on-unmatched-pattern",
         b"ignore-unknown",
         b"log-level",
@@ -275,21 +289,32 @@ const FORMAT: Table = Table {
         b"insert-pragma",
         b"experimental-ternaries",
         b"experimental-operator-position",
+        // What is built in besides. The first four are read by hand: see `FEATURES`.
+        b"sort-imports",
+        b"sort-tailwindcss",
+        b"sort-package-json",
+        b"jsdoc",
+        b"insert-final-newline",
     ],
     renamed: &[
         (b"config", b"config"),
         (b"ignorePatterns", b"ignore-pattern"),
     ],
+    without_flag: &[b"overrides"],
     actions: &[
         b"check",
         b"list-different",
         b"write",
         b"stdin-filepath",
+        b"staged",
+        b"changed",
         b"find-config-path",
         b"range-start",
         b"range-end",
         b"cursor-offset",
         b"init",
+        b"doctor",
+        b"format",
         b"migrate",
         b"list-files",
         b"verify",
@@ -298,6 +323,8 @@ const FORMAT: Table = Table {
         b"cwd",
         b"version",
         b"help",
+        b"all",
+        b"help-all",
     ],
     others: &[
         b"no-config",
@@ -305,6 +332,9 @@ const FORMAT: Table = Table {
         b"no-semi",
         b"no-bracket-spacing",
         b"no-error-on-unmatched-pattern",
+        b"no-insert-final-newline",
+        b"no-color",
+        b"no-verify",
         b"parser",
         b"plugin",
         b"jsx-bracket-same-line",
@@ -323,6 +353,170 @@ const _: () = assert!(
      bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
 );
 
+/// What an option in the table of a [`Feature`] takes.
+#[derive(Copy, Clone)]
+enum Takes {
+    Boolean,
+    String,
+    Strings,
+    /// Of more than strings. What reads it says what is wrong with it.
+    Array,
+}
+
+impl Takes {
+    fn check(self, value: &Expr) -> Result<(), Refusal> {
+        match (self, &value.data) {
+            (Takes::Boolean, Data::EBoolean(_))
+            | (Takes::String, Data::EString(_))
+            | (Takes::Array, Data::EArray(_)) => Ok(()),
+            (Takes::Strings, Data::EArray(items)) => (items.slice().iter())
+                .find(|it| !it.is_string())
+                .map_or(Ok(()), |it| expected("string", it)),
+            (Takes::Boolean, _) => expected("boolean", value),
+            (Takes::String, _) => expected("string", value),
+            (Takes::Strings | Takes::Array, _) => expected("array", value),
+        }
+    }
+}
+
+/// What a table is among `Options::format`.
+#[derive(Copy, Clone)]
+enum As {
+    /// One value, as JSON. What is called with it says what is wrong with it.
+    Json(fn(&[u8]) -> Result<(), Vec<u8>>),
+    /// Each of its options is a value.
+    Parts,
+}
+
+fn check_sort_imports(json: &[u8]) -> Result<(), Vec<u8>> {
+    let mut sort = bun_format::sort_imports::Settings::default();
+    sort.set(b"sortImports", json);
+    sort.compile().map(|_| ())
+}
+
+/// A key of `[format]` that is `true`, `false`, or a table with options.
+struct Feature {
+    flag: &'static [u8],
+    /// As `Options::format` has it.
+    name: &'static [u8],
+    table: As,
+    /// `name`, a dot, and the key.
+    options: &'static [(&'static [u8], Takes)],
+}
+
+const FEATURES: [Feature; 4] = [
+    Feature {
+        flag: b"sort-imports",
+        name: b"sortImports",
+        table: As::Json(check_sort_imports),
+        options: &[
+            (b"sortImports.groups", Takes::Array),
+            (b"sortImports.customGroups", Takes::Array),
+            (b"sortImports.internalPattern", Takes::Strings),
+            (b"sortImports.newlinesBetween", Takes::Boolean),
+            (b"sortImports.order", Takes::String),
+            (b"sortImports.ignoreCase", Takes::Boolean),
+            (b"sortImports.sortSideEffects", Takes::Boolean),
+            (b"sortImports.partitionByComment", Takes::Boolean),
+            (b"sortImports.partitionByNewline", Takes::Boolean),
+        ],
+    },
+    Feature {
+        flag: b"sort-tailwindcss",
+        name: b"sortTailwindcss",
+        table: As::Json(|_| Ok(())),
+        options: &[
+            (b"sortTailwindcss.stylesheet", Takes::String),
+            (b"sortTailwindcss.config", Takes::String),
+            (b"sortTailwindcss.functions", Takes::Strings),
+            (b"sortTailwindcss.attributes", Takes::Strings),
+            (b"sortTailwindcss.preserveWhitespace", Takes::Boolean),
+            (b"sortTailwindcss.preserveDuplicates", Takes::Boolean),
+        ],
+    },
+    Feature {
+        flag: b"sort-package-json",
+        name: b"sortPackageJson",
+        table: As::Parts,
+        options: &[(b"sortPackageJson.sortScripts", Takes::Boolean)],
+    },
+    Feature {
+        flag: b"jsdoc",
+        name: b"jsdoc",
+        table: As::Parts,
+        options: &[
+            (b"jsdoc.capitalizeDescriptions", Takes::Boolean),
+            (b"jsdoc.commentLineStrategy", Takes::String),
+            (b"jsdoc.separateTagGroups", Takes::Boolean),
+            (b"jsdoc.separateReturnsFromParam", Takes::Boolean),
+            (b"jsdoc.bracketSpacing", Takes::Boolean),
+            (b"jsdoc.descriptionWithDot", Takes::Boolean),
+            (b"jsdoc.addDefaultToDescription", Takes::Boolean),
+            (b"jsdoc.preferCodeFences", Takes::Boolean),
+            (b"jsdoc.lineWrappingStyle", Takes::String),
+            (b"jsdoc.descriptionTag", Takes::Boolean),
+            (b"jsdoc.keepUnparsableExampleIndent", Takes::Boolean),
+        ],
+    },
+];
+
+impl Feature {
+    /// The key of the option that is called `name` among [`Feature::options`].
+    fn key_of(&self, name: &'static [u8]) -> &'static [u8] {
+        name.get(self.name.len() + 1..).unwrap_or_default()
+    }
+
+    /// Takes in `value`, which `[format]` has for it.
+    fn set(&self, value: &Expr, options: &mut crate::fmt::cli::Options) -> Result<(), Refusal> {
+        let table = match &value.data {
+            Data::EBoolean(it) => {
+                return options.set(self.flag, None, it.value).map_err(at(value));
+            }
+            Data::EObject(_) => entries(value)?,
+            _ => return expected("boolean or object", value),
+        };
+        let mut parts = Vec::new();
+        for (key, value) in table {
+            let mut known = self.options.iter();
+            let Some(&(name, takes)) = known.find(|it| self.key_of(it.0) == key.name) else {
+                let keys = self.options.iter().map(|it| self.key_of(it.0).to_vec());
+                return unknown_key(&key.name, key.at, &[b"format.", self.name].concat(), keys);
+            };
+            takes.check(value)?;
+            if matches!(self.table, As::Json(_)) {
+                continue;
+            }
+            let text = match json_of(value)? {
+                Json::String(text) => text,
+                other => {
+                    let mut text = Vec::new();
+                    write_json(&mut text, &other);
+                    text
+                }
+            };
+            if bun_format::FormatOptions::default()
+                .set(name, &text)
+                .is_err()
+            {
+                return refuse(value.loc, &[b"Invalid ", name, b" value: ", &text, b"."]);
+            }
+            parts.push((name, text));
+        }
+        let mut whole = Vec::new();
+        match self.table {
+            As::Json(check) => {
+                write_json(&mut whole, &json_of(value)?);
+                let at = value.loc;
+                check(&whole).map_err(|message| Refusal { at, message })?;
+            }
+            As::Parts => whole.extend_from_slice(b"true"),
+        }
+        options.format.push((self.name, whole));
+        options.format.extend(parts);
+        Ok(())
+    }
+}
+
 /// What `[format]` of `file` says.
 pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
     let Some(section) = file.get(b"format") else {
@@ -335,22 +529,106 @@ pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> 
             options.config_lookup = false;
             continue;
         }
-        FORMAT.set(&key, value, &mut |flag, value, is_on| {
-            options.set(flag, value, is_on)?;
-            // With the flag, a wrong value comes out at the first file.
-            match options.format.last().filter(|it| key.name == it.0) {
-                Some((name, value))
-                    if bun_format::FormatOptions::default()
-                        .set(name, value)
-                        .is_err() =>
-                {
-                    error(&[b"Invalid ", *name, b" value: ", &value[..], b"."])
-                }
-                _ => Ok(()),
-            }
-        })?;
+        if key.name == b"overrides" {
+            options.overrides = overrides(value)?;
+            continue;
+        }
+        set_in_format(&key, value, &mut options)?;
     }
     Ok(Some(options))
+}
+
+/// Takes in `key = value` of `[format]`, or of the options of one of its `overrides`.
+fn set_in_format(
+    key: &Key,
+    value: &Expr,
+    options: &mut crate::fmt::cli::Options,
+) -> Result<(), Refusal> {
+    if let Some(feature) = FEATURES.iter().find(|it| it.name == key.name) {
+        return feature.set(value, options);
+    }
+    FORMAT.set(key, value, &mut |flag, value, is_on| {
+        options.set(flag, value, is_on)?;
+        // With the flag, a wrong value comes out at the first file.
+        let given = options.format.last().filter(|_| value.is_some());
+        match given.filter(|it| key.name == it.0) {
+            Some((name, value))
+                if bun_format::FormatOptions::default()
+                    .set(name, value)
+                    .is_err() =>
+            {
+                error(&[b"Invalid ", *name, b" value: ", &value[..], b"."])
+            }
+            _ => Ok(()),
+        }
+    })
+}
+
+/// A pattern, or an array of them.
+fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
+    let all: Vec<Vec<u8>> = match json_of(value)? {
+        Json::String(one) => vec![one],
+        Json::Array(all) => {
+            Takes::Strings.check(value)?;
+            let text = |it| match it {
+                Json::String(text) => Some(text),
+                _ => None,
+            };
+            all.into_iter().filter_map(text).collect()
+        }
+        _ => return expected("string or array", value),
+    };
+    match all.iter().find_map(|it| glob_refusal(it)) {
+        Some(refusal) => refuse(value.loc, &[&refusal]),
+        None => Ok(all),
+    }
+}
+
+/// `overrides` of `[format]`: shaped as in a `.prettierrc`, with the keys of `[format]` that say how a file is printed.
+fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
+    let Data::EArray(items) = &value.data else {
+        return expected("array", value);
+    };
+    // `parser` is for some files, never for all.
+    let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
+    let options_of = |table: &Expr| {
+        let mut options = crate::fmt::cli::Options::default();
+        for (key, value) in entries(table)? {
+            if key.name == b"parser" {
+                let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
+                give(FORMAT.param(b"parser"), value, set)?;
+                continue;
+            }
+            let mut keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
+            if !keys.any(|it| it == key.name) {
+                let keys = FORMAT.flags.iter().filter(is_option).map(|it| key_of(it));
+                let keys = keys.chain([b"parser".to_vec()]);
+                return unknown_key(&key.name, key.at, b"format.overrides.options", keys);
+            }
+            set_in_format(&key, value, &mut options)?;
+        }
+        Ok(options.format)
+    };
+    let one = |item: &Expr| {
+        let mut it = crate::fmt::cli::Override::default();
+        for (key, value) in entries(item)? {
+            match &key.name[..] {
+                b"files" => it.files = patterns(value)?,
+                b"excludeFiles" => it.excluded = patterns(value)?,
+                b"options" => it.format = options_of(value)?,
+                _ => {
+                    let keys = [&b"files"[..], b"excludeFiles", b"options"];
+                    let keys = keys.iter().map(|it| it.to_vec());
+                    return unknown_key(&key.name, key.at, b"format.overrides", keys);
+                }
+            }
+        }
+        match it.files.is_empty() {
+            true => refuse(item.loc, &[b"an override needs \"files\""]),
+            false => Ok(it),
+        }
+    };
+    items.slice().iter().map(one).collect()
 }
 
 const LINT: Table = Table {
@@ -401,6 +679,7 @@ const LINT: Table = Table {
         (b"categories", b"warn"),
         (b"categories", b"deny"),
     ],
+    without_flag: &[],
     actions: &[
         b"fix",
         b"fix-dry-run",
@@ -409,7 +688,10 @@ const LINT: Table = Table {
         b"init",
         b"stdin",
         b"stdin-filename",
+        b"staged",
+        b"changed",
         b"print-config",
+        b"doctor",
         b"rules",
         b"list-files",
         b"env-info",
@@ -425,6 +707,7 @@ const LINT: Table = Table {
         b"cwd",
         b"version",
         b"help",
+        b"help-all",
     ],
     others: &[
         b"no-config-lookup",
@@ -436,6 +719,7 @@ const LINT: Table = Table {
         b"no-type-aware",
         b"no-infer-globals",
         b"no-native-plugin-rules",
+        b"no-eslintrc",
         b"parser",
         b"plugin",
         b"eslintrc",

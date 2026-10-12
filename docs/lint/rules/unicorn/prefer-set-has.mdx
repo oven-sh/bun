@@ -1,0 +1,56 @@
+---
+title: "unicorn/prefer-set-has"
+description: "Require `Set#has()` instead of `Array#includes()` for an array that is only searched"
+---
+
+`includes()` walks the array from the start on every call. `has()` on a `Set` is a hash lookup, so it stays fast however long the list is.
+
+The rule reports a `const` or `let` when all of this is true:
+
+- Its value is a new array: an array literal, `Array.from()`, or the result of a method such as `map()` or `filter()`.
+- It is used for nothing but `.includes(value)`.
+- The lookup can run more than once: there are two or more calls, or the one call is in a loop or in a function.
+- It is not exported.
+
+`--fix` wraps the array in `new Set()` and renames the calls to `.has()`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const blocked = ["admin", "root", "system"];
+
+function isAllowed(name) {
+  return !blocked.includes(name);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const blocked = new Set(["admin", "root", "system"]);
+
+function isAllowed(name) {
+  return !blocked.has(name);
+}
+```
+
+An array that is searched once, or that is used as an array somewhere, stays an array:
+
+{/* good */}
+
+```js
+const formats = ["png", "jpeg"];
+const isImage = formats.includes(extension);
+
+const sizes = [16, 32, 64];
+for (const icon of icons) {
+  if (sizes.includes(icon.size)) draw(icon);
+}
+console.log(sizes.length);
+```

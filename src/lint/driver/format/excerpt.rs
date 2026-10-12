@@ -2,9 +2,9 @@
 //! Bun prints its own errors, `agent`, the same in tags and without colors, and `github`, the
 //! workflow commands that GitHub Actions turns into annotations.
 
-use super::Meta;
+use super::{Meta, linked};
 use crate::paths;
-use crate::results::FileResult;
+use crate::results::{Counts, FileResult};
 use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -271,7 +271,7 @@ fn write_pretty_problem<'r>(
             true => bun_core::pretty_fmt!("<r>  <d>", true).as_bytes(),
             false => bun_core::pretty_fmt!("<r>  <d>", false).as_bytes(),
         });
-        push_lossy(&mut text, &rule);
+        push_lossy(&mut text, &linked(&rule, message, meta));
     }
     let shown = match message.line {
         line @ 1.. => lines(result, (line.saturating_sub(2).max(1), line), meta, place),
@@ -337,7 +337,38 @@ fn write_pretty_problem<'r>(
     out.push(b'\n');
 }
 
+/// `12 problems (3 errors, 9 warnings)`, and how many of them `--fix` fixes. Without the end of the last line.
+fn write_pretty_summary(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    let mut counts = Counts::default();
+    results.iter().for_each(|it| counts.add(it.counts));
+    pretty!(
+        out,
+        meta.color,
+        "<b>{}<r> <d>(<r><red>{}<r><d>,<r> <yellow>{}<r><d>)<r>",
+        plural(counts.errors + counts.warnings, "problem"),
+        plural(counts.errors, "error"),
+        plural(counts.warnings, "warning")
+    );
+    let fixable = counts.fixable_errors + counts.fixable_warnings;
+    if fixable > 0 {
+        pretty!(
+            out,
+            meta.color,
+            "\n<d>{} can be fixed with<r> <cyan>--fix<r>",
+            fixable
+        );
+    }
+}
+
 pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    write_pretty_problems(out, results, meta);
+    if meta.is_native && !out.is_empty() {
+        out.extend_from_slice(if out.ends_with(b"\n") { b"\n" } else { b"\n\n" });
+        write_pretty_summary(out, results, meta);
+    }
+}
+
+fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
     let place = &mut Place::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
@@ -395,7 +426,7 @@ pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
             "  {:>4}  {}  <d>{}<r>\n",
             group.len(),
             BStr::new(first_line),
-            BStr::new(&group[0].rule())
+            BStr::new(&linked(&group[0].rule(), group[0].message, meta))
         );
     }
     let rest: usize = groups[shown + compact..].iter().map(Vec::len).sum();

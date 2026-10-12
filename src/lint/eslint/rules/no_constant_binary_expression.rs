@@ -284,7 +284,7 @@ fn is_static_literal(e: Expr<'_>) -> bool {
 }
 
 impl Rule for NoConstantBinaryExpression {
-    const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended().hints();
     const ON: On = On::new().binaries(&[
         BinOp::And,
         BinOp::Or,
@@ -385,6 +385,8 @@ fn may_be_static_literal(e: Expr<'_>) -> bool {
     }
 }
 
+const SAME_RESULT: &str = "The result is always the same. Are parentheses missing?";
+
 impl NoConstantBinaryExpression {
     #[inline(never)]
     fn check<'a>(e: Expr<'a>, (op, left, right): (BinOp, Expr<'a>, Expr<'a>), cx: &mut Cx<'a, Self>) {
@@ -394,13 +396,15 @@ impl NoConstantBinaryExpression {
             BinOp::And | BinOp::Or => {
                 cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                     .data("property", "truthiness")
-                    .data("operator", bin_op_text(op));
+                    .data("operator", bin_op_text(op))
+                    .hint("The left side is always truthy or always falsy. Are parentheses missing?");
             }
             BinOp::Nullish => {
                 if has_constant_nullishness(left, false) {
                     cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "nullishness")
-                        .data("operator", bin_op_text(op));
+                        .data("operator", bin_op_text(op))
+                        .hint("The left side is never null or undefined, or always is. Are parentheses missing?");
                 }
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
@@ -408,11 +412,13 @@ impl NoConstantBinaryExpression {
                 if is_constant_operand(left, right, is_strict) {
                     cx.report(right_place, CONSTANT_BINARY_OPERAND)
                         .data("operator", bin_op_text(op))
-                        .data("otherSide", "left");
+                        .data("otherSide", "left")
+                        .hint(SAME_RESULT);
                 } else if is_constant_operand(right, left, is_strict) {
                     cx.report(left_place, CONSTANT_BINARY_OPERAND)
                         .data("operator", bin_op_text(op))
-                        .data("otherSide", "right");
+                        .data("otherSide", "right")
+                        .hint(SAME_RESULT);
                 } else if is_strict {
                     if is_always_new(left) {
                         cx.report(left_place, ALWAYS_NEW);

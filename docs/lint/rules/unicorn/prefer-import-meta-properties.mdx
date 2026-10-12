@@ -1,0 +1,53 @@
+---
+title: "unicorn/prefer-import-meta-properties"
+description: "Require `import.meta.dirname` and `import.meta.filename` instead of building them from the URL"
+---
+
+ES modules have no `__dirname` and `__filename`, so a lot of code rebuilds them from `import.meta.url` with `fileURLToPath()` and `path.dirname()`. `import.meta.filename` and `import.meta.dirname` hold the same strings, with no imports.
+
+`--fix` replaces the call with the property. It does not remove the imports that are no longer used.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const filename = fileURLToPath(import.meta.url);
+const dirname = path.dirname(filename);
+```
+
+{/* bad */}
+
+```js
+import { fileURLToPath } from "node:url";
+
+const dirname = fileURLToPath(new URL(".", import.meta.url));
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const filename = import.meta.filename;
+const dirname = import.meta.dirname;
+```
+
+Other paths built from the URL are fine:
+
+{/* good */}
+
+```js
+import { fileURLToPath } from "node:url";
+
+const fixtures = fileURLToPath(new URL("./fixtures", import.meta.url));
+```
+
+## When not to use it
+
+Bun has both properties, and Node.js has them since 20.11. Turn the rule off for code that has to run on an older Node.js.

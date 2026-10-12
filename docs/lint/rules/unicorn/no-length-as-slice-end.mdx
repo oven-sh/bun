@@ -1,0 +1,28 @@
+---
+title: "unicorn/no-length-as-slice-end"
+description: "Disallow passing `.length` as the end argument of `.slice()`"
+---
+
+Without a second argument, `.slice()` already goes to the end of the array or string. Passing the length of the same value adds nothing.
+
+`--fix` removes the second argument.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+const rest = items.slice(1, items.length);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const rest = items.slice(1);
+const sameSizeAsOther = items.slice(1, other.length);
+const allButLast = items.slice(0, items.length - 1);
+```

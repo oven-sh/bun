@@ -1,0 +1,38 @@
+---
+title: "react/jsx-props-no-multi-spaces"
+description: "Disallow more than one space, or an empty line, between JSX props"
+---
+
+Extra spaces between props are usually left over from an edit. They make a tag look as if something is missing. The same goes for an empty line between props that are each on their own line.
+
+`--fix` replaces the extra spaces with one. It does not remove empty lines.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+const button = <Button type="submit" disabled />;
+```
+
+{/* bad */}
+
+```jsx
+const button = <Button type="submit" disabled />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const button = <Button type="submit" disabled />;
+
+const link = <Link to="/settings" replace />;
+```
+
+## When not to use it
+
+A formatter such as `bun format` or Prettier already fixes this spacing.

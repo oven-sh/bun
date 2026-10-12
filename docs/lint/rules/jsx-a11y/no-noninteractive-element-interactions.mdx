@@ -1,0 +1,75 @@
+---
+title: "jsx-a11y/no-noninteractive-element-interactions"
+description: "Disallow mouse and keyboard handlers on non-interactive elements"
+---
+
+Elements such as `<li>`, `<p>`, `<img>`, `<h1>` and `<main>` describe content. A screen reader does not announce them as something to press, and the Tab key skips them. A click handler on one of them works with a mouse and for nobody else.
+
+An element with a non-interactive role, such as `<div role="article">`, is treated the same way. `<div>` and `<span>` without a role are the business of `jsx-a11y/no-static-element-interactions`.
+
+Not reported: components, elements with an interactive role, with `role="presentation"` or `role="none"`, with `aria-hidden`, or with `contentEditable="true"`, and handlers set to `null` or `undefined`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const item = <li onClick={() => select(user)}>{user.name}</li>;
+```
+
+{/* bad */}
+
+```jsx
+const card = <div role="article" onKeyDown={openCard} />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const item = (
+  <li>
+    <button onClick={() => select(user)}>{user.name}</button>
+  </li>
+);
+
+const option = <li role="option" tabIndex={0} onClick={() => select(user)} />;
+```
+
+## Options
+
+| Option          | Default                                                                     | What it does                               |
+| --------------- | --------------------------------------------------------------------------- | ------------------------------------------ |
+| `handlers`      | mouse, drag and keyboard handlers, `onFocus`, `onBlur`, `onLoad`, `onError` | The handlers to report.                    |
+| an element name | see below                                                                   | Handlers that are allowed on that element. |
+
+By default `onLoad` and `onError` are allowed on `<body>`, `<iframe>` and `<img>`, and `onKeyUp`, `onKeyDown` and `onKeyPress` on `<dialog>`. As soon as you give any option these are gone, so repeat the ones you want to keep.
+
+{/* good */}
+
+```jsx
+const photo = <img src={url} alt="" onLoad={fadeIn} />;
+```
+
+{/* bad {"options": [{"handlers": ["onClick", "onLoad"]}]} */}
+
+```jsx
+const photo = <img src={url} alt="" onLoad={fadeIn} />;
+```
+
+{/* good {"options": [{"handlers": ["onClick", "onLoad"], "img": ["onLoad"]}]} */}
+
+```jsx
+const photo = <img src={url} alt="" onLoad={fadeIn} />;
+```
+
+With `handlers`, everything that is not on the list is allowed:
+
+{/* good {"options": [{"handlers": ["onClick"]}]} */}
+
+```jsx
+const page = <main onKeyDown={handleShortcut} />;
+```

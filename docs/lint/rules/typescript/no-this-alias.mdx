@@ -1,0 +1,79 @@
+---
+title: "@typescript-eslint/no-this-alias"
+description: "Disallow storing `this` in a variable"
+---
+
+`const self = this` is a way to reach the outer `this` from a `function` callback, which has a `this` of its own. An arrow function does not, so inside it `this` is still the outer one. With an arrow function you do not need the extra variable, and nobody can mix up `self` and `this`.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+class Timer {
+  seconds = 0;
+
+  start() {
+    const self = this;
+    setInterval(function () {
+      self.seconds++;
+    }, 1000);
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class Timer {
+  seconds = 0;
+
+  start() {
+    setInterval(() => {
+      this.seconds++;
+    }, 1000);
+  }
+}
+```
+
+## Options
+
+| Option               | Default | What it does                                                       |
+| -------------------- | ------- | ------------------------------------------------------------------ |
+| `allowDestructuring` | `true`  | Allow taking properties out of `this`: `const { seconds } = this`. |
+| `allowedNames`       | `[]`    | Names of variables that may hold `this`.                           |
+
+Reported with `allowDestructuring: false`:
+
+{/* bad {"options": [{"allowDestructuring": false}]} */}
+
+```ts
+class Timer {
+  seconds = 0;
+
+  report() {
+    const { seconds } = this;
+    return `${seconds}s`;
+  }
+}
+```
+
+With `allowedNames: ["self"]`, only `that` is reported:
+
+{/* bad {"options": [{"allowedNames": ["self"]}], "count": 1} */}
+
+```ts
+class Timer {
+  start() {
+    const self = this;
+    const that = this;
+    return [self, that];
+  }
+}
+```

@@ -1,0 +1,72 @@
+---
+title: "max-lines"
+description: "Enforce a maximum number of lines per file"
+---
+
+A file that keeps growing ends up doing many unrelated things, and finding anything in it means scrolling. This rule reports a file that has more lines than the maximum, which is 300 by default.
+
+## Examples
+
+With a maximum of 4, this file of 5 lines is reported:
+
+{/* bad {"options": [4]} */}
+
+```js
+import { readFile } from "node:fs/promises";
+
+const text = await readFile("notes.txt", "utf8");
+
+console.log(text.split("\n").length);
+```
+
+Not reported, with the work moved to another file:
+
+{/* good {"options": [4]} */}
+
+```js
+import { countLines } from "./count-lines.js";
+console.log(await countLines("notes.txt"));
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+max-lines = ["error", { max = 500, skipBlankLines = true, skipComments = true }]
+```
+
+| Option           | Default | What it does                                                                              |
+| ---------------- | ------- | ----------------------------------------------------------------------------------------- |
+| `max`            | `300`   | The number of lines a file can have.                                                      |
+| `skipBlankLines` | `false` | Do not count lines that are empty or only have whitespace.                                |
+| `skipComments`   | `false` | Do not count lines that only have a comment. A line with code and a comment still counts. |
+
+A number alone is short for `{ "max": number }`.
+
+With `skipBlankLines`, the first example has 3 lines:
+
+{/* good {"options": [{"max": 4, "skipBlankLines": true}]} */}
+
+```js
+import { readFile } from "node:fs/promises";
+
+const text = await readFile("notes.txt", "utf8");
+
+console.log(text.split("\n").length);
+```
+
+With `skipComments`, so does this one:
+
+{/* good {"options": [{"max": 4, "skipComments": true}]} */}
+
+```js
+// Prints the number of lines in notes.txt.
+// Run it with: bun count.js
+import { readFile } from "node:fs/promises";
+const text = await readFile("notes.txt", "utf8");
+console.log(text.split("\n").length);
+```
+
+## When not to use it
+
+Generated files, fixtures and long tables of data are long for a good reason. Turn the rule off for them.

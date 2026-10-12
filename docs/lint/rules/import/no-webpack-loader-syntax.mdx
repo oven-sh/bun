@@ -1,0 +1,30 @@
+---
+title: "import/no-webpack-loader-syntax"
+description: "Disallow webpack loader syntax such as `style-loader!./app.css` in imports"
+---
+
+webpack lets you name loaders in front of a path, separated by `!`. No other tool reads that syntax, so only webpack can run, test or bundle the file. It also spreads the build setup over your source files.
+
+The rule reports any `import`, `export .. from`, `import()` or `require()` with a `!` in its path.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+import styles from "style-loader!css-loader!./app.css";
+const notes = require("raw-loader!./notes.txt");
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+import styles from "./app.css";
+const notes = require("./notes.txt");
+```
+
+Configure the loaders in `webpack.config.js` instead.

@@ -1,0 +1,96 @@
+---
+title: "react/jsx-key"
+description: "Require a `key` prop on elements in arrays and iterators"
+---
+
+React uses `key` to tell the items of a list apart from one render to the next. Without it, React warns at run time and matches items by position, so after an insert or a reorder an item can end up with the state of its neighbor, such as the text typed into an input.
+
+The rule looks at elements in an array literal and at elements returned from the callback of `.map()` or `Array.from()`. Lists passed to `React.Children.toArray()` are exempt, because it adds keys itself.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const list = (
+  <ul>
+    {users.map(user => (
+      <li>{user.name}</li>
+    ))}
+  </ul>
+);
+
+const tabs = [<Tab key="home" />, <Tab />];
+
+const stars = Array.from({ length: 5 }, () => <Star />);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const list = (
+  <ul>
+    {users.map(user => (
+      <li key={user.id}>{user.name}</li>
+    ))}
+  </ul>
+);
+
+const tabs = [<Tab key="home" />, <Tab key="settings" />];
+
+const panels = React.Children.toArray([<Panel />, <Panel />]);
+```
+
+## Options
+
+| Option                     | Default | What it does                                                                                |
+| -------------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `checkFragmentShorthand`   | `false` | Also report `<>...</>` in a list. It cannot take a `key`. Use `<React.Fragment key={...}>`. |
+| `checkKeyMustBeforeSpread` | `false` | Report a `key` that comes after a `{...spread}`.                                            |
+| `warnOnDuplicates`         | `false` | Report siblings that have the same `key`.                                                   |
+
+{/* bad {"options": [{"checkFragmentShorthand": true}]} */}
+
+```jsx
+const rows = users.map(user => (
+  <>
+    <dt>{user.name}</dt>
+    <dd>{user.email}</dd>
+  </>
+));
+```
+
+{/* good {"options": [{"checkFragmentShorthand": true}]} */}
+
+```jsx
+const rows = users.map(user => (
+  <React.Fragment key={user.id}>
+    <dt>{user.name}</dt>
+    <dd>{user.email}</dd>
+  </React.Fragment>
+));
+```
+
+React's new JSX transform cannot handle a `key` that comes after a spread, and falls back to `createElement` for that element:
+
+{/* bad {"options": [{"checkKeyMustBeforeSpread": true}]} */}
+
+```jsx
+const rows = users.map(user => <Row {...user} key={user.id} />);
+```
+
+{/* good {"options": [{"checkKeyMustBeforeSpread": true}]} */}
+
+```jsx
+const rows = users.map(user => <Row key={user.id} {...user} />);
+```
+
+{/* bad {"options": [{"warnOnDuplicates": true}]} */}
+
+```jsx
+const tabs = [<Tab key="home" />, <Tab key="home" />];
+```

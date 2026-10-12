@@ -1,0 +1,114 @@
+---
+title: "react/forbid-prop-types"
+description: "Disallow vague prop types such as `any`, `array`, and `object`"
+---
+
+`PropTypes.any`, `PropTypes.array`, and `PropTypes.object` check almost nothing. A component that declares `users: PropTypes.array` accepts an array of anything, so the warning you wanted from `propTypes` never comes. `arrayOf`, `objectOf`, and `shape` say what is inside.
+
+The rule also looks inside `shape({ ... })` and at the arguments of a prop type, as in `arrayOf(PropTypes.object)`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```jsx
+import PropTypes from "prop-types";
+
+function UserList({ users, theme }) {
+  return (
+    <ul style={theme}>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  );
+}
+
+UserList.propTypes = {
+  users: PropTypes.array.isRequired,
+  theme: PropTypes.object,
+};
+```
+
+{/* bad {"count": 2} */}
+
+```jsx
+import PropTypes from "prop-types";
+
+function Card({ tags, owner }) {
+  return <div title={owner.name}>{tags.length}</div>;
+}
+
+Card.propTypes = {
+  tags: PropTypes.arrayOf(PropTypes.object),
+  owner: PropTypes.shape({ name: PropTypes.any }),
+};
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import PropTypes from "prop-types";
+
+function UserList({ users, theme }) {
+  return (
+    <ul style={theme}>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  );
+}
+
+UserList.propTypes = {
+  users: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.number, name: PropTypes.string })).isRequired,
+  theme: PropTypes.shape({ color: PropTypes.string }),
+};
+```
+
+## Options
+
+| Option                   | Default                      | What it does                                                  |
+| ------------------------ | ---------------------------- | ------------------------------------------------------------- |
+| `forbid`                 | `["any", "array", "object"]` | The prop types to report. Your list replaces the default one. |
+| `checkContextTypes`      | `false`                      | Also check `contextTypes`.                                    |
+| `checkChildContextTypes` | `false`                      | Also check `childContextTypes`.                               |
+
+With `forbid: ["any"]`, `object` is allowed and `any` is still reported:
+
+{/* bad {"options": [{"forbid": ["any"]}], "count": 1} */}
+
+```jsx
+import PropTypes from "prop-types";
+
+function Card({ style, extra }) {
+  return <div style={style}>{extra}</div>;
+}
+
+Card.propTypes = {
+  style: PropTypes.object,
+  extra: PropTypes.any,
+};
+```
+
+{/* bad {"options": [{"checkContextTypes": true}]} */}
+
+```jsx
+import PropTypes from "prop-types";
+
+function Title(props, context) {
+  return <h1 style={context.theme}>{props.text}</h1>;
+}
+
+Title.contextTypes = {
+  theme: PropTypes.object,
+};
+```
+
+## When not to use it
+
+React 19 ignores `propTypes`. If your props are typed with TypeScript, this rule has nothing to report.

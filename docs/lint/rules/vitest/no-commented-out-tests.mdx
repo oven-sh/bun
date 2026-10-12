@@ -1,0 +1,53 @@
+---
+title: "vitest/no-commented-out-tests"
+description: "Disallow tests that are inside a comment"
+---
+
+A test inside a comment never runs, and the test output does not say so. It is easy to comment one out while debugging and forget it.
+
+To turn a test off for now, use `test.skip` or `test.todo`, which show up in the summary. If nobody needs the test, delete it.
+
+A comment is reported if one of its lines starts with a call to `test`, `it` or `describe`. That includes `xtest`, `fit`, `test.only` and the like.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "vitest";
+
+// test("rounds down", () => {
+//   expect(Math.floor(1.9)).toBe(1);
+// });
+```
+
+{/* bad */}
+
+```ts
+import { describe, expect, it } from "vitest";
+
+describe("Math.floor", () => {
+  /*
+  it.only("rounds down", () => {
+    expect(Math.floor(1.9)).toBe(1);
+  });
+  */
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "vitest";
+
+test.skip("rounds down", () => {
+  expect(Math.floor(1.9)).toBe(1);
+});
+
+// test negative numbers too
+test.todo("rounds negative numbers down");
+```

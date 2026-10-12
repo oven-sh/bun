@@ -1,0 +1,36 @@
+---
+title: "prefer-spread"
+description: "Require spread syntax instead of `.apply()` to pass an array as arguments"
+---
+
+`Math.max.apply(Math, values)` only uses `.apply()` to pass an array as separate arguments, and it has to repeat `Math` to keep `this`. `Math.max(...values)` does the same and reads like a normal call.
+
+A call is reported only if spread can replace it: `.apply()` has to leave `this` as a plain call would. That means `null` or `undefined` for a function, and the same object for a method.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const highest = Math.max.apply(Math, values);
+notify.apply(null, listeners);
+logger.info.apply(logger, parts);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const highest = Math.max(...values);
+notify(...listeners);
+logger.info(...parts);
+
+// Sets another `this`, which spread cannot do
+render.apply(view, parts);
+logger.info.apply(console, parts);
+```

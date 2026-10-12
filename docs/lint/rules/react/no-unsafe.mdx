@@ -1,0 +1,64 @@
+---
+title: "react/no-unsafe"
+description: "Disallow the `UNSAFE_` lifecycle methods of class components"
+---
+
+`UNSAFE_componentWillMount`, `UNSAFE_componentWillReceiveProps`, and `UNSAFE_componentWillUpdate` run before React commits a render. React can start a render, drop it, and start again, so these methods can run several times for one update. A request or a subscription started there is then started several times, and may never be cleaned up.
+
+| Instead of                         | Use                        |
+| ---------------------------------- | -------------------------- |
+| `UNSAFE_componentWillMount`        | `componentDidMount`        |
+| `UNSAFE_componentWillReceiveProps` | `getDerivedStateFromProps` |
+| `UNSAFE_componentWillUpdate`       | `componentDidUpdate`       |
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+class Feed extends React.Component {
+  UNSAFE_componentWillMount() {
+    this.subscription = subscribe(this.props.channel);
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Feed extends React.Component {
+  componentDidMount() {
+    this.subscription = subscribe(this.props.channel);
+  }
+}
+```
+
+## Options
+
+| Option         | Default | What it does                                                                                                                |
+| -------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `checkAliases` | `false` | Also report the old names without the prefix: `componentWillMount`, `componentWillReceiveProps`, and `componentWillUpdate`. |
+
+{/* good */}
+
+```jsx
+class Feed extends React.Component {
+  componentWillMount() {
+    this.subscription = subscribe(this.props.channel);
+  }
+}
+```
+
+{/* bad {"options": [{"checkAliases": true}]} */}
+
+```jsx
+class Feed extends React.Component {
+  componentWillMount() {
+    this.subscription = subscribe(this.props.channel);
+  }
+}
+```

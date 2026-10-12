@@ -1,0 +1,88 @@
+---
+title: "capitalized-comments"
+description: "Require comments to start with a capital letter, or forbid it"
+---
+
+This is a style rule: it makes every comment start the same way. By default, a comment that starts with a lowercase letter is reported.
+
+Comments that start with something other than a letter, comments that start with a URL, and comments for tools such as `eslint-disable`, `global` or `istanbul ignore` are never reported.
+
+`--fix` changes the case of the first letter.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+// retry once, then give up
+await send(message);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+// Retry once, then give up
+await send(message);
+
+// 3 attempts at most
+// https://example.com/retries explains why
+/* eslint-disable-next-line no-console */
+console.log("sent");
+```
+
+## Options
+
+```toml bunfig.toml
+[lint.rules]
+capitalized-comments = ["error", "always", { ignoreConsecutiveComments = true }]
+```
+
+The first option is `"always"` (default), which requires a capital letter, or `"never"`, which requires a lowercase letter.
+
+{/* bad {"options": ["never"]} */}
+
+```js
+// Retry once, then give up
+await send(message);
+```
+
+The second option is an object:
+
+| Option                      | Default | What it does                                                                                             |
+| --------------------------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| `ignorePattern`             | none    | A regular expression. A comment that starts with a match is not checked.                                 |
+| `ignoreInlineComments`      | `false` | Do not check a comment that has code before it and after it on the same line.                            |
+| `ignoreConsecutiveComments` | `false` | Do not check a comment that comes right after another comment, so only the first line of a group counts. |
+
+{/* good {"options": ["always", {"ignorePattern": "webpack"}]} */}
+
+```js
+const editor = import(/* webpackChunkName: "editor" */ "./editor.js");
+```
+
+{/* good {"options": ["always", {"ignoreInlineComments": true}]} */}
+
+```js
+function resize(width, /* optional */ height) {}
+```
+
+{/* good {"options": ["always", {"ignoreConsecutiveComments": true}]} */}
+
+```js
+// Retry once, then give up,
+// so that a slow server does not block the queue
+await send(message);
+```
+
+To use different settings for `//` and `/* */` comments, put the same options under `line` and `block`. Here only the `//` comment is reported:
+
+{/* bad {"options": ["always", {"block": {"ignorePattern": "webpack"}}], "count": 1} */}
+
+```js
+// webpack splits the bundle here
+const editor = import(/* webpackChunkName: "editor" */ "./editor.js");
+```

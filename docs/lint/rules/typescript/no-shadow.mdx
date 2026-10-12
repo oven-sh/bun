@@ -1,0 +1,151 @@
+---
+title: "@typescript-eslint/no-shadow"
+description: "Disallow a declaration that hides one with the same name in an outer scope"
+---
+
+When an inner scope declares a name that an outer scope already has, the outer one cannot be reached from there. A reader who saw the outer declaration first takes the inner uses for it, and a line moved from one scope to the other silently means another variable.
+
+This is `no-shadow` with the same options. Only the default of `hoist` differs: `"functions-and-types"` here, `"functions"` there. Turn on only one of the two, or each name is reported twice.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+const timeout = 1000;
+
+function retry(action: () => void) {
+  const timeout = 50;
+  setTimeout(action, timeout);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const timeout = 1000;
+
+function retry(action: () => void) {
+  const delay = 50;
+  setTimeout(action, delay);
+}
+```
+
+A type parameter hides a type, and an enum member hides a variable inside the enum:
+
+{/* bad {"count": 2} */}
+
+```ts
+type Item = { id: number };
+function first<Item>(items: Item[]) {
+  return items[0];
+}
+
+const Low = 10;
+enum Priority {
+  Low,
+  High = Low + 1,
+}
+```
+
+## Options
+
+| Option                                       | Default                 | What it does                                                                             |
+| -------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
+| `allow`                                      | `[]`                    | Names that may hide an outer declaration.                                                |
+| `builtinGlobals`                             | `false`                 | Also report a name that hides a global, such as `Array`.                                 |
+| `hoist`                                      | `"functions-and-types"` | When to report a name that comes before the outer declaration it hides. See below.       |
+| `ignoreOnInitialization`                     | `false`                 | Allow it in a callback that is part of the initializer of the outer variable.            |
+| `ignoreTypeValueShadow`                      | `true`                  | Allow a value to have the name of an outer type, and a type the name of an outer value.  |
+| `ignoreFunctionTypeParameterNameValueShadow` | `true`                  | Allow a parameter in a function type or signature to have the name of an outer variable. |
+
+### `builtinGlobals`
+
+Reported with `builtinGlobals: true`:
+
+{/* bad {"options": [{"builtinGlobals": true}]} */}
+
+```ts
+function first(Array: string[]) {
+  return Array[0];
+}
+```
+
+### `hoist`
+
+| Value                   | Outer declarations that count when they come after the inner name |
+| ----------------------- | ----------------------------------------------------------------- |
+| `"all"`                 | All.                                                              |
+| `"functions"`           | Function declarations.                                            |
+| `"types"`               | Interfaces and type aliases.                                      |
+| `"functions-and-types"` | All three.                                                        |
+| `"never"`               | None.                                                             |
+
+Here the outer `port` is a `const` that comes later, so this is allowed by default:
+
+{/* good */}
+
+```ts
+function listen() {
+  const port = 3000;
+  return port;
+}
+
+const port = 8080;
+```
+
+It is reported with `hoist: "all"`:
+
+{/* bad {"options": [{"hoist": "all"}]} */}
+
+```ts
+function listen() {
+  const port = 3000;
+  return port;
+}
+
+const port = 8080;
+```
+
+### `ignoreOnInitialization`
+
+Not reported with `ignoreOnInitialization: true`:
+
+{/* good {"options": [{"ignoreOnInitialization": true}]} */}
+
+```ts
+declare const users: { active: boolean }[];
+
+const user = users.find(user => user.active);
+```
+
+### `ignoreTypeValueShadow`
+
+A type and a value with one name do not get in each other's way, so this is allowed by default:
+
+{/* good */}
+
+```ts
+type Config = { port: number };
+
+function start() {
+  const Config = { port: 3000 };
+  return Config;
+}
+```
+
+### `ignoreFunctionTypeParameterNameValueShadow`
+
+The parameter of a function type is only a label. Set the option to `false` to report it:
+
+{/* bad {"options": [{"ignoreFunctionTypeParameterNameValueShadow": false}]} */}
+
+```ts
+const id = 1;
+
+type Lookup = (id: number) => string;
+```

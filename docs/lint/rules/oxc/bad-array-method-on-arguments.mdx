@@ -1,0 +1,34 @@
+---
+title: "oxc/bad-array-method-on-arguments"
+description: "Disallow calling array methods on the `arguments` object"
+---
+
+`arguments` looks like an array: it has a `length` and numbered items. It is not one, so it has no `map`, `filter`, `join` or `slice`. Calling one of them throws `TypeError: arguments.map is not a function`.
+
+Use a rest parameter, which is a real array, or copy `arguments` into an array first.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function total() {
+  return arguments.reduce((sum, price) => sum + price, 0);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function total(...prices) {
+  return prices.reduce((sum, price) => sum + price, 0);
+}
+
+function legacyTotal() {
+  return Array.from(arguments).reduce((sum, price) => sum + price, 0);
+}
+```

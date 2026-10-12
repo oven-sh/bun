@@ -1,0 +1,120 @@
+---
+title: "preserve-caught-error"
+description: "Require the caught error as the `cause` of a new error thrown in `catch`"
+---
+
+When a `catch` block throws a new error, the one it caught is gone, with its message and its stack trace. The log says "Could not load the config" but not why. Pass the caught error as `cause` and both are kept.
+
+The rule checks `throw new Error()` in a `catch` block, and the other built-in classes such as `TypeError` and `AggregateError`. A `throw` in a function inside the block is not checked.
+
+The report comes with a suggestion that adds `{ cause: error }`.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+try {
+  loadConfig();
+} catch (error) {
+  throw new Error("Could not load the config");
+}
+```
+
+The `cause` has to be the caught error itself, not a part of it:
+
+{/* bad */}
+
+```js
+try {
+  loadConfig();
+} catch (error) {
+  throw new Error("Could not load the config", { cause: error.message });
+}
+```
+
+Destructuring the parameter loses the rest of the error:
+
+{/* bad */}
+
+```js
+try {
+  loadConfig();
+} catch ({ message }) {
+  throw new Error(`Could not load the config: ${message}`);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+try {
+  loadConfig();
+} catch (error) {
+  throw new Error("Could not load the config", { cause: error });
+}
+
+try {
+  saveConfig();
+} catch (error) {
+  report(error);
+  throw error;
+}
+```
+
+## Options
+
+| Option                  | Default | What it does                                                       |
+| ----------------------- | ------- | ------------------------------------------------------------------ |
+| `requireCatchParameter` | `false` | Also report a new error thrown in a `catch` that has no parameter. |
+| `errorClassNames`       | `[]`    | Your own error classes to check as well.                           |
+
+{/* bad {"options": [{"requireCatchParameter": true}]} */}
+
+```js
+try {
+  loadConfig();
+} catch {
+  throw new Error("Could not load the config");
+}
+```
+
+An entry of `errorClassNames` is the name of a class that takes `{ cause }` as its second argument, like `Error`:
+
+{/* bad {"options": [{"errorClassNames": ["ConfigError"]}]} */}
+
+```js
+try {
+  loadConfig();
+} catch (error) {
+  throw new ConfigError("Could not load the config");
+}
+```
+
+If `{ cause }` is another argument, the entry is an object that says which one, counting from 1:
+
+{/* bad {"options": [{"errorClassNames": [{"name": "HttpError", "argumentPosition": 3}]}]} */}
+
+```js
+try {
+  await fetchUser(id);
+} catch (error) {
+  throw new HttpError(502, "Could not fetch the user");
+}
+```
+
+{/* good {"options": [{"errorClassNames": [{"name": "HttpError", "argumentPosition": 3}]}]} */}
+
+```js
+try {
+  await fetchUser(id);
+} catch (error) {
+  throw new HttpError(502, "Could not fetch the user", { cause: error });
+}
+```

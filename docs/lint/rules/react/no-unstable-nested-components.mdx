@@ -1,0 +1,93 @@
+---
+title: "react/no-unstable-nested-components"
+description: "Disallow defining a component inside another component"
+---
+
+A component defined inside another component is a new function on every render of the parent. React compares components by identity, so it treats it as a different component each time: it removes the old DOM nodes, builds new ones, and throws away the state of everything below. Inputs lose focus and their text, and effects run again.
+
+Move the inner component to the top level of the file and pass it what it needs as props.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+function UserList({ users }) {
+  function Row({ user }) {
+    return <li>{user.name}</li>;
+  }
+
+  return (
+    <ul>
+      {users.map(user => (
+        <Row key={user.id} user={user} />
+      ))}
+    </ul>
+  );
+}
+```
+
+A component created in a prop is reported too:
+
+{/* bad */}
+
+```jsx
+function Page() {
+  return <Layout footer={() => <small>Terms of use</small>} />;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+function Row({ user }) {
+  return <li>{user.name}</li>;
+}
+
+function UserList({ users }) {
+  return (
+    <ul>
+      {users.map(user => (
+        <Row key={user.id} user={user} />
+      ))}
+    </ul>
+  );
+}
+```
+
+A function passed in a prop with a name that starts with `render`, or as `children`, is taken for a render prop. The receiver calls it as a plain function, so nothing is remounted:
+
+{/* good */}
+
+```jsx
+function Page() {
+  return <Layout renderFooter={() => <small>Terms of use</small>} />;
+}
+```
+
+## Options
+
+| Option            | Default     | What it does                                         |
+| ----------------- | ----------- | ---------------------------------------------------- |
+| `allowAsProps`    | `false`     | Allow a component that is created in a prop.         |
+| `propNamePattern` | `"render*"` | A glob for the names of props that are render props. |
+
+{/* good {"options": [{"allowAsProps": true}]} */}
+
+```jsx
+function Page() {
+  return <Layout footer={() => <small>Terms of use</small>} />;
+}
+```
+
+{/* good {"options": [{"propNamePattern": "*Renderer"}]} */}
+
+```jsx
+function Report({ rows }) {
+  return <Table rows={rows} rowRenderer={row => <Row data={row} />} />;
+}
+```

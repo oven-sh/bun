@@ -1,0 +1,131 @@
+---
+title: "bun:test/valid-expect"
+description: "Require `expect` to get a value, end in a called matcher, and be awaited when it is async"
+---
+
+`expect(value)` checks nothing by itself. The check happens when a matcher such as `.toBe()` is called, so an `expect` with no matcher, or with a matcher that is not called, passes whatever the value is.
+
+`.resolves` and `.rejects` make the matcher return a promise. If the test does not await or return it, the test can end first, and a failed assertion does not fail the test.
+
+This rule is on by default in files that import from `"bun:test"`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("adds the tax", () => {
+  expect(total(100)); // no matcher
+  expect(total(100)).toBe; // the matcher is not called
+  expect().toBe(108); // no value
+  expect(total(100)).never.toBe(0); // `never` is not a modifier
+});
+```
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("loads the user", () => {
+  expect(loadUser(1)).resolves.toEqual({ id: 1 });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("adds the tax", () => {
+  expect(total(100)).toBe(108);
+  expect(total(100)).not.toBe(0);
+});
+
+test("loads the user", async () => {
+  await expect(loadUser(1)).resolves.toEqual({ id: 1 });
+});
+
+test("rejects an unknown id", () => {
+  return expect(loadUser(-1)).rejects.toThrow("not found");
+});
+```
+
+A second argument is the message to print on failure, and does not count toward `maxArgs`. `expect().pass()` and `expect().fail()` need no value:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("adds the tax", () => {
+  expect(total(100), "total after tax").toBe(108);
+});
+
+test("never calls back", () => {
+  subscribe(() => expect().fail("called back"));
+});
+```
+
+Only a statement is reported. An `expect` that you keep in a variable or pass on can still get its matcher, or its `await`, somewhere else:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("loads both users", async () => {
+  const first = expect(loadUser(1)).resolves.toEqual({ id: 1 });
+  const second = expect(loadUser(2)).resolves.toEqual({ id: 2 });
+  await Promise.all([first, second]);
+});
+```
+
+## Options
+
+| Option          | Default                     | What it does                                                                                                           |
+| --------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `alwaysAwait`   | `false`                     | Report every async assertion that is not awaited where it is written, also one that is returned or kept in a variable. |
+| `asyncMatchers` | `["toResolve", "toReject"]` | Matchers that return a promise, and so have to be awaited or returned. Your list replaces the default one.             |
+| `minArgs`       | `1`                         | The fewest arguments `expect` can take.                                                                                |
+| `maxArgs`       | `1`                         | The most arguments `expect` can take.                                                                                  |
+
+{/* bad {"options": [{"alwaysAwait": true}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("rejects an unknown id", () => {
+  return expect(loadUser(-1)).rejects.toThrow("not found");
+});
+```
+
+`asyncMatchers` is for matchers of your own, added with `expect.extend()`, that return a promise:
+
+{/* bad {"options": [{"asyncMatchers": ["toResolveWith"]}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("loads the user", () => {
+  expect(loadUser(1)).toResolveWith({ id: 1 });
+});
+```
+
+With `{ "minArgs": 2 }`, every `expect` needs a message:
+
+{/* bad {"options": [{"minArgs": 2}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("adds the tax", () => {
+  expect(total(100)).toBe(108);
+});
+```

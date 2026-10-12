@@ -1,0 +1,52 @@
+---
+title: "unicorn/no-invalid-fetch-options"
+description: "Disallow a `body` in `fetch()` and `new Request()` when the method is `GET` or `HEAD`"
+---
+
+A `GET` or `HEAD` request cannot have a body. If you give it one, `new Request()` throws a `TypeError` and `fetch()` rejects with one. The method is `GET` when you do not set it, so the usual cause is a forgotten `method: "POST"`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+function createUser(user) {
+  return fetch("/api/users", {
+    body: JSON.stringify(user),
+  });
+}
+```
+
+{/* bad */}
+
+```js
+const request = new Request("/api/users", {
+  method: "HEAD",
+  body: "name=Ada",
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function createUser(user) {
+  return fetch("/api/users", {
+    method: "POST",
+    body: JSON.stringify(user),
+  });
+}
+```
+
+A `body` of `undefined` or `null` is allowed. The rule also stays quiet when it cannot tell the method or the options, for example when the object has a spread:
+
+{/* good */}
+
+```js
+fetch("/api/users", { body: undefined });
+fetch("/api/users", { ...defaults, body: "name=Ada" });
+fetch("/api/users", { method: getMethod(), body: "name=Ada" });
+```

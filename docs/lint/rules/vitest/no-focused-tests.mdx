@@ -1,0 +1,44 @@
+---
+title: "vitest/no-focused-tests"
+description: "Disallow `test.only` and `describe.only`"
+---
+
+`.only` makes Vitest run that test and skip every other one in the file. It is useful while debugging. Committed by accident, it hides failures in the tests that no longer run.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { describe, expect, test } from "vitest";
+
+test.only("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+
+describe.only("subtraction", () => {
+  test("subtracts", () => {
+    expect(2 - 1).toBe(1);
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { describe, expect, test } from "vitest";
+
+test("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+
+describe("subtraction", () => {
+  test("subtracts", () => {
+    expect(2 - 1).toBe(1);
+  });
+});
+```

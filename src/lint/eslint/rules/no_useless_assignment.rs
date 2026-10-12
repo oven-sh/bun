@@ -408,8 +408,8 @@ impl<'a, 'v> Variable<'a, 'v> {
     }
 
     /// Goes from the end of the segments of `target` through those where nothing is assigned to the
-    /// variable, and tells whether it is read on the way.
-    fn is_read_later(&self, target: &Assignment<'a>) -> bool {
+    /// variable, and tells whether it is read on the way. `overwritten`: called with each assignment that ends a way.
+    fn is_read_later(&self, target: &Assignment<'a>, mut overwritten: impl FnMut(&Assignment<'a>)) -> bool {
         let mut seen: FxHashSet<u32> = FxHashSet::default();
         let mut stack: SmallVec<[Segment<'a>; 16]> = target
             .segments
@@ -425,11 +425,34 @@ impl<'a, 'v> Variable<'a, 'v> {
             if self.is_read_in(id, first) {
                 return true;
             }
-            if first.is_none() {
-                stack.extend(segment.next_segments());
+            match first {
+                Some(first) => overwritten(first),
+                None => stack.extend(segment.next_segments()),
             }
         }
         false
+    }
+
+    /// For an assignment that [`Variable::is_assignment_unused`] is true of: what becomes of the value.
+    fn hint(&self, index: usize, next: u32, file: &File<'a>) -> Option<String> {
+        let mut lines: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut overwritten = |it: &Assignment<'a>| lines.push(file.line_of(it.identifier.start));
+        match self.assignments.get(next as usize) {
+            Some(next) => overwritten(next),
+            None => _ = self.is_read_later(self.assignments.get(index)?, overwritten),
+        }
+        lines.sort_unstable();
+        lines.dedup();
+        let places = match lines[..] {
+            [] => return Some("Nothing reads it after this.".to_owned()),
+            [line] => format!("line {line}"),
+            [first, second] => format!("line {first} and line {second}"),
+            [first, second, third] => format!("lines {first}, {second} and {third}"),
+            [first, second, third, ref others @ ..] => {
+                format!("lines {first}, {second}, {third} and {} more", others.len())
+            }
+        };
+        Some(format!("It is overwritten on {places} before it is read."))
     }
 
     /// Whether nothing reads the value that `assignments[index]` assigns. `next`: what
@@ -441,7 +464,7 @@ impl<'a, 'v> Variable<'a, 'v> {
         };
         let next = assignments.get(next as usize);
         !self.is_read_at_once(target, next)
-            && (next.is_some() || !self.is_read_later(target))
+            && (next.is_some() || !self.is_read_later(target, |_| {}))
     }
 }
 
@@ -1580,7 +1603,9 @@ impl NoUselessAssignment {
                         true => identifier.end.min(identifier.start + name.bytes().len() as u32),
                         false => identifier.end,
                     };
-                    cx.report(Span::new(identifier.start, end), UNNECESSARY_ASSIGNMENT).data("name", name);
+                    cx.report(Span::new(identifier.start, end), UNNECESSARY_ASSIGNMENT)
+                        .data("name", name)
+                        .hint_with(|| uses.hint(index, next, cx.file()));
                 }
             }
         }
@@ -1745,7 +1770,7 @@ impl NoUselessAssignment {
 }
 
 impl Rule for NoUselessAssignment {
-    const META: Meta = Meta::eslint("no-useless-assignment", Kind::Problem).recommended().reports_at_the_end();
+    const META: Meta = Meta::eslint("no-useless-assignment", Kind::Problem).recommended().reports_at_the_end().hints();
     const ON: On = On::new().symbols().finish();
     type State<'a> = State<'a>;
 

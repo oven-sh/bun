@@ -1,0 +1,44 @@
+---
+title: "unicorn/prefer-type-error"
+description: "Require `TypeError` when the `throw` follows a type check"
+---
+
+An `if` that checks the type of a value and then throws is saying "this value has the wrong type". `TypeError` is the built-in error for that, and the caller can tell it apart from other failures with `instanceof`.
+
+The rule reports `throw new Error()` when it is the only statement between the braces of an `if` or its `else`, and the condition is made of type checks: `typeof`, `instanceof`, `isNaN()`, `isFinite()`, or a method such as `Array.isArray()`, `Number.isInteger()` or `_.isString()`.
+
+`--fix` changes `Error` to `TypeError`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+function repeat(text, times) {
+  if (typeof text !== "string") {
+    throw new Error("text must be a string");
+  }
+  if (!Number.isInteger(times)) {
+    throw new Error("times must be an integer");
+  }
+  return text.repeat(times);
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+function repeat(text, times) {
+  if (typeof text !== "string") {
+    throw new TypeError("text must be a string");
+  }
+  if (times < 0) {
+    throw new Error("times must not be negative");
+  }
+  return text.repeat(times);
+}
+```

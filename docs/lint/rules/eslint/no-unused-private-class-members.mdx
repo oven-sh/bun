@@ -1,0 +1,63 @@
+---
+title: "no-unused-private-class-members"
+description: "Disallow `#private` class members that are never used"
+---
+
+Nothing outside a class can reach its `#private` fields and methods. If nothing inside the class uses one either, it is dead code, or the code that should use it is missing.
+
+A field that is only written to counts as unused: the statements `this.#count = 1` and `this.#count++` never read the value.
+
+If nothing refers to the member at all, the rule suggests removing it.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+class Counter {
+  #count = 0;
+  #step = 1;
+
+  #log() {
+    console.log("changed");
+  }
+
+  increment() {
+    this.#count++;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class Counter {
+  #count = 0;
+  #step = 1;
+
+  #log() {
+    console.log("changed to", this.#count);
+  }
+
+  increment() {
+    this.#count += this.#step;
+    this.#log();
+  }
+}
+```
+
+TypeScript's `private` members are not checked:
+
+{/* good */}
+
+```ts
+class Counter {
+  private count = 0;
+}
+```

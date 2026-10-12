@@ -1,0 +1,89 @@
+---
+title: "@typescript-eslint/no-unused-expressions"
+description: "Disallow statements that compute a value and do nothing with it"
+---
+
+A statement such as `user.name;` or `count + 1;` computes a value and throws it away. It is usually a mistake: a call without its `()`, a `===` that was meant to be `=`, or a line left behind after an edit.
+
+Calls, `new`, assignments, `await`, `delete`, `void`, `import()`, and directives such as `"use strict"` do something, so they are not reported. The rule looks through `as`, `!`, and type arguments, so `save as unknown;` is reported like `save;`.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 4} */}
+
+```ts
+declare const user: { name?: string; save(): void };
+
+user.save;
+user.name === "admin";
+user?.name;
+user.name!;
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+declare const user: { name?: string; save(): void };
+
+user.save();
+user.name = "admin";
+user?.save();
+```
+
+## Options
+
+| Option                 | Default | What it does                                                                                         |
+| ---------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `allowShortCircuit`    | `false` | Allow `a && b()`, `a \|\| b()`, and `a ?? b()`, if the right side would be allowed as a statement.   |
+| `allowTernary`         | `false` | Allow `a ? b() : c()`, if both branches would be allowed as statements.                              |
+| `allowTaggedTemplates` | `false` | Allow a tagged template such as `` sql`...` `` as a statement.                                       |
+| `enforceForJSX`        | `false` | Also report a JSX element as a statement.                                                            |
+| `ignoreDirectives`     | `false` | Allow strings at the start of a file or a function when `ecmaVersion` is 3, which has no directives. |
+
+With `allowShortCircuit`, you can use `&&` in place of an `if`:
+
+{/* good {"options": [{"allowShortCircuit": true}]} */}
+
+```ts
+declare const user: { save(): void } | undefined;
+
+user && user.save();
+```
+
+The right side still has to do something:
+
+{/* bad {"options": [{"allowShortCircuit": true}]} */}
+
+```ts
+declare const user: { save(): void } | undefined;
+
+user && user.save;
+```
+
+{/* good {"options": [{"allowTernary": true}]} */}
+
+```ts
+declare const user: { isNew: boolean; create(): void; update(): void };
+
+user.isNew ? user.create() : user.update();
+```
+
+{/* good {"options": [{"allowTaggedTemplates": true}]} */}
+
+```ts
+declare function sql(strings: TemplateStringsArray): void;
+
+sql`DELETE FROM sessions`;
+```
+
+{/* bad {"options": [{"enforceForJSX": true}]} */}
+
+```tsx
+<p>Saved</p>
+```

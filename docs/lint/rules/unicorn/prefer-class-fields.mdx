@@ -1,0 +1,79 @@
+---
+title: "unicorn/prefer-class-fields"
+description: "Require class fields instead of `this` assignments of fixed values in the constructor"
+---
+
+A property that starts with the same value in every instance does not need the constructor. As a class field it sits at the top of the class, where you look to see what an instance has. A constructor that did nothing else can go.
+
+Only the first statement of the constructor is checked. It is reported if it assigns a string, number, `BigInt`, boolean, `null` or regular expression literal to a property of `this`.
+
+`--fix` moves the value to a field.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```js
+class Counter {
+  constructor() {
+    this.count = 0;
+  }
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+class Counter {
+  count = 0;
+}
+```
+
+A value that depends on the arguments, or that is built when the constructor runs, stays where it is:
+
+{/* good */}
+
+```js
+class Counter {
+  constructor(start) {
+    this.count = start;
+  }
+}
+
+class Queue {
+  constructor() {
+    this.items = [];
+  }
+}
+```
+
+An assignment that comes after another statement, such as `super()`, is not reported:
+
+{/* good */}
+
+```js
+class Timer extends Emitter {
+  constructor() {
+    super();
+    this.ticks = 0;
+  }
+}
+```
+
+If the field already has a value, the constructor overwrites it right away, and that is reported too. `--fix` leaves this alone. `--fix-suggestions` keeps the value from the constructor.
+
+{/* bad */}
+
+```js
+class Counter {
+  count = 1;
+
+  constructor() {
+    this.count = 0;
+  }
+}
+```

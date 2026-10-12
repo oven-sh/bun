@@ -1,0 +1,52 @@
+---
+title: "jsx-a11y/no-autofocus"
+description: "Disallow the `autoFocus` attribute"
+---
+
+`autoFocus` moves the focus as soon as the element renders. A screen reader starts reading at that element, so the user misses everything before it. On a phone the keyboard opens and the page scrolls without being asked to.
+
+`autoFocus={false}` is not reported. Neither is `autoFocus` inside a `<dialog>`, an element with `role="dialog"`, or an element with a `popover` attribute, because opening one of those is supposed to move the focus.
+
+Your editor can remove the attribute as a suggestion.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const search = <input type="search" autoFocus />;
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const search = <input type="search" />;
+
+const rename = (
+  <dialog open>
+    <input type="text" autoFocus />
+  </dialog>
+);
+```
+
+## Options
+
+| Option         | Default | What it does                              |
+| -------------- | ------- | ----------------------------------------- |
+| `ignoreNonDOM` | `false` | Only check HTML elements, not components. |
+
+{/* bad */}
+
+```jsx
+const search = <SearchBox autoFocus />;
+```
+
+{/* good {"options": [{"ignoreNonDOM": true}]} */}
+
+```jsx
+const search = <SearchBox autoFocus />;
+```

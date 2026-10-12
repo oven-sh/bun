@@ -1,0 +1,68 @@
+---
+title: "no-empty-pattern"
+description: "Disallow destructuring patterns that bind nothing"
+---
+
+`const {} = user` looks like a declaration but creates no variable. The usual cause is one wrong character: `{ settings: {} }` destructures `settings` into nothing, where `{ settings = {} }` would give it a default value.
+
+This rule is on by default.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```js
+const {
+  settings: {},
+} = user;
+const [] = items;
+
+function render({}) {
+  return "<div></div>";
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const { settings = {} } = user;
+const [first] = items;
+
+function render({ title }) {
+  return `<div>${title}</div>`;
+}
+```
+
+## Options
+
+| Option                            | Default | What it does                                                                             |
+| --------------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `allowObjectPatternsAsParameters` | `false` | Allow `{}` as a parameter of a function, with no default value or with the default `{}`. |
+
+This is for a function that is called with an object it does not need, and that uses a later parameter:
+
+{/* good {"options": [{"allowObjectPatternsAsParameters": true}]} */}
+
+```js
+function withServer({}, use) {
+  return use(startServer());
+}
+
+function withDatabase({} = {}, use) {
+  return use(openDatabase());
+}
+```
+
+An empty array pattern as a parameter is still reported:
+
+{/* bad {"options": [{"allowObjectPatternsAsParameters": true}]} */}
+
+```js
+function withServer([], use) {
+  return use(startServer());
+}
+```

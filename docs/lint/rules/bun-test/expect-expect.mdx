@@ -1,0 +1,125 @@
+---
+title: "bun:test/expect-expect"
+description: "Require every test to make at least one assertion"
+---
+
+A test with no assertion passes as long as the code does not throw. It is green in the report whether the result is right or wrong. Most of the time the `expect` was forgotten, or removed while the test was being changed.
+
+Calls to `expect` and `expectTypeOf` count as assertions. `test.todo` and `test.skip` are not checked.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+import { test } from "bun:test";
+
+test("parses the port", () => {
+  parseConfig("port = 3000");
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { expect, test } from "bun:test";
+
+test("parses the port", () => {
+  expect(parseConfig("port = 3000")).toEqual({ port: 3000 });
+});
+
+test.todo("rejects a negative port");
+
+test.skip("reads the file", () => {
+  readConfig("app.conf");
+});
+```
+
+## Options
+
+| Option                         | Default                      | What it does                                                                                        |
+| ------------------------------ | ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| `assertFunctionNames`          | `["expect", "expectTypeOf"]` | The functions that count as an assertion. Your list replaces the default, so keep `"expect"` in it. |
+| `additionalTestBlockFunctions` | `[]`                         | Other `bun:test` functions to check like `test`, such as `"afterEach"`.                             |
+
+### `assertFunctionNames`
+
+The rule does not look inside the helpers that a test calls. This test is reported even though `checkUser` calls `expect`:
+
+{/* bad */}
+
+```ts
+import { expect, test } from "bun:test";
+
+function checkUser(user) {
+  expect(user.id).toBeGreaterThan(0);
+}
+
+test("creates a user", () => {
+  checkUser(createUser());
+});
+```
+
+Add the helper's name:
+
+```toml bunfig.toml
+[lint.rules]
+"bun:test/expect-expect" = ["error", { assertFunctionNames = ["expect", "checkUser"] }]
+```
+
+{/* good {"options": [{"assertFunctionNames": ["expect", "checkUser"]}]} */}
+
+```ts
+import { expect, test } from "bun:test";
+
+function checkUser(user) {
+  expect(user.id).toBeGreaterThan(0);
+}
+
+test("creates a user", () => {
+  checkUser(createUser());
+});
+```
+
+A name can be a chain with dots. `*` stands for any letters and digits in one part of the chain, and `**` for any number of parts. Upper and lower case are treated the same.
+
+{/* good {"options": [{"assertFunctionNames": ["expect", "request.**.expect"]}]} */}
+
+```ts
+import { test } from "bun:test";
+
+test("is healthy", async () => {
+  await request(app).get("/health").expect(200);
+});
+```
+
+### `additionalTestBlockFunctions`
+
+This option only works for functions that come from `bun:test`. A wrapper of your own is not checked, even if you list it.
+
+{/* bad {"options": [{"additionalTestBlockFunctions": ["afterEach"]}]} */}
+
+```ts
+import { afterEach } from "bun:test";
+
+afterEach(() => {
+  closeDatabase();
+});
+```
+
+{/* good {"options": [{"additionalTestBlockFunctions": ["testWithDatabase"]}]} */}
+
+```ts
+import { afterAll } from "bun:test";
+import { closeDatabase, testWithDatabase } from "./helpers";
+
+afterAll(closeDatabase);
+
+testWithDatabase("saves the user", db => {
+  db.save(createUser());
+});
+```

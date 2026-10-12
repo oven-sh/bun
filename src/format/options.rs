@@ -93,6 +93,8 @@ pub struct FormatOptions {
     pub jsdoc: Option<JsdocOptions>,
     /// oxfmt's `sortTailwindcss`: how the classes of Tailwind CSS are sorted, if they are.
     pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
+    /// TOML is formatted in the flavor of Prettier too, which has none. For who finds out what a file is.
+    pub toml: bool,
 }
 
 /// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that

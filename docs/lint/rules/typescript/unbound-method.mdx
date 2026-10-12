@@ -1,0 +1,74 @@
+---
+title: "@typescript-eslint/unbound-method"
+description: "Disallow taking a method off its object without binding it"
+---
+
+A method gets its `this` from how it is called. If you store `user.greet` in a variable or pass it as a callback, it is later called without the object, `this` is `undefined`, and the first `this.name` throws.
+
+Calling the method, comparing it, testing it in a condition, and `typeof` are fine. So are properties that hold an arrow function, methods declared with `this: void`, and built-in functions that do not use `this`, such as `console.log`, `Math.max`, and `JSON.parse`.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+class User {
+  name = "Ada";
+  greet() {
+    return `Hello ${this.name}`;
+  }
+}
+
+const user = new User();
+const greet = user.greet;
+const { greet: hello } = user;
+setTimeout(user.greet, 100);
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+class User {
+  name = "Ada";
+  greet() {
+    return `Hello ${this.name}`;
+  }
+  wave = () => `${this.name} waves`;
+  static create(this: void) {
+    return new User();
+  }
+}
+
+const user = new User();
+const greet = user.greet.bind(user);
+setTimeout(() => user.greet(), 100);
+setTimeout(user.wave, 100);
+const create = User.create;
+const log = console.log;
+```
+
+## Options
+
+| Option         | Default | What it does                   |
+| -------------- | ------- | ------------------------------ |
+| `ignoreStatic` | `false` | Do not check `static` methods. |
+
+`Id.next` does not use `this`, but it is reported unless `ignoreStatic` is on:
+
+{/* bad */}
+
+```ts
+class Id {
+  static next() {
+    return crypto.randomUUID();
+  }
+}
+
+const ids = [1, 2, 3].map(Id.next);
+```

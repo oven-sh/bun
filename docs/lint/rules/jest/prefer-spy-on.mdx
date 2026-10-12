@@ -1,0 +1,53 @@
+---
+title: "jest/prefer-spy-on"
+description: "Require `jest.spyOn()` instead of assigning `jest.fn()` to a property"
+---
+
+`Date.now = jest.fn()` throws the real `Date.now` away. Unless you saved it and put it back by hand, every test that runs afterwards gets the mock. `jest.spyOn(Date, "now")` remembers the original, so `mockRestore()` or `jest.restoreAllMocks()` brings it back.
+
+A spy calls the original function until you give it an implementation, so the suggestion turns `obj.save = jest.fn()` into `jest.spyOn(obj, 'save').mockImplementation()`.
+
+The rewrite is a suggestion in your editor. `--fix` does not apply it.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { beforeEach, jest } from "@jest/globals";
+
+beforeEach(() => {
+  Date.now = jest.fn(() => 1700000000000);
+  console.warn = jest.fn();
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { afterEach, beforeEach, jest } from "@jest/globals";
+
+beforeEach(() => {
+  jest.spyOn(Date, "now").mockImplementation(() => 1700000000000);
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+```
+
+A mock that is stored in a variable or written in an object literal replaces nothing, so it is not reported:
+
+{/* good */}
+
+```ts
+import { jest } from "@jest/globals";
+
+const onSave = jest.fn();
+const logger = { warn: jest.fn() };
+```

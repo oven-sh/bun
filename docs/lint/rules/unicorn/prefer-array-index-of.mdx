@@ -1,0 +1,35 @@
+---
+title: "unicorn/prefer-array-index-of"
+description: "Require `.indexOf()` instead of `.findIndex()` when looking for a value"
+---
+
+`.findIndex()` is for a test that `===` cannot express. If the callback only compares the element with a value, `.indexOf(value)` does the same without a function. The same goes for `.findLastIndex()` and `.lastIndexOf()`.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+const index = names.findIndex(name => name === "admin");
+const last = names.findLastIndex(name => name === current);
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const index = names.indexOf("admin");
+const last = names.lastIndexOf(current);
+```
+
+A callback that compares a property of the element, or compares with `==`, is not reported:
+
+{/* good */}
+
+```js
+const index = users.findIndex(user => user.name === "admin");
+const loose = ids.findIndex(id => id == "7");
+```

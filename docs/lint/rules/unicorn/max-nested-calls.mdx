@@ -1,0 +1,61 @@
+---
+title: "unicorn/max-nested-calls"
+description: "Enforce a maximum depth of calls nested in the arguments of other calls"
+---
+
+Nested calls run from the inside out, so you read `save(normalize(parse(read(file))))` backwards, counting parentheses on the way. Past a few levels, a variable with a good name for a step in the middle is easier to follow.
+
+A call counts as nested when it is in an argument of another call or of a `new` expression. By default up to 3 levels are allowed, and each call that is deeper is reported.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 1} */}
+
+```js
+save(normalize(parse(read(file))));
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+const config = parse(read(file));
+save(normalize(config));
+```
+
+A chain of methods is not nesting:
+
+{/* good */}
+
+```js
+const total = text.trim().split(",").map(Number).filter(Boolean).reduce(add);
+```
+
+The count starts again inside a function, a class or JSX:
+
+{/* good */}
+
+```js
+schedule(retry(withTimeout(() => save(normalize(config)))));
+```
+
+## Options
+
+| Option | Default | What it does                         |
+| ------ | ------- | ------------------------------------ |
+| `max`  | `3`     | The deepest nesting that is allowed. |
+
+{/* bad {"options": [{"max": 2}]} */}
+
+```js
+save(normalize(parse(text)));
+```
+
+{/* good {"options": [{"max": 4}]} */}
+
+```js
+save(normalize(parse(read(file))));
+```

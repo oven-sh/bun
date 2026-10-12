@@ -1,0 +1,90 @@
+---
+title: "react/jsx-max-depth"
+description: "Enforce a maximum depth of nested JSX elements"
+---
+
+Deeply nested JSX is hard to follow, and it is often a sign that part of the tree wants to be a component of its own. The outermost element has depth 0, its children depth 1, and so on. By default the rule reports an element deeper than 2.
+
+A variable that holds JSX and is used as a child, as in `{header}`, counts with the elements inside it. Elements inside a function, such as the callback of `.map()`, start again at depth 0.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const page = (
+  <main>
+    <section>
+      <ul>
+        <li>First</li>
+      </ul>
+    </section>
+  </main>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const page = (
+  <main>
+    <section>
+      <ItemList />
+    </section>
+  </main>
+);
+```
+
+{/* good */}
+
+```jsx
+const page = (
+  <main>
+    <section>
+      <ul>
+        {items.map(item => (
+          <li key={item.id}>
+            <a href={item.url}>{item.title}</a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  </main>
+);
+```
+
+## Options
+
+| Option | Default | What it does                       |
+| ------ | ------- | ---------------------------------- |
+| `max`  | `2`     | The deepest level that is allowed. |
+
+{/* bad {"options": [{"max": 1}]} */}
+
+```jsx
+const page = (
+  <main>
+    <section>
+      <ItemList />
+    </section>
+  </main>
+);
+```
+
+Moving part of the tree to a variable does not change its depth:
+
+{/* bad {"options": [{"max": 1}]} */}
+
+```jsx
+const section = (
+  <section>
+    <ItemList />
+  </section>
+);
+
+const page = <main>{section}</main>;
+```

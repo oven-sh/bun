@@ -1,0 +1,59 @@
+---
+title: "react/prefer-es6-class"
+description: "Enforce one way to write class components: `class` or `createReactClass`"
+---
+
+A class component can be written with `class` or with `createReactClass()`. The two differ in how methods are bound and how the first state and the default props are set, so a codebase that mixes them is harder to read. By default, `class` is required.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```jsx
+const Greeting = createReactClass({
+  render() {
+    return <h1>Hello {this.props.name}</h1>;
+  },
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+class Greeting extends React.Component {
+  render() {
+    return <h1>Hello {this.props.name}</h1>;
+  }
+}
+```
+
+## Options
+
+| Option               | What it does                                        |
+| -------------------- | --------------------------------------------------- |
+| `"always"` (default) | Report components made with `createReactClass()`.   |
+| `"never"`            | Report components written as a `class` declaration. |
+
+{/* bad {"options": ["never"]} */}
+
+```jsx
+class Greeting extends React.Component {
+  render() {
+    return <h1>Hello {this.props.name}</h1>;
+  }
+}
+```
+
+{/* good {"options": ["never"]} */}
+
+```jsx
+const Greeting = createReactClass({
+  render() {
+    return <h1>Hello {this.props.name}</h1>;
+  },
+});
+```

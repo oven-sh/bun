@@ -1,0 +1,43 @@
+---
+title: "@typescript-eslint/no-dynamic-delete"
+description: "Disallow `delete` with a computed property key"
+---
+
+`delete sessions[userId]` with a key that is only known at run time means the object is used as a map. TypeScript cannot check that the key exists, and `delete` does not tell you whether it removed anything. Use a `Map` or a `Set` instead. Their `.delete()` returns `true` only if the key was there.
+
+A literal key is fine: a string, a number, or a negative number.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+
+```ts
+const sessions: Record<string, Date> = {};
+
+function logout(userId: string) {
+  delete sessions[userId];
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+const sessions = new Map<string, Date>();
+
+function logout(userId: string) {
+  sessions.delete(userId);
+}
+```
+
+{/* good */}
+
+```ts
+const headers: Record<string, string> = {};
+
+delete headers.cookie;
+delete headers["set-cookie"];
+```

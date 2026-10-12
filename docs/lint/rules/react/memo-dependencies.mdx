@@ -1,0 +1,50 @@
+---
+title: "react-hooks/memo-dependencies"
+description: "Require the dependency list of `useMemo` and `useCallback` to match what the callback reads"
+---
+
+`useMemo` and `useCallback` keep their result until a value in the dependency list changes. If the callback reads a value that is not in the list, the result stays the same when that value changes, and the component shows old data. A value in the list that the callback does not read makes it run again for nothing.
+
+This is one of the checks of the React Compiler.
+
+## Examples
+
+Reported, because `query` is missing from the list:
+
+{/* bad */}
+
+```jsx
+import { useMemo } from "react";
+
+function Results({ items, query }) {
+  const visible = useMemo(() => items.filter(item => item.name.includes(query)), [items]);
+  return <List items={visible} />;
+}
+```
+
+Reported, because the callback does not read `theme`:
+
+{/* bad */}
+
+```jsx
+import { useCallback } from "react";
+
+function SaveButton({ save, draft, theme }) {
+  const onClick = useCallback(() => save(draft), [save, draft, theme]);
+  return <button onClick={onClick}>Save</button>;
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+import { useCallback, useMemo } from "react";
+
+function Results({ items, query, select }) {
+  const visible = useMemo(() => items.filter(item => item.name.includes(query)), [items, query]);
+  const onSelect = useCallback(item => select(item.id), [select]);
+  return <List items={visible} onSelect={onSelect} />;
+}
+```

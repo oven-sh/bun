@@ -16,11 +16,11 @@ pub struct PreferLazySchema {
 
 const EAGER_SCHEMA: Message = Message::new(
     "eagerSchema",
-    "This schema is built as soon as the module is evaluated. Build it when it is first used.",
+    "This schema is built as soon as the module is imported. Build it when it is first used.",
 );
 const EAGER_SCHEMA_WITH_WRAPPER: Message = Message::new(
     "eagerSchemaWithWrapper",
-    "This schema is built as soon as the module is evaluated. Build it when it is first used: `{{wrapper}}(() => ..)`.",
+    "This schema is built as soon as the module is imported. Build it when it is first used: `{{wrapper}}(() => ..)`.",
 );
 
 impl PreferLazySchema {

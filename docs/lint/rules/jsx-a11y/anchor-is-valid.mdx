@@ -1,0 +1,72 @@
+---
+title: "jsx-a11y/anchor-is-valid"
+description: "Require links to have a real `href`, and buttons to be `button` elements"
+---
+
+An `a` without an `href` cannot be reached with the Tab key and is not announced as a link. An `a` with `href="#"` or `href="javascript:..."` and an `onClick` is announced as a link but acts like a button: Space does not press it, and "open in new tab" leads nowhere.
+
+Use `a` with a real address to go somewhere. Use `button` to do something.
+
+- An `href` is missing if it has no value, or is `null` or `undefined`.
+- An `href` is invalid if it is `""` or `"#"`, or starts with `javascript:`.
+- A link with spread props and no `href` is not reported, because the `href` may be in the spread.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```jsx
+const home = <a>Home</a>;
+const top = <a href="#">Back to top</a>;
+const save = (
+  <a href="#" onClick={saveDraft}>
+    Save
+  </a>
+);
+```
+
+Not reported:
+
+{/* good */}
+
+```jsx
+const home = <a href="/">Home</a>;
+const top = <a href="#top">Back to top</a>;
+const save = <button onClick={saveDraft}>Save</button>;
+const tracked = (
+  <a href="/pricing" onClick={trackClick}>
+    Pricing
+  </a>
+);
+const docs = <a {...linkProps}>Docs</a>;
+```
+
+## Options
+
+| Option        | Default   | What it does                                                                                                                                               |
+| ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `components`  | `[]`      | Components to check like `a`.                                                                                                                              |
+| `specialLink` | `[]`      | Attributes that count as `href`, besides `href`.                                                                                                           |
+| `aspects`     | all three | Which checks run: `"noHref"` (no `href`), `"invalidHref"` (an `href` that goes nowhere), `"preferButton"` (an `onClick` with a missing or invalid `href`). |
+
+{/* bad {"options": [{"components": ["Link"], "specialLink": ["to"]}]} */}
+
+```jsx
+const home = <Link>Home</Link>;
+```
+
+{/* good {"options": [{"components": ["Link"], "specialLink": ["to"]}]} */}
+
+```jsx
+const home = <Link to="/">Home</Link>;
+```
+
+With only `"invalidHref"`, a link without an `href` is allowed:
+
+{/* good {"options": [{"aspects": ["invalidHref"]}]} */}
+
+```jsx
+const home = <a>Home</a>;
+```

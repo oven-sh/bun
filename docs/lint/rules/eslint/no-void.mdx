@@ -1,0 +1,52 @@
+---
+title: "no-void"
+description: "Disallow the `void` operator"
+---
+
+`void expression` runs the expression and gives `undefined`. Few people know the operator, and `undefined` says the same thing in a word that everybody can read.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```js
+let selected = void 0;
+
+button.onclick = () => void save();
+```
+
+Not reported:
+
+{/* good */}
+
+```js
+let selected = undefined;
+
+button.onclick = () => {
+  save();
+};
+```
+
+## Options
+
+| Option             | Default | What it does                                 |
+| ------------------ | ------- | -------------------------------------------- |
+| `allowAsStatement` | `false` | Allow `void` when it is the whole statement. |
+
+`void` at the start of a statement is how you tell `@typescript-eslint/no-floating-promises` that a promise is ignored on purpose. Turn this option on if you use both rules.
+
+{/* good {"options": [{"allowAsStatement": true}]} */}
+
+```js
+void save();
+```
+
+Anywhere else, `void` is still reported:
+
+{/* bad {"options": [{"allowAsStatement": true}]} */}
+
+```js
+const result = void save();
+```

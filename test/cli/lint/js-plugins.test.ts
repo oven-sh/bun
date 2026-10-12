@@ -607,18 +607,19 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     const notes = async (files: Record<string, string>, more: object, ...flags: string[]) =>
       (await lint({ ...files, ".oxlintrc.json": besideNode(more) }, [...flags, "a.js"])).stderr
         .split("\n")
-        .filter(it => it.startsWith("note: "));
-    const advice = `remove it from "jsPlugins" and add "node" to "plugins".`;
+        .filter(it => it.startsWith("note: ") || it.startsWith("  To use "));
 
     test(
       "a package, with its version",
       async () => {
         const jsPlugins = ["eslint-plugin-n"];
         expect(await notes(packaged("17.16.2"), { jsPlugins, rules })).toEqual([
-          `note: 1 rule of "n" ran in JavaScript (eslint-plugin-n 17.16.2, from "jsPlugins"). bun lint has it built in, as of 18.4.1: ${advice} Reports may differ.`,
+          `note: 1 "n" rule ran in JavaScript from eslint-plugin-n 17.16.2, but bun lint has it built in (version 18.4.1)`,
+          `  To use the built-in rule, remove eslint-plugin-n from "jsPlugins" and add "node" to "plugins". Reports may differ.`,
         ]);
         expect(await notes(packaged("18.4.9"), { jsPlugins, rules }, "-f", "stylish")).toEqual([
-          `note: 1 rule of "n" ran in JavaScript (eslint-plugin-n 18.4.9, from "jsPlugins"). bun lint has it built in, as of 18.4.1: ${advice}`,
+          `note: 1 "n" rule ran in JavaScript from eslint-plugin-n 18.4.9, but bun lint has it built in (version 18.4.1)`,
+          `  To use the built-in rule, remove eslint-plugin-n from "jsPlugins" and add "node" to "plugins".`,
         ]);
       },
       timeout,
@@ -633,7 +634,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
           `"no-new-require": rule("new"), "no-sync": rule("sync"), "only-there"`,
         );
         expect(await notes({ ...calledN, "n.js": plugin }, { rules: { ...rules, ...more } })).toEqual([
-          `note: 2 rules of "n" ran in JavaScript (./n.js, from "jsPlugins"). bun lint has them built in, as of 18.4.1: write them "node/.." and add "node" to "plugins". Keep it for the other 1. Reports may differ.`,
+          `note: 2 "n" rules ran in JavaScript from ./n.js, but bun lint has them built in (version 18.4.1)`,
+          `  To use the built-in rules, rename them to "node/.." and add "node" to "plugins". Keep ./n.js for the other 1 rule. Reports may differ.`,
         ]);
       },
       timeout,
@@ -1211,7 +1213,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       `);
       // What the process prints that evaluates the file is not shown.
       expect(stderr).not.toContain("The configuration file runs.");
-      expect(stderr).toMatch(/JavaScript: [12] engines, which have loaded [12] modules, /);
+      expect(stderr).toMatch(/JavaScript: [12] engines loaded [12] modules, /);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -1244,7 +1246,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       const counts = JSON.parse(raw).map((it: any) => it.messages.length);
       expect(counts).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1]);
       expect(stderr.split("The configuration file runs.").length - 1).toBe(1);
-      expect(stderr).toContain(`with the whole configuration file, which alone has the plugin "inline"`);
+      expect(stderr).toContain(`; loaded the whole config file for the plugin "inline"`);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -1357,7 +1359,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
 
         3 problems"
       `);
-      expect(stderr).toContain(`with the whole configuration file, which alone has what is in "settings"`);
+      expect(stderr).toContain(`; loaded the whole config file for "settings"`);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -1641,7 +1643,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         4 problems"
       `);
       expect(stderr).toContain(
-        "2 rules in JavaScript did not run, only the built-in rules have types: typed/at-once, typed/later",
+        "2 rules did not run because rules that run in JavaScript cannot use type information: typed/at-once, typed/later",
       );
       expect(stderr).not.toContain("You have used a rule");
       expect(exitCode).toBe(2);
@@ -1812,7 +1814,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ["-f", "unix", "--timing", "a.js"],
       );
       expect(stdout).toContain("<dir>/a.js:1:1: one [Error/own/one]");
-      expect(stderr).toContain("JavaScript: 1 engines, which have loaded 1 modules");
+      expect(stderr).toContain("JavaScript: 1 engines loaded 1 modules");
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -2211,7 +2213,7 @@ export default {
         { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];`, "a.js": "debugger;\n" },
         ["--timing", "a.js"],
       );
-      expect(stderr).toContain("JavaScript: 0 engines, which have loaded 0 modules, 0.0 MB of source, in 0.0ms");
+      expect(stderr).toContain("JavaScript: 0 engines loaded 0 modules, 0.0 MB of source, in 0.0ms");
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -2371,7 +2373,7 @@ export default {
         );
         expect(exitCode).toBe(1);
         const seen = raw.split(":1:1: seen [Error/own/grows]").length - 1;
-        return { seen, freed: Number(/, freed to stay in the memory: (\d+)/.exec(stderr)?.[1] ?? 0) };
+        return { seen, freed: Number(/, engines freed to save memory: (\d+)/.exec(stderr)?.[1] ?? 0) };
       };
       const more = Math.max(40, availableParallelism() + 1);
       const [one, some, many] = await Promise.all([run(1, "8"), run(96, "8"), run(more, "0")]);

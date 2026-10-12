@@ -1,0 +1,44 @@
+---
+title: "@typescript-eslint/no-non-null-asserted-optional-chain"
+description: "Disallow `!` after an optional chain"
+---
+
+`user?.name` is `undefined` when `user` is missing. That is what `?.` is for. A `!` after it tells TypeScript the result is never `undefined`, so the type no longer matches what happens at runtime, and the next line that uses the value can throw.
+
+If `user` is always there, you do not need `?.`. If it is not, handle the `undefined`.
+
+This rule is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+declare const user: { name: string; address?: { city: string } } | undefined;
+
+const name: string = user?.name!;
+const city: string = user?.address?.city!;
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+declare const user: { name: string; address?: { city: string } } | undefined;
+
+const name: string = user?.name ?? "guest";
+const city: string | undefined = user?.address?.city;
+```
+
+A `!` in the middle of the chain is allowed. Here it is only about `address`, and only when there is a `user`:
+
+{/* good */}
+
+```ts
+declare const user: { name: string; address?: { city: string } } | undefined;
+
+const city: string | undefined = user?.address!.city;
+```

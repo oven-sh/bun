@@ -1,0 +1,87 @@
+---
+title: "@typescript-eslint/no-unnecessary-type-assertion"
+description: "Disallow `as`, `<T>` and `!` assertions that do not change the type"
+---
+
+An assertion tells the compiler "trust me". If the expression already has that type, or the place that receives it accepts the original type, the assertion does nothing today. It stays in the code, though, and silences the compiler when the types change later.
+
+`--fix` removes the assertion.
+
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 3} */}
+
+```ts
+interface User {
+  name: string;
+  email?: string;
+}
+
+function show(user: User) {
+  const name = user.name as string;
+  const length = user.name!.length;
+  const email: string | undefined = user.email!;
+  return [name, length, email];
+}
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+interface User {
+  name: string;
+  email?: string;
+}
+
+function show(user: User) {
+  const name = user.name;
+  const length = user.name.length;
+  const email: string = user.email!;
+  return [name, length, email];
+}
+```
+
+An assertion that narrows or widens the type is not reported:
+
+{/* good */}
+
+```ts
+function parse(text: string) {
+  const data = JSON.parse(text) as { id: number };
+  let mode = "dark" as "dark" | "light";
+  return [data, mode];
+}
+```
+
+## Options
+
+| Option                        | Default | What it does                                                                                             |
+| ----------------------------- | ------- | -------------------------------------------------------------------------------------------------------- |
+| `checkLiteralConstAssertions` | `false` | Also report `as const` on a literal in a `const` declaration, where the type is the literal type anyway. |
+| `typesToIgnore`               | `[]`    | Type names, as written after `as`. Assertions to these types are never reported.                         |
+
+Reported only with `checkLiteralConstAssertions`:
+
+{/* bad {"options": [{"checkLiteralConstAssertions": true}]} */}
+
+```ts
+const retries = 3 as const;
+```
+
+Not reported with `"typesToIgnore": ["UserId"]`:
+
+{/* good {"options": [{"typesToIgnore": ["UserId"]}]} */}
+
+```ts
+type UserId = string;
+
+function key(id: UserId) {
+  return id as UserId;
+}
+```

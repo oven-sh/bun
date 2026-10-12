@@ -1,0 +1,98 @@
+---
+title: "jest/consistent-test-it"
+description: "Enforce one of `test` or `it` for defining tests"
+---
+
+`test` and `it` are two names for the same function. When a project uses both at random, a reader wonders whether the difference means something. It does not.
+
+By default, a test at the top level of a file uses `test`, and a test inside a `describe` uses `it`.
+
+`--fix` renames the call. It does not change the import, so import the new name yourself.
+
+## Examples
+
+Reported:
+
+{/* bad {"count": 2} */}
+
+```ts
+import { describe, expect, it, test } from "@jest/globals";
+
+it("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+
+describe("subtract", () => {
+  test("goes below zero", () => {
+    expect(1 - 2).toBe(-1);
+  });
+});
+```
+
+Not reported:
+
+{/* good */}
+
+```ts
+import { describe, expect, it, test } from "@jest/globals";
+
+test("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+
+describe("subtract", () => {
+  it("goes below zero", () => {
+    expect(1 - 2).toBe(-1);
+  });
+});
+```
+
+Forms such as `it.skip`, `it.only` and `it.each` are checked too:
+
+{/* bad */}
+
+```ts
+import { expect, it } from "@jest/globals";
+
+it.skip("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+```
+
+## Options
+
+| Option           | Default                                           | What it does                                                       |
+| ---------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
+| `fn`             | `"test"`                                          | The name for tests at the top level of a file: `"test"` or `"it"`. |
+| `withinDescribe` | the value of `fn` if you set it, otherwise `"it"` | The name for tests inside a `describe`.                            |
+
+To use `test` everywhere, set only `fn`:
+
+```toml bunfig.toml
+[lint.rules]
+"jest/consistent-test-it" = ["error", { fn = "test" }]
+```
+
+{/* bad {"options": [{"fn": "test"}]} */}
+
+```ts
+import { describe, expect, it } from "@jest/globals";
+
+describe("subtract", () => {
+  it("goes below zero", () => {
+    expect(1 - 2).toBe(-1);
+  });
+});
+```
+
+{/* good {"options": [{"fn": "test"}]} */}
+
+```ts
+import { describe, expect, test } from "@jest/globals";
+
+describe("subtract", () => {
+  test("goes below zero", () => {
+    expect(1 - 2).toBe(-1);
+  });
+});
+```

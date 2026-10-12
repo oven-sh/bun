@@ -313,6 +313,15 @@ impl<'e> Host<'e> {
         rules
     }
 
+    /// The plugins that are known, each with where it is: `[directory, specifier, alias]` of [`Host::load`], or
+    /// `[location, null, prefix]` of [`Host::load_located`].
+    pub fn plugins(&self) -> Vec<(Arc<Plugin>, Json)> {
+        let state = self.state.lock();
+        let located =
+            |it: &Loaded| Some((Arc::clone(&it.plugin), crate::json::parse(&it.location)?));
+        state.plugins.iter().filter_map(located).collect()
+    }
+
     /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
     /// is looked for from there. `alias`: the prefix of its rules, if it is not the name that the
     /// plugin has for itself.
@@ -662,7 +671,7 @@ impl<'e> Host<'e> {
                         _ => return Err(OUT_OF_STEP.to_vec().into()),
                     }
                     let loading = &mut self.state.lock().loading;
-                    loading.needs_the_configuration_for(b"what is in \"settings\"");
+                    loading.needs_the_configuration_for(b"\"settings\"");
                 }
                 _ => return Err(OUT_OF_STEP.to_vec().into()),
             }

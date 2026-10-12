@@ -2155,6 +2155,46 @@ catalogs:
     await expectFrozenInstall(dir);
   });
 
+  test.concurrent("a name with a range in one dependency group and catalog: in another", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-group-catalog", workspaces: ["packages/*"] }),
+        ".yarnrc.yml": `catalog:\n  a-dep: ~1.0.2\n  no-deps: ^1.0.0\n`,
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          // yarn installs the optionalDependencies range over the dependencies one, and devDependencies' over both
+          dependencies: { "a-dep": "^1.0.1", "no-deps": "1.x" },
+          devDependencies: { "no-deps": "catalog:" },
+          optionalDependencies: { "a-dep": "catalog:" },
+        }),
+        // keyed by the catalog's ranges
+        "yarn.lock": yarnLock({
+          "a-dep@npm:~1.0.2": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+          "a@workspace:packages/a": [
+            `resolution: "a@workspace:packages/a"`,
+            `dependencies:`,
+            `  a-dep: "npm:~1.0.2"`,
+            `  no-deps: "npm:^1.0.0"`,
+            `dependenciesMeta:`,
+            `  a-dep:`,
+            `    optional: true`,
+          ],
+          "berry-group-catalog@workspace:.": [`resolution: "berry-group-catalog@workspace:."`],
+          "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["a-dep@1.0.3", "a@workspace:packages/a", "no-deps@1.0.0"]);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+  });
+
   test.concurrent("a berry lockfile that holds the yarn v1 marker below its first lines", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },

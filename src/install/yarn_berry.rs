@@ -1452,21 +1452,30 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         let deps = this.packages.items_dependencies()[pkg_id];
         for dep_id in deps.begin()..deps.end() {
             let dep = this.buffers.dependencies[dep_id as usize].clone();
+            // `catalog:` -> the catalog's range, which is what yarn keyed the entry by.
+            // The range yarn installs for the name can be another group's `catalog:`.
+            let yarn_range = original_specs.by_dependency.get(&dep_id);
+            let catalog: Option<String> =
+                match yarn_range.and_then(|range| range.strip_prefix(b"catalog:")) {
+                    Some(group) => Some(sbuf!(this).append(group)?),
+                    None if yarn_range.is_none()
+                        && dep.version.tag == dependency::VersionTag::Catalog =>
+                    {
+                        Some(*dep.version.catalog())
+                    }
+                    None => None,
+                };
             let name = dep.name.slice(string_bytes!(this));
             let original_literal = dep.version.literal.slice(string_bytes!(this));
-            // `catalog:` -> the catalog's range, which is what yarn keyed the entry by
-            let catalog_range: Option<Vec<u8>> =
-                if dep.version.tag == dependency::VersionTag::Catalog {
-                    this.catalogs
-                        .get(this, *dep.version.catalog(), dep.name)
-                        .map(|d| d.version.literal.slice(string_bytes!(this)).to_vec())
-                } else {
-                    None
-                };
-            let literal: &[u8] = match original_specs.by_dependency.get(&dep_id) {
-                Some(spec) => spec,
-                None => catalog_range.as_deref().unwrap_or(original_literal),
-            };
+            let catalog_range: Option<Vec<u8>> = catalog.and_then(|group| {
+                this.catalogs
+                    .get(this, group, dep.name)
+                    .map(|d| d.version.literal.slice(string_bytes!(this)).to_vec())
+            });
+            let literal: &[u8] = catalog_range
+                .as_deref()
+                .or(yarn_range.map(|range| &**range))
+                .unwrap_or(original_literal);
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
             // The migration rewrites `portal:` / `link:` ranges in package.json to
@@ -1623,16 +1632,26 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     if original_specs.in_several_groups.contains(&dep_id) {
                         // what yarn locked for the range it installs has to be
                         // something this edge's own range, which bun reads, accepts
-                        let accepted = match (dep.version.tag, bound.tag) {
-                            (dependency::VersionTag::Npm, crate::resolution::Tag::Npm) => {
-                                dep.version.npm().version.satisfies(
-                                    bound.npm().version,
-                                    string_bytes!(this),
-                                    string_bytes!(this),
-                                )
+                        // (a `catalog:` edge reads the range of its own catalog)
+                        let own = match dep.version.tag {
+                            dependency::VersionTag::Catalog => this
+                                .catalogs
+                                .get(this, *dep.version.catalog(), dep.name)
+                                .map(|d| d.version),
+                            _ => Some(dep.version.clone()),
+                        };
+                        let accepted = match (own.as_ref().map(|v| v.tag), bound.tag) {
+                            (Some(dependency::VersionTag::Npm), crate::resolution::Tag::Npm) => {
+                                own.as_ref().is_some_and(|v| {
+                                    v.npm().version.satisfies(
+                                        bound.npm().version,
+                                        string_bytes!(this),
+                                        string_bytes!(this),
+                                    )
+                                })
                             }
                             (
-                                dependency::VersionTag::Workspace,
+                                Some(dependency::VersionTag::Workspace),
                                 crate::resolution::Tag::Workspace,
                             ) => true,
                             _ => false,

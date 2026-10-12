@@ -669,7 +669,8 @@ impl<'a> Installer<'a> {
             } else {
                 let staging = self.staging_lock.get_or_init(StagingLock::acquire).mode;
                 // No wait: on Windows a script that is still running keeps its package open.
-                self.clear_local_store_package(entry_id, staging, false);
+                // Either way the final path no longer passes the installed check.
+                let _ = self.clear_local_store_package(entry_id, staging, false);
             }
         }
         is_store_copy
@@ -1610,7 +1611,9 @@ impl<'a> Installer<'a> {
                 if is_stale_link == Some(false) {
                     self.remove_planted_links_in(entry_id, local.len())
                         .map_err(TaskError::LinkPackage)?;
-                    link_in_place |= !self.clear_local_store_package(entry_id, staging, true);
+                    link_in_place |= self
+                        .clear_local_store_package(entry_id, staging, true)
+                        .is_err();
                 }
             }
 
@@ -2302,8 +2305,13 @@ impl<'a> Installer<'a> {
         ));
     }
 
-    /// Frees the final path, and the staging path of a dead install's rest. False: link in place.
-    fn clear_local_store_package(&self, entry_id: StoreEntryId, mode: Staging, wait: bool) -> bool {
+    /// Frees the final path, and the staging path of a dead install's rest. On an error, link in place.
+    fn clear_local_store_package(
+        &self,
+        entry_id: StoreEntryId,
+        mode: Staging,
+        wait: bool,
+    ) -> sys::Maybe<()> {
         let mut final_ = AutoPath::init_top_level_dir();
         self.append_store_path(&mut final_, entry_id);
         let mut staging = AutoPath::init_top_level_dir();
@@ -2330,9 +2338,9 @@ impl<'a> Installer<'a> {
         }
         if is_refused(&moved) {
             self.delete_local_store_package_in_place(entry_id);
-            return false;
+            return moved.map_err(|refused| refused.err);
         }
-        Fd::cwd().delete_tree(staging.slice()).is_ok()
+        Fd::cwd().delete_tree(staging.slice())
     }
 
     /// The final path is what the next install's skip check looks at. False: link in place.

@@ -329,6 +329,8 @@ pub struct VirtualMachine {
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
     pub pending_ipc: Option<PendingIpc>,
+    /// The process started as a `node:cluster` worker and is not set up yet. `reload_entry_point` takes it.
+    pub(crate) cluster_worker_pending: bool,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -3414,7 +3416,7 @@ impl VirtualMachine {
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
 
-        // Node.js `--trace-*` and `--stack-trace-limit` flags need
+        // A `node:cluster` worker and the Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
         // `reload_entry_point` is the single funnel for the main entry,
         // workers, and `-e` evals, so this covers them all. Gated on a cheap
@@ -3430,7 +3432,9 @@ impl VirtualMachine {
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
             arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
         }
-        let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
+        let is_cluster_worker = core::mem::take(&mut self.cluster_worker_pending);
+        let needs_pre_execution = is_cluster_worker
+            || bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
@@ -4300,8 +4304,10 @@ impl VirtualMachine {
         }
 
         // Not removed from the map: `process.env` and `Bun.serve` read it there.
-        if map.get(b"NODE_UNIQUE_ID").is_some() {
+        if let Some(unique_id) = map.get(b"NODE_UNIQUE_ID") {
             bun_dotenv::omit_cluster_unique_id_from_child_env();
+            // Node.js sets a worker up for a non-empty value, with or without a channel.
+            self.cluster_worker_pending = self.is_main_thread() && !unique_id.is_empty();
         }
 
         // Node.js checks if this is set to "1" and no other value

@@ -167,7 +167,9 @@ cluster._getServer = function (obj, options, cb) {
     if (!indexes.has(indexesKey)) {
       return;
     }
-    cluster.worker!.state = "listening";
+    // Not set up as a worker: NODE_UNIQUE_ID was assigned at run time, or the process has no script (-e).
+    if (cluster.worker === null) return;
+    cluster.worker.state = "listening";
     const address = obj.address();
     message.act = "listening";
     message.port = (address && address.port) || options.port;
@@ -329,7 +331,7 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
-// Only the first request runs: a repeat would see `handles` empty and close the channel before the servers.
+// Unlike Node.js, only the first request runs: a repeat would see `handles` empty and close the channel early.
 let disconnectStarted = false;
 
 Worker.prototype._disconnect = function (this: ClusterWorker, primaryInitiated?) {

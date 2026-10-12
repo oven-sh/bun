@@ -4750,6 +4750,116 @@ describe("bundler", () => {
     },
   });
 
+  // s and r import each other, s imports c (top-level await), and p (in a cycle
+  // with q) imports r: all five are async. q missed the flag when s had the
+  // lower source index, and its plain arrow got an `await`. The index order of
+  // s.mjs and p.mjs follows the hash of their paths, so the second build swaps
+  // which file has which role. The metafile lists the inputs in index order.
+  test.concurrent("edgecase/AsyncWrapperOnImportCycleInBothSourceIndexOrders", async () => {
+    const graph = (sRole: string, pRole: string) => ({
+      "entry.mjs": `
+        const first = await import("./s.mjs");
+        const second = await import("./p.mjs");
+        const { s, p, viaQ } = { ...first, ...second };
+        console.log(s() + " " + p() + " " + viaQ());
+      `,
+      [`${sRole}.mjs`]: `
+        import { r } from "./r.mjs";
+        import { c } from "./c.mjs";
+        export const s = () => "s:" + r + ":" + c;
+      `,
+      "r.mjs": `
+        import { s } from "./${sRole}.mjs";
+        export const r = "r";
+        export function getS() { return s; }
+      `,
+      "c.mjs": `export const c = await Promise.resolve("c");`,
+      [`${pRole}.mjs`]: `
+        import { q, getP } from "./q.mjs";
+        import { r } from "./r.mjs";
+        export const p = () => "p:" + q + ":" + r;
+        export const viaQ = () => getP()();
+      `,
+      "q.mjs": `
+        import { p } from "./${pRole}.mjs";
+        export const q = "q";
+        export function getP() { return p; }
+      `,
+    });
+    using dir = tempDir("async-cycle-index-order", graph("s", "p"));
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const expected = { stdout: "s:r:c p:q:r p:q:r\n", stderr: "", exitCode: 0 };
+
+    const results: Record<string, unknown> = {};
+    const sRoleIsFirst: boolean[] = [];
+    for (const [sRole, pRole] of [
+      ["s", "p"],
+      ["p", "s"],
+    ]) {
+      for (const [name, contents] of Object.entries(graph(sRole, pRole))) {
+        writeFileSync(join(String(dir), name), contents);
+      }
+      const source = await run("entry.mjs");
+      const build = await run("build", "./entry.mjs", `--outdir=out-${sRole}`, `--metafile=meta-${sRole}.json`);
+      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      results[`${sRole}.mjs imports c.mjs`] = { source, bundle: await run(`out-${sRole}/entry.js`) };
+
+      const inputs = Object.keys((await Bun.file(join(String(dir), `meta-${sRole}.json`)).json()).inputs);
+      sRoleIsFirst.push(inputs.indexOf(`${sRole}.mjs`) < inputs.indexOf(`${pRole}.mjs`));
+    }
+    expect(results).toEqual({
+      "s.mjs imports c.mjs": { source: expected, bundle: expected },
+      "p.mjs imports c.mjs": { source: expected, bundle: expected },
+    });
+    expect(sRoleIsFirst.toSorted()).toEqual([false, true]);
+  });
+  // The same graph behind one `import()`: s also re-exports from p. q missed
+  // the flag here whatever the source indices were.
+  itBundled("edgecase/AsyncWrapperOnImportCycleBehindOneImport", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = await import("./s.js");
+        console.log(m.s + " " + m.p + " " + m.viaQ());
+      `,
+      "/s.js": /* js */ `
+        import { r } from "./r.js";
+        import { c } from "./c.js";
+        export { p, viaQ } from "./p.js";
+        export const s = "s:" + r + ":" + c;
+      `,
+      "/r.js": /* js */ `
+        import { s } from "./s.js";
+        export const r = "r";
+        export function getS() { return s; }
+      `,
+      "/c.js": /* js */ `export const c = await Promise.resolve("c");`,
+      "/p.js": /* js */ `
+        import { q, getP } from "./q.js";
+        import { r } from "./r.js";
+        export const p = "p:" + q + ":" + r;
+        export const viaQ = () => getP();
+      `,
+      "/q.js": /* js */ `
+        import { p } from "./p.js";
+        export const q = "q";
+        export function getP() { return p; }
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "s:r:c p:q:r p:q:r",
+    },
+  });
+
   // `a.mjs` imports a CommonJS file, then an ES module that a lazy route also
   // reaches, so the bundle wraps both. `init_w()` stays below the `require_c()`
   // of the import before it: every bundle prints what the source prints.

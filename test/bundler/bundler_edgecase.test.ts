@@ -2833,6 +2833,25 @@ describe("bundler", () => {
     },
   });
 
+  // The unbraced body of an `if` has the module scope, but its `var` is not a
+  // top-level statement.
+  itBundled("edgecase/LoweredTopLevelUsingSingleStatementVarInEsmWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        const mod = await import("./lazy.js");
+        console.log(mod.read());
+      `,
+      "/lazy.js": /* js */ `
+        using handle = { val: 42, [Symbol.dispose]() {} };
+        if (handle.val) var fromIf = handle.val + 1;
+        export function read() { return fromIf; }
+      `,
+    },
+    run: {
+      stdout: "43",
+    },
+  });
+
   itBundled("edgecase/NoOutWithTwoFiles", {
     files: {
       "/entry.ts": `

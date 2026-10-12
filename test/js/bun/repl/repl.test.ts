@@ -793,6 +793,17 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("a var in the unbraced body of an if persists", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "if (Math.random() < 2) var fromIf = 99",
+        "fromIf",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", "99"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("multiline input", () => {

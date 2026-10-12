@@ -7157,4 +7157,28 @@ describe.concurrent("bundler", () => {
       stdout: "5 9 2 7",
     },
   });
+  // https://github.com/evanw/esbuild/issues/4348
+  itBundled("default/BundleESMWithNestedVarIssue4348", {
+    files: {
+      "/entry.js": /* js */ `
+        var foo = Object.entries({ ...require('./foo') }).join('|')
+        if (foo !== 'a,a|b,b|c,c|d,d|e,e|f,f|g,g|h,h|i,i|j,j') throw 'fail: ' + foo
+      `,
+      "/foo.js": /* js */ `
+        var a = 'a'
+        for (var b = 'b'; 0; ) ;
+        if (true) { var c = 'c' }
+        if (true) var d = 'd'
+        if (false) {} else var e = 'e'
+        var x = 1
+        while (x--) var f = 'f'
+        do var g = 'g'; while (0);
+        for (; x++; ) var h = 'h'
+        for (var y in 'y') var i = 'i'
+        for (var y of 'y') var j = 'j'
+        export { a, b, c, d, e, f, g, h, i, j }
+      `,
+    },
+    run: true,
+  });
 });

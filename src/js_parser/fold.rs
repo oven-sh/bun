@@ -58,7 +58,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     ) -> RelocateVars {
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
-        if p.current_scope == p.module_scope {
+        // The unbraced body of a module-level `if`, `while` or `do` has the module scope, but its `var` is not a top-level statement.
+        if p.current_scope == p.module_scope
+            && !(p.is_inside_single_stmt_body && p.hoists_top_level_declarations())
+        {
             return RelocateVars {
                 ok: false,
                 ..Default::default()

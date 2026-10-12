@@ -1828,14 +1828,36 @@ describe("bundler", () => {
     },
   });
 
+  // Stub react packages for the three tests below. `c` counts its calls, and
+  // a compiled function calls it once per render. So the second number of
+  // each pair that `render` returns is 1 for a compiled function and 0 for a
+  // function that the compiler skipped.
+  const stubReactThatCountsCalls = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    "/node_modules/react/compiler-runtime.js": `
+      let count = 0;
+      exports.c = size => {
+        count++;
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+      exports.calls = () => count;
+    `,
+  };
+  const renderAndCountCalls = /* js */ `
+    function render(fn, props) {
+      const before = calls();
+      const result = fn(props);
+      return [result.props ?? result, calls() - before];
+    }
+  `;
+
   // prune_non_escaping_scopes does not visit the test of a `?:`. A reactive
   // scope that only the test reaches gets no node, but the local that scope
   // reassigns still refers to it. Once that local has to be memoized, Babel
   // raises `Invariant: Expected a node for all scopes` and skips that one
   // function. The last two functions are the controls.
-  //
-  // A compiled function calls the fake `c` once per render, so the second
-  // number of each pair is 1 for a compiled function and 0 for a skipped one.
   itBundled("react-compiler/AssignmentInConditionalTestSkipsOnlyThatFunction", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1887,11 +1909,7 @@ describe("bundler", () => {
           return <div>Hello {name}</div>;
         }
 
-        function render(fn, props) {
-          const before = calls();
-          const result = fn(props);
-          return [result.props ?? result, calls() - before];
-        }
+        ${renderAndCountCalls}
         console.log(JSON.stringify({
           CallInTest: render(CallInTest, { f: () => "x" }),
           ArrayInTest: render(ArrayInTest, { a: 1 }),
@@ -1902,18 +1920,8 @@ describe("bundler", () => {
           Plain: render(Plain, { name: "bun" }),
         }));
       `,
-      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      ...stubReactThatCountsCalls,
       "/node_modules/react/index.js": `exports.createElement = () => null;`,
-      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
-      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
-      "/node_modules/react/compiler-runtime.js": `
-        let count = 0;
-        exports.c = size => {
-          count++;
-          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
-        };
-        exports.calls = () => count;
-      `,
     },
     reactCompiler: true,
     target: "browser",
@@ -1937,9 +1945,6 @@ describe("bundler", () => {
   // block with a single predecessor but where a phi has multiple operands`. It
   // was an `assert_eq!` that ended the build. Babel 1.0.0 raises it and skips
   // that one function. The last two functions are the controls.
-  //
-  // A compiled function calls the fake `c` once per render, so the second
-  // number of each pair is 1 for a compiled function and 0 for a skipped one.
   itBundled("react-compiler/TryBodyThatCannotThrowSkipsOnlyThatFunction", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1999,11 +2004,7 @@ describe("bundler", () => {
           return <div>Hello {name}</div>;
         }
 
-        function render(fn, props) {
-          const before = calls();
-          const result = fn(props);
-          return [result.props, calls() - before];
-        }
+        ${renderAndCountCalls}
         console.log(JSON.stringify({
           ConstantInTryBody: render(ConstantInTryBody),
           LiteralsInTryBody: render(LiteralsInTryBody, { a: "a" }),
@@ -2013,18 +2014,8 @@ describe("bundler", () => {
           Plain: render(Plain, { name: "bun" }),
         }));
       `,
-      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      ...stubReactThatCountsCalls,
       "/node_modules/react/index.js": `exports.useMemo = fn => fn();`,
-      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
-      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
-      "/node_modules/react/compiler-runtime.js": `
-        let count = 0;
-        exports.c = size => {
-          count++;
-          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
-        };
-        exports.calls = () => count;
-      `,
     },
     reactCompiler: true,
     target: "browser",
@@ -2049,9 +2040,6 @@ describe("bundler", () => {
   // of these functions as written: 1.0.0 raises that invariant for the
   // third-argument form and rejects a call in a dependency list one pass
   // earlier. The last function is the control.
-  //
-  // A compiled function calls the fake `c` once per render, so the second
-  // number of each pair is 1 for a compiled function and 0 for a skipped one.
   itBundled("react-compiler/NestedManualMemoCallSkipsOnlyThatFunction", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -2081,11 +2069,7 @@ describe("bundler", () => {
           return <div>{x}</div>;
         }
 
-        function render(fn, props) {
-          const before = calls();
-          const result = fn(props);
-          return [result.props, calls() - before];
-        }
+        ${renderAndCountCalls}
         console.log(JSON.stringify({
           MemoInDependencyList: render(MemoInDependencyList, { a: 1, b: 2 }),
           MemoInCallbackDependencyList: render(MemoInCallbackDependencyList, { a: 5 }),
@@ -2094,18 +2078,8 @@ describe("bundler", () => {
           SequentialMemos: render(SequentialMemos, { a: 1, b: 2 }),
         }));
       `,
-      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      ...stubReactThatCountsCalls,
       "/node_modules/react/index.js": `exports.useMemo = fn => fn(); exports.useCallback = fn => fn;`,
-      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
-      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
-      "/node_modules/react/compiler-runtime.js": `
-        let count = 0;
-        exports.c = size => {
-          count++;
-          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
-        };
-        exports.calls = () => count;
-      `,
     },
     reactCompiler: true,
     target: "browser",

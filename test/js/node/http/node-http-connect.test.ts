@@ -2098,16 +2098,25 @@ describe("a tunnel behind a request head that took more than one read", () => {
 // An accepted CONNECT or Upgrade request has no response. Node.js destroys the socket and writes nothing.
 describe.each([
   [
+    "'connect' request",
     "connect",
     "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
     "HTTP/1.1 200 Connection Established\r\n\r\n",
   ],
   [
+    "'upgrade' request",
     "upgrade",
     "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
     "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
   ],
-] as const)("req.destroy() of a '%s' request", (event, request, accepted) => {
+  [
+    // The parser still reads HTTP here: 2 of the 5 body bytes came.
+    "'upgrade' request whose body still arrives",
+    "upgrade",
+    "POST / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\nContent-Length: 5\r\n\r\nhe",
+    "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n",
+  ],
+] as const)("req.destroy() of a %s", (_, event, request, accepted) => {
   describe.each([
     ["behind the reply of the listener", accepted],
     // A listener that refuses the tunnel. The client must not get a 200.

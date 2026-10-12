@@ -1153,13 +1153,6 @@ impl Run<'_> {
                 not_built_in.add(config);
             }
         }
-        for plugin in not_built_in.plugins() {
-            loader.cannot_do(&[
-                b"The rules of the plugin \"",
-                plugin.as_bytes(),
-                b"\" that the categories turn on did not run. None is built in: take it out of \"plugins\"",
-            ]);
-        }
         let mut unsupported = std::mem::take(&mut *loader.unsupported.lock());
         if options.allow_unsupported {
             for line in unsupported.drain(..) {
@@ -1390,7 +1383,7 @@ impl Run<'_> {
                 );
             }
         }
-        if let Some(note) = not_built_in.note().filter(|_| !options.silent) {
+        for note in not_built_in.notes().filter(|_| !options.silent) {
             pretty!(
                 &mut self.out.stderr,
                 environment.stderr.colors,
@@ -1560,7 +1553,8 @@ impl Run<'_> {
     }
 }
 
-/// What the configurations of the files that were linted, and their comments, turn on and what is left out here on purpose.
+/// What the configurations of the files that were linted, and their comments, turn on without naming it, or where something else
+/// does the work, and what is left out here on purpose. That it did not run is a note, in every format.
 #[derive(Default)]
 struct NotBuiltIn {
     /// [`formatting_rule`]
@@ -1585,18 +1579,12 @@ impl NotBuiltIn {
         self.plugins.extend(plugins.map(|it| it.prefix()));
     }
 
-    /// Nothing does the work of their rules: the run fails.
-    fn plugins(&mut self) -> &[&'static str] {
-        self.plugins.sort_unstable();
-        self.plugins.dedup();
-        &self.plugins
-    }
-
-    /// `bun format` does the work of the rules about layout: that they did not run is a note.
-    fn note(mut self) -> Option<String> {
-        self.about_layout.sort_unstable();
-        self.about_layout.dedup();
-        match &self.about_layout[..] {
+    fn notes(mut self) -> impl Iterator<Item = String> {
+        for names in [&mut self.about_layout, &mut self.plugins] {
+            names.sort_unstable();
+            names.dedup();
+        }
+        let about_layout = match &self.about_layout[..] {
             [] => None,
             [one] => Some(format!(
                 "1 formatting rule that is deprecated did not run, bun format does its work: {one}"
@@ -1607,7 +1595,19 @@ impl NotBuiltIn {
                 all[..all.len().min(3)].join(", "),
                 if all.len() > 3 { ", .." } else { "" },
             )),
-        }
+        };
+        let did_not_run = "that the categories turn on did not run. None is built in: take";
+        let plugins = match &self.plugins[..] {
+            [] => None,
+            [one] => Some(format!(
+                "The rules of the plugin \"{one}\" {did_not_run} it out of \"plugins\""
+            )),
+            all => Some(format!(
+                "The rules of the plugins \"{}\" {did_not_run} them out of \"plugins\"",
+                all.join("\" and \""),
+            )),
+        };
+        [about_layout, plugins].into_iter().flatten()
     }
 }
 

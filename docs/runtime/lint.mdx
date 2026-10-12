@@ -1175,7 +1175,7 @@ These differences are intentional:
 
 - **The rules are those of oxlint 1.87**, whichever version you had installed. A project on an older version sees what it would see after the upgrade.
 - **No language server.** `--lsp` is an error: `bun lint does not support --lsp.`
-- **The rules of `jsdoc` and `vue` are not built in.** A configuration can name the two plugins and their `settings`, and turn their rules off. If one of their rules is on, or a category would turn one on, the run [fails with exit code `2`](#what-cannot-be-linted) like for any other rule that is not built in: turn the rules off, or take the plugin out of `plugins`. The `<script>` blocks of `.vue` files are linted with all other rules.
+- **The rules of `jsdoc` and `vue` are not built in.** A configuration can name the two plugins and their `settings`, and turn their rules off. If it turns one of their rules on by name, the run [fails with exit code `2`](#what-cannot-be-linted) like for any other rule that is not built in. If it only lists the plugin, so that a category such as `correctness` would turn its rules on, a note on stderr says that they did not run, in every format, and the exit code stays as it is. The `<script>` blocks of `.vue` files are linted with all other rules.
 - **A rule that is not built in does not stop the run.** oxlint refuses the configuration. `bun lint` runs the other rules, and then [fails with exit code `2`](#what-cannot-be-linted). A configuration that is written for a newer oxlint still runs.
 - **The default format is `pretty`**, which looks like `bun check`. Every other format prints what oxlint prints.
 - **Files and problems are sorted.** oxlint prints a file when a thread is done with it.

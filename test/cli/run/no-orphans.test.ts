@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir, type DirectoryTree } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -80,7 +80,7 @@ const fixture = tempDir("no-orphans", {
 });
 
 async function spawnTree(noOrphans: string | undefined, childScript = "child.js") {
-  const env: Record<string, string> = { ...bunEnv };
+  const env: NodeJS.Dict<string> = { ...bunEnv };
   // bunEnv spreads process.env; make sure an ambient BUN_FEATURE_FLAG_NO_ORPHANS
   // from the test runner doesn't leak into the "unset" case.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
@@ -282,7 +282,7 @@ describe.concurrent.each([
         process.exit(0);
       `,
     });
-    const env: Record<string, string> = { ...bunEnv, ...extraEnv };
+    const env: NodeJS.Dict<string> = { ...bunEnv, ...extraEnv };
     if (!("BUN_FEATURE_FLAG_NO_ORPHANS" in extraEnv)) delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const proc = Bun.spawn({
       cmd: [bunExe(), ...argv, "clean-exit.js"],
@@ -332,8 +332,8 @@ describe.concurrent.each([
   },
 ])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
   test.concurrent.skipIf(!isPosix)("bun run and the script exit", async () => {
-    using dir = tempDir("no-orphans-run", files);
-    const env: Record<string, string> = { ...bunEnv };
+    using dir = tempDir("no-orphans-run", files as DirectoryTree);
+    const env: NodeJS.Dict<string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const sh = Bun.spawn({
       cmd: ["/bin/sh", "-c", `"${bunExe()}" run --no-orphans ${runArgs} & wait`],
@@ -599,7 +599,7 @@ test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reap
       process.exit(0);
     `,
   });
-  const env: Record<string, string> = { ...bunEnv };
+  const env: NodeJS.Dict<string> = { ...bunEnv };
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   const proc = Bun.spawn({
     cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
@@ -1003,7 +1003,7 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // link: it spawns the leaf via plain CreateProcess, so the leaf escapes
 // libuv's job but not the --no-orphans job. The leaf writes its pid to a file
 // so the test can observe it after cmd.exe's stdout pipe is torn down.
-async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>, bunfig = false) {
+async function spawnTreeWindows(argv: readonly string[], extraEnv: NodeJS.Dict<string>, bunfig = false) {
   // No `cwd` anywhere in the chain: the leaf must not hold an open handle on
   // the tempDir (CWD lock) or the negative test's cleanup races the rm.
   const dir = tempDir("no-orphans-win", {
@@ -1159,7 +1159,7 @@ test.concurrent.skipIf(!isWindows)(
       `,
       "sup.bat": `@"${bunExe()}" --no-orphans "%~dp0probe.js"\r\n`,
     });
-    const env: Record<string, string> = { ...bunEnv };
+    const env: NodeJS.Dict<string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     await using proc = Bun.spawn({
       cmd: ["cmd.exe", "/d", "/c", `${dir}\\sup.bat`],

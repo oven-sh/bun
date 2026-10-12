@@ -1,4 +1,4 @@
-import { dlopen, FFIType } from "bun:ffi";
+import { dlopen, FFIType, type Library } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
@@ -333,7 +333,8 @@ describe("Bun.Terminal subprocess integration", () => {
               ...termiosDecls,
             })
           : dlopen("libutil.so.1", { openpty: openptyDecl });
-    const libc = process.platform === "darwin" || isMusl ? lib : dlopen("libc.so.6", termiosDecls);
+    const libc: Library<typeof termiosDecls> =
+      process.platform === "darwin" || isMusl ? (lib as any) : dlopen("libc.so.6", termiosDecls);
 
     const masterBuf = new Int32Array(1);
     const slaveBuf = new Int32Array(1);

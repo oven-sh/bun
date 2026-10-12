@@ -118,7 +118,7 @@ bun_output::declare_scope!(DNSResolver, visible);
 const IANA_DNS_PORT: i32 = 53;
 
 // ──────────────────────────────────────────────────────────────────────────
-// dns_sd (macOS): DNSServiceGetAddrInfo over one shared mDNSResponder connection, no per-lookup threads.
+// dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -1209,36 +1209,8 @@ impl GetAddrInfoRequest {
         request
     }
 
-    /// Reply callback (inside `DNSServiceProcessResult`): records state; completion happens in `on_readable`.
-    /// # Safety
-    /// `context` is the registered `*mut GetAddrInfoRequest`; `address`, if non-null, is a valid sockaddr.
-    #[cfg(target_os = "macos")]
-    pub(crate) unsafe extern "C" fn dns_sd_reply(
-        _sd_ref: dns_sd::DNSServiceRef,
-        flags: u32,
-        _interface_index: u32,
-        error_code: i32,
-        _hostname: *const c_char,
-        address: *const Sockaddr,
-        ttl: u32,
-        context: *mut c_void,
-    ) {
-        dns_sd::SharedConnection::note_reply(context);
-        // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
-        let this: *mut Self = context.cast();
-        // SAFETY: `this` is the live heap request (JS thread); `address` is valid per dns_sd.h.
-        unsafe {
-            (*this)
-                .backend
-                .as_dns_sd_mut()
-                .query
-                .record_reply(flags, error_code, address, ttl);
-        }
-    }
-
     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
     #[cfg(target_os = "macos")]
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn complete_dns_sd(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and exclusively owned here.
         unsafe {
@@ -1291,7 +1263,6 @@ impl GetAddrInfoRequest {
     // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
     // `&mut *this` at entry would invalidate the pointer's allocation
     // provenance, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         // SAFETY: called on the JS thread with the heap request the lookup was
@@ -1356,7 +1327,6 @@ impl GetAddrInfoRequest {
     // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
     // `&mut *this` at entry would invalidate the pointer's allocation
     // provenance, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
@@ -1388,7 +1358,6 @@ impl GetAddrInfoRequest {
             let retcode = (*uv_info).retcode.int();
             bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
             let this: *mut Self = (*uv_info).data.cast();
-            #[cfg(windows)]
             debug_assert!(uv_info == core::ptr::from_mut((*this).backend.as_libc_uv_mut()));
 
             // On Windows, libuv's `uv_getaddrinfo` calls `GetAddrInfoW` then
@@ -2223,7 +2192,6 @@ pub(crate) mod internal {
         // `this` is reclaimed via `heap::take` (Box::from_raw); forming
         // `&mut *this` at entry would invalidate the pointer's allocation
         // provenance, so the param must stay `*mut`.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn deinit(this: *mut Self) {
             // SAFETY: this is a heap-allocated Request with refcount==0
             unsafe {
@@ -2480,9 +2448,6 @@ pub(crate) mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
-        // is a false positive on opaque-token forwarding.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify_threadsafe(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2499,9 +2464,6 @@ pub(crate) mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
-        // is a false positive on opaque-token forwarding.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2528,7 +2490,6 @@ pub(crate) mod internal {
     // `request` is forwarded to `owner.notify`, which may free it inline
     // (see fn doc); forming `&mut *request` at entry would be unsound across
     // that hand-off, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
@@ -2791,39 +2752,7 @@ pub(crate) mod internal {
                 query: dns_sd::QueryState::new(protocol),
             };
         }
-        let Some(_) = shared.start(
-            dns_sd::Inflight::Internal(req),
-            protocol,
-            host,
-            dns_sd_reply,
-            req.cast::<c_void>(),
-        ) else {
-            return false;
-        };
-
-        true
-    }
-
-    #[cfg(target_os = "macos")]
-    unsafe extern "C" fn dns_sd_reply(
-        _sd_ref: dns_sd::DNSServiceRef,
-        flags: u32,
-        _interface_index: u32,
-        error_code: i32,
-        _hostname: *const c_char,
-        address: *const Sockaddr,
-        ttl: u32,
-        context: *mut c_void,
-    ) {
-        dns_sd::SharedConnection::note_reply(context);
-        let req: *mut Request = context.cast();
-        // SAFETY: `context` is the registered `req` (event-loop thread); `address` is valid per dns_sd.h.
-        unsafe {
-            (*req)
-                .dns_sd
-                .query
-                .record_reply(flags, error_code, address, ttl)
-        };
+        shared.start(dns_sd::Inflight::Internal(req), protocol, host)
     }
 
     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
@@ -3246,7 +3175,6 @@ pub(crate) mod internal {
     /// for the duration of the call.
     // `hostname` is null-guarded before the deref; the non-null contract is
     // documented above and on the `bun_dns` extern decl.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[unsafe(no_mangle)]
     fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
         let host = if hostname.is_null() || len == 0 {

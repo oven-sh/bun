@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -121,6 +121,203 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     });
   });
 });
+
+// The import chain keeps a module graph loading, with the event loop turning, while the child's IPC channel is
+// already open. "late" is only sent once the child's listener exists, so the child reports in either case.
+const chain = {
+  "a.mjs": `import "./b.mjs";`,
+  "b.mjs": `import "./c.mjs";`,
+  "c.mjs": `import "./d.mjs";`,
+  "d.mjs": `export {};`,
+};
+const listens = `process.on("message", () => {});`;
+const listen = `
+const seen = [];
+process.on("message", message => {
+  seen.push(message);
+  if (message === "late") process.send(seen);
+});
+process.send("ready");`;
+const firstMessage = `new Promise(resolve => process.once("message", resolve))`;
+// Prints what the entry saw, in order, once the channel is gone.
+const untilDisconnect = `
+const seen = ["connected: " + process.connected];
+process.on("message", message => seen.push(message));
+process.on("disconnect", () => {
+  seen.push("disconnect");
+  console.log(JSON.stringify(seen));
+});`;
+
+describe.concurrent.each(["advanced", "json"] as const)(
+  "ipc mode %s: a message sent right after spawn reaches",
+  mode => {
+    it.each([
+      {
+        name: "the entry's listener when a preload already listens",
+        args: ["--preload", "./listens.cjs", "main.mjs"],
+        files: { "listens.cjs": listens, "main.mjs": `import "./a.mjs";${listen}` },
+      },
+      {
+        name: "the entry's listener when a preload only sends",
+        args: ["--preload", "./sends.cjs", "main.mjs"],
+        files: { "sends.cjs": `process.send("preload");`, "main.mjs": `import "./a.mjs";${listen}` },
+      },
+      {
+        name: "the entry's listener when a preload only listens for 'disconnect'",
+        args: ["--preload", "./disconnect.cjs", "main.mjs"],
+        files: { "disconnect.cjs": `process.on("disconnect", () => {});`, "main.mjs": `import "./a.mjs";${listen}` },
+      },
+      {
+        name: "the entry's listener when another preload loads after one that listens",
+        args: ["--preload", "./listens.cjs", "--preload", "./chain.mjs", "main.mjs"],
+        files: { "listens.cjs": listens, "chain.mjs": `import "./a.mjs";`, "main.mjs": listen },
+      },
+      {
+        name: "the listener of a -e script",
+        args: ["--preload", "./listens.cjs", "-e", `import "./a.mjs";${listen}`],
+        files: { "listens.cjs": listens },
+      },
+      {
+        name: "the listener of a bun test file",
+        args: ["test", "--preload", "./listens.cjs", "./main.test.ts"],
+        files: {
+          "listens.cjs": listens,
+          "main.test.ts": `import "./a.mjs";\nimport { test } from "bun:test";${listen}\ntest("waits", () => new Promise(resolve => process.on("message", message => message === "late" && resolve())));`,
+        },
+      },
+      {
+        name: "the listener of a module that the entry imports after process.send()",
+        args: ["main.mjs"],
+        files: {
+          "main.mjs": `process.send("loading");\nawait import("./app.mjs");`,
+          "app.mjs": `import "./a.mjs";${listen}`,
+        },
+      },
+      {
+        name: "the listener of a module that a CommonJS entry imports after process.send()",
+        args: ["main.cjs"],
+        files: {
+          "main.cjs": `process.send("loading");\nimport("./app.mjs");`,
+          "app.mjs": `import "./a.mjs";${listen}`,
+        },
+      },
+      {
+        name: "the entry's top-level await",
+        args: ["--preload", "./listens.cjs", "main.mjs"],
+        files: {
+          "listens.cjs": listens,
+          "main.mjs": `import "./a.mjs";\nprocess.send("ready");\nprocess.send([await ${firstMessage}]);`,
+        },
+        expected: ["early"],
+      },
+      // The next three pass without the hold too. They fail if it is too wide, or if it does not end.
+      {
+        name: "a preload's top-level await",
+        args: ["--preload", "./awaits.mjs", "main.mjs"],
+        files: {
+          "awaits.mjs": `globalThis.first = await ${firstMessage};`,
+          "main.mjs": `${listens}\nprocess.send([globalThis.first]);`,
+        },
+        expected: ["early"],
+      },
+      {
+        name: "a plugin's async onLoad that waits for it while the entry loads",
+        args: ["--preload", "./plugin.mjs", "main.mjs"],
+        files: {
+          "plugin.mjs": `
+import { plugin } from "bun";
+plugin({
+  name: "source-from-parent",
+  setup(build) {
+    build.onLoad({ filter: /\\.virtual$/ }, async () => ({ contents: "export default " + JSON.stringify(await ${firstMessage}), loader: "js" }));
+  },
+});`,
+          "main.mjs": `import first from "./value.virtual";\n${listens}\nprocess.send([first]);`,
+          "value.virtual": "",
+        },
+        expected: ["early"],
+      },
+      {
+        name: "a preload's listener when the entry fails to load",
+        args: ["--preload", "./survives.cjs", "main.mjs"],
+        files: {
+          "survives.cjs": `process.on("uncaughtException", () => {});\nprocess.on("message", message => process.send([message]));`,
+          "main.mjs": `import "./a.mjs";\nimport "./missing.mjs";`,
+        },
+        expected: ["early"],
+      },
+    ])("$name", async ({ args, files, expected = ["early", "late"] }) => {
+      using dir = tempDir("ipc-early-message", { ...chain, ...files });
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      await using child = spawn([bunExe(), ...args], {
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: mode,
+        ipc(message, subprocess) {
+          if (message === "ready") subprocess.send("late");
+          else if (Array.isArray(message)) resolve(message);
+        },
+        onExit(_subprocess, exitCode, signalCode) {
+          reject(new Error(`child exited (${exitCode}, ${signalCode}) before it reported`));
+        },
+      });
+      child.send("early");
+      expect(await promise).toEqual(expected);
+    });
+
+    // On Windows a failed write closes the channel at once. In advanced mode the child writes a version packet, and that
+    // write fails once the parent has closed its end.
+    it.skipIf(isWindows && mode === "advanced")(
+      "the entry's listeners before the parent's disconnect does",
+      async () => {
+        using dir = tempDir("ipc-early-disconnect", {
+          ...chain,
+          "listens.cjs": listens,
+          "main.mjs": `import "./a.mjs";${untilDisconnect}`,
+        });
+        await using child = spawn([bunExe(), "--preload", "./listens.cjs", "main.mjs"], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "inherit"],
+          serialization: mode,
+          ipc() {},
+        });
+        child.send("early");
+        child.disconnect();
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        expect(stdout).toBe(JSON.stringify(["connected: true", "early", "disconnect"]) + "\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // Windows kills a child together with a parent that exits.
+    it.skipIf(isWindows)("the entry's listeners when the parent exits at once", async () => {
+      using dir = tempDir("ipc-early-exit", {
+        ...chain,
+        "listens.cjs": listens,
+        "main.mjs": `import "./a.mjs";${untilDisconnect}`,
+        "parent.mjs": `
+const child = Bun.spawn([process.execPath, "--preload", "./listens.cjs", "main.mjs"], {
+  stdio: ["ignore", "inherit", "inherit"],
+  serialization: ${JSON.stringify(mode)},
+  ipc() {},
+});
+child.send("early");
+process.exit(0);`,
+      });
+      await using parent = spawn([bunExe(), "parent.mjs"], {
+        cwd: String(dir),
+        // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which kills the child with its parent. The
+        // child leaves on its own once it has seen the disconnect.
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      // The child holds the pipe, so this ends when the child does.
+      expect(await parent.stdout.text()).toBe(JSON.stringify(["connected: true", "early", "disconnect"]) + "\n");
+    });
+  },
+);
 
 describe("ipc mode json", () => {
   it.skipIf(isWindows)("closes the channel on a line that holds only the internal tag byte", async () => {

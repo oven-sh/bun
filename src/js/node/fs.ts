@@ -24,8 +24,11 @@ function lazyGlob() {
 
 const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
 
+// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
+const nextTick = process.nextTick;
+
 // guardCallback reroutes a throw inside the user callback to the
-// uncaughtException path instead of rejecting the internal promise chain.
+// uncaughtException path.
 function wrapFsCallback(callback) {
   return guardCallback(callback);
 }
@@ -40,16 +43,19 @@ function ensureCallback(callback) {
   return wrapFsCallback(callback);
 }
 
-// Micro-optimization: avoid creating a new function for every call
-// bind() is slightly more optimized in JSC
-// This code is equivalent to:
-//
-// function () { callback(null); }
-//
-function nullcallback(callback) {
-  return FunctionPrototypeBind.$call(callback, undefined, null);
+// Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
+function settleCallback(promise, callback) {
+  promise.then(
+    value => nextTick(callback, null, value),
+    err => nextTick(callback, err),
+  );
 }
-const FunctionPrototypeBind = nullcallback.bind;
+function settleCallbackWithNull(promise, callback) {
+  promise.then(
+    () => nextTick(callback, null),
+    err => nextTick(callback, err),
+  );
+}
 
 function openAsBlob(path, options) {
   return Promise.$resolve(Bun.file(path, options));
@@ -68,7 +74,7 @@ var access = function access(path, mode, callback?) {
     }
 
     callback = ensureCallback(callback);
-    fs.access(path, mode).then(callback, callback);
+    fs.accessCb(err => callback(err), path, mode);
   },
   appendFile = function appendFile(path, data, options, callback?) {
     if (!$isCallable(callback)) {
@@ -78,12 +84,12 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.appendFile(path, data, options).then(nullcallback(callback), callback);
+    fs.appendFileCb(callback, path, data, options);
   },
   close = function close(fd, callback?) {
     if ($isCallable(callback)) {
       callback = wrapFsCallback(callback);
-      fs.close(fd).then(() => callback(null), callback);
+      fs.closeCb(err => callback(err), fd);
     } else if (callback === undefined) {
       fs.close(fd).then(() => {});
     } else {
@@ -98,7 +104,7 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
     // route through promises.rm for the JS-side ERR_FS_EISDIR validation
-    require("node:fs/promises").rm(path, options).then(nullcallback(callback), callback);
+    settleCallback(require("node:fs/promises").rm(path, options), callback);
   },
   rmdir = function rmdir(path, options, callback?) {
     if ($isCallable(options)) {
@@ -108,10 +114,8 @@ var access = function access(path, mode, callback?) {
     callback = ensureCallback(callback);
 
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    (options?.recursive ? require("node:fs/promises").rm(path, options) : fs.rmdir(path, options)).then(
-      nullcallback(callback),
-      callback,
-    );
+    if (options?.recursive) settleCallback(require("node:fs/promises").rm(path, options), callback);
+    else fs.rmdirCb(callback, path, options);
   },
   copyFile = function copyFile(src, dest, mode, callback?) {
     if ($isCallable(mode)) {
@@ -121,16 +125,13 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.copyFile(src, dest, mode).then(nullcallback(callback), callback);
+    fs.copyFileCb(callback, src, dest, mode);
   },
   exists = function exists(path, callback) {
     callback = ensureCallback(callback);
 
     try {
-      fs.exists.$apply(fs, [path]).then(
-        existed => callback(existed),
-        _ => callback(false),
-      );
+      fs.existsCb((err, existed) => callback(err ? false : existed), path);
     } catch {
       callback(false);
     }
@@ -138,22 +139,22 @@ var access = function access(path, mode, callback?) {
   chown = function chown(path, uid, gid, callback) {
     callback = ensureCallback(callback);
 
-    fs.chown(path, uid, gid).then(nullcallback(callback), callback);
+    fs.chownCb(callback, path, uid, gid);
   },
   chmod = function chmod(path, mode, callback) {
     callback = ensureCallback(callback);
 
-    fs.chmod(path, mode).then(nullcallback(callback), callback);
+    fs.chmodCb(callback, path, mode);
   },
   fchmod = function fchmod(fd, mode, callback) {
     callback = ensureCallback(callback);
 
-    fs.fchmod(fd, mode).then(nullcallback(callback), callback);
+    fs.fchmodCb(callback, fd, mode);
   },
   fchown = function fchown(fd, uid, gid, callback) {
     callback = ensureCallback(callback);
 
-    fs.fchown(fd, uid, gid).then(nullcallback(callback), callback);
+    fs.fchownCb(callback, fd, uid, gid);
   },
   fstat = function fstat(fd, options, callback?) {
     if ($isCallable(options)) {
@@ -162,14 +163,12 @@ var access = function access(path, mode, callback?) {
     }
 
     callback = wrapFsCallback(callback);
-    fs.fstat(fd, options).then(function (stats) {
-      callback(null, stats);
-    }, callback);
+    fs.fstatCb(callback, fd, options);
   },
   fsync = function fsync(fd, callback) {
     callback = ensureCallback(callback);
 
-    fs.fsync(fd).then(nullcallback(callback), callback);
+    fs.fsyncCb(callback, fd);
   },
   ftruncate = function ftruncate(fd, len = 0, callback?) {
     if ($isCallable(len)) {
@@ -179,30 +178,30 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.ftruncate(fd, len).then(nullcallback(callback), callback);
+    fs.ftruncateCb(callback, fd, len);
   },
   futimes = function futimes(fd, atime, mtime, callback) {
     callback = ensureCallback(callback);
 
-    fs.futimes(fd, atime, mtime).then(nullcallback(callback), callback);
+    fs.futimesCb(callback, fd, atime, mtime);
   },
   lchmod =
     constants.O_SYMLINK !== undefined
       ? function lchmod(path, mode, callback) {
           callback = ensureCallback(callback);
 
-          fs.lchmod(path, mode).then(nullcallback(callback), callback);
+          fs.lchmodCb(callback, path, mode);
         }
       : undefined, // lchmod is only available on macOS
   lchown = function lchown(path, uid, gid, callback) {
     callback = ensureCallback(callback);
 
-    fs.lchown(path, uid, gid).then(nullcallback(callback), callback);
+    fs.lchownCb(callback, path, uid, gid);
   },
   link = function link(existingPath, newPath, callback) {
     callback = ensureCallback(callback);
 
-    fs.link(existingPath, newPath).then(nullcallback(callback), callback);
+    fs.linkCb(callback, existingPath, newPath);
   },
   mkdir = function mkdir(path, options, callback?) {
     if ($isCallable(options)) {
@@ -212,7 +211,7 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.mkdir(path, options).then(nullcallback(callback), callback);
+    fs.mkdirCb(callback, path, options);
   },
   mkdtemp = function mkdtemp(prefix, options, callback?) {
     if ($isCallable(options)) {
@@ -222,9 +221,7 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.mkdtemp(prefix, options).then(function (folder) {
-      callback(null, folder);
-    }, callback);
+    fs.mkdtempCb(callback, prefix, options);
   },
   open = function open(path, flags, mode?, callback?) {
     if (arguments.length < 3) {
@@ -238,14 +235,12 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.open(path, flags, mode).then(function (fd) {
-      callback(null, fd);
-    }, callback);
+    fs.openCb(callback, path, flags, mode);
   },
   fdatasync = function fdatasync(fd, callback) {
     callback = ensureCallback(callback);
 
-    fs.fdatasync(fd).then(nullcallback(callback), callback);
+    fs.fdatasyncCb(callback, fd);
   },
   read = function read(fd, buffer, offsetOrOptions?, length?, position?, callback?) {
     // fd = getValidatedFd(fd); DEFERRED TO NATIVE
@@ -287,14 +282,19 @@ var access = function access(path, mode, callback?) {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
     callback = wrapFsCallback(callback);
-    fs.read(fd, buffer, offset, length, position).then(
-      bytesRead => void callback(null, bytesRead, buffer),
-      err => callback(err),
+    fs.readCb(
+      (err, bytesRead) => (err ? callback(err) : callback(null, bytesRead, buffer)),
+      fd,
+      buffer,
+      offset,
+      length,
+      position,
     );
   },
   write = function write(fd, buffer, offsetOrOptions, length?, position?, callback?) {
-    function wrapper(bytesWritten) {
-      callback(null, bytesWritten, buffer);
+    function onWritten(err, bytesWritten) {
+      if (err) callback(err);
+      else callback(null, bytesWritten, buffer);
     }
 
     // $isTypedArrayView excludes DataView, so a DataView would fall through
@@ -311,7 +311,7 @@ var access = function access(path, mode, callback?) {
         } = offsetOrOptions ?? {});
       }
 
-      fs.write(fd, buffer, offsetOrOptions, length, position).then(wrapper, callback);
+      fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length, position);
       return;
     }
 
@@ -334,7 +334,7 @@ var access = function access(path, mode, callback?) {
     callback = position;
     callback = ensureCallback(callback);
 
-    fs.write(fd, buffer, offsetOrOptions, length).then(wrapper, callback);
+    fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length);
   },
   readdir = function readdir(path, options, callback?) {
     if ($isCallable(options)) {
@@ -344,23 +344,19 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.readdir(path, options).then(function (files) {
-      callback(null, files);
-    }, callback);
+    fs.readdirCb(callback, path, options);
   },
   readFile = function readFile(path, options, callback?) {
     callback ||= options;
     callback = ensureCallback(callback);
 
-    fs.readFile(path, options).then(function (data) {
-      callback(null, data);
-    }, callback);
+    fs.readFileCb(callback, path, options);
   },
   writeFile = function writeFile(path, data, options, callback?) {
     callback ||= options;
     callback = ensureCallback(callback);
 
-    fs.writeFile(path, data, options).then(nullcallback(callback), callback);
+    fs.writeFileCb(callback, path, data, options);
   },
   readlink = function readlink(path, options, callback?) {
     if ($isCallable(options)) {
@@ -370,14 +366,12 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.readlink(path, options).then(function (linkString) {
-      callback(null, linkString);
-    }, callback);
+    fs.readlinkCb(callback, path, options);
   },
   rename = function rename(oldPath, newPath, callback) {
     callback = ensureCallback(callback);
 
-    fs.rename(oldPath, newPath).then(nullcallback(callback), callback);
+    fs.renameCb(callback, oldPath, newPath);
   },
   lstat = function lstat(path, options, callback?) {
     if ($isCallable(options)) {
@@ -387,9 +381,7 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.lstat(path, options).then(function (stats) {
-      callback(null, stats);
-    }, callback);
+    fs.lstatCb(callback, path, options);
   },
   stat = function stat(path, options, callback?) {
     if ($isCallable(options)) {
@@ -401,13 +393,11 @@ var access = function access(path, mode, callback?) {
 
     const signal = options?.signal;
     if (signal?.aborted) {
-      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
       return;
     }
 
-    fs.stat(path, options).then(function (stats) {
-      callback(null, stats);
-    }, callback);
+    fs.statCb(callback, path, options);
   },
   statfs = function statfs(path, options, callback?) {
     if ($isCallable(options)) {
@@ -417,9 +407,7 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.statfs(path, options).then(function (stats) {
-      callback(null, stats);
-    }, callback);
+    fs.statfsCb(callback, path, options);
   },
   symlink = function symlink(target, path, type, callback?) {
     if (callback === undefined) {
@@ -431,7 +419,8 @@ var access = function access(path, mode, callback?) {
       callback = wrapFsCallback(callback);
     }
 
-    fs.symlink(target, path, type).then(callback, callback);
+    if ($isCallable(callback)) fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);
+    else fs.symlink(target, path, type).then(callback, callback);
   },
   truncate = function truncate(path, len, callback?) {
     if (typeof path === "number") {
@@ -448,22 +437,22 @@ var access = function access(path, mode, callback?) {
     }
 
     callback = ensureCallback(callback);
-    fs.truncate(path, len).then(nullcallback(callback), callback);
+    fs.truncateCb(callback, path, len);
   },
   unlink = function unlink(path, callback) {
     callback = ensureCallback(callback);
 
-    fs.unlink(path).then(nullcallback(callback), callback);
+    fs.unlinkCb(callback, path);
   },
   utimes = function utimes(path, atime, mtime, callback) {
     callback = ensureCallback(callback);
 
-    fs.utimes(path, atime, mtime).then(nullcallback(callback), callback);
+    fs.utimesCb(callback, path, atime, mtime);
   },
   lutimes = function lutimes(path, atime, mtime, callback) {
     callback = ensureCallback(callback);
 
-    fs.lutimes(path, atime, mtime).then(nullcallback(callback), callback);
+    fs.lutimesCb(callback, path, atime, mtime);
   },
   accessSync = fs.accessSync.bind(fs),
   appendFileSync = fs.appendFileSync.bind(fs),
@@ -599,7 +588,12 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.writev(fd, buffers, position).$then(bytesWritten => callback(null, bytesWritten, buffers), callback);
+    fs.writevCb(
+      (err, bytesWritten) => (err ? callback(err) : callback(null, bytesWritten, buffers)),
+      fd,
+      buffers,
+      position,
+    );
   },
   writevSync = fs.writevSync.bind(fs),
   readv = function readv(fd, buffers, position, callback?) {
@@ -610,7 +604,7 @@ var access = function access(path, mode, callback?) {
 
     callback = ensureCallback(callback);
 
-    fs.readv(fd, buffers, position).$then(bytesRead => callback(null, bytesRead, buffers), callback);
+    fs.readvCb((err, bytesRead) => (err ? callback(err) : callback(null, bytesRead, buffers)), fd, buffers, position);
   },
   readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,
@@ -813,9 +807,7 @@ const realpath: typeof import("node:fs").realpath =
         }
         callback = ensureCallback(callback);
 
-        fs.realpath(p, options).then(function (resolvedPath) {
-          callback(null, resolvedPath);
-        }, callback);
+        fs.realpathCb(callback, p, options);
       } as typeof import("node:fs").realpath)
     : (function realpath(p, options, callback) {
         if ($isCallable(options)) {
@@ -873,7 +865,7 @@ const realpath: typeof import("node:fs").realpath =
             LOOP();
           });
         } else {
-          process.nextTick(LOOP);
+          nextTick(LOOP);
         }
 
         // Walk down the path, swapping out linked path parts for their real
@@ -917,7 +909,7 @@ const realpath: typeof import("node:fs").realpath =
           // If not a symlink, skip to the next path part
           if (!stats.isSymbolicLink()) {
             knownHard.add(base);
-            return process.nextTick(LOOP);
+            return nextTick(LOOP);
           }
 
           // Stat & read the link if not read before.
@@ -952,7 +944,7 @@ const realpath: typeof import("node:fs").realpath =
               LOOP();
             });
           } else {
-            process.nextTick(LOOP);
+            nextTick(LOOP);
           }
         }
       } as typeof import("node:fs").realpath);
@@ -964,9 +956,7 @@ realpath.native = function realpath(p, options, callback?) {
 
   callback = ensureCallback(callback);
 
-  fs.realpathNative(p, options).then(function (resolvedPath) {
-    callback(null, resolvedPath);
-  }, callback);
+  fs.realpathNativeCb(callback, p, options);
 };
 realpathSync.native = fs.realpathNativeSync.bind(fs);
 
@@ -1008,7 +998,7 @@ function cp(src, dest, options, callback) {
   dest = getValidatedFsPath(dest, "dest");
   callback = guardCallback(callback);
 
-  require("node:fs/promises").cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
+  settleCallbackWithNull(require("node:fs/promises").cp(src, dest, options), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {
@@ -1032,19 +1022,13 @@ function _toUnixTimestamp(time: any, name = "time") {
 
 function onOpendirStatFulfilled(callback, path, result, stats) {
   if (!stats.isDirectory()) {
-    process.nextTick(callback, opendirNotDirError(path));
+    nextTick(callback, opendirNotDirError(path));
     return;
   }
-  process.nextTick(callback, null, result);
+  nextTick(callback, null, result);
 }
 function onOpendirStatRejected(callback, path, err) {
-  process.nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
-}
-function callOnceWithNull(callback) {
-  callback(null);
-}
-function callOnceWithNullThen(callback, value) {
-  callback(null, value);
+  nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
 }
 
 function opendirSync(path, options) {
@@ -1169,7 +1153,7 @@ class Dir {
       validateFunction(cb, "callback");
       cb = guardCallback(cb);
       // node's callback overload returns undefined (like close(cb) above)
-      this.read().then(callOnceWithNullThen.bind(null, cb), cb);
+      settleCallback(this.read(), cb);
       return;
     }
 
@@ -1210,7 +1194,7 @@ class Dir {
     if (!$isUndefinedOrNull(cb)) {
       validateFunction(cb, "callback");
       cb = guardCallback(cb);
-      this.close().then(callOnceWithNull.bind(null, cb), cb);
+      settleCallbackWithNull(this.close(), cb);
       return;
     }
     return this.#enqueue(this.#closeOp.bind(this));
@@ -1267,16 +1251,7 @@ function glob(pattern: string | string[], options, callback) {
   // the callback surfaces as an uncaught exception instead of rejecting the
   // internal promise chain (and is never routed back into `callback` as an
   // error), matching Node.js.
-  Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject)).then(
-    nextTickWithNullThen.bind(null, callback),
-    nextTickWith.bind(null, callback),
-  );
-}
-function nextTickWithNullThen(callback, result) {
-  process.nextTick(callback, null, result);
-}
-function nextTickWith(callback, err) {
-  process.nextTick(callback, err);
+  settleCallback(Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject)), callback);
 }
 
 function globSync(pattern: string | string[], options): string[] {

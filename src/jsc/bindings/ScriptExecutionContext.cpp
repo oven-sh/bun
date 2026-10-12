@@ -322,6 +322,8 @@ bool ScriptExecutionContext::isJSExecutionForbidden()
     // of its context is called, as none is once the VM was asked to stop.
     if (m_parent && m_isStopped)
         return true;
+    if (auto* globalObject = realm().m_globalObject; globalObject && Bun::isRetiredTestIsolationRealm(globalObject))
+        return true;
     JSC::VM* vm = realm().m_vm;
     return !vm || WebCore::clientData(*vm)->isStoppingOrStopped(*vm);
 }

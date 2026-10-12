@@ -693,7 +693,6 @@ fn run_hir_passes(
         );
     }
 
-    let _ = fbt_operands;
     Ok((reactive_fn, unique_identifiers))
 }
 

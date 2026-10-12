@@ -18,7 +18,7 @@ static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC
     // Loop over modified cookies and write Set-Cookie headers to the response
     for (auto& cookie : cookie_map->getAllChanges()) {
         auto utf8 = cookie->toString(global_this->vm()).utf8();
-        res->writeHeader("Set-Cookie", utf8.data());
+        res->writeHeader("Set-Cookie", utf8.legacyCStringPointer());
     }
 }
 extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, UWSResponseKind kind, void* arg2)

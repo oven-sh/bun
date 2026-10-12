@@ -668,9 +668,7 @@ impl Handle {
             close_on_complete: false,
             owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
@@ -683,9 +681,7 @@ impl Handle {
             close_on_complete: true,
             owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
@@ -703,10 +699,6 @@ impl Handle {
             close_on_complete,
             owns_fd: true,
             cluster_seq: None,
-            #[cfg(windows)]
-            win_export_hex: None,
-            #[cfg(windows)]
-            peer_pid: 0,
         })
     }
 }
@@ -870,7 +862,6 @@ impl WindowsWrite {
 #[cfg(windows)]
 #[derive(Default)]
 pub(crate) struct WindowsState {
-    pub(crate) is_server: bool,
     /// Non-owning raw pointer. The allocation
     /// is `heap::alloc`'d in `write` and freed exactly once by
     /// `windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
@@ -929,6 +920,10 @@ pub(crate) struct SendQueue {
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
+    /// See `is_reading`.
+    reads_held: Cell<bool>,
+    /// What the socket was last told. A new socket reads.
+    socket_reading: Cell<bool>,
 
     #[cfg(windows)]
     pub windows: JsCell<WindowsState>,
@@ -1054,6 +1049,8 @@ impl SendQueue {
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
+            reads_held: Cell::new(false),
+            socket_reading: Cell::new(true),
             #[cfg(windows)]
             windows: JsCell::new(WindowsState::default()),
         });
@@ -1082,6 +1079,66 @@ impl SendQueue {
             return false;
         }
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
+    }
+
+    /// Every reason not to read is a term here, so the end of one never
+    /// restarts what another still holds.
+    fn is_reading(&self) -> bool {
+        !self.reads_held.get()
+    }
+
+    /// `RuntimeHooks::hold_ipc_reads`.
+    pub(crate) fn set_reads_held(&self, held: bool) {
+        self.reads_held.set(held);
+        self.apply_socket_reading(self.is_reading());
+    }
+
+    /// For a socket that is about to open. Returns whether it opens reading.
+    pub(crate) fn set_reads_held_before_open(&self, held: bool) -> bool {
+        self.reads_held.set(held);
+        let reading = self.is_reading();
+        self.socket_reading.set(reading);
+        reading
+    }
+
+    /// Writes are unaffected. What the peer sends while the socket does not
+    /// read waits in the kernel, and so does its close.
+    fn apply_socket_reading(&self, reading: bool) {
+        if self.socket_reading.get() == reading {
+            return;
+        }
+        let SocketUnion::Open(socket) = *self.socket.get() else {
+            return;
+        };
+        log!("SendQueue#applySocketReading {}", reading);
+        self.socket_reading.set(reading);
+        #[cfg(not(windows))]
+        {
+            if reading {
+                socket.resume_stream();
+            } else {
+                socket.pause_stream();
+            }
+        }
+        #[cfg(windows)]
+        {
+            // SAFETY: an `Open` pipe is live until `windows_on_closed`.
+            let stream: *mut uv::uv_stream_t = unsafe { (*socket).as_stream() };
+            if !reading {
+                // SAFETY: as above.
+                unsafe { (*stream).read_stop() };
+                return;
+            }
+            // `close_socket` stopped the reads for good and only waits for its last write.
+            if self.windows.get().try_close_after_write {
+                return;
+            }
+            // SAFETY: as above; `root_ptr()` is the context `windows_configure_*` registered.
+            let started = unsafe { (*stream).read_start_ctx::<SendQueue>(self.root_ptr()) };
+            if started.is_err() && started.int() != uv::UV_EALREADY {
+                self.close_socket(CloseReason::Failure, CloseFrom::User);
+            }
+        }
     }
 
     fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
@@ -1848,7 +1905,6 @@ impl SendQueue {
             this.cast(),
             Some(Self::stop_for_vm_teardown),
         );
-        self_.windows.with_mut(|w| w.is_server = true);
         // SAFETY: pipe is the live uv handle just stored in the socket cell.
         unsafe { (*ipc_pipe).data = this.cast() };
 
@@ -1906,11 +1962,13 @@ impl SendQueue {
             this.cast(),
             Some(Self::stop_for_vm_teardown),
         );
-        self_.windows.with_mut(|w| w.is_server = false);
 
         // SAFETY: ipc_pipe is the live uv handle just stored in the socket cell.
         let stream = unsafe { (*ipc_pipe).as_stream() };
 
+        if !self_.socket_reading.get() {
+            return Ok(());
+        }
         // SAFETY: stream points to the live uv handle; `this` is the root-raw
         // context pointer (see fn safety contract) so storing it in
         // `handle.data` is sound for the handle's lifetime.
@@ -1948,7 +2006,6 @@ impl uv::StreamReader for SendQueue {
         // `incoming` itself, so only the length is forwarded and only a shared
         // view of `*this` is formed.
         let nread = data.len();
-        let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
         // `read_start_ctx`; a shared reborrow only, and `data` is not used after.
         IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);

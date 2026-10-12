@@ -923,7 +923,7 @@ enum PipeEvent {
 }
 
 #[cfg(windows)]
-struct QueuedEvent {
+pub(crate) struct QueuedEvent {
     generation: u32,
     event: PipeEvent,
 }
@@ -931,25 +931,34 @@ struct QueuedEvent {
 #[cfg(windows)]
 impl PipeEvent {
     fn post(self, generation: u32) {
-        let queued = bun_core::heap::into_raw(Box::new(QueuedEvent {
-            generation,
-            event: self,
-        }));
         // Not dispatched from the read callback: C++ runs JS that may spin a nested event loop (bun:test does), and libuv re-arms the read only after the callback returns.
         VirtualMachine::get()
             .as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
-                queued,
-                QueuedEvent::deliver,
-            ));
+            .enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
+                generation,
+                event: self,
+            })));
+    }
+}
+
+#[cfg(windows)]
+impl bun_event_loop::Taskable for QueuedEvent {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ChromePipeEvent;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `PipeEvent::post`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
 #[cfg(windows)]
 impl QueuedEvent {
-    fn deliver(this: *mut QueuedEvent) -> bun_jsc::JsResult<()> {
-        // SAFETY: the box leaked by `post`; ManagedTask hands it over once.
-        let queued = unsafe { bun_core::heap::take(this) };
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn deliver(self: Box<Self>) -> bun_jsc::JsResult<()> {
+        let queued = self;
         if queued.generation != GENERATION.load(Ordering::Relaxed) {
             scoped_log!(
                 Chrome,

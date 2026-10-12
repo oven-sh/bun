@@ -148,7 +148,7 @@ describe("basic", () => {
       const { packageDir } = await registry.createTestDir({
         bunfigOpts: { saveTextLockfile: !binaryLockfile, linker: "hoisted" },
       });
-      const packageJson = await createBasicCatalogMonorepo(packageDir, "catalog-basic-2");
+      const packageJson: any = await createBasicCatalogMonorepo(packageDir, "catalog-basic-2");
       let { err } = await runBunInstall(bunEnv, packageDir);
       expect(err).toContain("Saved lockfile");
 

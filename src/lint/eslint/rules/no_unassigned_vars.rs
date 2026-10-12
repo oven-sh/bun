@@ -53,8 +53,10 @@ impl Rule for NoUnassignedVars {
         };
         if !symbol.has_writes() && symbol.has_reads() {
             let is_oxlint = cx.language().is_oxlint;
-            // For oxc the `a` of the type `typeof a` is not read.
-            let is_read = |it: Reference| it.is_read() && !it.expr().is_some_and(Expr::is_in_type_query);
+            // For oxc the `a` of the type `typeof a` is not read, nor is `React` by JSX.
+            let is_read = |it: Reference| {
+                it.is_read() && !it.is_jsx_pragma() && !it.expr().is_some_and(Expr::is_in_type_query)
+            };
             if is_oxlint && (oxlint_passes_over(decl) || !symbol.references().any(is_read)) {
                 return;
             }

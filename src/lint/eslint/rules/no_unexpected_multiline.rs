@@ -72,10 +72,15 @@ impl NoUnexpectedMultiline {
     }
 
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // oxlint looks at a call without arguments too, and not at the last call of an optional chain.
+        let is_oxlint = cx.language().is_oxlint;
         if let Some(call) = e.as_call()
             && !call.is_optional()
-            && !call.args().is_empty()
-            && let Some(open) = match cx.language().is_oxlint && !call.type_args().is_empty() {
+            && match is_oxlint {
+                true => !e.is_chain_root(),
+                false => !call.args().is_empty(),
+            }
+            && let Some(open) = match is_oxlint && !call.type_args().is_empty() {
                 true => break_after_type_args(call, cx.file()),
                 false => break_after(call.callee()),
             }
@@ -129,6 +134,13 @@ impl NoUnexpectedMultiline {
         let Some(second_slash) = e.operator_span() else {
             return;
         };
+        // oxlint compares how far behind `a` the line ends with where `a` starts in the file.
+        if cx.language().is_oxlint
+            && strings::index_of_char_usize(cx.slice(Span::new(left.span().end, e.span().end)), b'\n')
+                .is_none_or(|newline| newline >= inner.span().start as usize)
+        {
+            return;
+        }
         if let Some(after) = cx.file().token_after(second_slash)
             && after.kind() == TokenKind::Identifier
             && after.start() == second_slash.end

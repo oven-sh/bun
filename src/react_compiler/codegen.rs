@@ -3506,7 +3506,7 @@ fn compare_scope_dependency(
     b: &crate::hir::ReactiveScopeDependency,
     env: &Environment,
 ) -> std::cmp::Ordering {
-    dep_to_sort_key(a, env).cmp(&dep_to_sort_key(b, env))
+    bun_core::strings::order_utf16(&dep_to_sort_key(a, env), &dep_to_sort_key(b, env))
 }
 
 fn dep_to_sort_key(dep: &crate::hir::ReactiveScopeDependency, env: &Environment) -> Vec<u8> {
@@ -3539,7 +3539,7 @@ fn compare_scope_declaration(
     let mut buf_b = [0u8; 24];
     let ka = ident_sort_key(a.identifier, env, &mut buf_a);
     let kb = ident_sort_key(b.identifier, env, &mut buf_b);
-    ka.cmp(kb)
+    bun_core::strings::order_utf16(ka, kb)
 }
 
 fn ident_sort_key<'a>(id: IdentifierId, env: &'a Environment, buf: &'a mut [u8; 24]) -> &'a [u8] {

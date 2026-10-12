@@ -3587,7 +3587,7 @@ test("react-compiler memory does not grow with the square of the size of a compo
   // A debug build is 20 times slower, and its larger frames leave the stack for
   // a chain of 94: a longer one is not compiled.
   const small = isDebug || isASAN;
-  // A chain is nested as deeply as it is long, and more than 256 levels are not compiled.
+  // A chain is nested as deeply as it is long, and one that the stack does not hold is not compiled.
   const terms = small ? 90 : 250;
   const elements = small ? 120 : 300;
   using dir = tempDir("react-compiler-memory", {
@@ -3974,6 +3974,50 @@ test("react-compiler compile time is not exponential in the function nesting dep
   // The outermost call is inlined. The other arrows stay, in one memoized scope.
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
+  expect(exitCode).toBe(0);
+});
+
+// Upstream sorts them with `<` of JavaScript, by UTF-16 code units: U+20000 begins with 0xD840, which is
+// before U+FF21. In UTF-8 it begins with 0xF0, which is after 0xEF.
+test("react-compiler sorts the dependencies and the declarations of a scope as JavaScript compares strings", async () => {
+  const [outside, inside] = ["\u{20000}", "\uFF21"];
+  expect(outside < inside).toBe(true);
+  using dir = tempDir("react-compiler-utf16-order", {
+    "entry.jsx": `
+      export function Component(props) {
+        const ${inside} = [];
+        const ${outside} = [];
+        ${inside}.push(${outside});
+        ${outside}.push(props.x);
+        // Keeps the scope of the two arrays and that of the element apart.
+        useThing();
+        return <div a={${inside}} b={${outside}} />;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // However the printer writes the names.
+  const out = stdout.replace(/\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})/g, (_, long, short) =>
+    String.fromCodePoint(parseInt(long ?? short, 16)),
+  );
+  const name = `(${outside}|${inside})`;
+  expect({
+    dependencies: out.match(new RegExp(String.raw`\$\[\d+\] !== ${name} \|\| \$\[\d+\] !== ${name}`, "u"))?.slice(1),
+    declarations: out.match(new RegExp(String.raw`\$\[\d+\] = ${name};\s*\$\[\d+\] = ${name};`, "u"))?.slice(1),
+  }).toEqual({
+    dependencies: [outside, inside],
+    declarations: [outside, inside],
+  });
   expect(exitCode).toBe(0);
 });
 

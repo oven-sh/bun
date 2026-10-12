@@ -795,9 +795,13 @@ impl<'a> Migrator<'a> {
                         if !has_entry && !self.silent {
                             bun_core::warn!(
                                 "skipped \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
-                                bstr::BStr::new(name),
-                                bstr::BStr::new(spec),
-                                bstr::BStr::new(if key.is_empty() { &b"."[..] } else { key }),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(name)),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(if key.is_empty() {
+                                    &b"."[..]
+                                } else {
+                                    key
+                                })),
                             );
                         }
                         continue;

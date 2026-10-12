@@ -1058,6 +1058,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     expect(fromYarn.err).toContain(
       `warn: skipped "direct@${masked(nowhere)}" from yarn.lock: missing "resolved" field\n`,
     );
+    expect(fromYarn.err).toContain(`warn: yarn.lock has no entry for "direct@${masked(nowhere)}"; bun resolves it\n`);
     expectNoSecrets(fromYarn.out, fromYarn.err);
     expect(fromYarn.exitCode).toBe(0);
 
@@ -1082,6 +1083,21 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     );
     expectNoSecrets(fromPnpm.out, fromPnpm.err);
     expect(fromPnpm.exitCode).toBe(1);
+
+    using npm = tempDir("redacted-migrate-npm", {
+      "package.json": packageJson(spec(nowhere)),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        lockfileVersion: 3,
+        packages: { "": { name: "app", dependencies: { direct: spec(nowhere) } } },
+      }),
+    });
+    const fromNpm = await run(String(npm), nowhere, ["pm", "migrate"]);
+    expect(fromNpm.err).toContain(
+      `warn: skipped "direct@${masked(nowhere)}" from package-lock.json: no entry for this dependency of "."\n`,
+    );
+    expectNoSecrets(fromNpm.out, fromNpm.err);
+    expect(fromNpm.exitCode).toBe(0);
   });
 
   // The registry chooses `dist.tarball`. It can hold credentials of its own.

@@ -3067,7 +3067,7 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
       cmd: [bunExe(), "pm", "migrate", "-f", ...flags],
       cwd: dir,
       env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

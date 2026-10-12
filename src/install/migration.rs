@@ -544,8 +544,8 @@ pub(crate) fn warn_unlocked_dependencies(
     };
     let count = unlocked().count();
     for dep in unlocked().take(if log_level.is_verbose() { count } else { 1 }) {
-        let name = bstr::BStr::new(dep.name.slice(buf));
-        let range = bstr::BStr::new(dep.version.literal.slice(buf));
+        let name = bun_core::fmt::for_terminal(bstr::BStr::new(dep.name.slice(buf)));
+        let range = bun_core::fmt::for_terminal(bstr::BStr::new(dep.version.literal.slice(buf)));
         if count == 1 || log_level.is_verbose() {
             bun_core::warn!(
                 "{} has no entry for \"{}@{}\"; bun resolves it",

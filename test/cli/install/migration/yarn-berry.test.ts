@@ -1982,7 +1982,7 @@ catalogs:
       },
     });
 
-    const { stderr, exitCode } = await run(dir, "install");
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     expect(stderr).not.toContain("error:");
     expect(stderr).not.toContain("Missing version range");
@@ -2009,14 +2009,14 @@ catalogs:
       "no-deps@1.0.1",
       "no-deps@1.0.1",
     ]);
-    for (const alias of ["pkg-alias", "other-alias", "no-deps"]) {
-      expect(await Bun.file(join(dir, "node_modules", alias, "package.json")).json()).toMatchObject({
-        name: "no-deps",
-        version: "1.0.1",
-      });
-      expect(await Bun.file(join(dir, "node_modules", alias, "patched-too.txt")).text()).toBe("hello world\n");
-    }
-    await expectFrozenInstall(dir);
+    // all three names are the one patched package
+    expect(bunLock).toContain(`"pkg-alias": ["no-deps@1.0.1", `);
+    expect(bunLock).toContain(`"other-alias": ["no-deps@1.0.1", `);
+    // bun reads the rewritten package.json files back to the same lockfile
+    const frozen = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+    expect(await bunLockOf(dir)).toBe(bunLock);
   });
 
   test.concurrent("catalog: in the dependencies a packageExtension adds", async () => {

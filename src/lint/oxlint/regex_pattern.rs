@@ -63,11 +63,16 @@ impl<'a> Pattern<'a> {
                         start: unit.start,
                         end: after_zero,
                     });
-                    units.extend(digits.iter().zip(after_zero..).map(|(digit, start)| CharInfo {
-                        code_unit: u16::from(*digit),
-                        start,
-                        end: start + 1,
-                    }));
+                    units.extend(
+                        digits
+                            .iter()
+                            .zip(after_zero..)
+                            .map(|(digit, start)| CharInfo {
+                                code_unit: u16::from(*digit),
+                                start,
+                                end: start + 1,
+                            }),
+                    );
                 }
                 _ => units.push(unit),
             }
@@ -152,7 +157,7 @@ fn mode_of_flags(flags: &[u8]) -> Option<Mode> {
     (flags.iter().all(is_known)
         && !flags.iter().enumerate().any(is_repeated)
         && !(mode.unicode && mode.unicode_sets))
-    .then_some(mode)
+        .then_some(mode)
 }
 
 /// `run_on_regex_node`: the pattern that oxlint parses for `e`, which is a regular expression literal or a call of `RegExp`, with

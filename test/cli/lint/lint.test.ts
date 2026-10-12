@@ -479,7 +479,10 @@ describe.concurrent("bun lint", () => {
   // Each place is what ESLint 10.12.0 reports.
   describe("no-useless-assignment as ESLint has it", () => {
     const places = async (lines: string[]) => {
-      const files = { "eslint.config.js": config({ "no-useless-assignment": "error" }), "a.cjs": lines.join("\n") + "\n" };
+      const files = {
+        "eslint.config.js": config({ "no-useless-assignment": "error" }),
+        "a.cjs": lines.join("\n") + "\n",
+      };
       const { raw } = await lint(files, ["-f", "unix", "a.cjs"]);
       return [...raw.matchAll(/\ba\.cjs:(\d+:\d+):/g)].map(it => it[1]);
     };
@@ -2784,7 +2787,11 @@ describe.concurrent("bun lint", () => {
         }];`,
       ],
     ])("as %s", async (_, name, configuration) => {
-      const { stdout, exitCode } = await lint({ [name]: configuration, ...sources }, ["-f", "unix", ...Object.keys(sources)]);
+      const { stdout, exitCode } = await lint({ [name]: configuration, ...sources }, [
+        "-f",
+        "unix",
+        ...Object.keys(sources),
+      ]);
       const places = [...stdout.matchAll(/([\w-]+\.ts):(\d+):(\d+): /g)].map(it => `${it[1]}:${it[2]}:${it[3]}`);
       expect(places.sort()).toEqual(["arrow.ts:3:5", "function.ts:3:5", "no-decorator.ts:3:5", "no-function.ts:3:5"]);
       expect(exitCode).toBe(1);
@@ -3510,7 +3517,10 @@ describe.concurrent("bun lint", () => {
     });
 
     test("--fix-type", async () => {
-      const files = { "eslint.config.js": config({ "unicode-bom": ["error", "always"], "no-var": "error" }), "a.js": bad };
+      const files = {
+        "eslint.config.js": config({ "unicode-bom": ["error", "always"], "no-var": "error" }),
+        "a.js": bad,
+      };
       const result = await lint(files, ["--fix", "--fix-type", "layout", "a.js"], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": `\uFEFF${bad}` });
     });
@@ -7482,13 +7492,7 @@ foo(b)
         lint(dir, ["--no-config-lookup", ...rules, "--fix", "-f", "json", "b.js"]),
       ]);
       expect(places(found.stdout)).toEqual(
-        [
-          "1:1-1:10 no-var",
-          "2:7-2:9 eqeqeq",
-          "2:13-4:2 curly",
-          "3:3-3:11 no-debugger",
-          "14:1-15:1 max-lines",
-        ].sort(),
+        ["1:1-1:10 no-var", "2:7-2:9 eqeqeq", "2:13-4:2 curly", "3:3-3:11 no-debugger", "14:1-15:1 max-lines"].sort(),
       );
       expect(JSON.parse(found.stdout)[0].suppressedMessages.length).toBe(2);
       expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe(

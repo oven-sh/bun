@@ -1792,6 +1792,21 @@ describe("endReadable() queues one tick for 'end' (nodejs/node#65310)", () => {
   });
 });
 
+describe("an EOF that nothing observes owes its 'readable' to a later listener (nodejs/node#65749)", () => {
+  it("read() takes the 'readable' that is owed", async () => {
+    // With autoDestroy, the stream is destroyed at 'end' and emits no 'readable' behind it in any case.
+    const r = new Readable({ read() {}, autoDestroy: false });
+    r.push(null);
+    expect(r.read()).toBe(null);
+    const events = [];
+    r.on("readable", () => events.push("readable"));
+    r.on("end", () => events.push("end"));
+    // Every tick of the stream runs before an immediate.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(events).toEqual(["end"]);
+  });
+});
+
 describe("Duplex.from({ readable, writable }) destroy propagation (nodejs/node#62824)", () => {
   it("destroys the writable side when the readable side errors", async () => {
     const r = new Readable({ read() {} });

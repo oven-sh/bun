@@ -65,6 +65,7 @@ const kHasPaused = 1 << 25;
 const kPaused = 1 << 26;
 const kDataListening = 1 << 27;
 const kEndScheduled = 1 << 28;
+const kEofReadablePending = 1 << 29;
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
@@ -592,7 +593,7 @@ Readable.prototype.read = function (n) {
   // If we're asking for more than the current hwm, then raise the hwm.
   if (n > state.highWaterMark) state.highWaterMark = computeNewHighWaterMark(n);
 
-  if (n !== 0) state[kState] &= ~kEmittedReadable;
+  if (n !== 0) state[kState] &= ~(kEmittedReadable | kEofReadablePending);
 
   // If we're doing read(0) to trigger a readable event, but we
   // already have a bunch of data in the buffer, then just trigger
@@ -725,7 +726,12 @@ function onEofChunk(stream, state) {
     // If we are sync, wait until next tick to emit the data.
     // Otherwise we risk emitting data in the flow()
     // the readable code triggers during a read() call.
-    emitReadable(stream);
+    if ((state[kState] & (kFlowing | kNeedReadable)) !== 0 || stream.listenerCount("readable") > 0) {
+      emitReadable(stream);
+    } else {
+      // Nobody observes the stream. A 'readable' listener that comes later gets this emission (Readable.prototype.on).
+      state[kState] |= kEofReadablePending;
+    }
   } else {
     // Emit 'readable' now to make sure it gets picked up.
     state[kState] &= ~kNeedReadable;
@@ -1058,8 +1064,15 @@ Readable.prototype.on = function (ev, fn) {
       $debug("on readable");
       if (state.length) {
         emitReadable(this);
-      } else if ((state[kState] & kReading) === 0) {
-        process.nextTick(nReadingNextTick, this);
+      } else {
+        if ((state[kState] & kEofReadablePending) !== 0) {
+          // onEofChunk skipped the 'readable' of the EOF, because nobody listened.
+          state[kState] &= ~kEofReadablePending;
+          emitReadable(this);
+        }
+        if ((state[kState] & kReading) === 0) {
+          process.nextTick(nReadingNextTick, this);
+        }
       }
     }
   }

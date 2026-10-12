@@ -20,6 +20,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// A configuration file error: the code of TypeScript's message, and the message arguments.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -213,7 +214,12 @@ pub struct ExtendedConfigCache {
     closed: RefCell<FxHashSet<Vec<u8>>>,
     /// How often a cycle was met, or something kept that had met one was used.
     cycles_met: Cell<usize>,
+    /// `Options::paths` for a `paths` as written, which the first field keeps in place.
+    paths: RefCell<FxHashMap<*const WrittenPaths, (Arc<WrittenPaths>, Arc<Paths>)>>,
 }
+
+type WrittenPaths = Vec<(Vec<u8>, Json)>;
+type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
 struct ExtendedConfigCacheEntry {
     extended_config: Option<Raw>,
@@ -289,6 +295,12 @@ pub(crate) fn starts_with_config_dir_template(value: &[u8]) -> bool {
 /// `getSubstitutedPathWithConfigDirTemplate`
 fn substitute_config_dir(value: &[u8], base: &[u8]) -> Vec<u8> {
     join(base, &value.replacen(CONFIG_DIR_TEMPLATE, b"./", 1))
+}
+
+/// Whether a substitution of `paths` starts with `${configDir}`.
+fn has_config_dir_template(patterns: &[(Vec<u8>, Json)]) -> bool {
+    let targets = patterns.iter().filter_map(|it| it.1.as_array()).flatten();
+    (targets.filter_map(Json::as_str)).any(starts_with_config_dir_template)
 }
 
 fn substitute_if_template(value: &[u8], base: &[u8]) -> Option<Vec<u8>> {
@@ -394,7 +406,7 @@ fn parse_config(
                 b"tsconfig.json"
             };
             errors.push(ConfigError::new(5092, &[name]));
-            Json::Object(Vec::new())
+            Json::Object(Default::default())
         }
     };
     if let Some(root) = file.root {
@@ -750,7 +762,9 @@ pub fn load_overriding(
     let references = get_project_references(&raw.references, base);
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, over(has_references), &[]);
-    Ok(project_from_raw(host, session, path, base, raw, errors))
+    Ok(project_from_raw(
+        host, session, path, base, raw, errors, cache,
+    ))
 }
 
 /// The project consisting of `files` only, or of everything under `dir` if `files` is empty, with
@@ -758,7 +772,7 @@ pub fn load_overriding(
 pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Vec<u8>>) -> Project {
     let raw = Raw {
         compiler: match compiler {
-            Json::Object(options) => options,
+            Json::Object(options) => Arc::unwrap_or_clone(options),
             _ => Vec::new(),
         },
         files: List {
@@ -768,7 +782,8 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
         },
         ..Raw::default()
     };
-    project_from_raw(host, &Session::new(), b"", dir, raw, Vec::new())
+    let cache = Default::default();
+    project_from_raw(host, &Session::new(), b"", dir, raw, Vec::new(), &cache)
 }
 
 /// `getProjectReferences`. `None`: nil.
@@ -794,6 +809,7 @@ fn project_from_raw(
     base: &[u8],
     mut raw: Raw,
     mut errors: Vec<ConfigError>,
+    extended_config_cache: &ExtendedConfigCache,
 ) -> Project {
     // `handleOptionConfigDirTemplateSubstitution`
     for (key, value) in &mut raw.compiler {
@@ -812,8 +828,9 @@ fn project_from_raw(
                     }
                 }
             }
-            Json::Object(patterns) if key == b"paths" => {
-                for (_, targets) in patterns {
+            // What the projects of a build have from one file stays shared.
+            Json::Object(patterns) if key == b"paths" && has_config_dir_template(patterns) => {
+                for (_, targets) in Arc::make_mut(patterns) {
                     if let Json::Array(targets) = targets {
                         for target in targets {
                             // A substitution is text, which messages quote.
@@ -829,8 +846,15 @@ fn project_from_raw(
             _ => {}
         }
     }
-    let compiler = Json::Object(std::mem::take(&mut raw.compiler));
+    let compiler = Json::Object(Arc::new(std::mem::take(&mut raw.compiler)));
     let mut options = Options::from_compiler_options(base, &compiler);
+    // One list for the projects that have their `paths` from one file.
+    if let Some(Json::Object(written)) = compiler.get(b"paths") {
+        let mut kept = extended_config_cache.paths.borrow_mut();
+        let entry = kept.entry(Arc::as_ptr(written));
+        let entry = entry.or_insert_with(|| (Arc::clone(written), Arc::clone(&options.paths)));
+        options.paths = Arc::clone(&entry.1);
+    }
     options.use_case_sensitive_file_names = host.is_case_sensitive();
     options.verify(&compiler, config_path);
     let about_options = &options.problems;
@@ -922,7 +946,7 @@ fn project_from_raw(
         references: references.unwrap_or_default(),
         errors,
         raw_compiler_options: match compiler {
-            Json::Object(options) => options,
+            Json::Object(options) => Arc::unwrap_or_clone(options),
             _ => Vec::new(),
         },
     }

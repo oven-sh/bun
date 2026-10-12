@@ -1642,7 +1642,8 @@ fn run_one(
             config::load_overriding(&host, &Session::new(), path.as_bytes(), &cache, &over).ok()
         });
         let mut project: Project = from_config_file.unwrap_or_else(|| {
-            config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
+            let compiler = Json::Object(std::sync::Arc::new(compiler));
+            config::without_config(&host, cwd.as_bytes(), compiler, files.clone())
         });
         // `compileDeclarationFiles` passes on `ConfigFile` and not `Errors`.
         if declaration_files.is_some() {

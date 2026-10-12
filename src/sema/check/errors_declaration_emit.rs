@@ -5886,7 +5886,7 @@ fn try_get_module_name_from_exports_or_imports(
         }
         // Each entry is a condition.
         Json::Object(entries) => {
-            for (key, value) in entries {
+            for (key, value) in entries.iter() {
                 if key != b"default"
                     && !conditions.contains(&key.as_slice())
                     && !(conditions.contains(&&b"types"[..])
@@ -5924,7 +5924,7 @@ fn try_get_module_name_from_exports(
     if let Json::Object(entries) = exports
         && object_kind(entries) == ObjectKind::Subpaths
     {
-        for (key, value) in entries {
+        for (key, value) in entries.iter() {
             let name = try_get_module_name_from_exports_or_imports(
                 target,
                 package_directory,
@@ -6266,7 +6266,7 @@ impl<'p, 's> Checker<'p, 's> {
                 prefers_ts_extension,
             },
         );
-        for (key, value) in entries {
+        for (key, value) in entries.iter() {
             if key == b"#" || key == b"#/" || !key.starts_with(b"#") {
                 continue;
             }

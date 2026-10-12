@@ -931,7 +931,9 @@ fn default_compiler_options() -> Json {
         (b"strict", Json::Bool(true)),
         (b"skipLibCheck", Json::Bool(true)),
     ];
-    Json::Object(options.map(|(name, value)| (name.to_vec(), value)).into())
+    Json::Object(Arc::new(
+        options.map(|(name, value)| (name.to_vec(), value)).into(),
+    ))
 }
 
 fn global(code: u32, args: &[impl AsRef<[u8]>]) -> Diagnostic {
@@ -1372,6 +1374,7 @@ fn project_without_config(
 ) -> config::Project {
     let mut options = default_compiler_options();
     if let Json::Object(options) = &mut options {
+        let options = Arc::make_mut(options);
         let specified = request.compiler_options.iter().cloned();
         let specified = specified.map(|CompilerOption(name, value)| (name, value));
         config::merge_compiler_options(options, specified.collect(), &[]);

@@ -13,6 +13,7 @@ use crate::session::Session;
 use crate::util::FxHashMap;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
@@ -21,8 +22,9 @@ pub enum Json {
     Number(f64),
     String(Vec<u8>),
     Array(Vec<Json>),
-    /// In source order: the order of `exports` conditions matters.
-    Object(Vec<(Vec<u8>, Json)>),
+    /// In source order: the order of `exports` conditions matters. Shared: the projects of a build
+    /// that extend one file all have its `paths`, which can have thousands of entries.
+    Object(Arc<Vec<(Vec<u8>, Json)>>),
 }
 
 /// `jsonwire.AppendQuote` under `AllowInvalidUTF8`, without `EscapeForHTML` and `EscapeForJS`.
@@ -536,7 +538,7 @@ impl<'s> TsConfigSourceFile<'s> {
                         }
                     }
                 }
-                Json::Object(result)
+                Json::Object(Arc::new(result))
             }
             _ => Json::Null,
         }

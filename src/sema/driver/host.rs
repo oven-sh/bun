@@ -836,7 +836,7 @@ fn actual_json_type(data: &JsonValue) -> Json {
         JsonValue::Number(_) => Json::Number(0.0),
         JsonValue::String(_) => Json::String(Vec::new()),
         JsonValue::Array(_) => Json::Array(Vec::new()),
-        JsonValue::Object(_) => Json::Object(Vec::new()),
+        JsonValue::Object(_) => Json::Object(Default::default()),
     }
 }
 
@@ -877,7 +877,7 @@ fn unmarshal_map(
         if is_repeated || text.is_none() {
             let mut refused = value.clone();
             refused.push((name.to_vec(), actual_json_type(&property.value)));
-            return Some(Json::Object(refused));
+            return Some(Json::Object(Arc::new(refused)));
         }
     }
     None
@@ -911,11 +911,11 @@ impl Expected {
             }
             JsonValue::Object(object) if is_map => {
                 let mut value = match self.value.take() {
-                    Some(Json::Object(value)) => value,
+                    Some(Json::Object(value)) => Arc::unwrap_or_clone(value),
                     _ => Vec::new(),
                 };
                 let refused = unmarshal_map(object.get(), has_duplicates, &mut value);
-                self.value = Some(Json::Object(value));
+                self.value = Some(Json::Object(Arc::new(value)));
                 refused
             }
             _ => Some(actual_json_type(data)),
@@ -960,7 +960,7 @@ fn unmarshal_json_value(value: &JsonValue, has_duplicates: bool) -> Option<Json>
                     None => entries.push((key.to_vec(), value)),
                 }
             }
-            Json::Object(entries)
+            Json::Object(Arc::new(entries))
         }
     })
 }
@@ -1017,7 +1017,7 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
         let values = shown.into_iter().chain(null).chain(value);
         fields.extend(values.map(|it| (name.to_vec(), it)));
     }
-    Some(Json::Object(fields))
+    Some(Json::Object(Arc::new(fields)))
 }
 
 /// `packagejson.Parse`. Bun's JSON parser, which makes the values, also takes what is no JSON.

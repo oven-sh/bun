@@ -409,6 +409,20 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     // NOLINTEND
 }
 
+// As many VMs as cores, each busy on its own thread: there is no core left for threads that compile beside them. With 16 VMs on
+// 16 cores these took 10 % more time and 2.3 times the memory.
+// After JSCInitialize and before the first VM: nothing reads the option before it, and its constructor freezes the options.
+extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::useConcurrentJIT() = false;
+    // BUN_JSC_useConcurrentJIT wins, as in JSCInitialize.
+    for (size_t i = 0; i < envc; i++) {
+        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
+            JSC::Options::setOption(envp[i] + 8, false);
+    }
+}
+
 extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);

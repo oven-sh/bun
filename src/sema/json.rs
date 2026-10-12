@@ -8,12 +8,11 @@ use crate::hir::{
     Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKind, StmtKind, UnOp,
     is_bigint_literal_at, is_parenthesized, is_private_name_at, start_of,
 };
-use crate::resolve::{Host, Options};
+use crate::resolve::Host;
 use crate::session::Session;
 use crate::util::FxHashMap;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
@@ -22,9 +21,8 @@ pub enum Json {
     Number(f64),
     String(Vec<u8>),
     Array(Vec<Json>),
-    /// In source order: the order of `exports` conditions matters. Shared: the projects of a build
-    /// that extend one file all have its `paths`, which can have thousands of entries.
-    Object(Arc<Vec<(Vec<u8>, Json)>>),
+    /// In source order: the order of `exports` conditions matters.
+    Object(Vec<(Vec<u8>, Json)>),
 }
 
 /// `jsonwire.AppendQuote` under `AllowInvalidUTF8`, without `EscapeForHTML` and `EscapeForJS`.
@@ -54,6 +52,17 @@ fn append_quote(out: &mut Vec<u8>, text: &[u8]) {
 }
 
 impl Json {
+    /// `Boolean(value)`
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            Json::Null => false,
+            Json::Bool(value) => *value,
+            Json::Number(value) => *value != 0.0 && !value.is_nan(),
+            Json::String(value) => !value.is_empty(),
+            Json::Array(_) | Json::Object(_) => true,
+        }
+    }
+
     /// `core.StringifyJson` without indentation.
     pub fn stringify(&self, out: &mut Vec<u8>) {
         match self {
@@ -305,7 +314,7 @@ impl<'s> TsConfigSourceFile<'s> {
     ) -> Option<Self> {
         let atoms = Interner::new_in(session);
         let path = b"/tsconfig.json";
-        let mut hir = host.parse(session.arena(), path, &text, &atoms, &Options::default());
+        let mut hir = host.parse(session.arena(), path, &text, &atoms, Default::default());
         hir.text = text;
         let is_object =
             |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_)) && !is_parenthesized(&hir, *e);
@@ -538,7 +547,7 @@ impl<'s> TsConfigSourceFile<'s> {
                         }
                     }
                 }
-                Json::Object(Arc::new(result))
+                Json::Object(result)
             }
             _ => Json::Null,
         }

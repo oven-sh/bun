@@ -9,7 +9,7 @@ use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, Options, displayed_path, join, to_path};
+use bun_sema::resolve::{Host, displayed_path, join, to_path};
 use bun_sema::session::Session;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use bun_threading::Guarded;
@@ -456,23 +456,13 @@ impl Host for Virtual {
     fn is_case_sensitive(&self) -> bool {
         self.is_case_sensitive
     }
-    fn share_declaration_files(&self, _: u32, _: usize) {}
-    fn stays_loaded(&self) {}
-    fn shared_file(
-        &self,
-        _: &[u8],
-        _: &[u8],
-        _: u8,
-    ) -> Option<std::sync::Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
-        None
-    }
     fn parse<'s>(
         &self,
         arena: &'s bun_sema::session::Arena,
         path: &[u8],
         text: &[u8],
         atoms: &bun_sema::atom::Interner<'s>,
-        options: &Options,
+        options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }
@@ -1546,7 +1536,6 @@ fn run_one(
             &only_units,
             &Session::new(),
             config_path.as_bytes(),
-            &Default::default(),
             &|_| Vec::new(),
         );
         named_by_config = project.ok().map(|project| project.files);
@@ -1638,12 +1627,10 @@ fn run_one(
         let from_config_file = config_unit.as_ref().and_then(|unit| {
             let path = absolute(&unit.name, &cwd);
             let over = |_: bool| compiler.clone();
-            let cache = Default::default();
-            config::load_overriding(&host, &Session::new(), path.as_bytes(), &cache, &over).ok()
+            config::load_overriding(&host, &Session::new(), path.as_bytes(), &over).ok()
         });
         let mut project: Project = from_config_file.unwrap_or_else(|| {
-            let compiler = Json::Object(std::sync::Arc::new(compiler));
-            config::without_config(&host, cwd.as_bytes(), compiler, files.clone())
+            config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
         });
         // `compileDeclarationFiles` passes on `ConfigFile` and not `Errors`.
         if declaration_files.is_some() {
@@ -1802,6 +1789,7 @@ fn run_one(
             compiler_options: &[],
             cwd: cwd.as_bytes(),
             project: None,
+            listed_projects: None,
             build: false,
             errors: &[],
             paths: &[],

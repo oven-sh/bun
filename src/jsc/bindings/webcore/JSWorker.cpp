@@ -853,7 +853,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        if (!Bun::isCPUProfilerRunning())
+        if (!Bun::isCPUProfilerRunning(workerCtx.vm()))
             Bun::startCPUProfiler(workerCtx.vm());
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [](VM&, JSGlobalObject*) -> JSValue { return jsUndefined(); });
@@ -879,7 +879,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         WTF::String result;
-        if (Bun::isCPUProfilerRunning())
+        if (Bun::isCPUProfilerRunning(workerCtx.vm()))
             Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
         if (result.isEmpty())
             result = kEmptyCpuProfileJSON;

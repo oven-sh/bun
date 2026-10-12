@@ -386,7 +386,7 @@ impl Snapshots {
 
     /// As Jest and Vitest sort them.
     fn keys_are_sorted(&self) -> bool {
-        self.values.keys().windows(2).all(|pair| natural_compare(&pair[0], &pair[1]).is_le())
+        self.values.keys().is_sorted_by(|a, b| natural_compare(a, b).is_le())
     }
 
     /// Whether a snapshot of the current file that does not match may be one that an older Bun wrote.

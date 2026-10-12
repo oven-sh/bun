@@ -1175,6 +1175,15 @@
  "no-shadow/import-that-is-exported": [
   "a.ts:2:19+1 eslint(no-shadow)"
  ],
+ "no-shadow/merged-namespaces": [
+  "a.ts:2:28+1 eslint(no-shadow)",
+  "a.ts:4:53+1 eslint(no-shadow)",
+  "a.ts:4:64+1 eslint(no-shadow)",
+  "a.ts:5:43+1 eslint(no-shadow)",
+  "a.ts:7:28+1 eslint(no-shadow)",
+  "a.ts:8:10+1 eslint(no-shadow)",
+  "a.ts:9:10+1 eslint(no-shadow)"
+ ],
  "sort-keys/one-report": [
   "a.js:1:5+20 eslint(sort-keys)",
   "a.js:2:5+32 eslint(sort-keys)",

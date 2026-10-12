@@ -2489,6 +2489,24 @@ export const projects: Project[] = [
     },
   },
   {
+    name: "no-shadow/merged-namespaces",
+    about: "each block of a namespace or an enum that is declared several times is a scope of its own",
+    config: rules([], { "no-shadow": "error" }),
+    files: {
+      "a.ts": lines(
+        `const a = 1;`,
+        `namespace N { export const a = 2; }`,
+        `namespace N { export const b = a; }`,
+        `namespace N { export const c = 2; export function g(a: number, c: number) {} }`,
+        `namespace N { export const y = 1; { const y = 2; } }`,
+        `namespace N { { const y = 2; } }`,
+        `namespace N { export const a = 3; }`,
+        `enum E { a }`,
+        `enum E { a = 2, r }`,
+      ),
+    },
+  },
+  {
     name: "sort-keys/one-report",
     about: "one report for an object, at the object",
     config: rules([], { "sort-keys": "error" }),

@@ -656,8 +656,7 @@ impl Checker {
                     None if self.builtin_globals => file.global(name.bytes()),
                     _ => None,
                 };
-                // What TypeScript merges from several namespaces is listed in the scope of each.
-                if (shadowed.is_some() || global.is_some()) && symbol.scope() == scope {
+                if shadowed.is_some() || global.is_some() {
                     let is_global_value = global.is_none_or(|it| it.is_value);
                     self.check_variable(cx, symbol, shadowed, is_global_value, &mut known);
                 }

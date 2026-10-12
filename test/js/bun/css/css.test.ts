@@ -7771,6 +7771,8 @@ describe("css tests", () => {
       '@property --accent{syntax:"<color>";inherits:false;initial-value:#fff}',
     );
     minify_test(".a{color:Redd}", ".a{color:Redd}");
+    // Only a color position folds.
+    minify_test(".a{--x:Red;animation-name:Red;font-family:Tan}", ".a{--x:Red;animation-name:Red;font-family:Tan}");
   });
 
   describe("edge cases", () => {

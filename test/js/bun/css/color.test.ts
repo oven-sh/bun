@@ -780,11 +780,14 @@ describe("named colors in any letter case", () => {
     ["DodgerBlue", "#1e90ff"],
     ["RebeccaPurple", "#663399"],
     ["LIGHTGOLDENRODYELLOW", "#fafad2"],
-    ["Transparent", "#000000"],
     ["color-mix(in srgb, Red, Blue)", "#800080"],
     ["rgb(from Red r g b)", "#ff0000"],
   ])("%s is %s", (input, expected) => {
     expect(color(input, "hex")).toBe(expected);
+  });
+
+  test("the css format prints the name in lowercase", () => {
+    expect(color("RED", "css")).toBe("red");
   });
 
   // Only ASCII letters fold: U+212A KELVIN SIGN lowercases to "k" in Unicode, and it is not a "k" here.

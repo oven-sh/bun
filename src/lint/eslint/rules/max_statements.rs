@@ -99,8 +99,11 @@ impl Rule for MaxStatements {
         if !ast_utils::is_function_with_body(func) {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
+        // For oxlint what is in a class is in something.
+        let encloses = |it: Node<'a>| matches!(it, Node::Func(_)) || is_oxlint && matches!(it, Node::Class(_));
         let is_top_level = self.ignore_top_level_functions
-            && cx.state.enclosed.find(Node::Func(func), |_, it| it.as_func().map(|_| ())).is_none();
+            && cx.state.enclosed.find(Node::Func(func), |_, it| encloses(it).then_some(())).is_none();
         if is_top_level {
             cx.state.count += 1;
         }
@@ -108,7 +111,13 @@ impl Rule for MaxStatements {
             return;
         };
         let in_blocks = cx.state.in_blocks.get(func.id().idx()).map_or(0, |it| *it as usize);
-        let count = func.body_statements().map_or(0, List::len) + in_blocks;
+        let body = func.body_statements();
+        // oxlint does not count directives.
+        let directives = match is_oxlint {
+            true => body.map_or(0, |it| it.iter().take_while(|it| it.directive().is_some()).count()),
+            false => 0,
+        };
+        let count = body.map_or(0, List::len) - directives + in_blocks;
         if count <= max {
             return;
         }
@@ -123,7 +132,9 @@ impl Rule for MaxStatements {
         let Some(max) = self.max else {
             return;
         };
-        if cx.state.count == 1 {
+        // oxlint asks how many have too many statements.
+        let count = if cx.language().is_oxlint { cx.state.exceeding.len() } else { cx.state.count };
+        if count == 1 {
             return;
         }
         for (func, count) in std::mem::take(&mut cx.state.exceeding) {

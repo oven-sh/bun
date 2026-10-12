@@ -322,6 +322,43 @@ for (const [site, table] of [
   }
 }
 
+// nghttp2 refuses these requests when it sends them, so the stream fails one tick after
+// request(). The call of the user comes first: the stream keeps its code and gets no 'error'.
+describe("a request that is refused after close() or destroy()", () => {
+  const refused = {
+    "a :path with a space": { ":path": "/a b" },
+    "content-length on a DELETE": { ":method": "DELETE", "content-length": "1" },
+  };
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+  for (const [name, headers] of Object.entries(refused)) {
+    for (const call of ["close", "destroy"] as const) {
+      for (const listener of [true, false]) {
+        test(`${call}(), ${name}, ${listener ? "an" : "no"} 'error' listener`, async () => {
+          const server = http2.createServer();
+          const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+          try {
+            await new Promise(resolve => client.on("connect", resolve));
+            const events: string[] = [];
+            const req = client.request(headers);
+            if (listener) req.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
+            req.on("close", () => events.push("close:" + req.rstCode));
+            req[call]();
+            // Bun's close() waited for 'ready', then queued the RST_STREAM with setImmediate for a
+            // stream that has no id: an uncaught "Invalid stream id". Two turns cover that call.
+            await nextTurn();
+            await nextTurn();
+            assert.deepStrictEqual(events, ["close:0"]);
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+      }
+    }
+  }
+});
+
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");
   // Alpine's node segfaults at a random point of this file (alpine 3.23 aarch64, on main too), and

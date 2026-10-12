@@ -2,10 +2,9 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::ast::{Assertion, Kind as RegexKind, NodeType};
 use bun_lint::regex::{self, Mode, parse_pattern};
-use bun_lint::utils::char_source::Written;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap, get_string_if_constant};
+use bun_lint_oxlint::regex_pattern::run_on_regex_node;
 use smallvec::SmallVec;
-use std::cell::OnceCell;
 
 /// Disallow useless backreferences in regular expressions.
 pub struct NoUselessBackreference;
@@ -100,13 +99,23 @@ fn may_have_backreference(pattern: &[u8]) -> bool {
 
 /// `node` is the regular expression: a literal, or a call of `RegExp`.
 fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoUselessBackreference>) {
+    check_pattern(pattern, Mode::of_flags(flags), &|_| node.span(), &|it| it.raw().to_vec(), cx);
+}
+
+/// `place`: where a backreference is reported. `shown`: what is said of a backreference and of a group.
+fn check_pattern<'a>(
+    pattern: &[u8],
+    mode: Mode,
+    place: &dyn Fn(regex::Node<'_>) -> Span,
+    shown: &dyn Fn(regex::Node<'_>) -> Vec<u8>,
+    cx: &Cx<'a, NoUselessBackreference>,
+) {
     if !may_have_backreference(pattern) {
         return;
     }
-    let Ok(ast) = parse_pattern(pattern, Mode::of_flags(flags), regex::Options::default()) else {
+    let Ok(ast) = parse_pattern(pattern, mode, regex::Options::default()) else {
         return;
     };
-    let written = OnceCell::new();
     for bref in ast.root().descendants() {
         let RegexKind::Backreference { resolved, .. } = bref.kind() else {
             continue;
@@ -128,26 +137,16 @@ fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoU
             1 => " and another group".to_owned(),
             count => format!(" and other {count} groups"),
         };
-        // oxlint points at the backreference, where it is written.
-        let pattern_start = node.span().start + 1;
-        let place = match node.kind() {
-            _ if !cx.language().is_oxlint => node.span(),
-            ExprKind::Regex(_) => Span::new(pattern_start + bref.start(), pattern_start + bref.end()),
-            ExprKind::Call(call) | ExprKind::New(call) => (written.get_or_init(|| Written::new(call.args().first()?)).as_ref())
-                .and_then(|it| it.span(bref.utf16_start(), bref.utf16_end()))
-                .unwrap_or_else(|| node.span()),
-            _ => node.span(),
-        };
-        cx.report(place, message)
-            .data("bref", bref.raw().to_vec())
-            .data("group", group.raw().to_vec())
+        cx.report(place(bref), message)
+            .data("bref", shown(bref))
+            .data("group", shown(group))
             .data("otherGroups", other_groups);
     }
 }
 
 impl Rule for NoUselessBackreference {
     const META: Meta = Meta::eslint("no-useless-backreference", Kind::Problem).recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
+    const ON: On = On::new().exprs(&[ExprTag::Regex, ExprTag::New]).calls_named(&["RegExp"]).finish();
     no_state!();
 
     fn new(_: &Options) -> Self {
@@ -155,15 +154,24 @@ impl Rule for NoUselessBackreference {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let mut on = On::new().exprs(&[ExprTag::Regex]);
-        // Finding the calls takes resolving every name of the file.
-        if file.mentions("RegExp") {
-            on = on.finish();
+        let on = On::new().exprs(&[ExprTag::Regex]);
+        match (file.mentions("RegExp"), file.language().is_oxlint) {
+            (false, _) => on,
+            (true, true) => on.exprs(&[ExprTag::New]).calls_named(&["RegExp"]),
+            // Finding the calls takes resolving every name of the file.
+            (true, false) => on.finish(),
         }
-        on
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // oxlint reads a pattern that is written where `RegExp` is called, and points at the backreference.
+        if cx.language().is_oxlint {
+            if let Some(pattern) = run_on_regex_node(e) {
+                let place = |it: regex::Node<'_>| pattern.span(it.start(), it.end());
+                check_pattern(pattern.text(), pattern.mode, &place, &|it| cx.slice(place(it)).to_vec(), cx);
+            }
+            return;
+        }
         if let Some(literal) = e.as_regex() {
             check_regex(e, literal.pattern(), literal.flags(), cx);
         }

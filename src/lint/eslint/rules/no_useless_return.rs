@@ -338,7 +338,8 @@ fn what_is_known<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
 fn oxlint_is_at_the_end<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
     let is_last = |list: List<'a, Stmt<'a>>| list.last().map(Node::Stmt) == Some(child);
     match parent {
-        Node::Func(func) => Some(func.body_statements().is_some_and(is_last)),
+        // A `return` in a static block is an error.
+        Node::Func(func) => Some(func.kind() != FnKind::StaticBlock && func.body_statements().is_some_and(is_last)),
         Node::Case(_) => None,
         Node::Stmt(parent) => match parent.kind() {
             StmtKind::Block(list) if !is_last(list) => Some(false),

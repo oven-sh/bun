@@ -31,12 +31,14 @@ fn key_span(member: Member<'_>) -> Option<Span> {
     }
 }
 
-/// oxlint compares a member with the last before it that has the name, whatever that one is.
+/// oxlint compares a member with the last before it that has the name, whatever that one is. Two of a private name are
+/// an error.
 fn oxlint_redeclares(member: Member<'_>, before: Member<'_>) -> bool {
     let is_private = |it: Member<'_>| it.key().is_some_and(Key::is_private);
     let is_accessor = |it: Member<'_>| matches!(it.kind(), MemberKind::Getter | MemberKind::Setter);
     member.is_static() == before.is_static()
-        && is_private(member) == is_private(before)
+        && !is_private(member)
+        && !is_private(before)
         && (member.kind() == before.kind() || !(is_accessor(member) && is_accessor(before)))
 }
 

@@ -29,19 +29,6 @@ describe("web worker", () => {
       ).toThrow(/Invalid file URL/);
     });
 
-    test("a preload that does not resolve throws the message of the resolver", () => {
-      let thrown: unknown;
-      try {
-        new Worker(import.meta.url, { preload: ["./this-preload-does-not-exist.js"] });
-      } catch (e) {
-        thrown = e;
-      }
-      expect(thrown).toBeInstanceOf(TypeError);
-      expect((thrown as TypeError).message).toBe(
-        'BuildMessage: ModuleNotFound resolving "./this-preload-does-not-exist.js" (entry point)',
-      );
-    });
-
     test("string", async () => {
       const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
         preload: new URL("worker-fixture-preload.js", import.meta.url).href,

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A barrel file re-exports other files with `export *`. Importing one name from it loads every file behind it, and every file those import. In a large project that slows down startup, tests, and bundling for code that is never used.
+A barrel file re-exports other files with `export *`. Importing one name from it loads every file behind it, and every file those import. In a large project, that slows down startup, tests, and bundling for code that's never used.
 
-Each `export *` or `export * as name` counts as one module, plus every module that the re-exported file imports, directly or through other files. The file is reported when the total is more than `threshold`.
+Each `export *` or `export * as name` counts as one module, plus every module the re-exported file imports, directly or through other files. The file is reported when the total is more than `threshold`.
 
 With an oxlint config, other files are only read if the `import` plugin is on. Without it, only the `export *` lines count.
 
@@ -59,7 +59,7 @@ export { findOrder } from "./orders.js";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `threshold` | `100` | The largest number of modules a file may load through `export *`. |
+| `threshold` | `100` | The largest number of modules a file can load through `export *`. |
 
 ```toml bunfig.toml
 [lint.rules]

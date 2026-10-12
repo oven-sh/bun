@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A file with no `import` and no `export` is valid both as a script and as a module, and the two run differently: a module is in strict mode, its top-level `this` is `undefined`, and its top-level declarations are not global. A tool that has to guess from the content can guess wrong.
+A file with no `import` and no `export` is valid both as a script and as a module, and the two run differently. A module is in strict mode, its top-level `this` is `undefined`, and its top-level declarations aren't global. A tool that has to guess from the content can guess wrong.
 
-One `import` or `export` statement settles it. `import()`, `import.meta`, top-level `await` and `require()` do not count.
+One `import` or `export` statement settles it. `import()`, `import.meta`, top-level `await` and `require()` don't count.
 
 ## Examples
 
@@ -58,7 +58,7 @@ greet("Ada");
 export {};
 ```
 
-A `.cjs` file is never a module, so it is not checked:
+A `.cjs` file is never a module, so it isn't checked:
 
 {/* good {"filename": "greet.cjs"} */}
 ```js greet.cjs
@@ -67,4 +67,4 @@ console.log("Hello, Ada");
 
 ## When not to use it
 
-If every tool you use decides by the file extension or by `"type"` in `package.json`, the content of the file does not matter and this rule is noise.
+If every tool you use decides by the file extension or by `"type"` in `package.json`, the file's content doesn't matter and this rule is noise.

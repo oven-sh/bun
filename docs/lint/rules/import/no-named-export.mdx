@@ -14,7 +14,7 @@ deprecated: false
 
 Some projects want each file to export one thing, as its default export. This rule reports every other export: `export const`, `export function`, `export { name }`, `export * from` and, in TypeScript, `export type` and `export interface`.
 
-`export { name as default }` is a default export and is allowed.
+`export { name as default }` is a default export, so it's allowed.
 
 ## Examples
 
@@ -56,4 +56,4 @@ export { formatPrice as default };
 
 ## When not to use it
 
-This is the opposite of `import/no-default-export`. With both on, a module cannot export anything.
+This is the opposite of `import/no-default-export`. With both on, a module can't export anything.

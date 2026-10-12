@@ -16,11 +16,11 @@ deprecated: false
 
 The rule reports three shapes:
 
-- `user & user.city`: a variable, and on the right a property of that variable.
-- `title | "Untitled"`: a variable, and on the right something that is clearly not a number.
+- `user & user.city`: a variable, with a property of that variable on the right.
+- `title | "Untitled"`: a variable, with something that clearly isn't a number on the right.
 - `title |= "Untitled"`: the same for `|=`.
 
-A number, a variable, `null` and arithmetic can be numbers, so they are allowed on the right. A string, an object, an array, `typeof x`, `!x`, a call and a property access are reported.
+A number, a variable, `null` and arithmetic can be numbers, so they're allowed on the right. A string, an object, an array, `typeof x`, `!x`, a call and a property access are reported.
 
 `--fix-suggestions` replaces the operator with the logical one.
 

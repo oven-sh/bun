@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-At a call like `createUser("Ada", "ada@example.com", "admin", "core")` nothing says which argument is which, and swapping two of them goes unnoticed. This rule reports a function that has more parameters than the maximum, which is 3 by default.
+In a call like `createUser("Ada", "ada@example.com", "admin", "core")`, nothing tells you which argument is which, and nobody notices if you swap two of them. This rule reports any function with more parameters than the maximum, which is 3 by default.
 
 ## Examples
 
@@ -44,7 +44,7 @@ max-params = ["error", 4]
 | Option | Default | What it does |
 | --- | --- | --- |
 | `max` | `3` | The number of parameters a function can have. `maximum` is an older name for it. |
-| `countThis` | `"except-void"` | Whether a TypeScript `this` parameter counts: `"always"`, `"never"`, or `"except-void"`, which counts it unless it is `this: void`. |
+| `countThis` | `"except-void"` | Whether a TypeScript `this` parameter counts: `"always"`, `"never"`, or `"except-void"`, which counts it unless it's `this: void`. |
 | `countVoidThis` | `false` | An older spelling. `true` is the same as `countThis: "always"`. |
 
 A number alone is short for `{ "max": number }`.
@@ -63,14 +63,14 @@ With `countThis: "never"` it has 2:
 function onClick(this: HTMLButtonElement, event: Event, target: Element) {}
 ```
 
-`this: void` does not count by default, so this passes with a maximum of 2:
+`this: void` doesn't count by default, so this passes with a maximum of 2:
 
 {/* good {"options": [2]} */}
 ```ts
 function onClick(this: void, event: Event, target: Element) {}
 ```
 
-With `countThis: "always"` it is reported:
+With `countThis: "always"` it's reported:
 
 {/* bad {"options": [{"max": 2, "countThis": "always"}]} */}
 ```ts

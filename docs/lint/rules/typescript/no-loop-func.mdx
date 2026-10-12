@@ -14,7 +14,7 @@ deprecated: true
 
 A function keeps the variable it uses, not the value the variable had when the function was created. If a loop creates functions that use a `var`, or a `let` declared outside the loop, and the loop changes that variable, every one of them sees the last value.
 
-A `const` never changes, and a `let` declared in the loop is new in each iteration, so both are safe. A function that is called right where it is written is not reported either.
+A `const` never changes, and a `let` declared in the loop is new in each iteration, so both are safe. A function that's called right where it's written isn't reported either.
 
 This rule is deprecated. Use `no-loop-func` instead.
 

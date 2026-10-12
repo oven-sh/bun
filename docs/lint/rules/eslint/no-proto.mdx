@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`object.__proto__` is a getter and setter that objects inherit from `Object.prototype`. An object made with `Object.create(null)` does not have it, so there `__proto__` is an ordinary property and reading it gives `undefined`. `Object.getPrototypeOf()` and `Object.setPrototypeOf()` work on every object.
+`object.__proto__` is a getter and setter that objects inherit from `Object.prototype`. An object made with `Object.create(null)` doesn't have it, so on that object `__proto__` is an ordinary property and reading it returns `undefined`. `Object.getPrototypeOf()` and `Object.setPrototypeOf()` work on every object.
 
-`__proto__` as a key in an object literal, which sets the prototype of the new object, is not reported.
+Using `__proto__` as a key in an object literal sets the new object's prototype, and that isn't reported.
 
 ## Examples
 

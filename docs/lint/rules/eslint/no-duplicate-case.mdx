@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `switch` runs the first `case` that matches. A second `case` with the same test is never chosen, so its code only runs if the case above it falls through. It is usually a copied `case` where the label was not changed.
+A `switch` runs the first `case` that matches. A second `case` with the same test is never chosen, so its code only runs if the case above it falls through. It's usually a copied `case` where someone forgot to change the label.
 
 Two labels are the same if their source text is the same, ignoring whitespace and comments.
 
@@ -54,7 +54,7 @@ switch (event.key) {
 }
 ```
 
-Labels do not have to be literals:
+Labels don't have to be literals:
 
 {/* bad */}
 ```js

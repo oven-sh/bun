@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Vitest runs the callback of `describe` to collect the tests inside it. Without a callback there is nothing to collect. The callback is not a test, so it has no `done` to call, and returning the result of `test()` from it does nothing.
+Vitest runs the `describe` callback to collect the tests inside it. Without a callback there's nothing to collect. The callback isn't a test, so it has no `done` to call, and returning the result of `test()` from it does nothing.
 
 ## Examples
 
@@ -51,7 +51,7 @@ describe("cart", () => {
 });
 ```
 
-An `async` callback is allowed. Options can come before the callback, and `describe.todo` needs only a title:
+An `async` callback is allowed. Options can come before the callback, and `describe.todo` only needs a title:
 
 {/* good */}
 ```ts

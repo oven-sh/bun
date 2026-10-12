@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`delete sessions[userId]` with a key that is only known at run time means the object is used as a map. TypeScript cannot check that the key exists, and `delete` does not tell you whether it removed anything. Use a `Map` or a `Set` instead. Their `.delete()` returns `true` only if the key was there.
+`delete sessions[userId]` with a key that's only known at run time means you're using the object as a map. TypeScript can't check that the key exists, and `delete` doesn't tell you whether it removed anything. Use a `Map` or a `Set` instead. Their `.delete()` returns `true` only if the key was there.
 
 A literal key is fine: a string, a number, or a negative number.
 

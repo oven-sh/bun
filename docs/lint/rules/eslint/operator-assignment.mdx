@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`total = total + price` names `total` twice, and you have to compare both sides to see that it is an update. `total += price` says it once. This rule keeps a codebase to one of the two forms.
+`total = total + price` names `total` twice, and you have to compare both sides to see that it's an update. `total += price` says it once. This rule keeps a codebase to one of the two forms.
 
 `--fix` rewrites the assignment when the target is a variable or a plain property such as `user.visits` or `this.count`. `area = width * area` is reported but not fixed.
 

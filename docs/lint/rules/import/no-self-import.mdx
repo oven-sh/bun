@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A file that imports itself is almost always a mistake left by a rename, a move, or an editor's auto-import. Everything it gets that way is already in scope, and `require()` returns the `exports` object before the file has finished filling it.
+A file that imports itself is almost always a mistake left over from a rename, a move, or an editor's auto-import. Everything it gets that way is already in scope, and `require()` returns the `exports` object before the file has finished filling it.
 
-The rule resolves each path, so it also finds the file under another spelling, such as `.` in an `index.js`. It checks `import`, `export .. from`, `import()` and `require()`.
+The rule resolves each path, so it also catches other spellings of the same file, such as `.` in an `index.js`. It checks `import`, `export .. from`, `import()` and `require()`.
 
 ## Examples
 

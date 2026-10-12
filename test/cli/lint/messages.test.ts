@@ -24,24 +24,31 @@ async function bun(files: Record<string, string | Buffer>, args: string[]) {
 }
 
 describe.concurrent("bun lint", () => {
-  test("rules that need types, without --type-aware", async () => {
+  test("rules that need types, with --no-type-aware", async () => {
     const rules = (...names: string[]) => `[lint.rules]\n${names.map(it => `"${it}" = "error"\n`).join("")}`;
     const files = { "a.ts": "export const a: number = 1;\n" };
     const [one, two] = await Promise.all([
-      bun({ ...files, "bunfig.toml": rules("@typescript-eslint/await-thenable") }, ["lint"]),
+      bun({ ...files, "bunfig.toml": rules("@typescript-eslint/await-thenable") }, ["lint", "--no-type-aware"]),
       bun(
         {
           ...files,
           "bunfig.toml": rules("@typescript-eslint/await-thenable", "@typescript-eslint/no-floating-promises"),
         },
-        ["lint"],
+        ["lint", "--no-type-aware"],
       ),
     ]);
-    expect(one.stderr).toStartWith("warn: Skipped 1 rule that needs type information\n  Use --type-aware to run it.\n");
+    expect(one.stderr).toStartWith(
+      "warn: Skipped 1 rule that needs type information\n  Remove typeAware = false or --no-type-aware to run it.\n",
+    );
     expect(two.stderr).toStartWith(
-      "warn: Skipped 2 rules that need type information\n  Use --type-aware to run them.\n",
+      "warn: Skipped 2 rules that need type information\n  Remove typeAware = false or --no-type-aware to run them.\n",
     );
     expect([one.exitCode, two.exitCode]).toEqual([0, 0]);
+    // A config file that does not ask for types.
+    const config = `const plugin = { meta: { name: "@typescript-eslint/eslint-plugin" }, rules: {} };
+export default [{ plugins: { "@typescript-eslint": plugin }, rules: { "@typescript-eslint/await-thenable": "error" } }];\n`;
+    const { stderr } = await bun({ "a.js": "export const a = 1;\n", "eslint.config.mjs": config }, ["lint", "a.js"]);
+    expect(stderr).toStartWith("warn: Skipped 1 rule that needs type information\n  Use --type-aware to run it.\n");
   });
 
   test("a config file that ends the process", async () => {

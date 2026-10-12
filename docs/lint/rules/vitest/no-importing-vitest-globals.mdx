@@ -55,7 +55,7 @@ describe("slugify", () => {
 });
 ```
 
-An `import` of types, or of names that are not globals, is not reported:
+An `import` of types, or of names that aren't globals, isn't reported:
 
 {/* good */}
 ```ts
@@ -67,4 +67,4 @@ const port = inject("port");
 
 ## When not to use it
 
-Use this rule only with `globals: true`. Without it the names do not exist until you import them. `vitest/prefer-importing-vitest-globals` enforces the opposite style.
+Only use this rule with `globals: true`. Without it the names don't exist until you import them. `vitest/prefer-importing-vitest-globals` enforces the opposite style.

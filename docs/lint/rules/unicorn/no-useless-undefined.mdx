@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A variable without a value, a `return` without a value and a missing argument are already `undefined`, and `undefined` is the default a parameter has anyway. Writing it out changes nothing.
+A variable without a value, a `return` without a value and a missing argument are already `undefined`, and a parameter defaults to `undefined` anyway. Writing it out changes nothing.
 
 `--fix` removes the `undefined`.
 
@@ -50,7 +50,7 @@ function find(id, fallback) {
 const noop = () => {};
 ```
 
-Some code needs the word. A `const` must have a value. A function with a return type keeps its `return undefined`, because TypeScript may require it. Only `undefined` at the end of the arguments can be dropped.
+Sometimes you do need to write it. A `const` must have a value. A function with a return type keeps its `return undefined`, because TypeScript may require it. And you can only drop `undefined` at the end of the arguments.
 
 {/* good */}
 ```ts
@@ -63,7 +63,7 @@ function find(id: string): string | undefined {
 render(undefined, container);
 ```
 
-Calls where the argument is the point are not reported either: functions with a name that starts with `set`, collection methods such as `push`, `add`, `has` and `includes`, assertions such as `toBe` and `toEqual`, `createContext`, and `ref`.
+Calls where the argument is the point aren't reported either. That covers functions whose name starts with `set`, collection methods such as `push`, `add`, `has` and `includes`, assertions such as `toBe` and `toEqual`, `createContext`, and `ref`.
 
 {/* good */}
 ```js

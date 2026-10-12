@@ -820,8 +820,8 @@ impl Config {
         Self::from_flat(registry, base_path, json, Some(load_plugin), false)
     }
 
-    /// From objects of the same shape that are no file of ESLint's: what is linted, and how, where neither ESLint nor oxlint has
-    /// a configuration. No object names a plugin: see [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig).
+    /// Builds the config for projects with no ESLint or oxlint config. `json` has the shape of a flat config, but doesn't
+    /// have to declare plugins. See [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig).
     pub fn without_a_file(
         registry: &Registry,
         base_path: &[u8],

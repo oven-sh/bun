@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-The compiler lets you call an `any` with any arguments. It does not check that the value is a function, and the result is `any` again. If the value is not a function, you find out from a `TypeError` when the code runs.
+The compiler lets you call an `any` with any arguments. It doesn't check that the value is a function, and the result is `any` again. If the value isn't a function, you find out from a `TypeError` when the code runs.
 
-The rule reports calls, `new`, and tagged templates. It also reports a value of type `Function`, which says that something can be called but not with what. A type that cannot be resolved, for example from a missing import, counts as `any`.
+The rule reports calls, `new`, and tagged templates. It also reports a value of type `Function`, which says you can call something but not which arguments it takes. A type that can't be resolved, for example from a missing import, counts as `any`.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -61,4 +61,4 @@ function stop(controller: unknown) {
 
 ## When not to use it
 
-In a codebase that is still moving from JavaScript to TypeScript, `any` is everywhere and the reports drown out the rest. Turn the rule on once most values have real types.
+In a codebase that's still moving from JavaScript to TypeScript, `any` is everywhere and the reports drown out everything else. Turn the rule on once most values have real types.

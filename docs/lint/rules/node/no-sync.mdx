@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A function such as `fs.readFileSync()` blocks the thread until it is done. In a server, every other request waits for that one file to be read. The versions that return a promise or take a callback let other work run in the meantime.
+A function such as `fs.readFileSync()` blocks the thread until it's done. In a server, every other request waits for that one file to be read. The versions that return a promise or take a callback let other work run in the meantime.
 
-The rule goes by the name alone: any call to a function or method with a name that ends in `Sync` is reported. Mentioning the function without calling it is not.
+The rule only goes by the name. It reports any call to a function or method with a name that ends in `Sync`. Mentioning the function without calling it isn't reported.
 
 ## Examples
 
@@ -66,4 +66,4 @@ function hasConfig() {
 
 ## When not to use it
 
-In scripts, build steps and command line tools nothing else waits for the thread, and the synchronous calls are simpler.
+In scripts, build steps and command line tools, nothing else is waiting for the thread, and the synchronous calls are simpler.

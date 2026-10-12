@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Some export names cause trouble. A module that exports a function named `then` looks like a promise, so `await import("./module.js")` calls that function instead of giving you the module. A project may also want named exports only, so that a thing has the same name wherever it is imported.
+Some export names cause trouble. A module that exports a function named `then` looks like a promise, so `await import("./module.js")` calls that function instead of giving you the module. Your project may also want named exports only, so everything keeps the same name wherever it's imported.
 
-The rule reports nothing until you give it options.
+The rule does nothing until you give it options.
 
 ## Examples
 
@@ -41,7 +41,7 @@ export function whenReady(callback) {
 }
 ```
 
-What counts is the name that other modules see, not the local one:
+The rule checks the name that other modules see, not the local one:
 
 {/* bad {"options": [{"restrictedNamedExports": ["then"]}]} */}
 ```js
@@ -56,7 +56,7 @@ export { whenReady as then };
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `restrictedNamedExports` | `[]` | Names that cannot be exported. |
+| `restrictedNamedExports` | `[]` | Names that can't be exported. |
 | `restrictedNamedExportsPattern` | none | A regular expression. Every exported name that matches it is reported, except `default`. |
 | `restrictDefaultExports` | `{}` | Which ways of writing a default export are reported. See the second table. |
 
@@ -84,7 +84,7 @@ With `{ restrictDefaultExports: { direct: true, named: true } }`:
 export default class User {}
 ```
 
-A form that you did not switch on is still allowed:
+Any form you didn't turn on is still allowed:
 
 {/* good {"options": [{"restrictDefaultExports": {"direct": true, "named": true}}]} */}
 ```js

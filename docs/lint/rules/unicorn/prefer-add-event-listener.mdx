@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An element has one `onclick`. Assigning to it silently replaces the handler that other code put there. `addEventListener()` adds a handler next to the others, and takes options such as `once` and `signal`.
+An element only has one `onclick`. Assigning to it silently replaces any handler that other code put there. `addEventListener()` adds a handler alongside the others, and it takes options such as `once` and `signal`.
 
-Any assignment to a property named `on` plus a DOM event is reported, whatever the object is.
+The rule reports any assignment to a property named `on` plus a DOM event, no matter what the object is.
 
 ## Examples
 
@@ -37,7 +37,7 @@ button.addEventListener("click", onClick);
 button.removeEventListener("click", onClick);
 ```
 
-Reading the property is fine, and so is a name that is not a DOM event:
+Reading the property is fine, and so is a name that isn't a DOM event:
 
 {/* good */}
 ```js
@@ -50,4 +50,4 @@ player.onscore = update;
 
 ## When not to use it
 
-Objects that are not event targets can have a property such as `onmessage` or `onerror` as their only way to take a handler. Turn the rule off for the files that use them.
+Some objects aren't event targets, and a property such as `onmessage` or `onerror` is the only way to give them a handler. Turn the rule off for the files that use them.

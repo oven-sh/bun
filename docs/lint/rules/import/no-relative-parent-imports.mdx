@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-An import from `../` ties a directory to its place in the project: move the directory and the import breaks. With this rule, a directory depends only on what is inside it and on packages.
+An import from `../` ties a directory to its place in the project. Move the directory and the import breaks. With this rule on, a directory only depends on packages and on the files inside it.
 
 To fix a report, move the file you import into the directory, or make it a package and import it by name.
 
-Only imports that resolve to a file are reported. A path that does not exist is left to `import/no-unresolved`.
+Only imports that resolve to a file are reported. A path that doesn't exist is left to `import/no-unresolved`.
 
 ## Examples
 
@@ -58,7 +58,7 @@ import { Footer } from "./parts/footer.js";
 | `esmodule` | `true` | Check `import`, `export .. from` and `import()`. |
 | `commonjs` | `false` | Also check `require()`. |
 | `amd` | `false` | Also check the dependencies of `define()` and of `require([..])`. |
-| `ignore` | `[]` | Regular expressions. A path that matches one of them is not checked. |
+| `ignore` | `[]` | Regular expressions. A path that matches one of them is skipped. |
 
 With `ignore`, you can keep one shared directory reachable:
 
@@ -79,4 +79,4 @@ import { formatDate } from "../shared/format.js";
 
 ## When not to use it
 
-Most projects share code between sibling directories through `../`. This rule fits a project that is built as a strict tree and reaches shared code through packages.
+Most projects share code between sibling directories through `../`. This rule fits a project that's built as a strict tree and reaches shared code through packages.

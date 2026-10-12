@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The `polyfill.io` domain changed hands and in 2024 began to serve malicious code to the sites that loaded it. A script from `https://polyfill.io/v3/` or `https://cdn.polyfill.io/v2/` is always reported.
+The `polyfill.io` domain changed hands, and in 2024 it started serving malicious code to the sites that loaded it. A script from `https://polyfill.io/v3/` or `https://cdn.polyfill.io/v2/` is always reported.
 
-The same service lives on at `polyfill-fastly.net`, `polyfill-fastly.io` and `cdnjs.cloudflare.com/polyfill/`. For those hosts, the rule reads the `features` parameter and reports the features that Next.js already includes, such as `fetch`, `Promise`, `Map`, `URL`, `Object.entries` and `es2015` to `es2019`. Your users would download them twice.
+The same service lives on at `polyfill-fastly.net`, `polyfill-fastly.io` and `cdnjs.cloudflare.com/polyfill/`. For those hosts, the rule reads the `features` parameter and reports the features Next.js already includes, such as `fetch`, `Promise`, `Map`, `URL`, `Object.entries` and `es2015` to `es2019`. Your users would download them twice.
 
 The rule checks `<script>` elements and the component you import from `next/script`.
 
@@ -38,7 +38,7 @@ export default function Polyfills() {
 }
 ```
 
-Not reported, because Next.js does not include `IntersectionObserver`:
+Not reported, because Next.js doesn't include `IntersectionObserver`:
 
 {/* good */}
 ```jsx

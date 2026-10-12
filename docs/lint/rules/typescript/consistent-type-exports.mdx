@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-`export { User } from "./models"` does not say whether `User` is a type or a value. A tool that compiles one file at a time cannot open `./models` to find out whether to keep the export or drop it. `export type { User }` says it: the export is a type, and it is removed from the JavaScript output.
+`export { User } from "./models"` doesn't say whether `User` is a type or a value. A tool that compiles one file at a time can't open `./models` to find out whether to keep the export or drop it. `export type { User }` spells it out. The export is a type, and it's removed from the JavaScript output.
 
 `--fix` adds the `type` keyword.
 

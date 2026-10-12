@@ -14,7 +14,7 @@ deprecated: false
 
 On a tag with many props, a fixed order makes a prop quick to find and keeps two people from adding the same one in different places.
 
-Capital letters sort before lowercase ones. A spread splits the props into groups that are sorted on their own, because moving a prop across a spread can change which value wins.
+Capital letters sort before lowercase ones. A spread splits the props into groups, and each group is sorted separately, because moving a prop across a spread can change which value wins.
 
 `--fix` reorders the props.
 
@@ -40,14 +40,14 @@ const link = <Link to="/home" {...rest} replace />;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreCase` | `false` | Compare names without regard to case. |
+| `ignoreCase` | `false` | Ignore case when comparing names. |
 | `callbacksLast` | `false` | Handlers such as `onClick` come after all other props. |
 | `shorthandFirst` | `false` | Props without a value, such as `disabled`, come first. |
 | `shorthandLast` | `false` | Props without a value come last. |
-| `multiline` | `"ignore"` | `"first"` or `"last"`: where props that span several lines go. |
+| `multiline` | `"ignore"` | Where props that span several lines go: `"first"` or `"last"`. |
 | `reservedFirst` | `false` | `true` puts `children`, `key`, `ref` and, on HTML elements, `dangerouslySetInnerHTML` first. A list of some of these names puts only those first. |
-| `noSortAlphabetically` | `false` | Check only the groups from the options above, not the alphabet. |
-| `locale` | `"auto"` | With a locale such as `"en"`, compare names as `localeCompare` does. |
+| `noSortAlphabetically` | `false` | Only check the groups from the options above, not the alphabetical order. |
+| `locale` | `"auto"` | With a locale such as `"en"`, compare names the way `localeCompare` does. |
 
 Within each group the props are still sorted alphabetically, unless `noSortAlphabetically` is set.
 

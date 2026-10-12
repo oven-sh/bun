@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Every iframe and every `node:vm` context has its own `Array`. An array that was created in another one is not an instance of yours, so `instanceof Array` is `false` for it. `Array.isArray()` is `true` for every array.
+Every iframe and every `node:vm` context has its own `Array`. An array created in another one isn't an instance of yours, so `instanceof Array` is `false` for it. `Array.isArray()` is `true` for every array.
 
 `--fix` rewrites `value instanceof Array` to `Array.isArray(value)`.
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`toThrow()` without an argument passes for any error at all, including a `TypeError` from a typo in the code under test. The test stays green although the check you meant to test was never reached. Pass part of the message, a regular expression, or the error class.
+`toThrow()` without an argument passes for any error at all, including a `TypeError` from a typo in the code under test. The test stays green even though it never reached the check you meant to test. Pass part of the message, a regular expression, or the error class.
 
-`.not.toThrow()` is allowed, because there is no error to describe.
+`.not.toThrow()` is allowed, because there's no error to describe.
 
 ## Examples
 

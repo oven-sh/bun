@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An inline snapshot is text that the test runner writes into your file and rewrites when you update snapshots. With `${}` in it, the expected text is computed while the test runs. The snapshot no longer shows what the output looks like, and the runner cannot keep the `${}` when it rewrites the snapshot.
+An inline snapshot is text that the test runner writes into your file and rewrites when you update snapshots. With `${}` in it, the expected text is computed while the test runs. The snapshot no longer shows what the output looks like, and the runner can't keep the `${}` when it rewrites the snapshot.
 
 The rule checks the template literals passed to `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`.
 

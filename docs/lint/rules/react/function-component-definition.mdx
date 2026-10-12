@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A function component can be a function declaration, a function expression, or an arrow function. A codebase that mixes all three is harder to scan and to search.
+A function component can be a function declaration, a function expression, or an arrow function. A codebase that mixes all three is harder to scan and search.
 
 By default a named component must be a function declaration, and an unnamed one must be a function expression.
 
@@ -50,8 +50,8 @@ function Footer(props) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `namedComponents` | `"function-declaration"` | The style of a function declaration or of a function assigned to a variable: `"function-declaration"`, `"function-expression"`, or `"arrow-function"`. |
-| `unnamedComponents` | `"function-expression"` | The style of any other component, such as one returned from a function: `"function-expression"` or `"arrow-function"`. |
+| `namedComponents` | `"function-declaration"` | The style for a component that's a function declaration or a function assigned to a variable: `"function-declaration"`, `"function-expression"`, or `"arrow-function"`. |
+| `unnamedComponents` | `"function-expression"` | The style for any other component, such as one returned from a function: `"function-expression"` or `"arrow-function"`. |
 
 Each option also takes a list of styles. Every style in the list is allowed, and `--fix` rewrites to the first one.
 

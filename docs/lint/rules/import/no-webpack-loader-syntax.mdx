@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-webpack lets you name loaders in front of a path, separated by `!`. Bun, Node.js and most other bundlers cannot resolve such a path, so the file only works with webpack. It also spreads the build setup over your source files.
+webpack lets you put loader names in front of a path, separated by `!`. Bun, Node.js and most other bundlers can't resolve a path like that, so the file only works with webpack. It also scatters your build setup across your source files.
 
 The rule reports any `import`, `export .. from`, `import()` or `require()` with a `!` in its path.
 

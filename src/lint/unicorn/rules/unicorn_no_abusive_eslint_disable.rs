@@ -71,7 +71,8 @@ impl Rule for NoAbusiveEslintDisable {
             let count = if has_rule { invalid_rules } else { 1 };
             for _ in 0..count {
                 let report = cx.report(comment_span, message);
-                // A comment of ESLint turns off what is reported at it. As eslint-plugin-unicorn: before the line starts.
+                // ESLint's disable comments would silence a report at the comment itself. Report at column -1 instead, like
+                // eslint-plugin-unicorn does.
                 if !cx.file().language().is_oxlint {
                     let line = cx.file().line_of(comment_span.start);
                     report.start_at(Position {

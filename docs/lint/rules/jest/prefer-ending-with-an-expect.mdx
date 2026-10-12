@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Whatever a test does after its last assertion is not checked. If the test ends with a click, a request or a save, that step can do the wrong thing and the test still passes.
+Anything a test does after its last assertion isn't checked. If the test ends with a click, a request or a save, that step can do the wrong thing and the test still passes.
 
-The last statement of the test has to be a call to `expect`, with or without `await`. A test with an empty body is reported. So is one that ends with an `if`, a loop or a `return`, even if there is an `expect` inside.
+The last statement in the test must be a call to `expect`, with or without `await`. A test with an empty body is reported. So is one that ends with an `if`, a loop or a `return`, even if there's an `expect` inside.
 
 ## Examples
 
@@ -61,8 +61,8 @@ test("loads the user", async () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `assertFunctionNames` | any name that contains `expect` | The calls that count as an assertion, besides `expect` itself. |
-| `additionalTestBlockFunctions` | `[]` | Other functions to check like `test`. It only works for names that Jest defines, such as `describe`. Your own wrappers around `test` are not checked. |
+| `assertFunctionNames` | any name that contains `expect` | The calls that count as an assertion, in addition to `expect` itself. |
+| `additionalTestBlockFunctions` | `[]` | Other functions to check like `test`. It only works for names that Jest defines, such as `describe`. Your own wrappers around `test` aren't checked. |
 
 By default, a helper or a method with `expect` in its name counts:
 

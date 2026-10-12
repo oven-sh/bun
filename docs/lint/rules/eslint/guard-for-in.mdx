@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`for...in` visits the enumerable properties an object inherits from its prototype chain as well as its own. If anything was added to a prototype, the loop body runs for keys the object does not have itself.
+`for...in` visits an object's own enumerable properties and the ones it inherits from its prototype chain. If anything was added to a prototype, the loop body runs for keys the object itself doesn't have.
 
-The rule looks only at the shape of the loop. The body has to be a single `if`, or start with an `if` that does nothing but `continue`. It does not check what the condition tests.
+The rule only looks at the shape of the loop. The body must be a single `if`, or start with an `if` that does nothing but `continue`. The rule doesn't check what the condition tests.
 
 ## Examples
 
@@ -54,7 +54,7 @@ for (const key in settings) {
 }
 ```
 
-`Object.keys()` returns only the object's own keys, so a `for...of` loop over it needs no guard:
+`Object.keys()` returns only the object's own keys, so a `for...of` loop over it doesn't need a guard:
 
 {/* good */}
 ```js

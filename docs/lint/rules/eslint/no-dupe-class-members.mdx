@@ -14,9 +14,9 @@ deprecated: false
 
 When a class declares two methods with the same name, the last one silently replaces the first. Calls run the second method, and edits to the first one have no effect.
 
-A getter and a setter with the same name are a pair and are allowed. So are a static member and an instance member with the same name, and `name` next to the private `#name`.
+A getter and a setter with the same name are a pair, so they're allowed. So are a static member and an instance member with the same name, and `name` next to the private `#name`.
 
-This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+This rule is on by default in JavaScript files. It's off in TypeScript files, where TypeScript reports the same mistake.
 
 ## Examples
 
@@ -82,7 +82,7 @@ class Cart {
 }
 ```
 
-In TypeScript, overload signatures do not count:
+In TypeScript, overload signatures don't count:
 
 {/* good */}
 ```ts

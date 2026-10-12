@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`{ name: name }` can be written `{ name }`, and `{ save: function () {} }` can be written `{ save() {} }`. The short forms say the same with less to read. This rule makes a codebase use one form everywhere.
+`{ name: name }` can be written `{ name }`, and `{ save: function () {} }` can be written `{ save() {} }`. The short forms say the same thing with less to read. This rule makes a codebase use one form everywhere.
 
 `--fix` rewrites a property to the form you chose. The `"consistent"` modes have no fix.
 
@@ -59,17 +59,17 @@ The first option:
 | `"methods"` | Require it for methods only. |
 | `"properties"` | Require it for properties only. |
 | `"never"` | Report every short form. |
-| `"consistent"` | In one object, all properties are short or none is. |
-| `"consistent-as-needed"` | The same, and if all of them can be short, they have to be. |
+| `"consistent"` | Within one object, either all properties are short or none are. |
+| `"consistent-as-needed"` | The same, and if all of them can be short, they must be. |
 
 The second option is an object:
 
 | Option | Default | Works with | What it does |
 | --- | --- | --- | --- |
 | `avoidQuotes` | `false` | `"always"`, `"methods"`, `"properties"` | Require the long form where the key is a string literal. |
-| `ignoreConstructors` | `false` | `"always"`, `"methods"` | Allow the long form where the key starts with a capital letter. A method cannot be called with `new`. |
+| `ignoreConstructors` | `false` | `"always"`, `"methods"` | Allow the long form where the key starts with a capital letter. A method can't be called with `new`. |
 | `methodsIgnorePattern` | none | `"always"`, `"methods"` | Allow the long form where the key matches this regular expression, such as `"^on"`. |
-| `avoidExplicitReturnArrows` | `false` | `"always"`, `"methods"` | Also require a method in place of an arrow function with a block body. |
+| `avoidExplicitReturnArrows` | `false` | `"always"`, `"methods"` | Also require a method instead of an arrow function with a block body. |
 
 With `"never"`, both properties are reported:
 
@@ -85,7 +85,7 @@ With `"consistent"`, a mix is reported:
 const user = { name, email: address };
 ```
 
-`email` has no short form, so `name` has to be long too:
+`email` has no short form, so `name` must be long too:
 
 {/* good {"options": ["consistent"]} */}
 ```js
@@ -99,7 +99,7 @@ With `"consistent-as-needed"`, this is reported, because both properties can be 
 const user = { name: name, email: email };
 ```
 
-With `avoidQuotes`, the first object is reported and the second is not:
+With `avoidQuotes`, the first object is reported and the second isn't:
 
 {/* bad {"options": ["always", {"avoidQuotes": true}]} */}
 ```js

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A path glued together by hand has the separator written into it. On Windows, `__dirname + "/data.json"` gives `C:\app/data.json`, which is not equal to the same path from `path.join()`. `path.join()` and `path.resolve()` use the separator of the platform and clean up `..` and doubled separators.
+When you glue a path together by hand, you hardcode the separator. On Windows, `__dirname + "/data.json"` gives `C:\app/data.json`, which isn't equal to the same path from `path.join()`. `path.join()` and `path.resolve()` use the platform's separator and clean up `..` and doubled separators.
 
 The rule reports `__dirname` or `__filename` followed by text that starts with `/` or `\`, or by `path.sep`.
 
@@ -37,7 +37,7 @@ const config = path.join(__dirname, "config.json");
 const cache = path.resolve(__dirname, "cache", name);
 ```
 
-Adding something that is not a new path segment is fine:
+Adding something that isn't a new path segment is fine:
 
 {/* good */}
 ```js

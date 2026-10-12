@@ -121,8 +121,8 @@ pub(super) fn report(
     let loaded = modules.packages();
     let packages = Packages::new(
         cwd,
-        |name| is_for_formatting(name) && !plugins.not_supported.iter().any(|it| it == name),
-        |name| {
+        &|name| is_for_formatting(name) && !plugins.not_supported.iter().any(|it| it == name),
+        &|name| {
             if for_files.iter().any(|it| it == name) {
                 Some(Need::Files)
             } else if let Some(file) = &file {

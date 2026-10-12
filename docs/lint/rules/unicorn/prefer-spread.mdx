@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-There are many ways to copy or join arrays: `Array.from(items)`, `items.slice()`, `items.slice(0)`, `items.toSpliced()`, `items.concat(more)`. `[...items]` does the same for all of them, and shows in one place what ends up in the new array.
+There are many ways to copy or join arrays: `Array.from(items)`, `items.slice()`, `items.slice(0)`, `items.toSpliced()`, `items.concat(more)`. `[...items]` replaces all of them, and shows in one place what ends up in the new array.
 
-`--fix` rewrites all of them but `concat()`. There the rule cannot tell whether an argument is an array to spread or a single item.
+`--fix` rewrites all of them except `concat()`, where the rule can't tell whether an argument is an array to spread or a single item.
 
 ## Examples
 
@@ -38,7 +38,7 @@ const sorted = [...scores].sort();
 const all = [...items, ...more, last];
 ```
 
-Calls that do more than copy are not reported. Neither is `slice()` on a variable named `buffer`, `arrayBuffer`, `blob` or `file`, or `concat()` on a string or on a capitalized name such as `Buffer`:
+Calls that do more than copy aren't reported. Neither is `slice()` on a variable named `buffer`, `arrayBuffer`, `blob` or `file`, or `concat()` on a string or on a capitalized name such as `Buffer`:
 
 {/* good */}
 ```js

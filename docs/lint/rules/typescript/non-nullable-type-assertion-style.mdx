@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-If `name` is a `string | undefined`, then `name as string` and `name!` do the same thing. The `!` is shorter, and it says exactly what you claim: the value is there. It also does not repeat the type, so there is nothing to update when the type changes.
+If `name` is a `string | undefined`, then `name as string` and `name!` do the same thing. The `!` is shorter, and it says exactly what you're claiming, which is that the value is there. It also doesn't repeat the type, so there's nothing to update when the type changes.
 
 `--fix` rewrites the assertion to `!`.
 
@@ -38,7 +38,7 @@ function nameOf(names: Map<string, string>, id: string) {
 }
 ```
 
-An assertion that does more than remove `null` and `undefined` cannot be written with `!`, so it is allowed:
+An assertion that does more than remove `null` and `undefined` can't be written with `!`, so it's allowed:
 
 {/* good */}
 ```ts
@@ -49,4 +49,4 @@ function toText(value: string | number | null) {
 
 ## When not to use it
 
-`@typescript-eslint/no-non-null-assertion` reports every `!`. Do not turn on both.
+`@typescript-eslint/no-non-null-assertion` reports every `!`. Don't turn on both.

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The second spread of the same object adds nothing new, and it overwrites every prop written between the two. In `<Button {...props} disabled {...props} />`, `disabled` is lost if `props` has a `disabled` of its own. It is almost always a leftover from a merge or a copy.
+Spreading the same object a second time adds nothing new, and it overwrites every prop written between the two. In `<Button {...props} disabled {...props} />`, `disabled` is lost if `props` also has a `disabled`. It's almost always a leftover from a merge or a copy.
 
-`--fix` removes every spread of the variable but the last. With an ESLint config there is no fix, as in `eslint-plugin-react`.
+`--fix` removes every spread of the variable except the last. With an ESLint config there's no fix, same as in `eslint-plugin-react`.
 
 ## Examples
 

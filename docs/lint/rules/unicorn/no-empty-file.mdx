@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A file without code does nothing. It is usually left over from a refactor, or it was created and never filled in. It still shows up in searches and in the file tree, and importing it works but gives you nothing.
+A file without code does nothing. It's usually left over from a refactor, or someone created it and never filled it in. It still shows up in searches and in the file tree, and importing it works but gives you nothing.
 
 A file counts as empty if it only has whitespace, comments, directives such as `"use strict"`, lone semicolons, or empty blocks.
 
@@ -39,7 +39,7 @@ export function formatDate(date) {
 }
 ```
 
-A file with a `///` comment is not reported, because `/// <reference>` does something in TypeScript:
+A file with a `///` comment isn't reported, because `/// <reference>` does something in TypeScript:
 
 {/* good */}
 ```ts

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A call like `createUser("Ada", "ada@example.com", true, false)` says nothing about what each argument means, and two arguments of the same type can be swapped without an error. Past three parameters, one object with named properties is easier to read and to extend.
+A call like `createUser("Ada", "ada@example.com", true, false)` says nothing about what each argument means, and you can swap two arguments of the same type without getting an error. Past three parameters, one object with named properties is easier to read and to extend.
 
-It is the TypeScript version of `max-params`. Function types are checked too. A `this: void` parameter is not counted.
+It's the TypeScript version of `max-params`. It checks function types too, and it doesn't count a `this: void` parameter.
 
 ## Examples
 

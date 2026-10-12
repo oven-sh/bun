@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An export that nothing imports is dead code that looks alive: it still gets maintained, tested and refactored. This rule reads the files of the project, collects what each one imports, and reports the exports that are left over.
+An export that nothing imports is dead code that looks alive, so it still gets maintained, tested and refactored. This rule reads the project's files, collects what each one imports, and reports the exports that are left over.
 
 The rule does nothing until you turn on `unusedExports` or `missingExports`.
 
@@ -70,10 +70,10 @@ export function formatDate(date) {}
 function formatTime(date) {}
 ```
 
-What counts as a use:
+Here's what counts as a use:
 
-- `import * as format from "./format.js"` and `import("./format.js")` use every export of the file.
-- `export * from "./format.js"` uses every export but the default.
+- `import * as format from "./format.js"` and `import("./format.js")` use every export in the file.
+- `export * from "./format.js"` uses every export except the default.
 - `require("./format.js")` uses nothing.
 
 ## Options
@@ -82,13 +82,13 @@ What counts as a use:
 | --- | --- | --- |
 | `unusedExports` | `false` | Report exports that no other file imports. |
 | `missingExports` | `false` | Report files that export nothing. |
-| `src` | the directory you run `bun lint` in | Files, folders and globs to search for imports. A file outside of them is not checked for unused exports. |
-| `ignoreExports` | `[]` | Files, folders and globs with exports that are never reported, such as entry points and tests. |
-| `ignoreUnusedTypeExports` | `false` | Do not report an unused exported `type`, `interface` or `enum`. |
+| `src` | the directory you run `bun lint` in | Files, folders and globs to search for imports. A file outside them isn't checked for unused exports. |
+| `ignoreExports` | `[]` | Files, folders and globs whose exports are never reported, such as entry points and tests. |
+| `ignoreUnusedTypeExports` | `false` | Don't report an unused exported `type`, `interface` or `enum`. |
 
 Only `.js`, `.mjs` and `.cjs` files are searched, unless the `import/extensions` setting lists others.
 
-The files that `main`, `bin` and `browser` in the closest `package.json` point to are entry points. Their exports are not reported, unless the package is `"private": true`.
+The files that `main`, `bin` and `browser` in the closest `package.json` point to are entry points. Their exports aren't reported, unless the package is `"private": true`.
 
 With `missingExports`, this file is reported:
 
@@ -99,4 +99,4 @@ function formatDate(date) {}
 
 ## When not to use it
 
-A library's exports are used by other projects, which the rule cannot see. List the public files in `ignoreExports`, or leave the rule off.
+A library's exports are used by other projects, which the rule can't see. List the public files in `ignoreExports`, or leave the rule off.

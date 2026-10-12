@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`const self = this` exists to reach the outer `this` from a nested `function`. An arrow function keeps the `this` of the code around it, so the extra variable is not needed.
+`const self = this` exists to reach the outer `this` from a nested `function`. An arrow function keeps the `this` from the surrounding code, so you don't need the extra variable.
 
 Only a plain variable is reported. Destructuring (`const { name } = this`) and assigning to a property (`cache.owner = this`) are fine.
 

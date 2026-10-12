@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`{count && <List />}` evaluates to `count` when `count` is falsy. React renders nothing for `false`, `null` and `undefined`, but it does render `0` and `NaN`, so an empty list shows a stray `0` on the page. In React Native, a number or a string outside of `<Text>` crashes the app.
+`{count && <List />}` evaluates to `count` when `count` is falsy. React renders nothing for `false`, `null` and `undefined`, but it does render `0` and `NaN`, so an empty list shows a stray `0` on the page. In React Native, a number or a string outside `<Text>` crashes the app.
 
 The rule reports `&&` in JSX braces, in children and in props, unless its left side looks like a boolean: `!x` or `!!x`, a comparison, any call such as `Boolean(count)`, or a variable declared as `true` or `false`.
 
-`--fix` rewrites the condition with the first of the allowed strategies.
+`--fix` rewrites the condition with the first allowed strategy.
 
 ## Examples
 
@@ -53,7 +53,7 @@ function Cart({ items }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `validStrategies` | `["ternary", "coerce"]` | The ways to write a condition that are allowed. `"ternary"` is `test ? <A /> : null`. `"coerce"` is `&&` with a boolean on the left. |
+| `validStrategies` | `["ternary", "coerce"]` | The allowed ways to write a condition. `"ternary"` is `test ? <A /> : null`. `"coerce"` is `&&` with a boolean on the left. |
 
 With only `"ternary"`, every `&&` is reported:
 
@@ -85,4 +85,4 @@ const count = <div>{items.length ? items.length : "none"}</div>;
 
 ## When not to use it
 
-The rule does not use types. It also reports `{user && <Profile user={user} />}` where `user` is an object or `undefined` and nothing can leak.
+The rule doesn't use types. So it also reports `{user && <Profile user={user} />}`, even when `user` is an object or `undefined` and nothing can leak.

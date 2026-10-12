@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`return total = price + tax;` can be a typo for `return total === price + tax;`, and a reader cannot tell which one you meant. Even when the assignment is wanted, it hides a side effect in a line that looks like it only returns a value.
+`return total = price + tax;` can be a typo for `return total === price + tax;`, and a reader can't tell which one you meant. Even when you do want the assignment, it hides a side effect in a line that looks like it only returns a value.
 
-The rule also covers an arrow function that has an assignment as its body.
+The rule also covers an arrow function whose body is an assignment.
 
 ## Examples
 
@@ -47,10 +47,10 @@ const select = (item) => {
 
 | Option | What it does |
 | --- | --- |
-| `"except-parens"` (default) | Allow an assignment that is wrapped in parentheses. |
+| `"except-parens"` (default) | Allow an assignment that's wrapped in parentheses. |
 | `"always"` | Report every assignment in a `return`. |
 
-The parentheses say that the assignment is on purpose:
+The parentheses show that the assignment is on purpose:
 
 {/* good */}
 ```js

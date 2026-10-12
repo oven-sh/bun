@@ -12,9 +12,9 @@ typeAware: false
 deprecated: true
 ---
 
-Calling a callback does not stop the function. If you call `callback(err)` in an `if` and forget to return, the code below runs too, and the callback is often called a second time.
+Calling a callback doesn't stop the function. If you call `callback(err)` in an `if` and forget to return, the code below it runs too, and the callback often gets called a second time.
 
-The rule reports a call to `callback`, `cb` or `next` inside a function, unless the call is returned, is followed by a `return` that ends its block, or is the last statement of the function.
+The rule reports a call to `callback`, `cb` or `next` inside a function, unless the call is returned, is followed by a `return` that ends its block, or is the function's last statement.
 
 ## Examples
 
@@ -56,7 +56,7 @@ function check(request, response, next) {
 
 ## Options
 
-One option: the list of names that count as callbacks. It replaces the default, `["callback", "cb", "next"]`. A name can be a path such as `"response.send"`.
+The only option is the list of names that count as callbacks. It replaces the default, `["callback", "cb", "next"]`. A name can be a path such as `"response.send"`.
 
 {/* bad {"options": [["done", "response.send"]]} */}
 ```js
@@ -68,7 +68,7 @@ function handle(request, response) {
 }
 ```
 
-With the same list, `callback` is no longer checked:
+With the same list, `callback` isn't checked anymore:
 
 {/* good {"options": [["done", "response.send"]]} */}
 ```js
@@ -82,4 +82,4 @@ function load(err, callback) {
 
 ## When not to use it
 
-The rule goes by the name only, so it cannot tell a callback from another function called `next`. Code that uses promises and `async` functions has no use for it.
+The rule only looks at the name, so it can't tell a callback from any other function called `next`. You don't need it in code that uses promises and `async` functions.

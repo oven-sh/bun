@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-React decides whether an element is the same one as last time by comparing the component function. A component that is created inside another component is a new function on every render. React then throws the old subtree away and mounts a new one, so its state is lost, its DOM nodes are rebuilt, and an input in it loses focus.
+React decides whether an element is the same one as last time by comparing the component function. A component created inside another component is a new function on every render. React then throws the old subtree away and mounts a new one, so it loses its state, its DOM nodes are rebuilt, and any input in it loses focus.
 
 The rule reports a JSX tag that is a local variable holding a function written in the component, the result of a call, or the result of `new`.
 
@@ -49,7 +49,7 @@ function Form({ label }) {
 }
 ```
 
-Choosing between components that exist already is fine:
+Choosing between components that already exist is fine:
 
 {/* good */}
 ```jsx

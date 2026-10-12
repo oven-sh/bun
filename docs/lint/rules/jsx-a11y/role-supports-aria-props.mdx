@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Each ARIA role supports a fixed set of `aria-*` attributes. A link cannot be checked and a list cannot be expanded. A screen reader ignores an attribute that does not fit the role, or announces something that makes no sense, so the state you meant to tell the user is lost.
+Each ARIA role supports a fixed set of `aria-*` attributes. A link can't be checked and a list can't be expanded. A screen reader ignores an attribute that doesn't fit the role, or announces something that makes no sense, so the user never hears the state you meant to tell them.
 
-The role is the one in the `role` attribute. Without it, the rule uses the role that the element has by itself: `link` for `<a href>`, `list` for `<ul>`, `heading` for `<h1>`. An element or a component that has no role either way, such as a plain `<div>`, is not reported.
+The rule reads the role from the `role` attribute. Without one, it uses the role the element has by default: `link` for `<a href>`, `list` for `<ul>`, `heading` for `<h1>`. An element or a component that has no role either way, such as a plain `<div>`, isn't reported.
 
 ## Examples
 

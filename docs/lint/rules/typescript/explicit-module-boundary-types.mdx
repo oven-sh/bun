@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-If the return type of an exported function is worked out from its body, a change inside the function changes the type that every importing file sees. Nobody notices at the edit, and the errors show up in those other files.
+If TypeScript infers an exported function's return type from its body, a change inside the function changes the type that every importing file sees. Nobody notices while making the edit, and the errors show up in those other files.
 
-This rule checks exported functions and the non-private methods of exported classes. They need a return type and a type for every parameter, and that type cannot be `any`. A parameter with a default value is fine without a type. Functions that are not exported are not checked.
+This rule checks exported functions and the non-private methods of exported classes. They need a return type and a type for every parameter, and that type can't be `any`. A parameter with a default value is fine without a type. Functions that aren't exported aren't checked.
 
 ## Examples
 
@@ -67,7 +67,7 @@ export class Cart {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowArgumentsExplicitlyTypedAsAny` | `false` | Allow a parameter that is written as `any`. |
+| `allowArgumentsExplicitlyTypedAsAny` | `false` | Allow a parameter that's written as `any`. |
 | `allowTypedFunctionExpressions` | `true` | Allow a function expression that gets its type from a typed variable or property, or from an `as`. |
 | `allowHigherOrderFunctions` | `true` | Allow a function that returns another function right away to go without a return type. The inner function is still checked. |
 | `allowDirectConstAssertionInArrowFunctions` | `true` | Allow `() => value as const` to go without a return type. |

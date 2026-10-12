@@ -14,7 +14,7 @@ deprecated: false
 
 A test that takes a `done` parameter waits until `done()` is called. If an `expect` throws first, `done()` is never reached, and the test fails with a timeout instead of the real error. An `async` test, or one that returns a promise, fails with the error itself.
 
-The name of the parameter does not matter. Any test or hook callback with exactly one parameter is reported.
+The parameter's name doesn't matter. Any test or hook callback with exactly one parameter is reported.
 
 ## Examples
 
@@ -53,7 +53,7 @@ import { afterAll } from "@jest/globals";
 afterAll(() => new Promise(resolve => server.close(resolve)));
 ```
 
-The callback of `test.each([...])` is not checked, because its parameters are the values of the row:
+The `test.each([...])` callback isn't checked, because its parameters are the row's values:
 
 {/* good */}
 ```ts

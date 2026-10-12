@@ -25,7 +25,7 @@ impl<const RUNNER: u8> Rule for PreferEndingWithAnExpect<RUNNER> {
                 .map(String::from)
                 .collect(),
             assert_function_names: (config.has("assertFunctionNames"))
-                .then(|| config.strings("assertFunctionNames").into_iter().filter_map(jest::convert_pattern).collect()),
+                .then(|| config.strings("assertFunctionNames").into_iter().filter_map(|it| jest::convert_pattern(it, Runner::of(RUNNER))).collect()),
         })
     }
 

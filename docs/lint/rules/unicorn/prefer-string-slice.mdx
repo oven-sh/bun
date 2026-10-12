@@ -14,9 +14,9 @@ deprecated: false
 
 Three methods cut a string, and each treats its arguments differently. The second argument of `substr()` is a length, not an end. `substring()` swaps its arguments if the first is larger and treats a negative number as `0`. `slice()` takes a start and an end, counts negative numbers from the end, and works the same way on arrays.
 
-The rule looks at the method name only, so it reports `substr()` and `substring()` on any object.
+The rule only looks at the method name, so it reports `substr()` and `substring()` on any object.
 
-`--fix` renames the method only where the result stays the same: `substr()` with at most one argument, and `substring()` with non-negative integer literals in ascending order. Rewrite the other calls by hand.
+`--fix` only renames the method when the result stays the same: `substr()` with at most one argument, and `substring()` with non-negative integer literals in ascending order. Rewrite the other calls by hand.
 
 ## Examples
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`expect(value)` checks nothing by itself. The check happens when a matcher such as `.toBe()` is called, so an `expect` with no matcher, or with a matcher that is not called, passes whatever the value is.
+`expect(value)` doesn't check anything by itself. The check happens when a matcher such as `.toBe()` is called, so an `expect` with no matcher, or with a matcher that isn't called, passes no matter what the value is.
 
-`.resolves` and `.rejects` make the matcher return a promise. If the test does not await or return it, the test can end first, and a failed assertion does not fail the test.
+`.resolves` and `.rejects` make the matcher return a promise. If the test doesn't await or return it, the test can end first, and a failed assertion doesn't fail the test.
 
 This rule is on by default in files that import from `"bun:test"`.
 
@@ -63,7 +63,7 @@ test("rejects an unknown id", () => {
 });
 ```
 
-A second argument is the message to print on failure, and does not count toward `maxArgs`. `expect().pass()` and `expect().fail()` need no value:
+A second argument is the message to print on failure, and it doesn't count toward `maxArgs`. `expect().pass()` and `expect().fail()` don't need a value:
 
 {/* good */}
 ```ts
@@ -78,7 +78,7 @@ test("never calls back", () => {
 });
 ```
 
-A missing matcher or a missing `await` is only reported when the `expect` is a statement of its own. One that you keep in a variable or pass to a function can get its matcher or its `await` somewhere else:
+A missing matcher or a missing `await` is only reported when the `expect` is its own statement. If you keep it in a variable or pass it to a function, it can get its matcher or its `await` somewhere else:
 
 {/* good */}
 ```ts
@@ -100,8 +100,8 @@ test("loads both users", async () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `alwaysAwait` | `false` | Report every async assertion that is not awaited where it is written, even one that is returned or kept in a variable. |
-| `asyncMatchers` | `["toResolve", "toReject"]` | Matchers that return a promise, so they have to be awaited or returned. Your list replaces the default. |
+| `alwaysAwait` | `false` | Report every async assertion that isn't awaited where it's written, even one that's returned or kept in a variable. |
+| `asyncMatchers` | `["toResolve", "toReject"]` | Matchers that return a promise, so they must be awaited or returned. Your list replaces the default. |
 | `minArgs` | `1` | The fewest arguments `expect` can take. |
 | `maxArgs` | `1` | The most arguments `expect` can take. |
 

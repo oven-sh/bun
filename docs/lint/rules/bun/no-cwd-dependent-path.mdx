@@ -12,12 +12,12 @@ typeAware: false
 deprecated: false
 ---
 
-`readFileSync("config.json")` does not look next to the file that calls it. It looks in the directory that the process was started in. The code works when you run it from the project root and fails with `ENOENT` when it runs from anywhere else. Start from `import.meta.dirname` to name a file next to your source.
+`readFileSync("config.json")` doesn't look next to the file that calls it. It looks in the directory the process was started in. The code works when you run it from the project root and fails with `ENOENT` when it runs from anywhere else. Start from `import.meta.dirname` to name a file next to your source.
 
 The rule checks a string or a template literal that starts with a relative path, in these places:
 
-- The functions of `node:fs` and `node:fs/promises`, except `glob` and `globSync`. For `copyFile`, `cp`, `link`, and `rename`, both paths are checked. For `symlink`, only the second one is, because the target is relative to the link.
-- `path.resolve()`, if every argument is such a literal.
+- The `node:fs` and `node:fs/promises` functions, except `glob` and `globSync`. For `copyFile`, `cp`, `link`, and `rename`, both paths are checked. For `symlink`, only the second one is, because the target is relative to the link.
+- `path.resolve()`, if every argument is a literal like that.
 - `Bun.file()` and `Bun.write()`.
 
 ## Examples
@@ -76,7 +76,7 @@ const team = helpers.loadFixture("fixtures/team.json");
 
 ## When not to use it
 
-A command-line tool often means the working directory. It reads the `package.json` of the project it was started in. Say so with `process.cwd()`, or turn the rule off for those files:
+A command-line tool often means the working directory, like when it reads the `package.json` of the project it was started in. Say so with `process.cwd()`, or turn the rule off for those files:
 
 {/* good */}
 ```js

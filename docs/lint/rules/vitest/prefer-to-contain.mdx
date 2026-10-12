@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-When `expect(tags.includes("new")).toBe(true)` fails, the message only says that `false` is not `true`. `expect(tags).toContain("new")` prints the array and the item it looked for.
+When `expect(tags.includes("new")).toBe(true)` fails, the message only says that `false` isn't `true`. `expect(tags).toContain("new")` prints the array and the item it looked for.
 
 The rule reports `expect(x.includes(y))` matched against `true` or `false` with `toBe()`, `toEqual()`, or `toStrictEqual()`.
 
-`--fix` rewrites the assertion, and adds or drops `.not` so that it still tests the same thing.
+`--fix` rewrites the assertion, and adds or drops `.not` so it still tests the same thing.
 
 ## Examples
 

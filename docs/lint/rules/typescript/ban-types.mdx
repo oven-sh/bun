@@ -12,13 +12,13 @@ typeAware: false
 deprecated: false
 ---
 
-Some built-in types do not mean what they look like:
+Some built-in types don't mean what they look like:
 
 - `String`, `Number`, `Boolean`, `Symbol`, and `BigInt` are the wrapper objects. You almost always want the lowercase `string`, `number`, `boolean`, `symbol`, or `bigint`.
-- `Function` accepts any function, and calling it returns `any`, so arguments and results are not checked.
+- `Function` accepts any function, and calling it returns `any`, so arguments and results aren't checked.
 - `Object` and `{}` accept every value except `null` and `undefined`, including `0` and `""`.
 
-Names that a class `implements` or an interface `extends` are not reported.
+Names that a class `implements` or an interface `extends` aren't reported.
 
 ## Examples
 
@@ -55,4 +55,4 @@ interface Handler extends Function {
 
 ## When not to use it
 
-Three newer rules split the same checks, so you can turn each on by itself: `@typescript-eslint/no-wrapper-object-types`, `@typescript-eslint/no-unsafe-function-type`, and `@typescript-eslint/no-empty-object-type`.
+Three newer rules split up the same checks, so you can turn each one on separately: `@typescript-eslint/no-wrapper-object-types`, `@typescript-eslint/no-unsafe-function-type`, and `@typescript-eslint/no-empty-object-type`.

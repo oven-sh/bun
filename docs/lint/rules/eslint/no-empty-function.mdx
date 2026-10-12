@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An empty function reads like something that was never finished. A reader cannot tell whether it does nothing on purpose, as a default callback does, or whether the body is missing.
+An empty function reads like something that was never finished. You can't tell whether it does nothing on purpose, like a default callback, or whether the body is missing.
 
 A comment in the body answers that question, and the rule accepts it.
 
@@ -57,12 +57,12 @@ class User {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `[]` | The kinds of functions that may be empty. |
+| `allow` | `[]` | The kinds of functions that can be empty. |
 
 | Kind | Allows |
 | --- | --- |
 | `"functions"` | `function noop() {}` and `function () {}` |
-| `"arrowFunctions"` | `() => {}`, also if it is `async` |
+| `"arrowFunctions"` | `() => {}`, even if it's `async` |
 | `"generatorFunctions"` | `function* items() {}` |
 | `"asyncFunctions"` | `async function load() {}` |
 | `"methods"` | `render() {}` in a class or an object |
@@ -76,7 +76,7 @@ class User {
 | `"decoratedFunctions"` | a method with a decorator |
 | `"overrideMethods"` | `override render() {}` |
 
-Each kind allows only what its row shows. `"methods"` does not cover `async load() {}`, and `"arrowFunctions"` does not cover an empty `function`:
+Each kind only allows what its row shows. `"methods"` doesn't cover `async load() {}`, and `"arrowFunctions"` doesn't cover an empty `function`:
 
 {/* good {"options": [{"allow": ["arrowFunctions"]}]} */}
 ```js

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`arguments` looks like an array but is not one: it has no `map`, `slice` or `join`. And `function log(level)` does not show that the function takes more than one argument. A rest parameter such as `...parts` is a real array, and you can see it in the signature.
+`arguments` looks like an array but isn't one. It has no `map`, `slice` or `join`. And `function log(level)` doesn't show that the function takes more than one argument. A rest parameter such as `...parts` is a real array, and you can see it in the signature.
 
-Reading a named property, such as `arguments.length`, is not reported.
+Reading a named property, such as `arguments.length`, isn't reported.
 
 This rule is on by default in TypeScript files.
 

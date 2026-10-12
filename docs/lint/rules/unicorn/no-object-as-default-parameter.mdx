@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A default value is used only when the whole argument is missing. As soon as the caller passes an object with one property, the default object is dropped and its other properties are `undefined`. Destructure the parameter and give each property its own default.
+A default value is only used when the whole argument is missing. As soon as the caller passes an object with even one property, the default object is dropped and its other properties are `undefined`. Destructure the parameter and give each property its own default.
 
 An empty object, `options = {}`, is allowed.
 

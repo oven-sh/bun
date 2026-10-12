@@ -14,7 +14,7 @@ deprecated: false
 
 `match()` and `exec()` build an array with the match and its groups. When you only want to know whether the text matches, `test()` returns a boolean and skips that work.
 
-The rule reports `match()` and `exec()` where only true or false counts: the condition of `if`, `while`, `do`, `for` and `? :`, after `!`, and inside `Boolean()`.
+The rule reports `match()` and `exec()` where only true or false matters: the condition of `if`, `while`, `do`, `for` and `? :`, after `!`, and inside `Boolean()`.
 
 `--fix` rewrites both `text.match(pattern)` and `pattern.exec(text)` to `pattern.test(text)`.
 
@@ -46,7 +46,7 @@ const isHex = /^[0-9a-f]+$/i.test(color);
 const label = !/\S/.test(name) ? "(empty)" : name;
 ```
 
-Where the match itself is used, nothing is reported:
+Nothing is reported where you use the match itself:
 
 {/* good */}
 ```js
@@ -56,7 +56,7 @@ const major = found ? found[1] : "0";
 
 ## When not to use it
 
-The rule does not know types, so look at what `--fix` changed:
+The rule doesn't know types, so check what `--fix` changed:
 
 - `text.match(pattern)` also accepts a string in `pattern`, and a string has no `test()` method.
 - A regular expression with the `g` flag remembers where the last `test()` stopped. `text.match(pattern)` always starts at the beginning.

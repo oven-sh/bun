@@ -14,7 +14,7 @@ deprecated: false
 
 A function that only passes its first parameter to `String`, `Number`, `BigInt`, `Boolean` or `Symbol` does what the built-in already does. Pass the built-in itself.
 
-The rule also reports `value => value` as the callback of `every`, `filter`, `find`, `findIndex`, `findLast`, `findLastIndex` and `some`. Those methods only check whether the result is truthy, so `Boolean` does the same.
+The rule also reports `value => value` as the callback of `every`, `filter`, `find`, `findIndex`, `findLast`, `findLastIndex` and `some`. Those methods only check whether the result is truthy, so `Boolean` does the same thing.
 
 ## Examples
 
@@ -42,7 +42,7 @@ const names = users.map(user => user.name).filter(Boolean);
 const toText = String;
 ```
 
-A function that does anything more is not reported. Neither is a TypeScript type guard, because `Boolean` does not narrow the type:
+A function that does anything more isn't reported. Neither is a TypeScript type guard, because `Boolean` doesn't narrow the type:
 
 {/* good */}
 ```ts

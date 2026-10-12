@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An `expect` in a `catch`, a callback or a loop may never run, and a test in which no `expect` runs passes. `expect.hasAssertions()` makes the test fail unless at least one assertion ran. `expect.assertions(2)` makes it fail unless exactly two ran.
+An `expect` in a `catch`, a callback or a loop might never run, and a test where no `expect` runs still passes. `expect.hasAssertions()` makes the test fail unless at least one assertion ran. `expect.assertions(2)` makes it fail unless exactly two ran.
 
-The first statement of every test has to be one of the two. The rule also reports `expect.hasAssertions()` with an argument, and `expect.assertions()` with anything but one number literal.
+The first statement in every test must be one of the two. The rule also reports `expect.hasAssertions()` with an argument, and `expect.assertions()` with anything other than one number literal.
 
 `--fix-suggestions` adds `expect.hasAssertions()`.
 
@@ -61,7 +61,7 @@ test("rejects a wrong password", async () => {
 });
 ```
 
-A `beforeEach` or `afterEach` hook that calls `expect.hasAssertions()` covers the tests after it in the same `describe`, or in the rest of the file if it is at the top level:
+A `beforeEach` or `afterEach` hook that calls `expect.hasAssertions()` covers the tests after it in the same `describe`, or in the rest of the file if it's at the top level:
 
 {/* good */}
 ```ts
@@ -78,7 +78,7 @@ test("adds", () => {
 
 ## Options
 
-Without options, every test is checked. With one or more of them, only the tests that match at least one are checked.
+Without options, every test is checked. If you turn on one or more options, only the tests that match at least one of them are checked.
 
 | Option | Default | What it does |
 | --- | --- | --- |

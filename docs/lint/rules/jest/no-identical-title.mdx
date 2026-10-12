@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-When two tests in the same block share a title, a failure report does not tell you which one failed, and filtering by name runs both. The second one is often a copy that kept the old title.
+When two tests in the same block share a title, a failure report doesn't tell you which one failed, and filtering by name runs both. The second one is often a copy that kept the old title.
 
-Titles are compared inside one block. The same title in two different `describe` blocks is fine.
+Titles are only compared within one block. The same title in two different `describe` blocks is fine.
 
 ## Examples
 
@@ -73,7 +73,7 @@ describe("formatPrice", () => {
 });
 ```
 
-Only titles that are plain strings are compared. A title built from a variable is skipped, and so is `.each`, which fills in the title for each row:
+Only plain string titles are compared. A title built from a variable is skipped, and so is `.each`, which fills in the title for each row:
 
 {/* good */}
 ```ts

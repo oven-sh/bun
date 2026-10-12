@@ -55,7 +55,7 @@ const result = sandbox.eval(code);
 | --- | --- | --- |
 | `allowIndirect` | `false` | Allow indirect calls to `eval`. |
 
-An indirect call runs the code in the global scope, so it cannot read or change the local variables around the call:
+An indirect call runs the code in the global scope, so it can't read or change the local variables around the call:
 
 {/* good {"options": [{"allowIndirect": true}]} */}
 ```js

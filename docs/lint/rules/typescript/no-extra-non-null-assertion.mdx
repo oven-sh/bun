@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`!` after an expression tells TypeScript that the value is not `null` or `undefined`. Writing it twice, as in `user!!`, says nothing more. Writing it right before `?.` contradicts itself: `user!?.name` first claims that `user` is there and then checks whether it is.
+`!` after an expression tells TypeScript that the value isn't `null` or `undefined`. Writing it twice, as in `user!!`, doesn't add anything. Writing it right before `?.` contradicts itself, because `user!?.name` first claims that `user` is there and then checks whether it is.
 
 `--fix` removes the extra `!`.
 

@@ -14,7 +14,7 @@ deprecated: false
 
 Vitest runs hooks in a fixed order: `beforeAll`, `beforeEach`, `afterEach`, `afterAll`. If a file lists them in another order, you read the teardown before the setup it undoes.
 
-Each `describe` block is checked on its own. Only hooks written one after another are compared. Any other call between two hooks, such as a test, starts a new group.
+Each `describe` block is checked on its own. The rule only compares hooks written one after another. Any other call between two hooks, such as a test, starts a new group.
 
 ## Examples
 
@@ -48,7 +48,7 @@ afterEach(() => {
 });
 ```
 
-The test between these two hooks starts a new group, so this is not reported. `vitest/prefer-hooks-on-top` reports it instead.
+The test between these two hooks starts a new group, so this isn't reported. `vitest/prefer-hooks-on-top` reports it instead.
 
 {/* good */}
 ```ts

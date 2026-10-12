@@ -14,7 +14,7 @@ deprecated: false
 
 `charCodeAt()` and `String.fromCharCode()` work in 16-bit units. Emoji and many other characters take two units. For those, `charCodeAt(0)` returns the number of half a character, and `String.fromCharCode(0x1F600)` drops the high bits and returns a different character. `codePointAt()` and `String.fromCodePoint()` handle the whole character.
 
-`--fix-dangerously` renames the method. `--fix` does not, because the result changes for those characters.
+`--fix-dangerously` renames the method. `--fix` doesn't, because the result changes for those characters.
 
 ## Examples
 

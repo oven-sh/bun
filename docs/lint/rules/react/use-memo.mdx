@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-React calls the function you pass to `useMemo()` with no arguments, keeps what it returns, and skips the call while the dependencies stay the same. Three kinds of callback do not fit that:
+React calls the function you pass to `useMemo()` with no arguments, keeps what it returns, and skips the call while the dependencies stay the same. Three kinds of callback don't fit that:
 
-- A callback with parameters. They are always `undefined`.
+- A callback with parameters. They're always `undefined`.
 - An `async` or generator function. The cached value is a promise or an iterator, not the result.
-- A callback that assigns to a variable declared outside of it. The assignment does not happen on a render where React reuses the cached value.
+- A callback that assigns to a variable declared outside of it. The assignment doesn't happen on a render where React reuses the cached value.
 
 ## Examples
 

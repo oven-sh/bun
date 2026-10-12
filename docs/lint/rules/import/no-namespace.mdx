@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`import * as utils` does not say which exports a file uses. You have to search for every `utils.` to find out, and a typo such as `utils.clmap` is only `undefined` at runtime, while a named import of a name that does not exist is an error when the module loads.
+`import * as utils` doesn't tell you which exports a file uses. You have to search for every `utils.` to find out. A typo such as `utils.clmap` is only `undefined` at runtime, while a named import of a name that doesn't exist is an error when the module loads.
 
-`--fix` turns the namespace into named imports if it is only used as `utils.name`. If the namespace object itself is passed around, or is not used at all, nothing is changed.
+`--fix` turns the namespace into named imports if it's only used as `utils.name`. If you pass the namespace object itself around, or never use it, `--fix` leaves it alone.
 
 ## Examples
 
@@ -40,7 +40,7 @@ const width = clamp(sum(sizes), 0, 100);
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignore` | `[]` | Globs for import paths that may be imported as a namespace. A glob without a `/` is compared with the last part of the path. |
+| `ignore` | `[]` | Globs for import paths you can import as a namespace. A glob without a `/` is matched against the last part of the path. |
 
 {/* good {"options": [{"ignore": ["*.css"]}]} */}
 ```js

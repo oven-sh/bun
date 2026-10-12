@@ -14,7 +14,7 @@ deprecated: false
 
 `Object.assign({}, defaults, options)` builds a new object, but you have to notice the `{}` to know that nothing is changed in place. `{ ...defaults, ...options }` is shorter and can only make a new object.
 
-A call is only reported if its first argument is an object literal. `Object.assign(target, options)` changes `target`, which spread cannot do. A call is also left alone if it spreads its arguments, or if one of its object literals has a getter or a setter.
+A call is only reported if its first argument is an object literal. `Object.assign(target, options)` changes `target`, which spread can't do. A call is also left alone if it spreads its arguments, or if one of its object literals has a getter or a setter.
 
 `--fix` rewrites the call as an object literal.
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Nothing outside a class can reach its `#private` fields and methods. If nothing inside the class uses one either, it is dead code, or the code that should use it is missing.
+Nothing outside a class can reach its `#private` fields and methods. If nothing inside the class uses one either, it's dead code, or the code that should use it is missing.
 
-A field that is only written to counts as unused: the statements `this.#count = 1` and `this.#count++` never read the value.
+A field that's only written to counts as unused, because the statements `this.#count = 1` and `this.#count++` never read the value.
 
 If nothing refers to the member at all, the rule suggests removing it.
 
@@ -59,9 +59,9 @@ class Counter {
 }
 ```
 
-TypeScript's `private` members are not checked:
+In TypeScript files, setting this rule runs `@typescript-eslint/no-unused-private-class-members` instead. It also checks `private` members:
 
-{/* good */}
+{/* bad */}
 ```ts
 class Counter {
   private count = 0;

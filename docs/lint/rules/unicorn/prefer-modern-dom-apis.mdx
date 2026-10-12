@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`insertBefore()` and `replaceChild()` need the parent of the node you care about, and the order of their arguments is easy to mix up. `insertAdjacentText()` and `insertAdjacentElement()` take the position as a string. The newer methods are called on the node itself and are named after what they do.
+`insertBefore()` and `replaceChild()` need the parent of the node you care about, and it's easy to mix up the order of their arguments. `insertAdjacentText()` and `insertAdjacentElement()` take the position as a string. You call the newer methods on the node itself, and they're named after what they do.
 
 | Reported | Write instead |
 | --- | --- |
@@ -47,7 +47,7 @@ heading.append("!");
 heading.after(note);
 ```
 
-`insertBefore()` and `replaceChild()` are only reported when they are called on a plain variable:
+`insertBefore()` and `replaceChild()` are only reported when they're called on a plain variable:
 
 {/* good */}
 ```js
@@ -56,4 +56,4 @@ document.body.insertBefore(banner, main);
 
 ## When not to use it
 
-`insertBefore()`, `replaceChild()` and `insertAdjacentElement()` return a node, and the newer methods return `undefined`. A call is reported even if its result is used, and then it needs more than a rename.
+`insertBefore()`, `replaceChild()` and `insertAdjacentElement()` return a node, and the newer methods return `undefined`. A call is reported even if you use its result, and in that case it needs more than a rename.

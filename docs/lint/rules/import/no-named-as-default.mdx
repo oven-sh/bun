@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`import Button from "./button"` gets the default export, whatever you call it. If `./button` also has a named export `Button`, the braces were probably forgotten, and the code uses a different value than its name says.
+`import Button from "./button"` gets the default export, whatever you call it. If `./button` also has a named export `Button`, you probably forgot the braces, and the code is using a different value than the name suggests.
 
 The rule reads the imported module. It only reports if that module has both a default export and a named export with the name you chose.
 
@@ -48,4 +48,4 @@ import ThemedButton, { Button } from "./button";
 
 ## When not to use it
 
-Some modules export the same value both ways on purpose, so that `import Button` and `import { Button }` both work. The rule reports the first form there too.
+Some modules export the same value both ways on purpose, so that `import Button` and `import { Button }` both work. The rule still reports the first form there.

@@ -16,7 +16,7 @@ deprecated: false
 
 By default this rule reports objects, arrays, symbols, `unknown`, `never`, and a `number` mixed with a `bigint`. Turn the `allow` options off to make it stricter.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -51,7 +51,7 @@ function describe(user: { name: string }, tags: string[], size: bigint) {
 | `allowNullish` | `true` | Allow an operand that can be `null` or `undefined`. |
 | `allowNumberAndString` | `true` | Allow adding a `number` or a `bigint` to a `string`. |
 | `allowRegExp` | `true` | Allow a `RegExp` operand. A `RegExp` plus a `number` is always reported. |
-| `skipCompoundAssignments` | `false` | Do not check `+=`. |
+| `skipCompoundAssignments` | `false` | Don't check `+=`. |
 
 With all the `allow` options off, both sides must have the same type:
 

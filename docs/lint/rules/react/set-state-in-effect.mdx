@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An effect runs after React has rendered. If its body sets state right away, React has to render the component a second time right after the first. Most of the time the state is not needed at all: a value that depends only on props and other state can be computed while rendering.
+An effect runs after React has rendered. If its body sets state right away, React renders the component a second time right after the first. Most of the time you don't need the state at all, because you can compute a value that depends only on props and other state while rendering.
 
-The rule checks `useEffect`, `useLayoutEffect` and `useInsertionEffect`. Setting state later is fine: in an event listener, a timer, or after a `fetch()`.
+The rule checks `useEffect`, `useLayoutEffect` and `useInsertionEffect`. Setting state later is fine, like in an event listener, a timer, or after a `fetch()`.
 
 ## Examples
 
@@ -35,7 +35,7 @@ function FullName({ first, last }) {
 }
 ```
 
-Moving the call into a helper does not change anything:
+Moving the call into a helper doesn't change anything:
 
 {/* bad */}
 ```jsx
@@ -63,7 +63,7 @@ function FullName({ first, last }) {
 }
 ```
 
-The effect subscribes to something outside React, and the state is set when that changes:
+This effect subscribes to something outside React, and only sets state when that changes:
 
 {/* good */}
 ```jsx
@@ -101,7 +101,7 @@ function Profile({ id }) {
 }
 ```
 
-A value read from a ref is only known after rendering, so storing it in state is allowed:
+You only know a ref's value after rendering, so storing it in state is allowed:
 
 {/* good */}
 ```jsx

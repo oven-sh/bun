@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`BigInt(123)` and `BigInt("123")` call a function to make a value you can write as `123n`. With a large number the call is also wrong: `BigInt(9007199254740993)` rounds the number before `BigInt` sees it, and gives `9007199254740992n`.
+`BigInt(123)` and `BigInt("123")` call a function to make a value you can write as `123n`. With a large number, the call is also wrong. `BigInt(9007199254740993)` rounds the number before `BigInt` sees it, so you get `9007199254740992n`.
 
 `--fix` replaces the call with the literal.
 
@@ -36,7 +36,7 @@ const limit = 9007199254740993n;
 const mask = 0xFFn;
 ```
 
-A value that is only known when the code runs still needs the call:
+A value that's only known at runtime still needs the call:
 
 {/* good */}
 ```js

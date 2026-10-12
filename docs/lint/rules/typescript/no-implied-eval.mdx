@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-In browsers, `setTimeout` and `setInterval` accept a string and run it as code, like `eval()`. `new Function()` does the same everywhere. The string is not type checked. It runs in the global scope, so it cannot see your local variables. If any part of it comes from a user, that user can run code in your program.
+In browsers, `setTimeout` and `setInterval` accept a string and run it as code, like `eval()`. `new Function()` does the same everywhere. The string isn't type checked. It runs in the global scope, so it can't see your local variables. If any part of it comes from a user, that user can run code in your program.
 
-The rule reports a first argument that is not a function, so it catches a variable of type `string` as well as a string literal. It checks `setTimeout`, `setInterval`, `setImmediate` and `execScript`, also when they are called through `window`, `global` or `globalThis`. A function of your own named `setTimeout` is not reported.
+The rule reports a first argument that isn't a function, so it catches a variable of type `string` as well as a string literal. It checks `setTimeout`, `setInterval`, `setImmediate` and `execScript`, even when they're called through `window`, `global` or `globalThis`. Your own function named `setTimeout` isn't reported.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 

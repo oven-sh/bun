@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A test declared inside an `if` only exists when the condition is true. When it is false, the test is missing from the output, so nobody sees that it did not run.
+A test declared inside an `if` only exists when the condition is true. When it's false, the test is missing from the output, so nobody sees that it didn't run.
 
-Use `test.runIf(condition)` or `test.skipIf(condition)`. The test is always declared, and it is shown as skipped when it does not run. `describe` has the same two methods.
+Use `test.runIf(condition)` or `test.skipIf(condition)`. The test is always declared, and it's shown as skipped when it doesn't run. `describe` has the same two methods.
 
 The rule is about the `if` around a test. For an `if` inside a test, see `vitest/no-conditional-in-test`.
 

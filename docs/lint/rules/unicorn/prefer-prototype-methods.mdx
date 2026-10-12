@@ -14,7 +14,7 @@ deprecated: false
 
 `[].slice.call(list)` creates an array only to reach `slice`, and then throws it away. `Array.prototype.slice.call(list)` names where the method comes from and creates nothing.
 
-The rule reports a method of an empty `[]` or `{}` that is used with `.call()`, `.apply()` or `.bind()`, or passed as the first argument of `Reflect.apply()`.
+The rule reports a method of an empty `[]` or `{}` that's used with `.call()`, `.apply()` or `.bind()`, or passed as the first argument of `Reflect.apply()`.
 
 `--fix` replaces `[]` with `Array.prototype` and `{}` with `Object.prototype`.
 
@@ -38,7 +38,7 @@ const isOwn = Object.prototype.hasOwnProperty.call(user, "name");
 const first = Reflect.apply(Array.prototype.at, items, [0]);
 ```
 
-A method of any other object is not reported:
+A method of any other object isn't reported:
 
 {/* good */}
 ```js

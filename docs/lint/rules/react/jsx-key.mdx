@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-React uses `key` to tell the items of a list apart from one render to the next. Without it, React warns at run time and matches items by position, so after an insert or a reorder an item can end up with the state of its neighbor, such as the text typed into an input.
+React uses `key` to tell list items apart from one render to the next. Without it, React warns at run time and matches items by position. After an insert or a reorder, an item can then end up with its neighbor's state, such as the text typed into an input.
 
-The rule looks at elements in an array literal and at elements returned from the callback of `.map()` or `Array.from()`. Lists passed to `React.Children.toArray()` are exempt, because it adds keys itself.
+The rule looks at elements in an array literal and at elements returned from a `.map()` or `Array.from()` callback. It skips lists passed to `React.Children.toArray()`, because that adds keys itself.
 
 This rule is on by default if your `package.json` depends on `react`.
 
@@ -54,7 +54,7 @@ const panels = React.Children.toArray([<Panel />, <Panel />]);
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `checkFragmentShorthand` | `false` | Also report `<>...</>` in a list. It cannot take a `key`. Use `<React.Fragment key={...}>`. |
+| `checkFragmentShorthand` | `false` | Also report `<>...</>` in a list. It can't take a `key`, so use `<React.Fragment key={...}>`. |
 | `checkKeyMustBeforeSpread` | `false` | Also report a `key` that comes after a `{...spread}`. |
 | `warnOnDuplicates` | `false` | Also report siblings that have the same `key`. |
 

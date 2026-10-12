@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `for` loop with a counter has three places to get wrong: the start, the end, and the step. If the counter is only used to read `items[i]`, a `for...of` loop gives you the element directly and has none of them.
+A `for` loop with a counter has three places you can get wrong: the start, the end, and the step. If you only use the counter to read `items[i]`, a `for...of` loop gives you the element directly and has none of them.
 
 A loop is reported if it starts at `0`, runs while `i < items.length`, goes up by one, and uses `i` in its body only to read `items[i]`.
 

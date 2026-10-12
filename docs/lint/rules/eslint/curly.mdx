@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Without braces, only the next statement belongs to the `if` or the loop. Add a second line below it with the same indentation, and that line runs every time, whatever the condition says.
+Without braces, only the next statement belongs to the `if` or the loop. If you add a second line below it with the same indentation, that line runs every time, no matter what the condition says.
 
-`--fix` adds the missing braces, or removes the ones your style does not want.
+`--fix` adds the missing braces, or removes the ones your style doesn't want.
 
 ## Examples
 
@@ -104,7 +104,7 @@ if (user.admin) {
 }
 ```
 
-With any option but `"all"`, a second option `"consistent"` makes all branches of an `if` / `else` chain look the same. If one of them needs braces, all of them get braces.
+With any option except `"all"`, you can add `"consistent"` as a second option. It makes all branches of an `if` / `else` chain look the same. If one of them needs braces, they all get braces.
 
 {/* bad {"options": ["multi", "consistent"]} */}
 ```js

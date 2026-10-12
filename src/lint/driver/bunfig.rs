@@ -593,9 +593,7 @@ fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
 
 /// `overrides` of `[format]`: shaped as in a `.prettierrc`, with the keys of `[format]` that say how a file is printed.
 fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
-    let Data::EArray(items) = &value.data else {
-        return expected("array", value);
-    };
+    let items = tables_of(value, b"format")?;
     // `parser` is for some files, never for all.
     let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
     let options_of = |table: &Expr| {
@@ -633,7 +631,23 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
         needs_files(item, &it.files)?;
         Ok(it)
     };
-    items.slice().iter().map(one).collect()
+    items.iter().map(one).collect()
+}
+
+/// The elements of `value`, which is `overrides` of `section`.
+fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], Refusal> {
+    match &value.data {
+        Data::EArray(items) => Ok(items.slice()),
+        Data::EObject(_) => refuse(
+            value.loc,
+            &[
+                b"\"overrides\" is an array of tables\n  Write [[",
+                section,
+                b".overrides]], with two brackets",
+            ],
+        ),
+        _ => expected("array", value),
+    }
 }
 
 /// `files` of `item`, an element of `overrides`, say which files it is for.
@@ -721,7 +735,6 @@ const LINT: Table = Table {
         b"debug",
         b"cwd",
         b"version",
-        b"lsp",
         b"help",
         b"help-all",
     ],
@@ -763,6 +776,7 @@ const LINT: Table = Table {
         b"concurrency",
         b"flag",
         b"mcp",
+        b"lsp",
     ],
 };
 
@@ -883,9 +897,7 @@ fn rules(table: &Expr) -> Result<(Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>), Refu
 
 /// `overrides` of `[lint]`.
 fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
-    let Data::EArray(items) = &value.data else {
-        return expected("array", value);
-    };
+    let items = tables_of(value, b"lint")?;
     let one = |item: &Expr| {
         let mut it = crate::cli::Override::default();
         for (key, value) in entries(item)? {
@@ -911,7 +923,7 @@ fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal>
         needs_files(item, &it.files)?;
         Ok(it)
     };
-    items.slice().iter().map(one).collect()
+    items.iter().map(one).collect()
 }
 
 /// `[lint.globals]`, or `globals` of an override. A boolean is what ESLint takes it for: whether it can be written to.
@@ -923,7 +935,14 @@ fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
             Some(Json::String(it)) if it == b"writable" => b"writable",
             Some(Json::String(it)) if it == b"readonly" => b"readonly",
             Some(Json::String(it)) if it == b"off" => b"off",
-            _ => return expected("\"readonly\", \"writable\" or \"off\"", value),
+            _ => {
+                let mut message = Vec::new();
+                write_json(&mut message, &json_of(value)?);
+                message.extend_from_slice(b" is not a valid value for the global ");
+                message.extend_from_slice(&name.name);
+                message.extend_from_slice(b"\n  Expected \"readonly\", \"writable\", or \"off\"");
+                return refuse(value.loc, &[&message]);
+            }
         };
         Ok((name.name, Json::String(kind.to_vec())))
     };
@@ -1029,11 +1048,6 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
             _ => LINT.set(&key, value, set)?,
         }
     }
-    // There are no type errors without types.
-    if options.type_check && options.type_aware.is_none() {
-        options.type_aware = Some(true);
-    }
-    // A flag that only ESLint or only oxlint has tells whom a command line was written for. A key was written for Bun.
     options.forget_whose_flags_it_has();
     Ok(Some(options))
 }

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`<Button label={"Save"} />` and `<Button label="Save" />` mean the same thing, and so do `<p>{"Hello"}</p>` and `<p>Hello</p>`. The braces add noise. By default this rule reports them around a plain string, around a template literal without `${}`, and around an element that is a child.
+`<Button label={"Save"} />` and `<Button label="Save" />` mean the same thing, and so do `<p>{"Hello"}</p>` and `<p>Hello</p>`. The braces add noise. By default this rule reports them around a plain string, around a template literal without `${}`, and around a child element.
 
 `--fix` removes or adds the braces.
 
@@ -36,7 +36,7 @@ const button = <Button label="Save" title="Save">Save</Button>;
 const panel = <Panel><Spinner /></Panel>;
 ```
 
-Braces that are needed stay. A string is left alone if it has a backslash or an entity such as `&amp;`. So is a child that starts or ends with white space, has `<`, `>`, `{`, or `}`, or stands next to another `{}` expression.
+Braces that are needed stay. The rule leaves a string alone if it has a backslash or an entity such as `&amp;`. It also leaves a child alone if it starts or ends with white space, has `<`, `>`, `{`, or `}`, or sits next to another `{}` expression.
 
 {/* good */}
 ```jsx
@@ -56,11 +56,11 @@ const kept = (
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `props` | `"never"` | Braces around a string that is the value of an attribute. |
-| `children` | `"never"` | Braces around a string or an element that is a child. |
-| `propElementValues` | `"ignore"` | Braces around an element that is the value of an attribute. |
+| `props` | `"never"` | Braces around a string that's an attribute's value. |
+| `children` | `"never"` | Braces around a string or an element that's a child. |
+| `propElementValues` | `"ignore"` | Braces around an element that's an attribute's value. |
 
-Each takes `"never"` (report the braces), `"always"` (report a string without braces), or `"ignore"` (do not check). One of these words in place of the object sets both `props` and `children`.
+Each takes `"never"` (report the braces), `"always"` (report a string without braces), or `"ignore"` (don't check). If you pass one of these words instead of the object, it sets both `props` and `children`.
 
 {/* bad {"options": ["always"], "count": 2} */}
 ```jsx
@@ -87,7 +87,7 @@ const page = <Layout header=<Header /> />;
 const page = <Layout header={<Header />} />;
 ```
 
-Do not use `propElementValues: "never"`. It reports the element with braces and also the element without them, so nothing you write passes:
+Don't use `propElementValues: "never"`. It reports the element with braces and also the element without them, so nothing you write passes:
 
 {/* bad {"options": [{"propElementValues": "never"}], "count": 2} */}
 ```jsx

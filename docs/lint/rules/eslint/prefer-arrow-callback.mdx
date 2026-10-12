@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `function` passed as a callback gets its own `this`, so `this.save()` inside it only works if you add `.bind(this)`. An arrow function uses the `this` of the code around it, and it is shorter.
+A `function` passed as a callback gets its own `this`, so `this.save()` inside it only works if you add `.bind(this)`. An arrow function uses the surrounding code's `this`, and it's shorter.
 
-A callback is left alone if an arrow function cannot replace it: a generator, a function that calls itself by name, or one that uses `arguments` or `new.target`. By default a callback that uses `this` without `.bind(this)` is left alone too.
+A callback is left alone if an arrow function can't replace it: a generator, a function that calls itself by name, or one that uses `arguments` or `new.target`. By default a callback that uses `this` without `.bind(this)` is left alone too.
 
 `--fix` rewrites the callback as an arrow function and removes `.bind(this)`.
 
@@ -59,7 +59,7 @@ walk(tree, function visit(node) {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `allowNamedFunctions` | `false` | Allow a callback that has a name, which shows up in stack traces. |
-| `allowUnboundThis` | `true` | Allow a callback that uses `this` without `.bind(this)`. With `false` it is reported but not fixed. |
+| `allowUnboundThis` | `true` | Allow a callback that uses `this` without `.bind(this)`. With `false` it's reported but not fixed. |
 
 {/* good {"options": [{"allowNamedFunctions": true}]} */}
 ```js

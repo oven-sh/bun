@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`toBeTruthy()` passes for `1`, `"no"` and `{}`. `toBeFalsy()` passes for `0`, `""`, `null` and `undefined`. If a function should return a boolean and starts to return `undefined`, a test with `toBeFalsy()` still passes. `toBe(false)` fails.
+`toBeTruthy()` passes for `1`, `"no"` and `{}`. `toBeFalsy()` passes for `0`, `""`, `null` and `undefined`. If a function should return a boolean and starts returning `undefined`, a test with `toBeFalsy()` still passes. `toBe(false)` fails.
 
-`--fix` rewrites the matcher. A test that passed with a value that is not a boolean fails afterwards.
+`--fix` rewrites the matcher. A test that passed with a value that isn't a boolean fails afterwards.
 
 ## Examples
 
@@ -55,6 +55,6 @@ test("rejects an empty password", () => {
 
 ## When not to use it
 
-Some tests only care that there is a value: a match from `String.prototype.match()`, a non-empty string. There `toBeTruthy()` says what you mean.
+Some tests only care that there's a value, like a match from `String.prototype.match()` or a non-empty string. In those tests `toBeTruthy()` says what you mean.
 
-`vitest/prefer-to-be-truthy` and `vitest/prefer-to-be-falsy` ask for the opposite. Do not turn them on together with this rule.
+`vitest/prefer-to-be-truthy` and `vitest/prefer-to-be-falsy` ask for the opposite. Don't turn them on together with this rule.

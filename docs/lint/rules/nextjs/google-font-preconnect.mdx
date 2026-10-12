@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Google Fonts serves its font files from `fonts.gstatic.com`. A `<link>` to that host is there to open the connection early, so the font download does not wait for DNS and TLS. Without `rel="preconnect"`, the browser does not do that.
+Google Fonts serves its font files from `fonts.gstatic.com`. A `<link>` to that host is there to open the connection early, so the font download doesn't wait for DNS and TLS. Without `rel="preconnect"`, the browser doesn't do that.
 
 The rule looks at `<link>` elements with an `href` that starts with `https://fonts.gstatic.com`.
 

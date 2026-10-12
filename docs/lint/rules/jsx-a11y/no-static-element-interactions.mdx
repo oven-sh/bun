@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `<div>` or a `<span>` says nothing about what it is. With a click handler it works like a button for mouse users, but a screen reader announces only its text, so nobody else learns that it can be pressed.
+A `<div>` or a `<span>` says nothing about what it is. With a click handler, it works like a button for mouse users, but a screen reader only announces its text, so nobody else knows they can press it.
 
-Use the real element, such as `<button>` or `<a href>`. If you cannot, give the element a `role` that says what it is. An `<a>` without an `href` counts as static too.
+Use the real element, such as `<button>` or `<a href>`. If you can't, give the element a `role` that says what it is. An `<a>` without an `href` counts as static too.
 
 Not reported:
 
@@ -55,7 +55,7 @@ const backdrop = <div role="presentation" onClick={closeDialog} />;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `handlers` | `["onClick", "onMouseDown", "onMouseUp", "onKeyPress", "onKeyDown", "onKeyUp"]` | The handlers to report. Your list replaces the default. |
-| `allowExpressionValues` | `false` | Accept a `role` that is only known at run time, such as `role={role}`. |
+| `allowExpressionValues` | `false` | Accept a `role` that's only known at run time, such as `role={role}`. |
 
 {/* good */}
 ```jsx

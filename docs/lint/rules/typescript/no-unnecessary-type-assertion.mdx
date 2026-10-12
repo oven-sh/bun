@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-An assertion tells the compiler "trust me". If the expression already has that type, or the place that receives it accepts the original type, the assertion does nothing today. It stays in the code, though, and silences the compiler when the types change later.
+An assertion tells the compiler "trust me". If the expression already has that type, or the place that receives it accepts the original type, the assertion does nothing today. But it stays in the code and silences the compiler when the types change later.
 
 `--fix` removes the assertion.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -54,7 +54,7 @@ function show(user: User) {
 }
 ```
 
-An assertion that narrows or widens the type is not reported:
+An assertion that narrows or widens the type isn't reported:
 
 {/* good */}
 ```ts
@@ -69,7 +69,7 @@ function parse(text: string) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `checkLiteralConstAssertions` | `false` | Also report `as const` on a literal in a `const` declaration, where the type is the literal type anyway. |
+| `checkLiteralConstAssertions` | `false` | Also report `as const` on a literal in a `const` declaration, where the type is already the literal type. |
 | `typesToIgnore` | `[]` | Type names, as written after `as`. Assertions to these types are never reported. |
 
 Reported only with `checkLiteralConstAssertions`:

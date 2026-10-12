@@ -14,7 +14,7 @@ deprecated: false
 
 React only renders a component again when you call `setState`. If you assign to `this.state` or to something inside it, the screen keeps showing the old value, and the next `setState` may overwrite your change.
 
-The constructor is the one place where `this.state` can be assigned, because nothing has rendered yet.
+The constructor is the one place where you can assign `this.state`, because nothing has rendered yet.
 
 ## Examples
 

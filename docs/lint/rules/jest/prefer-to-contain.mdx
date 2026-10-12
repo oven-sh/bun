@@ -16,7 +16,7 @@ When `expect(tags.includes("new")).toBe(true)` fails, the message only says that
 
 The rule reports `expect(x.includes(y))` matched against `true` or `false` with `toBe()`, `toEqual()`, or `toStrictEqual()`.
 
-`--fix` rewrites the assertion, and adds or drops `.not` so that it still tests the same thing.
+`--fix` rewrites the assertion, and adds or drops `.not` so it still tests the same thing.
 
 ## Examples
 
@@ -46,7 +46,7 @@ test("a draft is tagged", () => {
 });
 ```
 
-A start index has no equivalent in `toContain()`, so this is allowed:
+`toContain()` has no equivalent for a start index, so this is allowed:
 
 {/* good */}
 ```ts

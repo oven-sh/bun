@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A declaration that lists modules and ordinary variables together makes it hard to see what the file depends on. This rule wants the `require()` calls in a declaration of their own.
+A declaration that lists modules and ordinary variables together makes it hard to see what the file depends on. This rule wants the `require()` calls in their own declaration.
 
 `require("x")` and a property of it, such as `require("x").y`, count as a `require()`. Everything else is an ordinary variable, including one without a value.
 
@@ -41,9 +41,9 @@ const retries = 3;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `grouping` | `false` | Also report a declaration that mixes kinds of modules: Node.js built-ins, packages, files (`./`, `../`, `/`), and computed names. |
-| `allowCall` | `false` | Count a module that is called right away, such as `require("debug")("app")`, as a `require()`. |
+| `allowCall` | `false` | Count a module that's called right away, such as `require("debug")("app")`, as a `require()`. |
 
-You can write `true` in place of `{ "grouping": true }`.
+You can write `true` instead of `{ "grouping": true }`.
 
 {/* bad {"options": [{"grouping": true}]} */}
 ```js
@@ -70,7 +70,7 @@ const fs = require("node:fs"),
   path = require("path");
 ```
 
-Without `allowCall`, a module that is called is an ordinary variable:
+Without `allowCall`, a module that's called counts as an ordinary variable:
 
 {/* bad */}
 ```js

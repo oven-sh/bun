@@ -14,15 +14,15 @@ deprecated: false
 
 With the classic JSX transform, `<div />` compiles to `React.createElement("div")`. The file needs `React` in scope, but the name appears nowhere in the code, so `no-unused-vars` reports the import.
 
-This rule reports nothing itself. While it is on, every JSX element counts as a use of `React`, and `no-unused-vars` leaves the import alone.
+This rule reports nothing itself. While it's on, every JSX element counts as a use of `React`, and `no-unused-vars` leaves the import alone.
 
-If a `@jsx` comment or `settings.react.pragma` names another function, that variable is counted in place of `React`. A `<>` fragment also counts as a use of `Fragment`, or of the name in `settings.react.fragment`.
+If a `@jsx` comment or `settings.react.pragma` names another function, that variable is counted instead of `React`. A `<>` fragment also counts as a use of `Fragment`, or of the name in `settings.react.fragment`.
 
 {/* never reports */}
 
 ## Examples
 
-With this rule on, `no-unused-vars` does not report `React` here:
+With this rule on, `no-unused-vars` doesn't report `React` here:
 
 {/* good */}
 ```jsx
@@ -33,7 +33,7 @@ export function Greeting() {
 }
 ```
 
-Nor `h` here:
+And it doesn't report `h` here:
 
 {/* good */}
 ```jsx
@@ -47,4 +47,4 @@ export function Greeting() {
 
 ## When not to use it
 
-With the automatic JSX runtime of React 17 and later, you do not import `React` for JSX. Turn this rule off, so that a leftover import is reported.
+With the automatic JSX runtime in React 17 and later, you don't import `React` for JSX. Turn this rule off so a leftover import gets reported.

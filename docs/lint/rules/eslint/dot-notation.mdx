@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`user["name"]` and `user.name` read the same property. The dot form is shorter, and it leaves brackets for the cases that need them: a key in a variable, or a name that is not a valid identifier.
+`user["name"]` and `user.name` read the same property. The dot form is shorter, and it leaves brackets for the cases that need them: a key in a variable, or a name that isn't a valid identifier.
 
 `--fix` rewrites the brackets to a dot.
 
@@ -39,7 +39,7 @@ const first = items[0];
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowKeywords` | `true` | With `false`, reserved words go in brackets: `node.class` is reported, and `node["class"]` is allowed. Only engines older than ES5 need this. |
+| `allowKeywords` | `true` | With `false`, reserved words go in brackets, so `node.class` is reported and `node["class"]` is allowed. Only engines older than ES5 need this. |
 | `allowPattern` | `""` | A regular expression. Property names that match it can be written in brackets. |
 
 {/* bad {"options": [{"allowKeywords": false}]} */}

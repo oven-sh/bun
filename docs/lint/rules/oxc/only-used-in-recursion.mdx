@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A parameter that a function only hands to itself never affects the result. Either it is left over and every caller passes a value for nothing, or the code that was meant to use it is missing.
+A parameter that a function only hands to itself never affects the result. Either it's left over and every caller passes a value for nothing, or the code that was meant to use it is missing.
 
-The rule checks function declarations, and function expressions and arrow functions assigned to a variable. Methods are not checked. In JSX it also checks a destructured prop that a component only passes to itself under the same name.
+The rule checks function declarations, and function expressions and arrow functions assigned to a variable. Methods aren't checked. In JSX, it also checks a destructured prop that a component only passes to itself under the same name.
 
-`--fix-dangerously` removes the parameter and the argument that calls in the same file pass for it. For a prop, it removes the prop and the attribute on the recursive element. It does not touch exported functions, or a parameter that is not the last one.
+`--fix-dangerously` removes the parameter, and the matching argument from calls in the same file. For a prop, it removes the prop and the attribute on the recursive element. It doesn't touch exported functions, or a parameter that isn't the last one.
 
 ## Examples
 
@@ -47,7 +47,7 @@ function countNodes(node) {
 }
 ```
 
-A parameter that is read anywhere else is in use. That includes an expression in the recursive call, such as `depth + 1`:
+A parameter that's read anywhere else counts as used. That includes an expression in the recursive call, such as `depth + 1`:
 
 {/* good */}
 ```js

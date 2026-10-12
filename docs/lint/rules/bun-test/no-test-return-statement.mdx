@@ -14,7 +14,7 @@ deprecated: false
 
 The only thing worth returning from a test is a promise for `bun test` to wait for. A matcher such as `toBe()` returns nothing, so the `return` in `return expect(total).toBe(3)` has no effect. It only makes the test look like it waits for something.
 
-The rule reports `return expect(..).matcher(..)` in the callback of `test` or `it`, and in a function declaration that is passed to one of them.
+The rule reports `return expect(..).matcher(..)` in a `test` or `it` callback, and in a function declaration that's passed to one of them.
 
 ## Examples
 
@@ -53,7 +53,7 @@ test("adds the prices", () => {
 });
 ```
 
-Other `return` statements are not reported. That includes a returned promise, which `bun test` waits for:
+Other `return` statements aren't reported. That includes a returned promise, which `bun test` waits for:
 
 {/* good */}
 ```ts

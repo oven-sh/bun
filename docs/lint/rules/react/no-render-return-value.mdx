@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`ReactDOM.render` returns the instance of the root component, but only if React has rendered it by the time the call returns. React does not promise that. To get the instance, give the root element a `ref` callback. React calls it when the instance exists.
+`ReactDOM.render` returns the root component's instance, but only if React has rendered it by the time the call returns. React doesn't promise that. To get the instance, give the root element a `ref` callback. React calls it when the instance exists.
 
-The call is reported when its result is stored in a variable or a property, assigned, or returned.
+The rule reports the call when its result is stored in a variable or a property, assigned, or returned.
 
 ## Examples
 

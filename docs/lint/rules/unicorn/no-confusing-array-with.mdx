@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`array.with(index, value)` returns a copy of the array with one element replaced. A negative index counts from the end, and a reader who does not know that cannot tell which element changes. The array's own `.length` as the index looks like a way to append, but `with()` never makes the array longer. It throws a `RangeError`.
+`array.with(index, value)` returns a copy of the array with one element replaced. A negative index counts from the end, and a reader who doesn't know that can't tell which element changes. Passing the array's `.length` as the index looks like a way to append, but `with()` never makes the array longer. It throws a `RangeError`.
 
 ## Examples
 
@@ -40,7 +40,7 @@ const updated = scores.with(scores.length - 1, 100);
 const longer = [...scores, 100];
 ```
 
-The rule only sees a number that is written in the call. An index in a variable is not checked:
+The rule only sees a number written directly in the call. It doesn't check an index stored in a variable:
 
 {/* good */}
 ```js

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Some projects do not want certain attributes in their markup: `id`, because two copies of a component then share one, or `style`, because all styling goes through classes. This rule reports the props you list when they are on a DOM element.
+Some projects don't want certain attributes in their markup. It might be `id`, because two copies of a component would share one, or `style`, because all styling goes through classes. This rule reports the props you list when they're on a DOM element.
 
-Nothing is forbidden until you fill in `forbid`. Components, which means elements with a capitalized name, are not checked.
+The rule does nothing until you add entries to `forbid`. It doesn't check components, which means elements with a capitalized name.
 
 ## Examples
 
@@ -41,14 +41,14 @@ Not reported:
 "react/forbid-dom-props" = ["error", { forbid = ["id", { propName = "style", message = "Use a class" }] }]
 ```
 
-The one option is `forbid`, a list that is empty by default. An entry is the name of a prop, or an object:
+`forbid` is the only option. It's a list of prop names or objects, and it's empty by default:
 
 | Key | What it does |
 | --- | --- |
 | `propName` | The name of the prop. |
-| `disallowedFor` | The prop is forbidden on these elements only. Without it, on all DOM elements. |
-| `disallowedValues` | With an oxlint config, the prop is forbidden only with one of these values. Other configs ignore it. |
-| `message` | Replaces the text of the report. |
+| `disallowedFor` | The prop is forbidden on these elements only. Without it, the prop is forbidden on all DOM elements. |
+| `disallowedValues` | With an oxlint config, the prop is only forbidden when it has one of these values. Other configs ignore it. |
+| `message` | Replaces the report's text. |
 
 {/* bad {"options": [{"forbid": [{"propName": "style", "disallowedFor": ["span"]}]}]} */}
 ```jsx

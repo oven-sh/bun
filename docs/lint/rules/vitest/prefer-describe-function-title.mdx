@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`describe` accepts a function or a class as its title and prints its name. A string that repeats the name is not updated when you rename the function, so the test output keeps showing a name that no longer exists.
+`describe` accepts a function or a class as its title and prints its name. A string that repeats the name isn't updated when you rename the function, so the test output keeps showing a name that no longer exists.
 
-The rule reports a `describe` title that is a string equal to a name the file imports. A title like `slugify.name` is reported too. If your config sets `settings.vitest.typecheck` to `true`, strings are not reported.
+The rule reports a `describe` title that's a string equal to a name the file imports. A title like `slugify.name` is reported too. If your config sets `settings.vitest.typecheck` to `true`, strings aren't reported.
 
 `--fix` replaces the title with the name, unless the import is type-only.
 

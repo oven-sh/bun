@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-`await` on a value that has no `then` method gives back the same value one tick later. It is usually a mistake: the function was never async, or you forgot to call it.
+`await` on a value that has no `then` method gives back the same value one tick later. It's usually a mistake. Either the function was never async, or you forgot to call it.
 
-The same goes for `for await...of` over something that is not async iterable, `await using` with something that is not async disposable, and values that are not promises in the array passed to `Promise.all`, `Promise.allSettled`, `Promise.any`, or `Promise.race`.
+The same goes for `for await...of` over something that isn't async iterable, `await using` with something that isn't async disposable, and values that aren't promises in the array passed to `Promise.all`, `Promise.allSettled`, `Promise.any`, or `Promise.race`.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -69,7 +69,7 @@ for (const port of ports) {
 }
 ```
 
-A value that may or may not be a promise can be awaited, and so can `any` and `unknown`:
+You can await a value that may or may not be a promise, and you can await `any` and `unknown`:
 
 {/* good */}
 ```ts

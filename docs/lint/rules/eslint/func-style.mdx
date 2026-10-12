@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A function declaration can be called above the line that defines it. A function assigned to a variable exists only after that line has run. If a project mixes both, you have to check how each function is written to know where it can be called.
+A function declaration can be called above the line that defines it. A function assigned to a variable only exists after that line has run. If a project mixes both, you have to check how each function is written to know where it can be called.
 
 This rule makes you pick one. By default it asks for expressions.
 
@@ -61,7 +61,7 @@ func-style = ["error", "declaration", { allowArrowFunctions = true }]
 | Option | What it does |
 | --- | --- |
 | `"expression"` (default) | Report function declarations. |
-| `"declaration"` | Report functions assigned to a variable where it is declared. |
+| `"declaration"` | Report functions assigned to a variable where it's declared. |
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -87,7 +87,7 @@ function formatName(user) {
 }
 ```
 
-An arrow function that uses `this` is not reported, because `this` would mean something else in a declaration:
+An arrow function that uses `this` isn't reported, because `this` would mean something else in a declaration:
 
 {/* good {"options": ["declaration"]} */}
 ```js
@@ -108,7 +108,7 @@ const initials = (user) => user.first[0] + user.last[0];
 
 ### `allowTypeAnnotation`
 
-A declaration cannot be given a function type as a whole, so this option lets such functions stay expressions:
+You can't give a declaration a function type as a whole, so this option lets those functions stay expressions:
 
 {/* good {"options": ["declaration", {"allowTypeAnnotation": true}]} */}
 ```ts

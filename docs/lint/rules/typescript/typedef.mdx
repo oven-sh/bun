@@ -12,7 +12,7 @@ typeAware: false
 deprecated: true
 ---
 
-TypeScript infers most types. Some teams still want them written out in certain places, for example on every parameter, so that a reader does not need an editor to see them.
+TypeScript infers most types. Some teams still want them written out in certain places, for example on every parameter, so a reader doesn't need an editor to see them.
 
 Every option is off by default, so this rule reports nothing until you turn on at least one.
 
@@ -44,14 +44,14 @@ const double = (value: number) => value * 2;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `parameter` | `false` | Require a type on parameters of functions and methods. |
-| `arrowParameter` | `false` | Require a type on parameters of arrow functions. |
+| `parameter` | `false` | Require a type on function and method parameters. |
+| `arrowParameter` | `false` | Require a type on arrow function parameters. |
 | `variableDeclaration` | `false` | Require a type on `const`, `let`, and `var`. Destructuring has its own options. |
-| `variableDeclarationIgnoreFunction` | `false` | Do not require a type on a variable or a class property that is set to a function. |
+| `variableDeclarationIgnoreFunction` | `false` | Don't require a type on a variable or a class property that's set to a function. |
 | `arrayDestructuring` | `false` | Require a type on `const [a, b] = ...`. |
 | `objectDestructuring` | `false` | Require a type on `const { a, b } = ...`. |
 | `memberVariableDeclaration` | `false` | Require a type on class properties. |
-| `propertyDeclaration` | `false` | Require a type on properties of interfaces and type literals. |
+| `propertyDeclaration` | `false` | Require a type on interface and type literal properties. |
 
 Both are reported with `variableDeclaration`:
 
@@ -61,7 +61,7 @@ const retries = 3;
 const log = (message: string) => console.log(message);
 ```
 
-Add `variableDeclarationIgnoreFunction` to leave functions alone. The variable of a `for...of` or `for...in` loop never needs a type:
+Add `variableDeclarationIgnoreFunction` to leave functions alone. The variable in a `for...of` or `for...in` loop never needs a type:
 
 {/* good {"options": [{"variableDeclaration": true, "variableDeclarationIgnoreFunction": true}]} */}
 ```ts

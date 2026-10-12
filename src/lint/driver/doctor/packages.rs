@@ -159,8 +159,8 @@ impl Packages {
     /// nothing else. `need`: why a run needs a package.
     pub(crate) fn new(
         cwd: &[u8],
-        is_of_a_tool: impl Fn(&[u8]) -> bool,
-        need: impl Fn(&[u8]) -> Option<Need>,
+        is_of_a_tool: &dyn Fn(&[u8]) -> bool,
+        need: &dyn Fn(&[u8]) -> Option<Need>,
     ) -> Packages {
         let mut packages = Packages::default();
         let read = |it: &[u8]| fs::read(&paths::join(it, b"package.json")).ok();

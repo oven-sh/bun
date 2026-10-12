@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `var` declared inside an `if`, a loop or a `switch` is visible in the whole function. Code after the block can read it, and gets `undefined` when the block did not run. This rule reports every use of a `var` outside the block that declares it, as if it were a `let`.
+A `var` declared inside an `if`, a loop or a `switch` is visible in the whole function. Code after the block can still read it, and gets `undefined` if the block didn't run. This rule treats every `var` like a `let` and reports any use outside the block that declares it.
 
 ## Examples
 
@@ -53,4 +53,4 @@ function label(user) {
 
 ## When not to use it
 
-If `no-var` is on, there is no `var` left to check, and `let` and `const` already behave this way.
+If `no-var` is on, there's no `var` left to check, and `let` and `const` already behave this way.

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-ES modules have no `__dirname` and `__filename`, so a lot of code rebuilds them from `import.meta.url` with `fileURLToPath()` and `path.dirname()`. `import.meta.filename` and `import.meta.dirname` hold the same strings, with no imports.
+ES modules don't have `__dirname` or `__filename`, so a lot of code rebuilds them from `import.meta.url` with `fileURLToPath()` and `path.dirname()`. `import.meta.filename` and `import.meta.dirname` hold the same strings, with no imports.
 
-`--fix` replaces the call with the property. It does not remove the imports that are no longer used.
+`--fix` replaces the call with the property. It doesn't remove imports that are no longer used.
 
 ## Examples
 
@@ -55,4 +55,4 @@ const fixtures = fileURLToPath(new URL("./fixtures", import.meta.url));
 
 ## When not to use it
 
-Bun has both properties, and Node.js has them since 20.11. Turn the rule off for code that has to run on an older Node.js.
+Bun has both properties, and Node.js has had them since 20.11. Turn the rule off for code that needs to run on an older Node.js.

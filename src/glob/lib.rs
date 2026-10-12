@@ -1,7 +1,6 @@
 #![warn(unused_must_use)]
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
-pub mod ignore;
 pub mod matcher;
 pub mod pattern;
 pub mod scan;

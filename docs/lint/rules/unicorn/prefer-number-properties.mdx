@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-The global `isNaN` and `isFinite` convert their argument to a number first, so `isNaN("abc")` is `true` and `isFinite("1")` is `true`. `Number.isNaN` and `Number.isFinite` do not convert: they are `false` for anything that is not a number.
+The global `isNaN` and `isFinite` convert their argument to a number first, so `isNaN("abc")` is `true` and `isFinite("1")` is `true`. `Number.isNaN` and `Number.isFinite` don't convert, so they're `false` for anything that isn't a number.
 
 `Number.parseInt`, `Number.parseFloat` and `Number.NaN` are the same as the globals. The rule reports the globals so that everything about numbers is written the same way.
 
-`--fix` rewrites `parseInt`, `parseFloat`, `NaN` and `Infinity`. It does not touch `isNaN` and `isFinite`, because the result can change. `--fix-dangerously` rewrites those too.
+`--fix` rewrites `parseInt`, `parseFloat`, `NaN` and `Infinity`. It doesn't touch `isNaN` and `isFinite`, because the result can change. `--fix-dangerously` rewrites those too.
 
 ## Examples
 

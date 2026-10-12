@@ -14,9 +14,9 @@ deprecated: false
 
 Vitest prints a title after the titles of the blocks around it, as in `cart > adds an item`. A capital in the middle of that line reads like the start of a new sentence, and a mix of both styles is harder to scan.
 
-The titles of `bench` are checked too.
+`bench` titles are checked too.
 
-`--fix` makes the first letter lowercase. Snapshots are stored under the title of their test, so update them afterwards.
+`--fix` makes the first letter lowercase. Snapshots are stored under their test's title, so update them afterwards.
 
 ## Examples
 
@@ -55,12 +55,12 @@ test("adds an item", () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignore` | `[]` | Functions to skip: `"describe"`, `"test"`, `"it"`, `"bench"`. `"test"` does not cover `it`. |
+| `ignore` | `[]` | Functions to skip: `"describe"`, `"test"`, `"it"`, `"bench"`. `"test"` doesn't cover `it`. |
 | `allowedPrefixes` | `[]` | Allow a title that starts with one of these strings. |
-| `ignoreTopLevelDescribe` | `false` | Allow a capital in a `describe` that is not inside another block. |
+| `ignoreTopLevelDescribe` | `false` | Allow a capital in a `describe` that isn't inside another block. |
 | `lowercaseFirstCharacterOnly` | `true` | Set it to `false` to report an uppercase letter anywhere in the title. `--fix` then makes the whole title lowercase. |
 
-`allowedPrefixes` is for titles that start with a name you cannot change:
+`allowedPrefixes` is for titles that start with a name you can't change:
 
 {/* good {"options": [{"allowedPrefixes": ["GET", "POST"]}]} */}
 ```ts

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-If the function you pass to `new Promise` is async and it throws, or something it awaits rejects, the new promise never hears about it. It stays pending forever, and a `.catch()` on it or a `try` around its `await` does not see the error.
+If the function you pass to `new Promise` is async and it throws, or something it awaits rejects, the new promise never hears about it. It stays pending forever, and a `.catch()` on it or a `try` around its `await` never sees the error.
 
 An `await` in the executor also means that you already have a promise, so you rarely need `new Promise` at all.
 

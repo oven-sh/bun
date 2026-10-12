@@ -1,3 +1,5 @@
+// Portions of this file are copied from ESLint, which is under the MIT License. The notice is in code_path.js.
+
 // ───────────── tokens and comments ─────────────
 //
 // ESLint's `TokenStore`. Where the tokens and the comments are is in arrays of numbers: see

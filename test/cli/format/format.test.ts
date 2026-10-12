@@ -1730,7 +1730,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const after = async (files: Record<string, string>, args: string[] = []) =>
       (await format({ "a.ts": asOxfmt, ...files }, args, { reads: ["a.ts"] })).files["a.ts"];
 
-    test("a project that depends on oxfmt, or Vite+, and not on Prettier is formatted like oxfmt does", async () => {
+    test("a project that depends on oxfmt or Vite+ gets oxfmt's style", async () => {
       expect(await after({})).toBe(asPrettier);
       expect(await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n' })).toBe(asOxfmt);
       expect(await after({ "package.json": '{ "dependencies": { "vite-plus": "1.0.0" } }\n' })).toBe(asOxfmt);
@@ -1739,9 +1739,10 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         ["a.ts"],
         { reads: ["a.ts"] },
       );
-      expect(both.files["a.ts"]).toBe(asPrettier);
+      // Depending on both suggests a migration to oxfmt, so oxfmt wins.
+      expect(both.files["a.ts"]).toBe(asOxfmt);
       expect(both.stderr).toContain(
-        "warn: No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like Prettier.",
+        "note: No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like oxfmt. Add a config file to change that.",
       );
       // A configuration file says more than that.
       expect(

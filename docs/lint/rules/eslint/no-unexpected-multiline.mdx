@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-JavaScript only ends a statement at a line break if the next line cannot continue it. A line that starts with `(`, `[`, a template literal, or `/` can. Two lines that look like two statements then run as one call, property access, tagged template, or division.
+JavaScript only ends a statement at a line break if the next line can't continue it. A line that starts with `(`, `[`, a template literal, or `/` can. Then two lines that look like two statements run as one call, property access, tagged template, or division.
 
 This mostly happens in code without semicolons.
 
@@ -20,7 +20,7 @@ This rule is on by default.
 
 ## Examples
 
-Reported. This reads an element of what `getName()` returns:
+Reported. This reads an element of whatever `getName()` returns:
 
 {/* bad */}
 ```js

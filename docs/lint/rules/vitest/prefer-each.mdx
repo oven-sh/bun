@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`test.each` and `describe.each` take the list of cases as an argument and fill in the title for each one. A `for` loop around `test` does the same with more code, and you build every title by hand.
+`test.each` and `describe.each` take the list of cases as an argument and fill in the title for each one. A `for` loop around `test` does the same thing with more code, and you have to build every title by hand.
 
-The rule reports `for`, `for...of` and `for...in` loops that contain a `test`, a `describe` or a hook such as `beforeEach`. A loop inside a test is fine. `while` loops and `cases.forEach(...)` around a test are not reported.
+The rule reports `for`, `for...of` and `for...in` loops that contain a `test`, a `describe` or a hook such as `beforeEach`. A loop inside a test is fine. `while` loops and `cases.forEach(...)` around a test aren't reported.
 
 ## Examples
 

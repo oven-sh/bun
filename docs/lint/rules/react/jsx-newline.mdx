@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Empty lines between siblings break up a long JSX tree. Some teams want them everywhere, others nowhere. By default the rule requires an empty line before each element or `{...}` expression that follows another one.
+Empty lines between siblings break up a long JSX tree. Some teams want them everywhere, and others want them nowhere. By default the rule requires an empty line before each element or `{...}` expression that follows another one.
 
 `--fix` adds or removes the empty line.
 
@@ -51,7 +51,7 @@ const page = (
 | Option | Default | What it does |
 | --- | --- | --- |
 | `prevent` | `false` | Report the empty lines instead of requiring them. |
-| `allowMultilines` | `false` | Only together with `prevent`. Still require an empty line before and after an element that takes several lines. |
+| `allowMultilines` | `false` | Only works together with `prevent`. Still require an empty line before and after an element that takes several lines. |
 
 With `prevent`:
 

@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-An `async` function wraps what it returns in a promise, and turns what it throws into a rejection. The callbacks of `.then()`, `.catch()` and `.finally()` work the same way. Returning `Promise.resolve(value)` or `Promise.reject(error)` from them wraps a second time for nothing. `return value` and `throw error` do the same.
+An `async` function wraps whatever it returns in a promise, and turns anything it throws into a rejection. Callbacks passed to `.then()`, `.catch()` and `.finally()` work the same way. Returning `Promise.resolve(value)` or `Promise.reject(error)` from them wraps a second time for nothing. `return value` and `throw error` do the same thing.
 
 `yield Promise.resolve(value)` in an async generator is reported too.
 
-`--fix` rewrites to `return value` or `throw error`. It does not touch a `Promise.reject()` inside a `try`, because that `try` would catch the `throw`.
+`--fix` rewrites to `return value` or `throw error`. It doesn't touch a `Promise.reject()` inside a `try`, because that `try` would catch the `throw`.
 
 ## Examples
 

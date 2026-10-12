@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A promise rejected with a string or a plain object has no stack trace, so you cannot see where it failed. The code that catches it and reads `error.message` gets `undefined`.
+A promise rejected with a string or a plain object has no stack trace, so you can't see where it failed. The code that catches it and reads `error.message` gets `undefined`.
 
-The rule checks `Promise.reject()` and the `reject` function of `new Promise((resolve, reject) => ...)`. It reports a reason that cannot be an `Error`: a literal, an object literal, `undefined`, or nothing. A variable or the result of a call is not reported, because the rule cannot tell what it holds.
+The rule checks `Promise.reject()` and the `reject` function of `new Promise((resolve, reject) => ...)`. It reports a reason that can't be an `Error`: a literal, an object literal, `undefined`, or nothing. A variable or a call's result isn't reported, because the rule can't tell what it holds.
 
 ## Examples
 

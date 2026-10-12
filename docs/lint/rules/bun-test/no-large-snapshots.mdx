@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Nobody reads a snapshot of several hundred lines in a review. When it changes, it gets updated without a look, and then the test passes whatever the code does. A short snapshot, or an assertion on the few values that matter, still tells you something when it fails.
+Nobody reads a several-hundred-line snapshot in a review. When it changes, people update it without looking, and then the test passes no matter what the code does. A short snapshot, or an assertion on the few values that matter, still tells you something when it fails.
 
-The rule counts the lines of the snapshot in `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`. The limit is 50 lines. Snapshots in `.snap` files are not checked.
+The rule counts the lines of the snapshot in `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`. The limit is 50 lines. Snapshots in `.snap` files aren't checked.
 
 ## Examples
 
@@ -70,7 +70,7 @@ test("loads the user", () => {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `inlineMaxSize` | the value of `maxSize` | The most lines an inline snapshot can have. |
-| `maxSize` | `50` | The limit to use when `inlineMaxSize` is not set. |
+| `maxSize` | `50` | The limit to use when `inlineMaxSize` isn't set. |
 
 ```toml bunfig.toml
 [lint.rules]

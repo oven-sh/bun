@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A test with no assertion passes as long as the code does not throw, whether the result is right or wrong. Usually the `expect` was forgotten, or lost while the test was being changed.
+A test with no assertion passes as long as the code doesn't throw, whether the result is right or wrong. Usually someone forgot the `expect`, or lost it while changing the test.
 
-`test.todo` is not checked. `test.skip` is.
+`test.todo` isn't checked. `test.skip` is.
 
 ## Examples
 
@@ -55,7 +55,7 @@ test.todo("parses the host");
 
 ### `assertFunctionNames`
 
-The rule does not look inside the helpers that a test calls. This test is reported even though `checkUser` calls `expect`:
+The rule doesn't look inside the helpers that a test calls. This test is reported even though `checkUser` calls `expect`:
 
 {/* bad */}
 ```ts
@@ -70,7 +70,7 @@ test("creates a user", () => {
 });
 ```
 
-Add the helper's name, and it is not reported:
+Add the helper's name and the report goes away:
 
 ```toml bunfig.toml
 [lint.rules]
@@ -92,7 +92,7 @@ test("creates a user", () => {
 
 A name can be a chain, such as `request.get.expect`. `*` matches any letters and digits in one part of the chain, and `**` matches one or more parts. Case is ignored.
 
-With `"request.**.expect"` in the list, this is not reported:
+With `"request.**.expect"` in the list, this isn't reported:
 
 {/* good {"options": [{"assertFunctionNames": ["expect", "request.**.expect"]}]} */}
 ```ts
@@ -116,7 +116,7 @@ afterEach(() => {
 });
 ```
 
-A wrapper of your own is not checked, even if you list it. With `["testWithDatabase"]`, this is not reported:
+Your own wrappers aren't checked, even if you list them. With `["testWithDatabase"]`, this isn't reported:
 
 {/* good {"options": [{"additionalTestBlockFunctions": ["testWithDatabase"]}]} */}
 ```ts

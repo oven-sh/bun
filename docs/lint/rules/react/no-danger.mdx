@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-React escapes the text you render. `dangerouslySetInnerHTML` turns that off and puts a string into the page as HTML. If any part of the string comes from a user, they can run scripts in the browsers of other users.
+React escapes the text you render. `dangerouslySetInnerHTML` turns that off and puts a string into the page as HTML. If any part of the string comes from a user, they can run scripts in other users' browsers.
 
-By default only DOM elements such as `<div>` are checked, not your own components.
+By default the rule only checks DOM elements such as `<div>`, not your own components.
 
 ## Examples
 
@@ -38,7 +38,7 @@ const preview = <Markdown dangerouslySetInnerHTML={{ __html: post.body }} />;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `customComponentNames` | `[]` | Names of components to check as well. A name can be a glob: `"*"` matches every component, `"Html*"` every name that starts with `Html`. |
+| `customComponentNames` | `[]` | Names of components to check as well. A name can be a glob: `"*"` matches every component, and `"Html*"` matches every name that starts with `Html`. |
 
 {/* bad {"options": [{"customComponentNames": ["Markdown", "Html*"]}], "count": 2} */}
 ```jsx
@@ -49,4 +49,4 @@ const footer = <HtmlBlock dangerouslySetInnerHTML={{ __html: site.footer }} />;
 
 ## When not to use it
 
-Some pages have to render HTML from a trusted or sanitized source, such as the output of a Markdown renderer. Disable the rule on those lines, so that each use stays visible in review.
+Some pages need to render HTML from a trusted or sanitized source, such as a Markdown renderer's output. Disable the rule on those lines, so each use stays visible in review.

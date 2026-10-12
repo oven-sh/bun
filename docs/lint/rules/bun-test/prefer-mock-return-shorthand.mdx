@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`mockImplementation(() => value)` wraps a value in a function that only returns it. `mockReturnValue(value)` does the same with less to read. The same goes for `mockImplementationOnce()` and `mockReturnValueOnce()`.
+`mockImplementation(() => value)` wraps a value in a function that only returns it. `mockReturnValue(value)` does the same thing with less code. The same goes for `mockImplementationOnce()` and `mockReturnValueOnce()`.
 
 `--fix` rewrites the call.
 
@@ -42,7 +42,7 @@ const getPort = mock().mockReturnValue(3000);
 const getUser = mock().mockReturnValueOnce({ name: "Ada" });
 ```
 
-A function that takes parameters, is `async`, does more than return, or returns a `let` or `var` variable needs `mockImplementation()`, so it is not reported:
+A function that takes parameters, is `async`, does more than return, or returns a `let` or `var` variable needs `mockImplementation()`, so it isn't reported:
 
 {/* good */}
 ```ts
@@ -59,7 +59,7 @@ const nextVisit = mock().mockImplementation(() => {
 });
 ```
 
-A function that calls something or creates an object with `new` is not reported either. `mockReturnValue(createUser())` calls `createUser()` once, not each time the mock is called.
+A function that calls something or creates an object with `new` isn't reported either. `mockReturnValue(createUser())` calls `createUser()` once, not each time the mock is called.
 
 {/* good */}
 ```ts

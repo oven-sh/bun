@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`user.id === user.id` has the same answer every time, so the condition around it tests nothing. It is almost always a typo for a comparison with another value.
+`user.id === user.id` gives the same answer every time, so the condition around it doesn't test anything. It's almost always a typo for a comparison with another value.
 
-The rule looks at `==`, `===`, `!=`, `!==`, `<`, `>`, `<=` and `>=`, and reports when both sides are written the same way.
+The rule checks `==`, `===`, `!=`, `!==`, `<`, `>`, `<=` and `>=`, and reports when both sides are written the same way.
 
 ## Examples
 
@@ -36,7 +36,7 @@ function isSameUser(user, other) {
 }
 ```
 
-`value !== value` is `true` only for `NaN`. It is reported too. Say what you mean instead:
+`value !== value` is `true` only for `NaN`. It's reported too. Say what you mean instead:
 
 {/* bad */}
 ```js

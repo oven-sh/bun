@@ -14,15 +14,15 @@ deprecated: false
 
 `if (count)` on a `number | undefined` is false for `undefined`, and also for `0` and `NaN`. `if (name)` on an optional string is also false for `""`. Code that means "was it given?" then skips a valid value.
 
-This rule checks the conditions of `if`, `while`, `do`, `for`, and `? :`, the operand of `!`, the left side of `&&` and `||`, and what the callback of `filter`, `find`, `some`, `every`, and similar array methods returns.
+This rule checks the conditions of `if`, `while`, `do`, `for`, and `? :`, the operand of `!`, the left side of `&&` and `||`, and the return value of callbacks passed to `filter`, `find`, `some`, `every`, and similar array methods.
 
-By default a condition can be a `boolean`, a `string`, a `number`, or an object that may be `null` or `undefined`. These are reported:
+By default a condition can be a `boolean`, a `string`, a `number`, or an object that can be `null` or `undefined`. These are reported:
 
-- a `boolean`, `string`, `number`, or enum that may also be `null` or `undefined`
+- a `boolean`, `string`, `number`, or enum that can also be `null` or `undefined`
 - `any` and `unknown`
 - a mix such as `string | number`
-- an object that is never nullish, which is always true
-- a value that is always nullish, which is always false
+- an object that's never nullish, which is always true
+- a value that's always nullish, which is always false
 
 This rule needs type information. Run `bun lint --type-aware`. It also needs `strictNullChecks` (or `strict`) in your `tsconfig.json`.
 
@@ -64,7 +64,7 @@ declare function resize(width: number): void;
 declare function draw(items: string[]): void;
 ```
 
-Callbacks of array methods, `unknown`, and mixed types are reported too:
+Array method callbacks, `unknown`, and mixed types are reported too:
 
 {/* bad {"count": 3} */}
 ```ts
@@ -75,7 +75,7 @@ function pick(sizes: (number | undefined)[], raw: unknown, id: string | number) 
 }
 ```
 
-A nullable object has only one falsy case, so it is allowed:
+A nullable object has only one falsy case, so it's allowed:
 
 {/* good */}
 ```ts
@@ -90,13 +90,13 @@ function nameOf(user?: { name: string }) {
 | --- | --- | --- |
 | `allowString` | `true` | Allow `string`. |
 | `allowNumber` | `true` | Allow `number` and `bigint`. |
-| `allowNullableObject` | `true` | Allow an object, function, or symbol that may be nullish. |
+| `allowNullableObject` | `true` | Allow an object, function, or symbol that can be nullish. |
 | `allowNullableBoolean` | `false` | Allow `boolean \| null \| undefined`. |
 | `allowNullableString` | `false` | Allow `string \| null \| undefined`. |
 | `allowNullableNumber` | `false` | Allow `number \| null \| undefined`. |
-| `allowNullableEnum` | `false` | Allow an enum that may be nullish. |
+| `allowNullableEnum` | `false` | Allow an enum that can be nullish. |
 | `allowAny` | `false` | Allow `any` and `unknown`. |
-| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Do not report a project that has `strictNullChecks` off. Without it TypeScript hides `null` and `undefined` from types, so the rule misses most cases. |
+| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Don't report a project that has `strictNullChecks` off. Without it TypeScript hides `null` and `undefined` from types, so the rule misses most cases. |
 
 Turn off `allowString` and `allowNumber` to accept only real booleans and nullable objects. These are then reported:
 
@@ -110,7 +110,7 @@ function summary(items: string[], query: string) {
 }
 ```
 
-An optional flag is a common case to allow, with `allowNullableBoolean`:
+An optional flag is a common case to allow. Use `allowNullableBoolean` for that:
 
 {/* good {"options": [{"allowNullableBoolean": true}]} */}
 ```ts

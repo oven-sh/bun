@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-The React Compiler has to know everything a component reads and writes. `eval()` runs code that it cannot see, so it skips the whole component. The component still works, but it gets no automatic memoization.
+The React Compiler needs to know everything a component reads and writes. `eval()` runs code it can't see, so it skips the whole component. The component still works, but it gets no automatic memoization.
 
 The rule only looks at components and hooks, including the functions nested in them.
 
@@ -56,4 +56,4 @@ function run(formula) {
 
 ## When not to use it
 
-If you do not use the React Compiler, a skipped component costs you nothing.
+If you don't use the React Compiler, a skipped component costs you nothing.

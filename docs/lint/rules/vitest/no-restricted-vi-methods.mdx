@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Some `vi` methods do not fit every project. `vi.mock()` replaces a whole module for the file, and a team may want tests to pass fakes in as arguments instead. This rule reports calls of the `vi` methods you list.
+Some `vi` methods don't fit every project. `vi.mock()` replaces a whole module for the file, and your team might want tests to pass fakes in as arguments instead. This rule reports calls to the `vi` methods you list.
 
-Without options it reports nothing.
+Without options it doesn't report anything.
 
 ## Examples
 
@@ -45,7 +45,7 @@ test("sends a welcome mail", () => {
 
 ## Options
 
-One object. A key is the name of a `vi` method. A value is the message to report, or `null` for the default message, ``Use of `useFakeTimers` is not allowed``.
+The rule takes one object. Each key is the name of a `vi` method. Each value is the message to report, or `null` for the default message, ``Use of `useFakeTimers` is not allowed``.
 
 ```json
 {

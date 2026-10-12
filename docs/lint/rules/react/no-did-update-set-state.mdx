@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`componentDidUpdate` runs after every update, and `setState` causes an update. A call that is not behind a condition loops forever. One that is behind a condition still renders the component twice for each change.
+`componentDidUpdate` runs after every update, and `setState` causes an update. A call that isn't behind a condition loops forever. One that's behind a condition still renders the component twice for each change.
 
-A `setState` in a callback inside `componentDidUpdate` is allowed by default, because it runs later: when a request finishes or an event fires.
+A `setState` in a callback inside `componentDidUpdate` is allowed by default, because it runs later, when a request finishes or an event fires.
 
-The rule reports nothing if `settings.react.version` in your ESLint config is 16.3 or later, or is `"detect"` and such a version is installed.
+The rule reports nothing if `settings.react.version` in your ESLint config is 16.3 or later, or if it's `"detect"` and the installed version is 16.3 or later.
 
 ## Examples
 

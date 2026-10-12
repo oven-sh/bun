@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A leading or trailing underscore is a convention for "private", but it protects nothing: any code can still read and write `user._id`. If a member has to be private, use a `#private` class member, which the language enforces.
+A leading or trailing underscore is a convention for "private", but it doesn't protect anything. Any code can still read and write `user._id`. If a member needs to be private, use a `#private` class member, which the language enforces.
 
-By default the rule checks variable and function declarations and property access. It does not check parameters, destructured names, or the names of methods and class fields where they are defined. The name `_` alone and `obj.__proto__` are always allowed.
+By default the rule checks variable and function declarations and property access. It doesn't check parameters, destructured names, or method and class field names where they're defined. The name `_` alone and `obj.__proto__` are always allowed.
 
 ## Examples
 
@@ -52,10 +52,10 @@ function load(_request, id) {
 | `allowFunctionParams` | `true` | Allow `function f(_a) {}`. |
 | `allowInArrayDestructuring` | `true` | Allow `const [_a] = list`. |
 | `allowInObjectDestructuring` | `true` | Allow `const { _a } = obj`. |
-| `enforceInMethodNames` | `false` | Also report the names of methods, in classes and in object literals. |
-| `enforceInClassFields` | `false` | Also report the names of class fields. |
+| `enforceInMethodNames` | `false` | Also report method names, in classes and in object literals. |
+| `enforceInClassFields` | `false` | Also report class field names. |
 
-An oxlint config has one more option: `allowInUsingDeclarations` (default `false`) allows `using _lock = acquire()`.
+An oxlint config has one more option. `allowInUsingDeclarations` (default `false`) allows `using _lock = acquire()`.
 
 ```toml bunfig.toml
 [lint.rules]

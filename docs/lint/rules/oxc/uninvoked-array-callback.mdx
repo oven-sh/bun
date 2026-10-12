@@ -14,7 +14,7 @@ deprecated: false
 
 `new Array(5)` has a length of 5 but no elements, only empty slots. `map`, `forEach`, `filter`, and most other array methods skip empty slots, so the callback never runs. `new Array(5).map(() => 0)` gives back five empty slots, not five zeros.
 
-The rule reports a method call directly on `new Array(n)`, where `n` is a number written in the code and the first argument is a function written in the call. It does not look at the method name. `find()` and `findIndex()`, which do visit empty slots, are reported too, and so is `fill(() => 0)`.
+The rule reports a method call directly on `new Array(n)`, where `n` is a number written in the code and the first argument is a function written in the call. It doesn't look at the method name. `find()` and `findIndex()`, which do visit empty slots, are reported too, and so is `fill(() => 0)`.
 
 ## Examples
 

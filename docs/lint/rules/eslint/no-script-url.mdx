@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A browser runs the text after `javascript:` as code when the URL is opened. That is `eval` under another name: the code is a string that no tool checks, and if any part of it comes from a user, it is a way to inject a script.
+A browser runs the text after `javascript:` as code when the URL is opened. That's `eval` under another name. The code is a string that no tool checks, and if any part of it comes from a user, it's a way to inject a script.
 
 The rule reports a string or a template literal without `${}` that starts with `javascript:`, in upper or lower case.
 

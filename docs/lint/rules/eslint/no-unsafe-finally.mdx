@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `finally` block runs after `try` and `catch` have already decided what happens next. A `return`, `throw`, `break`, or `continue` in it overrides that decision: the value that `try` returned is dropped, and an error that was on its way to the caller disappears.
+A `finally` block runs after `try` and `catch` have already decided what happens next. A `return`, `throw`, `break`, or `continue` in it overrides that decision. The value that `try` returned is dropped, and an error that was on its way to the caller disappears.
 
 This rule is on by default.
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A component that accepts `className` or `style` lets every caller restyle it, and soon no two uses look the same. This rule reports those props on components, so that looks are changed through props the component defines, such as `variant` or `size`.
+A component that accepts `className` or `style` lets every caller restyle it, and soon no two uses look the same. This rule reports those props on components, so callers change the look through props the component defines, such as `variant` or `size`.
 
-Only components are checked, which means elements with a capitalized name. DOM elements such as `<div>` are not.
+The rule only checks components, which means elements with a capitalized name. It skips DOM elements such as `<div>`.
 
 ## Examples
 
@@ -45,19 +45,19 @@ Not reported:
 "react/forbid-component-props" = ["error", { forbid = ["style", { propName = "className", allowedFor = ["Icon"] }] }]
 ```
 
-The one option is `forbid`, a list that replaces the default `["className", "style"]`. An entry is the name of a prop, or an object:
+`forbid` is the only option. It's a list of prop names or objects, and it replaces the default `["className", "style"]`:
 
 | Key | What it does |
 | --- | --- |
 | `propName` | The name of the prop. |
-| `propNamePattern` | Instead of `propName`: a glob for the names, such as `"data-*"`. |
-| `allowedFor` | Components that may have the prop. It is forbidden on all others. |
-| `allowedForPatterns` | The same, as globs for the component's name. |
+| `propNamePattern` | Use this instead of `propName` to match names with a glob, such as `"data-*"`. |
+| `allowedFor` | Components that can have the prop. It's forbidden on all others. |
+| `allowedForPatterns` | The same, as globs that match the component's name. |
 | `disallowedFor` | The prop is forbidden on these components only. |
 | `disallowedForPatterns` | The same, as globs. |
-| `message` | Replaces the text of the report. |
+| `message` | Replaces the report's text. |
 
-An entry has either the `allowed..` keys or the `disallowed..` keys, not both.
+An entry can have the `allowed..` keys or the `disallowed..` keys, but not both.
 
 {/* good {"options": [{"forbid": [{"propName": "className", "allowedFor": ["Icon"]}]}]} */}
 ```jsx

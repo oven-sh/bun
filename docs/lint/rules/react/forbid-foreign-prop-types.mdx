@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Many production builds strip `propTypes` from components to save bytes. Code that reads `Button.propTypes` then gets `undefined`: it works in development and breaks in production.
+Many production builds strip `propTypes` from components to save bytes. Code that reads `Button.propTypes` then gets `undefined`, so it works in development and breaks in production.
 
-Every read of a `.propTypes` property is reported, and so is taking it out with destructuring. Assigning to `propTypes` is fine. To share prop types between components, export them as a plain object.
+The rule reports every read of a `.propTypes` property, including destructuring it. Assigning to `propTypes` is fine. To share prop types between components, export them as a plain object.
 
 ## Examples
 

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`concat`, `reduce` and `flatMap(x => x)` can all flatten an array of arrays, but a reader has to work out that this is what they do. `.flat()` says it.
+`concat`, `reduce` and `flatMap(x => x)` can all flatten an array of arrays, but you have to work out that that's what they're doing. `.flat()` says so.
 
 `--fix` rewrites the `flatMap` and `reduce` forms to `.flat()`. `--fix-dangerously` also rewrites `[].concat.apply([], array)`.
 
@@ -36,7 +36,7 @@ Not reported:
 const items = pages.flat();
 ```
 
-A `flatMap` that changes the elements is not reported:
+A `flatMap` that changes the elements isn't reported:
 
 {/* good */}
 ```js

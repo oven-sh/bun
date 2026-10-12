@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-If a class declares the same name twice, the last declaration wins and the first one is never used. Nothing fails at runtime, so the dead code stays and misleads whoever reads it.
+If a class declares the same name twice, the last declaration wins and the first one is never used. Nothing fails at runtime, so the dead code stays and misleads anyone who reads it.
 
-A getter and a setter with the same name are a pair and are allowed. So are a static member and an instance member with the same name. Overload signatures, which repeat the name without a body, are not reported.
+A getter and a setter with the same name are a pair and are allowed. So are a static member and an instance member with the same name. Overload signatures, which repeat the name without a body, aren't reported.
 
-It is the TypeScript version of `no-dupe-class-members`. Unlike that rule, it skips members with a name in brackets, such as `["save"]`.
+It's the TypeScript version of `no-dupe-class-members`. Unlike that rule, it skips members with a name in brackets, such as `["save"]`.
 
 ## Examples
 
@@ -60,4 +60,4 @@ class Store {
 
 ## When not to use it
 
-TypeScript reports duplicate members on its own. If you type check your code, you do not need this rule.
+TypeScript reports duplicate members on its own. If you type check your code, you don't need this rule.

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Two `beforeEach` calls in the same block both run, so nothing fails. But someone who reads the first one assumes it is all the setup and misses the second, which can be many lines below.
+Two `beforeEach` calls in the same block both run, so nothing fails. But someone who reads the first one will assume that's all the setup and miss the second, which can be many lines below.
 
 Hooks are counted per `describe` block, and the top level of the file counts as a block. A nested `describe` can have its own `beforeEach`.
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`.at(-1)` reads the last element. Without it you name the array twice, as in `items[items.length - 1]`, or copy part of it with `.slice(-1)[0]`.
+`.at(-1)` reads the last element. Without it, you have to name the array twice, as in `items[items.length - 1]`, or copy part of it with `.slice(-1)[0]`.
 
-One character taken with `.substring(index, index + 1)` is reported too.
+Taking one character with `.substring(index, index + 1)` is reported too.
 
 `--fix` rewrites these to `.at()`, except `.substring()`, which treats an index outside the string differently. `--fix-suggestions` rewrites that one.
 
@@ -43,7 +43,7 @@ const letter = name.at(index);
 const first = items[0];
 ```
 
-`.at()` only reads, so writing to an element is not reported:
+`.at()` only reads, so writing to an element isn't reported:
 
 {/* good */}
 ```js

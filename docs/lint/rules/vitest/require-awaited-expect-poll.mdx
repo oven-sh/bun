@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`expect.poll` and `expect.element` retry until the assertion holds, so they return a promise. If you neither await nor return it, the test does not wait for it and ends before the assertion has a result.
+`expect.poll` and `expect.element` retry until the assertion holds, so they return a promise. If you don't await or return it, the test doesn't wait for it and ends before the assertion has a result.
 
 ## Examples
 
@@ -44,7 +44,7 @@ test("hides the spinner", () => {
 });
 ```
 
-The `await` or `return` has to be right in front of the assertion. An arrow function without braces and `Promise.all` are reported too:
+The `await` or `return` must be right in front of the assertion. An arrow function without braces and `Promise.all` are reported too:
 
 {/* bad */}
 ```js

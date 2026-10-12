@@ -14,9 +14,7 @@ deprecated: false
 
 A variable declared without a value is `undefined` until a later line assigns it. If one branch skips the assignment, the code after it reads `undefined`. `"always"` requires a value in every declaration. `"never"` requires the opposite style: declare first, assign later.
 
-Always write the mode. With `"error"` alone, this rule reports nothing.
-
-It is the TypeScript version of `init-declarations`. A `declare let` and the variables in a `declare namespace` cannot have a value, so `"always"` does not report them.
+It's the TypeScript version of `init-declarations`. A `declare let` and the variables in a `declare namespace` can't have a value, so `"always"` doesn't report them.
 
 ## Examples
 
@@ -54,11 +52,11 @@ declare let isMember: boolean;
 | Option | What it does |
 | --- | --- |
 | `"always"` | Report a `var` or `let` that has no value. |
-| `"never"` | Report a `var` or `let` that has a value. `const` and `using` need one, so they are allowed. |
+| `"never"` | Report a `var` or `let` that has a value. `const` and `using` need one, so they're allowed. |
 
-Without a mode:
+The default is `"always"`:
 
-{/* good */}
+{/* bad */}
 ```ts
 let discount: number;
 ```
@@ -78,7 +76,7 @@ const rate = 0.2;
 discount = 100 * rate;
 ```
 
-With `"never"`, a second option `{ "ignoreForLoopInit": true }` allows the variable in the head of a `for` loop. It is `false` by default.
+With `"never"`, a second option `{ "ignoreForLoopInit": true }` allows the variable in the head of a `for` loop. It's `false` by default.
 
 {/* bad {"options": ["never"]} */}
 ```ts

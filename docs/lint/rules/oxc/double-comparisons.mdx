@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`a === b || a < b` is a long way to write `a <= b`. The reader has to check that both halves compare the same two values before seeing what the condition means.
+`a === b || a < b` is a long way to write `a <= b`. Readers have to check that both halves compare the same two values before they can see what the condition means.
 
 | Written | Means |
 | --- | --- |
@@ -21,7 +21,7 @@ deprecated: false
 | `a < b \|\| a > b` | `a != b` |
 | `a <= b && a >= b` | `a == b` |
 
-The halves can be in either order, and one of them can be flipped: `a < b || b < a` is reported too.
+The halves can be in either order, and one of them can be flipped, so `a < b || b < a` is reported too.
 
 `--fix-suggestions` rewrites the condition with the single operator.
 
@@ -51,4 +51,4 @@ const changed = before !== after;
 
 ## When not to use it
 
-The short form is not always the same. `a < b || a > b` is `false` when one side is `NaN`, and `a != b` is `true`. For two `Date` objects, `a <= b && a >= b` compares the times, and `a == b` only tests whether they are the same object.
+The short form doesn't always mean the same thing. `a < b || a > b` is `false` when one side is `NaN`, but `a != b` is `true`. For two `Date` objects, `a <= b && a >= b` compares the times, but `a == b` only tests whether they're the same object.

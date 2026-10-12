@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A Node.js callback gets the error as its first argument. If the function never looks at it, a failure goes unnoticed, and the code goes on with a result that is `undefined`.
+A Node.js callback gets the error as its first argument. If the function never looks at it, a failure goes unnoticed, and the code carries on with a result that's `undefined`.
 
-The rule reports a function with a first parameter named `err` that is never used in its body. Any use counts: it does not check what you do with the error.
+The rule reports a function with a first parameter named `err` that's never used in its body. Any use counts. The rule doesn't check what you do with the error.
 
 ## Examples
 
@@ -41,7 +41,7 @@ fs.readFile("config.json", (err, data) => {
 
 ## Options
 
-The option is the name of the error parameter. The default is `"err"`. If it starts with `^`, it is a regular expression.
+The option is the name of the error parameter. The default is `"err"`. If it starts with `^`, it's treated as a regular expression.
 
 ```toml bunfig.toml
 [lint.rules]
@@ -59,7 +59,7 @@ socket.end(function (err) {
 });
 ```
 
-A plain name replaces `err`, which is no longer checked:
+A plain name replaces `err`, so `err` is no longer checked:
 
 {/* good {"options": ["error"]} */}
 ```js

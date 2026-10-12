@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `GET` or `HEAD` request cannot have a body. If you give it one, `new Request()` throws a `TypeError` and `fetch()` rejects with one. The method is `GET` when you do not set it, so the usual cause is a forgotten `method: "POST"`.
+A `GET` or `HEAD` request can't have a body. If you give it one, `new Request()` throws a `TypeError` and `fetch()` rejects with one. The method defaults to `GET`, so the usual cause is a forgotten `method: "POST"`.
 
 ## Examples
 
@@ -47,7 +47,7 @@ function createUser(user) {
 }
 ```
 
-A `body` of `undefined` or `null` is allowed. The rule also stays quiet when it cannot tell the method or the options, for example when the object has a spread:
+A `body` of `undefined` or `null` is allowed. The rule also stays quiet when it can't tell what the method or the options are, for example when the object has a spread:
 
 {/* good */}
 ```js

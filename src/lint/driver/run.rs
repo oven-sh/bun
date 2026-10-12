@@ -727,12 +727,15 @@ impl Run<'_> {
         // oxlint leaves them out too, and says nothing.
         if !rules_without_types.is_empty() && !is_oxlint {
             let count = format!("{}", rules_without_types.len()).into_bytes();
-            let rest: &[u8] = if rules_without_types.len() == 1 {
-                b" rule that needs type information\n  Use --type-aware to run it."
-            } else {
-                b" rules that need type information\n  Use --type-aware to run them."
+            let (rules, them): (&[u8], &[u8]) = match rules_without_types.len() {
+                1 => (b" rule that needs type information\n  ", b" to run it."),
+                _ => (b" rules that need type information\n  ", b" to run them."),
             };
-            loader.warn(&[b"Skipped ", &count, rest]);
+            let way_out: &[u8] = match self.options.type_aware {
+                Some(false) => b"Remove typeAware = false or --no-type-aware",
+                _ => b"Use --type-aware",
+            };
+            loader.warn(&[b"Skipped ", &count, rules, way_out, them]);
         }
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
         let most_engines = (pool.threads()).min(context.js_plugins.most_realms());
@@ -1063,8 +1066,9 @@ impl Run<'_> {
             },
             false => self.lint_files(&loader, &context, &pool, &mut phases),
         };
-        for warning in std::mem::take(&mut *loader.warnings.lock()) {
-            self.warn(&warning);
+        let warnings = std::mem::take(&mut *loader.warnings.lock());
+        for warning in warnings.iter().filter(|_| !(is_native && options.silent)) {
+            self.warn(warning);
         }
         let without_types = js_plugins.rules_that_asked_for_types();
         if !without_types.is_empty() {
@@ -1321,6 +1325,11 @@ impl Run<'_> {
         };
         let denies_warnings =
             options.deny_warnings || of_cwd.as_ref().is_some_and(|it| it.denies_warnings);
+        // Outside oxlint mode, `--deny-warnings` is `--max-warnings 0`.
+        let max_warnings = match denies_warnings && !is_oxlint {
+            true => 0,
+            false => max_warnings,
+        };
         let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
         // Only these two have something for a file without a problem.
         if !matches!(format, Format::Json | Format::JsonWithMetadata) {
@@ -1434,7 +1443,7 @@ impl Run<'_> {
             self.out.stdout.push(b'\n');
         }
 
-        if !is_oxlint && counts.errors == 0 && has_too_many_warnings {
+        if !is_oxlint && !options.silent && counts.errors == 0 && has_too_many_warnings {
             self.error(&format::summary::too_many_warnings(max_warnings));
         }
         if !options.silent {

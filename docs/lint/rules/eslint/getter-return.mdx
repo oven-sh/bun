@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A getter that does not return gives `undefined` to whoever reads the property. Usually the `return` was forgotten, or one branch of the getter has none.
+A getter that doesn't return gives `undefined` to any code that reads the property. Usually someone forgot the `return`, or one branch of the getter doesn't have one.
 
 The rule checks `get` in classes and object literals, and the `get` function of a property descriptor passed to `Object.defineProperty`, `Reflect.defineProperty`, `Object.defineProperties` or `Object.create`.
 
-This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+This rule is on by default in JavaScript files. It's off in TypeScript files, where TypeScript reports the same mistake.
 
 ## Examples
 
@@ -75,7 +75,7 @@ class Cart {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowImplicit` | `false` | Allow `return;` without a value. The getter still has to end with a `return` on every path. |
+| `allowImplicit` | `false` | Allow `return;` without a value. The getter still needs to end with a `return` on every path. |
 
 {/* bad */}
 ```js

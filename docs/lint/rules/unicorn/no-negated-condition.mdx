@@ -14,7 +14,7 @@ deprecated: false
 
 When both branches are written out, a negated condition makes you read "if not this, else that" and turn it around in your head. Test the positive case and swap the branches.
 
-A condition counts as negated if it is `!value`, `a != b`, or `a !== b`.
+A condition counts as negated if it's `!value`, `a != b`, or `a !== b`.
 
 `--fix` removes the negation and swaps the two branches.
 
@@ -46,7 +46,7 @@ if (user) {
 const label = count === 1 ? "item" : "items";
 ```
 
-An `if` without an `else` has no branches to swap, and neither does one that goes on with `else if`:
+An `if` without an `else` has no branches to swap, and neither does one that continues with `else if`:
 
 {/* good */}
 ```js

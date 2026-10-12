@@ -12,16 +12,16 @@ typeAware: false
 deprecated: false
 ---
 
-A misspelled path, a file that was moved, or a package that is not installed only fails when the code runs or is bundled. This rule looks up each import on disk and reports the ones it cannot find.
+A misspelled path, a file that moved, or a package that isn't installed only fails when you run or bundle the code. This rule looks up each import on disk and reports the ones it can't find.
 
 Paths resolve the way they do in Bun and TypeScript:
 
-- A path without an extension is tried with the extensions of JavaScript and TypeScript and with `.json`, then as a folder with an `index` file.
+- A path without an extension is tried with the JavaScript and TypeScript extensions and with `.json`, then as a folder with an `index` file.
 - `./user.js` also finds `./user.ts`.
-- `paths` of your `tsconfig.json` are followed.
-- What comes after a `?` is ignored.
+- `paths` in your `tsconfig.json` are followed.
+- Anything after a `?` is ignored.
 - Node.js built-in modules, `bun` and `bun:test` always resolve.
-- `import type` and `export type` are not checked.
+- `import type` and `export type` aren't checked.
 
 ## Examples
 
@@ -71,7 +71,7 @@ import { user as sameUser } from "./user.ts";
 import logoUrl from "./logo.svg?url";
 ```
 
-The `import/resolver` setting changes how paths resolve. `typescript`, the default, and `node` with its `extensions` option are supported. With an ESLint config the default is `node`, as in `eslint-plugin-import`: it tries `.mjs`, `.js`, `.json` and `.node`, and knows only the built-in modules of Node.js.
+The `import/resolver` setting changes how paths resolve. Two resolvers are supported: `typescript`, which is the default, and `node` with its `extensions` option. With an ESLint config the default is `node`, as in `eslint-plugin-import`. It tries `.mjs`, `.js`, `.json` and `.node`, and only knows the Node.js built-in modules.
 
 ```toml bunfig.toml
 [lint.settings]
@@ -85,9 +85,9 @@ The `import/resolver` setting changes how paths resolve. `typescript`, the defau
 | `esmodule` | `true` | Check `import`, `export .. from` and `import()`. |
 | `commonjs` | `false` | Also check `require()`. |
 | `amd` | `false` | Also check the dependencies of `define()` and of `require([..])`. |
-| `ignore` | `[]` | Regular expressions. A path that matches one of them is not checked. |
+| `ignore` | `[]` | Regular expressions. A path that matches one of them is skipped. |
 
-`caseSensitive` and `caseSensitiveStrict` are accepted and have no effect.
+`caseSensitive` and `caseSensitiveStrict` are accepted but have no effect.
 
 Use `ignore` for paths that only a bundler understands:
 
@@ -103,4 +103,4 @@ import routes from "virtual:routes";
 
 ## When not to use it
 
-In a TypeScript project the type checker already reports imports it cannot find.
+In a TypeScript project the type checker already reports imports it can't find.

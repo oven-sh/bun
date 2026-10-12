@@ -62,4 +62,4 @@ const isUnique = users.values().toArray().every((user, index, all) => all.indexO
 
 ## When not to use it
 
-The rule cannot see types, so it reports every `.toArray()` call without arguments in these places. Turn it off if you use a library with its own `toArray()` on objects that are not iterable.
+The rule can't see types, so it reports every `.toArray()` call without arguments in these places. Turn it off if you use a library with its own `toArray()` on objects that aren't iterable.

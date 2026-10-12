@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A value of type `Function` can be called with any arguments, and the result is `any`, so TypeScript checks nothing about the call. `Function` also accepts classes, which throw when you call them without `new`.
+You can call a value of type `Function` with any arguments, and the result is `any`, so TypeScript checks nothing about the call. `Function` also accepts classes, which throw when you call them without `new`.
 
 Write the parameters and the return type instead.
 
@@ -56,7 +56,7 @@ function nameOf(task: (...args: never[]) => unknown) {
 }
 ```
 
-A type of your own that is named `Function` is not reported:
+Your own type named `Function` isn't reported:
 
 {/* good */}
 ```ts

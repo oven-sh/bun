@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Without an argument, `join()` puts a comma between the items. A reader may expect no separator at all, or a comma and a space. Writing the separator removes the guess.
+Without an argument, `join()` puts a comma between the items. A reader might expect no separator at all, or a comma and a space. Writing the separator out removes the guesswork.
 
-The rule looks at the method name only, so it reports `.join()` without arguments on any object. It also reports `Array.prototype.join.call(items)` and `[].join.call(items)`.
+The rule only looks at the method name, so it reports `.join()` without arguments on any object. It also reports `Array.prototype.join.call(items)` and `[].join.call(items)`.
 
 `--fix` adds `","`, which keeps the result the same.
 

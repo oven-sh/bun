@@ -14,7 +14,7 @@ deprecated: false
 
 In a normal string you write every backslash twice, which makes a Windows path or a regex source hard to read and easy to get wrong. In a `String.raw` template you write it once.
 
-A string is left alone if it has another escape such as `\n`, ends with a backslash, or contains a backtick or `${`. `String.raw` cannot express those.
+The rule skips a string that has another escape such as `\n`, ends with a backslash, or contains a backtick or `${`. `String.raw` can't express those.
 
 `--fix` rewrites the string to a `String.raw` template.
 

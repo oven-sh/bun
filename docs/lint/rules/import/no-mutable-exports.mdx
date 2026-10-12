@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An import is a live view of the exported variable. If the module assigns to an exported `let`, the value changes in every file that imported it, and nothing at the import says so. Code that copied the value keeps the old one, and code that reads it again gets the new one.
+An import is a live view of the exported variable. If the module assigns to an exported `let`, the value changes in every file that imported it, and nothing at the import tells you that. Code that copied the value keeps the old one, and code that reads it again gets the new one.
 
-The variable is reported whether it is exported where it is declared or later, with `export { count }` or `export default count`.
+The variable is reported whether you export it where it's declared or later, with `export { count }` or `export default count`.
 
 ## Examples
 

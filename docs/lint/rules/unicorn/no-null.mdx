@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-JavaScript has two values for "nothing". Using only `undefined` means one check instead of two, and default parameters and destructuring defaults apply to `undefined` but not to `null`.
+JavaScript has two values for "nothing". If you only use `undefined`, you need one check instead of two. Default parameters and destructuring defaults also apply to `undefined` but not to `null`.
 
-Strict comparisons such as `x === null` are allowed by default, because code often has to test what an API returned.
+Strict comparisons such as `x === null` are allowed by default, because you often need to check what an API returned.
 
 ## Examples
 
@@ -51,4 +51,4 @@ if (selected === null) {
 
 ## When not to use it
 
-Many APIs return or expect `null`: the DOM, JSON, databases. If your code talks to them a lot, this rule gets in the way.
+Many APIs return or expect `null`, like the DOM, JSON and databases. If your code talks to them a lot, this rule gets in the way.

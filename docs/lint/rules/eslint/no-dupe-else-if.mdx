@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In an `if ... else if` chain, a branch only runs if every condition before it was false. If a condition repeats an earlier one, its branch can never run. It is usually a copied line where the condition was not changed.
+In an `if ... else if` chain, a branch only runs if every condition before it was false. If a condition repeats an earlier one, its branch can never run. It's usually a copied line where someone forgot to change the condition.
 
-The rule also understands `||` and `&&`. After `if (a || b)`, both `else if (a)` and `else if (b && c)` are dead. The order of the operands does not matter.
+The rule also understands `||` and `&&`. After `if (a || b)`, both `else if (a)` and `else if (b && c)` are dead. The order of the operands doesn't matter.
 
 This rule is on by default.
 
@@ -46,7 +46,7 @@ if (status === "active") {
 }
 ```
 
-A condition that is narrower than an earlier one is reported too:
+A condition that's narrower than an earlier one is reported too:
 
 {/* bad {"count": 2} */}
 ```js

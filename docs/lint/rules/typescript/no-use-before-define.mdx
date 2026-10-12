@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Reading a `let`, `const`, or `class` before its declaration runs throws a `ReferenceError`. Reading a `var` early gives `undefined` without any error. Function declarations do work before their line, but a reader has to scroll down to find out what is being called.
+Reading a `let`, `const`, or `class` before its declaration runs throws a `ReferenceError`. Reading a `var` early gives you `undefined` without any error. Function declarations do work before their line, but the reader needs to scroll down to find out what's being called.
 
 A variable used in its own initializer, such as `const total = total + 1`, is reported too. Unlike ESLint's `no-use-before-define`, this rule also checks enums, type aliases, and interfaces.
 
@@ -55,7 +55,7 @@ start(Mode.Fast);
 | Option | Default | What it does |
 | --- | --- | --- |
 | `functions` | `true` | Report function declarations that are used early. `false` allows every early use of them. |
-| `variables` | `true` | With `false`, a function may mention a `var`, `let`, or `const` that is declared below it. An early use in the same scope is still reported. |
+| `variables` | `true` | With `false`, a function can mention a `var`, `let`, or `const` that's declared below it. An early use in the same scope is still reported. |
 | `classes` | `true` | The same as `variables`, for classes. |
 | `enums` | `true` | The same as `variables`, for enums. |
 | `typedefs` | `true` | Report type aliases and interfaces that are used early. This only has an effect with `ignoreTypeReferences: false`. |
@@ -64,7 +64,7 @@ start(Mode.Fast);
 
 The string `"nofunc"` is short for `{ "functions": false }`.
 
-With `functions: false`, calling a function declaration early is allowed, because it is already defined when the file starts to run:
+With `functions: false`, calling a function declaration early is allowed, because it's already defined when the file starts to run:
 
 {/* good {"options": [{"functions": false}]} */}
 ```ts
@@ -73,7 +73,7 @@ start();
 function start() {}
 ```
 
-By default, the position in the file is all that counts, even in a function that only runs later:
+By default, only the position in the file counts, even in a function that runs later:
 
 {/* bad */}
 ```ts
@@ -93,7 +93,7 @@ function isFull(count: number) {
 const limit = 10;
 ```
 
-An early use in the same scope runs before the declaration, so it is still reported:
+An early use in the same scope runs before the declaration, so it's still reported:
 
 {/* bad {"options": [{"variables": false}]} */}
 ```ts
@@ -102,7 +102,7 @@ console.log(limit);
 const limit = 10;
 ```
 
-Types do not exist when the code runs, so by default their order does not matter where they are used as types:
+Types don't exist when the code runs, so by default their order doesn't matter where they're used as types:
 
 {/* good */}
 ```ts
@@ -125,7 +125,7 @@ let current: User;
 type User = { name: string };
 ```
 
-With `allowNamedExports: true`, you can keep the list of exports at the top of the file:
+With `allowNamedExports: true`, you can keep the export list at the top of the file:
 
 {/* good {"options": [{"allowNamedExports": true}]} */}
 ```ts

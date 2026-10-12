@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The shape of an object can be declared with `interface User { ... }` or with `type User = { ... }`. For most code the two work the same. This rule picks one. By default it is `interface`.
+You can declare an object's shape with `interface User { ... }` or with `type User = { ... }`. For most code the two work the same. This rule picks one. By default it's `interface`.
 
-Only a `type` that is an object type is reported. Unions, functions, and other types cannot be written as an `interface`.
+The rule only reports a `type` that's an object type. You can't write unions, functions, and other types as an `interface`.
 
 `--fix` rewrites the declaration to the other form.
 
@@ -66,4 +66,4 @@ type User = {
 
 ## When not to use it
 
-The two differ in a few ways. Two `interface` declarations with the same name merge, which is how you add to a global type such as `Window`. A `type` can be passed where a `Record<string, unknown>` is expected, and an `interface` cannot. If your code depends on both, leave this rule off.
+The two differ in a few ways. Two `interface` declarations with the same name merge, which is how you add to a global type such as `Window`. You can pass a `type` where a `Record<string, unknown>` is expected, but not an `interface`. If your code depends on both, leave this rule off.

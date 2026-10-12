@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An `await` in a loop makes every round wait for the one before it. Ten requests of 100 ms each take a second, where starting them together and awaiting them with `Promise.all` takes about 100 ms.
+An `await` in a loop makes every iteration wait for the one before it. Ten requests of 100 ms each take a second. If you start them together and await them with `Promise.all`, they take about 100 ms.
 
 ## Examples
 
@@ -38,7 +38,7 @@ async function loadAll(urls) {
 }
 ```
 
-A `for await` loop is meant to wait, so an `await` in its body is not reported:
+A `for await` loop is meant to wait, so an `await` in its body isn't reported:
 
 {/* good */}
 ```js
@@ -62,4 +62,4 @@ async function printUsers() {
 
 ## When not to use it
 
-Some loops have to run one step at a time: each page of results gives the cursor for the next, a retry waits for the attempt before it, or you do not want to send a server 500 requests at once. Disable the rule for those loops with a comment.
+Some loops have to run one step at a time: each page of results gives you the cursor for the next one, a retry waits for the previous attempt, or you don't want to send a server 500 requests at once. Disable the rule for those loops with a comment.

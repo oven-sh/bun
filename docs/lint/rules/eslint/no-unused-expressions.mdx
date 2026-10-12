@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A statement such as `server.close;` or `count === 0;` computes a value and does nothing with it. Usually it is a mistake: the parentheses of a call are missing, or `===` was typed where `=` was meant.
+A statement such as `server.close;` or `count === 0;` computes a value and does nothing with it. It's usually a mistake, like a call that's missing its parentheses, or a `===` where you meant `=`.
 
-Calls, `new`, assignments, `await`, `yield`, `delete`, `void`, `i++`, and directives such as `"use strict"` do something, so they are not reported.
+Calls, `new`, assignments, `await`, `yield`, `delete`, `void`, `i++`, and directives such as `"use strict"` do something, so they aren't reported.
 
 ## Examples
 
@@ -48,7 +48,7 @@ console.log(`Hello, ${name}`);
 | `enforceForJSX` | `false` | Also report a JSX element as a statement. |
 | `ignoreDirectives` | `false` | Allow strings at the start of a file or a function when `ecmaVersion` is 3, which has no directives. |
 
-By default, `&&` in place of an `if` is reported:
+By default, using `&&` instead of an `if` is reported:
 
 {/* bad */}
 ```js

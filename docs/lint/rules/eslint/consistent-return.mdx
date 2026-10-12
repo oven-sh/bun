@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A function that returns a value on one path and nothing on another sometimes gives its caller `undefined`. That can be on purpose, but often a value was forgotten, or the function runs off its end by accident.
+A function that returns a value on one path and nothing on another sometimes gives its caller `undefined`. That can be on purpose, but often someone forgot a value, or the function runs off the end by accident.
 
-The first `return` of the function sets what is expected. Every `return` that differs is reported, and so is a function that returns a value and can also run to its end.
+The function's first `return` sets the expectation. Every `return` that differs from it is reported, and so is a function that returns a value but can also run off the end.
 
 ## Examples
 
@@ -83,4 +83,4 @@ function findUser(id) {
 
 ## When not to use it
 
-In TypeScript, the compiler option `noImplicitReturns` finds the same mistakes and knows the return type of the function.
+In TypeScript, the compiler option `noImplicitReturns` finds the same mistakes and knows the function's return type.

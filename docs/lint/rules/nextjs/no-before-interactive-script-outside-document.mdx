@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `beforeInteractive` script has to be in the HTML that the server sends, before any Next.js code runs. In the Pages Router, only `pages/_document.js` writes that HTML. In a page or a component, the script is not part of that HTML and loads later.
+A `beforeInteractive` script must be in the HTML the server sends, before any Next.js code runs. In the Pages Router, only `pages/_document.js` writes that HTML. In a page or a component, the script isn't part of that HTML and loads later.
 
-Files under an `app/` directory are not checked. In the App Router, `beforeInteractive` belongs in the root layout.
+Files under an `app/` directory aren't checked. In the App Router, `beforeInteractive` belongs in the root layout.
 
 ## Examples
 

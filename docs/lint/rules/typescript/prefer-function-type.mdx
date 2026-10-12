@@ -14,7 +14,7 @@ deprecated: false
 
 An interface with a call signature and nothing else describes a function. `type Handler = (event: Event) => void` says the same thing in one line.
 
-Object types written inline and `new (...)` signatures are checked too. An interface that extends another interface is left alone.
+Inline object types and `new (...)` signatures are checked too. An interface that extends another interface is left alone.
 
 `--fix` rewrites the interface to a type alias, and the object type to a function type.
 
@@ -40,7 +40,7 @@ type Handler = (event: Event) => void;
 function listen(callback: (event: Event) => void) {}
 ```
 
-A type with another member, or with more than one call signature, cannot be written as a function type:
+A type with another member, or with more than one call signature, can't be written as a function type:
 
 {/* good */}
 ```ts
@@ -59,7 +59,7 @@ interface Timed extends Logger {
 }
 ```
 
-In an interface, `this` as a type means the interface itself. A function type has no such `this`, so the rule points at it and does not offer a fix:
+In an interface, `this` as a type means the interface itself. A function type has no such `this`, so the rule points at it and doesn't offer a fix:
 
 {/* bad */}
 ```ts

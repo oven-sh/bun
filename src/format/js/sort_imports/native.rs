@@ -1,15 +1,16 @@
-//! What `sortImports` of `[format]` in bunfig.toml does besides what oxfmt's does: the names in braces are sorted, and the
-//! imports of one module become one.
+//! Extra steps for `sortImports` from bunfig.toml's `[format]` or `--sort-imports`, on top of oxfmt's sorter. Sorts the names
+//! inside braces and merges imports from the same module.
 //!
-//! It is done to the text, which is then parsed and formatted in place of the file, like what a plugin of Prettier makes.
-//! Pieces of the text change places, as they are written. A file that is tidy, as every file is after the first time, is
-//! not parsed again.
+//! This is a text-to-text pass, like the Prettier plugins. The caller parses and formats the returned text instead of the
+//! original file. Pieces of source text move around verbatim. A file that is already tidy returns `None` and isn't parsed
+//! twice, which is the common case after the first run.
 //!
-//! - A comment in the braces goes with its name: the comments before a name, and those behind it that end its line. So do
-//!   those next to the braces, which the formatter gives to the first and to the last name.
-//! - An import with a comment of its own stays an import of its own. Others can be merged into it.
-//! - Nothing is merged across an import for its side effects, across one that a comment tells to leave alone, or across any
-//!   other statement.
+//! - A comment inside the braces moves with its name. That covers comments before the name and comments after it that end
+//!   the line. Comments right outside the braces move with the first or last name, because that's where the formatter puts
+//!   them anyway.
+//! - An import with its own comment (above it or after it on the same line) is never merged away. Other imports can merge
+//!   into it.
+//! - Nothing merges across a side-effect import, a `prettier-ignore`d import, or any other statement.
 
 use super::compare::natord;
 use bun_core::strings;
@@ -18,32 +19,32 @@ use bun_lint::span::Span;
 use bun_lint::tokens::TokenKind;
 use std::cmp::Ordering;
 
-/// A name in braces, with the text that goes where it goes.
+/// One name inside the braces, plus the source text that moves with it.
 #[derive(Copy, Clone)]
 struct Chunk<'a> {
     spec: ImportSpec<'a>,
-    /// From where the chunk before it ends: blanks, comments, the name, and what is before its comma.
+    /// Starts where the previous chunk ends. Covers whitespace, leading comments, the name, and anything before its comma.
     before_comma: Span,
-    /// The comments behind the comma.
+    /// Trailing comments after the comma.
     after_comma: Span,
-    /// Where there is more than comments, which are all that goes along: before the `{`, and from the last name on.
+    /// Regions outside this chunk (before the `{`, after the last name). Only the comments in them move with the name.
     lead: Span,
     trail: Span,
 }
 
-/// The `{ .. }` of an import.
+/// An import's `{ .. }`.
 struct Braces<'a> {
     open: u32,
     close: u32,
     chunks: Vec<Chunk<'a>>,
-    /// What is between the last chunk and the `}`.
+    /// Everything between the last chunk and the `}`.
     tail: Span,
-    /// What is before the `{`, as far as its comments are for the first name, and what is between the `}` and the `from`.
+    /// `lead` ends at the `{`, and its comments belong to the first name. `trail` runs from the `}` to `from`.
     lead: Span,
     trail: Span,
 }
 
-/// Text that is put together of pieces.
+/// Output buffer that never lets a line comment swallow the next piece.
 #[derive(Default)]
 struct Pieces {
     text: Vec<u8>,
@@ -66,22 +67,22 @@ impl Pieces {
 struct Tidy<'a> {
     file: &'a File<'a>,
     text: &'a [u8],
-    /// What is written in the place of what, in the order of the text.
+    /// Replacements to apply to the source text.
     changes: Vec<(Span, Vec<u8>)>,
 }
 
-/// An import of a run.
+/// One import in a run of consecutive imports.
 struct Entry<'a> {
     statement: Stmt<'a>,
     import: Import<'a>,
     braces: Option<Braces<'a>>,
-    /// It can take in what others import.
+    /// Other imports can merge into this one.
     can_grow: bool,
-    /// It can go, and what it imports with it.
+    /// This import can be merged into another one and removed.
     can_go: bool,
 }
 
-/// `"a"` and `'a'` are `a`.
+/// Strips the quotes from `"a"` or `'a'`.
 fn without_quotes(text: &[u8]) -> &[u8] {
     match text {
         [b'"' | b'\'', inner @ .., b'"' | b'\''] => inner,
@@ -100,7 +101,7 @@ impl<'a> Tidy<'a> {
         self.file.comments_in(span).next().is_some()
     }
 
-    /// Where the first `byte` in `span` is that is in no comment.
+    /// Finds the first `byte` in `span` that isn't inside a comment.
     fn find(&self, span: Span, byte: u8) -> Option<u32> {
         let mut from = span.start;
         let find_until = |from: u32, end: u32| {
@@ -117,7 +118,7 @@ impl<'a> Tidy<'a> {
         find_until(from, span.end)
     }
 
-    /// The name that `spec` is sorted by: that in the other module.
+    /// Sort key: the exported name, so `a as z` sorts under `a`.
     fn key_of(&self, spec: ImportSpec<'a>) -> &'a [u8] {
         without_quotes(self.slice(spec.imported().span()))
     }
@@ -137,7 +138,7 @@ impl<'a> Tidy<'a> {
         if !import.has_named_imports() {
             return None;
         }
-        // Between `import` and the module.
+        // Everything between `import` and the module specifier.
         let keyword_end = statement.span().start + "import".len() as u32;
         let clause = Span::before(keyword_end, import.spec_span()?);
         let named = import.named();
@@ -152,7 +153,7 @@ impl<'a> Tidy<'a> {
             let limit = next.unwrap_or(close);
             let comma = self.find(Span::after(spec.span(), limit), b',');
             let after = comma.map_or_else(|| spec.span().end, |comma| comma + 1);
-            // The comments on the rest of the line, if nothing but them is on it. Before the `}` nothing else can be.
+            // Comments on the rest of the line trail this name, but only if nothing else follows them on that line.
             let mut reached = after;
             for comment in self.file.comments_in(Span::new(after, limit)) {
                 let gap = self.slice(Span::before(reached, comment.span()));
@@ -175,7 +176,7 @@ impl<'a> Tidy<'a> {
             });
             from = reached;
         }
-        // Behind `type`, or behind the default.
+        // `lead` starts after `type` or after the default import.
         let kind = import.clause_span();
         let letters = self
             .slice(kind)
@@ -186,18 +187,18 @@ impl<'a> Tidy<'a> {
             None if import.is_type_only() => kind.start + letters.count() as u32,
             None => clause.start,
         };
-        let from = self.find(Span::new(close + 1, clause.end), b'f')?;
+        let keyword = self.find(Span::new(close + 1, clause.end), b'f')?;
         Some(Braces {
             open,
             close,
             chunks,
             tail: Span::new(from, close),
             lead: Span::new(lead_start, open),
-            trail: Span::new(close + 1, from),
+            trail: Span::new(close + 1, keyword),
         })
     }
 
-    /// The names of `braces`, with the comments next to the braces. `with_tail`: and those before the `}`.
+    /// Returns the chunks with the comments around the braces attached. `with_tail` also attaches comments before the `}`.
     fn chunks_of(&self, braces: &Braces<'a>, with_tail: bool) -> Vec<Chunk<'a>> {
         let mut chunks = braces.chunks.clone();
         if let Some(first) = chunks.first_mut() {
@@ -222,14 +223,14 @@ impl<'a> Tidy<'a> {
         .any(|it| self.has_comments(*it))
     }
 
-    /// What is left of the line after `statement`, up to `limit`.
+    /// The rest of the line after `statement`, capped at `limit`.
     fn rest_of_line(&self, statement: Span, limit: u32) -> Span {
         let rest = Span::after(statement, limit);
         let len = strings::index_of_any(self.slice(rest), b"\n\r");
         len.map_or(rest, |len| Span::after(statement, rest.start + len as u32))
     }
 
-    /// Whether a comment in one of `spans` says that what it is about stays as it is written.
+    /// Returns true if `spans` contain a `prettier-ignore` or `oxfmt-ignore` comment.
     fn is_left_alone(&self, spans: [Span; 2]) -> bool {
         let is_ignore = |span: Span| {
             let text = self.slice(span);
@@ -245,7 +246,7 @@ impl<'a> Tidy<'a> {
             .any(|span| self.file.comments_in(*span).any(|it| is_ignore(it.span())))
     }
 
-    /// `before`: from the line of the statement before it. `behind`: the rest of its line.
+    /// `before` starts after the previous statement's line. `behind` is the rest of this statement's line.
     fn entry(
         &self,
         statement: Stmt<'a>,
@@ -254,7 +255,7 @@ impl<'a> Tidy<'a> {
     ) -> Entry<'a> {
         let span = statement.span();
         let braces = self.braces_of(statement, import);
-        // Those in the statement that no name takes along.
+        // Comments inside the statement that no name can carry along.
         let has_comments_inside = match &braces {
             Some(braces) if braces.chunks.is_empty() => self.has_comments(span),
             Some(braces) => {
@@ -263,7 +264,7 @@ impl<'a> Tidy<'a> {
             }
             None => self.has_comments(span),
         };
-        // One before it, without an empty line between.
+        // A comment directly above, with no blank line in between.
         let leads = self.file.comments_in(before).last().is_some_and(|it| {
             let gap = self.slice(it.span().between(span));
             strings::count_char(gap, b'\n').max(strings::count_char(gap, b'\r')) < 2
@@ -271,9 +272,9 @@ impl<'a> Tidy<'a> {
         let can_grow = import.namespace().is_none()
             && import.phase().is_none()
             && braces.is_some() == import.has_named_imports()
-            // `import {} from "a"`
+            // Leave `import {} from "a"` alone.
             && (import.default().is_some() || !import.named().is_empty())
-            // `import type a, { b }` is an error.
+            // `import type a, { b }` is a syntax error.
             && !(import.is_type_only() && import.default().is_some());
         Entry {
             statement,
@@ -284,9 +285,9 @@ impl<'a> Tidy<'a> {
         }
     }
 
-    /// Whether the two can become one, as far as that is about the module.
+    /// Same module, same `type` keyword, same import attributes.
     fn is_same_kind(&self, a: &Entry<'a>, b: &Entry<'a>) -> bool {
-        // `type`, or `typeof` of Flow.
+        // `type`, or Flow's `typeof`.
         let kind = |it: &Entry<'a>| {
             let clause = self.slice(it.import.clause_span());
             let word = clause.iter().take_while(|it| it.is_ascii_alphabetic());
@@ -316,22 +317,22 @@ impl<'a> Tidy<'a> {
         out.push(self.slice(span), self.is_line_comment_at_end(span));
     }
 
-    fn push_comments(&self, span: Span, out: &mut Pieces) {
+    /// Writes the comments in `span`. `leads` means they belong to the name that follows.
+    fn push_comments(&self, span: Span, leads: bool, out: &mut Pieces) {
         for comment in self.file.comments_in(span) {
-            out.push(b" ", false);
-            out.push(
-                self.slice(comment.span()),
-                comment.kind() == TokenKind::Line,
-            );
+            let is_line = comment.kind() == TokenKind::Line;
+            // A leading line comment needs its own line, or it would attach to the previous name.
+            out.push(if leads && is_line { b"\n" } else { b" " }, false);
+            out.push(self.slice(comment.span()), is_line);
         }
     }
 
-    /// Writes `chunks` as what is between the braces.
+    /// Writes `chunks` as the contents of the braces.
     fn write_names(&self, chunks: &[Chunk<'a>], out: &mut Pieces) {
         for chunk in chunks {
-            self.push_comments(chunk.lead, out);
+            self.push_comments(chunk.lead, true, out);
             self.push(chunk.before_comma, out);
-            // A comment that ends no line is about the next name if it is behind the comma.
+            // A block comment after the comma would attach to the next name, so the comma goes after it.
             let is_line = |it: Span| {
                 self.file
                     .comments_in(it)
@@ -342,14 +343,14 @@ impl<'a> Tidy<'a> {
                 out.push(b",", false);
             }
             self.push(chunk.after_comma, out);
-            self.push_comments(chunk.trail, out);
+            self.push_comments(chunk.trail, false, out);
             if !comma_is_first {
                 out.push(b",", false);
             }
         }
     }
 
-    /// Sorts `chunks`. A name that is there twice is there once. Returns whether that changes anything.
+    /// Sorts `chunks` and drops exact duplicates. Returns true if anything changed.
     fn sort(&self, chunks: &mut Vec<Chunk<'a>>) -> bool {
         let before: Vec<u32> = chunks.iter().map(|it| it.before_comma.start).collect();
         crate::sort::sort_by(&mut chunks[..], |a, b| self.compare(a.spec, b.spec));
@@ -359,7 +360,7 @@ impl<'a> Tidy<'a> {
         !chunks.iter().map(|it| it.before_comma.start).eq(before)
     }
 
-    /// Takes `statement` out of the text, and its line if nothing else is on it.
+    /// Deletes `statement`, and the whole line if nothing else is on it.
     fn remove(&mut self, statement: Stmt<'a>) {
         let mut span = statement.span();
         let (before, after) = (
@@ -380,12 +381,12 @@ impl<'a> Tidy<'a> {
         self.changes.push((span, Vec::new()));
     }
 
-    /// Writes `target` with `default` and `chunks`, which may be more than it has.
+    /// Rewrites `target` to import `default` and `chunks`.
     fn rewrite(&mut self, target: &Entry<'a>, default: Option<Span>, chunks: &[Chunk<'a>]) {
         let mut names = Pieces::default();
         match (&target.braces, target.import.default()) {
             (Some(braces), own_default) => {
-                // They are among `chunks` now.
+                // These comments are part of `chunks` now.
                 if !braces.chunks.is_empty() {
                     let comments = [braces.lead, braces.trail].map(|it| self.file.comments_in(it));
                     let comments = comments.into_iter().flatten();
@@ -404,7 +405,7 @@ impl<'a> Tidy<'a> {
                 self.changes.push((inside, names.text));
             }
             (None, Some(default)) if !chunks.is_empty() => {
-                // Behind the comments that are about the default.
+                // Insert after any comments that belong to the default import.
                 let default = default.span();
                 let source = target.import.spec_span().unwrap_or_default();
                 let from = self.find(default.between(source), b'f');
@@ -421,24 +422,29 @@ impl<'a> Tidy<'a> {
         }
     }
 
-    /// `entries`: the imports between two statements that nothing is moved across.
+    /// Tidies one run of imports with no barrier in it.
     fn tidy(&mut self, entries: &[Entry<'a>]) {
         let mut is_seen = vec![false; entries.len()];
         for (at, first) in entries.iter().enumerate() {
             if is_seen[at] {
                 continue;
             }
-            // Those of one module.
+            // All imports that could merge with `first`.
             let group: Vec<usize> = (at..entries.len())
                 .filter(|&other| {
                     other == at || (!is_seen[other] && self.is_same_kind(first, &entries[other]))
                 })
                 .collect();
             group.iter().for_each(|&it| is_seen[it] = true);
-            // One that has to stay takes in the others.
+            // Prefer a target that can't be removed, then one whose `}` has a comment before it, so that comment stays put.
             let can_grow = || group.iter().copied().filter(|&it| entries[it].can_grow);
+            let has_tail_comment = |it: &usize| {
+                let braces = entries[*it].braces.as_ref();
+                braces.is_some_and(|braces| self.has_comments(braces.tail))
+            };
             let target = can_grow()
                 .find(|&it| !entries[it].can_go)
+                .or_else(|| can_grow().find(has_tail_comment))
                 .or_else(|| can_grow().next());
             let mut default = target.and_then(|it| Some(entries[it].import.default()?.span()));
             let mut merged: Vec<Chunk<'a>> = Vec::new();
@@ -478,7 +484,7 @@ impl<'a> Tidy<'a> {
         }
     }
 
-    /// Whether there may be something to do: a name that is not where it belongs, or a module that is imported twice.
+    /// Cheap check for unsorted names or a module that is imported twice. False positives are fine.
     fn may_be_untidy(&self) -> bool {
         let mut modules: Vec<&[u8]> = Vec::new();
         for statement in self.file.body().iter() {
@@ -503,7 +509,7 @@ impl<'a> Tidy<'a> {
     }
 }
 
-/// The text of `file` with the names in the braces of its imports sorted, and one import for each module. `None`: it is so.
+/// Returns the text of `file` with sorted names and merged imports, or `None` if nothing changes.
 pub(super) fn preprocess<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     let text = file.text();
     let mut tidy = Tidy {
@@ -552,7 +558,7 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// What `file` imports, each name by itself, and its comments.
+/// Every binding `file` imports, plus all of its comments.
 fn summary<'a>(file: &'a File<'a>) -> (Vec<Vec<u8>>, Vec<&'a [u8]>) {
     let mut names = Vec::new();
     for statement in file.body().iter() {
@@ -594,7 +600,7 @@ fn summary<'a>(file: &'a File<'a>) -> (Vec<Vec<u8>>, Vec<&'a [u8]>) {
     (names, comments)
 }
 
-/// Whether `after`, which is made of what [`preprocess`] has made of `before`, imports the same and has the same comments.
+/// Checks that `after`, the parsed output of [`preprocess`], still imports the same bindings and has the same comments.
 pub(super) fn keeps_imports<'a, 'b>(before: &'a File<'a>, after: &'b File<'b>) -> bool {
     !after.has_parse_errors() && summary(before) == summary(after)
 }

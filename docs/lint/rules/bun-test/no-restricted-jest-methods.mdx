@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Some teams agree not to use parts of the `jest` object: no module mocks, no fake timers, no spies. This rule reports the methods you list, with your own message if you give one, so the agreement does not depend on review.
+Some teams agree not to use parts of the `jest` object, like module mocks, fake timers or spies. This rule reports the methods you list, with your own message if you give one, so the agreement doesn't depend on review.
 
 The rule does nothing until you give it a list.
 
@@ -56,7 +56,7 @@ import { vi } from "bun:test";
 const send = vi.spyOn(mailer, "send");
 ```
 
-Only methods of `jest` and `vi` are checked. The `spyOn` and `mock` functions that `"bun:test"` exports are not:
+Only methods of `jest` and `vi` are checked. The `spyOn` and `mock` functions that `"bun:test"` exports aren't:
 
 {/* good {"options": [{"spyOn": "Pass the dependency in instead of spying on it"}]} */}
 ```ts
@@ -67,11 +67,11 @@ const send = spyOn(mailer, "send");
 
 ## Options
 
-One object. Each key is the name of a method. The value is the message to report.
+The rule takes one object. Each key is a method name, and its value is the message to report.
 
 ```toml bunfig.toml
 [lint.rules]
 "bun:test/no-restricted-jest-methods" = ["error", { spyOn = "Pass the dependency in instead of spying on it" }]
 ```
 
-In a JSON or JavaScript config, `null` in place of the message gives the default message: ``Use of `spyOn` is not allowed``.
+In a JSON or JavaScript config, use `null` in place of the message to get the default message: ``Use of `spyOn` is not allowed``.

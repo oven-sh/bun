@@ -264,6 +264,20 @@ preserveDuplicates = true
     expect(result.exitCode).toBe(0);
   });
 
+  test("the functions that projects put classes together with are known, unless the table names others", async () => {
+    const calls = ["clsx", "cn", "cva", "cx", "classNames", "classnames", "twMerge", "twJoin", "tv", "other"];
+    const code = (classes: (name: string) => string) => calls.map(name => `${name}("${classes(name)}");\n`).join("");
+    const [byDefault, named, oxfmt] = await Promise.all([
+      format({ ...tailwind, ...bunfig("sortTailwindcss = true"), "a.js": code(() => "p-4 m-2") }),
+      format({ ...tailwind, ...bunfig(`sortTailwindcss = { functions = ["other"] }`), "a.js": code(() => "p-4 m-2") }),
+      format({ ...tailwind, ".oxfmtrc.json": `{ "sortTailwindcss": true }`, "a.js": code(() => "p-4 m-2") }),
+    ]);
+    expect(byDefault.files["a.js"]).toBe(code(name => (name === "other" ? "p-4 m-2" : "m-2 p-4")));
+    expect(named.files["a.js"]).toBe(code(name => (name === "other" ? "m-2 p-4" : "p-4 m-2")));
+    // oxfmt knows none.
+    expect(oxfmt.files["a.js"]).toBe(code(() => "p-4 m-2"));
+  });
+
   test("it is laid over a .prettierrc, as the flag is", async () => {
     const files = { ...tailwind, ".prettierrc": `{ "jsxSingleQuote": true }`, "a.jsx": input };
     const result = await format({ ...files, ...bunfig("sortTailwindcss = true") });
@@ -570,7 +584,8 @@ insertFinalNewline = false
   });
 
   test.each([
-    ["overrides = {}", "expected array but received object"],
+    ["overrides = {}", `"overrides" is an array of tables\n  Write [[format.overrides]], with two brackets`],
+    ["overrides = 1", "expected array but received number"],
     ["overrides = [1]", "expected object but received number"],
     ["overrides = [{ options = { semi = false } }]", `an override needs "files"`],
     ["overrides = [{ files = 1 }]", "expected string or array but received number"],
@@ -594,5 +609,51 @@ insertFinalNewline = false
     expect(result.stderr).toContain(message);
     expect(result.files["a.js"]).toBe("a  ;\n");
     expect(result.exitCode).toBe(2);
+  });
+});
+
+describe.concurrent("an .oxfmtrc.json beside a configuration of Prettier", () => {
+  const note = (ignored: string) => `note: Using .oxfmtrc.json. ${ignored} is ignored. Use --config to pick it.\n`;
+  const both = { ".oxfmtrc.json": "{}\n", ".prettierrc": "{}\n", "a.js": wide, "sub/b.js": wide };
+
+  test("oxfmt's is used, and that is said once", async () => {
+    const result = await format(both);
+    expect(result.stderr).toBe(note(".prettierrc"));
+    expect(result.files).toMatchObject({ "a.js": wide, "sub/b.js": wide });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("--config picks one, and nothing is said", async () => {
+    const [prettier, oxfmt] = await Promise.all([
+      format(both, ["--config", ".prettierrc", "a.js"]),
+      format(both, ["--config", ".oxfmtrc.json", "a.js"]),
+    ]);
+    expect(prettier.stderr).toBe("");
+    expect(prettier.files["a.js"]).toBe(broken);
+    expect(oxfmt.stderr).toBe("");
+    expect(oxfmt.files["a.js"]).toBe(wide);
+  });
+
+  test("a package.json counts if it has the key", async () => {
+    const [has, lacks] = await Promise.all([
+      format({ ".oxfmtrc.json": "{}\n", "package.json": `{\n  "prettier": {}\n}\n`, "a.js": wide }),
+      format({ ".oxfmtrc.json": "{}\n", "package.json": `{\n  "name": "a"\n}\n`, "a.js": wide }),
+    ]);
+    expect(has.stderr).toBe(note("prettier in package.json"));
+    expect(lacks.stderr).toBe("");
+  });
+
+  test("a program is not run to find out", async () => {
+    const files = { ".oxfmtrc.json": "{}\n", "prettier.config.js": `throw new Error("It runs.");\n`, "a.ts": wide };
+    const result = await format(files, ["a.ts"]);
+    expect(result.stderr).toBe(note("prettier.config.js"));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("one alone is nothing to talk about, and --log-level=error wants no notes", async () => {
+    const { ".prettierrc": _, ...oxfmt } = both;
+    const { ".oxfmtrc.json": __, ...prettier } = both;
+    const results = await Promise.all([format(oxfmt), format(prettier), format(both, ["--log-level=error", "."])]);
+    expect(results.map(it => it.stderr)).toEqual(["", "", ""]);
   });
 });

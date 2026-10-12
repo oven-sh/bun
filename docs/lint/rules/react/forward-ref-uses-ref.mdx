@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`forwardRef` passes the parent's `ref` to your component as a second parameter. A component that only takes `props` drops it, so the parent's `ref.current` is never set. Either the `ref` parameter is missing or the wrapper is not needed.
+`forwardRef` passes the parent's `ref` to your component as a second parameter. A component that only takes `props` drops it, so the parent's `ref.current` is never set. Either the `ref` parameter is missing or you don't need the wrapper.
 
 The rule reports a function with exactly one parameter. Your editor offers two suggestions: add a `ref` parameter, or remove the `forwardRef` wrapper.
 

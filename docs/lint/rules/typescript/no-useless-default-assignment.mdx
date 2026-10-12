@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-A default value only applies when the value is `undefined`. If the type says that a property, a tuple element, or a callback parameter is always there, the default never runs, and it tells readers that the value can be missing when it cannot.
+A default value only applies when the value is `undefined`. If the type says that a property, a tuple element, or a callback parameter is always there, the default never runs, and it tells readers that the value can be missing when it can't.
 
 A default of `undefined` is reported too, because a missing value is already `undefined`.
 
@@ -58,7 +58,7 @@ function greet({ name = "guest" }: { name?: string }) {
 const doubled = [1, 2, 3].map(value => value * 2);
 ```
 
-A default on a parameter of a function declaration is what makes the parameter optional, so it is allowed:
+In a function declaration, the default is what makes the parameter optional, so it's allowed:
 
 {/* good */}
 ```ts
@@ -83,9 +83,9 @@ function connect(port?: number) {}
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Do not report files that are checked without `strictNullChecks`. |
+| `allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing` | `false` | Don't report files that are checked without `strictNullChecks`. |
 
-Without `strictNullChecks` in `tsconfig.json`, types do not say what can be `undefined`. By default, the rule reports every such file once, to tell you to turn it on:
+Without `strictNullChecks` in `tsconfig.json`, types don't say what can be `undefined`. By default, the rule reports each of those files once, to tell you to turn it on:
 
 {/* bad {"count": 1, "compilerOptions": {"strict": false}} */}
 ```ts

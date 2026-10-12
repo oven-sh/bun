@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A callback passed to `.then()`, `.catch()` or `.finally()` runs later. If the test neither awaits nor returns the promise, Vitest marks the test as passed before the `expect` in the callback runs, and a failed assertion does not fail the test.
+A callback passed to `.then()`, `.catch()` or `.finally()` runs later. If the test doesn't await or return the promise, Vitest marks the test as passed before the `expect` in the callback runs, and a failed assertion doesn't fail the test.
 
 ## Examples
 
@@ -29,7 +29,7 @@ test("loads the user", () => {
 });
 ```
 
-A promise kept in a variable has to be awaited or returned too:
+A promise kept in a variable must be awaited or returned too:
 
 {/* bad */}
 ```ts
@@ -42,7 +42,7 @@ test("loads the user", () => {
 });
 ```
 
-Code after the `return` of the test never runs:
+Code after the test's `return` never runs:
 
 {/* bad */}
 ```ts
@@ -82,7 +82,7 @@ test("loads the guest", async () => {
 });
 ```
 
-Several promises can be awaited together:
+You can await several promises together:
 
 {/* good */}
 ```ts
@@ -99,7 +99,7 @@ test("loads both users", async () => {
 });
 ```
 
-A test with a parameter is not checked. This test takes the test context, so the rule misses the promise that nobody waits for:
+A test with a parameter isn't checked. This test takes the test context, so the rule misses the promise that nobody waits for:
 
 {/* good */}
 ```ts

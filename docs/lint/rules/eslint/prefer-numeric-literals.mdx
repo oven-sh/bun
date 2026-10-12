@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`parseInt("ff8800", 16)` parses a string every time it runs, to get a number that was known when you wrote it. Write the number itself: `0xff8800`. Binary literals start with `0b` and octal ones with `0o`.
+`parseInt("ff8800", 16)` parses a string every time it runs, to get a number you already knew when you wrote it. Write the number itself: `0xff8800`. Binary literals start with `0b` and octal ones with `0o`.
 
-Only `parseInt` and `Number.parseInt` with a fixed string and a radix of `2`, `8` or `16` are reported.
+The rule only reports `parseInt` and `Number.parseInt` with a fixed string and a radix of `2`, `8` or `16`.
 
-`--fix` replaces the call with the literal when the string has only digits of that radix.
+`--fix` replaces the call with the literal when the string only has digits that are valid in that radix.
 
 ## Examples
 

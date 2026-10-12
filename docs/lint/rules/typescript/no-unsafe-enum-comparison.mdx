@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-Comparing an enum with a raw value, as in `status === 1`, ties the code to the number behind the member. Reorder the enum or insert a member and the comparison means something else, with no compile error.
+Comparing an enum with a raw value, as in `status === 1`, ties the code to the number behind the member. If you reorder the enum or insert a member, the comparison means something else and you get no compile error.
 
 The rule checks `==`, `!=`, `===`, `!==`, `<`, `<=`, `>`, `>=` and the `case` labels of a `switch`. Comparing members of two different enums is reported too.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -74,7 +74,7 @@ function describe(status: Status, color: Color) {
 }
 ```
 
-A comparison with a value of another kind, such as `undefined`, is not reported:
+A comparison with another kind of value, such as `undefined`, isn't reported:
 
 {/* good */}
 ```ts

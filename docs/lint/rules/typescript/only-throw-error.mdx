@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-You can `throw` any value, but only an `Error` records the stack at the place where it was created. Code that catches it also expects an `Error`: with `throw "not found"`, `error.message` is `undefined` and `error instanceof Error` is `false`.
+You can `throw` any value, but only an `Error` records the stack where it was created. Code that catches it also expects an `Error`. With `throw "not found"`, `error.message` is `undefined` and `error instanceof Error` is `false`.
 
-By default, values of type `any` or `unknown` may be thrown, and so may an error that you caught.
+By default, you can throw values of type `any` or `unknown`, and you can rethrow an error that you caught.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -53,8 +53,8 @@ function load(path: string, status: number) {
 | --- | --- | --- |
 | `allowThrowingAny` | `true` | Allow throwing a value of type `any`. |
 | `allowThrowingUnknown` | `true` | Allow throwing a value of type `unknown`. |
-| `allowRethrowing` | `true` | Allow throwing the `error` of `catch (error)`, of `.catch(error => ...)`, and of the second callback of `.then()`, whatever its type. |
-| `allow` | `[]` | Other types that may be thrown. |
+| `allowRethrowing` | `true` | Allow throwing the `error` from `catch (error)`, from `.catch(error => ...)`, and from the second callback of `.then()`, whatever its type. |
+| `allow` | `[]` | Other types you can throw. |
 
 {/* bad {"options": [{"allowThrowingAny": false}]} */}
 ```ts
@@ -63,7 +63,7 @@ function fail(reason: any) {
 }
 ```
 
-In strict mode, the `error` of a `catch` is `unknown`. With `allowThrowingUnknown: false`, you can still throw it again:
+In strict mode, the `error` in a `catch` is `unknown`. With `allowThrowingUnknown: false`, you can still throw it again:
 
 {/* good {"options": [{"allowThrowingUnknown": false}]} */}
 ```ts
@@ -89,7 +89,7 @@ function parse(text: string): unknown {
 }
 ```
 
-An entry of `allow` is the name of a type, or an object that also says where the type comes from: `{ "from": "file", "name": "Redirect" }` for your own code, `{ "from": "lib", "name": "Response" }` for a built-in type, or `{ "from": "package", "name": "Redirect", "package": "my-router" }`.
+Each `allow` entry is a type name, or an object that also says where the type comes from: `{ "from": "file", "name": "Redirect" }` for your own code, `{ "from": "lib", "name": "Response" }` for a built-in type, or `{ "from": "package", "name": "Redirect", "package": "my-router" }`.
 
 {/* good {"options": [{"allow": [{"from": "file", "name": "Redirect"}]}]} */}
 ```ts

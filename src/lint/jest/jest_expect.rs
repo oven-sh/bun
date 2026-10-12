@@ -673,15 +673,14 @@ pub(crate) mod expect_expect {
 
     impl AssertFunctionMatcher {
         /// `None` for a pattern that is not valid.
-        fn new(name: &str) -> Option<Self> {
+        fn new(name: &str, runner: Runner) -> Option<Self> {
             match name
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.'))
             {
                 true => Some(AssertFunctionMatcher::Exact(name.to_owned())),
-                false => {
-                    convert_pattern(name).map(|it| AssertFunctionMatcher::Pattern(Box::new(it)))
-                }
+                false => convert_pattern(name, runner)
+                    .map(|it| AssertFunctionMatcher::Pattern(Box::new(it))),
             }
         }
 
@@ -739,7 +738,7 @@ pub(crate) mod expect_expect {
                     .as_deref()
                     .unwrap_or(default)
                     .iter()
-                    .filter_map(|it| AssertFunctionMatcher::new(it))
+                    .filter_map(|it| AssertFunctionMatcher::new(it, runner))
                     .collect()
             };
             ExpectExpectConfig {

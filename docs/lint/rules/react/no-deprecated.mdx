@@ -14,7 +14,7 @@ deprecated: false
 
 React warns about a deprecated API for a while and then removes it. `ReactDOM.render` logs a warning in React 18 and no longer exists in React 19, so code that still calls it breaks on upgrade. The report names the version that deprecated the API and what to use instead.
 
-Among the APIs the rule knows:
+Some of the APIs the rule knows:
 
 | Deprecated | Since | Use |
 | --- | --- | --- |
@@ -25,9 +25,9 @@ Among the APIs the rule knows:
 | `React.DOM` | 15.6.0 | the `react-dom-factories` package |
 | `React.PropTypes`, `React.createClass` | 15.5.0 | the `prop-types` and `create-react-class` packages |
 
-Member access, named imports and destructuring from `require()` are all checked.
+The rule checks member access, named imports and destructuring from `require()`.
 
-If your ESLint config sets `settings.react.version`, an API that was deprecated in a later version is not reported. Without that setting, everything the rule knows is reported.
+If your ESLint config sets `settings.react.version`, an API that was deprecated in a later version isn't reported. Without that setting, the rule reports everything it knows.
 
 ## Examples
 

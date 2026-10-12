@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-A template literal turns whatever you put in `${}` into a string. For a plain object that gives `"[object Object]"`, for a promise `"[object Promise]"`, and for a function its source code. These end up in log lines, URLs, and messages shown to users.
+A template literal turns whatever you put in `${}` into a string. A plain object becomes `"[object Object]"`, a promise becomes `"[object Promise]"`, and a function becomes its source code. These end up in log lines, URLs, and messages shown to users.
 
-By default strings, numbers, bigints, booleans, `null`, `undefined`, `any`, regular expressions, `Error`, `URL`, and `URLSearchParams` are allowed. Tagged templates are not checked.
+By default strings, numbers, bigints, booleans, `null`, `undefined`, `any`, regular expressions, `Error`, `URL`, and `URLSearchParams` are allowed. Tagged templates aren't checked.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -52,7 +52,7 @@ console.log(`Open ${new URL("https://bun.com")}`);
 | Option | Default | What it does |
 | --- | --- | --- |
 | `allowAny` | `true` | Allow `any`. |
-| `allowArray` | `false` | Allow an array if the type of its elements is allowed. |
+| `allowArray` | `false` | Allow an array if its element type is allowed. |
 | `allowBoolean` | `true` | Allow `boolean`. |
 | `allowNever` | `false` | Allow `never`. |
 | `allowNullish` | `true` | Allow `null` and `undefined`. |
@@ -77,7 +77,7 @@ const tags = ["a", "b"];
 console.log(`Tags: ${tags}`); // Tags: a,b
 ```
 
-An entry of `allow` is a name, or an object that also says where the type comes from: `"lib"` for TypeScript's built-in types, `"file"` for your own code, `"package"` for an npm package. Not reported with `allow: [{ "from": "file", "name": "Money" }]`:
+Each `allow` entry is a name, or an object that also says where the type comes from: `"lib"` for TypeScript's built-in types, `"file"` for your own code, `"package"` for an npm package. Not reported with `allow: [{ "from": "file", "name": "Money" }]`:
 
 {/* good {"options": [{"allow": [{"from": "file", "name": "Money"}]}]} */}
 ```ts

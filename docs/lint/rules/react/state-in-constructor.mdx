@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A class component can set its initial state in two places: with `this.state = ...` in the constructor, or with a `state = ...` class field. Both work. In a codebase that mixes them, you have to look in two places to find the initial state of a component.
+A class component can set its initial state in two places: with `this.state = ...` in the constructor, or with a `state = ...` class field. Both work. In a codebase that mixes them, you have to look in two places to find a component's initial state.
 
 By default the rule asks for the constructor.
 
@@ -71,7 +71,7 @@ class Counter extends React.Component {
 }
 ```
 
-And this is not:
+And this isn't:
 
 {/* good {"options": ["never"]} */}
 ```jsx

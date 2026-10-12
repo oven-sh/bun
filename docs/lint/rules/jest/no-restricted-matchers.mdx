@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Some matchers are too loose for your tests. `toBeTruthy()` passes for `1`, `"no"` and `[]`, so it does not prove that a value is `true`. This rule reports the matchers and modifiers you list.
+Some matchers are too loose for your tests. `toBeTruthy()` passes for `1`, `"no"` and `[]`, so it doesn't prove that a value is `true`. This rule reports the matchers and modifiers you list.
 
 Without options it reports nothing.
 
@@ -46,7 +46,7 @@ test("a new user is active", () => {
 
 ## Options
 
-One object. A key is what you write after `expect(..)`, joined with dots. A value is a hint shown with the report, or `null` for no hint.
+The rule takes one object. Each key is the chain you write after `expect(..)`, joined with dots. Each value is a hint shown with the report, or `null` for no hint.
 
 ```json
 {
@@ -69,7 +69,7 @@ One object. A key is what you write after `expect(..)`, joined with dots. A valu
 | A chain, such as `"not.toBe"` | `expect(a).not.toBe(b)`, but not `expect(a).toBe(b)`. |
 | `"not"`, `"resolves"`, `"rejects"`, or a chain that ends in `.not`, such as `"resolves.not"` | Every chain that starts with it. |
 
-A matcher has to be the whole chain, so `"toBe"` allows this:
+A matcher must be the whole chain, so `"toBe"` allows this:
 
 {/* good {"options": [{"toBe": null}]} */}
 ```ts
@@ -80,7 +80,7 @@ test("ids differ", () => {
 });
 ```
 
-A modifier matches whatever comes after it:
+A modifier matches no matter what comes after it:
 
 {/* bad {"options": [{"resolves": null}], "count": 2} */}
 ```ts

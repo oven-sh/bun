@@ -14,7 +14,7 @@ deprecated: false
 
 `<Header />` reads a variable named `Header`. If nothing declares or imports it, usually because of a typo or a forgotten import, rendering throws a `ReferenceError`.
 
-Names that start with a lowercase letter, such as `<div>` or `<my-element>`, are HTML elements and are not checked. In `<Menu.Item>`, only `Menu` is checked.
+Names that start with a lowercase letter, such as `<div>` or `<my-element>`, are HTML elements, so the rule skips them. In `<Menu.Item>`, it only checks `Menu`.
 
 ## Examples
 
@@ -44,7 +44,7 @@ export function Page() {
 | --- | --- | --- |
 | `allowGlobals` | `false` | Accept components that are global variables. |
 
-By default a global does not count in a module, even one you declared:
+By default a global doesn't count in a module, even one you declared:
 
 {/* bad */}
 ```jsx

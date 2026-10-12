@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`mockImplementation(() => value)` wraps a value in a function that only returns it. `mockReturnValue(value)` does the same with less to read. The same goes for `mockImplementationOnce()` and `mockReturnValueOnce()`.
+`mockImplementation(() => value)` wraps a value in a function that only returns it. `mockReturnValue(value)` does the same thing with less code. The same goes for `mockImplementationOnce()` and `mockReturnValueOnce()`.
 
 `--fix` rewrites the call.
 
@@ -42,7 +42,7 @@ const getPort = jest.fn().mockReturnValue(3000);
 const getUser = jest.fn().mockReturnValueOnce({ name: "Ada" });
 ```
 
-A function that takes parameters, is `async`, does more than return, or returns a `let` or `var` variable needs `mockImplementation()`, so it is not reported:
+A function that takes parameters, is `async`, does more than return, or returns a `let` or `var` variable needs `mockImplementation()`, so it isn't reported:
 
 {/* good */}
 ```ts
@@ -70,4 +70,4 @@ const getUser = jest.fn().mockImplementation(() => createUser());
 
 ## When not to use it
 
-`mockReturnValue({ name: "Ada" })` returns the same object on every call. `mockImplementation(() => ({ name: "Ada" }))` returns a new one. If the code under test changes what the mock returns, keep the function and disable the rule on that line.
+`mockReturnValue({ name: "Ada" })` returns the same object on every call. `mockImplementation(() => ({ name: "Ada" }))` returns a new one. If the code under test mutates the object the mock returns, keep the function and disable the rule on that line.

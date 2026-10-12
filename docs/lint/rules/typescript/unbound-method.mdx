@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-A method gets its `this` from how it is called. If you store `user.greet` in a variable or pass it as a callback, it is later called without the object, `this` is `undefined`, and the first `this.name` throws.
+A method gets its `this` from how it's called. If you store `user.greet` in a variable or pass it as a callback, it's later called without the object, so `this` is `undefined` and the first `this.name` throws.
 
-Calling the method, comparing it, testing it in a condition, and `typeof` are fine. So are properties that hold an arrow function, methods declared with `this: void`, and built-in functions that do not use `this`, such as `console.log`, `Math.max`, and `JSON.parse`.
+Calling the method, comparing it, testing it in a condition, and `typeof` are fine. So are properties that hold an arrow function, methods declared with `this: void`, and built-in functions that don't use `this`, such as `console.log`, `Math.max`, and `JSON.parse`.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -64,9 +64,9 @@ const log = console.log;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreStatic` | `false` | Do not check `static` methods. |
+| `ignoreStatic` | `false` | Don't check `static` methods. |
 
-`Id.next` does not use `this`, but it is reported unless `ignoreStatic` is on:
+`Id.next` doesn't use `this`, but it's reported unless `ignoreStatic` is on:
 
 {/* bad */}
 ```ts

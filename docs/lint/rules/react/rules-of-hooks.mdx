@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-React tells one `useState` from the next by the order of the calls. If a hook runs on one render and not on the next, every hook after it gets the state of another one, and React throws "Rendered fewer hooks than expected".
+React tells one `useState` from the next by the order you call them in. If a hook runs on one render but not the next, every hook after it gets another hook's state, and React throws "Rendered fewer hooks than expected".
 
-So a hook must be called on every render, in the same order. It cannot be in a condition, a loop, a nested function, or after an early `return`. It also cannot be in a class, an async function, at the top level of a file, or in a function that is neither a component nor a hook. A name counts as a hook if it is `use` or starts with `use` and a capital letter. A component's name starts with a capital letter.
+So you must call every hook on every render, in the same order. You can't call one in a condition, a loop, a nested function, or after an early `return`. You also can't call one in a class, an async function, at the top level of a file, or in a function that's neither a component nor a hook. A name counts as a hook if it's `use` or starts with `use` and a capital letter. A component's name starts with a capital letter.
 
 This rule is on by default if your `package.json` depends on `react`.
 
@@ -77,7 +77,7 @@ function useTheme() {
 }
 ```
 
-`use` is the exception. It can be called in a condition or a loop, but not in a `try` block:
+`use` is the exception. You can call it in a condition or a loop, but not in a `try` block:
 
 {/* good */}
 ```jsx
@@ -90,7 +90,7 @@ function Note({ notePromise }) {
 }
 ```
 
-A function made with `useEffectEvent` can only be called from an effect or another effect event in the same component:
+You can only call a function made with `useEffectEvent` from an effect or another effect event in the same component:
 
 {/* bad */}
 ```jsx
@@ -108,4 +108,4 @@ Your own effect hooks count as effects if `settings["react-hooks"].additionalEff
 
 | Option | What it does |
 | --- | --- |
-| `additionalHooks` | Accepted, but this rule does not use it. |
+| `additionalHooks` | Accepted, but this rule doesn't use it. |

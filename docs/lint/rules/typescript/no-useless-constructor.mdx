@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A class without a constructor gets one for free. In a base class it is empty, and in a subclass it passes all arguments to `super()`. Writing that out by hand adds lines that do nothing.
+A class without a constructor gets one for free. In a base class it's empty, and in a subclass it passes all arguments to `super()`. Writing that out by hand adds lines that do nothing.
 
 ## Examples
 
@@ -59,7 +59,7 @@ class User {
 }
 ```
 
-So is a `public` constructor in a subclass, which can open up a `protected` one:
+A `public` constructor in a subclass is allowed too, because it can open up a `protected` one:
 
 {/* good */}
 ```ts

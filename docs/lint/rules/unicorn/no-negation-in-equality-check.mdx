@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`!` binds tighter than `===`, so `!a === b` means `(!a) === b`. It turns `a` into `true` or `false` and compares that with `b`. What was meant is almost always `a !== b`.
+`!` binds tighter than `===`, so `!a === b` means `(!a) === b`. It turns `a` into `true` or `false` and compares that with `b`. You almost always meant `a !== b`.
 
 `--fix-suggestions` removes the `!` and flips the operator.
 
@@ -36,7 +36,7 @@ if (user.role !== "admin") {
 }
 ```
 
-If you do want to compare the negated value, say so with parentheses. `!!value`, which converts to a boolean, is also allowed:
+If you do want to compare the negated value, wrap it in parentheses to say so. `!!value`, which converts to a boolean, is also allowed:
 
 {/* good */}
 ```js

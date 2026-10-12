@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The `Error` constructor already records the stack when `super()` runs. Calling `Error.captureStackTrace(this, MyError)` in the constructor of the subclass does that work a second time.
+The `Error` constructor already records the stack when `super()` runs. Calling `Error.captureStackTrace(this, MyError)` in the subclass's constructor does that work a second time.
 
-The rule checks classes that extend a built-in error such as `Error`, `TypeError` or `RangeError`. It reports the call when the second argument is the class itself: its name, `new.target` or `this.constructor`.
+The rule checks classes that extend a built-in error such as `Error`, `TypeError` or `RangeError`. It reports the call when the second argument is the class itself, written as its name, `new.target` or `this.constructor`.
 
 `--fix-suggestions` removes the call.
 
@@ -45,7 +45,7 @@ class ValidationError extends Error {
 }
 ```
 
-Hiding another function from the stack is a real use, and so is a class that does not extend a built-in error:
+Hiding another function from the stack is a real use, and so is calling it in a class that doesn't extend a built-in error:
 
 {/* good */}
 ```js

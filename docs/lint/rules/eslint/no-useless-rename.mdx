@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`import { user as user }` and `const { id: id } = user` rename something to the name it already has. The short form means the same.
+`import { user as user }` and `const { id: id } = user` rename something to the name it already has. The short form means the same thing.
 
 `--fix` removes the rename.
 
@@ -45,9 +45,9 @@ export { id, userName as name };
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreImport` | `false` | Do not check imports. |
-| `ignoreExport` | `false` | Do not check exports. |
-| `ignoreDestructuring` | `false` | Do not check destructuring. |
+| `ignoreImport` | `false` | Don't check imports. |
+| `ignoreExport` | `false` | Don't check exports. |
+| `ignoreDestructuring` | `false` | Don't check destructuring. |
 
 {/* good {"options": [{"ignoreDestructuring": true}]} */}
 ```js

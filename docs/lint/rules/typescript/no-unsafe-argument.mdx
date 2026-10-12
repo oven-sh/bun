@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-The compiler accepts `any` for every parameter. Pass an `any` to a function that wants a `number` and nothing checks that it is one. The function then runs with whatever came in.
+The compiler accepts `any` for every parameter. If you pass an `any` to a function that wants a `number`, nothing checks that it's a number. The function then runs with whatever came in.
 
 The rule also reports `any` inside a generic type, such as a `Set<any>` passed where a `Set<string>` is expected, and spreading an `any`, an `any[]` or a tuple with an `any` element into the arguments.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 
@@ -61,4 +61,4 @@ debug(JSON.parse("{}"));
 
 ## When not to use it
 
-In a codebase that is still moving from JavaScript to TypeScript, `any` is everywhere and the reports drown out the rest. Turn the rule on once most values have real types.
+In a codebase that's still moving from JavaScript to TypeScript, `any` is everywhere and the reports drown out everything else. Turn the rule on once most values have real types.

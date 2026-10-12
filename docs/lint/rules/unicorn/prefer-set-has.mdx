@@ -12,14 +12,14 @@ typeAware: false
 deprecated: false
 ---
 
-`includes()` walks the array from the start on every call. `has()` on a `Set` is a hash lookup, so it stays fast however long the list is.
+`includes()` walks the array from the start on every call. `has()` on a `Set` is a hash lookup, so it stays fast no matter how long the list gets.
 
 The rule reports a `const` or `let` when all of this is true:
 
 - Its value is a new array: an array literal, `Array.from()`, or the result of a method such as `map()` or `filter()`.
-- It is used for nothing but `.includes(value)`.
-- The lookup can run more than once: there are two or more calls, or the one call is in a loop or in a function.
-- It is not exported.
+- You only ever call `.includes(value)` on it.
+- The lookup can run more than once, because there are two or more calls or the only call is inside a loop or a function.
+- It isn't exported.
 
 `--fix` wraps the array in `new Set()` and renames the calls to `.has()`.
 
@@ -47,7 +47,7 @@ function isAllowed(name) {
 }
 ```
 
-An array that is searched once, or that is used as an array somewhere, stays an array:
+An array that you search once, or that you also use as an array somewhere, can stay an array:
 
 {/* good */}
 ```js

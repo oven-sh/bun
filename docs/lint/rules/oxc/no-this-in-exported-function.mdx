@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-After `import { save } from "./store"`, a call to `save()` has no object in front of it, so `this` is `undefined` and `this.items` throws. With `import * as store`, `store.save()` sees the module's exports as `this`, but a bundler may turn that into a plain `save()` call, and then the same code breaks only in the bundle.
+After `import { save } from "./store"`, a call to `save()` has no object in front of it, so `this` is `undefined` and `this.items` throws. With `import * as store`, `store.save()` sees the module's exports as `this`, but a bundler can turn that into a plain `save()` call, and then the same code only breaks in the bundle.
 
-The rule checks `export function`, `export default function`, and functions listed in `export { name }`. An arrow function inside one of them uses the same `this`, so it is checked too. `export const save = function () {}` and `export default save` are not checked.
+The rule checks `export function`, `export default function`, and functions listed in `export { name }`. An arrow function inside one of them uses the same `this`, so it's checked too. `export const save = function () {}` and `export default save` aren't checked.
 
 ## Examples
 
@@ -56,7 +56,7 @@ export function save(store, item) {
 }
 ```
 
-A regular function or a class inside the exported function has a `this` of its own:
+A regular function or a class inside the exported function has its own `this`:
 
 {/* good */}
 ```js
@@ -72,4 +72,4 @@ export function createStore() {
 
 ## When not to use it
 
-A function that is exported to be attached to an object or called with `.call()` uses `this` on purpose. The rule reports it even if it declares a TypeScript `this` parameter.
+A function you export so it can be attached to an object or called with `.call()` uses `this` on purpose. The rule reports it even if it declares a TypeScript `this` parameter.

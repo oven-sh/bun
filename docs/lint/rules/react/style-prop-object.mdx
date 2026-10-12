@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In HTML, `style` is a string of CSS. In React it is an object with camelCased properties, and React throws an error when it renders a DOM element with a string as its `style`.
+In HTML, `style` is a string of CSS. In React it's an object with camelCased properties, and React throws when it renders a DOM element with a string as its `style`.
 
-The rule reports a `style` that is a string, number or boolean literal, in JSX and in `React.createElement()`. It also follows a variable to the literal it was declared with. It does not report `null`, `undefined`, a template literal, or anything it cannot see the value of, such as a prop or the result of a call.
+The rule reports a `style` that's a string, number or boolean literal, in JSX and in `React.createElement()`. It also follows a variable to the literal it was declared with. It doesn't report `null`, `undefined`, a template literal, or any value it can't see, such as a prop or the result of a call.
 
 ## Examples
 
@@ -52,7 +52,7 @@ function Card({ style }) {
 | --- | --- | --- |
 | `allow` | `[]` | Names of components that can take any `style` value. |
 
-Use `allow` for a component that gives `style` a meaning of its own:
+Use `allow` for a component where `style` means something else:
 
 {/* good {"options": [{"allow": ["FormattedNumber"]}]} */}
 ```jsx

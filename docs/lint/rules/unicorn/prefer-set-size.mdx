@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`[...set].length` copies every item of the `Set` into a new array, reads one number and throws the array away. A `Set` already knows how many items it has: `set.size`.
+`[...set].length` copies every item in the `Set` into a new array, reads one number and throws the array away. A `Set` already knows how many items it has, and `set.size` tells you.
 
-The rule reports `[...set].length` and `Array.from(set).length` where `set` is a `new Set()` or a `const` that is initialized with one.
+The rule reports `[...set].length` and `Array.from(set).length` when `set` is a `new Set()` or a `const` that's initialized with one.
 
 `--fix` rewrites it to `.size`.
 
@@ -40,7 +40,7 @@ const visitors = new Set(ids);
 console.log(visitors.size);
 ```
 
-Where the rule cannot tell that the value is a `Set`, it reports nothing:
+If the rule can't tell that the value is a `Set`, it doesn't report anything:
 
 {/* good */}
 ```js

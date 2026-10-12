@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A method that never reads `this` does not need an instance. Callers still have to create one to reach it. Make it `static`, or move it out of the class.
+A method that never reads `this` doesn't need an instance, but callers still have to create one to reach it. Make it `static`, or move it out of the class.
 
-Methods, getters, setters, and functions stored in instance fields are checked. Constructors, static members, and abstract members are not.
+The rule checks methods, getters, setters, and functions stored in instance fields. It skips constructors, static members, and abstract members.
 
-It is the TypeScript version of `class-methods-use-this` and reports the same code. Turn on one of the two, not both.
+It's the TypeScript version of `class-methods-use-this` and reports the same code. Turn on one of the two, not both.
 
 ## Examples
 
@@ -61,7 +61,7 @@ class Invoice {
 | `ignoreOverrideMethods` | `false` | Skip members marked `override`. |
 | `ignoreClassesThatImplementAnInterface` | `false` | `true` skips every member of a class that has an `implements` clause. `"public-fields"` still checks its `private` and `protected` members. |
 
-A subclass has to keep the shape of the method it overrides, so it cannot make it `static`:
+A subclass must keep the shape of the method it overrides, so it can't make it `static`:
 
 {/* good {"options": [{"ignoreOverrideMethods": true}]} */}
 ```ts
@@ -79,7 +79,7 @@ class Spinner extends Widget {
 }
 ```
 
-The same holds for a method that an interface asks for. With `"public-fields"`, `render` is skipped and `frame` is reported. With `true`, neither is reported.
+The same goes for a method that an interface requires. With `"public-fields"`, `render` is skipped and `frame` is reported. With `true`, neither is reported.
 
 {/* bad {"options": [{"ignoreClassesThatImplementAnInterface": "public-fields"}], "count": 1} */}
 ```ts

@@ -25,7 +25,7 @@ Reported:
 const ranked = players.sort((a, b) => b.score - a.score);
 ```
 
-A copy made only to sort it is reported too, because `toSorted()` already copies:
+Copying the array first is reported too, because `toSorted()` already makes a copy:
 
 {/* bad */}
 ```js
@@ -39,14 +39,14 @@ Not reported:
 const ranked = players.toSorted((a, b) => b.score - a.score);
 ```
 
-A call that is a statement of its own is allowed by default. Nothing uses the result, so changing the array is the point:
+A call used as a standalone statement is allowed by default. Nothing uses the result, so changing the array is the point:
 
 {/* good */}
 ```js
 players.sort((a, b) => b.score - a.score);
 ```
 
-If the argument cannot be a compare function, such as an object or a string, `sort` belongs to something else, for example a database query:
+If the argument can't be a compare function, like an object or a string, `sort` belongs to something else, such as a database query:
 
 {/* good */}
 ```js
@@ -57,7 +57,7 @@ const recent = await db.posts.find().sort({ createdAt: -1 });
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowExpressionStatement` | `true` | Allow `array.sort();` as a statement of its own. |
+| `allowExpressionStatement` | `true` | Allow `array.sort();` as a standalone statement. |
 | `allowAfterSpread` | `false` | Allow `[...array].sort()`. |
 
 {/* bad {"options": [{"allowExpressionStatement": false}]} */}
@@ -72,4 +72,4 @@ const ranked = [...players].sort((a, b) => b.score - a.score);
 
 ## When not to use it
 
-`toSorted()` is part of ES2023. Turn the rule off if your code has to run where that method does not exist.
+`toSorted()` is part of ES2023. Turn the rule off if your code needs to run somewhere that doesn't have it.

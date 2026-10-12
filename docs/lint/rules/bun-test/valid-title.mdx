@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The title is how you find a test in the output when it fails. This rule reports a title that is empty, starts or ends with a space, or repeats the name of its function, as in `test("test adds an item")`. It also reports a test title that is not a string. Options let you add naming rules of your own.
+The title is how you find a test in the output when it fails. This rule reports a title that's empty, starts or ends with a space, or repeats its function's name, as in `test("test adds an item")`. It also reports a test title that isn't a string. You can add your own naming rules with options.
 
-`--fix` removes the spaces and the repeated word. It changes nothing in a file that uses `toMatchSnapshot()` or `toThrowErrorMatchingSnapshot()`, because snapshots are stored under the title of their test.
+`--fix` removes the spaces and the repeated word. It doesn't change anything in a file that uses `toMatchSnapshot()` or `toThrowErrorMatchingSnapshot()`, because snapshots are stored under their test's title.
 
 ## Examples
 
@@ -45,7 +45,7 @@ describe("cart", () => {
 });
 ```
 
-`bun test` takes a function, a class or a number as the title of a `describe`, so that is allowed by default:
+`bun test` accepts a function, a class or a number as a `describe` title, so that's allowed by default:
 
 {/* good */}
 ```ts
@@ -60,15 +60,15 @@ describe(Cart, () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowArguments` | `false` | Allow a title that is a plain variable, such as `title`. |
-| `ignoreTypeOfDescribeName` | `true` | Allow a `describe` title that is not a string. |
-| `ignoreTypeOfTestName` | `false` | Allow a `test` or `it` title that is not a string. |
+| `allowArguments` | `false` | Allow a title that's a plain variable, such as `title`. |
+| `ignoreTypeOfDescribeName` | `true` | Allow a `describe` title that isn't a string. |
+| `ignoreTypeOfTestName` | `false` | Allow a `test` or `it` title that isn't a string. |
 | `ignoreSpaces` | `false` | Allow spaces at the start and the end. |
-| `disallowedWords` | `[]` | Whole words that a title cannot contain. Case does not matter. |
-| `mustMatch` | none | A pattern that every title has to match. |
+| `disallowedWords` | `[]` | Whole words that a title can't contain. Case doesn't matter. |
+| `mustMatch` | none | A pattern that every title must match. |
 | `mustNotMatch` | none | A pattern that no title can match. |
 
-A variable as the title of a test is reported by default, because the rule cannot tell what it holds:
+A variable as a test title is reported by default, because the rule can't tell what it holds:
 
 {/* bad */}
 ```ts
@@ -100,7 +100,7 @@ import { test } from "bun:test";
 test("Should add an item", () => {});
 ```
 
-`mustMatch` and `mustNotMatch` take a regular expression as a string, either `"^adds "` or `"/^adds /i"`. Of the flags only `i` has an effect. To set the message of the report, pass `[pattern, message]`:
+`mustMatch` and `mustNotMatch` take a regular expression as a string, either `"^adds "` or `"/^adds /i"`. `i` is the only flag that has an effect. To set the report's message, pass `[pattern, message]`:
 
 {/* bad {"options": [{"mustNotMatch": ["\\.$", "Do not end a title with a period"]}]} */}
 ```ts
@@ -109,7 +109,7 @@ import { test } from "bun:test";
 test("adds an item.", () => {});
 ```
 
-To use a different pattern for `describe`, `test` and `it`, pass an object. Each value is a pattern. A function that is not in the object is not checked:
+To use a different pattern for `describe`, `test` and `it`, pass an object. Each value is a pattern. A function that isn't in the object isn't checked:
 
 {/* bad {"options": [{"mustMatch": {"it": "^should "}}], "count": 1} */}
 ```ts

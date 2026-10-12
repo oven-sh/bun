@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`(await getUser(id)).name` needs parentheses that are easy to forget: `await getUser(id).name` reads `name` from the promise and gives `undefined`. Destructuring, or a variable for the awaited value, needs no parentheses and reads from left to right.
+`(await getUser(id)).name` needs parentheses, and they're easy to forget. Without them, `await getUser(id).name` reads `name` from the promise and gives you `undefined`. If you destructure, or put the awaited value in a variable, you don't need parentheses and the code reads from left to right.
 
-`--fix-dangerously` rewrites `const name = (await getUser(id)).name` and `const first = (await getPosts(id))[0]` to destructuring. Rewrite other forms by hand.
+`--fix-dangerously` rewrites `const name = (await getUser(id)).name` and `const first = (await getPosts(id))[0]` to destructuring. You need to rewrite other forms by hand.
 
 ## Examples
 

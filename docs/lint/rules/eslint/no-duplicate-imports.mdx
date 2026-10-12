@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Two `import` statements for the same module split one list of names over two places. A reader has to find both to know what the file takes from that module, and the next person to add a name has to pick one.
+Two `import` statements for the same module split one list of names over two places. You have to find both to know what the file takes from that module, and the next person who adds a name has to pick one.
 
-Only statements that can be merged are reported. `import * as path` and `import { join }` cannot be written as one statement, so they can stand side by side.
+Only statements that can be merged are reported. `import * as path` and `import { join }` can't be written as one statement, so they're allowed side by side.
 
 ## Examples
 
@@ -48,7 +48,7 @@ import { join } from "node:path";
 | `includeExports` | `false` | Also look at `export ... from` statements. |
 | `allowSeparateTypeImports` | `false` | Allow an `import type` statement next to a normal import from the same module. |
 
-With `includeExports`, an `export ... from` a module that the file already imports or exports from is reported:
+With `includeExports`, an `export ... from` is reported if the file already imports or exports from that module:
 
 {/* bad {"options": [{"includeExports": true}]} */}
 ```js
@@ -56,7 +56,7 @@ import { parse } from "./parser.js";
 export { tokenize } from "./parser.js";
 ```
 
-`export * from` cannot be merged with an import of names, so it is still allowed:
+`export * from` can't be merged with a named import, so it's still allowed:
 
 {/* good {"options": [{"includeExports": true}]} */}
 ```js

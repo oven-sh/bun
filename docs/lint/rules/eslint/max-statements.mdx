@@ -12,13 +12,13 @@ typeAware: false
 deprecated: false
 ---
 
-A function with a long list of statements usually does several jobs, and you have to read all of it to change any part. This rule reports a function that has more statements than the maximum, which is 10 by default.
+A function with a long list of statements usually does several jobs, and you have to read all of it to change any part. This rule reports any function with more statements than the maximum, which is 10 by default.
 
-Statements in nested blocks count too. The statements of an inner function count for the inner function only.
+Statements in nested blocks count too. An inner function's statements only count for the inner function.
 
 ## Examples
 
-With a maximum of 3, this function of 4 statements is reported:
+With a maximum of 3, this function with 4 statements is reported:
 
 {/* bad {"options": [3]} */}
 ```js
@@ -64,7 +64,7 @@ The first option is the maximum, as a number or as `{ "max": number }`. `maximum
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreTopLevelFunctions` | `false` | Do not report the only top-level function of a file, such as a wrapper around a whole script. |
+| `ignoreTopLevelFunctions` | `false` | Don't report a file's only top-level function, such as a wrapper around a whole script. |
 
 With it, this passes with a maximum of 2:
 
@@ -77,7 +77,7 @@ With it, this passes with a maximum of 2:
 })();
 ```
 
-In a file with two or more top-level functions the option changes nothing:
+In a file with two or more top-level functions, the option has no effect:
 
 {/* bad {"options": [2, {"ignoreTopLevelFunctions": true}]} */}
 ```js

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A capital first letter is how a reader tells a constructor from an ordinary function. If the names do not follow that, it is easy to forget `new`: a class then throws, and an older constructor function runs with the wrong `this`.
+A capital first letter is how you tell a constructor from an ordinary function. If names don't follow that convention, it's easy to forget `new`. A class then throws, and an older constructor function runs with the wrong `this`.
 
-The rule reports two things: `new` with a name that starts with a lowercase letter, and a call without `new` of a name that starts with a capital letter.
+The rule reports two things: `new` with a name that starts with a lowercase letter, and a call without `new` to a name that starts with a capital letter.
 
 The built-ins that work without `new` are allowed: `Array`, `BigInt`, `Boolean`, `Date`, `Error`, `Function`, `Number`, `Object`, `RegExp`, `String`, `Symbol`, and `Date.UTC()`.
 
@@ -48,12 +48,12 @@ new-cap = ["error", { capIsNewExceptions = ["Router"] }]
 | Option | Default | What it does |
 | --- | --- | --- |
 | `newIsCap` | `true` | Report `new` with a lowercase name. |
-| `capIsNew` | `true` | Report a call of a capitalized name without `new`. |
+| `capIsNew` | `true` | Report a call to a capitalized name without `new`. |
 | `properties` | `true` | Also check names after a dot, as in `new net.socket()` and `express.Router()`. |
 | `newIsCapExceptions` | `[]` | Lowercase names that are allowed after `new`. |
-| `newIsCapExceptionPattern` | none | A regular expression for such names. |
+| `newIsCapExceptionPattern` | none | A regular expression for those names. |
 | `capIsNewExceptions` | `[]` | Capitalized names that can be called without `new`. |
-| `capIsNewExceptionPattern` | none | A regular expression for such names. |
+| `capIsNewExceptionPattern` | none | A regular expression for those names. |
 
 Reported by default:
 

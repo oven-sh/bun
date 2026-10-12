@@ -409,7 +409,7 @@ pub(crate) fn lint(
     let nested = all_loaded.iter().skip(1).filter_map(|it| it.file.as_ref());
     let nested = sorted(nested.map(shown).collect());
     let loaded = modules.packages();
-    let packages = Packages::new(cwd, packages::is_for_linting, |name| {
+    let packages = Packages::new(cwd, &packages::is_for_linting, &|name| {
         let is_named = || sources.iter().any(|it| it.1 == name);
         if javascript.iter().any(|it| it.0 == name) {
             Some(Need::Rules)

@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`toHaveBeenCalled()` passes whatever the mock was called with, so the test keeps passing when the code starts to pass the wrong arguments. `toHaveBeenCalledWith(...)` checks the arguments too. The alias `toBeCalled()` is reported the same way.
+`toHaveBeenCalled()` passes no matter what the mock was called with, so the test keeps passing when the code starts passing the wrong arguments. `toHaveBeenCalledWith(...)` checks the arguments too. The alias `toBeCalled()` is reported the same way.
 
-`.not.toHaveBeenCalled()` is allowed: a mock that never ran has no arguments to check.
+`.not.toHaveBeenCalled()` is allowed, because a mock that never ran has no arguments to check.
 
-`--fix-suggestions` renames the matcher and leaves the parentheses empty. Fill in the arguments you expect: `toHaveBeenCalledWith()` only passes for a call without arguments. That is why `--fix` does not rename it.
+`--fix-suggestions` renames the matcher and leaves the parentheses empty. Fill in the arguments you expect, because `toHaveBeenCalledWith()` only passes for a call without arguments. That's why `--fix` doesn't rename it.
 
 ## Examples
 

@@ -59,20 +59,14 @@ Using eslint.config.js (ESLint flat config)
     1 rule runs in JavaScript
         lint/plugin.js    1
 
-You can remove: eslint
-Still needed:   typescript-eslint (eslint.config.js loads it)
+Still needed:   eslint (typescript-eslint needs it)
+                typescript-eslint (eslint.config.js loads it)
 ```
 
 - **Natively**: the rule is built into Bun. That covers ESLint's core rules, typescript-eslint, `react`, `react-hooks`, `import`, `n`, and `prettier/prettier`.
 - **In JavaScript**: Bun loads the plugin and runs it like ESLint does. It works, but it's slower. See [ESLint plugins](/lint/plugins).
 
----
-
-Uninstall what `--doctor` says you can remove. Keep every package that `eslint.config.js` imports, because Bun runs that file.
-
-```sh terminal icon="terminal"
-bun remove eslint
-```
+The last lines tell you which packages you still need. Bun runs your `eslint.config.js`, so everything that file imports has to stay. Here that's `typescript-eslint`, which needs `eslint`. Packages you no longer need are listed under `You can remove`.
 
 ---
 

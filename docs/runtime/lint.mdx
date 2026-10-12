@@ -133,7 +133,7 @@ A comment that no longer disables anything gets a warning, and `--fix` removes i
 
 ## Type-aware rules
 
-Some bugs only show up with types, like a promise nobody awaits. `--type-aware` turns on the rules that use them.
+Some bugs only show up with types, like a promise nobody awaits. `--type-aware` turns on the recommended rules that use them.
 
 ```bash terminal icon="terminal"
 bun lint --type-aware
@@ -153,6 +153,15 @@ Types come from [`bun check`](/runtime/check), Bun's built-in type checker. It's
 [lint]
 typeAware = true
 ```
+
+Only want one of them? Turn it on like any other rule. You don't need `typeAware`.
+
+```toml bunfig.toml icon="settings"
+[lint.rules]
+"@typescript-eslint/no-floating-promises" = "error"
+```
+
+To report type errors too, like `bun check` does, set `typeCheck = true` or pass `--type-check`.
 
 ## Git hooks
 

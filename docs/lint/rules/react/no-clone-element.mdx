@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`cloneElement` adds props to an element that was created somewhere else. Whoever reads `<Row />` cannot see that it receives `isSelected`, and the extra props are lost as soon as someone wraps the child in another component. Pass the data with a render prop or with context instead.
+`cloneElement` adds props to an element that was created somewhere else. Anyone reading `<Row />` can't see that it receives `isSelected`, and the extra props are lost as soon as someone wraps the child in another component. Pass the data with a render prop or with context instead.
 
-Only a `cloneElement` that is imported from `"react"` is reported.
+The rule only reports a `cloneElement` that's imported from `"react"`.
 
 ## Examples
 

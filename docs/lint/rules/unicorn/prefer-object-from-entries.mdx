@@ -14,7 +14,7 @@ deprecated: false
 
 Building an object with `reduce` and a spread copies the whole object on every step, so the work grows with the square of the number of items. `Object.fromEntries()` does it in one pass and says what the code is for.
 
-The rule reports a `reduce` that starts from `{}` or `Object.create(null)`. The callback has to be an arrow function without a block body that returns `{ ...result, key: value }` or `Object.assign(result, { key: value })`. It also reports `_.fromPairs()` and `lodash.fromPairs()`.
+The rule reports a `reduce` that starts from `{}` or `Object.create(null)`. The callback must be an arrow function without a block body that returns `{ ...result, key: value }` or `Object.assign(result, { key: value })`. It also reports `_.fromPairs()` and `lodash.fromPairs()`.
 
 ## Examples
 
@@ -40,7 +40,7 @@ const ages = Object.fromEntries(users.map(user => [user.name, user.age]));
 const query = Object.fromEntries(pairs);
 ```
 
-A `reduce` that starts from an object with properties, or that adds more than one property a step, is not reported:
+A `reduce` that starts from an object with properties, or that adds more than one property per step, isn't reported:
 
 {/* good */}
 ```js
@@ -53,14 +53,14 @@ const index = users.reduce((result, user) => ({ ...result, [user.id]: user, [use
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `functions` | `["_.fromPairs", "lodash.fromPairs"]` | Functions to report when they are called with one argument. A name can have dots: `"utils.toObject"`. Your list replaces the default. |
+| `functions` | `["_.fromPairs", "lodash.fromPairs"]` | Functions to report when they're called with one argument. A name can have dots, like `"utils.toObject"`. Your list replaces the default. |
 
 {/* bad {"options": [{"functions": ["utils.toObject"]}]} */}
 ```js
 const query = utils.toObject(pairs);
 ```
 
-`_.fromPairs` is not in the list anymore:
+`_.fromPairs` isn't in the list anymore:
 
 {/* good {"options": [{"functions": ["utils.toObject"]}]} */}
 ```js

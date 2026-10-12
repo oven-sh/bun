@@ -14,7 +14,7 @@ deprecated: false
 
 Vitest has two ways to run a test once per row of data. `test.each` spreads an array row into separate arguments. `test.for` passes the row as one argument. When a project mixes them, you have to check which one a test uses before you can read its callback's parameters.
 
-The rule reports nothing until you choose a method for at least one function.
+The rule does nothing until you choose a method for at least one function.
 
 ## Examples
 
@@ -53,7 +53,7 @@ test.for([
 
 ## Options
 
-Each option takes `"each"` or `"for"`, the method you want. A function you leave out is not checked.
+Each option takes the method you want, `"each"` or `"for"`. A function you leave out isn't checked.
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -62,7 +62,7 @@ Each option takes `"each"` or `"for"`, the method you want. A function you leave
 | `describe` | not checked | The method for `describe`. |
 | `suite` | not checked | The method for `suite`. |
 
-`test` and `it` are separate settings. With only `test` set, `it.each` is allowed:
+`test` and `it` are separate settings. If you only set `test`, `it.each` is still allowed:
 
 {/* good {"options": [{"test": "for"}]} */}
 ```ts

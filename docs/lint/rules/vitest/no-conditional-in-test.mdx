@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A test with a branch in it checks different things on different runs. When it fails you first have to find out which path it took, and a path that is never taken is never tested. The branch often repeats the logic of the code under test, mistakes included.
+A test with a branch in it checks different things on different runs. When it fails you first have to find out which path it took, and a path that's never taken is never tested. The branch often repeats the logic of the code under test, mistakes included.
 
-Write one test for each case, or a table of cases with `test.each`. Conditions outside a test are not reported.
+Write one test for each case, or a table of cases with `test.each`. Conditions outside a test aren't reported.
 
 ## Examples
 
@@ -64,7 +64,7 @@ test("finds the home directory", () => {
 });
 ```
 
-Not reported, because the condition decides which test runs and is not inside one:
+Not reported, because the condition decides which test runs and isn't inside one:
 
 {/* good */}
 ```ts
@@ -96,4 +96,4 @@ test.skipIf(process.env.CI || process.platform === "win32")("finds the home dire
 
 ## When not to use it
 
-If a condition in a test is fine for you as long as every `expect` runs, use `vitest/no-conditional-expect` instead.
+If you're fine with a condition in a test as long as every `expect` runs, use `vitest/no-conditional-expect` instead.

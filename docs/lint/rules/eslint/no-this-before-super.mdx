@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-In the constructor of a class that extends another, `this` does not exist until `super()` has returned. Using `this` or `super.method()` before that throws a `ReferenceError` when the object is created.
+In the constructor of a class that extends another class, `this` doesn't exist until `super()` has returned. Using `this` or `super.method()` before that throws a `ReferenceError` when the object is created.
 
-The rule follows the branches of the constructor: `super()` has to be called on every path that leads to the `this`. Classes without `extends` are not checked.
+The rule follows the constructor's branches, so `super()` must be called on every path that leads to the `this`. Classes without `extends` aren't checked.
 
-This rule is on by default in JavaScript files. In TypeScript files it is off by default, because TypeScript reports the same mistake.
+This rule is on by default in JavaScript files. In TypeScript files it's off by default, because TypeScript reports the same mistake.
 
 ## Examples
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: true
 ---
 
-`fs.readFileSync()` and its relatives block the thread until the work is done. In a server, no other request is handled in the meantime.
+`fs.readFileSync()` and its relatives block the thread until the work is done. In a server, no other request gets handled in the meantime.
 
-The rule goes by the name alone: it reports every `object.somethingSync`, called or not, whatever the object is. It does not see a function that is imported by name, such as `import { readFileSync } from "node:fs"`.
+The rule only goes by the name. It reports every `object.somethingSync`, called or not, no matter what the object is. It doesn't catch a function that's imported by name, such as `import { readFileSync } from "node:fs"`.
 
 ESLint has deprecated this rule. Use `n/no-sync` instead, which reports those calls too.
 
@@ -44,7 +44,7 @@ async function handle(request) {
 }
 ```
 
-This blocks the thread too, but the rule does not see it:
+This blocks the thread too, but the rule doesn't catch it:
 
 {/* good */}
 ```js
@@ -77,4 +77,4 @@ function loadConfig() {
 
 ## When not to use it
 
-In a script or a command-line tool nothing else waits for the thread, and the sync methods are simpler.
+In a script or a command-line tool, nothing else is waiting for the thread, and the sync methods are simpler.

@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-Inside a `try` block, `return save()` leaves the function before the promise settles. If it rejects, the `catch` does not run, and the `finally` runs too early. `return await save()` keeps the function inside the `try` until the promise is done.
+Inside a `try` block, `return save()` leaves the function before the promise settles. If it rejects, the `catch` doesn't run, and the `finally` runs too early. `return await save()` keeps the function inside the `try` until the promise is done.
 
-The same goes for a `catch` block that is followed by a `finally`, and for code after a `using` declaration, where the resource is disposed as soon as the function returns. By default the rule requires `await` in those places and reports it everywhere else. An `await` on a returned value that is not a promise is always reported.
+The same goes for a `catch` block that's followed by a `finally`, and for code after a `using` declaration, where the resource is disposed as soon as the function returns. By default the rule requires `await` in those places and reports it everywhere else. An `await` on a returned value that isn't a promise is always reported.
 
-`--fix` adds or removes the `await` where that does not affect error handling. In a `try` or after `using`, the change is a suggestion in your editor instead.
+`--fix` adds or removes the `await` where that doesn't affect error handling. In a `try` or after `using`, the change is a suggestion in your editor instead.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -86,7 +86,7 @@ async function listUsers() {
 | `"always"` | `await` required | `await` required |
 | `"never"` | `await` reported | `await` reported |
 
-`"always"` keeps the function in the stack trace of an error from the promise it returns. With it, this is reported:
+`"always"` keeps the function in the stack trace when the promise it returns rejects. With it, this is reported:
 
 {/* bad {"options": ["always"]} */}
 ```ts

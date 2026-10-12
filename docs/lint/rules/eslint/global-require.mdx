@@ -12,7 +12,7 @@ typeAware: false
 deprecated: true
 ---
 
-`require()` loads a module synchronously. Inside a function, that work happens in the middle of the first call instead of at startup, and a missing module throws only when that call is made. The file's dependencies are also no longer listed in one place.
+`require()` loads a module synchronously. Inside a function, that work happens in the middle of the first call instead of at startup, and a missing module only throws when that call is made. The file's dependencies also aren't listed in one place anymore.
 
 ## Examples
 
@@ -46,7 +46,7 @@ function readConfig(path) {
 }
 ```
 
-A function of your own that is named `require` is not reported:
+Your own function named `require` isn't reported:
 
 {/* good */}
 ```js
@@ -57,4 +57,4 @@ function load(require) {
 
 ## When not to use it
 
-Loading a heavy module only when it is needed makes startup faster, and an optional dependency has to be required inside `try`. If you do either often, leave this rule off.
+Loading a heavy module only when it's needed makes startup faster, and an optional dependency must be required inside `try`. If you do either often, leave this rule off.

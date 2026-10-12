@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-When every branch of an `if` starts or ends with the same statements, that code runs whatever the condition is. Repeating it hides what really differs between the branches, and a later edit can change one copy and miss the others.
+When every branch of an `if` starts or ends with the same statements, that code runs no matter what the condition is. Repeating it hides what really differs between the branches, and a later edit can change one copy and miss the others.
 
-The rule looks at an `if` that ends in an `else`, with any number of `else if` in between, where every branch is a block in braces. Without a final `else` nothing is reported, because the code does not always run. Branches that are completely identical are not reported either.
+The rule looks at an `if` that ends in an `else`, with any number of `else if` in between, where every branch is a block in braces. Without a final `else`, nothing is reported, because the code doesn't always run. Branches that are completely identical aren't reported either.
 
 `--fix-suggestions` moves the statement out of the `if` when exactly one statement is shared.
 
@@ -75,4 +75,4 @@ if (format === "json") {
 
 ## When not to use it
 
-Moving a statement before the `if` makes it run before the condition is evaluated. If the condition has side effects or depends on what the statement changes, the repeated code may be what you want.
+Moving a statement before the `if` makes it run before the condition is evaluated. If the condition has side effects or depends on what the statement changes, the repeated code might be what you want.

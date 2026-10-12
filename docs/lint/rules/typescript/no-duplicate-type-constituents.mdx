@@ -14,11 +14,11 @@ deprecated: false
 
 `string | number | string` means the same as `string | number`. The repeat adds nothing, and in a long union it hides what the type really allows.
 
-The rule compares types, not only text, so an alias for a type that is already in the union is found too. It also reports `| undefined` on an optional parameter, where the `?` already says it.
+The rule compares types, not only text, so it also finds an alias for a type that's already in the union. It also reports `| undefined` on an optional parameter, where the `?` already says it.
 
 `--fix` removes the repeated type.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag it's on by default in TypeScript files.
 
 ## Examples
 
@@ -55,8 +55,8 @@ interface User {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreUnions` | `false` | Do not check `\|` unions. This also allows `\| undefined` on an optional parameter. |
-| `ignoreIntersections` | `false` | Do not check `&` intersections. |
+| `ignoreUnions` | `false` | Don't check `\|` unions. This also allows `\| undefined` on an optional parameter. |
+| `ignoreIntersections` | `false` | Don't check `&` intersections. |
 
 {/* good {"options": [{"ignoreUnions": true}]} */}
 ```ts

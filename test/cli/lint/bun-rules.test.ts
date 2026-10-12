@@ -1754,6 +1754,22 @@ const testRules: Record<string, Case[]> = {
     `test.todo("a", () => {});`,
     `test.todoIf(a)("b");`,
     `own("a", () => {});`,
+    // `**` can be nothing, and a star is for every character of a name.
+    ...[
+      `test("a", () => {\n  request(b).expect(200);\n});`,
+      `test("a", () => {\n  request(b).get("/").set("c").expect(200);\n});`,
+      `test("a", () => {\n  check_all$(b);\n});`,
+      `test("a", () => {\n  b.c.verify();\n});`,
+      `test("a", () => {\n  verify();\n});`,
+      `test("a", () => {\n  $assert(b);\n});`,
+      `«test»("a", () => {\n  request(b).get("/");\n});`,
+      `«test»("a", () => {\n  requests.expect(200);\n});`,
+      `«test»("a", () => {\n  recheck(b);\n});`,
+      `«test»("a", () => {\n  assert(b);\n});`,
+    ].map(code => ({
+      code,
+      options: [{ assertFunctionNames: ["request.**.expect", "check*", "**.verify", "$ass*"] }],
+    })),
     // A wrapper of one's own, a method, a hook.
     ...[
       `«own»("a", () => {});`,

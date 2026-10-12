@@ -3,11 +3,11 @@
 //! the working directory.
 //!
 //! Here is which files there are, and which directory their lines belong to. What a line matches is
-//! said by [`bun_glob::ignore`].
+//! said by [`bun_lint::ignore`].
 
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_glob::ignore::{IgnoreOptions, IgnoreRules, Verdict};
+use bun_lint::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 use bun_sema::util::FxHashSet;
 use std::sync::Arc;
 

@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-Some components read `props.name`, others take `{ name }` apart first. With destructuring, the top of a component lists everything it uses. Without it, you always see where a value comes from. This rule keeps a codebase to one of the two.
+Some components read `props.name`, and others destructure `{ name }` first. With destructuring, the top of a component lists everything it uses. Without it, you always see where a value comes from. This rule makes your codebase stick to one style.
 
 By default it asks for destructuring, in function components (`props`, `context`) and in class components (`this.props`, `this.state`, `this.context`).
 
-`--fix` only works for `destructureInSignature`: it moves the destructuring into the parameter list.
+`--fix` only works for `destructureInSignature`. It moves the destructuring into the parameter list.
 
 ## Examples
 
@@ -70,7 +70,7 @@ function Badge(props) {
 "react/destructuring-assignment" = ["error", "always", { destructureInSignature = "always" }]
 ```
 
-The first option is `"always"` (default) or `"never"`. With `"never"`, destructuring is what gets reported:
+The first option is `"always"` (default) or `"never"`. With `"never"`, the rule reports destructuring instead:
 
 {/* bad {"options": ["never"]} */}
 ```jsx

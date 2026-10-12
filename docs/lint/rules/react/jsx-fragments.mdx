@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`<>...</>` and `<React.Fragment>...</React.Fragment>` do the same thing. Mixing them makes readers wonder if there is a difference. By default the rule asks for the short form.
+`<>...</>` and `<React.Fragment>...</React.Fragment>` do the same thing. Mixing them makes readers wonder if there's a difference. By default the rule asks for the short form.
 
-A fragment with a prop such as `key` is never reported, because the short form cannot take props. A plain `<Fragment>` counts if `Fragment` comes from `"react"` or from `React`.
+A fragment with a prop such as `key` is never reported, because the short form can't take props. A plain `<Fragment>` counts if `Fragment` comes from `"react"` or from `React`.
 
 `--fix` rewrites the fragment to the other form.
 

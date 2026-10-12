@@ -14,7 +14,7 @@ deprecated: false
 
 A `@deprecated` tag in a doc comment says that a function, class, property or type is going away, and usually what to use instead. Editors strike the name through, but nothing stops new code from using it. This rule reports every use, and repeats the text after the tag so you know what to switch to.
 
-It works for your own code, for packages and for the built-in types. The declaration itself and the `import` are not reported, only the places where the name is used. If only one overload of a function is deprecated, only calls to that overload are reported.
+It works for your own code, for packages and for the built-in types. The declaration itself and the `import` aren't reported, only the places where the name is used. If only one overload of a function is deprecated, only calls to that overload are reported.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -79,7 +79,7 @@ load(1);
 | --- | --- | --- |
 | `allow` | `[]` | Deprecated names that you can keep using. |
 
-An entry of `allow` is a name, or an object that also says where the name comes from:
+Each `allow` entry is a name, or an object that also says where the name comes from:
 
 | Entry | What it matches |
 | --- | --- |

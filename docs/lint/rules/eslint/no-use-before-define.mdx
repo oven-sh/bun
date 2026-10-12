@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Reading a `let`, `const`, or `class` before its declaration runs throws a `ReferenceError`. Reading a `var` early gives `undefined` without any error. Function declarations do work before their line, but a reader has to scroll down to find out what is being called.
+Reading a `let`, `const`, or `class` before its declaration runs throws a `ReferenceError`. Reading a `var` early gives `undefined` without any error. Function declarations do work before their line, but a reader has to scroll down to find out what's being called.
 
 The rule goes by position in the file. A function that mentions a variable declared below it is reported, even if the function only runs later. The options relax that.
 
@@ -56,7 +56,7 @@ start();
 | Option | Default | What it does |
 | --- | --- | --- |
 | `functions` | `true` | Report function declarations that are used early. |
-| `classes` | `true` | With `false`, a function may mention a class that is declared below it. An early use in the same scope is still reported. |
+| `classes` | `true` | With `false`, a function may mention a class that's declared below it. An early use in the same scope is still reported. |
 | `variables` | `true` | The same as `classes`, for `var`, `let`, and `const`. |
 | `allowNamedExports` | `false` | Allow `export { name }` above the declaration of `name`. |
 | `enums` | `true` | Report TypeScript enums that are used early. |
@@ -65,7 +65,7 @@ start();
 
 The string `"nofunc"` is short for `{ "functions": false }`.
 
-With `functions: false`, you can call a function declaration early. It is already defined when the file starts to run:
+With `functions: false`, you can call a function declaration early. It's already defined when the file starts to run:
 
 {/* good {"options": [{"functions": false}]} */}
 ```js
@@ -74,7 +74,7 @@ start();
 function start() {}
 ```
 
-With `variables: false`, a function may mention a variable that is declared below it:
+With `variables: false`, a function may mention a variable that's declared below it:
 
 {/* good {"options": [{"variables": false}]} */}
 ```js
@@ -85,7 +85,7 @@ function report() {
 const limit = 10;
 ```
 
-An early use in the same scope runs before the declaration, so it is still reported:
+An early use in the same scope runs before the declaration, so it's still reported:
 
 {/* bad {"options": [{"variables": false}]} */}
 ```js
@@ -102,7 +102,7 @@ export { limit };
 const limit = 10;
 ```
 
-Types do not exist when the code runs, so by default a type can be named before it is declared:
+Types don't exist when the code runs, so by default you can name a type before it's declared:
 
 {/* good */}
 ```ts

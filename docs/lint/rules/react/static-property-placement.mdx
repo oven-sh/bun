@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A class component can declare `propTypes` in three ways: as a `static` field, as a `static get` accessor, or by assigning to the class after its body. All three work. In a codebase that mixes them, you have to look in several places to find the props of a component.
+A class component can declare `propTypes` in three ways: as a `static` field, as a `static get` accessor, or by assigning to the class after its body. All three work. In a codebase that mixes them, you have to look in several places to find a component's props.
 
-The rule checks `propTypes`, `defaultProps`, `childContextTypes`, `contextTypes`, `contextType` and `displayName`. By default it asks for a `static` field. It does not look at function components.
+The rule checks `propTypes`, `defaultProps`, `childContextTypes`, `contextTypes`, `contextType` and `displayName`. By default it asks for a `static` field. It ignores function components.
 
 ## Examples
 
@@ -56,7 +56,7 @@ class Button extends React.Component {
 }
 ```
 
-Function components are not checked:
+Function components aren't checked:
 
 {/* good */}
 ```jsx
@@ -93,7 +93,7 @@ class Button extends React.Component {
 }
 ```
 
-With `"static getter"`, this is not reported:
+With `"static getter"`, this isn't reported:
 
 {/* good {"options": ["static getter"]} */}
 ```jsx

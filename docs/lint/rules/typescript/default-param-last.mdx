@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A default value only applies when the argument is left out or is `undefined`. If a required parameter follows, the caller cannot leave the first one out and has to write `undefined` to get the default.
+A default value only applies when the argument is left out or is `undefined`. If a required parameter follows, the caller can't leave the first one out and has to pass `undefined` to get the default.
 
-Optional parameters (`label?: string`) count like parameters with a default.
+Optional parameters (`label?: string`) are treated like parameters with a default.
 
-It is the TypeScript version of `default-param-last` and reports the same code. Turn on one of the two, not both.
+It's the TypeScript version of `default-param-last` and reports the same code. Turn on one of the two, not both.
 
 ## Examples
 

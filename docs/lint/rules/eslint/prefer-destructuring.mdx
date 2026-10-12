@@ -44,7 +44,7 @@ const city = user?.city;
 
 ## Options
 
-The rule takes two objects. The first says what to check, the second has `enforceForRenamedProperties`.
+The rule takes two objects. The first says what to check, and the second holds `enforceForRenamedProperties`.
 
 ```toml bunfig.toml
 [lint.rules]
@@ -55,7 +55,7 @@ prefer-destructuring = ["error", { object = true, array = false }, { enforceForR
 | --- | --- | --- |
 | `object` | `true` | Report properties: `const name = user.name`. |
 | `array` | `true` | Report elements: `const first = items[0]`. |
-| `enforceForRenamedProperties` | `false` | Also report a property that goes into a variable with another name, and a computed key. |
+| `enforceForRenamedProperties` | `false` | Also report a property that goes into a variable with a different name, and a computed key. |
 
 If you pass the first object, a key you leave out is `false`.
 

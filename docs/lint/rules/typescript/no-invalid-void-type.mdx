@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`void` says that the caller should ignore what a function returns. Anywhere else it is confusing: a variable or a parameter of type `void` can only hold `undefined`. Write `undefined` there, or make the parameter optional.
+`void` says that the caller should ignore what a function returns. Anywhere else it's confusing, because a variable or a parameter of type `void` can only hold `undefined`. Write `undefined` there, or make the parameter optional.
 
 `void` is fine as a return type and as a type argument, such as `Promise<void>`. A union is fine if every member is `void`, `never` or a generic type with `void` as an argument.
 
@@ -47,7 +47,7 @@ type MaybeAsync = void | Promise<void>;
 | Option | Default | What it does |
 | --- | --- | --- |
 | `allowInGenericTypeArguments` | `true` | `false` reports `void` as a type argument. A list of names allows it only for those types. |
-| `allowAsThisParameter` | `false` | Allow `this: void`, which says that a function does not use `this`. |
+| `allowAsThisParameter` | `false` | Allow `this: void`, which says that a function doesn't use `this`. |
 
 {/* bad {"options": [{"allowInGenericTypeArguments": false}]} */}
 ```ts

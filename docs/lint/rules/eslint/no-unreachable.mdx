@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-Statements that follow a `return`, `throw`, `break`, or `continue` in the same block never run. Neither does code after a loop that never ends. It is either dead code to delete, or code that was meant to run and sits in the wrong place.
+Statements that follow a `return`, `throw`, `break`, or `continue` in the same block never run. Neither does code after a loop that never ends. It's either dead code you can delete, or code that was meant to run and is in the wrong place.
 
-Function declarations and `var` declarations without a value are hoisted, so they are not reported.
+Function declarations and `var` declarations without a value are hoisted, so they aren't reported.
 
-This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript finds unreachable code itself.
+This rule is on by default in JavaScript files. It's off in TypeScript files, where TypeScript finds unreachable code itself.
 
 ## Examples
 
@@ -59,7 +59,7 @@ function area(shape) {
 }
 ```
 
-`super()` creates the fields of a subclass. If the constructor never calls it, the fields are reported:
+`super()` creates a subclass's fields. If the constructor never calls it, the fields are reported:
 
 {/* bad */}
 ```js

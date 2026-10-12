@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`constructor(private name: string) {}` declares a field and assigns it in one step. That is short, but the field is not listed with the other fields of the class, so it is easy to miss. It is also not plain type syntax, so tools that only strip types, such as Node.js, reject it.
+`constructor(private name: string) {}` declares a field and assigns it in one step. That's short, but the field isn't listed with the class's other fields, so it's easy to miss. It also isn't plain type syntax, so tools that only strip types, such as Node.js, reject it.
 
-By default, every parameter property is reported. The `prefer` option turns the rule around.
+By default, every parameter property is reported. The `prefer` option flips the rule.
 
 ## Examples
 
@@ -44,7 +44,7 @@ class User {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `prefer` | `"class-property"` | `"parameter-property"` turns the rule around and reports fields that could be parameter properties. |
+| `prefer` | `"class-property"` | `"parameter-property"` flips the rule and reports fields that could be parameter properties. |
 | `allow` | `[]` | Modifiers to leave alone: `"readonly"`, `"private"`, `"protected"`, `"public"`, `"private readonly"`, `"protected readonly"`, `"public readonly"`. |
 
 With `prefer: "parameter-property"`, a field is reported if it has no initial value, and the constructor starts by assigning it from a parameter with the same name and the same type:
@@ -67,7 +67,7 @@ class User {
 }
 ```
 
-An entry of `allow` has to match all the modifiers. `"readonly"` allows `readonly id` and not `private readonly id`:
+An `allow` entry must match all the modifiers. `"readonly"` allows `readonly id` but not `private readonly id`:
 
 {/* good {"options": [{"allow": ["readonly"]}]} */}
 ```ts

@@ -14,7 +14,7 @@ deprecated: false
 
 Text typed straight into JSX never goes through your translation function, so every user sees it in the language you wrote it in.
 
-By default only bare text between tags is reported. A string in braces, such as `{"Bun"}`, counts as written on purpose. The `noStrings` option reports those too.
+By default the rule only reports bare text between tags. It treats a string in braces, such as `{"Bun"}`, as written on purpose. The `noStrings` option reports those too.
 
 ## Examples
 
@@ -45,11 +45,11 @@ const brand = <strong>{"Bun"}</strong>;
 | `noStrings` | `false` | Also report strings and template literals in braces, and strings in props. |
 | `ignoreProps` | `false` | Never report anything in props. |
 | `noAttributeStrings` | `false` | Also report props with a plain string value, such as `alt="Logo"`. |
-| `allowedStrings` | `[]` | Strings that are never reported. Spaces around the text do not count. |
-| `elementOverrides` | `{}` | Other options for some components, by name. |
-| `restrictedAttributes` | `[]` | Only with an oxlint config: props that cannot have a plain string value, even with `ignoreProps`. |
+| `allowedStrings` | `[]` | Strings that are never reported. Spaces around the text don't count. |
+| `elementOverrides` | `{}` | Different options for some components, by name. |
+| `restrictedAttributes` | `[]` | Only with an oxlint config: props that can't have a plain string value, even with `ignoreProps`. |
 
-With `noStrings`, braces do not help:
+With `noStrings`, braces don't help:
 
 {/* bad {"options": [{"noStrings": true}], "count": 2} */}
 ```jsx
@@ -72,7 +72,7 @@ function Greeting({ t }) {
 const logo = <img src={logoUrl} alt="Company logo" />;
 ```
 
-`allowedStrings` is for punctuation and other text that is the same in every language:
+`allowedStrings` is for punctuation and other text that's the same in every language:
 
 {/* good {"options": [{"allowedStrings": ["|"]}]} */}
 ```jsx
@@ -85,7 +85,7 @@ const links = (
 
 ### `elementOverrides`
 
-The keys are component names, which start with a capital letter. Each value takes the options above, which replace the top-level ones for that component, and two more:
+The keys are component names, which start with a capital letter. Each value takes the options above, which replace the top-level ones for that component, plus two more:
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -110,7 +110,7 @@ const message = (
 );
 ```
 
-An empty override puts a component back on the defaults, here without `noStrings`:
+An empty override resets a component to the defaults, so here it's checked without `noStrings`:
 
 {/* good {"options": [{"noStrings": true, "elementOverrides": {"Code": {}}}]} */}
 ```jsx

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Some folders must not depend on others: code that ships to the browser must not pull in server code, and a shared library must not import from the app that uses it. You write those borders down as zones, and the rule reports every import that crosses one.
+Some folders shouldn't depend on others. Code that ships to the browser shouldn't pull in server code, and a shared library shouldn't import from the app that uses it. You describe those boundaries as zones, and the rule reports every import that crosses one.
 
 The rule does nothing until you give it zones. It checks `import`, `export .. from`, `import()` and `require()`, and only paths that resolve to a file.
 
@@ -23,7 +23,7 @@ The rule does nothing until you give it zones. It checks `import`, `export .. fr
 "import/no-restricted-paths" = ["error", { zones = [{ target = "./src/client", from = "./src/server" }] }]
 ```
 
-With this zone, files in `src/client` cannot import files in `src/server`.
+With this zone, files in `src/client` can't import files in `src/server`.
 
 Reported:
 
@@ -61,11 +61,11 @@ Each zone has these keys:
 | Key | What it does |
 | --- | --- |
 | `target` | The files the restriction applies to. A path, a glob, or a list of them. A path to a folder covers everything in it. |
-| `from` | The files that `target` cannot import. A path, a glob, or a list. A list is either all paths or all globs. |
-| `except` | Files inside `from` that can be imported after all. |
+| `from` | The files that `target` can't import. A path, a glob, or a list. A list is either all paths or all globs. |
+| `except` | Files inside `from` that you can still import. |
 | `message` | Text to add to the report. |
 
-If `from` is a path, each `except` is a path relative to `from` and must be inside it. If `from` is a glob, each `except` must be a glob too, and it has to match the absolute path of the file: `**/types.js`.
+If `from` is a path, each `except` is a path relative to `from` and must be inside it. If `from` is a glob, each `except` must be a glob too, and it needs to match the file's absolute path, like `**/types.js`.
 
 With this zone, `src/client/app.js` can import `../server/types.js` and nothing else from `src/server`:
 

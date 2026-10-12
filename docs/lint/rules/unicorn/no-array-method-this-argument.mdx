@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`map`, `filter`, and similar methods take a second argument that becomes `this` inside the callback. It sits after the callback, where it is easy to miss. With an arrow function it does nothing, because an arrow function keeps the `this` of the code around it.
+`map`, `filter`, and similar methods take a second argument that becomes `this` inside the callback. It comes after the callback, where it's easy to miss. With an arrow function it does nothing, because an arrow function keeps the `this` from the surrounding code.
 
-The rule checks `every`, `filter`, `find`, `findLast`, `findIndex`, `findLastIndex`, `flatMap`, `forEach`, `map`, and `some`, and the third argument of `Array.from()` and `Array.fromAsync()`.
+The rule checks `every`, `filter`, `find`, `findLast`, `findIndex`, `findLastIndex`, `flatMap`, `forEach`, `map`, and `some`. It also checks the third argument of `Array.from()` and `Array.fromAsync()`.
 
 ## Examples
 
@@ -48,7 +48,7 @@ const rows = items.map((item) => table.renderRow(item));
 const cards = Array.from(nodes, (node) => view.wrap(node));
 ```
 
-A call is skipped if its first argument cannot be a function. So are library methods with the same names, such as `_.map()`, `R.map()`, `$.map()`, and `React.Children.map()`, because their second argument means something else:
+The rule skips a call if its first argument can't be a function. It also skips library methods with the same names, such as `_.map()`, `R.map()`, `$.map()`, and `React.Children.map()`, because their second argument means something else:
 
 {/* good */}
 ```js

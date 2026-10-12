@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-A private member can only be assigned inside its class. If nothing there assigns it after the constructor, it never changes. `readonly` says so, and TypeScript rejects an assignment that someone adds later by mistake.
+A private member can only be assigned inside its class. If nothing there assigns it after the constructor, it never changes. `readonly` says so, and then TypeScript rejects an assignment that someone adds later by mistake.
 
-The rule checks `private` fields, `#private` fields, static ones too, and `private` parameters of the constructor. Assignments, `++`, `--`, `delete`, and destructuring into the member count as changes. Changing what is inside the value, such as `this.entries.set(...)`, does not.
+The rule checks `private` fields and `#private` fields, including static ones, and `private` constructor parameters. Assignments, `++`, `--`, `delete`, and destructuring into the member count as changes. Changing what's inside the value, such as `this.entries.set(...)`, doesn't.
 
 `--fix` adds `readonly`.
 
@@ -66,7 +66,7 @@ class Cache {
 | --- | --- | --- |
 | `onlyInlineLambdas` | `false` | Skip members that are declared with a value other than an arrow function. |
 
-With `onlyInlineLambdas: true`, this is not reported:
+With `onlyInlineLambdas: true`, this isn't reported:
 
 {/* good {"options": [{"onlyInlineLambdas": true}]} */}
 ```ts
@@ -75,7 +75,7 @@ class Button {
 }
 ```
 
-An arrow function is still reported, and so is a member that is declared without a value:
+An arrow function is still reported, and so is a member that's declared without a value:
 
 {/* bad {"options": [{"onlyInlineLambdas": true}], "count": 2} */}
 ```ts

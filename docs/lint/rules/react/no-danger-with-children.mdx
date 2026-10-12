@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`dangerouslySetInnerHTML` replaces everything inside an element, so it cannot be combined with children. React throws an error when it renders a DOM element that has both.
+`dangerouslySetInnerHTML` replaces everything inside an element, so you can't combine it with children. React throws an error when it renders a DOM element that has both.
 
-Children count whether they are between the tags, in a `children` prop, or the third argument of `React.createElement`. Props that are spread from an object literal in a variable are followed.
+Children count whether they're between the tags, in a `children` prop, or the third argument of `React.createElement`. The rule also follows props that are spread from an object literal in a variable.
 
 ## Examples
 
@@ -45,7 +45,7 @@ const article = <div dangerouslySetInnerHTML={{ __html: post.body }} />;
 const placeholder = <div>Loading</div>;
 ```
 
-A line break between the tags is not a child:
+A line break between the tags isn't a child:
 
 {/* good */}
 ```jsx

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A property that starts with the same value in every instance does not need the constructor. As a class field it sits at the top of the class, where you look to see what an instance has. A constructor that did nothing else can go.
+A property that starts with the same value in every instance doesn't need the constructor. As a class field, it sits at the top of the class, where you look to see what an instance has. If the constructor did nothing else, you can delete it.
 
-Only the first statement of the constructor is checked. It is reported if it assigns a string, number, `BigInt`, boolean, `null` or regular expression literal to a property of `this`.
+The rule only checks the constructor's first statement. It's reported if it assigns a string, number, `BigInt`, boolean, `null` or regular expression literal to a property of `this`.
 
 `--fix` moves the value to a field.
 
@@ -40,7 +40,7 @@ class Counter {
 }
 ```
 
-A value that depends on the arguments, or that is built when the constructor runs, stays where it is:
+A value that depends on the arguments, or that's built when the constructor runs, stays where it is:
 
 {/* good */}
 ```js
@@ -57,7 +57,7 @@ class Queue {
 }
 ```
 
-An assignment that comes after another statement, such as `super()`, is not reported:
+An assignment that comes after another statement, such as `super()`, isn't reported:
 
 {/* good */}
 ```js
@@ -69,7 +69,7 @@ class Timer extends Emitter {
 }
 ```
 
-If the field already has a value, the constructor overwrites it right away, and that is reported too. `--fix` leaves this alone. `--fix-suggestions` keeps the value from the constructor.
+If the field already has a value, the constructor overwrites it right away, and that's reported too. `--fix` leaves this alone. `--fix-suggestions` keeps the value from the constructor.
 
 {/* bad */}
 ```js

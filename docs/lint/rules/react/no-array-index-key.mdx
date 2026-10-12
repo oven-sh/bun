@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-React uses `key` to tell which item of a list is which between two renders. An index names a position, not an item. After you insert, remove or sort items, React matches components with the wrong data: an input keeps the text that was typed for another row.
+React uses `key` to tell which list item is which between two renders. An index names a position, not an item. After you insert, remove or sort items, React matches components with the wrong data. For example, an input keeps the text that was typed for another row.
 
 The rule looks at the index parameter of array callbacks (`map`, `flatMap`, `forEach`, `filter`, `find`, `findIndex`, `some`, `every`, `reduce`, `reduceRight`) and of `React.Children.map` and `React.Children.forEach`. It also finds the index in a template literal, in a concatenation, in `index.toString()` and in `String(index)`.
 
@@ -41,4 +41,4 @@ const list = todos.map(todo => <Todo key={todo.id} {...todo} />);
 
 ## When not to use it
 
-An index is a fine key for a list that is never reordered, filtered or added to.
+An index is a fine key for a list that's never reordered, filtered or added to.

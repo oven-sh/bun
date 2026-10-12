@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When an inner variable has the name of an outer one, the outer one cannot be reached from there anymore. A reader who has the outer meaning in mind reads the inner code wrong, and moving a line in or out of the block silently changes what the name refers to.
+When an inner variable has the same name as an outer one, you can't reach the outer one from there anymore. A reader who has the outer meaning in mind misreads the inner code, and moving a line in or out of the block silently changes what the name refers to.
 
 ## Examples
 
@@ -46,7 +46,7 @@ function greet(guest) {
 | `builtinGlobals` | `false` | Also report names of globals, such as `Map` or `Object`. |
 | `hoist` | `"functions"` | Whether to report when the outer declaration comes after the inner one. See below. |
 | `ignoreOnInitialization` | `false` | Allow a callback's variable to shadow the variable that the call is assigned to. |
-| `ignoreTypeValueShadow` | `true` | Allow a value with the name of a type, and the reverse. |
+| `ignoreTypeValueShadow` | `true` | Allow a value with the same name as a type, and the reverse. |
 | `ignoreFunctionTypeParameterNameValueShadow` | `true` | Allow the parameter names of function types and signatures. |
 
 ### `allow`
@@ -72,13 +72,13 @@ function index(entries) {
 
 ### `hoist`
 
-An inner variable can come before the outer declaration of the same name. `hoist` says when that is reported.
+An inner variable can come before the outer declaration of the same name. `hoist` controls when that's reported.
 
 | Value | What is reported |
 | --- | --- |
 | `"functions"` | Only when the outer declaration is a function declaration. |
-| `"types"` | Only when it is a type alias or an interface. |
-| `"functions-and-types"` | When it is any of these. |
+| `"types"` | Only when it's a type alias or an interface. |
+| `"functions-and-types"` | When it's any of these. |
 | `"all"` | Always. |
 | `"never"` | Never. |
 

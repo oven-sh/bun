@@ -44,7 +44,7 @@ class Cache {
 }
 ```
 
-Where the brackets change the meaning, they are allowed. `{ "__proto__": base }` sets the prototype and `{ ["__proto__"]: base }` adds a normal property. In a class, `["constructor"]() {}` is a normal method, and `static prototype() {}` without brackets is a syntax error.
+The brackets are allowed where they change the meaning. `{ "__proto__": base }` sets the prototype and `{ ["__proto__"]: base }` adds a normal property. In a class, `["constructor"]() {}` is a normal method, and `static prototype() {}` without brackets is a syntax error.
 
 {/* good */}
 ```js
@@ -60,7 +60,7 @@ class Cache {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `enforceForClassMembers` | `true` | Also check the methods and fields of classes. |
+| `enforceForClassMembers` | `true` | Also check class methods and fields. |
 
 {/* good {"options": [{"enforceForClassMembers": false}]} */}
 ```js

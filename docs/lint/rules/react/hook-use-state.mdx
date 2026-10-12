@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`useState` returns a value and the function that updates it. When the two names do not match, as in `[color, setFlavor]`, a reader cannot tell which setter belongs to which state. When the result is kept in one variable, every use becomes `state[0]` and `state[1]`.
+`useState` returns a value and the function that updates it. When the two names don't match, as in `[color, setFlavor]`, you can't tell which setter belongs to which state. When you keep the result in one variable, every use becomes `state[0]` and `state[1]`.
 
-The setter must be `set` followed by the name of the value with a capital first letter. The rule only looks at `useState` and `React.useState` imported from `"react"`. A `useState()` call that is returned directly, as in a custom hook, is allowed.
+The setter's name must be `set` followed by the value's name with a capital first letter. The rule only looks at `useState` and `React.useState` imported from `"react"`. A `useState()` call that is returned directly, as in a custom hook, is allowed.
 
 ## Examples
 

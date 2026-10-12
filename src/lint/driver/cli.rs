@@ -270,7 +270,7 @@ pub(crate) const PARAMS: &[Param] = clap::concat_params!(
     RULES, FILES, OUTPUT, FIXING, TYPES, OTHER, OF_ESLINT, OF_OXLINT, OPPOSITES
 );
 
-/// The flags that ESLint has and oxlint has not, which tell whom a run stands in for.
+/// Flags only ESLint has. A flag never picks the tool. These lists only let a run reject flags that can't work with its config.
 const ONLY_OF_ESLINT: [&[u8]; 36] = [
     b"config-lookup",
     b"rule",
@@ -310,17 +310,14 @@ const ONLY_OF_ESLINT: [&[u8]; 36] = [
     b"resolve-plugins-relative-to",
 ];
 
-/// The other way round, beside `--import-plugin` and the like.
-const ONLY_OF_OXLINT: [&[u8]; 11] = [
+/// Flags only oxlint has, besides `--import-plugin` and friends. Flags that `--help` lists as Bun's own don't belong here.
+const ONLY_OF_OXLINT: [&[u8]; 8] = [
     b"allow",
     b"warn",
     b"deny",
     b"deny-warnings",
     b"silent",
     b"disable-nested-config",
-    b"fix-suggestions",
-    b"fix-dangerously",
-    b"type-check",
     b"rules",
     b"lsp",
 ];
@@ -351,7 +348,7 @@ pub struct OfOneTool {
 }
 
 impl OfOneTool {
-    /// Whether nothing can be done about it in a run that has a configuration of `flavor`.
+    /// Whether the flag can't work in a run that uses a `flavor` config.
     fn means_nothing_to(&self, flavor: Flavor) -> bool {
         let is_of_eslint_8 = ONLY_OF_ESLINT_8.contains(&self.name);
         match (self.tool, flavor) {
@@ -364,6 +361,8 @@ impl OfOneTool {
             (Tool::Eslint, Flavor::EslintRc | Flavor::BuiltIn) | (Tool::Oxlint, Flavor::Oxlint) => {
                 false
             }
+            // Without a config file every built-in rule is available, so there are no plugins to turn on or off.
+            (Tool::Oxlint, Flavor::BuiltIn) => self.name.ends_with(b"-plugin"),
             (Tool::Oxlint, _) => match self.name {
                 b"allow" | b"warn" | b"deny" => is_category(&self.value),
                 name => name.ends_with(b"-plugin"),
@@ -500,8 +499,6 @@ pub struct Options {
     pub plugins: Vec<(&'static [u8], bool)>,
     /// `--type-aware`, `--no-type-aware`. `None`: as the configuration says.
     pub type_aware: Option<bool>,
-    /// The command line has `--type-aware`.
-    pub has_type_aware_flag: bool,
     /// `--infer-globals`, `--no-infer-globals`. `None`: only without a configuration file.
     pub infer_globals: Option<bool>,
     /// `--infer-globals=fast`: `InferGlobals::ByOptions` without a configuration file. It is to become what is done there
@@ -602,7 +599,6 @@ impl Default for Options {
             type_aware: None,
             infer_globals: None,
             infers_globals_by_options: false,
-            has_type_aware_flag: false,
             tsconfig: None,
             threads: 0,
             timing: false,
@@ -768,7 +764,7 @@ impl Options {
             b"exit-on-fatal-error" => self.exit_on_fatal_error = is_on,
             b"print-config" => self.print_config = owned(),
             b"doctor" => self.doctor = is_on,
-            b"type-aware" => (self.type_aware, self.has_type_aware_flag) = (Some(is_on), is_on),
+            b"type-aware" => self.type_aware = Some(is_on),
             b"infer-globals" => self.infer_globals = Some(is_on),
             b"tsconfig" | b"project" => self.tsconfig = owned(),
             b"threads" | b"concurrency" => match (name, text) {
@@ -869,19 +865,12 @@ impl Options {
         merge(&mut self.parser_options, options);
     }
 
-    /// What is set so far was not written for ESLint or for oxlint.
+    /// Call after reading bunfig.toml. A key is never rejected as another tool's flag.
     pub(crate) fn forget_whose_flags_it_has(&mut self) {
         self.of_one_tool.clear();
-        self.has_type_aware_flag = false;
     }
 
-    /// Whether the command line has a flag that `tool` has and the other tool has not.
-    pub(crate) fn has_flag_of(&self, tool: Tool) -> bool {
-        self.of_one_tool.iter().any(|it| it.tool == tool)
-    }
-
-    /// The first flag of the command line that nothing can be done about in a run that has a configuration of `flavor`: as it is
-    /// written, and whose it is.
+    /// Returns the first flag that can't work with a `flavor` config, as written, and the tool it belongs to.
     pub(crate) fn flag_that_means_nothing_to(
         &self,
         flavor: Flavor,
@@ -912,10 +901,6 @@ impl Options {
         // ESLint refuses `--fix-type` in a run that fixes nothing. As a default it waits for one that does.
         if !alone.fix && !alone.fix_dry_run {
             defaults.fix_type = None;
-        }
-        // `typeCheck` asks for types.
-        if alone.type_aware == Some(false) {
-            defaults.type_check = false;
         }
         if !defaults.overrides.is_empty() {
             defaults.of_command_line = Some(Box::new(alone));

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Whatever a test does after its last assertion is not checked. If the test ends with a click, a request or a save, that step can do the wrong thing and the test still passes.
+Anything a test does after its last assertion isn't checked. If the test ends with a click, a request or a save, that step can do the wrong thing and the test still passes.
 
-The last statement of the test has to be a call to `expect`, with or without `await`. A test with an empty body is reported. So is one that ends with an `if`, a loop or a `return`, even if there is an `expect` inside.
+The test's last statement must be a call to `expect`, with or without `await`. A test with an empty body is reported. So is one that ends with an `if`, a loop or a `return`, even if there's an `expect` inside.
 
 ## Examples
 
@@ -62,7 +62,7 @@ test("loads the user", async () => {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `assertFunctionNames` | any name that contains `expect` | The calls that count as an assertion, besides `expect` itself. |
-| `additionalTestBlockFunctions` | `[]` | Other functions to check like `test`: your own wrappers around it, or a hook such as `afterEach`. |
+| `additionalTestBlockFunctions` | `[]` | Other functions to check like `test`, such as your own wrappers around it or a hook like `afterEach`. |
 
 By default, a helper or a method with `expect` in its name counts:
 
@@ -79,7 +79,7 @@ test("responds with 200", async () => {
 });
 ```
 
-With `assertFunctionNames`, only `expect` and the names in the list count. A name can be a dotted path. `*` matches any letters and digits in one part of the path, and `**` matches any number of parts.
+With `assertFunctionNames`, only `expect` and the names in the list count. A name can be a dotted path. `*` matches any characters in one part of the path, and `**` matches any number of parts, including none.
 
 {/* good {"options": [{"assertFunctionNames": ["assert*", "request.**.expect"]}]} */}
 ```ts
@@ -103,7 +103,7 @@ test("has a valid user", () => {
 });
 ```
 
-With `additionalTestBlockFunctions`, a wrapper of your own or a hook is checked too:
+With `additionalTestBlockFunctions`, your own wrapper or a hook is checked too:
 
 {/* bad {"options": [{"additionalTestBlockFunctions": ["scenario"]}]} */}
 ```ts

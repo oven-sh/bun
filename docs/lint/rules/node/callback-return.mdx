@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Calling a callback does not end the function. Without a `return`, the code after the call keeps running, and the callback is often called a second time.
+Calling a callback doesn't end the function. Without a `return`, the code after the call keeps running, and the callback often gets called a second time.
 
-The rule looks at calls to `callback`, `cb` and `next` inside functions. A call is fine if it is returned, if a `return` follows it directly, or if it is the last statement of the function.
+The rule looks at calls to `callback`, `cb` and `next` inside functions. A call is fine if you return it, if a `return` comes right after it, or if it's the last statement in the function.
 
 ## Examples
 
@@ -50,7 +50,7 @@ function saveUser(user, callback) {
 }
 ```
 
-The rule does not follow the control flow. A call at the end of an `if` block is reported even if nothing runs after it:
+The rule doesn't follow control flow. A call at the end of an `if` block is reported even if nothing runs after it:
 
 {/* bad */}
 ```js
@@ -94,4 +94,4 @@ function show(req, res, next) {
 
 ## When not to use it
 
-The rule goes by names. It reports a function named `next` that is not a callback, and misses a callback with another name. Code that uses promises and `async` functions does not need it.
+The rule goes by names. It reports a function named `next` that isn't a callback, and misses a callback with another name. Code that uses promises and `async` functions doesn't need it.

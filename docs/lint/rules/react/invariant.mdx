@@ -14,7 +14,7 @@ deprecated: false
 
 The React Compiler checks its own work while it analyzes a component. When one of these checks fails, it gives up on that component or hook and leaves it unoptimized. The code still runs as written.
 
-A report from this rule does not mean that your code breaks a rule of React. It means that the compiler cannot handle the way it is written. Writing it another way usually gets the component compiled again.
+A report from this rule doesn't mean your code breaks one of React's rules. It means the compiler can't handle the way it's written. Writing it another way usually gets the component compiled again.
 
 ## Examples
 
@@ -44,4 +44,4 @@ function Results(props) {
 
 ## When not to use it
 
-If you do not build with the React Compiler, nothing is lost when it gives up on a component.
+If you don't build with the React Compiler, you lose nothing when it gives up on a component.

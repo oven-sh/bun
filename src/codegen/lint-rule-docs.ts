@@ -1,17 +1,17 @@
-// The pages about the lint rules, `docs/lint/rules/<plugin>/<rule>.mdx`.
+// Generates part of the lint rule docs in `docs/lint/rules/<plugin>/<rule>.mdx`.
 //
-// A person writes `title`, `description` and the text. Everything else in the frontmatter, and `index.mdx`, come from
-// `bun lint --rules -f json`:
+// You write `title`, `description` and the body by hand. This script fills in the rest of the frontmatter and writes
+// `index.mdx`, using the output of `bun lint --rules -f json`:
 //
-//   bun src/codegen/lint-rule-docs.ts --write [--bun=<a bun that has the rules> | --rules=<what it prints, in a file>]
+//   bun src/codegen/lint-rule-docs.ts --write [--bun=<path to bun> | --rules=<file with that JSON>]
 //
-// `test/cli/lint/rule-docs.test.ts` fails if they are out of date, and runs every example of every page.
+// `test/cli/lint/rule-docs.test.ts` fails if the generated parts are stale. It also runs every example on every page.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
 export const pagesRoot = join(import.meta.dirname, "..", "..", "docs", "lint", "rules");
 
-/** A row of `bun lint --rules -f json`. */
+/** One entry in the output of `bun lint --rules -f json`. */
 export type Rule = {
   scope: string;
   value: string;
@@ -27,7 +27,7 @@ export type Rule = {
   docs_url: string;
 };
 
-/** `typescript/no-explicit-any`, from the URL of the page. */
+/** Page name for a rule, e.g. `typescript/no-explicit-any`. Taken from its docs URL. */
 export const pageOf = (rule: Rule) =>
   rule.docs_url.slice(rule.docs_url.indexOf("/lint/rules/") + "/lint/rules/".length);
 
@@ -36,7 +36,7 @@ const walk = (dir: string): string[] =>
     statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : [join(dir, name)],
   );
 
-/** The names of the pages that exist: `typescript/no-explicit-any`. */
+/** Names of all existing pages, e.g. `typescript/no-explicit-any`. */
 export const pageNames = (root = pagesRoot) =>
   walk(root)
     .filter(path => path.endsWith(".mdx"))
@@ -106,7 +106,7 @@ const PLUGINS: Record<string, string> = {
   "prettier": "Prettier",
 };
 
-/** `index.mdx`: every rule, by plugin. */
+/** Contents of `index.mdx`: a table of every rule, grouped by plugin. */
 export function indexFor(rules: Rule[]) {
   const cell = (text: string) => text.replaceAll("|", "\\|");
   const sections = Object.entries(PLUGINS).map(([plugin, name]) => {
@@ -133,7 +133,7 @@ ${sections.join("\n")}`;
 
 export type Example = {
   page: string;
-  /** The line of the page that the code block starts on. */
+  /** Line number in the page where the code block starts. */
   line: number;
   want: "bad" | "good";
   language: string;
@@ -142,22 +142,27 @@ export type Example = {
   count?: number;
   filename: string;
   compilerOptions?: Record<string, unknown>;
-  /** It is a project of its own, and the working directory of a run of its own: for options that are paths from there. */
+  /** Lint this example in its own project directory. Needed when options are paths relative to the project root. */
   root: boolean;
-  /** It is linted beside an `.oxlintrc.json` that turns the rule on, in a run of its own: for a rule that reports only there. */
+  /** Lint this example with an `.oxlintrc.json` that enables the rule. For rules that only report with an oxlint config. */
   config?: "oxlint";
   settings?: Record<string, unknown>;
-  /** Packages that are installed next to it, with their versions: for a rule that asks. */
+  /** Fake packages to install next to the example (name to version). For rules that check installed versions. */
   packages?: Record<string, string>;
-  /** Other files, next to it. */
+  /** Extra files to write next to the example. */
   files: Record<string, string>;
 };
 
 /**
- * The examples of a page. On the line before a code block: `{/* bad *\/}` (the rule reports it), `{/* good *\/}` (it does not),
- * each with JSON behind the word: `options`, `count`, `filename`, `compilerOptions`, `root`, `config`, `settings`, `packages`. `{/* file "name" *\/}`: a file next to the
- * next example. `{/* skip *\/}`: not run. `{/* never reports *\/}` on a line of its own: the rule reports nothing, so the page needs no
- * example that is reported.
+ * Parses the examples on a page. Each code block needs a marker comment on the line before it:
+ *
+ * - `{/* bad *\/}`: the rule must report this code.
+ * - `{/* good *\/}`: the rule must not report this code.
+ * - `{/* file "name" *\/}`: an extra file for the next example.
+ * - `{/* skip *\/}`: don't run this block.
+ *
+ * `bad` and `good` can be followed by JSON with `options`, `count`, `filename`, `compilerOptions`, `root`, `config`,
+ * `settings` or `packages`. A page with `{/* never reports *\/}` on its own line doesn't need a `bad` example.
  */
 export function examplesOf(page: string, body: string, firstLine: number): { examples: Example[]; problems: string[] } {
   const [examples, problems]: [Example[], string[]] = [[], []];
@@ -171,15 +176,14 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
       try {
         if (marker[2]) meta = JSON.parse(marker[2]);
       } catch {
-        problems.push(`line ${firstLine + i}: what follows "${marker[1]}" is not JSON`);
+        problems.push(`line ${firstLine + i}: invalid JSON after "${marker[1]}"`);
       }
       pending = { word: marker[1], meta, line: firstLine + i };
       continue;
     }
     const fence = /^```(\w*)/.exec(lines[i]);
     if (!fence) {
-      if (pending && lines[i].trim())
-        problems.push(`line ${pending.line}: the marker is not right before a code block`);
+      if (pending && lines[i].trim()) problems.push(`line ${pending.line}: marker must be directly above a code block`);
       if (lines[i].trim()) pending = null;
       continue;
     }
@@ -188,7 +192,7 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
     const code = lines.slice(i + 1, end).join("\n") + "\n";
     if (!pending) {
       if (/^([cm]?[jt]s|[jt]sx)$/.test(fence[1]))
-        problems.push(`line ${firstLine + i}: a ${fence[1]} block needs a marker: bad, good, file or skip`);
+        problems.push(`line ${firstLine + i}: ${fence[1]} block has no marker (bad, good, file or skip)`);
     } else if (pending.word === "file") {
       files[String(pending.meta)] = code;
     } else if (pending.word !== "skip") {
@@ -224,9 +228,8 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
     i = end;
   }
   const neverReports = lines.includes("{/* never reports */}");
-  if (!neverReports && !examples.some(it => it.want === "bad"))
-    problems.push("there is no example that is reported: {/* bad */}");
-  if (!examples.some(it => it.want === "good")) problems.push("there is no example that is not reported: {/* good */}");
+  if (!neverReports && !examples.some(it => it.want === "bad")) problems.push("missing a {/* bad */} example");
+  if (!examples.some(it => it.want === "good")) problems.push("missing a {/* good */} example");
   return { examples, problems };
 }
 
@@ -251,7 +254,7 @@ if (import.meta.main) {
   for (const rule of rules) {
     const path = join(pagesRoot, pageOf(rule) + ".mdx");
     if (!existsSync(path)) {
-      console.error(`no page: ${relative(process.cwd(), path)}`);
+      console.error(`missing page: ${relative(process.cwd(), path)}`);
       continue;
     }
     const page = readPage(readFileSync(path, "utf8"));

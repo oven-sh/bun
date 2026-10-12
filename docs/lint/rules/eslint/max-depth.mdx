@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-To understand a line that sits five blocks deep, you have to keep every condition and loop around it in your head. This rule reports a statement that is nested deeper than the maximum, which is 4 by default.
+To understand a line that sits five blocks deep, you have to keep every condition and loop around it in your head. This rule reports any statement nested deeper than the maximum, which is 4 by default.
 
 `if`, `switch`, `try`, `for`, `while`, `do` and `with` each add one level. Every function starts again at zero.
 
@@ -81,6 +81,6 @@ max-depth = ["error", 3]
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `max` | `4` | The deepest level that is allowed. `maximum` is an older name for it. |
+| `max` | `4` | The deepest level allowed. `maximum` is an older name for it. |
 
 A number alone is short for `{ "max": number }`.

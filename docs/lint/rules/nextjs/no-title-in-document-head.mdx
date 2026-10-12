@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`pages/_document.js` is shared by all pages, so a `<title>` in it gives every page the same title, and it can clash with the title a page sets for itself. Set the title in each page, with `Head` from `next/head`.
+Every page shares `pages/_document.js`, so a `<title>` in it gives every page the same title, and it can clash with the title a page sets for itself. Set the title in each page, with `Head` from `next/head`.
 
-The rule reports a `<title>` that is a direct child of the `Head` you import from `next/document`.
+The rule reports a `<title>` that's a direct child of the `Head` you import from `next/document`.
 
 ## Examples
 
@@ -54,7 +54,7 @@ export default function Home() {
 }
 ```
 
-The rule only follows the first name in the braces of the import. If `Head` is not first, nothing is reported:
+The rule only follows the first name in the import's braces. If `Head` isn't first, nothing is reported:
 
 {/* good {"filename": "pages/_document.jsx"} */}
 ```jsx

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A statement that is only `new Error("...")` creates an error and discards it. Nothing is thrown, and the code carries on as if the check passed.
+A statement that's only `new Error("...")` creates an error and throws it away. Nothing is thrown, and the code carries on as if the check passed.
 
-An error that is assigned, returned or passed to a function is not reported. Only `Error` itself is checked, not other classes such as `TypeError`.
+An error that's assigned, returned or passed to a function isn't reported. Only `Error` itself is checked, not other classes such as `TypeError`.
 
 `--fix-suggestions` adds the `throw`.
 

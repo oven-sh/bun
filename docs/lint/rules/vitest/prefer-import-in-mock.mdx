@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-TypeScript does not check a path that is written as a string. With `vi.mock(import("./api"))` it knows which module is mocked, so a wrong path is a type error and `importOriginal()` in the factory has the type of the module.
+TypeScript doesn't check a path that's written as a string. With `vi.mock(import("./api"))` it knows which module is mocked, so a wrong path is a type error and `importOriginal()` in the factory has the module's type.
 
 `--fix` wraps the string in `import()`.
 

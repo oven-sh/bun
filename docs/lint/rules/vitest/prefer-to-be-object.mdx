@@ -14,7 +14,7 @@ deprecated: false
 
 `expectTypeOf()` has its own matcher for object types, `toBeObject()`. `toBeInstanceOf(Object)` and an `instanceof Object` check are longer ways to ask the same question.
 
-Only `expectTypeOf()` is checked. `expect(value).toBeInstanceOf(Object)` is not reported.
+The rule only checks `expectTypeOf()`. `expect(value).toBeInstanceOf(Object)` isn't reported.
 
 `--fix` rewrites the assertion to `toBeObject()`, or to `.not.toBeObject()` if the original tested for the opposite.
 

@@ -14,7 +14,7 @@ deprecated: false
 
 Without a return type, TypeScript works out what a function returns from its body. Change the body and the type changes with it, and the error shows up in the callers, far from the edit. With a return type, the error is on the `return` that no longer fits.
 
-A function that already gets its type from somewhere else is not reported: a callback passed as an argument, or the value of a variable or property that has a type.
+A function that already gets its type from somewhere else isn't reported, like a callback passed as an argument, or the value of a variable or property that has a type.
 
 ## Examples
 
@@ -59,13 +59,13 @@ class Cart {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowExpressions` | `false` | Allow a function expression, unless it is the value of a variable, a class member or an `export default`. |
-| `allowTypedFunctionExpressions` | `true` | Allow a function expression that gets its type from a typed variable or property, from an `as`, or from the call it is passed to. |
+| `allowExpressions` | `false` | Allow a function expression, unless it's the value of a variable, a class member or an `export default`. |
+| `allowTypedFunctionExpressions` | `true` | Allow a function expression that gets its type from a typed variable or property, from an `as`, or from the call it's passed to. |
 | `allowHigherOrderFunctions` | `true` | Allow a function that returns another function right away. The inner function is still checked. |
 | `allowDirectConstAssertionInArrowFunctions` | `true` | Allow `() => value as const`. |
 | `allowConciseArrowFunctionExpressionsStartingWithVoid` | `false` | Allow `() => void save()`. |
 | `allowFunctionsWithoutTypeParameters` | `false` | Only check generic functions. |
-| `allowIIFEs` | `false` | Allow a function that is called where it is written: `(() => { ... })()`. |
+| `allowIIFEs` | `false` | Allow a function that's called where it's written: `(() => { ... })()`. |
 | `allowedNames` | `[]` | Names of functions and methods that are never reported. |
 
 With `allowHigherOrderFunctions`, only the function that does the work needs a type:
@@ -80,7 +80,7 @@ const multiplyBy = (factor: number) => (value: number): number => value * factor
 const multiplyBy = (factor: number) => (value: number): number => value * factor;
 ```
 
-With `allowExpressions`, a function inside a larger expression is allowed. One that is stored under a name is still reported:
+With `allowExpressions`, a function inside a larger expression is allowed. One that's stored under a name is still reported:
 
 {/* good {"options": [{"allowExpressions": true}]} */}
 ```ts

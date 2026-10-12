@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-If a file exports one thing, that thing is what the file is for, and a default export says so. Whoever imports it does not have to look up the name.
+If a file exports one thing, that thing is what the file is for, and a default export says so. Anyone who imports it doesn't have to look up the name.
 
-A file is left alone if it has a default export, an `export *`, or an exported `type` or `interface`.
+The rule skips a file if it has a default export, an `export *`, or an exported `type` or `interface`.
 
 ## Examples
 

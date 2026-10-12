@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A fallback written as `name = name || "stranger"` is hidden in the function body. A default parameter puts it in the signature, where callers and editors see it.
+A fallback written as `name = name || "stranger"` is hidden in the function body. A default parameter puts it in the signature, where callers and editors can see it.
 
 The rule reports `||`, `??`, `||=` and `??=` when the fallback is a literal and the parameter is the last one. It reports nothing if an earlier statement in the function could have a side effect, such as a function call.
 
@@ -49,7 +49,7 @@ function connect(host, port = 8080) {
 }
 ```
 
-A parameter that is not the last one and a fallback that is not a literal are left alone:
+A parameter that isn't the last one and a fallback that isn't a literal are left alone:
 
 {/* good */}
 ```js

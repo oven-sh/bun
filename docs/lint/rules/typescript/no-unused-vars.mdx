@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A name that is declared and never read is dead code. Often it points at a mistake: a result you forgot to return, an import left behind after an edit, or a typo that made two variables out of one.
+A name that's declared and never read is dead code. It often points at a mistake, like a result you forgot to return, an import left behind after an edit, or a typo that turned one variable into two.
 
-"Used" means read, so a variable that is only assigned to is reported. Exported names are not. Unlike ESLint's `no-unused-vars`, this rule also checks types, interfaces, and enums, and it knows that `options: Options` uses `Options`.
+"Used" means read, so a variable that's only assigned to is reported. Exported names aren't. Unlike ESLint's `no-unused-vars`, this rule also checks types, interfaces, and enums, and it knows that `options: Options` uses `Options`.
 
-To keep a name that you do not use, start it with `_`.
+To keep a name that you don't use, start it with `_`.
 
 This rule is on by default in TypeScript files.
 
@@ -57,7 +57,7 @@ export async function load(path: string, options: Options) {
 }
 ```
 
-A value that is only used in a type, through `typeof`, is reported. Nothing reads it when the code runs:
+A value that's only used in a type, through `typeof`, is reported. Nothing reads it when the code runs:
 
 {/* bad */}
 ```ts
@@ -70,12 +70,12 @@ export type Settings = typeof defaults;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `vars` | `"all"` | `"local"` skips variables in the global scope. The top level of a module is not the global scope, so this only matters for scripts. |
-| `varsIgnorePattern` | `"^_"` | Regular expression for names of variables that may be unused. |
-| `args` | `"after-used"` | Report unused parameters after the last one that is used. `"all"` reports every unused parameter, `"none"` reports none. |
+| `vars` | `"all"` | `"local"` skips variables in the global scope. The top level of a module isn't the global scope, so this only matters for scripts. |
+| `varsIgnorePattern` | `"^_"` | Regular expression for variable names that can be unused. |
+| `args` | `"after-used"` | Report unused parameters after the last one that's used. `"all"` reports every unused parameter, `"none"` reports none. |
 | `argsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for parameters. |
 | `caughtErrors` | `"all"` | `"none"` allows an unused `error` in `catch (error)`. |
-| `caughtErrorsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for the parameter of `catch`. |
+| `caughtErrorsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for the `catch` parameter. |
 | `destructuredArrayIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for names in `const [a, b] = list`. |
 | `ignoreRestSiblings` | `true` | Allow unused names next to a `...rest` in object destructuring. |
 | `ignoreClassWithStaticInitBlock` | `false` | Allow an unused class that has a `static {}` block, which runs anyway. |
@@ -83,11 +83,11 @@ export type Settings = typeof defaults;
 | `reportUsedIgnorePattern` | `false` | Report a name that matches one of the patterns and is used. |
 | `enableAutofixRemoval` | `{ "imports": false }` | With `imports: true`, `--fix` removes unused imports. |
 
-A string in place of the object, `"all"` or `"local"`, sets `vars`.
+You can pass a string, `"all"` or `"local"`, instead of the object. It sets `vars`.
 
-The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
+The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config you get ESLint's defaults, which have no patterns and set `ignoreRestSiblings` to `false`.
 
-By default, a parameter in front of one that is used is allowed, because you cannot remove it without moving the others:
+By default, an unused parameter before a used one is allowed, because you can't remove it without moving the others:
 
 {/* good */}
 ```ts
@@ -99,7 +99,7 @@ export const doubled = [1, 2, 3].map((value, index) => index * 2);
 export const doubled = [1, 2, 3].map((value, index) => index * 2);
 ```
 
-A name that starts with `_` is unused on purpose. Options of your own have to say so again:
+A name that starts with `_` is unused on purpose. If you set your own options, you need to repeat the pattern:
 
 {/* good */}
 ```ts
@@ -136,5 +136,5 @@ export const url = `http://localhost:${_port}`;
 With an oxlint config, the rule follows oxlint where the two differ:
 
 - Without an options object, variables and parameters that start with `_` are ignored.
-- A value that is only used through `typeof` in a type counts as used, unless `reportVarsOnlyUsedAsTypes` is `true`.
-- `fix` takes the place of `enableAutofixRemoval`. It is `{ "imports": ..., "variables": ... }`, and each is `"off"`, `"suggestion"` (default), `"fix"`, or `"safe-fix"`.
+- A value that's only used through `typeof` in a type counts as used, unless `reportVarsOnlyUsedAsTypes` is `true`.
+- `fix` replaces `enableAutofixRemoval`. It's `{ "imports": ..., "variables": ... }`, and each is `"off"`, `"suggestion"` (default), `"fix"`, or `"safe-fix"`.

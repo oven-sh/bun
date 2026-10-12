@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-If every path through the body of a loop ends in `break`, `return`, or `throw`, the loop never gets to a second pass. Usually a condition is missing around the exit, or `continue` was meant.
+If every path through a loop's body ends in `break`, `return`, or `throw`, the loop never gets to a second pass. Usually a condition is missing around the exit, or you meant `continue`.
 
 ## Examples
 
-Reported. Only the first result is ever looked at:
+Reported. The loop only ever looks at the first result:
 
 {/* bad */}
 ```js
@@ -51,7 +51,7 @@ function firstError(results) {
 | --- | --- | --- |
 | `ignore` | `[]` | Kinds of loops to skip: `"WhileStatement"`, `"DoWhileStatement"`, `"ForStatement"`, `"ForInStatement"`, `"ForOfStatement"`. |
 
-A `for...of` loop that returns at once is a short way to get the first item of an iterable. By default it is reported:
+A `for...of` loop that returns right away is a short way to get an iterable's first item. By default it's reported:
 
 {/* bad */}
 ```js

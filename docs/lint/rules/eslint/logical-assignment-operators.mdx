@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`options = options || {}` names the variable twice, and it assigns even when `options` keeps its value. `options ||= {}` says the same with one name and assigns only when it has to.
+`options = options || {}` names the variable twice, and it assigns even when `options` keeps its value. `options ||= {}` says the same thing with one name and only assigns when it needs to.
 
 `--fix` rewrites the code when the target is a plain variable. A property can have a getter or a setter, and the rewrite can change how often they run, so `user.name = user.name || "guest"` gets a suggestion instead of a fix.
 

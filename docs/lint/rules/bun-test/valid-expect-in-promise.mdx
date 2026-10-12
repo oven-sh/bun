@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A callback passed to `.then()`, `.catch()` or `.finally()` runs later. If the test neither awaits nor returns the promise, `bun test` does not wait for it. The test is over before the `expect` in the callback runs, so a failed assertion does not fail that test.
+A callback passed to `.then()`, `.catch()` or `.finally()` runs later. If the test doesn't await or return the promise, `bun test` doesn't wait for it. The test is over before the `expect` in the callback runs, so a failed assertion doesn't fail that test.
 
 This rule is on by default in files that import from `"bun:test"`.
 
@@ -31,7 +31,7 @@ test("loads the user", () => {
 });
 ```
 
-A promise kept in a variable has to be awaited or returned too:
+A promise kept in a variable must be awaited or returned too:
 
 {/* bad */}
 ```ts
@@ -44,7 +44,7 @@ test("loads the user", () => {
 });
 ```
 
-Code after the `return` of the test never runs:
+Code after the test's `return` never runs:
 
 {/* bad */}
 ```ts
@@ -101,7 +101,7 @@ test("loads both users", async () => {
 });
 ```
 
-A test with a parameter is not checked, because calling `done` is another way to make `bun test` wait:
+A test with a parameter isn't checked, because calling `done` is another way to make `bun test` wait:
 
 {/* good */}
 ```ts

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-When the browser meets a `<script>` with a `src`, it stops reading the HTML until the file is downloaded and run. Nothing below the tag is shown in the meantime. A slow third-party server then holds up your whole page.
+When the browser hits a `<script>` with a `src`, it stops reading the HTML until it has downloaded and run the file. Nothing below the tag shows up in the meantime, so a slow third-party server holds up your whole page.
 
-With `async` or `defer`, the browser keeps reading the HTML while the file downloads. `Script` from `next/script` does not block either, and lets you pick when the script loads.
+With `async` or `defer`, the browser keeps reading the HTML while the file downloads. `Script` from `next/script` doesn't block either, and it lets you pick when the script loads.
 
 ## Examples
 

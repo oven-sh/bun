@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Spreading `undefined` or `null` into an object literal adds nothing and does not throw. So `{ ...(options || {}) }` and `{ ...(options ?? {}) }` give the same object as `{ ...options }`.
+Spreading `undefined` or `null` into an object literal adds nothing and doesn't throw. So `{ ...(options || {}) }` and `{ ...(options ?? {}) }` give the same object as `{ ...options }`.
 
-This is only true for objects. Spreading `undefined` into an array or into the arguments of a call throws, so `[...(items || [])]` is not reported.
+This is only true for objects. Spreading `undefined` into an array or a call's arguments throws, so `[...(items || [])]` isn't reported.
 
 `--fix` removes the fallback.
 

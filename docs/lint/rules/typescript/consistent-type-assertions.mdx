@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-TypeScript has two ways to write a type assertion: `value as User` and `<User>value`. The second cannot be used in `.tsx` files, where it reads as JSX. This rule picks one. By default it is `as`.
+TypeScript has two ways to write a type assertion: `value as User` and `<User>value`. You can't use the second one in `.tsx` files, where it reads as JSX. This rule picks one. By default it's `as`.
 
-It can also report assertions on object and array literals. `{ ... } as User` compiles when a required property is missing. `const user: User = { ... }` and `{ ... } satisfies User` do not.
+It can also report assertions on object and array literals. `{ ... } as User` compiles when a required property is missing. `const user: User = { ... }` and `{ ... } satisfies User` don't.
 
 `--fix` rewrites `<T>value` to `value as T`.
 
@@ -42,9 +42,9 @@ const input = document.querySelector("input") as HTMLInputElement;
 | `objectLiteralTypeAssertions` | `"allow"` | What to do with `{ ... } as T`. |
 | `arrayLiteralTypeAssertions` | `"allow"` | What to do with `[ ... ] as T`. |
 
-The last two take `"allow"`, `"never"`, or `"allow-as-parameter"`, which allows the assertion only where there is no variable to annotate: an argument of a call, a default value, a `throw`, or a value in JSX. They never report `as const`, `as any`, or `as unknown`.
+The last two take `"allow"`, `"never"`, or `"allow-as-parameter"`, which allows the assertion only where there's no variable to annotate: an argument of a call, a default value, a `throw`, or a value in JSX. They never report `as const`, `as any`, or `as unknown`.
 
-With `"never"` as the style, `as const` is still allowed, because it does not override the type checker:
+With `"never"` as the style, `as const` is still allowed, because it doesn't override the type checker:
 
 {/* bad {"options": [{"assertionStyle": "never"}]} */}
 ```ts

@@ -1,7 +1,7 @@
 //! `ignorePatterns` of an `.oxlintrc.json` and of the configuration files of ESLint 8: lines in the format of a `.gitignore`.
-//! What a line matches is said by [`bun_glob::ignore`]. Here is who asks what.
+//! What a line matches is said by [`crate::ignore`]. Here is who asks what.
 
-use bun_glob::ignore::{IgnoreOptions, IgnoreRules, Verdict};
+use crate::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 
 pub(super) struct IgnoreLines {
     rules: IgnoreRules,

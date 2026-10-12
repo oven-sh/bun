@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When a file holds several classes, its name can describe only one of them, and the others are hard to find.
+When a file holds several classes, its name can only describe one of them, and the others are hard to find.
 
 Class declarations and class expressions both count. The default maximum is 1.
 
@@ -41,12 +41,12 @@ class User {}
 max-classes-per-file = ["error", { max = 2, ignoreExpressions = true }]
 ```
 
-The option is either a number, the maximum, or an object:
+The option is either a number (the maximum) or an object:
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `max` | `1` | The number of classes a file can have. |
-| `ignoreExpressions` | `false` | Do not count class expressions. |
+| `ignoreExpressions` | `false` | Don't count class expressions. |
 
 {/* good {"options": [2]} */}
 ```js

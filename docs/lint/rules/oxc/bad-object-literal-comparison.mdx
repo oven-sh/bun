@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`items === []` does not test whether `items` is empty. Each `[]` or `{}` creates a new object, and `===` compares objects by identity, so the comparison is always `false` and `!==` is always `true`.
+`items === []` doesn't test whether `items` is empty. Each `[]` or `{}` creates a new object, and `===` compares objects by identity, so the comparison is always `false` and `!==` is always `true`.
 
-The rule reports `==`, `!=`, `===` and `!==` with an empty object or array literal on either side. To test for empty, look at `length` or at the keys.
+The rule reports `==`, `!=`, `===` and `!==` with an empty object or array literal on either side. To test whether something is empty, look at `length` or at the keys.
 
 ## Examples
 

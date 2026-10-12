@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-A type parameter can have a default: `<T = string>`. Passing that same type yourself changes nothing.
+A type parameter can have a default, like `<T = string>`. Passing that same type yourself doesn't change anything.
 
-Only the last type argument is checked, because the ones before it cannot be left out while it is there.
+Only the last type argument is checked, because you can't leave out the earlier ones while it's there.
 
 `--fix` removes the type argument.
 

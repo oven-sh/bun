@@ -14,7 +14,7 @@ deprecated: false
 
 Tests written right under each other, or right under setup code, are hard to tell apart when you scan a file. A blank line above each `test` or `it` call separates them.
 
-Only the line above the call is checked, not the line below. Comments directly above the call count as part of it, so the blank line goes above them. A test that comes first in a file or in a `describe` callback needs no blank line.
+The rule only checks the line above the call, not the line below. Comments directly above the call count as part of it, so the blank line goes above them. A test that comes first in a file or in a `describe` callback doesn't need a blank line.
 
 `--fix` inserts the blank line.
 

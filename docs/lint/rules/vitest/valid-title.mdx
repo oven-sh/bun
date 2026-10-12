@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-The title is how you find a test in the output when it fails. This rule reports a title that is empty, is not a string, starts or ends with a space, or repeats the name of its function, as in `test("test adds an item")`. Options let you add naming rules of your own.
+The title is how you find a test in the output when it fails. This rule reports a title that's empty, isn't a string, starts or ends with a space, or repeats the name of its function, as in `test("test adds an item")`. Options let you add your own naming rules.
 
 `--fix` removes the spaces and the repeated word.
 
@@ -49,17 +49,17 @@ describe("cart", () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowArguments` | `false` | Allow a title that is a plain variable, such as `title`. |
-| `ignoreTypeOfDescribeName` | `false` | Allow a `describe` title that is not a string. |
-| `ignoreTypeOfTestName` | `false` | Allow a `test` or `it` title that is not a string. |
+| `allowArguments` | `false` | Allow a title that's a plain variable, such as `title`. |
+| `ignoreTypeOfDescribeName` | `false` | Allow a `describe` title that isn't a string. |
+| `ignoreTypeOfTestName` | `false` | Allow a `test` or `it` title that isn't a string. |
 | `ignoreSpaces` | `false` | Allow spaces at the start and the end. |
-| `disallowedWords` | `[]` | Whole words that a title cannot contain. Case does not matter. |
-| `mustMatch` | none | A pattern that every title has to match. |
+| `disallowedWords` | `[]` | Whole words that a title can't contain. Case doesn't matter. |
+| `mustMatch` | none | A pattern that every title must match. |
 | `mustNotMatch` | none | A pattern that no title can match. |
 
-If `settings.vitest.typecheck` is `true` in your config, `describe` titles are not checked at all.
+If `settings.vitest.typecheck` is `true` in your config, `describe` titles aren't checked at all.
 
-A variable is reported by default, because the rule cannot tell what it holds:
+A variable is reported by default, because the rule can't tell what it holds:
 
 {/* bad */}
 ```ts
@@ -93,7 +93,7 @@ import { test } from "vitest";
 test("Should add an item", () => {});
 ```
 
-`mustMatch` and `mustNotMatch` take a regular expression as a string, either `"^adds "` or `"/^adds /"`. Flags after the last `/` are ignored. To set the message of the report, pass `[pattern, message]`:
+`mustMatch` and `mustNotMatch` take a regular expression as a string, either `"^adds "` or `"/^adds /"`. Flags after the last `/` are ignored. To set the report's message, pass `[pattern, message]`:
 
 {/* bad {"options": [{"mustNotMatch": ["\\.$", "Do not end a title with a period"]}]} */}
 ```ts
@@ -102,7 +102,7 @@ import { test } from "vitest";
 test("adds an item.", () => {});
 ```
 
-To use a different pattern for `describe`, `test` and `it`, pass an object. A function that is not in the object is not checked:
+To use a different pattern for `describe`, `test` and `it`, pass an object. A function that isn't in the object isn't checked:
 
 {/* bad {"options": [{"mustMatch": {"it": "^should "}}], "count": 1} */}
 ```ts

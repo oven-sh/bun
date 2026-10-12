@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An inline snapshot is text that `bun test` writes into your file and rewrites when you update snapshots. With `${}` in it, the expected text is computed while the test runs. The snapshot no longer shows what the output looks like, and `bun test --update-snapshots` cannot rewrite it.
+An inline snapshot is text that `bun test` writes into your file and rewrites when you update snapshots. With `${}` in it, the expected text is computed while the test runs. The snapshot no longer shows what the output looks like, and `bun test --update-snapshots` can't rewrite it.
 
 The rule checks the template literals passed to `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`.
 

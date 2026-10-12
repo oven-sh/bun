@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A backreference such as `\1` or `\k<quote>` matches the text that a group captured. If the group cannot have captured anything when the backreference is reached, the backreference matches the empty string, and the pattern accepts more than it seems to.
+A backreference such as `\1` or `\k<quote>` matches the text that a group captured. If the group can't have captured anything by the time the backreference is reached, the backreference matches the empty string, and the pattern accepts more than it seems to.
 
 That happens when the group comes later in the pattern, when the backreference is inside the group, when the group is in another alternative of a `|`, or when the group is in a negative lookaround.
 

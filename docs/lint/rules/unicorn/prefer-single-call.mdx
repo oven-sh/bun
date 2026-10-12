@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`push()`, `unshift()`, `classList.add()`, `classList.remove()` and `importScripts()` take any number of arguments. Two calls in a row on the same object do what one call does, in more lines.
+`push()`, `unshift()`, `classList.add()`, `classList.remove()` and `importScripts()` take any number of arguments. Two calls in a row on the same object do the same thing as one call, with more lines.
 
-`--fix` merges the two calls. It does not when there is a comment between them, or when an argument of the second call reads the object, as in `items.push(items.length)`.
+`--fix` merges the two calls. It leaves them alone when there's a comment between them, or when one of the second call's arguments reads the object, as in `items.push(items.length)`.
 
 ## Examples
 
@@ -48,7 +48,7 @@ button.classList.add("active", "large");
 importScripts("parser.js", "worker-utils.js");
 ```
 
-`push()` on a stream is another method, which takes one chunk. `push()` and `unshift()` are never reported on `stream`, `this`, `this.stream`, `process.stdin`, `process.stdout` and `process.stderr`:
+`push()` on a stream is a different method that takes one chunk. `push()` and `unshift()` are never reported on `stream`, `this`, `this.stream`, `process.stdin`, `process.stdout` and `process.stderr`:
 
 {/* good */}
 ```js
@@ -60,7 +60,7 @@ stream.push(body);
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignore` | `[]` | More `push()` and `unshift()` calls to allow, written as in the code: `"readable.push"`. |
+| `ignore` | `[]` | More `push()` and `unshift()` calls to allow, written the way they appear in the code, like `"readable.push"`. |
 
 {/* bad */}
 ```js

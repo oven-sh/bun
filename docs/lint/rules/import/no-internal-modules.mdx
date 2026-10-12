@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A directory with an `index.js`, like a package, decides what it shows to the outside. An import that reaches past it, such as `./api/users` or `lodash/get`, depends on how the inside is laid out and breaks when a file in there is moved or renamed.
+A directory with an `index.js` works like a package. It decides what the outside gets to see. An import that reaches past it, such as `./api/users` or `lodash/get`, depends on how the inside is laid out, so it breaks when someone moves or renames a file in there.
 
-An import path may have one step: `./api`, `../api`, `lodash`, `@scope/package`. A longer path is reported if the file exists. `export ... from`, `import()` and `require()` are checked too.
+An import path can have one step, like `./api`, `../api`, `lodash` or `@scope/package`. A longer path is reported if the file exists. The rule also checks `export ... from`, `import()` and `require()`.
 
 ## Examples
 
@@ -56,8 +56,8 @@ import { listUsers } from "./api";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `[]` | Globs. A longer path is allowed if one matches the import path, without its `./` or `../`, or the full path of the file. |
-| `forbid` | none | Globs, matched the same way. Only what matches one is reported, and every other path is allowed. |
+| `allow` | `[]` | Globs. A longer path is allowed if a glob matches the import path (without its `./` or `../`) or the file's full path. |
+| `forbid` | none | Globs, matched the same way. Only paths that match a glob are reported, and every other path is allowed. |
 
 Use `allow` or `forbid`, not both.
 

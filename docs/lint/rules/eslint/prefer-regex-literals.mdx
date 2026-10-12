@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In `new RegExp("\\d+")` you write every backslash twice. Forget one and the pattern changes without an error: `"\d+"` is the string `d+`. In the literal `/\d+/` you write the pattern as it is, and a mistake in it is a syntax error, not an exception when that line runs.
+In `new RegExp("\\d+")` you write every backslash twice. Forget one and the pattern changes without an error, because `"\d+"` is the string `d+`. In the literal `/\d+/` you write the pattern as is, and a mistake in it is a syntax error, not an exception when that line runs.
 
-A call is reported if the pattern and the flags are fixed strings: a string literal, a template literal without `${}`, or `String.raw` without `${}`. A pattern that is built at run time needs the constructor and is not reported.
+A call is reported if the pattern and the flags are fixed strings: a string literal, a template literal without `${}`, or `String.raw` without `${}`. A pattern that's built at run time needs the constructor, so it isn't reported.
 
 The report comes with a suggestion that replaces the call with the literal.
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`instanceof` gives the wrong answer for built-ins in two ways. A primitive is never an instance: `"text" instanceof String` is `false`. And every iframe and every `node:vm` context has its own built-ins, so an array or a function that comes from another one is not an instance of your `Array` or `Function`.
+`instanceof` gives the wrong answer for built-ins in two ways. First, a primitive is never an instance, so `"text" instanceof String` is `false`. Second, every iframe and every `node:vm` context has its own built-ins, so an array or a function from another one isn't an instance of your `Array` or `Function`.
 
-By default the rule reports `instanceof` with `Array`, `Function`, `String`, `Number`, `Boolean`, `BigInt`, and `Symbol`. `--fix-suggestions` rewrites these to `Array.isArray(value)` or a `typeof` check.
+By default, the rule reports `instanceof` with `Array`, `Function`, `String`, `Number`, `Boolean`, `BigInt`, and `Symbol`. `--fix-suggestions` rewrites these to `Array.isArray(value)` or a `typeof` check.
 
 ## Examples
 

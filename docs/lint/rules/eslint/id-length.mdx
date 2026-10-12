@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A one-letter name such as `e`, `n` or `x` makes the reader go back to the declaration to learn what it holds. A very long name makes every line that uses it hard to scan.
+A one-letter name such as `e`, `n` or `x` sends you back to the declaration to find out what it holds. A very long name makes every line that uses it hard to scan.
 
-The rule checks a name where your code introduces it: variables, parameters, functions, classes, imports, object keys and class members. By default a name needs at least 2 characters, and there is no maximum.
+The rule checks a name where your code introduces it: variables, parameters, functions, classes, imports, object keys and class members. By default a name needs at least 2 characters, and there's no maximum.
 
 ## Examples
 
@@ -50,7 +50,7 @@ try {
 }
 ```
 
-Type parameters are not checked:
+Type parameters aren't checked:
 
 {/* good */}
 ```ts
@@ -73,7 +73,7 @@ id-length = ["error", { min = 3, max = 30, exceptions = ["i", "id"] }]
 | `properties` | `"always"` | `"never"` stops checking object keys and the properties you assign to. |
 | `exceptions` | `[]` | Names that are always allowed. |
 | `exceptionPatterns` | `[]` | Regular expressions. A name that matches one is always allowed. |
-| `checkGeneric` | `true` | Only with an oxlint config, which also checks type parameters such as the `T` in `Box<T>`. `false` stops checking them. |
+| `checkGeneric` | `true` | Only applies with an oxlint config, which also checks type parameters such as the `T` in `Box<T>`. `false` stops checking them. |
 
 {/* bad {"options": [{"max": 20}]} */}
 ```js

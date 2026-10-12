@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Two enum members with the same value cannot be told apart at runtime: `Status.Active === Status.Enabled` is `true`, a `switch` only ever reaches the first `case`, and for numbers the reverse lookup `Status[1]` gives only the last name.
+You can't tell two enum members with the same value apart at runtime. `Status.Active === Status.Enabled` is `true`, a `switch` only ever reaches the first `case`, and for numbers the reverse lookup `Status[1]` gives only the last name.
 
-Only values written as a number, a string or a template without `${}` are compared, with or without a `+` or `-` sign. Members without a value and computed values are skipped.
+The rule only compares values written as a number, a string or a template without `${}`, with or without a `+` or `-` sign. It skips members without a value and computed values.
 
 This rule is on by default in TypeScript files.
 
@@ -50,7 +50,7 @@ enum Color {
 }
 ```
 
-A value that TypeScript fills in is not compared. Here `Third` is `1` as well:
+A value that TypeScript fills in isn't compared. Here `Third` is `1` as well:
 
 {/* good */}
 ```ts

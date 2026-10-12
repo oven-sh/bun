@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An enum value can be any expression, but then you have to evaluate it in your head to know what the member is. Names can also surprise you. Inside an enum, a name refers to another member before it refers to a variable outside, so `Max = limit` reads the member `limit` if there is one, not the `const limit` above the enum.
+An enum value can be any expression, but then you need to evaluate it in your head to know what the member is. Names can also surprise you. Inside an enum, a name refers to another member before it refers to a variable outside, so `Max = limit` reads the member `limit` if there is one, not the `const limit` above the enum.
 
-Strings, numbers, a `-` or `+` in front of a number, and template strings without `${}` are allowed. A member without a value is not checked.
+Strings, numbers, a `-` or `+` in front of a number, and template strings without `${}` are allowed. A member without a value isn't checked.
 
 ## Examples
 
@@ -60,7 +60,7 @@ enum Permission {
 }
 ```
 
-With `allowBitwiseExpressions: true`, none of them is:
+With `allowBitwiseExpressions: true`, none of them are reported:
 
 {/* good {"options": [{"allowBitwiseExpressions": true}]} */}
 ```ts

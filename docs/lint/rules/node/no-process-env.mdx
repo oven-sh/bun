@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When `process.env` is read all over the code, it is hard to list the variables the program needs, a misspelled name gives `undefined` without an error, and tests have to change the environment of the process. Read the environment in one config file and import the values from there.
+When you read `process.env` all over the code, it's hard to list the variables the program needs, a misspelled name gives `undefined` without an error, and tests have to change the process's environment. Read the environment in one config file and import the values from there.
 
 ## Examples
 
@@ -40,7 +40,7 @@ if (config.env === "development") {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowedVariables` | `[]` | Names of variables that can be read from `process.env`. |
+| `allowedVariables` | `[]` | Names of variables you can read from `process.env`. |
 
 {/* good {"options": [{"allowedVariables": ["NODE_ENV"]}]} */}
 ```js
@@ -48,7 +48,7 @@ const isProduction = process.env.NODE_ENV === "production";
 const mode = process.env["NODE_ENV"];
 ```
 
-Other variables are still reported, and so is `process.env` on its own:
+Other variables are still reported, and so is `process.env` by itself:
 
 {/* bad {"options": [{"allowedVariables": ["NODE_ENV"]}], "count": 2} */}
 ```js

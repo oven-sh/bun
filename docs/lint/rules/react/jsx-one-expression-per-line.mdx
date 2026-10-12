@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When tags, text and expressions share a line, it is hard to see how many children an element has, and a change to one of them shows up in a diff as a change to all of them. With this rule, every child is on its own line, and so are the opening and closing tags around it.
+When tags, text and expressions share a line, it's hard to see how many children an element has, and changing one of them shows up in a diff as a change to all of them. This rule puts every child on its own line, along with the opening and closing tags around it.
 
 `--fix` adds the line breaks. Where a space between two children matters, it writes `{' '}` to keep it.
 
@@ -51,7 +51,7 @@ const greeting = (
 
 ## Options
 
-There is one option, `allow`:
+`allow` is the only option:
 
 | `allow` | What it does |
 | --- | --- |
@@ -83,4 +83,4 @@ const greeting = <p>Hello {name}, you have {count} messages</p>;
 
 ## When not to use it
 
-A formatter such as `bun format` or Prettier decides where JSX breaks, and it does not agree with this rule. Use one or the other.
+A formatter such as `bun format` or Prettier decides where JSX breaks, and it doesn't agree with this rule. Use one or the other.

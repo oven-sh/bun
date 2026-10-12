@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`removeEventListener()` only removes the exact function that was passed to `addEventListener()`. A function written inline and the result of `.bind()` are new functions each time, so the call removes nothing and the old listener keeps running.
+`removeEventListener()` only removes the exact function you passed to `addEventListener()`. An inline function or the result of `.bind()` is a new function every time, so the call removes nothing and the old listener keeps running.
 
 ## Examples
 

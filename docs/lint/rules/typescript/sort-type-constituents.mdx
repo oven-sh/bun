@@ -12,11 +12,11 @@ typeAware: false
 deprecated: true
 ---
 
-A long union in no particular order is hard to scan, and a member that is listed twice is easy to miss. This rule keeps the members of `A | B` and `A & B` in a fixed order.
+A long union in no particular order is hard to scan, and a member that's listed twice is easy to miss. This rule keeps the members of `A | B` and `A & B` in a fixed order.
 
-Members are first put in groups, with named types first and `null`, `undefined`, and `void` last. Inside a group they are sorted by their text, ignoring case.
+Members are first put in groups, with named types first and `null`, `undefined`, and `void` last. Inside a group they're sorted by their text, ignoring case.
 
-`--fix` sorts the members. If there are comments between them, the fix would delete the comments, so it is a suggestion in your editor instead.
+`--fix` sorts the members. If there are comments between them, the fix would delete the comments, so it's a suggestion in your editor instead.
 
 ## Examples
 
@@ -45,7 +45,7 @@ type Key = "alt" | "Shift";
 | --- | --- | --- |
 | `checkUnions` | `true` | Check union types (`\|`). |
 | `checkIntersections` | `true` | Check intersection types (`&`). |
-| `caseSensitive` | `false` | Compare by character code, so every capital letter comes before every small one. |
+| `caseSensitive` | `false` | Compare by character code, so every uppercase letter comes before every lowercase one. |
 | `groupOrder` | all, in this order | The order of the groups: `"named"`, `"keyword"`, `"operator"`, `"literal"`, `"function"`, `"import"`, `"conditional"`, `"object"`, `"tuple"`, `"intersection"`, `"union"`, `"nullish"`. Groups you leave out come last, together. |
 
 Not reported with `groupOrder: ["nullish", "keyword", "named"]`:

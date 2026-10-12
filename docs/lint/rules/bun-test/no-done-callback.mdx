@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A test that takes a `done` parameter waits until `done()` is called. If some code path never calls it, the test hangs until it times out, and the timeout does not say why. An `async` test, or one that returns a promise, ends when the promise settles and fails with the error it rejects with.
+A test that takes a `done` parameter waits until `done()` is called. If some code path never calls it, the test hangs until it times out, and the timeout doesn't tell you why. An `async` test, or one that returns a promise, ends when the promise settles. If the promise rejects, the test fails with that error.
 
-The name of the parameter does not matter. Any test or hook callback with exactly one parameter is reported.
+The parameter's name doesn't matter. Any test or hook callback with exactly one parameter is reported.
 
 ## Examples
 
@@ -53,7 +53,7 @@ import { afterAll } from "bun:test";
 afterAll(() => new Promise(resolve => server.close(resolve)));
 ```
 
-The callback of `test.each([...])` is not checked, because its parameters are the values of the row:
+The `test.each([...])` callback isn't checked, because its parameters are the row's values:
 
 {/* good */}
 ```ts

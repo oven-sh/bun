@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A name that is declared and never read is clutter at best. Often it points at a bug: a value was computed and then a different name was used, or a refactor left an import behind.
+A name that's declared and never read is clutter at best. Often it points to a bug. Maybe you computed a value and then used a different name, or a refactor left an import behind.
 
-"Used" means read. A variable that is only assigned to or incremented is not used, and neither is a function that only calls itself. Anything you `export` is used.
+"Used" means read. A variable that's only assigned to or incremented isn't used, and neither is a function that only calls itself. Anything you `export` is used.
 
-The rule suggests removing the declaration. To keep a name that you do not use, start it with `_`.
+The rule suggests removing the declaration. To keep a name that you don't use, start it with `_`.
 
 This rule is on by default in JavaScript files. In TypeScript files, `@typescript-eslint/no-unused-vars` is on instead.
 
@@ -51,7 +51,7 @@ export async function save(path, data) {
 }
 ```
 
-An unused parameter is only reported if it comes after the last one that is used, because you cannot remove the others:
+An unused parameter is only reported if it comes after the last one that's used, because you can't remove the others:
 
 {/* good */}
 ```js
@@ -87,18 +87,18 @@ no-unused-vars = ["error", { args = "all", argsIgnorePattern = "^_" }]
 | Option | Default | What it does |
 | --- | --- | --- |
 | `vars` | `"all"` | `"local"` skips globals: the names in `/* global */` comments and the top-level variables of a classic script. The top level of a module or a CommonJS file is still checked. |
-| `varsIgnorePattern` | `"^_"` | Regular expression for names of variables that may be unused. |
+| `varsIgnorePattern` | `"^_"` | Regular expression for variable names that may be unused. |
 | `args` | `"after-used"` | `"all"` reports every unused parameter, `"none"` reports none. |
 | `argsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for parameters. |
 | `caughtErrors` | `"all"` | `"none"` allows an unused `error` in `catch (error)`. |
-| `caughtErrorsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for the parameter of `catch`. |
+| `caughtErrorsIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for the `catch` parameter. |
 | `destructuredArrayIgnorePattern` | `"^_"` | Like `varsIgnorePattern`, for names in `const [a, b] = list`. |
 | `ignoreRestSiblings` | `true` | Allow unused names next to a `...rest` in object destructuring. |
 | `ignoreClassWithStaticInitBlock` | `false` | Allow an unused class that has a `static {}` block, which runs anyway. |
 | `ignoreUsingDeclarations` | `false` | Allow unused `using` and `await using` variables, which are disposed of anyway. |
 | `reportUsedIgnorePattern` | `false` | Report a name that matches one of the patterns and is used. |
 
-A string in place of the object, `"all"` or `"local"`, sets `vars`.
+You can pass a string instead of the object, `"all"` or `"local"`, to set `vars`.
 
 The options you set replace all of the defaults, so repeat the patterns you want to keep. With an ESLint config the defaults are ESLint's: no patterns, and `ignoreRestSiblings` is `false`.
 

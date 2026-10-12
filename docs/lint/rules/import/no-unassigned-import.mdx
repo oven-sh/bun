@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`import "./setup.js"` runs a module only for its side effects. Nothing in the file shows what the module changes, and the order of such imports matters without saying so. With this rule, every import has to bring in a name you can follow.
+`import "./setup.js"` runs a module only for its side effects. Nothing in the file shows what the module changes, and the order of these imports matters even though nothing says so. With this rule on, every import needs to bring in a name you can follow.
 
-A `require()` call that stands alone as a statement is reported too, and so is an import with empty braces.
+A `require()` call that's a statement by itself is reported too, and so is an import with empty braces.
 
 ## Examples
 
@@ -42,11 +42,11 @@ patchConsole();
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `[]` | Globs for modules that can be imported for their side effects. |
+| `allow` | `[]` | Globs for modules you can import for their side effects. |
 
-A package name is matched as you wrote it. A relative path is made absolute first, so a glob for files either starts with `**/` or is relative to the directory you run `bun lint` in.
+A package name is matched exactly as you wrote it. A relative path is made absolute first, so a glob for files either starts with `**/` or is relative to the directory you run `bun lint` in.
 
-`devDependencies`, `optionalDependencies` and `peerDependencies` are accepted and have no effect.
+`devDependencies`, `optionalDependencies` and `peerDependencies` are accepted but have no effect.
 
 ```toml bunfig.toml
 [lint.rules]
@@ -70,4 +70,4 @@ import "./register-globals.js";
 
 ## When not to use it
 
-Stylesheets, polyfills and test setup files are meant to be imported this way. If `allow` would have to list most of your side-effect imports, leave the rule off.
+Stylesheets, polyfills and test setup files are meant to be imported this way. If you'd end up listing most of your side-effect imports in `allow`, leave the rule off.

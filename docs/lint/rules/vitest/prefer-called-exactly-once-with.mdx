@@ -16,7 +16,7 @@ deprecated: false
 
 The pair is reported when both assertions are in the same block, in either order. Assertions with `.not` are ignored.
 
-`--fix-dangerously` replaces the pair with one `toHaveBeenCalledExactlyOnceWith(...)` call. `--fix` does not.
+`--fix-dangerously` replaces the pair with one `toHaveBeenCalledExactlyOnceWith(...)` call. `--fix` doesn't.
 
 ## Examples
 
@@ -47,7 +47,7 @@ test("saves the draft", () => {
 });
 ```
 
-A `mockClear()`, `mockReset()`, or `mockRestore()` on the mock between the two assertions means they are about different calls, so they are not a pair:
+A `mockClear()`, `mockReset()`, or `mockRestore()` on the mock between the two assertions means they're about different calls, so they aren't a pair:
 
 {/* good */}
 ```ts

@@ -38,7 +38,7 @@ const newest = users.findLast(user => user.isActive);
 const lastGuest = users.findLast(user => user.isGuest);
 ```
 
-A variable that holds the result of `.filter()` is reported too, if its first element is all you read:
+A variable that holds the result of `.filter()` is reported too, if you only read its first element:
 
 {/* bad */}
 ```js
@@ -46,7 +46,7 @@ const admins = users.filter(user => user.isAdmin);
 notify(admins[0]);
 ```
 
-Any other use of the variable makes it fine:
+If you use the variable in any other way, it's fine:
 
 {/* good */}
 ```js

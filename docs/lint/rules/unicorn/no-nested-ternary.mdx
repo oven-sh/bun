@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In `a ? b : c ? d : e` it is hard to see which `:` belongs to which `?`. This rule allows one ternary inside another if the inner one is in parentheses. A third level is always reported.
+In `a ? b : c ? d : e`, it's hard to see which `:` belongs to which `?`. This rule allows one ternary inside another if the inner one is in parentheses. A third level is always reported.
 
-`--fix` adds the parentheses. It does not rewrite a third level.
+`--fix` adds the parentheses. It doesn't rewrite a third level.
 
 ## Examples
 

@@ -12,16 +12,16 @@ typeAware: false
 deprecated: false
 ---
 
-React compares values by identity to decide what to render again. If you change an object in place, it is still the same object, so React sees no change and the screen keeps showing the old data. A changed prop also changes the parent's copy.
+React compares values by identity to decide what to render again. If you change an object in place, it's still the same object, so React sees no change and the screen keeps showing the old data. Changing a prop also changes the parent's copy.
 
-The rule reports an assignment to, or a `delete` of, a property of:
+The rule reports assigning to a property, or using `delete` on one, when the property belongs to:
 
 - props and the arguments of a hook
 - a value returned by `useState`, `useContext`, and other hooks
 - a value that was already passed to a hook or used in JSX
 - a variable declared outside the component
 
-It also reports a local variable that is reassigned after render, for example in an event handler.
+It also reports a local variable that's reassigned after render, for example in an event handler.
 
 ## Examples
 
@@ -109,7 +109,7 @@ function Profile() {
 }
 ```
 
-The rule does not know what a method call does. This modifies the parent's array and is not reported:
+The rule doesn't know what a method call does. This modifies the parent's array but isn't reported:
 
 {/* good */}
 ```jsx

@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-In Node.js a file is either an ES module or a CommonJS module. A file with an `import` declaration is an ES module, where `module` and `exports` do not exist, so `module.exports = ...` throws a `ReferenceError`. Bundlers and transpilers that accept the mix do not agree on what such a file exports.
+In Node.js a file is either an ES module or a CommonJS module. A file with an `import` declaration is an ES module, where `module` and `exports` don't exist, so `module.exports = ...` throws a `ReferenceError`. Bundlers and transpilers that accept the mix don't agree on what a file like that exports.
 
-The import declarations are what is reported. Any property of `module` counts, so `module.hot` in a file with imports is reported too.
+The rule reports the import declarations. Any property of `module` counts, so `module.hot` in a file with imports is reported too.
 
-The entry point of a package is exempt: the file that `main` in the closest `package.json` points to, or its `index.js`.
+A package's entry point is exempt. That's the file that `main` in the closest `package.json` points to, or its `index.js`.
 
 ## Examples
 
@@ -79,7 +79,7 @@ module.exports = { run: text => parse(text) };
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `exceptions` | `[]` | Globs for files that are not checked. They are matched against the full path, so start them with `**/`. |
+| `exceptions` | `[]` | Globs for files to skip. They're matched against the full path, so start them with `**/`. |
 
 ```toml bunfig.toml
 [lint.rules]

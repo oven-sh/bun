@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`name="email"` and `name = "email"` mean the same thing. Using one style everywhere keeps props easy to scan. By default the rule allows no space on either side of the `=`.
+`name="email"` and `name = "email"` mean the same thing. Using one style everywhere keeps props easy to scan. By default the rule doesn't allow a space on either side of the `=`.
 
 `--fix` adds or removes the spaces.
 
@@ -36,7 +36,7 @@ const field = <input name="email" required />;
 
 | Option | What it does |
 | --- | --- |
-| `"never"` (default) | Allow no space before or after the `=`. |
+| `"never"` (default) | Don't allow a space before or after the `=`. |
 | `"always"` | Require a space before and after the `=`. |
 
 {/* bad {"options": ["always"]} */}

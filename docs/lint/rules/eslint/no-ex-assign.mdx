@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Assigning to the parameter of a `catch` clause overwrites the error that was caught. From that line on, nothing in the block can read the original message or stack.
+Assigning to a `catch` clause's parameter overwrites the error that was caught. From that line on, nothing in the block can read the original message or stack.
 
 This rule is on by default.
 
@@ -54,7 +54,7 @@ try {
 }
 ```
 
-Setting a property keeps the error, so it is allowed:
+Setting a property keeps the error, so it's allowed:
 
 {/* good */}
 ```js

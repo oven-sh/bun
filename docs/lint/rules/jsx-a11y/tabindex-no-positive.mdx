@@ -12,13 +12,13 @@ typeAware: false
 deprecated: false
 ---
 
-The Tab key visits every element with a positive `tabIndex` first, from the lowest number to the highest, and only then the rest of the page. The focus jumps around in an order that does not match what is on the screen, and every new control means renumbering the others.
+The Tab key visits every element with a positive `tabIndex` first, from the lowest number to the highest, and only then the rest of the page. Focus jumps around in an order that doesn't match what's on the screen, and every new control means renumbering the others.
 
 Use `0` to put an element in the tab order at its place in the document, and `-1` to make it focusable from code only. To change the order, move the elements.
 
-A value that is only known at run time, such as `tabIndex={order}`, is not checked.
+A value that's only known at run time, such as `tabIndex={order}`, isn't checked.
 
-`--fix-dangerously` changes the value to `"0"`. `--fix` does not, because that changes the tab order.
+`--fix-dangerously` changes the value to `"0"`. `--fix` doesn't, because that changes the tab order.
 
 ## Examples
 

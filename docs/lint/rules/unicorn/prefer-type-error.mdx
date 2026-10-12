@@ -14,7 +14,7 @@ deprecated: false
 
 An `if` that checks the type of a value and then throws is saying "this value has the wrong type". `TypeError` is the built-in error for that, and the caller can tell it apart from other failures with `instanceof`.
 
-The rule reports `throw new Error()` when it is the only statement between the braces of an `if` or its `else`, and the condition is made of type checks: `typeof`, `instanceof`, `isNaN()`, `isFinite()`, or a method such as `Array.isArray()`, `Number.isInteger()` or `_.isString()`.
+The rule reports `throw new Error()` when it's the only statement inside the braces of an `if` or its `else`, and the condition is made of type checks: `typeof`, `instanceof`, `isNaN()`, `isFinite()`, or a method such as `Array.isArray()`, `Number.isInteger()` or `_.isString()`.
 
 `--fix` changes `Error` to `TypeError`.
 

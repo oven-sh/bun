@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An enum member without a value gets a number from its position: the first is `0`, the next is one more than the member before it. Add a member in the middle, or sort the list, and every member after it gets a new number. Values that were saved in a database or sent to another service now mean something else.
+An enum member without a value gets a number from its position. The first is `0`, and each one after that is one more than the member before it. If you add a member in the middle or sort the list, every member after it gets a new number. Values that were saved in a database or sent to another service now mean something else.
 
 Each member without a value is reported.
 
@@ -47,4 +47,4 @@ enum Role {
 
 ## When not to use it
 
-If the values never leave the program and you only compare members with each other, the numbers do not matter.
+If the values never leave the program and you only compare members with each other, the numbers don't matter.

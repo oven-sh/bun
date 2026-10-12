@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A test at the top level of a file shows up in the output with no group name, so a failure says "starts empty" but not what starts empty. A hook at the top level runs for every test in the file, including the ones somebody adds later for something else. Inside a `describe`, both say what they belong to.
+A test at the top level of a file shows up in the output with no group name, so a failure says "starts empty" but not what starts empty. A hook at the top level runs for every test in the file, including the ones somebody adds later for something else. Inside a `describe`, it's clear what both belong to.
 
 ## Examples
 
@@ -52,7 +52,7 @@ describe("cart", () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `maxNumberOfTopLevelDescribes` | no limit | How many `describe` blocks a file can have at the top level. Each one after that is reported. Nested blocks do not count. |
+| `maxNumberOfTopLevelDescribes` | no limit | How many `describe` blocks a file can have at the top level. Each one after that is reported. Nested blocks don't count. |
 
 {/* bad {"options": [{"maxNumberOfTopLevelDescribes": 1}], "count": 1} */}
 ```js

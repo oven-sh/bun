@@ -40,4 +40,4 @@ const emails = document.querySelectorAll("[name='email']");
 
 ## When not to use it
 
-The results are not quite the same. The `getElementsBy...` methods return a live collection that follows the document, and `querySelectorAll()` returns a list that does not change. An id is not always a valid selector: `getElementById("1.a")` works, and `querySelector("#1.a")` throws unless you pass the id through `CSS.escape()`.
+The results aren't quite the same. The `getElementsBy...` methods return a live collection that follows the document, and `querySelectorAll()` returns a list that doesn't change. An id also isn't always a valid selector. `getElementById("1.a")` works, but `querySelector("#1.a")` throws unless you pass the id through `CSS.escape()`.

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`toEqual()` skips properties that are `undefined`, treats a hole in an array like `undefined`, and does not compare the classes of the two objects. So `expect({ name: "Ada", email: undefined }).toEqual({ name: "Ada" })` passes. `toStrictEqual()` checks all three, and that test fails.
+`toEqual()` skips properties that are `undefined`, treats a hole in an array like `undefined`, and doesn't compare the two objects' classes. So `expect({ name: "Ada", email: undefined }).toEqual({ name: "Ada" })` passes. `toStrictEqual()` checks all three, and that test fails.
 
-`--fix-suggestions` renames the matcher. `--fix` does not, because a test that passes with `toEqual()` can fail with `toStrictEqual()`.
+`--fix-suggestions` renames the matcher. `--fix` doesn't, because a test that passes with `toEqual()` can fail with `toStrictEqual()`.
 
 ## Examples
 

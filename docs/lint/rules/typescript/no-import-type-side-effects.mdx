@@ -36,7 +36,7 @@ import type { User, Role } from "./models";
 export function describe(user: User, role: Role) {}
 ```
 
-An import that also brings in a value has to stay at run time, so it is fine:
+An import that also brings in a value must stay at run time, so it's fine:
 
 {/* good */}
 ```ts
@@ -47,4 +47,4 @@ export const user: User = loadUser();
 
 ## When not to use it
 
-Without `verbatimModuleSyntax`, TypeScript drops an import that is only used for types, so both forms compile to the same code.
+Without `verbatimModuleSyntax`, TypeScript drops an import that's only used for types, so both forms compile to the same code.

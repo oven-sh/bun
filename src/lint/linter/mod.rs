@@ -578,6 +578,7 @@ impl<S: RuleSet> Linter<S> {
                 problems: &mut problems,
                 skipped: &mut result.skipped_rules,
                 configured: Vec::new(),
+                by_other_name: Vec::new(),
             };
             for comment in comments.iter().filter(is_understood) {
                 inline.apply(comment, &mut running, &mut running_js);
@@ -1167,6 +1168,8 @@ struct Inline<'i, 'c, 'a, S: RuleSet> {
     skipped: &'i mut Vec<Box<[u8]>>,
     /// The rules that a comment has configured already.
     configured: Vec<Named<'c>>,
+    /// The subset of `configured` that was set [through the paired rule's name](Inline::set_by).
+    by_other_name: Vec<Named<'c>>,
 }
 
 impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
@@ -1222,7 +1225,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         if found.is_none() {
             // All rules of a plugin that is loaded are known.
             let is_known_to_be_missing = lacks_it || js.is_some() && !config.skips_unknown_rules;
-            // Where every rule is here, no package has one that a comment could turn on.
+            // With every rule built in, there's no npm package that could provide the rule a comment enables.
             let is_of_a_package = !is_known_to_be_missing
                 && self.config.is_foreign(id)
                 && !(config.has_every_rule && is_turned_on);
@@ -1236,6 +1239,47 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             }
         }
         found
+    }
+
+    /// Calls [`Registry::pair_of`], but only in configs where a pair acts as one rule.
+    fn pair_of(&self, rule: Named) -> Option<(&'static RuleEntry, &'static RuleEntry)> {
+        match rule {
+            Named::Native(entry) if self.config.has_every_rule => {
+                self.linter.registry.pair_of(entry.meta)
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the rule that a config comment naming `rule` applies to in this file. `given` are the comment's options.
+    /// For a [pair](Registry::pair_of) that's the typescript-eslint version in TypeScript files, unless it can't run or
+    /// only the core rule accepts the options.
+    fn set_by(&self, rule: Named<'c>, given: &[Json]) -> Named<'c> {
+        let Some((base, extension)) = self.pair_of(rule) else {
+            return rule;
+        };
+        let can_run = !extension.meta.requires_types || self.file.types.is_some();
+        let takes = |it: &RuleEntry| schema::validate(it.meta, given).is_ok();
+        let is_for_base = self.file.is_javascript() || !can_run || !takes(extension) && takes(base);
+        Named::Native(if is_for_base { base } else { extension })
+    }
+
+    /// Returns the rule that a disable comment naming `rule` applies to. For a pair that's whichever rule runs on this file.
+    fn disabled_by(&self, rule: Named<'c>) -> Named<'c> {
+        let Some((base, extension)) = self.pair_of(rule) else {
+            return rule;
+        };
+        let is_of_pair = |it: &&Named| [base, extension].iter().any(|of| it.is(Named::Native(of)));
+        if let Some(set) = self.configured.iter().find(is_of_pair) {
+            return *set;
+        }
+        let is_on =
+            |it: &RuleEntry| (self.config.rule(it)).is_some_and(|it| it.severity != Severity::Off);
+        match (is_on(base), is_on(extension)) {
+            (true, false) => Named::Native(base),
+            (false, true) => Named::Native(extension),
+            _ => self.set_by(rule, &[]),
+        }
     }
 
     /// The part of ESLint's `applyInlineConfig` and of what `verify` does with its result that is
@@ -1283,9 +1327,27 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 value => Some(value),
             };
             let is_turned_on = first.and_then(severity_of) != Some(Severity::Off);
-            let Some(rule) = self.find(comment, &id, is_turned_on) else {
+            let Some(named) = self.find(comment, &id, is_turned_on) else {
                 continue;
             };
+            let given = match &value {
+                Json::Array(items) => items.get(1..).unwrap_or_default(),
+                _ => &[],
+            };
+            let rule = self.set_by(named, given);
+            // A setting under the rule's own name beats one under the paired name, in either order.
+            if !named.is(rule) {
+                let is_configured = |it: &Named| it.is(rule);
+                if self.configured.iter().any(is_configured)
+                    && !self.by_other_name.iter().any(is_configured)
+                {
+                    continue;
+                }
+                self.by_other_name.push(rule);
+            } else if let Some(at) = self.by_other_name.iter().position(|it| it.is(rule)) {
+                self.by_other_name.swap_remove(at);
+                self.configured.retain(|it| !it.is(rule));
+            }
             // In ESLint 8 a comment says all there is to say about a rule, and the last comment counts.
             let value = match eslint_8.map(|it| it.inline_setting(&id, &value, rule.js())) {
                 Some(Ok(setting)) => Json::Array(setting),
@@ -1359,7 +1421,15 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
             let validated = match is_validated || is_zero {
                 true => None,
-                false => Some(rule.validate(options)),
+                // Options are valid for a pair if either rule accepts them.
+                false => Some(rule.validate(options).or_else(|lines| {
+                    let pair = self.pair_of(rule).map(|it| [it.0, it.1]);
+                    let mut pair = pair.iter().flatten();
+                    match pair.any(|it| schema::validate(it.meta, options).is_ok()) {
+                        true => Ok(Vec::new()),
+                        false => Err(lines),
+                    }
+                })),
             };
             if let Some(Err(lines)) = &validated {
                 let message = quoted(&[
@@ -1373,6 +1443,15 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 continue;
             }
             self.configured.push(rule);
+            // Make sure the paired rule doesn't run too.
+            if let Some((base, extension)) = self.pair_of(rule) {
+                let rests = if rule.is(Named::Native(base)) {
+                    extension
+                } else {
+                    base
+                };
+                running.retain(|it| !is_same_rule(it.entry, rests));
+            }
             let (entry, existing) = match (rule, existing) {
                 (Named::Native(entry), Some(Existing::Native(existing))) => (entry, Some(existing)),
                 (Named::Native(entry), _) => (entry, None),
@@ -1553,6 +1632,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             let Some(rule) = self.find(comment, name, false) else {
                 return true;
             };
+            let rule = self.disabled_by(rule);
             let is_new = !rules.iter().any(|it| it.is(rule));
             if is_new {
                 rules.push(rule);

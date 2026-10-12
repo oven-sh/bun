@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`value == null` is `true` for `null` and also for `undefined`. If you meant only `null`, the check lets `undefined` through. If you meant both, the next reader cannot tell that from the code.
+`value == null` is `true` for `null` and also for `undefined`. If you meant only `null`, the check lets `undefined` through. If you meant both, the next reader can't tell that from the code.
 
 ## Examples
 
@@ -44,4 +44,4 @@ if (session === null || session === undefined) {
 
 ## When not to use it
 
-`== null` is a common short way to test for `null` and `undefined` at once. If your code does that on purpose, leave this rule off. `eqeqeq` with the `"smart"` option allows `== null` and still reports `value == other`.
+`== null` is a common shorthand for testing for `null` and `undefined` at once. If your code does that on purpose, leave this rule off. `eqeqeq` with the `"smart"` option allows `== null` and still reports `value == other`.

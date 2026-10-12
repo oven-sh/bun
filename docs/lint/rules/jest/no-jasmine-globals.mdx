@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Jest's default test runner does not define Jasmine's globals. A test that came from Jasmine and still calls `fail()`, `spyOn()` or `jasmine.createSpy()` stops with a `ReferenceError` when it gets there. Jest has its own API for each of them.
+Jest's default test runner doesn't define Jasmine's globals. A test that came from Jasmine and still calls `fail()`, `spyOn()` or `jasmine.createSpy()` throws a `ReferenceError` when it gets there. Jest has its own API for each of them.
 
 | Jasmine | Jest |
 | --- | --- |
@@ -62,7 +62,7 @@ test("saves the user", () => {
 test.skip("exports to PDF", () => {});
 ```
 
-A function of your own with one of these names is not reported:
+Your own function with one of these names isn't reported:
 
 {/* good */}
 ```js

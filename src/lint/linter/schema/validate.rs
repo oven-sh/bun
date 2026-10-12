@@ -8,14 +8,14 @@ use crate::regex::Regex;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 
-/// From an array or an object to a value in it.
+/// One step of a path into nested arrays and objects.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Step {
     Index(usize),
     Key(Vec<u8>),
 }
 
-/// What a limit counts.
+/// What a minimum or maximum applies to.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Of {
     /// The number itself.
@@ -25,7 +25,7 @@ pub(super) enum Of {
     Properties,
 }
 
-/// What a keyword asks for that the data is not.
+/// The reason a schema keyword rejected the data.
 #[derive(Clone, Debug)]
 pub(super) enum Why {
     /// `type`
@@ -40,14 +40,14 @@ pub(super) enum Why {
     Missing(Vec<u8>),
     /// `additionalProperties: false`: the property, and the properties that the schema has.
     Unknown(Vec<u8>, Vec<Vec<u8>>),
-    /// `anyOf`, `oneOf`, `not`, `then`, `else`: the errors before it say more.
+    /// `anyOf`, `oneOf`, `not`, `then` or `else` failed. The errors before this one have the details.
     Composite,
 }
 
 /// An error object of Ajv.
 #[derive(Clone, Debug)]
 pub(super) struct SchemaError {
-    /// From the root to `data`.
+    /// Path from the root to `data`.
     pub(super) path: Vec<Step>,
     pub(super) why: Why,
     /// `error.data`
@@ -61,7 +61,7 @@ pub(super) struct SchemaError {
 pub(super) struct Validator<'s> {
     pub(super) root: &'s Json,
     pub(super) errors: Vec<SchemaError>,
-    /// From the root to what is checked.
+    /// Path from the root to the value being checked.
     pub(super) at: Vec<Step>,
 }
 
@@ -239,7 +239,7 @@ impl<'s> Validator<'s> {
         self.check(schema, data, cx)
     }
 
-    /// [`Validator::check`] for what is a `step` further in.
+    /// Runs [`Validator::check`] on a child value, one `step` below the current one.
     fn check_in(&mut self, step: Step, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
         self.at.push(step);
         let is_valid = self.check(schema, data, cx);

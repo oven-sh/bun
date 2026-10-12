@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A worker has no `window`, a browser has no `global`, and Node.js has no `self`. Code that names one of them throws a `ReferenceError` where it does not exist. `globalThis` is the same object and exists everywhere.
+A worker has no `window`, a browser has no `global`, and Node.js has no `self`. Code that names one of them throws a `ReferenceError` where it doesn't exist. `globalThis` is the same object and exists everywhere.
 
-Properties that only make sense on one of them are allowed, such as `window.innerWidth`, `window.addEventListener("resize", ...)` and `self.postMessage()`. So is a computed access such as `window[name]`, and a variable of your own with one of these names.
+Properties that only make sense on one of them are allowed, such as `window.innerWidth`, `window.addEventListener("resize", ...)` and `self.postMessage()`. Computed access such as `window[name]` is allowed too, and so is your own variable with one of these names.
 
 ## Examples
 
@@ -50,7 +50,7 @@ self.postMessage({ done: true });
 const handler = window[name];
 ```
 
-An event that is not specific to the window is reported:
+An event that isn't specific to the window is reported:
 
 {/* bad */}
 ```js

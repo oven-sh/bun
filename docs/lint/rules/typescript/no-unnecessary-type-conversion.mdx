@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-`String(name)`, `+count` and `!!isOpen` are ways to convert a value. If `name` is already a string, `count` a number and `isOpen` a boolean, nothing is converted, and the reader is left to wonder what else the value could have been.
+`String(name)`, `+count` and `!!isOpen` all convert a value. If `name` is already a string, `count` is already a number and `isOpen` is already a boolean, they convert nothing, and the reader is left wondering what else the value could have been.
 
 | Reported | If the value is already |
 | --- | --- |
@@ -51,7 +51,7 @@ function format(name: string, count: number, isOpen: boolean) {
 }
 ```
 
-A conversion that changes the type is not reported:
+A conversion that changes the type isn't reported:
 
 {/* good */}
 ```ts

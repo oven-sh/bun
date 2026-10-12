@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`process.exit()` stops the process at once. Work that is still pending is dropped, `finally` blocks do not run, and the code that called yours gets no chance to handle the failure. Throw an error instead, or set `process.exitCode` and let the process end when it has nothing left to do.
+`process.exit()` stops the process immediately. Pending work is dropped, `finally` blocks don't run, and the code that called yours never gets a chance to handle the failure. Throw an error instead, or set `process.exitCode` and let the process end when it has nothing left to do.
 
 ## Examples
 
@@ -39,7 +39,7 @@ function loadConfig(path) {
 }
 ```
 
-The rule allows `process.exit()` in three places. A file that starts with `#!` is a command-line program, which decides for itself when to end:
+The rule allows `process.exit()` in three places. The first is a file that starts with `#!`. That's a command-line program, so it decides when to exit:
 
 {/* good */}
 ```js
@@ -49,7 +49,7 @@ if (!(await run())) {
 }
 ```
 
-A handler passed to `process.on()` or `process.once()`:
+The second is a handler passed to `process.on()` or `process.once()`:
 
 {/* good */}
 ```js
@@ -59,7 +59,7 @@ process.on("SIGINT", () => {
 });
 ```
 
-And a file that imports something from `node:worker_threads`, where `process.exit()` ends the worker thread and not the process:
+The third is a file that imports something from `node:worker_threads`, where `process.exit()` ends the worker thread, not the process:
 
 {/* good */}
 ```js

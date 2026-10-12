@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When other members sit between the getter and the setter of a property, a reader who finds the getter can miss that there is a setter further down.
+When other members sit between a property's getter and setter, someone who finds the getter can miss that there's a setter further down.
 
 The rule checks object literals and classes. In a class, a static pair and an instance pair with the same name are separate.
 
@@ -58,8 +58,8 @@ grouped-accessor-pairs = ["error", "getBeforeSet"]
 | Option | What it does |
 | --- | --- |
 | `"anyOrder"` (default) | The pair must be adjacent, in either order. |
-| `"getBeforeSet"` | The getter also has to come first. |
-| `"setBeforeGet"` | The setter also has to come first. |
+| `"getBeforeSet"` | The getter must also come first. |
+| `"setBeforeGet"` | The setter must also come first. |
 
 | Option | Default | What it does |
 | --- | --- | --- |

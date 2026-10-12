@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-React compares a context's `value` by identity. An object, array or function that is created while the component renders is a new value every time, so every consumer of the context renders again each time this component does, even if nothing in the value changed.
+React compares a context's `value` by identity. An object, array or function that's created while the component renders is a new value every time. So every consumer of the context renders again each time this component does, even if nothing in the value changed.
 
-The rule looks at the `value` of `<Something.Provider>`, and of `<Something>` where `Something` is the result of `createContext()`. It reports objects, arrays, functions, classes, `new` expressions, regular expressions and JSX, written in the prop or kept in a variable of the component.
+The rule looks at the `value` of `<Something.Provider>`, and of `<Something>` where `Something` is the result of `createContext()`. It reports objects, arrays, functions, classes, `new` expressions, regular expressions and JSX, whether they're written in the prop or kept in one of the component's variables.
 
 ## Examples
 
@@ -61,7 +61,7 @@ function App({ user, children }) {
 }
 ```
 
-A value that is created once, outside of the component, is fine too:
+A value that's created once, outside the component, is fine too:
 
 {/* good */}
 ```jsx

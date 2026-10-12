@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`void expression` runs the expression and gives `undefined`. Few people know the operator, and `undefined` says the same thing in a word that everybody can read.
+`void expression` runs the expression and returns `undefined`. Few people know the operator, and `undefined` says the same thing in a word everybody can read.
 
 ## Examples
 
@@ -40,9 +40,9 @@ button.onclick = () => {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowAsStatement` | `false` | Allow `void` when it is the whole statement. |
+| `allowAsStatement` | `false` | Allow `void` when it's the whole statement. |
 
-`void` at the start of a statement is how you tell `@typescript-eslint/no-floating-promises` that a promise is ignored on purpose. Turn this option on if you use both rules.
+`void` at the start of a statement is how you tell `@typescript-eslint/no-floating-promises` that you're ignoring a promise on purpose. Turn this option on if you use both rules.
 
 {/* good {"options": [{"allowAsStatement": true}]} */}
 ```js

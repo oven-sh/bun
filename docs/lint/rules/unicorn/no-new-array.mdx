@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`new Array(value)` does two different things. If `value` is a number, you get an array of that length with nothing in it. If it is anything else, you get an array with `value` as its only item. A reader cannot tell which one is meant without knowing the type of `value`.
+`new Array(value)` does two different things. If `value` is a number, you get an array of that length with nothing in it. If it's anything else, you get an array with `value` as its only item. You can't tell which one is meant without knowing the type of `value`.
 
-The rule suggests both readings: `Array.from({length: value})` and `[value]`. It cannot know which one you meant, so `--fix` leaves the code alone. `--fix-dangerously` applies the first one.
+The rule suggests both readings: `Array.from({length: value})` and `[value]`. It can't know which one you meant, so `--fix` leaves the code alone. `--fix-dangerously` applies the first one.
 
 ## Examples
 

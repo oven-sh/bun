@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A long row of props is hard to scan, and a change to one of them marks the whole line in a diff. By default the rule allows one prop on a line.
+A long row of props is hard to scan, and changing one of them marks the whole line in a diff. By default the rule allows one prop per line.
 
 `--fix` puts the extra props on new lines.
 
@@ -67,7 +67,7 @@ const field = (
 );
 ```
 
-`maximum` can also be an object: `single` is the limit for tags on one line, `multi` the limit for tags that take several lines. A limit that you leave out is not checked. This form cannot be combined with `when`.
+`maximum` can also be an object. `single` is the limit for tags on one line, and `multi` is the limit for tags that take several lines. If you leave a limit out, it isn't checked. You can't combine this form with `when`.
 
 ```toml bunfig.toml
 [lint.rules]

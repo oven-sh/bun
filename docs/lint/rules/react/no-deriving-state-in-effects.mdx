@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An effect runs after the component has rendered. If all it does is compute a value from props or state and store it with a `useState` setter, React renders once with the stale value, runs the effect, and renders again. Compute the value while rendering: it is always up to date, and the extra state and the extra render go away.
+An effect runs after the component has rendered. If all it does is compute a value from props or state and store it with a `useState` setter, React renders once with the stale value, runs the effect, and renders again. Compute the value while rendering instead. It's always up to date, and the extra state and the extra render go away.
 
-An effect is reported if it uses nothing but its dependencies and state setters, and the value it stores is made from all of its dependencies.
+The rule reports an effect if it uses nothing but its dependencies and state setters, and the value it stores is made from all of its dependencies.
 
 ## Examples
 
@@ -46,7 +46,7 @@ function Greeting({ firstName, lastName }) {
 }
 ```
 
-An effect that talks to something outside of React is what effects are for:
+Talking to something outside React is what effects are for:
 
 {/* good */}
 ```jsx

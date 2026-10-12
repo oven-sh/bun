@@ -14,7 +14,7 @@ deprecated: false
 
 In older browsers, a page opened with `target="_blank"` can reach the page that opened it through `window.opener` and send it to another address, for example a fake login page. `rel="noreferrer"` cuts that connection.
 
-Only links that can leave your site are reported: an `href` that starts with a scheme such as `https:` or with `//`, or an `href` in braces.
+The rule only reports links that can leave your site: an `href` that starts with a scheme such as `https:` or with `//`, or an `href` in braces.
 
 `--fix` adds `rel="noreferrer"` to the link.
 
@@ -76,8 +76,8 @@ const link = <a {...props} rel="noreferrer">Open</a>;
 const search = <form action="https://example.com/search" target="_blank" />;
 ```
 
-Your own link and form components are checked too if the `settings` of your ESLint config list them under `linkComponents` and `formComponents`.
+The rule also checks your own link and form components if your ESLint config's `settings` list them under `linkComponents` and `formComponents`.
 
 ## When not to use it
 
-Current browsers treat `target="_blank"` as if it had `rel="noopener"`. If you do not support older ones, you do not need this rule.
+Current browsers treat `target="_blank"` as if it had `rel="noopener"`. If you don't support older ones, you don't need this rule.

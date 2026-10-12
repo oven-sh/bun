@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-This rule reports nothing. The React Compiler has a category for problems with `fbt`, a library for translations, but none of its checks use that category. The rule exists because `eslint-plugin-react-hooks` has it, so a config that mentions it keeps working.
+This rule reports nothing. The React Compiler has a category for problems with `fbt`, a translation library, but none of its checks use that category. The rule exists because `eslint-plugin-react-hooks` has it, so a config that mentions it keeps working.
 
-What the compiler cannot handle in an `<fbt>` element, such as two `<fbt:plural>` tags in one element, is reported by `react-hooks/todo`.
+When the compiler can't handle something in an `<fbt>` element, such as two `<fbt:plural>` tags in one element, `react-hooks/todo` reports it.
 
 {/* never reports */}
 

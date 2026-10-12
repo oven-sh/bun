@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`name = name` does nothing. It is usually what is left of a refactoring, or a typo for `this.name = name`.
+`name = name` does nothing. It's usually left over from a refactor, or a typo for `this.name = name`.
 
-The rule looks at `=`, `&&=`, `||=` and `??=`, and into destructuring. `count += count` is not reported, because it changes the value.
+The rule checks `=`, `&&=`, `||=` and `??=`, and looks inside destructuring. `count += count` isn't reported, because it changes the value.
 
 This rule is on by default.
 

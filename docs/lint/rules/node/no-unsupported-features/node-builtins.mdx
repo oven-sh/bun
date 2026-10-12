@@ -12,13 +12,13 @@ typeAware: false
 deprecated: false
 ---
 
-A Node.js API that is newer than the oldest version you support is missing there. An `import` of it fails when the file loads, and a call throws a `TypeError`. You only find out when somebody runs the code on that version.
+A Node.js API that's newer than the oldest version you support is missing there. An `import` of it fails when the file loads, and a call throws a `TypeError`. You only find out when somebody runs the code on that version.
 
-The rule checks what you take from built-in modules with `import`, `require()` or `process.getBuiltinModule()`, globals such as `fetch`, and the properties of `import.meta`. It takes the versions you support from `engines.node` in your `package.json`. If nothing sets a range, it assumes `>=16.0.0`. Every version in the range must have the API, and have it as stable: an API that is still experimental is reported too.
+The rule checks anything you take from built-in modules with `import`, `require()` or `process.getBuiltinModule()`, globals such as `fetch`, and the properties of `import.meta`. It takes the versions you support from `engines.node` in your `package.json`. If nothing sets a range, it assumes `>=16.0.0`. Every version in the range must have the API, and it must be stable there. An API that's still experimental is reported too.
 
 ## Examples
 
-Reported, because `util.parseArgs` is stable since 20.0.0, `fetch` since 21.0.0 and `import.meta.dirname` since 24.0.0:
+Reported, because `util.parseArgs` has been stable since 20.0.0, `fetch` since 21.0.0 and `import.meta.dirname` since 24.0.0:
 
 {/* bad {"count": 3} */}
 ```js
@@ -73,7 +73,7 @@ Without `version`, the range comes from `settings.n.version` in an ESLint config
 "n/no-unsupported-features/node-builtins" = ["error", { version = ">=22.5.0", allowExperimental = true }]
 ```
 
-`node:sqlite` is experimental since 22.5.0:
+`node:sqlite` has been experimental since 22.5.0:
 
 {/* bad {"options": [{"version": ">=22.5.0"}]} */}
 ```js
@@ -99,4 +99,4 @@ fs.cpSync("public", "dist", { recursive: true });
 
 ## When not to use it
 
-If the code never runs in Node.js, for example because it only runs in Bun, the reports do not apply.
+If the code never runs in Node.js, for example because it only runs in Bun, the reports don't apply.

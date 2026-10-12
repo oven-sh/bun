@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`import fs from "fs"` looks like an import of an npm package. `node:fs` shows at once that the module is built in.
+`import fs from "fs"` looks like it imports an npm package. `node:fs` makes it obvious that the module is built in.
 
 The rule checks `import`, `export { ... } from`, `import()`, `require()` and TypeScript's `import fs = require("fs")`.
 
@@ -42,7 +42,7 @@ export { EventEmitter } from "node:events";
 const os = await import("node:os");
 ```
 
-Packages and your own files are not reported:
+Packages and your own files aren't reported:
 
 {/* good */}
 ```js

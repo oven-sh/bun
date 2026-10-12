@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`.findIndex()` is for a test that `===` cannot express. If the callback only compares the element with a value, `.indexOf(value)` does the same without a function. The same goes for `.findLastIndex()` and `.lastIndexOf()`.
+`.findIndex()` is for a test that `===` can't express. If the callback only compares the element with a value, `.indexOf(value)` does the same thing without a function. The same goes for `.findLastIndex()` and `.lastIndexOf()`.
 
 ## Examples
 
@@ -32,7 +32,7 @@ const index = names.indexOf("admin");
 const last = names.lastIndexOf(current);
 ```
 
-A callback that compares a property of the element, or compares with `==`, is not reported:
+A callback that compares a property of the element, or compares with `==`, isn't reported:
 
 {/* good */}
 ```js

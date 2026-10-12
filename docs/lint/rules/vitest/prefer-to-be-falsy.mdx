@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`toBe(false)` passes only for `false` itself. If the code returns `undefined`, `null`, or `0` instead, the test fails, even though `if (!value)` treats them all the same. `toBeFalsy()` passes for any falsy value.
+`toBe(false)` only passes for `false` itself. If the code returns `undefined`, `null`, or `0` instead, the test fails, even though `if (!value)` treats them all the same. `toBeFalsy()` passes for any falsy value.
 
 `toEqual(false)` and `toStrictEqual(false)` are reported too, with or without `.not`.
 
-`--fix-suggestions` replaces the matcher with `toBeFalsy()`. `--fix` does not, because the new matcher accepts more values.
+`--fix-suggestions` replaces the matcher with `toBeFalsy()`. `--fix` doesn't, because the new matcher accepts more values.
 
 ## Examples
 

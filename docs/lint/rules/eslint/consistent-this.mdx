@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Code that saves `this` for a nested function calls the variable `that`, `self`, `me` or `vm`. With one name everywhere, you know what the variable holds without looking for its declaration.
+Code that saves `this` for a nested function calls the variable `that`, `self`, `me` or `vm`. If you use one name everywhere, you know what the variable holds without looking up its declaration.
 
 The rule reports `this` assigned to any other name. It also reports the chosen name when it holds something other than `this`. The default name is `that`.
 
@@ -47,7 +47,7 @@ function Timer() {
 }
 ```
 
-Destructuring is not an alias, so it is allowed:
+Destructuring isn't an alias, so it's allowed:
 
 {/* good */}
 ```js
@@ -59,7 +59,7 @@ function Timer() {
 
 ## Options
 
-The options are the names you allow, one or more:
+The options are one or more names you allow:
 
 ```toml bunfig.toml
 [lint.rules]
@@ -78,4 +78,4 @@ function Timer() {
 
 ## When not to use it
 
-An arrow function uses the `this` of the code around it, so new code rarely needs an alias at all.
+An arrow function uses the surrounding code's `this`, so new code rarely needs an alias at all.

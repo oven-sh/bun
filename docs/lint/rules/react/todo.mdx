@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-The React Compiler does not handle all of JavaScript yet. When it finds something it cannot handle in a component or hook, it skips that function. The code is valid and still works, but it gets no automatic memoization. Turn this rule on to find those components.
+The React Compiler doesn't handle all of JavaScript yet. When it finds something it can't handle in a component or hook, it skips that function. The code is valid and still works, but it gets no automatic memoization. Turn this rule on to find those components.
 
 Some of what it reports:
 
@@ -85,7 +85,7 @@ function Report(props) {
 }
 ```
 
-A function that is neither a component nor a hook is never compiled, so it can use anything:
+A function that's neither a component nor a hook is never compiled, so it can use anything:
 
 {/* good */}
 ```jsx
@@ -100,4 +100,4 @@ function loadRows(load) {
 
 ## When not to use it
 
-If you do not use the React Compiler, there is nothing to fix here. Even if you do, rewriting working code is only worth it for components that are slow to render.
+If you don't use the React Compiler, there's nothing to fix here. Even if you do, rewriting working code is only worth it for components that are slow to render.

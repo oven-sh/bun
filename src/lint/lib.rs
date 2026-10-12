@@ -21,6 +21,7 @@ pub mod docs;
 pub(crate) mod estree;
 pub mod fix;
 pub mod formats;
+pub mod ignore;
 pub mod js_plugin;
 pub mod json;
 pub mod language;

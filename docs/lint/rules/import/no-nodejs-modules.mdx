@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Code that runs in a browser has no `fs`, `path` or `crypto` module. An import of one either breaks the bundle or pulls in a large polyfill. Turn this rule on for the files that ship to the client.
+Browsers don't have an `fs`, `path` or `crypto` module. Importing one either breaks the bundle or pulls in a large polyfill. Turn this rule on for the files that ship to the client.
 
 It checks `import`, `export ... from`, `import()` and `require()`, with and without the `node:` prefix.
 
@@ -40,7 +40,7 @@ import { cart } from "./cart";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `[]` | Builtin modules that may be imported, spelled as in the import: `"path"` does not allow `"node:path"`. |
+| `allow` | `[]` | Builtin modules you can import, spelled the way the import spells them. `"path"` doesn't allow `"node:path"`. |
 
 {/* good {"options": [{"allow": ["node:path"]}]} */}
 ```js

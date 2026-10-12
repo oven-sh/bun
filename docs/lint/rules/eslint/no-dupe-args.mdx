@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-When two parameters have the same name, the name refers to the last one. The argument passed for the first one can only be reached through `arguments`. It is nearly always a typo or a copy-paste mistake.
+When two parameters have the same name, the name refers to the last one. You can only reach the argument passed for the first one through `arguments`. It's nearly always a typo or a copy-paste mistake.
 
-In strict mode, in modules and in arrow functions this is already a syntax error. The rule catches it in the scripts where it is not, such as a `.cjs` file without `"use strict"`.
+In strict mode, in modules and in arrow functions this is already a syntax error. The rule catches it in the scripts where it isn't, such as a `.cjs` file without `"use strict"`.
 
-This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports the same mistake.
+This rule is on by default in JavaScript files. It's off in TypeScript files, where TypeScript reports the same mistake.
 
 ## Examples
 

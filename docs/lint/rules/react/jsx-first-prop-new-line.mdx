@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-When a tag takes several lines and its first prop stays next to the tag name, that prop is easy to miss and the props do not line up. By default the rule reports this for a tag that has more than one prop.
+When a tag takes several lines and its first prop stays next to the tag name, that prop is easy to miss and the props don't line up. By default the rule reports this for a tag that has more than one prop.
 
 `--fix` moves the first prop.
 
@@ -49,11 +49,11 @@ const short = <Input name="email" value={email} />;
 | --- | --- |
 | `"multiline-multiprop"` (default) | If the tag takes several lines and has more than one prop. |
 | `"multiline"` | If the tag takes several lines. |
-| `"multiprop"` | If the tag has more than one prop. With one prop, it has to be on the line of the tag name. |
+| `"multiprop"` | If the tag has more than one prop. With one prop, it must be on the same line as the tag name. |
 | `"always"` | Always. |
-| `"never"` | Never. It has to be on the line of the tag name. |
+| `"never"` | Never. It must be on the same line as the tag name. |
 
-A single prop that takes several lines is reported with `"multiline"`, not with the default:
+A single prop that takes several lines is reported with `"multiline"`, but not with the default:
 
 {/* bad {"options": ["multiline"]} */}
 ```jsx

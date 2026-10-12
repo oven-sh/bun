@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A value that is overwritten or thrown away before anything reads it does nothing. Often it is left over from an edit, or the wrong variable was assigned.
+A value that's overwritten or thrown away before anything reads it does nothing. Often it's left over from an edit, or the wrong variable was assigned.
 
 The rule follows every path through the function. An assignment is reported only if no path reads the value.
 
@@ -64,7 +64,7 @@ function finish(job) {
 }
 ```
 
-A variable that is never read at all is left to `no-unused-vars`:
+`no-unused-vars` handles a variable that's never read at all:
 
 {/* good */}
 ```js

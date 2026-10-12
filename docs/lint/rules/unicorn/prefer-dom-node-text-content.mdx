@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`innerText` returns the text as it is rendered. The browser has to compute styles and layout to answer, and text hidden by CSS is left out. `textContent` returns the text of every node under the element without any of that work.
+`innerText` returns the text as it's rendered. The browser needs to compute styles and layout to answer, and it leaves out text hidden by CSS. `textContent` returns the text of every node under the element without any of that work.
 
-The rule does not know types. It reports `.innerText` on any object, and `innerText` in destructuring.
+The rule doesn't know types. It reports `.innerText` on any object, and `innerText` in destructuring.
 
-`--fix` renames the property access. Destructuring is left to you.
+`--fix` renames the property access. You need to fix destructuring yourself.
 
 ## Examples
 

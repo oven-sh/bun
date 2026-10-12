@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-If JSX can be in any file, you cannot tell from a file's name whether it holds components, and tools that pick a parser by extension have to treat every file as JSX. By default the rule only allows JSX in `.jsx` files.
+If JSX can be in any file, you can't tell from a file's name whether it holds components, and tools that pick a parser by extension have to treat every file as JSX. By default the rule only allows JSX in `.jsx` files.
 
-Only the first JSX element in the file is reported.
+The rule only reports the first JSX element in the file.
 
 ## Examples
 
@@ -40,9 +40,9 @@ export function Button({ label }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `extensions` | `[".jsx"]` | The extensions that may contain JSX, each with its dot. |
-| `allow` | `"always"` | With `"as-needed"`, also report a file that has one of these extensions and no JSX. |
-| `ignoreFilesWithoutCode` | `false` | With `"as-needed"`, do not report a file that has no code at all. |
+| `extensions` | `[".jsx"]` | The extensions that can contain JSX, each with its dot. |
+| `allow` | `"always"` | With `"as-needed"`, also report a file that has one of these extensions but no JSX. |
+| `ignoreFilesWithoutCode` | `false` | With `"as-needed"`, don't report a file that has no code at all. |
 
 A TypeScript project needs `.tsx` in the list:
 
@@ -67,7 +67,7 @@ export function formatPrice(cents) {
 }
 ```
 
-With `ignoreFilesWithoutCode`, a file that only has comments is not:
+With `ignoreFilesWithoutCode`, a file that only has comments isn't:
 
 {/* good {"filename": "empty.jsx", "options": [{"allow": "as-needed", "ignoreFilesWithoutCode": true}]} */}
 ```jsx

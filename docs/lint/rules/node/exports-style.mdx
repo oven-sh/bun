@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A CommonJS file can export through `module.exports` or through its shorthand `exports`. Both start as the same object, but once `module.exports` is assigned a new value, what you add to `exports` is no longer exported. Using one of the two everywhere avoids that.
+A CommonJS file can export through `module.exports` or through its shorthand `exports`. Both start as the same object, but once you assign a new value to `module.exports`, anything you add to `exports` is no longer exported. Sticking to one of the two everywhere avoids that.
 
 ## Examples
 
@@ -46,7 +46,7 @@ module.exports.parse = function parse(text) {
 | `"module.exports"` (default) | Report every use of `exports`. |
 | `"exports"` | Report every use of `module.exports`, and every assignment to `exports` itself. |
 
-A second option is an object:
+The second option is an object:
 
 | Option | Default | What it does |
 | --- | --- | --- |

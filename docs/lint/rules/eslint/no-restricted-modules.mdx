@@ -12,9 +12,9 @@ typeAware: false
 deprecated: true
 ---
 
-A project often has modules that some code should not load: a package that has been replaced, a Node.js module in code that also runs in the browser, the internal files of another package. This rule reports a `require()` of them.
+A project often has modules that some code shouldn't load, like a package that's been replaced, a Node.js module in code that also runs in the browser, or another package's internal files. This rule reports a `require()` of them.
 
-The rule reports nothing until you give it names. It only looks at `require()` with a fixed string. For `import`, use `no-restricted-imports`.
+The rule does nothing until you give it names. It only looks at `require()` with a fixed string. For `import`, use `no-restricted-imports`.
 
 ## Examples
 
@@ -41,18 +41,18 @@ const nodeFs = require("node:fs");
 const plugin = require(pluginName);
 ```
 
-A name has to match the whole string, so `"fs"` does not cover `"fs/promises"` or `"node:fs"`.
+A name must match the whole string, so `"fs"` doesn't cover `"fs/promises"` or `"node:fs"`.
 
 ## Options
 
-Each option is a module name, or an object with a `name` and a `message` that is added to the report.
+Each option is a module name, or an object with a `name` and a `message` that's added to the report.
 
 To use patterns, pass one object instead:
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `paths` | `[]` | The list of modules, written as above. |
-| `patterns` | `[]` | Patterns in the syntax of `.gitignore`. A pattern that starts with `!` makes an exception to the ones before it. |
+| `patterns` | `[]` | Patterns in `.gitignore` syntax. A pattern that starts with `!` makes an exception to the ones before it. |
 
 With `{ paths: ["request"], patterns: ["lodash/*", "!lodash/fp"] }`, these are reported:
 
@@ -62,7 +62,7 @@ const request = require("request");
 const merge = require("lodash/merge");
 ```
 
-And these are not:
+And these aren't:
 
 {/* good {"options": [{"paths": ["request"], "patterns": ["lodash/*", "!lodash/fp"]}]} */}
 ```js

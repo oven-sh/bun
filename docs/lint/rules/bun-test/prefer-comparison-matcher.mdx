@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`expect(price < 100).toBe(true)` compares first and hands `expect` only the result. When it fails, the message says that `false` is not `true`, and you do not see the price. `expect(price).toBeLessThan(100)` prints both numbers.
+`expect(price < 100).toBe(true)` compares first and hands `expect` only the result. When it fails, the message says that `false` isn't `true`, and you don't see the price. `expect(price).toBeLessThan(100)` prints both numbers.
 
 The rule reports `>`, `>=`, `<` and `<=` inside `expect()` when the result is checked against `true` or `false` with `toBe()`, `toEqual()` or `toStrictEqual()`.
 
-`--fix-suggestions` rewrites the assertion. `--fix` does not, because the comparison matchers throw on anything that is not a number or a bigint.
+`--fix-suggestions` rewrites the assertion. `--fix` doesn't, because the comparison matchers throw on anything that isn't a number or a bigint.
 
 ## Examples
 
@@ -59,7 +59,7 @@ test("sorts after the first entry", () => {
 
 ## When not to use it
 
-The rule does not look at types, so it also reports comparisons of dates, or of strings held in variables. The comparison matchers throw on those values. This test is correct as written:
+The rule doesn't look at types, so it also reports comparisons of dates, or of strings held in variables. The comparison matchers throw on those values. This test is correct as written:
 
 {/* bad */}
 ```ts

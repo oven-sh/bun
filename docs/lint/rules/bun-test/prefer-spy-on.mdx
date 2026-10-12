@@ -14,7 +14,7 @@ deprecated: false
 
 `Date.now = mock()` throws the real `Date.now` away. Unless you save it and put it back yourself, every test that runs afterwards gets the mock. `spyOn(Date, "now")` remembers the original, so `mockRestore()` or `mock.restore()` brings it back.
 
-The rule reports a property that is set to `mock()`, `jest.fn()` or `vi.fn()`.
+The rule reports a property that's set to `mock()`, `jest.fn()` or `vi.fn()`.
 
 `--fix-suggestions` rewrites `obj.save = mock()` to `spyOn(obj, 'save').mockImplementation()` if the file imports `spyOn`, and `obj.save = jest.fn()` to `jest.spyOn(obj, 'save').mockImplementation()`. The `.mockImplementation()` is there because a spy calls the original function until you give it an implementation.
 
@@ -48,7 +48,7 @@ afterEach(() => {
 });
 ```
 
-A mock that is stored in a variable or written in an object literal replaces nothing, so it is not reported:
+A mock that's stored in a variable or written in an object literal doesn't replace anything, so it isn't reported:
 
 {/* good */}
 ```ts

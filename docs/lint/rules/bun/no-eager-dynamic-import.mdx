@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-The point of `import()` is to load a module only when it is needed. An `import()` at the top level of a file runs as soon as the file is imported, so the module is always loaded. With `await`, everything that imports the file waits for it too. Move the call into the function that needs the module, or write an `import` statement.
+The point of `import()` is to load a module only when it's needed. An `import()` at the top level of a file runs as soon as the file is imported, so the module is always loaded. With `await`, everything that imports the file waits for it too. Move the call into the function that needs the module, or write an `import` statement.
 
 ## Examples
 
@@ -46,7 +46,7 @@ export function render(text) {
 }
 ```
 
-A function that is called right where it is defined, a `static` field, and a `static` block also run while the file loads:
+A function that's called right where it's defined, a `static` field, and a `static` block also run while the file loads:
 
 {/* bad {"count": 3} */}
 ```js

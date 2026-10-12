@@ -1,6 +1,6 @@
 // What `bun lint` prints where no configuration file of ESLint or oxlint applies, and what is the same with one.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { sep } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -37,8 +37,9 @@ async function lint(files: Files, args: string[] = [], more: Record<string, stri
   return { stdout: withoutDirectory(stdout, dir), stderr: withoutTime(stderr), exitCode };
 }
 
-// Some sandboxes have no pseudo-terminals.
+// Some sandboxes have no pseudo-terminals. On Windows, ConPTY re-renders the screen, so escape sequences don't survive.
 const hasTerminal = (() => {
+  if (isWindows) return false;
   try {
     new Bun.Terminal({}).close();
     return true;

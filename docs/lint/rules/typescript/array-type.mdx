@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`string[]` and `Array<string>` are the same type. A codebase that mixes the two makes readers stop and check whether the difference means something. This rule picks one. By default it is `T[]`, and `readonly T[]` for read-only arrays.
+`string[]` and `Array<string>` are the same type. A codebase that mixes the two makes readers stop and check whether the difference means something. This rule picks one. By default it's `T[]`, and `readonly T[]` for read-only arrays.
 
 `--fix` rewrites the type to the other form.
 
@@ -47,9 +47,9 @@ Each takes one of these values:
 | --- | --- |
 | `"array"` | Require `T[]` and `readonly T[]`. |
 | `"generic"` | Require `Array<T>` and `ReadonlyArray<T>`. |
-| `"array-simple"` | Require `T[]` when `T` is simple, and `Array<T>` when it is not. |
+| `"array-simple"` | Require `T[]` when `T` is simple, and `Array<T>` when it isn't. |
 
-A simple type is a keyword such as `string`, a name without type arguments such as `User`, or an array. Unions, functions, object types, and generics are not simple.
+A simple type is a keyword such as `string`, a name without type arguments such as `User`, or an array. Unions, functions, object types, and generics aren't simple.
 
 {/* bad {"options": [{"default": "generic"}]} */}
 ```ts

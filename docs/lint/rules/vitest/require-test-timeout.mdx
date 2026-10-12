@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-A test without its own timeout gets the default, which is 5 seconds unless your config changes it. That is a long wait when a unit test hangs, and too short for a test that starts a server, which then fails now and then on a slow machine.
+A test without its own timeout gets the default, which is 5 seconds unless your config changes it. That's a long wait when a unit test hangs, and it's too short for a test that starts a server, which then fails now and then on a slow machine.
 
 Set the timeout as a number after the test function, as `{ timeout }` in the options before it, or for all the tests below with `vi.setConfig({ testTimeout })`.
 
-Tests marked `.skip` or `.todo` are not checked.
+Tests marked `.skip` or `.todo` aren't checked.
 
 ## Examples
 
@@ -57,7 +57,7 @@ test("loads the report", async () => {
 });
 ```
 
-The timeout has to be written as a number that is not negative. A variable is reported, and so are options without `timeout`:
+The timeout must be written as a number that isn't negative. A variable is reported, and so are options without `timeout`:
 
 {/* bad {"count": 2} */}
 ```js

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-An `afterAll` hook written right under another statement is easy to miss when you look for a file's cleanup code. A blank line above it sets it apart.
+An `afterAll` hook right under another statement is easy to miss when you're looking for a file's cleanup code. A blank line above it makes it stand out.
 
-Only the line above the call is checked, not the line below. Comments directly above the call count as part of it, so the blank line goes above them. An `afterAll` that comes first in a file or in a `describe` callback needs no blank line.
+The rule only checks the line above the call, not the line below. Comments directly above the call count as part of it, so the blank line goes above them. An `afterAll` that comes first in a file or in a `describe` callback doesn't need a blank line.
 
 `--fix` inserts the blank line.
 

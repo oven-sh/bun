@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-If a condition never changes, one branch always runs and the other is dead code. It is often a mistake: `role === "admin" || "owner"` is always truthy, because `"owner"` is a non-empty string.
+If a condition never changes, one branch always runs and the other is dead code. It's often a mistake. For example, `role === "admin" || "owner"` is always truthy, because `"owner"` is a non-empty string.
 
 The rule checks the test of `if`, `? :`, `while`, `do...while` and `for`. `while (true)` is allowed by default.
 
@@ -54,7 +54,7 @@ while (true) {
 | --- | --- |
 | `"allExceptWhileTrue"` (default) | Check loops, but allow `while (true)`. |
 | `"all"` or `true` | Check loops, including `while (true)`. |
-| `"none"` or `false` | Do not check loops. |
+| `"none"` or `false` | Don't check loops. |
 
 {/* bad {"options": [{"checkLoops": "all"}]} */}
 ```js
@@ -83,7 +83,7 @@ while (1) {
 }
 ```
 
-A loop in a generator function is not reported if it contains a `yield`, because the caller decides when to stop:
+A loop in a generator function isn't reported if it contains a `yield`, because the caller decides when to stop:
 
 {/* good {"options": [{"checkLoops": "all"}]} */}
 ```js

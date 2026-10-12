@@ -54,17 +54,17 @@ class Timer {
 
 ## Options
 
-One object. Each key sets the order for one kind of container.
+The rule takes one object. Each key sets the order for one kind of container.
 
 | Option | What it applies to |
 | --- | --- |
-| `default` | Everything that has no setting of its own. |
+| `default` | Everything that doesn't have its own setting. |
 | `classes` | Class declarations. |
 | `classExpressions` | Class expressions. |
 | `interfaces` | Interfaces. |
 | `typeLiterals` | Type literals such as `type Point = { ... }`. |
 
-A value is `"never"` (do not check), a list of member groups, or an object:
+Each value is `"never"` (don't check), a list of member groups, or an object:
 
 | Key | Default | What it does |
 | --- | --- | --- |
@@ -74,8 +74,8 @@ A value is `"never"` (do not check), a list of member groups, or an object:
 
 A group is a kind of member: `signature`, `readonly-signature`, `call-signature`, `field`, `readonly-field`, `static-initialization`, `constructor`, `accessor`, `get`, `set`, `method`. In classes you can narrow it with an accessibility, a scope, or both: `private-field`, `static-method`, `public-static-method`, `protected-abstract-get`, `decorated-field`.
 
-- A member goes to the most specific group that is listed.
-- A member that fits no listed group can stand anywhere.
+- A member goes in the most specific group that's listed.
+- A member that doesn't fit any listed group can go anywhere.
 - Groups in an inner list have the same rank.
 
 Methods before fields:

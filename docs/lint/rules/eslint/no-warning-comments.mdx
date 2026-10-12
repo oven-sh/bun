@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `TODO` or `FIXME` comment marks work that is not finished. This rule lists them, so that they are dealt with before the code ships and do not pile up.
+A `TODO` or `FIXME` comment marks work that isn't finished. This rule lists them, so you can deal with them before the code ships and they don't pile up.
 
-By default a term counts only at the start of a comment. Upper and lower case do not matter, and a term only matches as a whole word.
+By default a term only counts at the start of a comment. Case doesn't matter, and a term only matches as a whole word.
 
 ## Examples
 
@@ -68,7 +68,7 @@ const result = compute();
 const result = compute();
 ```
 
-In a JSDoc comment, the `*` characters come before the term, so it is not at the start:
+In a JSDoc comment, the `*` characters come before the term, so it isn't at the start:
 
 {/* good */}
 ```js
@@ -78,7 +78,7 @@ In a JSDoc comment, the `*` characters come before the term, so it is not at the
 function connect(host, port) {}
 ```
 
-With `decoration: ["*"]` they are skipped:
+With `decoration: ["*"]` they're skipped:
 
 {/* bad {"options": [{"decoration": ["*"]}]} */}
 ```js

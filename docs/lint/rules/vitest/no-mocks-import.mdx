@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Vitest picks up the files in `__mocks__` by itself when you call `vi.mock()`. Importing one by its path does not mock anything. The code under test still gets the real module, and your assertions look at a mock that nobody calls.
+Vitest picks up the files in `__mocks__` on its own when you call `vi.mock()`. Importing one by its path doesn't mock anything. The code under test still gets the real module, and your assertions look at a mock that nobody calls.
 
 Import the real path and mock it. The test and the code under test then share the same mock.
 

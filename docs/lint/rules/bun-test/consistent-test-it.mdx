@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`test` and `it` are two names for the same function. When a project uses both at random, a reader wonders whether the difference means something. It does not.
+`test` and `it` are two names for the same function. When a project mixes them at random, readers wonder whether the difference means something. It doesn't.
 
 By default, a test at the top level of a file uses `test`, and a test inside a `describe` uses `it`.
 
@@ -54,7 +54,7 @@ describe("subtract", () => {
 });
 ```
 
-Forms such as `it.skip`, `it.only` and `it.each` are checked too:
+Variants like `it.skip`, `it.only` and `it.each` are checked too:
 
 {/* bad */}
 ```ts

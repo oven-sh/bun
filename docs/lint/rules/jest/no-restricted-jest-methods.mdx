@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Some teams agree not to use parts of the `jest` object: no module mocks, no fake timers, no spies. This rule reports the methods you list, with your own message if you give one, so the agreement does not depend on review.
+Some teams agree not to use parts of the `jest` object, like module mocks, fake timers or spies. This rule reports the methods you list, with your own message if you give one, so the agreement doesn't depend on review.
 
 The rule does nothing until you give it a list.
 
@@ -49,7 +49,7 @@ test("retries once", () => {
 
 ## Options
 
-One object. Each key is the name of a method. The value is the message to report, or `null` for the default message: ``Use of `spyOn` is not allowed``.
+The rule takes one object. Each key is a method name. The value is the message to report, or `null` for the default message: ``Use of `spyOn` is not allowed``.
 
 ```json .oxlintrc.json
 {

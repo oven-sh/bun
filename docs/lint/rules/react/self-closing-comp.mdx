@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`<Avatar></Avatar>` and `<Avatar />` render the same thing. The closing tag is more to read, and it makes you look for children that are not there.
+`<Avatar></Avatar>` and `<Avatar />` render the same thing. The closing tag is extra noise, and it makes you look for children that aren't there.
 
-An element counts as empty if there is nothing between its tags, or only whitespace that includes a line break.
+An element counts as empty if there's nothing between its tags, or only whitespace that includes a line break.
 
 `--fix` rewrites the element to the self-closing form.
 
@@ -63,14 +63,14 @@ const space = <span>{" "}</span>;
 | `component` | `true` | Check components, such as `<Avatar>`. |
 | `html` | `true` | Check DOM elements, such as `<div>`. |
 
-With `html: false`, DOM elements are not checked:
+With `html: false`, the rule skips DOM elements:
 
 {/* good {"options": [{"html": false}]} */}
 ```jsx
 const spacer = <div className="spacer"></div>;
 ```
 
-With `component: false`, components are not checked:
+With `component: false`, it skips components:
 
 {/* good {"options": [{"component": false}]} */}
 ```jsx

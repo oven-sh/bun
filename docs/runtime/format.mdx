@@ -165,13 +165,14 @@ sortTailwindcss = true
 <a className="m-2 flex p-4" /> // [!code ++]
 ```
 
-Classes in `class` and `className` are sorted in Tailwind's recommended order. The order comes from the `tailwindcss` package in your project, so version 3 or 4 has to be installed.
+Classes are sorted in Tailwind's recommended order, in `class` and `className` and in calls to `clsx`, `cn`, `cva`, `twMerge`, and [a few more](/runtime/bunfig#format-sorttailwindcss). The order comes from the `tailwindcss` package in your project, so version 3 or 4 has to be installed.
 
-To sort the arguments of functions like `clsx` too, use a table. See [`format.sortTailwindcss`](/runtime/bunfig#format-sorttailwindcss).
+To name your own functions or your stylesheet, use a table.
 
 ```toml bunfig.toml icon="settings"
 [format.sortTailwindcss]
-functions = ["clsx", "cn"]
+stylesheet = "./src/app.css"
+functions = ["clsx", "tw"]
 ```
 
 ## Sort `package.json`

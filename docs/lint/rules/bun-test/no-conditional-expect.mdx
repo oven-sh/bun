@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-An `expect` that only runs under a condition may not run at all. If the condition is false, or nothing is thrown, the test passes without checking anything.
+An `expect` that only runs under a condition might not run at all. If the condition is false, or nothing throws, the test passes without checking anything.
 
 In a test, the rule reports an `expect` inside an `if`, a `switch`, a `catch` block, a `.catch()` callback, `a ? b : c`, or an operand of `&&`, `||` or `??`.
 
-It also checks a helper that a test uses, written as `function check() {}` or `const check = () => {}`. Methods are not checked.
+It also checks helpers that a test uses, if they're written as `function check() {}` or `const check = () => {}`. Methods aren't checked.
 
 ## Examples
 

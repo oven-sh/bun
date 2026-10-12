@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A hook applies to every test in its block, wherever it is written. A `beforeEach` below a test still runs before that test, but someone reading from the top has not seen it yet.
+A hook applies to every test in its block, no matter where it's written. A `beforeEach` below a test still runs before that test, but someone reading from the top hasn't seen it yet.
 
 Each `describe` block is checked on its own.
 
@@ -48,7 +48,7 @@ test("starts empty", () => {
 });
 ```
 
-A hook at the top of a `describe` block is fine, even if there is a test before the block:
+A hook at the top of a `describe` block is fine, even if there's a test before the block:
 
 {/* good */}
 ```ts

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`Children.map`, `Children.count`, and the other `Children` methods look at the JSX a component was given, not at what it renders. Wrap one of the children in another component or a fragment, and the count and the mapping change. Passing the data as a prop does not break this way.
+`Children.map`, `Children.count`, and the other `Children` methods look at the JSX a component was given, not at what it renders. If you wrap one of the children in another component or a fragment, the count and the mapping change. Passing the data as a prop doesn't break this way.
 
-The rule reports a call on `Children` when `Children`, or the object it is read from, is imported from `"react"`.
+The rule reports a call on `Children` when `Children`, or the object it's read from, is imported from `"react"`.
 
 ## Examples
 

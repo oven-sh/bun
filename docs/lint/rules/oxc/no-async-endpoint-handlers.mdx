@@ -48,7 +48,7 @@ app.get("/users/:id", (req, res, next) => {
 });
 ```
 
-A handler that is wrapped in a call is not reported, so a helper that passes rejections to `next` works too:
+A handler wrapped in a call isn't reported, so a helper that passes rejections to `next` works too:
 
 {/* good */}
 ```js
@@ -66,7 +66,7 @@ app.get(
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowedNames` | `[]` | Names of `async` functions that may be used as handlers. |
+| `allowedNames` | `[]` | Names of `async` functions you can use as handlers. |
 
 {/* good {"options": [{"allowedNames": ["listUsers"]}]} */}
 ```js
@@ -77,7 +77,7 @@ async function listUsers(req, res) {
 router.get("/users", listUsers);
 ```
 
-The name is the function's own name. An arrow function has none, so it is reported even if the variable that holds it is in the list:
+The name is the function's own name. An arrow function doesn't have one, so it's reported even if the variable that holds it is in the list:
 
 {/* bad {"options": [{"allowedNames": ["listUsers"]}]} */}
 ```js

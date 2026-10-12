@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`import {} from "./setup.js"` imports no names. It is usually what is left after the last name was removed. If you want the module to run for its side effects, `import "./setup.js"` says so.
+`import {} from "./setup.js"` doesn't import any names. It's usually left over after the last name was removed. If you want the module to run for its side effects, `import "./setup.js"` says so.
 
 `--fix` removes the empty braces after a default import, and removes `export {}`. It leaves `import {} from` and `export {} from` to you, because they still load the module.
 

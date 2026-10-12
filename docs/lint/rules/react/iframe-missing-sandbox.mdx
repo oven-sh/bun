@@ -17,10 +17,10 @@ Without `sandbox`, the page inside an `iframe` can run scripts, submit forms, op
 The rule reports:
 
 - an `iframe` that has no `sandbox` attribute
-- a word in `sandbox` that is not a known permission, such as a typo
+- a word in `sandbox` that isn't a known permission, such as a typo
 - `allow-scripts` together with `allow-same-origin`. With both, a page from your own origin can remove the `sandbox` attribute from its own `iframe`.
 
-It checks `<iframe>` and `React.createElement("iframe", ...)`. A value that is not a string literal, such as `sandbox={permissions}`, is not checked.
+It checks `<iframe>` and `React.createElement("iframe", ...)`. It skips a value that isn't a string literal, such as `sandbox={permissions}`.
 
 ## Examples
 

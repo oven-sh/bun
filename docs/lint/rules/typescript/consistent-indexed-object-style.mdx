@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`Record<string, number>` and `{ [key: string]: number }` describe the same object: any string key, with a number as its value. This rule picks one way to write it. By default it is `Record`.
+`Record<string, number>` and `{ [key: string]: number }` describe the same object: any string key, with a number as its value. This rule picks one way to write it. By default it's `Record`.
 
-`--fix` rewrites the type to the other form where that is safe.
+`--fix` rewrites the type to the other form where that's safe.
 
 ## Examples
 
@@ -29,7 +29,7 @@ interface Prices {
 }
 ```
 
-A mapped type that does not use its key is also a `Record`:
+A mapped type that doesn't use its key is also a `Record`:
 
 {/* bad */}
 ```ts
@@ -45,7 +45,7 @@ type Prices = Record<string, number>;
 type Flags = Record<"debug" | "verbose", boolean>;
 ```
 
-An index signature next to other members cannot be a `Record`. Neither can a type that refers to itself, because a type alias for `Record` cannot be circular:
+An index signature next to other members can't be a `Record`. Neither can a type that refers to itself, because a type alias for `Record` can't be circular:
 
 {/* good */}
 ```ts

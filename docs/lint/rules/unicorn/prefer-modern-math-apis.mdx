@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Formulas built from `Math.log()` and `Math.sqrt()` are longer than the method that does the same, and less exact. `Math.log(1000) / Math.LN10` is `2.9999999999999996`, and `Math.log10(1000)` is `3`. `Math.sqrt(x * x + y * y)` is `Infinity` as soon as a square overflows, where `Math.hypot(x, y)` still has the answer.
+Formulas built from `Math.log()` and `Math.sqrt()` are longer than the method that does the same thing, and less exact. `Math.log(1000) / Math.LN10` is `2.9999999999999996`, but `Math.log10(1000)` is `3`. `Math.sqrt(x * x + y * y)` is `Infinity` as soon as a square overflows, while `Math.hypot(x, y)` still gives you the answer.
 
 ## Examples
 

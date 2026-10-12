@@ -14,7 +14,7 @@ deprecated: false
 
 JavaScript's built-in APIs and most libraries use camelCase. If a codebase has both `user_name` and `userName`, you have to look up which spelling each variable uses.
 
-The rule reports a name that has an underscore in the middle. Underscores at the start or the end (`_private`, `unused_`) and names in capitals (`MAX_RETRIES`) are allowed. Reading a property (`row.first_name`), a key in quotes and a name in a call (`get_user()`) are not reported either, because those names often come from code you do not control.
+The rule reports names with an underscore in the middle. Underscores at the start or the end (`_private`, `unused_`) and names in capitals (`MAX_RETRIES`) are allowed. Reading a property (`row.first_name`), a key in quotes and a name in a call (`get_user()`) aren't reported either, because those names often come from code you don't control.
 
 ## Examples
 
@@ -47,9 +47,9 @@ function fullName(user) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `properties` | `"always"` | `"never"` stops checking property names: keys of object literals, class members, and `a.b_c = 1`. |
-| `ignoreDestructuring` | `false` | Allow a destructured variable that keeps the name of the property. |
-| `ignoreImports` | `false` | Allow a named import that keeps the name it is exported with. |
+| `properties` | `"always"` | `"never"` stops checking property names: object literal keys, class members, and `a.b_c = 1`. |
+| `ignoreDestructuring` | `false` | Allow a destructured variable that keeps the property's name. |
+| `ignoreImports` | `false` | Allow a named import that keeps the name it's exported with. |
 | `ignoreGlobals` | `false` | Allow the global variables that your config or a `/* global */` comment declares. |
 | `allow` | `[]` | Names to allow. Each entry is a name or a regular expression. |
 

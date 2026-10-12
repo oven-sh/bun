@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `javascript:` URL runs its text as code when the link is followed. That is a common way to inject a script into a page, and React 19 blocks these URLs. Use an event handler instead.
+A `javascript:` URL runs its text as code when someone follows the link. That's a common way to inject a script into a page, and React 19 blocks these URLs. Use an event handler instead.
 
 By default the rule looks at the `href` of `<a>`. It only sees URLs written as a plain string, not values in braces.
 
@@ -48,8 +48,8 @@ The first option is a list of your own link components and the props that hold a
 const close = <Link to="javascript:closeDialog()">Close</Link>;
 ```
 
-After the list, or in its place, comes an object:
+You can pass an object after the list, or instead of it:
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `includeFromSettings` | `false` | Also check the components listed under `linkComponents` in the `settings` of your ESLint config. |
+| `includeFromSettings` | `false` | Also check the components listed under `linkComponents` in your ESLint config's `settings`. |

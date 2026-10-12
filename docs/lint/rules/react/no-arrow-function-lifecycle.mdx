@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-An arrow function in a class field is created again for every instance, and it is not on the prototype. A subclass cannot call it with `super.componentDidMount()`, and a test cannot replace it on `Component.prototype`. React always calls lifecycle methods on the instance, so binding `this` with an arrow function gains nothing.
+An arrow function in a class field is created again for every instance, and it isn't on the prototype. A subclass can't call it with `super.componentDidMount()`, and a test can't replace it on `Component.prototype`. React always calls lifecycle methods on the instance, so binding `this` with an arrow function gains nothing.
 
 The rule covers `render`, every `component*` and `UNSAFE_component*` method, `shouldComponentUpdate`, `getSnapshotBeforeUpdate`, `getChildContext`, `getDefaultProps`, `getInitialState` and the static `getDerivedStateFromProps`, in classes and in `createReactClass`.
 
-`--fix` rewrites the arrow function to a method.
+`--fix` rewrites the arrow function as a method.
 
 ## Examples
 

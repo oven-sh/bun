@@ -38,7 +38,7 @@ pub fn contains_name(sorted: &[&str], name: &[u8]) -> bool {
 
 /// `fast_glob::glob_match`
 pub fn glob_match(pattern: &[u8], text: &[u8]) -> bool {
-    bun_glob::r#match(pattern, text).matches()
+    bun_glob::matcher::match_on::<false>(pattern, text).matches()
 }
 
 /// `Path::file_name`

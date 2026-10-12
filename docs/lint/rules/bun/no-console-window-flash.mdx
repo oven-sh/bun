@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-On Windows, a child process that is started from an app without a console gets a console window of its own. The window opens and closes again as the process runs, which users see as a black flash. `windowsHide: true` prevents it, and has no effect on other systems.
+On Windows, a child process started from an app without a console gets its own console window. The window opens and closes again as the process runs, which users see as a black flash. `windowsHide: true` prevents it and has no effect on other systems.
 
-The rule looks at `exec`, `execSync`, `execFile`, `execFileSync`, `spawn`, and `spawnSync` of `node:child_process`, and at `Bun.spawn` and `Bun.spawnSync`.
+The rule looks at `exec`, `execSync`, `execFile`, `execFileSync`, `spawn`, and `spawnSync` from `node:child_process`, and at `Bun.spawn` and `Bun.spawnSync`.
 
 ## Examples
 
@@ -47,7 +47,7 @@ execFile("git", ["status", "--short"], { windowsHide: true }, (error, stdout) =>
 const git = Bun.spawn(["git", "status", "--short"], { stdout: "pipe", windowsHide: true });
 ```
 
-A process that inherits a stream writes to the terminal of its parent, so it is not reported. Any value for `windowsHide` counts, because writing `false` is a deliberate choice. Options that are not an object literal in the call, or that spread another object, are not checked:
+A process that inherits a stream writes to its parent's terminal, so it isn't reported. Any value for `windowsHide` counts, because writing `false` is a deliberate choice. Options that aren't an object literal in the call, or that spread another object, aren't checked:
 
 {/* good */}
 ```js
@@ -62,4 +62,4 @@ spawn("bun", ["test"], { ...options, cwd });
 
 ## When not to use it
 
-Code that never runs on Windows does not need the option.
+Code that never runs on Windows doesn't need the option.

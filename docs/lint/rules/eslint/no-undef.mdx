@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-Using a name that no `import`, declaration, or parameter defines throws a `ReferenceError` when that line runs. It is usually a typo or a missing import, and you only find out when that code path runs.
+Using a name that no `import`, declaration, or parameter defines throws a `ReferenceError` when that line runs. It's usually a typo or a missing import, and you only find out when that code path runs.
 
-Without a config file, `bun lint` knows the globals of browsers and Node.js, and `Bun`. In test files such as `math.test.js` it also knows `test`, `expect`, `describe` and the like.
+Without a config file, `bun lint` knows the browser and Node.js globals, and `Bun`. In test files such as `math.test.js` it also knows `test`, `expect`, `describe` and the like.
 
-This rule is on by default in JavaScript files. It is off in TypeScript files, where the type checker reports the same thing.
+This rule is on by default in JavaScript files. It's off in TypeScript files, where the type checker reports the same thing.
 
 ## Examples
 
@@ -73,7 +73,7 @@ analytics = "readonly"
 | --- | --- | --- |
 | `typeof` | `false` | Also report an undeclared name after `typeof`. |
 
-`typeof` never throws, so `typeof name === "undefined"` is a safe way to test for a global that may be missing. That is why it is allowed by default:
+`typeof` never throws, so `typeof name === "undefined"` is a safe way to test for a global that may be missing. That's why it's allowed by default:
 
 {/* good */}
 ```js

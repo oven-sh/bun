@@ -14,9 +14,9 @@ deprecated: false
 
 This rule compares each file with what `bun format` prints and reports every place where they differ. Formatting problems then show up next to your lint problems, in the terminal and in the editor.
 
-It reads the same settings as `bun format`: your `.prettierrc`, `.editorconfig`, and the `[format]` section of `bunfig.toml`. It skips the files that `bun format` skips. The options and the messages are the same as for `prettier/prettier`, and you do not need Prettier installed.
+It reads the same settings as `bun format`: your `.prettierrc`, `.editorconfig`, and the `[format]` section of `bunfig.toml`. It skips the files that `bun format` skips. The options and the messages are the same as for `prettier/prettier`, and you don't need Prettier installed.
 
-A file that Bun cannot format the way your config asks, for example because of a Prettier plugin that `bun format` does not have, gets one report that says why.
+If Bun can't format a file the way your config asks, for example because of a Prettier plugin that `bun format` doesn't have, the file gets one report that says why.
 
 `--fix` formats the file.
 
@@ -38,7 +38,7 @@ const user = { name: "Ada" };
 
 ## Options
 
-The first option is an object of formatting options, with the names they have in a `.prettierrc`. They win over your config files.
+The first option is an object of formatting options, using the same names as in a `.prettierrc`. They override your config files.
 
 ```toml bunfig.toml
 [lint.rules]

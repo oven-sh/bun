@@ -14,9 +14,9 @@ deprecated: false
 
 `for...in` walks the keys of an object, not the items of an array. Over an array, the keys are the indexes as strings, so `i + 1` gives `"01"` and not `1`. The loop also skips holes, and it visits any other enumerable property that the array or its prototype has.
 
-The rule reports arrays, tuples and array-like objects such as a `NodeList`: any type with numeric indexes and a numeric `length`.
+The rule reports arrays, tuples and array-like objects such as a `NodeList`. That covers any type with numeric indexes and a numeric `length`.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 

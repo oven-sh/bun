@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-An object that does not define its own `toString()` turns into the text `"[object Object]"`. That text ends up in a log line, a URL or a message on the page, and the data you wanted to show is lost.
+An object that doesn't define its own `toString()` turns into the text `"[object Object]"`. That text ends up in a log line, a URL or a message on the page, and the data you wanted to show is lost.
 
 The rule checks `.toString()`, `.toLocaleString()`, `String(value)`, `"text" + value`, `${value}` in a template, and `.join()` on an array of such objects. The report says "will" if the type always gives `[object Object]`, and "may" if only some members of a union do.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag it's on by default in TypeScript files.
 
 ## Examples
 
@@ -55,7 +55,7 @@ console.log(`At ${new Point(1, 2)}`);
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoredTypeNames` | `["Error", "RegExp", "URL", "URLSearchParams"]` | Names of types that are never reported. Types that extend them are not reported either. Your list replaces the default. |
+| `ignoredTypeNames` | `["Error", "RegExp", "URL", "URLSearchParams"]` | Names of types that are never reported. Types that extend them aren't reported either. Your list replaces the default. |
 | `checkUnknown` | `false` | Also report values of type `unknown`, which may be plain objects. |
 
 {/* good {"options": [{"ignoredTypeNames": ["Money"]}]} */}

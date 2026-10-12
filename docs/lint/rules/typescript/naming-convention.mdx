@@ -14,7 +14,7 @@ deprecated: false
 
 When names follow one convention, the shape of a name tells you what it is: `UserStore` is a type, `userStore` is a value, `MAX_USERS` is a constant. This rule lets you say which shape each kind of name must have.
 
-Without options: everything is `camelCase`, variables can also be `UPPER_CASE`, imports can also be `PascalCase`, and classes, interfaces, type aliases, enums and type parameters are `PascalCase`. One leading or trailing underscore is allowed, except on types and imports.
+Without options, everything is `camelCase`, variables can also be `UPPER_CASE`, imports can also be `PascalCase`, and classes, interfaces, type aliases, enums and type parameters are `PascalCase`. One leading or trailing underscore is allowed, except on types and imports.
 
 ## Examples
 
@@ -43,28 +43,28 @@ interface UserRecord {}
 
 ## Options
 
-A list of entries. Each entry picks names with `selector` (and `modifiers`, `types`, `filter`) and says what they must look like. Your list replaces the defaults.
+The options are a list of entries. Each entry picks names with `selector` (and `modifiers`, `types`, `filter`) and says what they must look like. Your list replaces the defaults.
 
 | Key | What it does |
 | --- | --- |
 | `selector` | Which kind of name, or a list of kinds. See below. |
-| `format` | The allowed formats: `camelCase`, `strictCamelCase`, `PascalCase`, `StrictPascalCase`, `snake_case`, `UPPER_CASE`. `null` checks no format. The strict ones do not allow two capitals in a row: `userId`, not `userID`. |
-| `leadingUnderscore`, `trailingUnderscore` | `"forbid"`, `"allow"`, `"require"`, `"requireDouble"`, `"allowDouble"`, `"allowSingleOrDouble"`. If not set, an underscore is checked as part of the name, so `_id` is not `camelCase`. |
+| `format` | The allowed formats: `camelCase`, `strictCamelCase`, `PascalCase`, `StrictPascalCase`, `snake_case`, `UPPER_CASE`. `null` skips the format check. The strict ones don't allow two capitals in a row: `userId`, not `userID`. |
+| `leadingUnderscore`, `trailingUnderscore` | `"forbid"`, `"allow"`, `"require"`, `"requireDouble"`, `"allowDouble"`, `"allowSingleOrDouble"`. If not set, an underscore is checked as part of the name, so `_id` isn't `camelCase`. |
 | `prefix`, `suffix` | The name must start or end with one of these strings. |
 | `custom` | `{ "regex": "...", "match": true }`: the name must match the pattern, or must not with `false`. |
 | `filter` | A pattern, or `{ "regex", "match" }`. The entry only applies to names that pass it. |
 | `modifiers` | The entry only applies to names that have all of these: `const`, `readonly`, `static`, `public`, `protected`, `private`, `#private`, `abstract`, `destructured`, `global`, `exported`, `unused`, `requiresQuotes`, `override`, `async`, `default`, `namespace`. |
-| `types` | For variables, parameters, properties, getters and setters: the entry only applies to values of these types: `boolean`, `string`, `number`, `function`, `array`. This needs type information. Run `bun lint --type-aware`. Without it, the entry applies to nothing. |
+| `types` | For variables, parameters, properties, getters and setters: the entry only applies to values of these types: `boolean`, `string`, `number`, `function`, `array`. This needs type information. Run `bun lint --type-aware`. Without it, the entry doesn't apply to anything. |
 
 Selectors: `variable`, `function`, `parameter`, `parameterProperty`, `classProperty`, `objectLiteralProperty`, `typeProperty`, `classMethod`, `objectLiteralMethod`, `typeMethod`, `classicAccessor`, `autoAccessor`, `enumMember`, `class`, `interface`, `typeAlias`, `enum`, `typeParameter`, `import`.
 
-`import` is for default and namespace imports. The names in `import { ... }` are not checked.
+`import` is for default and namespace imports. The names in `import { ... }` aren't checked.
 
 Group selectors: `default` (everything), `variableLike`, `memberLike`, `typeLike`, `property`, `method`, `accessor`.
 
-One entry decides for each name. A single selector wins over a group selector. Between two entries with the same selector, the one with a `filter` wins, then the one with `modifiers` or `types`.
+Only one entry applies to each name. A single selector wins over a group selector. Between two entries with the same selector, the one with a `filter` wins, then the one with `modifiers` or `types`.
 
-Underscores, then the prefix and the suffix, are cut off before `custom` and `format` are checked. So with the prefix `is`, `isActive` is checked as `Active`:
+The rule strips underscores, then the prefix and the suffix, before it checks `custom` and `format`. So with the prefix `is`, `isActive` is checked as `Active`:
 
 {/* good {"options": [{"selector": "variable", "format": ["PascalCase"], "prefix": ["is", "has"]}]} */}
 ```ts
@@ -101,7 +101,7 @@ class Cache {
 }
 ```
 
-A name that needs quotes never fits a format. Switch the check off for those:
+A name that needs quotes never fits a format. Turn the check off for those:
 
 {/* bad {"options": [{"selector": "default", "format": ["camelCase"]}]} */}
 ```ts
@@ -122,4 +122,4 @@ const { user_id } = await fetchUser();
 
 ## When not to use it
 
-The defaults are strict about property names, which often come from an API, a database or a file format. Expect to write your own list before the rule is quiet.
+The defaults are strict about property names, which often come from an API, a database or a file format. Expect to write your own list before the rule quiets down.

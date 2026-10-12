@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A closing tag at the end of the last line of content, or indented differently from its opening tag, makes it hard to see where an element ends. This rule wants the closing tag of an element that spans several lines on its own line, in the same column as the opening tag.
+A closing tag at the end of the last line of content, or indented differently from its opening tag, makes it hard to see where an element ends. When an element spans several lines, this rule wants its closing tag on its own line, in the same column as the opening tag.
 
 `--fix` moves the closing tag.
 
@@ -54,12 +54,12 @@ const small = <Card>Welcome back</Card>;
 
 | Option | What it does |
 | --- | --- |
-| `"tag-aligned"` (default) | The closing tag is in the column of the opening `<`. |
-| `"line-aligned"` | The closing tag has the indentation of the line that has the opening `<`. |
+| `"tag-aligned"` (default) | The closing tag is in the same column as the opening `<`. |
+| `"line-aligned"` | The closing tag is indented like the line that has the opening `<`. |
 
 `{ "location": "line-aligned" }` means the same as `"line-aligned"`.
 
-The two differ when the opening tag does not start its line:
+The two differ when the opening tag doesn't start its line:
 
 {/* good {"options": ["line-aligned"]} */}
 ```jsx

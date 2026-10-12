@@ -257,7 +257,7 @@ pub struct ResolvedConfig {
     pub missing_rules: Vec<Box<[u8]>>,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     pub prefers_typescript_rules: bool,
-    /// Neither ESLint nor oxlint has a configuration: every rule here exists, by [any of its names](Registry::find_by_any_name).
+    /// There's no ESLint or oxlint config, so every built-in rule is available [under any of its names](Registry::find_by_any_name).
     pub has_every_rule: bool,
     /// `oxlint-disable` and the like mean what `eslint-disable` means. ESLint ignores them, and so does a configuration of
     /// ESLint.
@@ -366,6 +366,8 @@ impl ResolvedConfig {
             || self.error.is_some()
             || entry.meta.follows_oxlint
             || self.prefers_typescript_rules
+            // The driver has already validated these options and prints its own error messages.
+            || self.has_every_rule
         {
             return;
         }

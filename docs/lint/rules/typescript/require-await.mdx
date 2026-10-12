@@ -14,9 +14,9 @@ deprecated: false
 
 An `async` function with no `await` in it does its work right away and then wraps the result in a promise for nothing. Often the `async` is left over from a refactor, or an `await` is missing.
 
-This is `require-await` with types, which lets it allow a function that returns a promise: there `async` turns an error thrown before the `return` into a rejection. Turn the other rule off when you use this one. `for await` and `await using` count as an `await`, and a function with an empty body is not reported.
+This is `require-await` with types, so it can allow a function that returns a promise. There, `async` turns an error thrown before the `return` into a rejection. Turn the other rule off when you use this one. `for await` and `await using` count as an `await`, and a function with an empty body isn't reported.
 
-This rule needs type information. Run `bun lint --type-aware`. With that flag, it is on by default in TypeScript files.
+This rule needs type information. Run `bun lint --type-aware`. With that flag, it's on by default in TypeScript files.
 
 ## Examples
 

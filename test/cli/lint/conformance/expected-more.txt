@@ -6,4 +6,4 @@ FAIL more/reviews/typescript-eslint/no-unused-vars#2174 messages differ
 0 cases have their messages in another order
 
 632 rules, 629 without failures, 0 not implemented
-76541 cases passed, 4 failed, 258 skipped
+76552 cases passed, 4 failed, 258 skipped

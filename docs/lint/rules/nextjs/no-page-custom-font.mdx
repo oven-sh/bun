@@ -14,7 +14,7 @@ deprecated: false
 
 A font `<link>` in one page only loads for that page. Other pages that use the font show a fallback instead. In `pages/_document.js`, the same `<link>` is part of every page.
 
-The rule looks at `<link>` elements with an `href` that starts with `https://fonts.googleapis.com/css`. It reports them in every file that is not named `_document.*`. In `_document.*`, it reports them if they are not inside the default export.
+The rule looks at `<link>` elements with an `href` that starts with `https://fonts.googleapis.com/css`. It reports them in every file that isn't named `_document.*`. In `_document.*`, it reports them if they aren't inside the default export.
 
 ## Examples
 

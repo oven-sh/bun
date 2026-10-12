@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Without `targetOrigin`, `window.postMessage()` delivers the message only if the other window has the same origin as yours. A message to an iframe or a popup on another origin is dropped without an error. Naming the origin also makes sure that the data goes only to the site you mean.
+Without `targetOrigin`, `window.postMessage()` only delivers the message if the other window has the same origin as yours. A message to an iframe or a popup on another origin is dropped without an error. Naming the origin also makes sure the data only goes to the site you mean.
 
-The rule looks at the method name only. It reports `.postMessage()` with exactly one argument on any object, except one that looks like a message port: `port`, `port1`, `port2`, `messagePort`, `channel.port1`, `event.ports[0]`.
+The rule only looks at the method name. It reports `.postMessage()` with exactly one argument on any object, except one that looks like a message port: `port`, `port1`, `port2`, `messagePort`, `channel.port1`, `event.ports[0]`.
 
 ## Examples
 
@@ -38,7 +38,7 @@ channel.port1.postMessage({ type: "ready" });
 
 ## When not to use it
 
-`Worker`, `BroadcastChannel` and `ServiceWorker` also have a `postMessage()` method, and theirs takes no origin. The rule cannot tell them from a window, so it reports them too:
+`Worker`, `BroadcastChannel` and `ServiceWorker` also have a `postMessage()` method, and theirs doesn't take an origin. The rule can't tell them apart from a window, so it reports them too:
 
 {/* bad */}
 ```js

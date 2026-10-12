@@ -17,7 +17,7 @@ Using .oxfmtrc.json (oxfmt config)
 
     3 files are formatted natively
 
-You can remove: oxfmt
+Still needed:   oxfmt (the "format" script runs it)
 ```
 
 ---
@@ -59,7 +59,12 @@ If you're on a version of oxfmt before 0.72, a few files change once, like when 
 
 ---
 
-Uninstall oxfmt.
+Run `--doctor` again. No script runs oxfmt anymore, so you can uninstall it.
+
+```txt
+You can remove: oxfmt
+Not checked:    other tools' configs, CI files, Git hooks
+```
 
 ```sh terminal icon="terminal"
 bun remove oxfmt

@@ -19,7 +19,9 @@ Using .prettierrc (Prettier config)
 
 Built-in plugins: @ianvs/prettier-plugin-sort-imports
 
-You can remove: @ianvs/prettier-plugin-sort-imports, prettier
+You can remove: @ianvs/prettier-plugin-sort-imports
+Still needed:   prettier (the "format" script runs it)
+Not checked:    other tools' configs, CI files, Git hooks
 ```
 
 ---
@@ -57,11 +59,18 @@ All matched files use Prettier code style!
 
 ---
 
-Uninstall what `--doctor` says you can remove. Leave `.prettierrc` as it is, including `plugins`.
+Run `--doctor` again. No script runs Prettier anymore, so it can go too.
+
+```txt
+You can remove: @ianvs/prettier-plugin-sort-imports, prettier
+Not checked:    other tools' configs, CI files, Git hooks
+```
 
 ```sh terminal icon="terminal"
 bun remove prettier @ianvs/prettier-plugin-sort-imports
 ```
+
+Leave `.prettierrc` as it is, including `plugins`.
 
 Keep `prettier` if your editor's Prettier extension uses it.
 
@@ -89,14 +98,14 @@ If you use `prettier-plugin-tailwindcss`, take it out of `.prettierrc` and turn 
 ```json .prettierrc icon="file-json"
 {
   "plugins": ["prettier-plugin-tailwindcss"], // [!code --]
-  "tailwindFunctions": ["clsx"], // [!code --]
+  "tailwindFunctions": ["tw"], // [!code --]
   "semi": false
 }
 ```
 
 ```toml bunfig.toml icon="settings"
 [format.sortTailwindcss]
-functions = ["clsx"]
+functions = ["tw"]
 ```
 
 The order of the classes is the same. A few edge cases differ, like a class string inside a nested function call, so expect a small diff the first time.

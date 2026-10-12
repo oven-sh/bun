@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A class can expose a constant as a `readonly` field or as a getter that returns a literal. Both read the same from outside. This rule picks one, so the same thing is written the same way in every class. By default it is the `readonly` field, which is shorter.
+A class can expose a constant as a `readonly` field or as a getter that returns a literal. From the outside, you read both the same way. This rule picks one, so every class writes it the same way. By default it's the `readonly` field, which is shorter.
 
 Only literals count: strings, numbers, booleans, `null`, regular expressions, and templates without `${}`.
 
@@ -43,7 +43,7 @@ class Server {
 }
 ```
 
-A getter that has a setter with the same name cannot become a `readonly` field, so it is left alone:
+A getter that has a setter with the same name can't become a `readonly` field, so the rule leaves it alone:
 
 {/* good */}
 ```ts
@@ -80,7 +80,7 @@ class Server {
 }
 ```
 
-With `"getters"`, a field that the constructor assigns to is not reported:
+With `"getters"`, a field that the constructor assigns to isn't reported:
 
 {/* good {"options": ["getters"]} */}
 ```ts

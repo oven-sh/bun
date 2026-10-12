@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-In a long `defaultProps` object, a fixed order makes a prop quick to find and makes a duplicate stand out.
+In a long `defaultProps` object, a fixed order makes props quick to find and duplicates easy to spot.
 
 Capital letters sort before lowercase ones. After a spread, sorting starts over.
 
@@ -46,7 +46,7 @@ Button.defaultProps = {
 };
 ```
 
-`label` comes after a spread here, so it is not compared with `size`:
+`label` comes after a spread here, so it isn't compared with `size`:
 
 {/* good */}
 ```jsx
@@ -75,7 +75,7 @@ Button.defaultProps = {
 };
 ```
 
-With `ignoreCase: true` it is not:
+With `ignoreCase: true` it isn't:
 
 {/* good {"options": [{"ignoreCase": true}]} */}
 ```jsx

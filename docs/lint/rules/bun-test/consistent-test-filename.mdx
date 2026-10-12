@@ -14,7 +14,7 @@ deprecated: false
 
 When some test files are named `user.test.ts` and others `user.spec.ts`, a glob or a search written for one name misses the other.
 
-By default, a file that ends in `.test` or `.spec` plus `.js`, `.jsx`, `.ts` or `.tsx` is a test file, and it has to use `.test`. Only files that import from `"bun:test"` are checked.
+By default, any file that ends in `.test` or `.spec` plus `.js`, `.jsx`, `.ts` or `.tsx` counts as a test file, and it must use `.test`. Only files that import from `"bun:test"` are checked.
 
 ## Examples
 
@@ -46,15 +46,15 @@ Both options are regular expressions, written as strings and tested against the 
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `pattern` | `.*\.test\.[tj]sx?$` | What the path of a test file has to match. |
-| `allTestPattern` | `.*\.(test\|spec)\.[tj]sx?$` | Which files are test files. Other files are not checked. |
+| `pattern` | `.*\.test\.[tj]sx?$` | The pattern a test file's path must match. |
+| `allTestPattern` | `.*\.(test\|spec)\.[tj]sx?$` | Which files count as test files. Other files aren't checked. |
 
 ```toml bunfig.toml
 [lint.rules]
 "bun:test/consistent-test-filename" = ["error", { pattern = '.*\.spec\.ts$' }]
 ```
 
-With that `pattern`, `.test.ts` is the name that is reported:
+With that `pattern`, `.test.ts` is the name that gets reported:
 
 {/* bad {"options": [{"pattern": ".*\\.spec\\.ts$"}], "filename": "src/user.test.ts"} */}
 ```ts src/user.test.ts
@@ -63,7 +63,7 @@ import { test } from "bun:test";
 test.todo("has a name");
 ```
 
-With `allTestPattern` set to `__tests__`, every file with `__tests__` in its path is a test file. This one is reported because it does not end in `.test.ts`:
+With `allTestPattern` set to `__tests__`, every file with `__tests__` in its path is a test file. This one is reported because it doesn't end in `.test.ts`:
 
 {/* bad {"options": [{"allTestPattern": "__tests__"}], "filename": "__tests__/user.ts"} */}
 ```ts __tests__/user.ts

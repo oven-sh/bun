@@ -61,7 +61,7 @@ import { Header } from "./header.js";
 | `commonjs` | `false` | Also check `require()`. |
 | `noUselessIndex` | `false` | Also report a path that ends in `/index` or `/index.js`, because the folder's name resolves to the same file. |
 
-With `noUselessIndex`, the first import is reported and the second is not:
+With `noUselessIndex`, the first import is reported and the second isn't:
 
 {/* file "parts/index.js" */}
 ```js parts/index.js
@@ -76,4 +76,4 @@ import { Footer as SameFooter } from "./parts";
 
 ## When not to use it
 
-Leave `noUselessIndex` off for code that runs as ES modules in Node.js or in a browser. There an import has to name the file, and `./parts` does not find `./parts/index.js`.
+Leave `noUselessIndex` off for code that runs as ES modules in Node.js or in a browser. There, an import needs to name the file, and `./parts` doesn't find `./parts/index.js`.

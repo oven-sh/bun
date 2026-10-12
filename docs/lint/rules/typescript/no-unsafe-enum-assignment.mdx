@@ -14,7 +14,7 @@ deprecated: false
 
 The compiler accepts a plain number where a numeric enum is expected, and `as` turns a number or a string into an enum. The code then depends on the raw values behind the members, and the variable can hold a value that no `switch` over the enum handles.
 
-The rule checks variables, assignments, default values, arguments, return values, class properties, JSX attributes, the elements of array and object literals, and `as` assertions. It also reports arithmetic on an enum variable, such as `current++`, and a plain number or string used as a key of an object with enum keys.
+The rule checks variables, assignments, default values, arguments, return values, class properties, JSX attributes, array and object literal elements, and `as` assertions. It also reports arithmetic on an enum variable, such as `current++`, and a plain number or string used as a key of an object with enum keys.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -62,7 +62,7 @@ const all: Status[] = [Status.Open, Status.Closed];
 const code: Status | number = 404;
 ```
 
-Combining members of the same enum with `|`, `&`, `^` and `~` is allowed, because that is how flag enums are used:
+Combining members of the same enum with `|`, `&`, `^` and `~` is allowed, because that's how flag enums work:
 
 {/* good */}
 ```ts
@@ -77,4 +77,4 @@ access &= ~Access.Write;
 
 ## When not to use it
 
-Values that come from outside, such as JSON or a database, arrive as plain numbers and strings. If you turn them into enums with `as` in many places, this rule reports each one. Converting in one checked function keeps the reports to that function.
+Values from outside, such as JSON or a database, arrive as plain numbers and strings. If you turn them into enums with `as` in many places, this rule reports each one. If you convert them in one checked function, only that function is reported.

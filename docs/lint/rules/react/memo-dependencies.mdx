@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`useMemo` and `useCallback` keep their result until a value in the dependency list changes. If the callback reads a value that is not in the list, the result stays the same when that value changes, and the component shows old data. A value in the list that the callback does not read makes it run again for nothing.
+`useMemo` and `useCallback` keep their result until a value in the dependency list changes. If the callback reads a value that isn't in the list, the result stays the same when that value changes, and the component shows old data. A value in the list that the callback doesn't read makes it run again for nothing.
 
-Values that never change between renders, such as a `setState` function or a ref, do not have to be listed.
+You don't have to list values that never change between renders, such as a `setState` function or a ref.
 
 In `.ts` and `.tsx` files, the report comes with a suggestion that rewrites the list, which your editor can apply.
 
@@ -32,7 +32,7 @@ function Results({ items, query }) {
 }
 ```
 
-Reported, because the callback does not read `theme`:
+Reported, because the callback doesn't read `theme`:
 
 {/* bad */}
 ```jsx

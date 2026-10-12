@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-`user["name"]` and `user.name` read the same property. The dot form is shorter and easier to read. Brackets are for keys that are computed or that are not valid names, such as `headers["content-type"]`.
+`user["name"]` and `user.name` read the same property. The dot form is shorter and easier to read. Brackets are for keys that are computed or aren't valid names, such as `headers["content-type"]`.
 
 This is `dot-notation` with types, which lets it make exceptions for private members, protected members, and index signatures. Turn the other rule off when you use this one.
 
@@ -65,7 +65,7 @@ const row = { user_id: 1 };
 console.log(row["user_id"]);
 ```
 
-TypeScript does not check `private` and `protected` on an access with brackets, which tests sometimes use to reach into a class:
+TypeScript doesn't check `private` and `protected` on bracket access, and tests sometimes use that to reach into a class:
 
 {/* good {"options": [{"allowPrivateClassPropertyAccess": true}]} */}
 ```ts
@@ -76,7 +76,7 @@ class Counter {
 console.log(new Counter()["count"]);
 ```
 
-With `allowIndexSignaturePropertyAccess`, brackets can mark the keys that may not be there. `host` is declared, so it is still reported:
+With `allowIndexSignaturePropertyAccess`, brackets can mark the keys that may not be there. `host` is declared, so it's still reported:
 
 {/* bad {"options": [{"allowIndexSignaturePropertyAccess": true}], "count": 1} */}
 ```ts

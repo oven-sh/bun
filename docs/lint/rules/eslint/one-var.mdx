@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`let a, b;` and `let a; let b;` do the same. This rule makes a codebase choose one of the two.
+`let a, b;` and `let a; let b;` do the same thing. This rule makes a codebase pick one of the two.
 
-By default it asks for one `var` statement in each function, and one `let` and one `const` statement in each block. `"never"` asks for the opposite: one variable in each statement, so that a line can be added, removed, or moved without touching its neighbors.
+By default it asks for one `var` statement in each function, and one `let` and one `const` statement in each block. `"never"` asks for the opposite, one variable in each statement, so you can add, remove, or move a line without touching its neighbors.
 
 `--fix` splits a statement, and joins a statement with the one right before it.
 
@@ -53,7 +53,7 @@ one-var = ["error", "never"]
 | --- | --- |
 | `"always"` (default) | One statement for each kind of declaration in a scope. |
 | `"never"` | One variable in each statement. |
-| `"consecutive"` | Statements of the same kind that follow each other have to be joined. Statements with other code between them are allowed. |
+| `"consecutive"` | Statements of the same kind that follow each other must be joined. Statements with other code between them are allowed. |
 
 With `"never"`, this is reported:
 
@@ -62,7 +62,7 @@ With `"never"`, this is reported:
 let first = 1, second = 2;
 ```
 
-And this is not. The head of a `for` loop is exempt:
+And this isn't. A `for` loop's head is exempt:
 
 {/* good {"options": ["never"]} */}
 ```js
@@ -80,7 +80,7 @@ let first = 1;
 let second = 2;
 ```
 
-And this is not:
+And this isn't:
 
 {/* good {"options": ["consecutive"]} */}
 ```js
@@ -89,14 +89,14 @@ log(first);
 let second = 2;
 ```
 
-In place of the string you can give an object, in one of two forms. Each mode is `"always"`, `"never"`, or `"consecutive"`.
+Instead of the string you can pass an object, in one of two forms. Each mode is `"always"`, `"never"`, or `"consecutive"`.
 
 | Option | What it does |
 | --- | --- |
-| `var`, `let`, `const`, `using`, `awaitUsing` | The mode for that kind of declaration. A kind you leave out is not checked. |
-| `separateRequires` | With `"always"`, variables that are set to a call of `require()` get a statement of their own. Default `false`. |
+| `var`, `let`, `const`, `using`, `awaitUsing` | The mode for that kind of declaration. A kind you leave out isn't checked. |
+| `separateRequires` | With `"always"`, variables that are set to a `require()` call get their own statement. Default `false`. |
 
-With `{ "let": "never" }`, `const` is not checked:
+With `{ "let": "never" }`, `const` isn't checked:
 
 {/* good {"options": [{"let": "never"}]} */}
 ```js
@@ -112,7 +112,7 @@ With `{ "var": "always", "separateRequires": true }`, this is reported:
 var fs = require("fs"), limit = 10;
 ```
 
-And this is not:
+And this isn't:
 
 {/* good {"options": [{"var": "always", "separateRequires": true}]} */}
 ```js
@@ -120,7 +120,7 @@ var fs = require("fs"), path = require("path");
 var limit = 10;
 ```
 
-The other form cannot be mixed with the first:
+You can't mix the other form with the first:
 
 | Option | What it does |
 | --- | --- |

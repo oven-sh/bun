@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Some expressions look like they depend on a value but always give the same result. `a + b ?? c` means `(a + b) ?? c`, and a sum is never `null`, so `c` is never used. `items === []` is always `false`, because `[]` is a new array that is equal to nothing else.
+Some expressions look like they depend on a value but always give the same result. `a + b ?? c` means `(a + b) ?? c`, and a sum is never `null`, so `c` is never used. `items === []` is always `false`, because `[]` is a new array that isn't equal to anything else.
 
 The rule reports:
 

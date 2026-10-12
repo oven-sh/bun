@@ -12,15 +12,15 @@ typeAware: false
 deprecated: false
 ---
 
-When imports are added wherever there is room, you cannot see at a glance what a file depends on, and two branches that add an import in the same spot conflict. This rule sorts imports into groups by where they come from.
+When people add imports wherever there's room, you can't see at a glance what a file depends on, and two branches that add an import in the same spot conflict. This rule sorts imports into groups by where they come from.
 
 The default order is Node.js built-ins, packages, parent folders (`../`), the same folder (`./`), then the folder's own index (`.` or `./`). Inside a group any order is fine, unless you set `alphabetize`.
 
-- `import` and top-level `const x = require()` are checked. All `require()` calls go after all `import` statements.
+- The rule checks `import` and top-level `const x = require()`. All `require()` calls go after all `import` statements.
 - `import "./app.css"` and other imports without a name are skipped, because moving them can change what the code does.
 - `bun` and `bun:test` count as built-ins. With an ESLint config they count as packages, unless `settings["import/core-modules"]` lists them.
 
-`--fix` moves the imports, unless there is other code between them.
+`--fix` moves the imports, unless there's other code between them.
 
 ## Examples
 
@@ -55,16 +55,16 @@ import { routes } from "./";
 | `named` | `false` | Also sort the names inside `{ }`, by `alphabetize.order`. `true`, or an object with `enabled` for all and `import`, `export`, `require`, `cjsExports` for each kind. Its `types` key says where inline `type` names go: `"mixed"`, `"types-first"` or `"types-last"`. |
 | `pathGroups` | `[]` | Puts paths that match a glob into a group: `{ pattern, group, position }`. `position` is `"before"` or `"after"` the rest of the group. `patternOptions` takes glob options such as `nocase` and `matchBase`. |
 | `pathGroupsExcludedImportTypes` | `["builtin", "external", "object"]` | Kinds of imports that `pathGroups` leaves alone. |
-| `distinctGroup` | `true` | For `newlines-between`, treat a path group with a `position` as a group of its own. |
+| `distinctGroup` | `true` | For `newlines-between`, treat a path group with a `position` as a separate group. |
 | `sortTypesGroup` | `false` | Order the imports in the `"type"` group by `groups` too. |
 | `newlines-between-types` | same as `newlines-between` | With `sortTypesGroup`, the empty lines around and between `import type` statements. |
 | `consolidateIslands` | `"never"` | `"inside-groups"`, with `"always-and-inside-groups"`: an empty line around each multi-line import, none between single-line imports of a group. |
-| `warnOnUnassignedImports` | `false` | Also check imports without a name. `--fix` does not move them. |
+| `warnOnUnassignedImports` | `false` | Also check imports without a name. `--fix` doesn't move them. |
 
-Four more groups can go in `groups`:
+You can put four more groups in `groups`:
 
-- `"internal"`: a path that is not relative and resolves to a file in your project.
-- `"unknown"`: a path that fits no other group.
+- `"internal"`: a path that isn't relative and resolves to a file in your project.
+- `"unknown"`: a path that doesn't fit any other group.
 - `"object"`: `import log = console.log` in TypeScript.
 - `"type"`: `import type`.
 
@@ -78,7 +78,7 @@ import fs from "node:fs";
 import express from "express";
 ```
 
-And this is not:
+And this isn't:
 
 {/* good {"options": [{"newlines-between": "always"}]} */}
 ```js
@@ -133,7 +133,7 @@ An alias that looks like a package name, such as `@app/button`, counts as `"exte
 
 ### The `"type"` group
 
-With `"type"` in `groups`, every `import type` goes to that place, wherever it imports from:
+With `"type"` in `groups`, every `import type` goes in that spot, no matter where it imports from:
 
 {/* bad {"options": [{"groups": ["builtin", "external", "parent", "sibling", "index", "type"]}]} */}
 ```ts

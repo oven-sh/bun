@@ -284,14 +284,14 @@ describe.concurrent("bun lint and bun format", () => {
       run(["format", "a.js"], ofFormat),
       run(["-e", "console.log(1)"], ofLint + ofFormat),
     ]);
-    expect(lint.error).toStartWith(`error: unknown key "noSuchKey" in [lint].`);
-    expect(format.error).toStartWith(`error: unknown key "noSuchKey" in [format].`);
+    expect(lint.error).toStartWith(`error: Unknown key "noSuchKey" in [lint]`);
+    expect(format.error).toStartWith(`error: Unknown key "noSuchKey" in [format]`);
     expect(other).toEqual({ stdout: "1\n", error: undefined, exitCode: 0 });
     const [onlyFormat, onlyLint] = await Promise.all([
       run(["lint", "--no-config-lookup", "a.js"], ofFormat),
       run(["format", "--check", "a.js"], ofLint),
     ]);
-    expect(onlyFormat.error).toStartWith(`error: unknown key "noSuchKey" in [format].`);
+    expect(onlyFormat.error).toStartWith(`error: Unknown key "noSuchKey" in [format]`);
     expect(onlyFormat.exitCode).toBe(2);
     expect(onlyLint).toEqual({ stdout: expect.any(String), error: undefined, exitCode: 0 });
   });

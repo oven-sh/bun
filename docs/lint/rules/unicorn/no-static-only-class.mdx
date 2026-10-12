@@ -14,9 +14,9 @@ deprecated: false
 
 A class with only `static` members has nothing to instantiate. It groups values and functions under a name, and a plain object does that with less syntax.
 
-A class is not reported if it extends another class, has a decorator, is empty, or has a member that an object cannot have: a private `#name`, a static block, or in TypeScript a member marked `readonly`, `declare`, `public`, `protected` or `private`.
+A class isn't reported if it extends another class, has a decorator, is empty, or has a member that an object can't have: a private `#name`, a static block, or in TypeScript a member marked `readonly`, `declare`, `public`, `protected` or `private`.
 
-`--fix-dangerously` rewrites the class to an object. `--fix` does not, because code that calls `new` on the class or uses it as a type stops working.
+`--fix-dangerously` rewrites the class to an object. `--fix` doesn't, because code that calls `new` on the class or uses it as a type would stop working.
 
 ## Examples
 
@@ -46,7 +46,7 @@ const Temperature = {
 };
 ```
 
-A private member keeps the class:
+A class with a private member isn't reported:
 
 {/* good */}
 ```js
@@ -59,7 +59,7 @@ class Counter {
 }
 ```
 
-So does a TypeScript modifier:
+Neither is one with a TypeScript modifier:
 
 {/* good */}
 ```ts

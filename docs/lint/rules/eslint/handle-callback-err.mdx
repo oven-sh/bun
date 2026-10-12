@@ -12,7 +12,7 @@ typeAware: false
 deprecated: true
 ---
 
-A Node.js style callback gets the error as its first argument. If the function never looks at it, a failure goes unnoticed and the code carries on with a result that is `undefined`.
+A Node.js-style callback gets the error as its first argument. If the function never looks at it, a failure goes unnoticed and the code carries on with an `undefined` result.
 
 The rule reports a function if its first parameter is named `err` and is never used. Any use counts as handling it.
 
@@ -47,7 +47,7 @@ fs.readFile(path, "utf8", function (err, text) {
 handle-callback-err = ["error", "^(err|error)$"]
 ```
 
-The one option is a string: the name of the error parameter. The default is `"err"`. A string that starts with `^` is a regular expression that the name has to match.
+The only option is a string with the name of the error parameter. The default is `"err"`. A string that starts with `^` is a regular expression that the name must match.
 
 {/* bad {"options": ["error"]} */}
 ```js
@@ -67,7 +67,7 @@ fs.unlink(path, (err) => {
 });
 ```
 
-With the default, a parameter named `error` is not checked:
+With the default, a parameter named `error` isn't checked:
 
 {/* good */}
 ```js

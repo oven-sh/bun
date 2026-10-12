@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`xit`, `xtest` and `xdescribe` are short names for `it.skip`, `test.skip` and `describe.skip`. One extra letter is easy to miss in a review, and a search for `.skip` does not find it.
+`xit`, `xtest` and `xdescribe` are short names for `it.skip`, `test.skip` and `describe.skip`. One extra letter is easy to miss in a review, and a search for `.skip` doesn't find it.
 
-`--fix` rewrites the short name only if the file already imports the long one: `xtest` becomes `test.skip` if `test` is imported.
+`--fix` rewrites the short name only if the file already imports the long one. For example, `xtest` becomes `test.skip` if `test` is imported.
 
 ## Examples
 

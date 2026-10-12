@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-A function that returns a value on one path and nothing on another gives its caller `undefined` some of the time. Often that path was forgotten.
+A function that returns a value on one path and nothing on another gives its caller `undefined` some of the time. Often that's a path someone forgot.
 
 This is `consistent-return` with types. A function with the return type `void`, or an async function that returns `Promise<void>`, can mix `return;` with `return value;`. Turn the other rule off when you use this one.
 
@@ -83,4 +83,4 @@ function findUser(id: number) {
 
 ## When not to use it
 
-The `noImplicitReturns` option of TypeScript catches the forgotten path too. If it is on, you may not need this rule.
+TypeScript's `noImplicitReturns` option catches the forgotten path too. If it's on, you may not need this rule.

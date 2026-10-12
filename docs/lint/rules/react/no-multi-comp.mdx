@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-With one component per file, you can find any component by its file name, and a change to one does not show up in the history of another.
+With one component per file, you can find any component by its file name, and a change to one doesn't show up in another's history.
 
-The first component in the file is accepted. Every component after it is reported.
+The rule accepts the first component in the file and reports every component after it.
 
 ## Examples
 
@@ -46,7 +46,7 @@ export function Profile({ user }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreStateless` | `false` | Do not count function components, or components wrapped in `memo` or `forwardRef`. Only class components and `createReactClass` count. |
+| `ignoreStateless` | `false` | Don't count function components, or components wrapped in `memo` or `forwardRef`. Only class components and `createReactClass` count. |
 
 With `ignoreStateless`, a class component can have small function components next to it:
 

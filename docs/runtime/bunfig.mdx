@@ -430,6 +430,8 @@ Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Ev
 "no-restricted-imports" = ["error", { paths = ["lodash"] }]
 ```
 
+Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
+
 ### `lint.categories`
 
 Set a whole category of rules at once. `[lint.rules]` wins over a category.
@@ -487,7 +489,7 @@ Picture = "img"
 
 ### `lint.typeAware`
 
-Also run the [type-aware rules](/runtime/lint#type-aware-rules), such as `@typescript-eslint/no-floating-promises`. Default `false`.
+Turn on typescript-eslint's recommended [type-aware rules](/runtime/lint#type-aware-rules), such as `@typescript-eslint/no-floating-promises`. Default `false`.
 
 ```toml title="bunfig.toml" icon="settings"
 [lint]
@@ -495,7 +497,16 @@ typeAware = true
 tsconfig = "./tsconfig.lint.json" # default: the nearest tsconfig.json
 ```
 
-`typeCheck = true` does the same and reports type errors too, like [`bun check`](/runtime/check).
+You don't need it for a single rule. A type-aware rule runs as soon as you turn it on in `[lint.rules]`. `typeAware = false` skips every type-aware rule.
+
+### `lint.typeCheck`
+
+Also report type errors, like [`bun check`](/runtime/check). It turns on no rules. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+typeCheck = true
+```
 
 ### `lint.globals`
 
@@ -642,17 +653,19 @@ To give type imports a group of their own, prefix a group with `type-`, like `"t
 ```toml title="bunfig.toml" icon="settings"
 [format.sortTailwindcss]
 stylesheet = "./src/app.css"
-functions = ["clsx", "cn", "cva"]
+functions = ["clsx", "tw"]
 ```
 
-| Key                  | What it does                                               |
-| -------------------- | ---------------------------------------------------------- |
-| `stylesheet`         | Tailwind 4: the CSS file that imports Tailwind             |
-| `config`             | Tailwind 3: the path of `tailwind.config.js`               |
-| `functions`          | Sort the strings passed to these functions                 |
-| `attributes`         | Sort these attributes too, besides `class` and `className` |
-| `preserveWhitespace` | Keep the whitespace between classes                        |
-| `preserveDuplicates` | Keep duplicate classes                                     |
+| Key                  | What it does                                                          |
+| -------------------- | --------------------------------------------------------------------- |
+| `stylesheet`         | Tailwind 4: the CSS file that imports Tailwind                        |
+| `config`             | Tailwind 3: the path of `tailwind.config.js`                          |
+| `functions`          | Sort the strings passed to these functions. Replaces the default list |
+| `attributes`         | Sort these attributes too, besides `class` and `className`            |
+| `preserveWhitespace` | Keep the whitespace between classes                                   |
+| `preserveDuplicates` | Keep duplicate classes                                                |
+
+By default, `functions` is `clsx`, `cn`, `cva`, `cx`, `classNames`, `classnames`, `twMerge`, `twJoin`, and `tv`.
 
 ### `format.sortPackageJson`
 

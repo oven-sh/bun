@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`{...props}` passes on everything in the object, including props the element does not know. You cannot tell from the tag what it receives, and on an HTML element the extras end up as unknown attributes in the page. Naming each prop shows what is passed.
+`{...props}` passes on everything in the object, including props the element doesn't know. You can't tell from the tag what it receives, and on an HTML element the extras end up as unknown attributes in the page. Naming each prop shows what's passed.
 
 ## Examples
 
@@ -63,14 +63,14 @@ const field = <TextField {...inputProps} />;
 const avatar = <Avatar {...{ src, alt }} />;
 ```
 
-An exception allows a tag that is otherwise checked:
+An exception allows a tag that's otherwise checked:
 
 {/* good {"options": [{"exceptions": ["TextField"]}]} */}
 ```jsx
 const field = <TextField {...inputProps} />;
 ```
 
-And it checks a tag that is otherwise ignored:
+And it checks a tag that's otherwise ignored:
 
 {/* bad {"options": [{"custom": "ignore", "exceptions": ["TextField"]}]} */}
 ```jsx

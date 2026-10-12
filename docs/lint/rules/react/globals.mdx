@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-React decides when and how often a component renders. In development, Strict Mode renders it twice. If rendering assigns to a variable that lives outside the component, the value of that variable depends on how many times React happened to render.
+React decides when and how often a component renders. In development, Strict Mode renders it twice. If rendering assigns to a variable that lives outside the component, that variable's value depends on how many times React happened to render.
 
-An assignment in an effect or in an event handler is allowed, because that code does not run during render.
+You can assign in an effect or an event handler, because that code doesn't run during render.
 
 ## Examples
 
@@ -30,7 +30,7 @@ function Counter() {
 }
 ```
 
-A function that is called during render counts too:
+A function that's called during render counts too:
 
 {/* bad */}
 ```jsx
@@ -73,7 +73,7 @@ function Page({ id }) {
 }
 ```
 
-Changing a property of an outside object is a job for `react-hooks/immutability`, not for this rule:
+Changing a property of an outside object is a job for `react-hooks/immutability`, not this rule:
 
 {/* good */}
 ```jsx

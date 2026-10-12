@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`expect(a === b).toBe(true)` compares the values before `expect` sees them. When the test fails, the output only says that `false` is not `true`. It does not show the two values.
+`expect(a === b).toBe(true)` compares the values before `expect` sees them. When the test fails, the output only says that `false` is not `true`. It doesn't show the two values.
 
-The rule reports `===` and `!==` inside `expect` when the result is compared with `true` or `false` using `toBe`, `toEqual` or `toStrictEqual`. `==` and `!=` are not reported.
+The rule reports `===` and `!==` inside `expect` when the result is compared with `true` or `false` using `toBe`, `toEqual` or `toStrictEqual`. `==` and `!=` aren't reported.
 
 `--fix-suggestions` rewrites the assertion with `toBe`. Your editor also offers `toEqual` and `toStrictEqual`.
 

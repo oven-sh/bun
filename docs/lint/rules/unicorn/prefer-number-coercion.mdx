@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`parseFloat` and `parseInt` read as many characters as they can and ignore the rest, so `parseFloat("12px")` is `12` and `parseInt("1e3", 10)` is `1`. `Number()` converts the whole string: bad input gives `NaN`, which you can check for.
+`parseFloat` and `parseInt` read as many characters as they can and ignore the rest, so `parseFloat("12px")` is `12` and `parseInt("1e3", 10)` is `1`. `Number()` converts the whole string, so bad input gives `NaN`, which you can check for.
 
-The rule reports `parseFloat(value)` and `parseInt(value, 10)`, also as `Number.parseFloat` and `Number.parseInt`. `parseInt` with no radix or with another radix is not reported.
+The rule reports `parseFloat(value)` and `parseInt(value, 10)`, including when they're written as `Number.parseFloat` and `Number.parseInt`. `parseInt` with no radix or with another radix isn't reported.
 
-`--fix` does not change the code, because the result can differ. `--fix-suggestions` rewrites it to `Number(value)`, or to `Math.trunc(Number(value))` for `parseInt`.
+`--fix` doesn't change the code, because the result can differ. `--fix-suggestions` rewrites it to `Number(value)`, or to `Math.trunc(Number(value))` for `parseInt`.
 
 ## Examples
 
@@ -41,4 +41,4 @@ const page = parseInt(query.page);
 
 ## When not to use it
 
-The results differ: `Number("")` is `0` where `parseFloat("")` is `NaN`, and `Number("12px")` is `NaN`. If you parse strings with a unit or other text after the number, keep `parseFloat`.
+The results differ. `Number("")` is `0` where `parseFloat("")` is `NaN`, and `Number("12px")` is `NaN`. If you parse strings with a unit or other text after the number, keep `parseFloat`.

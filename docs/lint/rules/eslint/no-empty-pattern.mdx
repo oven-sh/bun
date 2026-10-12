@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`const {} = user` looks like a declaration but creates no variable. The usual cause is one wrong character: `{ settings: {} }` destructures `settings` into nothing, where `{ settings = {} }` would give it a default value.
+`const {} = user` looks like a declaration but doesn't create a variable. The usual cause is one wrong character. `{ settings: {} }` destructures `settings` into nothing, while `{ settings = {} }` would give it a default value.
 
 This rule is on by default.
 
@@ -46,9 +46,9 @@ function render({ title }) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowObjectPatternsAsParameters` | `false` | Allow `{}` as a parameter of a function, with no default value or with the default `{}`. |
+| `allowObjectPatternsAsParameters` | `false` | Allow `{}` as a function parameter, with no default value or with the default `{}`. |
 
-This is for a function that is called with an object it does not need, and that uses a later parameter:
+This is for a function that's called with an object it doesn't need, but that uses a later parameter:
 
 {/* good {"options": [{"allowObjectPatternsAsParameters": true}]} */}
 ```js

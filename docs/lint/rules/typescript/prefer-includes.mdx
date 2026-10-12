@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-`tags.indexOf("draft") !== -1` gets a position and compares it with a magic number, only to find out if the value is there. It is easy to write `> 0` instead of `>= 0` and miss the first element. `tags.includes("draft")` asks the question directly.
+`tags.indexOf("draft") !== -1` gets a position and compares it with a magic number, only to find out if the value is there. It's easy to write `> 0` instead of `>= 0` and miss the first element. `tags.includes("draft")` asks the question directly.
 
-The rule works for strings, arrays, and any type of your own that has an `includes` method with the same parameters as its `indexOf`. It also reports `.test()` on a regular expression that only matches one fixed string, such as `/admin/`.
+The rule works for strings, arrays, and any of your own types that has an `includes` method with the same parameters as its `indexOf`. It also reports `.test()` on a regular expression that only matches one fixed string, such as `/admin/`.
 
 `--fix` rewrites both forms. `tags?.indexOf("draft") !== -1` is reported but not fixed.
 
@@ -55,7 +55,7 @@ function slice(path: string) {
 }
 ```
 
-So is a type that has no `includes` method:
+A type that has no `includes` method is left alone too:
 
 {/* good */}
 ```ts

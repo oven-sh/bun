@@ -34,21 +34,21 @@ const tags = posts.flatMap(post => post.tags);
 const words = lines.flatMap(line => line.split(" "));
 ```
 
-`.flatMap()` flattens one level, so a deeper `.flat()` is not reported:
+`.flatMap()` flattens one level, so a deeper `.flat()` isn't reported:
 
 {/* good */}
 ```js
 const cells = tables.map(table => table.rows).flat(2);
 ```
 
-`Children` from React has a `map` but no `flatMap`, so it is left alone:
+`Children` from React has a `map` but no `flatMap`, so it's left alone:
 
 {/* good */}
 ```js
 const items = React.Children.map(children, child => child.props.items).flat();
 ```
 
-A `.filter()` before a `.flatMap()` that returns an array literal of two or more elements is also reported. The `.flatMap()` callback can return `[]` for the elements to skip. `--fix-suggestions` makes this change.
+A `.filter()` before a `.flatMap()` that returns an array literal of two or more elements is also reported. The `.flatMap()` callback can return `[]` for the elements you want to skip. `--fix-suggestions` makes this change.
 
 {/* bad */}
 ```js

@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-What `text.match(pattern)` returns depends on the flags of `pattern`. With `g` it is a list of all matches without their groups. Without `g` it is the first match with its groups, which is what `pattern.exec(text)` returns. If you use `exec` for one match and keep `match` for the `g` flag, the method name says which of the two you get.
+The return value of `text.match(pattern)` depends on the flags of `pattern`. With `g` it's a list of all matches without their groups. Without `g` it's the first match with its groups, which is what `pattern.exec(text)` returns. If you use `exec` for one match and keep `match` for the `g` flag, the method name tells you which of the two you get.
 
-A call is only reported if the rule can tell that there is no `g` flag. A regular expression that comes in as a parameter is left alone.
+A call is only reported if the rule can tell that there's no `g` flag. A regular expression that comes in as a parameter is left alone.
 
-`--fix` rewrites the call. A string argument becomes a regular expression: `text.match("v1")` becomes `/v1/.exec(text)`.
+`--fix` rewrites the call. A string argument becomes a regular expression, so `text.match("v1")` becomes `/v1/.exec(text)`.
 
 This rule needs type information. Run `bun lint --type-aware`.
 

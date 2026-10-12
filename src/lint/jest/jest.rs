@@ -1766,17 +1766,46 @@ pub(crate) fn print_expression(out: &mut Vec<u8>, e: Expr) {
 }
 
 /// `request.*.expect` is `/^request\.[a-z\d]*\.expect(\.|$)/iu`, and `**` is also for dots. `None` if that is not valid.
-pub(crate) fn convert_pattern(pattern: &str) -> Option<Regex> {
+///
+/// For `bun:test` the stars are also for `_` and `$`, and `**` can be nothing: `request.**.expect` is for `request.expect` too.
+pub(crate) fn convert_pattern(pattern: &str, runner: Runner) -> Option<Regex> {
+    let is_bun = runner == Runner::Bun;
     let mut converted = "^".to_owned();
+    let mut follows_optional_dot = false;
     for (i, part) in strings::split(pattern.as_bytes(), b".").enumerate() {
-        converted.push_str(if i > 0 { "\\." } else { "" });
+        if part == b"**" && is_bun {
+            follows_optional_dot = i == 0;
+            converted.push_str(if i == 0 {
+                "(?:[\\w$.]*\\.)?"
+            } else {
+                "(?:\\.[\\w$.]*)?"
+            });
+            continue;
+        }
+        converted.push_str(if i > 0 && !follows_optional_dot {
+            "\\."
+        } else {
+            ""
+        });
+        follows_optional_dot = false;
         if part == b"**" {
             converted.push_str("[a-z\\d\\.]*");
             continue;
         }
         for (i, literal) in strings::split(part, b"*").enumerate() {
-            converted.push_str(if i > 0 { "[a-z\\d]*" } else { "" });
-            converted.push_str(std::str::from_utf8(literal).unwrap_or_default());
+            converted.push_str(match (i > 0, is_bun) {
+                (false, _) => "",
+                (true, false) => "[a-z\\d]*",
+                (true, true) => "[\\w$]*",
+            });
+            for (i, plain) in strings::split(literal, b"$").enumerate() {
+                converted.push_str(match (i > 0, is_bun) {
+                    (false, _) => "",
+                    (true, false) => "$",
+                    (true, true) => "\\$",
+                });
+                converted.push_str(std::str::from_utf8(plain).unwrap_or_default());
+            }
         }
     }
     converted.push_str("(\\.|$)");

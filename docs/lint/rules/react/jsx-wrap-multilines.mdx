@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Without parentheses, JSX that spans several lines has to start on the same line as the `return` or the `=`, so its opening tag does not line up with its closing tag. If you move it down a line, `return` followed by a line break returns `undefined`. With parentheses the JSX can start on its own line.
+Without parentheses, JSX that spans several lines must start on the same line as the `return` or the `=`, so its opening tag doesn't line up with its closing tag. If you move it down a line, `return` followed by a line break returns `undefined`. With parentheses the JSX can start on its own line.
 
 JSX on one line never needs parentheses.
 
@@ -65,9 +65,9 @@ Each takes one of these values:
 | Value | What it does |
 | --- | --- |
 | `"parens"` or `true` | Require parentheses. |
-| `"parens-new-line"` | Require parentheses, with `(` and `)` on other lines than the JSX. |
+| `"parens-new-line"` | Require parentheses, with `(` and `)` on different lines from the JSX. |
 | `"never"` | Report parentheses around the JSX, even on one line. |
-| `"ignore"` or `false` | Do not check this place. |
+| `"ignore"` or `false` | Don't check this place. |
 
 {/* bad {"options": [{"declaration": "parens-new-line"}]} */}
 ```jsx
@@ -109,7 +109,7 @@ function Card({ title }) {
 const empty = (<section />);
 ```
 
-While `condition` is `"ignore"`, the branches of a conditional that is declared or assigned are checked under `declaration` or `assignment`:
+While `condition` is `"ignore"`, the branches of a conditional that's declared or assigned are checked under `declaration` or `assignment`:
 
 {/* bad */}
 ```jsx

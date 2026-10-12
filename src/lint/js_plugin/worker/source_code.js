@@ -1,3 +1,5 @@
+// Portions of this file are copied from ESLint, which is under the MIT License. The notice is in code_path.js.
+
 // ───────────── ESLint's `SourceCode` ─────────────
 //
 // There is one object for all files. What it says is about the file that is being linted, and is

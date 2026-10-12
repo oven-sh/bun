@@ -12,13 +12,13 @@ typeAware: false
 deprecated: false
 ---
 
-A function that does not fit on the screen is hard to read in one go, and it usually does several jobs that could have a name each. This rule reports a function that has more lines than the maximum, which is 50 by default.
+A function that doesn't fit on the screen is hard to read in one go, and it usually does several jobs that could each have a name. This rule reports any function with more lines than the maximum, which is 50 by default.
 
 The count runs from the line where the function starts to the line where it ends.
 
 ## Examples
 
-With a maximum of 5, this function of 7 lines is reported:
+With a maximum of 5, this 7-line function is reported:
 
 {/* bad {"options": [5]} */}
 ```js
@@ -56,9 +56,9 @@ max-lines-per-function = ["error", { max = 80, skipBlankLines = true, skipCommen
 | Option | Default | What it does |
 | --- | --- | --- |
 | `max` | `50` | The number of lines a function can have. |
-| `skipBlankLines` | `false` | Do not count lines that are empty or only have whitespace. |
-| `skipComments` | `false` | Do not count lines that only have a comment. |
-| `IIFEs` | `false` | Also check a function that is called where it is written: `(function () { ... })()`. |
+| `skipBlankLines` | `false` | Don't count lines that are empty or only have whitespace. |
+| `skipComments` | `false` | Don't count lines that only have a comment. |
+| `IIFEs` | `false` | Also check a function that's called where it's written, like `(function () { ... })()`. |
 
 A number alone is short for `{ "max": number }`.
 
@@ -84,7 +84,7 @@ function greet(user) {
 }
 ```
 
-A function that is called where it is written is skipped by default. This passes with a maximum of 2:
+A function that's called where it's written is skipped by default. This passes with a maximum of 2:
 
 {/* good {"options": [2]} */}
 ```js
@@ -94,7 +94,7 @@ A function that is called where it is written is skipped by default. This passes
 })();
 ```
 
-With `IIFEs` it is reported:
+With `IIFEs` it's reported:
 
 {/* bad {"options": [{"max": 2, "IIFEs": true}]} */}
 ```js

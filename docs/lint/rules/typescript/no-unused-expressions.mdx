@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A statement such as `user.name;` or `count + 1;` computes a value and throws it away. It is usually a mistake: a call without its `()`, a `===` that was meant to be `=`, or a line left behind after an edit.
+A statement such as `user.name;` or `count + 1;` computes a value and throws it away. It's usually a mistake, like a call without its `()`, a `===` that was meant to be `=`, or a line left behind after an edit.
 
-Calls, `new`, assignments, `await`, `delete`, `void`, `import()`, and directives such as `"use strict"` do something, so they are not reported. The rule looks through `as`, `!`, and type arguments, so `save as unknown;` is reported like `save;`.
+Calls, `new`, assignments, `await`, `delete`, `void`, `import()`, and directives such as `"use strict"` do something, so they aren't reported. The rule looks through `as`, `!`, and type arguments, so `save as unknown;` is reported like `save;`.
 
 This rule is on by default in TypeScript files.
 
@@ -53,7 +53,7 @@ user?.save();
 | `enforceForJSX` | `false` | Also report a JSX element as a statement. |
 | `ignoreDirectives` | `false` | Allow strings at the start of a file or a function when `ecmaVersion` is 3, which has no directives. |
 
-With `allowShortCircuit`, you can use `&&` in place of an `if`:
+With `allowShortCircuit`, you can use `&&` instead of an `if`:
 
 {/* good {"options": [{"allowShortCircuit": true}]} */}
 ```ts
@@ -62,7 +62,7 @@ declare const user: { save(): void } | undefined;
 user && user.save();
 ```
 
-The right side still has to do something:
+The right side still needs to do something:
 
 {/* bad {"options": [{"allowShortCircuit": true}]} */}
 ```ts

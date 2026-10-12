@@ -14,7 +14,7 @@ deprecated: false
 
 This rule compares each file with what Prettier prints and reports every place where they differ. Formatting problems then show up next to your lint problems, in the terminal and in the editor.
 
-It is the rule from `eslint-plugin-prettier`, for projects with an ESLint config that loads that package. Bun has it built in. It compares the file with the output of `bun format`, which matches Prettier 3.9, so it never starts Prettier.
+It's the rule from `eslint-plugin-prettier`, for projects with an ESLint config that loads that package. Bun has it built in. It compares the file with the output of `bun format`, which matches Prettier 3.9, so it never starts Prettier.
 
 If Bun can't guarantee the same output as your Prettier, the package's rule runs in JavaScript with your installed Prettier, and a note says why. That happens, for example, with a Prettier version other than 3.9 or a Prettier plugin that `bun format` doesn't have.
 
@@ -58,7 +58,7 @@ To skip files, list them in a `.prettierignore` in the directory where you run `
 
 ## Options
 
-The first option is an object of Prettier options, with the names they have in a `.prettierrc`. They win over your config files.
+The first option is an object of Prettier options, with the same names as in a `.prettierrc`. They override your config files.
 
 {/* skip */}
 ```js eslint.config.js

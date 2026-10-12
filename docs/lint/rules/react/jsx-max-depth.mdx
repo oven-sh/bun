@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Deeply nested JSX is hard to follow, and it usually means that part of the tree should be its own component. The outermost element has depth 0, its children depth 1, and so on. By default the rule reports an element deeper than 2.
+Deeply nested JSX is hard to follow, and it usually means part of the tree should be its own component. The outermost element has depth 0, its children have depth 1, and so on. By default the rule reports an element deeper than 2.
 
-Elements inside an expression in braces, such as `{more && <li />}` or the callback of `.map()`, start again at depth 0.
+Elements inside an expression in braces, such as `{more && <li />}` or a `.map()` callback, start again at depth 0.
 
 ## Examples
 
@@ -64,7 +64,7 @@ const page = (
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `max` | `2` | The deepest level that is allowed. |
+| `max` | `2` | The deepest level that's allowed. |
 
 {/* bad {"options": [{"max": 1}]} */}
 ```jsx
@@ -77,7 +77,7 @@ const page = (
 );
 ```
 
-Moving part of the tree to a variable does not change its depth:
+Moving part of the tree to a variable doesn't change its depth:
 
 {/* bad {"options": [{"max": 1}]} */}
 ```jsx

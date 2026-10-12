@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`splice(start)` and `toSpliced(start)` already remove everything from `start` to the end of the array. Passing the array's own `.length`, `Infinity` or `Number.POSITIVE_INFINITY` as the second argument does the same thing with more to read.
+`splice(start)` and `toSpliced(start)` already remove everything from `start` to the end of the array. Passing the array's `.length`, `Infinity` or `Number.POSITIVE_INFINITY` as the second argument does the same thing with more code.
 
 `--fix` removes the second argument.
 

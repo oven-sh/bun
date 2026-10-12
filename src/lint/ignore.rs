@@ -1,11 +1,14 @@
 //! The lines of one ignore file, or of one array in a configuration: the last line that matches decides.
-//! A line becomes a pattern for [`crate::match`].
+//!
+//! A line becomes a pattern for [`bun_glob::match`]. What the package `ignore` reads in a way of its own (a `\`, `[!a]`, a path with
+//! an empty name) goes the way of the package: its table of replacements makes a regular expression of the line.
 
-use crate::matcher;
-use crate::pattern::{Candidate, Pattern};
+use crate::regex::Regex;
 use bun_collections::StringHashMap;
-use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
+use bun_glob::{Candidate, Pattern};
+use smallvec::SmallVec;
+use std::sync::{LazyLock, OnceLock};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct IgnoreOptions {
@@ -28,8 +31,12 @@ pub enum Verdict {
 }
 
 struct Rule {
-    /// `None`: whatever is found by its key matches.
+    /// `None`: whatever is found by its key matches, or `of_package` says what does.
     pattern: Option<Pattern>,
+    /// Without braces: the line, without the `!`, and what the package makes of it, once that is asked for.
+    of_package: Option<(Box<[u8]>, OnceLock<Option<Regex>>)>,
+    /// `pattern` does not say the same as the package.
+    is_only_of_package: bool,
     is_negated: bool,
     is_for_directories: bool,
 }
@@ -90,7 +97,7 @@ fn read(line: &[u8], options: IgnoreOptions) -> Result<Option<Line>, ()> {
                     None => return Ok(None),
                 }
             }
-            b'[' => match matcher::class_end(written, at) {
+            b'[' => match bun_glob::matcher::class_end(written, at) {
                 Some(close) if options.has_braces && has_reversed_range(&written[at..close]) => {
                     return Err(());
                 }
@@ -136,6 +143,127 @@ fn read(line: &[u8], options: IgnoreOptions) -> Result<Option<Line>, ()> {
     }))
 }
 
+/// `REPLACERS` of the package `ignore` 5.3.2.
+static REPLACERS: LazyLock<[Regex; 16]> = LazyLock::new(|| {
+    [
+        r"/^\uFEFF/",
+        r"/((?:\\\\)*?)(\\?\s+)$/",
+        r"/(\\+?)\s/g",
+        r"/[\\$.|*+(){^]/g",
+        r"/(?!\\)\?/g",
+        r"/^\//",
+        r"/\//g",
+        r"/^\^*\\\*\\\*\\\//",
+        r"/^(?=[^^])/",
+        r"/\\\/\\\*\\\*(?=\\\/|$)/g",
+        r"/(^|[^\\]+)(\\\*)+(?=.+)/g",
+        r"/\\\\\\(?=[$.|*+(){^])/g",
+        r"/\\\\/g",
+        r"/(\\)?\[([^\]/]*?)(\\*)($|\])/g",
+        r"/(?:[^*])$/",
+        r"/(\^|\\\/)?\\\*$/",
+    ]
+    .map(Regex::literal)
+});
+
+/// `REGEX_REGEXP_RANGE`
+static RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::literal("/([0-z])-([0-z])/g"));
+
+/// `makeRegex(pattern, ignoreCase)` of the package. Later replacements see what earlier ones wrote. `None`: it throws.
+fn regex_of_package(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
+    let even = |backslashes: &[u8]| backslashes.len() - backslashes.len() % 2;
+    let mut source = pattern.to_vec();
+    for (step, regex) in REPLACERS.iter().enumerate() {
+        let len = source.len();
+        let replaced = regex.replace_with(&source, |found, out| match step {
+            0 => {}
+            1 => {
+                out.extend_from_slice(found.bytes(1));
+                if found.bytes(2).starts_with(b"\\") {
+                    out.push(b' ');
+                }
+            }
+            2 => {
+                out.extend_from_slice(&found.bytes(1)[..even(found.bytes(1))]);
+                out.push(b' ');
+            }
+            3 => out.extend_from_slice(&[b"\\", found.as_bytes()].concat()),
+            4 => out.extend_from_slice(b"[^/]"),
+            5 => out.push(b'^'),
+            6 => out.extend_from_slice(b"\\/"),
+            7 => out.extend_from_slice(b"^(?:.*\\/)?"),
+            // A `/` that is not the last character ties the line to the directory.
+            8 => out.extend_from_slice(
+                match strings::contains_char(&pattern[..pattern.len().saturating_sub(1)], b'/') {
+                    true => b"^",
+                    false => b"(?:^|\\/)",
+                },
+            ),
+            9 => out.extend_from_slice(match found.end() < len {
+                true => b"(?:\\/[^\\/]+)*",
+                false => b"\\/.+",
+            }),
+            10 => out.extend_from_slice(&[found.bytes(1), b"[^\\/]*"].concat()),
+            11 | 12 => out.push(b'\\'),
+            13 => {
+                let (range, end_escape, close) = (found.bytes(2), found.bytes(3), found.bytes(4));
+                if found.get(1).is_some() {
+                    let kept = &end_escape[..even(end_escape)];
+                    out.extend_from_slice(&[b"\\[", range, kept, close].concat());
+                } else if close == b"]" && end_escape.len() % 2 == 0 {
+                    // `sanitizeRange`: `b-a` is left out.
+                    let sanitized = RANGE.replace_with(range, |it, out| {
+                        if it.bytes(1) <= it.bytes(2) {
+                            out.extend_from_slice(it.as_bytes());
+                        }
+                    });
+                    out.extend_from_slice(&[b"[", &sanitized[..], end_escape, b"]"].concat());
+                } else {
+                    out.extend_from_slice(b"[]");
+                }
+            }
+            14 => {
+                out.extend_from_slice(found.as_bytes());
+                out.extend_from_slice(match found.as_bytes() {
+                    b"/" => b"$",
+                    _ => b"(?=$|\\/$)",
+                });
+            }
+            _ => {
+                match found.get(1) {
+                    Some(before) => out.extend_from_slice(&[before.as_bytes(), b"[^/]+"].concat()),
+                    None => out.extend_from_slice(b"[^/]*"),
+                }
+                out.extend_from_slice(b"(?=$|\\/$)");
+            }
+        });
+        source = replaced.into_owned();
+    }
+    Regex::from_bytes(&source, if ignores_case { b"i" } else { b"" }).ok()
+}
+
+/// Whether the package reads `line`, which has no `!` in front, as [`read`] does: no `\`, no class but of letters and digits, ASCII.
+fn is_read_the_same(line: &[u8]) -> bool {
+    let mut rest = line;
+    while let Some(open) = strings::index_of_char_usize(rest, b'[') {
+        let Some(len) = strings::index_of_char_usize(&rest[open + 1..], b']') else {
+            return false;
+        };
+        let inside = &rest[open + 1..open + 1 + len];
+        let is_bound = |at: usize| inside.get(at).is_some_and(u8::is_ascii_alphanumeric);
+        let is_range = |at: usize| {
+            at > 0 && is_bound(at - 1) && is_bound(at + 1) && inside[at - 1] <= inside[at + 1]
+        };
+        if inside.is_empty()
+            || !(0..len).all(|at| is_bound(at) || inside[at] == b'-' && is_range(at))
+        {
+            return false;
+        }
+        rest = &rest[open + len + 2..];
+    }
+    line.is_ascii() && !strings::contains_char(line, b'\\')
+}
+
 /// `[z-a]`
 fn has_reversed_range(class: &[u8]) -> bool {
     let inside = &class[1..class.len() - 1];
@@ -166,6 +294,8 @@ pub struct IgnoreRules {
     others: Vec<u32>,
     /// It has a line with `!`.
     has_exceptions: bool,
+    /// Of one of the rules only the package says what it matches.
+    has_rules_of_package: bool,
 }
 
 fn places<'m>(map: &'m Places, key: &[u8]) -> Option<&'m [u32]> {
@@ -194,10 +324,41 @@ impl IgnoreRules {
             at_top: Vec::new(),
             others: Vec::new(),
             has_exceptions: false,
+            has_rules_of_package: false,
         }
     }
 
     fn add_line(&mut self, line: &[u8]) {
+        // `checkPattern`, `createRule`
+        let of_package = (!self.options.has_braces).then(|| {
+            let body = line.strip_prefix(b"!").unwrap_or(line);
+            match body {
+                [b'\\', rest @ ..] if matches!(rest, [b'!' | b'#', ..]) => rest,
+                _ => body,
+            }
+        });
+        // Nor is a line of nothing but `/`, which to the package is about a name that is empty.
+        let is_read_the_same = |it: &&[u8]| {
+            is_read_the_same(it) && !it.trim_ascii_end().iter().all(|byte| *byte == b'/')
+        };
+        if let Some(body) = of_package.filter(|it| !is_read_the_same(it)) {
+            let says_nothing = strings::trim_js_whitespace(line).is_empty()
+                || line.starts_with(b"#")
+                || line.ends_with(b"\\") && !line.ends_with(b"\\\\");
+            if !says_nothing {
+                self.others.push(self.rules.len() as u32);
+                self.has_rules_of_package = true;
+                self.has_exceptions |= line.starts_with(b"!");
+                self.rules.push(Rule {
+                    pattern: None,
+                    of_package: Some((body.into(), OnceLock::new())),
+                    is_only_of_package: true,
+                    is_negated: line.starts_with(b"!"),
+                    is_for_directories: false,
+                });
+            }
+            return;
+        }
         let read = match read(line, self.options) {
             Ok(Some(read)) => read,
             Ok(None) => return,
@@ -241,6 +402,8 @@ impl IgnoreRules {
         self.rules.push(Rule {
             // `may_keep_inside` asks those with `!`.
             pattern: (!is_found_by_key || read.is_negated).then(|| Pattern::new(&read.pattern)),
+            of_package: of_package.map(|it| (it.into(), OnceLock::new())),
+            is_only_of_package: false,
             is_negated: read.is_negated,
             is_for_directories: read.is_for_directories,
         });
@@ -282,12 +445,21 @@ impl IgnoreRules {
         &self.refused
     }
 
+    /// What the package says about `text`, a path with a `/` behind it if it is a directory.
+    fn package_says(&self, rule: &Rule, text: &[u8]) -> bool {
+        let Some((line, regex)) = &rule.of_package else {
+            return false;
+        };
+        let regex = regex.get_or_init(|| regex_of_package(line, self.options.ignores_case));
+        regex.as_ref().is_some_and(|it| it.test(text))
+    }
+
     /// The last of `found` that matches and is behind `best`, or else `best`. `is_known`: what is found matches.
     fn look(
         &self,
         (found, is_known): (Option<&[u32]>, bool),
         best: Option<u32>,
-        path: &Candidate<'_>,
+        (path, text): (&Candidate<'_>, &[u8]),
         is_directory: bool,
     ) -> Option<u32> {
         // Those before the best so far say nothing.
@@ -297,10 +469,11 @@ impl IgnoreRules {
             let rule = self.rules.get(**at as usize);
             rule.filter(|it| is_directory || !it.is_for_directories)
                 .is_some_and(|rule| {
-                    let asked = || {
-                        rule.pattern
-                            .as_ref()
-                            .is_none_or(|it| it.matches_candidate(path))
+                    let asked = || match rule.is_only_of_package {
+                        true => self.package_says(rule, text),
+                        false => {
+                            (rule.pattern.as_ref()).is_none_or(|it| it.matches_candidate(path))
+                        }
                     };
                     debug_assert!(!is_known || asked());
                     is_known || asked()
@@ -311,6 +484,19 @@ impl IgnoreRules {
 
     /// The last rule that matches.
     fn last_match(&self, path: &[u8], is_directory: bool) -> Option<&Rule> {
+        // As the package is asked.
+        let has_empty_name = !self.options.has_braces
+            && (matches!(path, [] | [b'/', ..] | [.., b'/']) || strings::contains(path, b"//"));
+        let mut text: SmallVec<[u8; 256]> = SmallVec::new();
+        if has_empty_name || self.has_rules_of_package {
+            text.extend_from_slice(path);
+            if is_directory {
+                text.push(b'/');
+            }
+        }
+        if has_empty_name {
+            return (self.rules.iter().rev()).find(|it| self.package_says(it, &text));
+        }
         let mut folded: SmallVec<[u8; 256]> = SmallVec::new();
         let path = match self.options.ignores_case {
             true => {
@@ -346,7 +532,7 @@ impl IgnoreRules {
             ),
             (Some(&self.others[..]), false),
         ] {
-            best = self.look(found, best, &candidate, is_directory);
+            best = self.look(found, best, (&candidate, &text), is_directory);
         }
         self.rules.get(best? as usize)
     }
@@ -389,7 +575,7 @@ impl IgnoreRules {
             .map(|it| from + it)
             .filter(|it| it + 1 < path.len())
         {
-            if slash > 0 && is_ignored(&path[..slash], true) {
+            if is_ignored(&path[..slash], true) {
                 return true;
             }
             from = slash + 1;

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-In `/error   code/` you cannot tell at a glance whether there are two, three or four spaces. ` {3}` says it.
+In `/error   code/` you can't tell at a glance whether there are two, three or four spaces. ` {3}` spells it out.
 
-The rule looks at regular expression literals and at a string passed to `RegExp`. Spaces inside a character class such as `[  ]` are not reported.
+The rule checks regular expression literals and strings passed to `RegExp`. Spaces inside a character class such as `[  ]` aren't reported.
 
 `--fix` replaces the spaces with one space and a count.
 

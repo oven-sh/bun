@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`tasks.map(task => ({ ...task, done: false }))` copies every property of every item into a new object. On a large array that is a lot of work and memory. If nothing else uses the old items, you can change them in place.
+`tasks.map(task => ({ ...task, done: false }))` copies every property of every item into a new object. On a large array, that's a lot of work and memory. If nothing else uses the old items, you can change them in place.
 
-The rule looks at the object or array that the callback returns, directly or through a variable. It does not look at what is spread, so `ids.map(id => ({ ...defaults, id }))` is reported too.
+The rule looks at the object or array the callback returns, directly or through a variable. It doesn't look at what's being spread, so `ids.map(id => ({ ...defaults, id }))` is reported too.
 
-`--fix-suggestions` rewrites `{ ...task, done: false }` to `Object.assign(task, { done: false })`. That changes the items of the original array.
+`--fix-suggestions` rewrites `{ ...task, done: false }` to `Object.assign(task, { done: false })`. That changes the original array's items.
 
 ## Examples
 
@@ -68,8 +68,8 @@ class TaskList {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreRereads` | `true` | Allow the spread if the array variable is read again after the call. The copy is then likely on purpose. |
-| `ignoreArgs` | `true` | Allow the spread if the array is a parameter of a function. The caller may still use its items. |
+| `ignoreRereads` | `true` | Allow the spread if the array variable is read again after the call. In that case, the copy is probably on purpose. |
+| `ignoreArgs` | `true` | Allow the spread if the array is a function parameter. The caller might still use its items. |
 
 Allowed by default, because `tasks` is used afterwards:
 
@@ -105,4 +105,4 @@ function markDone(tasks) {
 
 ## When not to use it
 
-If your code treats data as immutable, as React state and Redux stores require, the copy is the point. The cost also does not matter for small arrays.
+If your code treats data as immutable, as React state and Redux stores require, the copy is the point. The cost also doesn't matter for small arrays.

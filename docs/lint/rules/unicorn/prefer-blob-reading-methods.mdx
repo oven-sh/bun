@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `FileReader` hands over its result in a `load` event, so you write a handler for it, another for `error`, and often a promise around both. `blob.text()` and `blob.arrayBuffer()` return a promise that you can `await`. A `File` is a `Blob`, so it has them too.
+A `FileReader` delivers its result in a `load` event, so you end up writing a handler for it, another for `error`, and often a promise around both. `blob.text()` and `blob.arrayBuffer()` return a promise that you can `await`. A `File` is a `Blob`, so it has them too.
 
-Any call of a method named `readAsText` or `readAsArrayBuffer` with one argument is reported.
+The rule reports any call to a method named `readAsText` or `readAsArrayBuffer` with one argument.
 
 ## Examples
 
@@ -48,7 +48,7 @@ function readText(file) {
 const bytes = await file.arrayBuffer();
 ```
 
-`blob.text()` always decodes as UTF-8. A call that passes an encoding has no replacement, and is not reported:
+`blob.text()` always decodes as UTF-8. A call that passes an encoding has no replacement, so it isn't reported:
 
 {/* good */}
 ```js

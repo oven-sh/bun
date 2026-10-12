@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Each `<Head>` from `next/document` renders a whole `<head>`, with the styles and scripts that Next.js adds for the page. A second one repeats all of that. Put your tags in one `<Head>`.
+Each `<Head>` from `next/document` renders a whole `<head>`, with the styles and scripts Next.js adds for the page. A second one repeats all of that. Put your tags in one `<Head>`.
 
 The rule reports any file with two or more `<Head>` elements, if `Head` is an imported name.
 
@@ -66,7 +66,7 @@ export default function Document() {
 
 ## When not to use it
 
-The rule does not check where `Head` comes from. Next.js merges several `<Head>` elements from `next/head`, but two of them in one file are still reported:
+The rule doesn't check where `Head` comes from. Next.js merges several `<Head>` elements from `next/head`, but two of them in one file are still reported:
 
 {/* bad */}
 ```jsx

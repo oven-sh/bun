@@ -16,7 +16,7 @@ In `const retries: number = 3`, TypeScript already infers that `retries` is a nu
 
 The rule looks at variables, parameters with a default value and class properties. It reports `bigint`, `boolean`, `number`, `null`, `string`, `symbol`, `undefined` and `RegExp` when the value is a literal of that type or a call such as `Number(input)` or `Symbol("id")`.
 
-A `readonly` or optional property is not reported. Without its annotation, `readonly limit = 10` has the type `10`, not `number`.
+A `readonly` or optional property isn't reported. Without its annotation, `readonly limit = 10` has the type `10`, not `number`.
 
 `--fix` removes the annotation.
 
@@ -51,7 +51,7 @@ class Cart {
 }
 ```
 
-An annotation that is wider than the value is not reported:
+An annotation that's wider than the value isn't reported:
 
 {/* good */}
 ```ts
@@ -62,8 +62,8 @@ let selected: string | null = null;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreParameters` | `false` | Do not report parameters. |
-| `ignoreProperties` | `false` | Do not report class properties. |
+| `ignoreParameters` | `false` | Don't report parameters. |
+| `ignoreProperties` | `false` | Don't report class properties. |
 
 {/* good {"options": [{"ignoreParameters": true}]} */}
 ```ts

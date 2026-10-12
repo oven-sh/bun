@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Snapshots in a `.snap` file are named after the test and numbered: `renders the menu 1`, `renders the menu 2`. With several in one test, you cannot tell which snapshot belongs to which `expect`, and adding one in the middle renumbers the rest. A hint becomes part of the name: `renders the menu: closed 1`.
+Snapshots in a `.snap` file are named after the test and numbered: `renders the menu 1`, `renders the menu 2`. With several in one test, you can't tell which snapshot belongs to which `expect`, and adding one in the middle renumbers the rest. A hint becomes part of the name: `renders the menu: closed 1`.
 
-By default a hint is only required in a test that has more than one snapshot. Inline snapshots are not checked.
+By default a hint is only required in a test that has more than one snapshot. Inline snapshots aren't checked.
 
 ## Examples
 
@@ -46,7 +46,7 @@ test("renders the footer", () => {
 });
 ```
 
-A single argument only counts as a hint if it is a string or a template literal. Property matchers or a variable are reported:
+A single argument only counts as a hint if it's a string or a template literal. Property matchers or a variable are reported:
 
 {/* bad {"count": 2} */}
 ```ts

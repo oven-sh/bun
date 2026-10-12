@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-JSX allows spaces almost anywhere inside a tag, so `<Avatar/>`, `<Avatar />` and `< Avatar / >` all mean the same. This rule picks one way to write them. By default that is `<Avatar />` and `</p>`: a space before `/>`, none after `<`, and none between `/` and the bracket next to it.
+JSX allows spaces almost anywhere inside a tag, so `<Avatar/>`, `<Avatar />` and `< Avatar / >` all mean the same thing. This rule picks one way to write them. By default that's `<Avatar />` and `</p>`: a space before `/>`, none after `<`, and none between `/` and the bracket next to it.
 
 `--fix` adds or removes the spaces.
 
@@ -57,9 +57,9 @@ const small = <Avatar/>;
 const label = <p >Profile</p >;
 ```
 
-`"allow-multiline"` is `"never"`, except that a line break after `<` is allowed.
+`"allow-multiline"` works like `"never"`, except that it allows a line break after `<`.
 
-With `"proportional-always"`, a tag that spans several lines must have its `/>` or `>` on a line of its own:
+With `"proportional-always"`, a tag that spans several lines must have its `/>` or `>` on a separate line:
 
 {/* bad {"options": [{"beforeSelfClosing": "proportional-always"}]} */}
 ```jsx

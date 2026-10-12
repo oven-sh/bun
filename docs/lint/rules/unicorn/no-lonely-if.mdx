@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Two nested `if` statements with nothing else between them test one combined condition. Joined with `&&`, the code loses a level of indentation and the whole condition is in one place.
+Two nested `if` statements with nothing else between them test one combined condition. Join them with `&&` and you lose a level of indentation and get the whole condition in one place.
 
-`no-lonely-if` without the `unicorn/` prefix is a different rule. It reports an `if` that is alone in an `else` block.
+`no-lonely-if` without the `unicorn/` prefix is a different rule. It reports an `if` that's the only thing in an `else` block.
 
 ## Examples
 
@@ -38,7 +38,7 @@ if (user && user.isAdmin) {
 }
 ```
 
-The two cannot be merged when either one has an `else`, or when the outer block does something more:
+You can't merge the two when either one has an `else`, or when the outer block does something else as well:
 
 {/* good */}
 ```js

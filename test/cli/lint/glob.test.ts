@@ -213,3 +213,106 @@ test.concurrent("for the rules of import no `*` and no `**` takes the dot that a
   expect(Object.fromEntries(lines)).toEqual({ "src/x/a.js": [3], ".hidden/x/a.js": [1, 2, 3] });
   expect(exitCode).toBe(1);
 });
+
+/** `file:line` of what is reported in a project with these files. */
+async function reported(files: Record<string, string>, args: string[]) {
+  using dir = tempDir("bun-lint-glob", files);
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "-f", "json", ...args],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+  const results: { filePath: string; messages: { line: number }[] }[] = JSON.parse(stdout);
+  return results
+    .flatMap(it =>
+      it.messages.map(message => `${relative(String(dir), it.filePath).replaceAll("\\", "/")}:${message.line}`),
+    )
+    .sort();
+}
+
+test.concurrent("import/no-extraneous-dependencies: `**/*.test.js` is not for a file in .storybook", async () => {
+  const code = 'import dev from "dev";\nexport default dev;\n';
+  const files = {
+    "bunfig.toml": `[lint.rules]\n"import/no-extraneous-dependencies" = ["error", { devDependencies = ["**/*.test.js"] }]\n`,
+    "package.json": JSON.stringify({ name: "p", version: "1.0.0", devDependencies: { dev: "1.0.0" } }),
+    "node_modules/dev/package.json": JSON.stringify({ name: "dev", version: "1.0.0", main: "index.js" }),
+    "node_modules/dev/index.js": "module.exports = 1;\n",
+    "src/a.test.js": code,
+    "src/b.js": code,
+    ".storybook/a.test.js": code,
+  };
+  expect(await reported(files, ["src", ".storybook/a.test.js"])).toEqual([".storybook/a.test.js:1", "src/b.js:1"]);
+});
+
+test.concurrent.each([
+  [", patternOptions = { dot = true }", ["a.js:2"]],
+  ["", []],
+])("import/order: patternOptions.dot of a path group%s", async (options, expected) => {
+  const group = `{ pattern = "~/**", group = "builtin", position = "before"${options} }`;
+  const files = {
+    "bunfig.toml": `[lint.rules]\n"import/order" = ["error", { pathGroups = [${group}], pathGroupsExcludedImportTypes = [] }]\n`,
+    "a.js": 'import fs from "fs";\nimport a from "~/.hidden/a";\nexport default [fs, a];\n',
+  };
+  expect(await reported(files, ["a.js"])).toEqual(expected);
+});
+
+// The expected files come from ESLint 10.12.
+test.concurrent("brace sequences in `files` match the same files as ESLint", async () => {
+  // prettier-ignore
+  const names = ["0", "1", "2", "3", "4", "9", "10", "11", "01", "02", "001", "-1", "-", "a", "b", "c", "d", "{a}", "1..a"];
+  const expected = [
+    ["x{1..3}.js", "1 2 3"],
+    ["x{3..1}.js", "1 2 3"],
+    ["x{01..03}.js", "01 02"],
+    ["x{1..10}.js", "1 10 2 3 4 9"],
+    ["x{001..3}.js", "001"],
+    ["x{-1..1}.js", "-1 0 1"],
+    ["x{1..9..2}.js", "1 3 9"],
+    ["x{9..1..4}.js", "1 9"],
+    ["x{a..c}.js", "a b c"],
+    ["x{d..a..2}.js", "b d"],
+    ["x{{1..2},a}.js", "1 2 a"],
+    // Not from one number to another, nor from one letter to another.
+    ["x{1..a}.js", ""],
+    ["x{1..3,a}.js", "a"],
+    ["x{a}.js", "{a}"],
+    ["v{1..2}/**/*.js", "v1 v2"],
+  ].map(([pattern, found]) => [
+    pattern,
+    found
+      .split(" ")
+      .filter(Boolean)
+      .map(it => (it.startsWith("v") ? `${it}/x/a.js` : `x${it}.js`))
+      .sort()
+      .join(" "),
+  ]);
+  const files = [...names.map(it => `x${it}.js`), "v1/x/a.js", "v2/x/a.js", "v3/x/a.js"];
+  expect(
+    await filesOf(
+      expected.map(it => it[0]),
+      files,
+    ),
+  ).toEqual(expected);
+});
+
+test.concurrent.each(["*[\\", "*[a\\", "[a-\\", "[\\", "{[\\}", "@([\\)", "\\", "[", "{", "@(", "{1..", "[!", "[^\\"])(
+  "a pattern that ends in the middle of something matches nothing: %s",
+  async pattern => {
+    using dir = tempDir("bun-lint-glob", { "a.js": "", "eslint.config.mjs": "export default [{}];\n" });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", pattern],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("No files matching the pattern");
+    expect(exitCode).toBe(2);
+  },
+);

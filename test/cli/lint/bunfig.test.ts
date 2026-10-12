@@ -43,7 +43,15 @@ async function lint(files: Record<string, string>, args: string[], reads: string
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const read = (name: string) =>
     existsSync(join(String(dir), name)) ? readFileSync(join(String(dir), name), "utf8") : null;
+  type Result = { filePath: string; messages: { ruleId: string | null; severity: number }[] };
+  const results: Result[] = stdout.startsWith('{"results":') ? JSON.parse(stdout).results : [];
+  const problems = results.flatMap(({ filePath, messages }) => {
+    const file = normalizeBunSnapshot(filePath, String(dir)).replace("<dir>/", "");
+    return messages.map(it => `${file} ${it.ruleId ?? "-"} ${it.severity === 2 ? "error" : "warn"}`);
+  });
   return {
+    /** With `-f json-with-metadata`: `file rule severity` for each. */
+    problems: problems.sort(),
     stdout: normalizeBunSnapshot(stdout, String(dir)),
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
@@ -219,7 +227,6 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       ["a.ts"],
     ],
     [`typeCheck = true`, ["--type-check"], ["--no-type-check"], typed, ["--type-aware", "a.ts"]],
-    [`typeCheck = true`, ["--type-aware", "--type-check"], ["--no-type-aware"], typed, ["a.ts"]],
     [
       `tsconfig = "none.json"`,
       ["--tsconfig", "none.json"],
@@ -343,8 +350,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     expect(dry).toEqual(dryByFlag);
   });
 
-  // A flag that only one of the two tools has says whom a command line was written for. A key was written for Bun.
-  test("a key does not say which tool the run stands in for", async () => {
+  test("a key doesn't pick between an ESLint and an oxlint config", async () => {
     const both = { ...eslint, ...oxlint };
     const undecided = "note: Using .oxlintrc.json. eslint.config.js is ignored. Use --config to pick it.";
     const results = await Promise.all(
@@ -498,8 +504,11 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     [`[lint.rules]\neqeqeq = ["smart"]`, `"smart" is not a valid severity for eqeqeq`],
     [`[lint.rules]\neqeqeq = []`, "[] is not a valid severity for eqeqeq"],
     [`[lint.rules]\neqeqeq = true`, "true is not a valid severity for eqeqeq"],
-    [`[lint.globals]\na = "on"`, `expected "readonly", "writable" or "off" but received string`],
-    [`[lint.globals]\na = 1`, `expected "readonly", "writable" or "off" but received number`],
+    [
+      `[lint.globals]\na = "on"`,
+      `"on" is not a valid value for the global a\n  Expected "readonly", "writable", or "off"`,
+    ],
+    [`[lint.globals]\na = 1`, "1 is not a valid value for the global a"],
     [`[lint.categories]\nstyles = "warn"`, `Unknown key "styles" in [lint.categories]\n  Did you mean "style"?`],
     [`[lint.categories]\nsecurity = "warn"`, `Unknown key "security" in [lint.categories]\n    at`],
     [`[lint.categories]\nstyle = "deny"`, `"deny" is not a valid severity for style`],
@@ -546,34 +555,310 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       }),
     );
     // Flags of ESLint and oxlint that say nothing about a project, or have no effect.
-    expect(answers.filter(it => !it[1]).map(it => it[0])).toEqual([
-      "parser",
-      "plugin",
-      "concurrency",
-      "flag",
+    expect(
+      answers
+        .filter(it => !it[1])
+        .map(it => it[0])
+        .sort(),
+    ).toEqual([
       "cache",
       "cache-file",
       "cache-location",
       "cache-strategy",
-      "mcp",
-      "no-eslintrc",
-      "env",
-      "rulesdir",
-      "resolve-plugins-relative-to",
-      "import-plugin",
-      "react-plugin",
-      "jsdoc-plugin",
-      "jest-plugin",
-      "vitest-plugin",
-      "jsx-a11y-plugin",
-      "nextjs-plugin",
-      "react-perf-plugin",
-      "promise-plugin",
-      "node-plugin",
-      "vue-plugin",
-      "disable-unicorn-plugin",
+      "concurrency",
       "disable-oxc-plugin",
       "disable-typescript-plugin",
+      "disable-unicorn-plugin",
+      "env",
+      "flag",
+      "import-plugin",
+      "jest-plugin",
+      "jsdoc-plugin",
+      "jsx-a11y-plugin",
+      "lsp",
+      "mcp",
+      "nextjs-plugin",
+      "no-eslintrc",
+      "node-plugin",
+      "parser",
+      "plugin",
+      "promise-plugin",
+      "react-perf-plugin",
+      "react-plugin",
+      "resolve-plugins-relative-to",
+      "rulesdir",
+      "vitest-plugin",
+      "vue-plugin",
     ]);
+  });
+});
+
+describe.concurrent("[[lint.overrides]]", () => {
+  /** What is reported, as `file rule severity`, in a format that is the same whosever the configuration is. */
+  async function problems(files: Record<string, string>, args: string[] = []) {
+    return (await lint(files, ["-f", "json-with-metadata", ...args])).problems;
+  }
+
+  const log = "console.log(1);\n";
+  const tree = {
+    "a.test.js": log,
+    "sub/b.test.js": log,
+    "sub/c.js": log,
+    "scripts/d.js": log,
+    "scripts/vendor/e.js": log,
+    "README.md": "# Not JavaScript\n",
+  };
+  const bunfig = `
+[lint.rules]
+"no-console" = "error"
+
+[[lint.overrides]]
+files = ["*.test.js", "scripts/**"]
+excludeFiles = ["scripts/vendor/**"]
+rules = { "no-console" = "off" }
+
+[[lint.overrides]]
+files = "*.md"
+rules = { "no-var" = "error" }
+`;
+  const left = ["scripts/vendor/e.js no-console error", "sub/c.js no-console error"];
+  const flat = `module.exports = [{ rules: { "no-console": "warn" } }];\n`;
+  const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, rules: { "no-console": "warn" } });
+  const configs: Record<string, Record<string, string>> = {
+    "no config file": {},
+    "eslint.config.js": { "eslint.config.js": flat },
+    ".oxlintrc.json": { ".oxlintrc.json": oxlintrc },
+    ".eslintrc.json": { ".eslintrc.json": JSON.stringify({ root: true, rules: { "no-console": "warn" } }) },
+  };
+
+  describe.each(Object.keys(configs))("with %s", name => {
+    const files = { ...tree, ...configs[name], "bunfig.toml": bunfig };
+
+    // A pattern without a slash is for a name in any directory, any other for the path from bunfig.toml.
+    test("an override is for the files that `files` matches and `excludeFiles` does not", async () => {
+      expect(await problems(files)).toEqual(left);
+    });
+
+    test("it makes no file linted", async () => {
+      const { stdout, exitCode } = await lint(files, ["--list-files"]);
+      expect(stdout).toContain("c.js");
+      expect(stdout).not.toContain("README.md");
+      expect(exitCode).toBe(0);
+    });
+
+    test("--rule wins, also where it says what [lint.rules] says", async () => {
+      const all = Object.keys(tree).filter(it => it.endsWith(".js"));
+      expect(await problems(files, ["--rule", "no-console: error"])).toEqual(
+        all.map(it => `${it} no-console error`).sort(),
+      );
+      expect(await problems(files, ["--rule", "no-console: warn", "sub"])).toEqual([
+        "sub/b.test.js no-console warn",
+        "sub/c.js no-console warn",
+      ]);
+    });
+
+    test("a later one wins over an earlier one", async () => {
+      const later = `${bunfig}\n[[lint.overrides]]\nfiles = "sub/**"\nrules = { "no-console" = "warn" }\n`;
+      expect(await problems({ ...files, "bunfig.toml": later })).toEqual([
+        "scripts/vendor/e.js no-console error",
+        "sub/b.test.js no-console warn",
+        "sub/c.js no-console warn",
+      ]);
+    });
+
+    test("globals, which --global wins over", async () => {
+      const files = {
+        ...configs[name],
+        "a.js": "mine;\n",
+        "a.test.js": "mine;\n",
+        "bunfig.toml": `
+[lint.rules]
+"no-undef" = "error"
+[lint.globals]
+mine = "readonly"
+[[lint.overrides]]
+files = "*.test.js"
+globals = { mine = "off" }
+`,
+      };
+      expect(await problems(files, ["a.js", "a.test.js"])).toEqual(["a.test.js no-undef error"]);
+      expect(await problems(files, ["--global", "mine", "a.js", "a.test.js"])).toEqual([]);
+    });
+  });
+
+  test("the patterns are from the directory of bunfig.toml, wherever the config file is", async () => {
+    const files = { ...tree, "bunfig.toml": bunfig, "config/mine.json": oxlintrc, "config/mine.js": flat };
+    expect(await problems(files, ["--config", "config/mine.json"])).toEqual(left);
+    expect(await problems(files, ["--config", "config/mine.js"])).toEqual(left);
+    const nested = { ...tree, "bunfig.toml": bunfig, ".oxlintrc.json": "{}", "scripts/.oxlintrc.json": oxlintrc };
+    expect(await problems(nested)).toEqual(left);
+    // That of the working directory.
+    const below = { ...tree, "bunfig.toml": "", "scripts/bunfig.toml": bunfig.replaceAll("scripts/", "") };
+    expect(await problems(below, ["--cwd", "scripts"])).toEqual(["scripts/vendor/e.js no-console error"]);
+  });
+
+  test("a severity alone keeps the options of [lint.rules]", async () => {
+    const files = {
+      "a.js": "export const f = a => [a == null, a == 1];\n",
+      "bunfig.toml": `[lint.rules]\neqeqeq = ["error", "smart"]\n[[lint.overrides]]\nfiles = "*.js"\nrules = { eqeqeq = "warn" }\n`,
+    };
+    expect(await problems(files)).toEqual(["a.js eqeqeq warn"]);
+  });
+
+  test("a core rule set for *.test.ts runs as its typescript-eslint version in every directory", async () => {
+    const files = {
+      "a.test.ts": "const unused = 1;\nexport {};\n",
+      "sub/b.test.ts": "const unused = 1;\nexport {};\n",
+      "bunfig.toml": `[[lint.overrides]]\nfiles = "*.test.ts"\nrules = { "no-unused-vars" = "error" }\n`,
+    };
+    expect(await problems(files)).toEqual([
+      "a.test.ts @typescript-eslint/no-unused-vars error",
+      "sub/b.test.ts @typescript-eslint/no-unused-vars error",
+    ]);
+  });
+
+  test("settings", async () => {
+    const files = {
+      "a.jsx": "export default <Picture />;\n",
+      "legacy/b.jsx": "export default <Picture />;\n",
+      "bunfig.toml": `
+[lint.rules]
+"jsx-a11y/alt-text" = "error"
+[lint.globals]
+Picture = "readonly"
+[[lint.overrides]]
+files = "legacy/**"
+settings = { "jsx-a11y" = { components = { Picture = "img" } } }
+`,
+    };
+    expect(await problems(files)).toEqual(["legacy/b.jsx jsx-a11y/alt-text error"]);
+  });
+
+  test("its tables can be written as sections", async () => {
+    const files = {
+      ...tree,
+      "bunfig.toml": `
+[lint.rules]
+"no-console" = "error"
+[[lint.overrides]]
+files = "*.test.js"
+[lint.overrides.rules]
+"no-console" = "off"
+[[lint.overrides]]
+files = "scripts/*"
+[lint.overrides.rules]
+"no-console" = "warn"
+`,
+    };
+    expect(await problems(files)).toEqual([
+      "scripts/d.js no-console warn",
+      "scripts/vendor/e.js no-console error",
+      "sub/c.js no-console error",
+    ]);
+  });
+
+  const inOverride = (lines: string) => `[[lint.overrides]]\nfiles = "*.js"\n${lines}`;
+  test.each([
+    ["[lint]\noverrides = true", "expected array but received boolean", "2:13"],
+    [
+      `[lint.overrides]\nfiles = "*.js"`,
+      `"overrides" is an array of tables\n  Write [[lint.overrides]], with two brackets`,
+      "1:7",
+    ],
+    ["[lint]\noverrides = [1]", "expected object but received number", "2:14"],
+    [`[[lint.overrides]]\nrules = { "no-var" = "error" }`, `an override needs "files"`, "1:8"],
+    ["[[lint.overrides]]\nfiles = []", `an override needs "files"`, "1:8"],
+    ["[[lint.overrides]]\nfiles = 1", "expected string or array but received number", "2:9"],
+    [`[[lint.overrides]]\nfiles = ["a", 1]`, "expected string but received number", "2:15"],
+    [`[[lint.overrides]]\nfiles = "{a"`, "Invalid glob pattern `{a`: unclosed brace expansion", "2:9"],
+    [`[[lint.overrides]]\nfiles = "a"\nexcludeFiles = "a["`, "Invalid glob pattern `a[`", "3:16"],
+    [`[[lint.overrides]]\nfile = "a"`, `Unknown key "file" in [lint.overrides]\n  Did you mean "files"?`, "2:1"],
+    [
+      inOverride(`excludedFiles = "b"`),
+      `Unknown key "excludedFiles" in [lint.overrides]\n  Did you mean "excludeFiles"?`,
+      "3:1",
+    ],
+    [inOverride("options = {}"), `Unknown key "options" in [lint.overrides]\n    at`, "3:1"],
+    [inOverride("rules = 1"), "expected object but received number", "3:9"],
+    [inOverride(`rules = { "no-vra" = "error" }`), `Unknown rule "no-vra"\n  Did you mean "no-var"?`, "3:11"],
+    [
+      inOverride(`[lint.overrides.rules]\n"no-var" = "always"`),
+      `"always" is not a valid severity for no-var\n  Expected "off", "warn", or "error"`,
+      "4:12",
+    ],
+    [
+      inOverride(`[lint.overrides.rules]\neqeqeq = ["error", "sometimes"]`),
+      `"sometimes" is not a valid option for eqeqeq\n  Expected "always", "smart", or "allow-null"`,
+      "4:20",
+    ],
+    [
+      inOverride(`globals = { a = "yes" }`),
+      `"yes" is not a valid value for the global a\n  Expected "readonly", "writable", or "off"`,
+      "3:17",
+    ],
+    [inOverride("settings = 1"), "expected object but received number", "3:12"],
+  ])("%s is refused", async (bunfig, message, place) => {
+    const { stdout, stderr, exitCode } = await lint({ "a.js": log, "bunfig.toml": `${bunfig}\n` }, []);
+    expect(stderr).toContain(`error: ${message}`);
+    expect(stderr).toEndWith(`\n    at bunfig.toml:${place}`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(2);
+  });
+
+  test.each(["eslint.config.js", ".eslintrc.json"])(
+    "a mistake in its rules, with %s, is said to be in bunfig.toml",
+    async name => {
+      const bunfig = inOverride(`rules = { eqeqeq = ["error", "sometimes"] }\n`);
+      const { stderr, exitCode } = await lint({ ...configs[name], "a.js": log, "bunfig.toml": bunfig }, []);
+      expect(stderr).toContain("Invalid config in bunfig.toml\n");
+      expect(exitCode).toBe(2);
+    },
+  );
+});
+
+// Which rules are on is one question, whether there are types another.
+describe.concurrent("types without a config file", () => {
+  const files = {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+    "a.ts": "async function f() {}\nf();\nexport const a: string = 1;\n",
+  };
+  const floating = `[lint.rules]\n"@typescript-eslint/no-floating-promises" = "error"\n`;
+  const run = async (bunfig: string, args: string[] = []) => {
+    const result = await lint({ ...files, "bunfig.toml": bunfig }, ["-f", "json-with-metadata", ...args]);
+    return [result.problems, result.stderr.includes("Skipped 1 rule that needs type information")];
+  };
+
+  test("a rule that needs types runs if it is turned on", async () => {
+    const reported = ["a.ts @typescript-eslint/no-floating-promises error"];
+    expect(await run("")).toEqual([[], false]);
+    expect(await run(floating)).toEqual([reported, false]);
+    expect(await run("", ["--rule", "@typescript-eslint/no-floating-promises: error"])).toEqual([reported, false]);
+    const inOverride = floating.replace("[lint.rules]", `[[lint.overrides]]\nfiles = "*.ts"\n[lint.overrides.rules]`);
+    expect(await run(inOverride)).toEqual([reported, false]);
+  });
+
+  // `consistent-type-imports` reads the tsconfig.json where there are types.
+  test("a rule that only uses types where there are any does not make a run check them", async () => {
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": true } }`,
+      "database.ts": "export class Database {}\n",
+      "a.ts": `import { Database } from "./database";\n@Injectable()\nexport class Users {\n  constructor(private database: Database) {}\n}\n`,
+    };
+    const uses = `[lint.rules]\n"@typescript-eslint/consistent-type-imports" = "error"\n`;
+    const args = ["-f", "json-with-metadata", "a.ts"];
+    const reported = "a.ts @typescript-eslint/consistent-type-imports error";
+    expect((await lint({ ...files, "bunfig.toml": uses }, args)).problems).toEqual([]);
+    expect((await lint({ ...files, "bunfig.toml": uses }, ["--type-aware", ...args])).problems).toContain(reported);
+  });
+
+  test("not with typeAware = false or --no-type-aware", async () => {
+    expect(await run(`[lint]\ntypeAware = false\n${floating}`)).toEqual([[], true]);
+    expect(await run(floating, ["--no-type-aware"])).toEqual([[], true]);
+  });
+
+  test("typeCheck and --type-check report type errors, and turn no rule on", async () => {
+    const reported = ["a.ts typescript/TS2322 error"];
+    expect(await run("[lint]\ntypeCheck = true\n")).toEqual([reported, false]);
+    expect(await run("", ["--type-check"])).toEqual([reported, false]);
   });
 });

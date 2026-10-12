@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`Promise.all([await loadUser(), await loadPosts()])` waits for the user before it starts to load the posts. The requests run one after the other, and `Promise.all()` only receives finished values, so it has nothing left to do. With `Promise.race()` and `Promise.any()` there is no race either.
+`Promise.all([await loadUser(), await loadPosts()])` waits for the user before it starts loading the posts. The requests run one after the other, and `Promise.all()` only gets finished values, so it has nothing left to do. With `Promise.race()` and `Promise.any()`, there's no race either.
 
 The rule checks `Promise.all()`, `Promise.allSettled()`, `Promise.any()`, and `Promise.race()`.
 

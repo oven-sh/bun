@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Indentation is what shows which JSX element is inside which. A child at the wrong depth looks like a sibling of its parent. The rule checks every tag, `{...}` child and line of text that starts a line. The default is 4 spaces for each level.
+Indentation shows which JSX element is inside which. A child at the wrong depth looks like its parent's sibling. The rule checks every tag, `{...}` child and line of text that starts a line. The default is 4 spaces for each level.
 
-Props are not checked. Use `react/jsx-indent-props` for those.
+The rule doesn't check props. Use `react/jsx-indent-props` for those.
 
 `--fix` corrects the indentation.
 
@@ -55,8 +55,8 @@ The first option is the number of spaces for each level, or `"tab"` for one tab.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| a number or `"tab"` | `4` | The indentation of one level. |
-| `checkAttributes` | `false` | Also check the closing `)}` of a prop's value that takes several lines. It has to line up with the prop's name. |
+| a number or `"tab"` | `4` | The indentation for one level. |
+| `checkAttributes` | `false` | Also check the closing `)}` of a prop's value that takes several lines. It must line up with the prop's name. |
 | `indentLogicalExpressions` | `false` | Require an element on its own line after `&&`, `\|\|` or `??` to be indented one level. Without it, both ways are allowed. |
 
 The examples below use `2`.

@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-TypeScript lets a getter and a setter of the same property have different types. If the getter can return something that the setter does not accept, then `field.value = field.value` is a type error, which nobody expects of a property.
+TypeScript lets a property's getter and setter have different types. If the getter can return something the setter doesn't accept, then `field.value = field.value` is a type error, which nobody expects from a property.
 
-The other direction is fine: a setter may accept more than the getter returns. A getter without a return type annotation is not checked.
+The other direction is fine, so a setter can accept more than the getter returns. A getter without a return type annotation isn't checked.
 
 This rule needs type information. Run `bun lint --type-aware`.
 

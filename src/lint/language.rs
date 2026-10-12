@@ -129,7 +129,7 @@ pub struct LanguageOptions {
     /// The configuration is one of oxlint: where a rule of oxlint does something else than the rule of ESLint or of the plugin
     /// that it is a port of, oxlint is followed.
     pub is_oxlint: bool,
-    /// Neither ESLint nor oxlint has a configuration: no rule stands in for that of a package.
+    /// There's no ESLint or oxlint config, so no rule has to match an installed package's behavior.
     pub stands_alone: bool,
     /// The scopes are those of oxc where they differ from typescript-eslint's: `namespace A.B { }` is a namespace `B` that is
     /// declared in the scope of a namespace `A`; outside strict code a function that JavaScript declares in a block is a

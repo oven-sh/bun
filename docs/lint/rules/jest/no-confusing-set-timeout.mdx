@@ -12,15 +12,15 @@ typeAware: false
 deprecated: false
 ---
 
-`jest.setTimeout` sets the timeout for the whole test file. A call inside a `describe` or a test looks like it only applies there, but it does not. With two calls in a file, it is hard to tell which one a given test gets.
+`jest.setTimeout` sets the timeout for the whole test file. A call inside a `describe` or a test looks like it only applies there, but it doesn't. With two calls in a file, it's hard to tell which one a given test gets.
 
-The rule reports a `jest.setTimeout` call that is:
+The rule reports a `jest.setTimeout` call that's:
 
 - not at the top level of the file
 - after another Jest function such as `test` or `expect`
 - not the first one in the file
 
-To give one test more time, pass the timeout as the third argument of `test`.
+To give one test more time, pass the timeout as the third argument to `test`.
 
 ## Examples
 

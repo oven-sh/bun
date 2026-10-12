@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `switch` without `default` does nothing when no `case` matches. When a new value shows up, it is silently skipped. A `default` makes you decide what happens then, even if the answer is to throw.
+A `switch` without `default` does nothing when no `case` matches. When a new value shows up, it's silently skipped. A `default` makes you decide what happens then, even if the answer is to throw.
 
 If you leave it out on purpose, say so with a `// no default` comment after the last `case`.
 
@@ -65,7 +65,7 @@ switch (status) {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `commentPattern` | `"^no default$"`, in any case | A regular expression for the comment that excuses a missing `default`. It is tested on the last comment after the last `case`. |
+| `commentPattern` | `"^no default$"`, in any case | A regular expression for the comment that excuses a missing `default`. It's tested against the last comment after the last `case`. |
 
 {/* good {"options": [{"commentPattern": "^skip default"}]} */}
 ```js

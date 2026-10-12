@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`require()` loads a module synchronously. Inside a function, it reads from disk and blocks the first time that function runs, and a missing module throws then and not at startup. It also hides what the file depends on.
+`require()` loads a module synchronously. Inside a function, it reads from disk and blocks the first time that function runs, and a missing module throws then instead of at startup. It also hides what the file depends on.
 
-A `require()` inside a function, an `if`, a `try` or any other block is reported. A `require` that the file declares itself is not.
+A `require()` inside a function, an `if`, a `try` or any other block is reported. A `require` that the file declares itself isn't.
 
 ## Examples
 
@@ -46,7 +46,7 @@ function readConfig(file) {
 }
 ```
 
-At the top level, a `require()` inside an object or array literal, or after `&&` or `||`, is reported too. Give it a variable of its own:
+At the top level, a `require()` inside an object or array literal, or after `&&` or `||`, is reported too. Put it in its own variable:
 
 {/* bad {"count": 2} */}
 ```js
@@ -59,4 +59,4 @@ const debug = process.env.DEBUG && require("./debug");
 
 ## When not to use it
 
-Loading a heavy or optional module only when it is needed is a reason to call `require()` inside a function. Turn the rule off for that line.
+Loading a heavy or optional module only when you need it is a good reason to call `require()` inside a function. Turn the rule off for that line.

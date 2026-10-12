@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`findDOMNode` reaches into a component and returns whatever DOM node it happens to render first. The caller breaks when the component changes its markup. It does not work with function components, React warns about it in strict mode, and React 19 removed it.
+`findDOMNode` reaches into a component and returns whatever DOM node it happens to render first. The caller breaks when the component changes its markup. It doesn't work with function components, React warns about it in strict mode, and React 19 removed it.
 
 Attach a ref to the element you need.
 

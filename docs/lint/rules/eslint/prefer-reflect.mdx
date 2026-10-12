@@ -12,9 +12,9 @@ typeAware: false
 deprecated: true
 ---
 
-`Reflect` has the low-level operations on objects in one place, as plain functions. For example, `Reflect.defineProperty()` returns `false` where `Object.defineProperty()` throws.
+`Reflect` puts the low-level object operations in one place, as plain functions. For example, `Reflect.defineProperty()` returns `false` where `Object.defineProperty()` throws.
 
-The rule reports `delete` on a property, and every call of a method with one of these names on anything but `Reflect`: `apply`, `call`, `defineProperty`, `getOwnPropertyDescriptor`, `getPrototypeOf`, `setPrototypeOf`, `isExtensible`, `getOwnPropertyNames`, `preventExtensions`.
+The rule reports `delete` on a property, and every call to a method with one of these names on anything but `Reflect`: `apply`, `call`, `defineProperty`, `getOwnPropertyDescriptor`, `getPrototypeOf`, `setPrototypeOf`, `isExtensible`, `getOwnPropertyNames`, `preventExtensions`.
 
 ## Examples
 
@@ -57,4 +57,4 @@ save.apply(user, args);
 
 ## When not to use it
 
-ESLint has deprecated this rule, and the older forms are not going away. The rule goes by the name of the method alone, so `phone.call(number)` is reported. For `Object.getOwnPropertyNames` it names `Reflect.getOwnPropertyNames`, which does not exist.
+ESLint has deprecated this rule, and the older forms aren't going away. The rule only goes by the method's name, so `phone.call(number)` is reported. For `Object.getOwnPropertyNames` it points you to `Reflect.getOwnPropertyNames`, which doesn't exist.

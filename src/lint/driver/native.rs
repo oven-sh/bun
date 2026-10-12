@@ -1,5 +1,5 @@
-//! What `[lint]` of bunfig.toml and the command line say about rules where neither ESLint nor oxlint has a configuration.
-//! Every rule that is built in can be named, by any of its names, and a name of no rule is a mistake.
+//! Rule settings for projects with no ESLint or oxlint config ("native mode"). They come from `[lint]` in bunfig.toml and
+//! from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error.
 
 use crate::bunfig::RuleOfBunfig;
 use crate::cli::Options;
@@ -14,16 +14,16 @@ use bun_lint::linter::{
 use bun_lint::options::Json;
 use bun_lint::rule::{Meta, Plugin};
 
-/// What is wrong with what is said about a rule.
+/// An invalid rule setting.
 pub(crate) struct Mistake {
-    /// What follows `error: `.
+    /// The text printed after `error: `.
     pub(crate) message: Vec<u8>,
-    /// Where it is in bunfig.toml, if it is there.
+    /// Byte offset in bunfig.toml. `None` if the setting came from `--rule`.
     at: Option<usize>,
 }
 
 impl Mistake {
-    /// As Bun prints an error, with the line of the bunfig.toml of `cwd` that has it.
+    /// Formats the error like Bun's other errors, with a code frame from `cwd`'s bunfig.toml.
     pub(crate) fn print(&self, cwd: &[u8], colors: bool) -> Vec<u8> {
         let text = fs::read(&paths::join(cwd, b"bunfig.toml")).unwrap_or_default();
         let text = strings::without_utf8_bom(&text);
@@ -58,7 +58,7 @@ impl Mistake {
     }
 }
 
-/// What is wrong with `id`, the name of no rule: what follows `error: `.
+/// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
 pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
     match registry.why_missing(id) {
         Missing::Formatting => [
@@ -87,7 +87,7 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8]) -> Vec<u8> {
     }
 }
 
-/// What is wrong with `written`, which is where the severity of `rule`, or of a category, is expected.
+/// Error message for `written`, which isn't a valid severity. `rule` is the rule or category it was set for.
 pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
     let mut message = Vec::new();
     write_json(&mut message, written);
@@ -97,15 +97,20 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
     message
 }
 
-/// The first mistake in `[lint.rules]`, after `--rule` and in the `rules` of `[[lint.overrides]]`: the name of no rule, no severity, options that the rule does not
-/// take. To turn off what was left out on purpose asks for nothing.
+/// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an unknown
+/// rule, an invalid severity, or options the rule doesn't take. Turning off a rule that Bun left out on purpose is fine.
 pub(crate) fn check_rules(linter: &Linter, options: &Options) -> Result<(), Mistake> {
+    let filters = options.filters.iter().filter(|it| !is_category(&it.1));
+    let filters: Vec<(Vec<u8>, Json)> = filters
+        .map(|(severity, rule)| (rule.clone(), severity_name(*severity)))
+        .collect();
+    check(linter, &filters, &[])?;
     check(linter, &options.rule, &options.rules_of_bunfig)?;
     let mut overrides = options.overrides.iter();
     overrides.try_for_each(|it| check(linter, &it.rules, &it.places))
 }
 
-/// `places`: for the first of `rules`, which are in bunfig.toml, where.
+/// `places` has the bunfig.toml locations of the first `places.len()` rules. The rest came from `--rule`.
 fn check(
     linter: &Linter,
     rules: &[(Vec<u8>, Json)],
@@ -113,7 +118,7 @@ fn check(
 ) -> Result<(), Mistake> {
     let registry = linter.registry();
     for (at, (id, setting)) in rules.iter().enumerate() {
-        // What `--rule` says about the same rule has taken its place.
+        // `--rule` may have replaced this entry, so its bunfig.toml location no longer applies.
         let written = places.get(at);
         let written = written.filter(|it| it.setting == *setting);
         let parts: &[Json] = match setting {
@@ -141,7 +146,13 @@ fn check(
         };
         let given = parts.get(1..).unwrap_or_default();
         let entry = found.filter(|_| severity != Severity::Off);
-        if let Some(mistake) = entry.and_then(|it| mistake_in_options(it.meta, id, given)) {
+        // Options are valid for a pair if either rule accepts them.
+        let mistake = entry.and_then(|it| match registry.pair_of(it.meta) {
+            Some((base, extension)) => mistake_in_options(base.meta, id, given)
+                .and_then(|_| mistake_in_options(extension.meta, id, given)),
+            None => mistake_in_options(it.meta, id, given),
+        });
+        if let Some(mistake) = mistake {
             let after_severity = mistake
                 .path
                 .iter()
@@ -156,7 +167,7 @@ fn check(
                 at: written.map(|it| it.place.find(&path, mistake.is_about_key)),
             });
         }
-        // What no schema can tell: a selector or a regular expression that cannot be read.
+        // Some errors get past the schema, like an invalid selector or regular expression.
         if let Some(Err(thrown)) = entry.map(|it| linter.validate(it, given)) {
             return Err(Mistake {
                 message: [b"Invalid options for ", &id[..], b"\n  ", &thrown].concat(),
@@ -167,7 +178,7 @@ fn check(
     Ok(())
 }
 
-/// What `[lint.categories]` says about a rule that oxlint has in `category`.
+/// Severity that `[lint.categories]` sets for rules in oxlint's `category`.
 fn severity_in(options: &Options, category: &[u8]) -> Option<Severity> {
     let is_about =
         |name: &[u8]| name == category || name == b"all" && CATEGORIES.contains(&category);
@@ -175,8 +186,91 @@ fn severity_in(options: &Options, category: &[u8]) -> Option<Severity> {
     said.find(|it| is_about(&it.1)).map(|it| it.0)
 }
 
-/// `[lint.categories]` as configuration objects, which come after what is on without a word and before `[lint.rules]`. The rules of
-/// typescript-eslint are for TypeScript, where its extension of a rule of ESLint stands in for that.
+const TYPESCRIPT: &[u8] = b"**/*.{ts,mts,cts,tsx}";
+
+/// Makes a core rule and its typescript-eslint version ([`Registry::pair_of`]) behave as one rule, so a problem is never
+/// reported twice. Setting either name sets both. The core rule runs on JavaScript and the typescript-eslint version on
+/// TypeScript. If a config object sets both names, each one applies to its own language.
+///
+/// The core rule also runs on TypeScript if the typescript-eslint version needs type information that this run doesn't
+/// have, or if only the core rule accepts the options.
+pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, has_types: bool) -> Vec<Json> {
+    let id = |meta: &'static Meta| RuleId::Known(meta).to_vec();
+    let off = || severity_name(Severity::Off);
+    let mut split = Vec::with_capacity(objects.len());
+    for object in objects {
+        let rules = object.get(b"rules").and_then(Json::as_object);
+        // The two rules of each pair, and the setting found under each name.
+        let mut pairs: Vec<([&'static Meta; 2], [Option<&Json>; 2])> = Vec::new();
+        let mut everywhere = Vec::new();
+        for (name, setting) in rules.unwrap_or_default() {
+            let found = registry.find_by_any_name(name);
+            let Some((base, extension)) = found.and_then(|it| registry.pair_of(it.meta)) else {
+                everywhere.push((name.clone(), setting.clone()));
+                continue;
+            };
+            let is_extension = found.is_some_and(|it| it.meta.plugin == Plugin::TypeScript);
+            let said = match is_extension {
+                true => [None, Some(setting)],
+                false => [Some(setting), None],
+            };
+            match pairs.iter_mut().find(|it| it.0[0].name == base.meta.name) {
+                Some(pair) => pair.1 = [said[0].or(pair.1[0]), said[1].or(pair.1[1])],
+                None => pairs.push(([base.meta, extension.meta], said)),
+            }
+        }
+        if pairs.is_empty() {
+            split.push(object);
+            continue;
+        }
+        let mut in_typescript = Vec::new();
+        for ([base, extension], [of_base, of_extension]) in pairs {
+            let (Some(for_javascript), Some(for_typescript)) =
+                (of_base.or(of_extension), of_extension.or(of_base))
+            else {
+                continue;
+            };
+            everywhere.push((id(base), for_javascript.clone()));
+            everywhere.push((id(extension), off()));
+            let given = for_typescript.as_array().and_then(|it| it.get(1..));
+            let takes = |it| mistake_in_options(it, b"", given.unwrap_or_default()).is_none();
+            let can_run = has_types || !extension.requires_types;
+            let (runs, rests) = match can_run && (takes(extension) || !takes(base)) {
+                true => (extension, base),
+                false => (base, extension),
+            };
+            in_typescript.push((id(rests), off()));
+            in_typescript.push((id(runs), for_typescript.clone()));
+        }
+        let typescript = || Json::String(TYPESCRIPT.to_vec());
+        let files = match object.get(b"files").and_then(Json::as_array) {
+            Some(files) => (files.iter())
+                .map(|it| match it {
+                    Json::Array(all) => all.iter().cloned().chain([typescript()]).collect(),
+                    one => vec![one.clone(), typescript()],
+                })
+                .map(Json::Array)
+                .collect(),
+            None => vec![typescript()],
+        };
+        let mut second = vec![(&b"files"[..], Json::Array(files))];
+        for key in [&b"ignores"[..], b"basePath", b"$globsOfBun"] {
+            second.extend(object.get(key).map(|it| (key, it.clone())));
+        }
+        second.push((b"rules", Json::Object(in_typescript)));
+        let Json::Object(mut first) = object else {
+            continue;
+        };
+        first.retain(|it| it.0 != b"rules");
+        first.push((b"rules".to_vec(), Json::Object(everywhere)));
+        split.push(Json::Object(first));
+        split.push(crate::print_config::object(second));
+    }
+    split
+}
+
+/// Converts `[lint.categories]` to config objects. They go after the defaults and before `[lint.rules]`.
+/// typescript-eslint rules only apply to TypeScript files. Pass the result through [`split_pairs`].
 pub(crate) fn categories(registry: &Registry, options: &Options) -> Vec<Json> {
     if !options.filters.iter().any(|it| is_category(&it.1)) {
         return Vec::new();
@@ -184,7 +278,7 @@ pub(crate) fn categories(registry: &Registry, options: &Options) -> Vec<Json> {
     let id = |meta: &'static Meta| RuleId::Known(meta).to_vec();
     let (mut everywhere, mut in_typescript) = (Vec::new(), Vec::new());
     for meta in registry.all().iter().map(|it| it.meta) {
-        // Another rule stands in its place.
+        // Native mode uses the ESLint plugin's version of this rule instead.
         let is_hidden = registry.names_of(meta).id != id(meta);
         let category = oxlint_category(meta.plugin, meta.name).filter(|_| !is_hidden);
         let Some(severity) = category.and_then(|it| severity_in(options, it.as_bytes())) else {
@@ -195,13 +289,8 @@ pub(crate) fn categories(registry: &Registry, options: &Options) -> Vec<Json> {
             continue;
         }
         everywhere.push((id(meta), severity_name(severity)));
-        let extension = registry.get_preferring(meta.plugin, meta.name.as_bytes(), true);
-        if let Some(extension) = extension.filter(|it| it.meta.plugin != meta.plugin) {
-            in_typescript.push((id(meta), severity_name(Severity::Off)));
-            in_typescript.push((id(extension.meta), severity_name(severity)));
-        }
     }
-    let typescript = Json::Array(vec![Json::String(b"**/*.{ts,mts,cts,tsx}".to_vec())]);
+    let typescript = Json::Array(vec![Json::String(TYPESCRIPT.to_vec())]);
     vec![
         object(vec![(b"rules", Json::Object(everywhere))]),
         object(vec![

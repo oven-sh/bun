@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A variable that is read at the top level of a file is read once, when the file is first imported. A test that sets `process.env.API_URL` after the import changes nothing, and neither does code that loads the environment later. What the module does then depends on the order of the imports. Read the variable in the function that needs it.
+A variable that's read at the top level of a file is read once, when the file is first imported. A test that sets `process.env.API_URL` after the import has no effect, and neither does code that loads the environment later. The module's behavior then depends on import order. Read the variable in the function that needs it.
 
-The rule knows `process.env`, `Bun.env`, `import.meta.env`, and `env` imported from `node:process`. Assigning to a variable or deleting one is not reported.
+The rule knows `process.env`, `Bun.env`, `import.meta.env`, and `env` imported from `node:process`. Assigning to a variable or deleting one isn't reported.
 
 ## Examples
 
@@ -58,7 +58,7 @@ const isProduction = process.env.NODE_ENV === "production";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `["NODE_ENV"]` | Names of variables that may be read at the top level. It replaces the default list. |
+| `allow` | `["NODE_ENV"]` | Names of variables that can be read at the top level. It replaces the default list. |
 
 {/* good {"options": [{"allow": ["NODE_ENV", "CI"]}]} */}
 ```js
@@ -73,4 +73,4 @@ const isProduction = process.env.NODE_ENV === "production";
 
 ## When not to use it
 
-A file that exists to read and check the environment once at startup, such as `env.ts` or `config.ts`, does on purpose what this rule reports. Turn the rule off for that file.
+A file like `env.ts` or `config.ts` that reads and checks the environment once at startup is doing this on purpose. Turn the rule off for that file.

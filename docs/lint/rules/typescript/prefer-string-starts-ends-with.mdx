@@ -14,7 +14,7 @@ deprecated: false
 
 There are many ways to ask whether a string starts or ends with some text: `indexOf(...) === 0`, `slice(0, 3) === "..."`, `charAt(0)`, `s[0]`, a regular expression with `^` or `$`. Each one makes the reader work out the indexes. `startsWith` and `endsWith` say what you mean.
 
-`--fix` rewrites the check to `startsWith` or `endsWith` where that cannot change the result.
+`--fix` rewrites the check to `startsWith` or `endsWith` where that can't change the result.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -54,7 +54,7 @@ function isTypeScript(file: string) {
 }
 ```
 
-Indexes and methods such as `indexOf` are only reported on a string. On an array they are fine:
+Indexes and methods such as `indexOf` are only reported on a string. On an array they're fine:
 
 {/* good */}
 ```ts

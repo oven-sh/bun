@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-TypeScript lets you pass a function that returns something where `() => void` is expected. The caller then drops the result. For an `async` function the dropped result is a promise: nobody awaits it, and if it rejects, nobody catches the error.
+TypeScript lets you pass a function that returns something where `() => void` is expected. The caller then drops the result. For an `async` function, the dropped result is a promise. Nobody awaits it, and if it rejects, nobody catches the error.
 
 The rule checks arguments, assignments, variables with a type, array elements, object and class members, JSX attributes, and `return` statements. A function that returns `undefined` or `never` is fine.
 

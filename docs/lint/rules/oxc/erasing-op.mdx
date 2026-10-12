@@ -14,7 +14,7 @@ deprecated: false
 
 `x * 0`, `x & 0` and `0 / x` are zero for any ordinary number `x`. The other operand does nothing, so the `0` is probably a typo or a leftover from debugging.
 
-The rule reports `*` and `&` with a literal `0` on either side, and `/` with a literal `0` on the left. Dividing by zero, as in `x / 0`, is not reported.
+The rule reports `*` and `&` with a literal `0` on either side, and `/` with a literal `0` on the left. Dividing by zero, as in `x / 0`, isn't reported.
 
 `--fix-dangerously` replaces the whole expression with `0`. That drops the other operand, including any function call in it.
 

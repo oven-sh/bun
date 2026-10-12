@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`removeChild()` makes you find the parent of a node to remove the node, and it throws if that is not the node's parent. `remove()` is called on the node itself.
+`removeChild()` makes you find a node's parent before you can remove the node, and it throws if that isn't the node's parent. You call `remove()` on the node itself.
 
 `removeChild()` returns the node it removed and `remove()` returns `undefined`. If you need the node afterwards, keep your own reference to it.
 
-The rule does not know types. It reports every call of a method named `removeChild` with one argument that could be a node.
+The rule doesn't know types. It reports every call to a method named `removeChild` with one argument that could be a node.
 
 ## Examples
 

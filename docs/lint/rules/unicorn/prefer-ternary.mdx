@@ -14,7 +14,7 @@ deprecated: false
 
 When both branches of an `if`/`else` only return, throw, `await`, `yield`, or assign to the same variable, the statement repeats itself and the only difference is the value. A ternary writes the common part once.
 
-An `if` is left alone if it is an `else if`, if a branch has more than one statement, or if the condition or one of the values is already a ternary.
+The rule skips an `if` when it's an `else if`, when a branch has more than one statement, or when the condition or one of the values is already a ternary.
 
 ## Examples
 
@@ -60,7 +60,7 @@ if (retrying) {
 | Option | What it does |
 | --- | --- |
 | `"always"` (default) | Report every `if`/`else` that can be a ternary. |
-| `"only-single-line"` | Report only if the condition and the statement in each branch fit on one line each. |
+| `"only-single-line"` | Only report when the condition and the statement in each branch fit on one line each. |
 
 {/* good {"options": ["only-single-line"]} */}
 ```js

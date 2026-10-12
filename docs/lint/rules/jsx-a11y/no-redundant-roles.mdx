@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Most HTML elements come with a role: a `<button>` is a `button`, a `<ul>` is a `list`. Writing that role again changes nothing, and it is one more thing to update when the element changes.
+Most HTML elements come with a role: a `<button>` is a `button`, a `<ul>` is a `list`. Writing that role again changes nothing, and it's one more thing to update when the element changes.
 
-For `<input>`, `<select>` and `<img>` the role depends on their other attributes: `<input type="checkbox">` is a `checkbox`, `<input type="range">` is a `slider`. Only a `role` written as a string is checked.
+For `<input>`, `<select>` and `<img>`, the role depends on the other attributes: `<input type="checkbox">` is a `checkbox`, `<input type="range">` is a `slider`. Only a `role` written as a string is checked.
 
 `--fix` removes the `role` attribute.
 
@@ -40,7 +40,7 @@ const toggle = <button role="switch" aria-checked={enabled} />;
 
 ## Options
 
-An object that maps an element to the roles that may be repeated on it. By default only `<nav role="navigation">` is allowed.
+The option is an object that maps an element to the roles you can repeat on it. By default only `<nav role="navigation">` is allowed.
 
 {/* good */}
 ```jsx

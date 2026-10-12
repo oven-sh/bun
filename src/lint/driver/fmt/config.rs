@@ -870,12 +870,13 @@ impl<'c> Configs<'c> {
                     formatters = Formatters::depended_on(&environment.cwd);
                     let has_oxfmt = formatters.oxfmt || formatters.vite_plus;
                     let has_prettier = formatters.prettier;
+                    // Who has both is on the way to oxfmt.
                     if has_oxfmt && has_prettier {
-                        configs.warn(&[
-                            b"No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like Prettier. Use --flavor=oxfmt to format like oxfmt.",
-                        ]);
+                        configs.note.get_or_init(|| {
+                            b"No config file found, and package.json depends on both oxfmt and prettier\n  Formatting like oxfmt. Add a config file to change that.".to_vec()
+                        });
                     }
-                    has_oxfmt && !has_prettier
+                    has_oxfmt
                 }),
             },
             // The name of the one that cannot be used tells.

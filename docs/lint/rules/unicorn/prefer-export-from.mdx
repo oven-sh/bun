@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-An `import` followed by an `export` of the same name takes two statements, often far apart, to say one thing. `export { parse } from "./parser.js"` says it in one place and adds no name to the file's scope.
+An `import` followed by an `export` of the same name takes two statements, often far apart, to say one thing. `export { parse } from "./parser.js"` says it in one place and doesn't add a name to the file's scope.
 
 ## Examples
 
@@ -49,7 +49,7 @@ export * as icons from "./icons.js";
 | --- | --- | --- |
 | `checkUsedVariables` | `true` | Also report an import that the file uses for something other than exporting it. |
 
-By default this is reported, even though the file needs the import for `parse("")`:
+By default, this is reported even though the file needs the import for `parse("")`:
 
 {/* bad */}
 ```js
@@ -69,7 +69,7 @@ export { parse } from "./parser.js";
 export const empty = parse("");
 ```
 
-With `false`, an import statement is skipped as soon as one of its names is used in the file:
+With `false`, the rule skips an import statement as soon as the file uses one of its names:
 
 {/* good {"options": [{"checkUsedVariables": false}]} */}
 ```js

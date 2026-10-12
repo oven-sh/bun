@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A package can be in `node_modules` only because another package depends on it. Importing it works on your machine until that other package drops or upgrades it, and it fails for whoever installs your package, because nothing tells the package manager to install it.
+A package can end up in `node_modules` only because another package depends on it. Importing it works on your machine until that other package drops or upgrades it. It also fails for anyone who installs your package, because nothing tells the package manager to install it.
 
-The rule reads the closest `package.json` above the file. A package is fine if it is in `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies` or `bundledDependencies`. `import`, `export ... from`, `import()` and `require()` are checked. Relative paths, Node.js builtins, `import type` and packages that are not installed are not.
+The rule reads the closest `package.json` above the file. A package is fine if it's in `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies` or `bundledDependencies`. The rule checks `import`, `export ... from`, `import()` and `require()`. It skips relative paths, Node.js builtins, `import type` and packages that aren't installed.
 
 ## Examples
 
@@ -65,11 +65,11 @@ import { cart } from "./cart";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `devDependencies` | `true` | `false` reports an import of a package that is only in `devDependencies`. An array of globs names the files that may import them. |
+| `devDependencies` | `true` | `false` reports imports of packages that are only in `devDependencies`. An array of globs lists the files that can import them. |
 | `optionalDependencies` | `true` | The same for `optionalDependencies`. |
 | `peerDependencies` | `true` | The same for `peerDependencies`. |
 | `bundledDependencies` | `true` | The same for `bundledDependencies`. |
-| `packageDir` | none | A directory, or an array of directories, to read `package.json` from instead of the closest one. In a monorepo, name the package and the root. |
+| `packageDir` | none | A directory, or an array of directories, to read `package.json` from instead of the closest one. In a monorepo, list the package and the root. |
 | `includeInternal` | `false` | Also check names that resolve to a file in your own project. |
 | `includeTypes` | `false` | Also check `import type`. |
 
@@ -82,7 +82,7 @@ Most projects allow `devDependencies` in tests and scripts only:
 "import/no-extraneous-dependencies" = ["error", { devDependencies = ["test/**", "scripts/**"] }]
 ```
 
-With that, code that ships cannot import a package that is missing in production:
+With that config, code that ships can't import a package that's missing in production:
 
 {/* file "package.json" */}
 ```json package.json

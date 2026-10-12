@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-A promise that nobody awaits runs on its own. If it rejects, the error is not caught by the `try` around the call, and the code after it runs before the work is done.
+A promise that nobody awaits runs on its own. If it rejects, the `try` around the call doesn't catch the error, and the code after it runs before the work is done.
 
-A promise counts as handled if it is awaited, returned, given a `.catch()` or a second argument to `.then()`, or marked as ignored on purpose with `void`.
+A promise counts as handled if it's awaited, returned, given a `.catch()` or a second argument to `.then()`, or marked as ignored on purpose with `void`.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -51,7 +51,7 @@ function onBlur() {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `ignoreVoid` | `true` | Allow `void promise` as a way to say "ignored on purpose". |
-| `ignoreIIFE` | `false` | Allow an async function that is called where it is written: `(async () => { ... })()`. |
+| `ignoreIIFE` | `false` | Allow an async function that's called where it's written: `(async () => { ... })()`. |
 | `checkThenables` | `false` | Also report objects that only have a `then` method. |
 | `allowForKnownSafePromises` | `[]` | Promise types that never need handling. |
 | `allowForKnownSafeCalls` | `[]` | Functions that return promises you never need to handle. |

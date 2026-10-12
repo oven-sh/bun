@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-The type `Number` is not the type of `1`. It describes the wrapper object that `new Number(1)` creates. A `number` fits into a `Number`, but not the other way around, so a value typed `Number` cannot be passed to a function that takes a `number`. The same goes for `String`, `Boolean`, `BigInt`, and `Symbol`.
+The type `Number` isn't the type of `1`. It describes the wrapper object that `new Number(1)` creates. A `number` fits into a `Number`, but not the other way around, so you can't pass a value typed `Number` to a function that takes a `number`. The same goes for `String`, `Boolean`, `BigInt`, and `Symbol`.
 
-`Object` accepts almost every value, including strings and numbers. If you mean "not a primitive", that is `object`.
+`Object` accepts almost every value, including strings and numbers. If you mean "not a primitive", use `object`.
 
 `--fix` replaces the type with the lower-case one.
 
@@ -51,7 +51,7 @@ function keysOf(record: object) {
 }
 ```
 
-Only types are checked. Calling the functions of the same name is fine:
+Only types are checked. Calling the functions with the same names is fine:
 
 {/* good */}
 ```ts

@@ -12,11 +12,11 @@ typeAware: false
 deprecated: true
 ---
 
-`process.env` is global state. When it is read all over a project, nobody can list which variables the project needs, every reader has to deal with a missing or misspelled value, and tests have to change the environment of the whole process.
+`process.env` is global state. If you read it all over a project, nobody can list which variables the project needs, every reader has to deal with a missing or misspelled value, and tests have to change the whole process's environment.
 
 Read the environment in one file, check the values there, and import that file everywhere else. Turn the rule off for that one file.
 
-Only `process.env` is checked, not `Bun.env` or `import.meta.env`.
+The rule only checks `process.env`, not `Bun.env` or `import.meta.env`.
 
 ## Examples
 
@@ -42,4 +42,4 @@ function connect() {
 
 ## When not to use it
 
-In a small script, or in a project that has no single place for its configuration, reading `process.env` directly is fine.
+Reading `process.env` directly is fine in a small script, or in a project that doesn't keep its configuration in one place.

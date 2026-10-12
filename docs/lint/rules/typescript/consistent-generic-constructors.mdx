@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-When you create a generic class, the type arguments can go on the variable (`const users: Map<string, User> = new Map()`) or on the call (`const users = new Map<string, User>()`). Both give the same type. This rule picks one place. By default it is the call, which names the class once instead of twice.
+When you create a generic class, the type arguments can go on the variable (`const users: Map<string, User> = new Map()`) or on the call (`const users = new Map<string, User>()`). Both give the same type. This rule picks one place. By default it's the call, which names the class once instead of twice.
 
-Variables, class fields, and parameters with a default value are checked, except the parameters of arrow functions. Code that has type arguments on both sides, or on neither, is left alone.
+The rule checks variables, class fields, and parameters with a default value, except arrow function parameters. It leaves code alone when the type arguments are on both sides, or on neither.
 
 `--fix` moves the type arguments to the other side.
 
@@ -46,7 +46,7 @@ class Game {
 function start(seen = new Set<string>()) {}
 ```
 
-The annotation has to name the same class as the call. Here it does not, so moving the type arguments would change the type of the variable:
+The annotation must name the same class as the call. Here it doesn't, so moving the type arguments would change the variable's type:
 
 {/* good */}
 ```ts

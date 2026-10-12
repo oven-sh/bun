@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`new Promise` ignores what its function returns. A `return value` there usually means `resolve(value)` was intended, and the promise never settles.
+`new Promise` ignores whatever its function returns. A `return value` there usually means you meant `resolve(value)`, and the promise never settles.
 
-An arrow function without braces also returns a value: `resolve => setTimeout(resolve, 100)` returns the timer. That one is harmless, but it is reported too. Put the body in braces.
+An arrow function without braces also returns a value. For example, `resolve => setTimeout(resolve, 100)` returns the timer. That one's harmless, but it's reported too. Put the body in braces.
 
-A `return` without a value, used to leave the function early, is allowed.
+A `return` without a value is allowed, so you can still leave the function early.
 
 ## Examples
 
@@ -60,7 +60,7 @@ const wait = ms =>
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allowVoid` | `false` | Allow returning a `void` expression, which says the value is dropped on purpose. |
+| `allowVoid` | `false` | Allow returning a `void` expression, which says you're dropping the value on purpose. |
 
 With `{ allowVoid: true }`, this is allowed:
 

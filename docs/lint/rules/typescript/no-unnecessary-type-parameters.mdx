@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-A type parameter relates two things: an argument to the return type, or one argument to another. One that appears only once relates nothing. Write its constraint, or `unknown`, in its place and the signature means the same.
+A type parameter connects two things, like an argument and the return type, or one argument and another. If it appears only once, it doesn't connect anything. Replace it with its constraint, or with `unknown`, and the signature means the same thing.
 
 A type parameter that appears only as the return type is worse. The caller picks any type and the compiler believes it, which is a type assertion in disguise.
 
-The rule checks functions, methods and classes. Uses inside a function body do not count, only the signature.
+The rule checks functions, methods and classes. Only the signature counts, so uses inside a function body are ignored.
 
 This rule needs type information. Run `bun lint --type-aware`.
 

@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A branded type such as `UserId` says "this string has been checked". That only holds if every `UserId` comes from the function that checks. `raw as UserId` anywhere else makes one from a value that nothing has checked, and the compiler accepts it.
+A branded type such as `UserId` says "this string has been checked". That's only true if every `UserId` comes from the function that does the check. Writing `raw as UserId` anywhere else creates one from an unchecked value, and the compiler accepts it.
 
 The rule does nothing until you list your branded types in `branded`.
 
@@ -74,12 +74,12 @@ export function parseUserId(text: string): UserId {
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `module` | required | The end of the path of the file that declares the type, without the extension: `"src/ids"` or `"ids"`. A package name works too. |
-| `type` | required | The name of the type as the module exports it. |
-| `mint` | `[]` | Functions of the module that make a value of the type without checking it. |
-| `mintedIn` | `[]` | The ends of the paths of the files that may import the `mint` functions, with the extension. |
+| `module` | required | The end of the path to the file that declares the type, without the extension, like `"src/ids"` or `"ids"`. A package name works too. |
+| `type` | required | The type's name as the module exports it. |
+| `mint` | `[]` | Functions in the module that create a value of the type without checking it. |
+| `mintedIn` | `[]` | The ends of the paths to the files that can import the `mint` functions, with the extension. |
 
-With `mint`, importing or re-exporting one of those functions is reported in every file that is not in `mintedIn`:
+With `mint`, importing or re-exporting one of those functions is reported in every file that isn't in `mintedIn`:
 
 {/* bad {"filename": "src/routes.ts", "options": [{"branded": [{"module": "src/ids", "type": "UserId", "mint": ["unsafeUserId"], "mintedIn": ["src/db.ts"]}]}]} */}
 ```ts

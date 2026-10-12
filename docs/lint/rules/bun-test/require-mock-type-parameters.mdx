@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A plain `jest.fn()` is typed as a function that takes any arguments and returns `any`. TypeScript then accepts `mockReturnValue(42)` on a mock of a function that returns a string. With a type parameter, what you pass to the mock and what it returns are checked.
+A plain `jest.fn()` is typed as a function that takes any arguments and returns `any`. TypeScript then accepts `mockReturnValue(42)` on a mock of a function that returns a string. With a type parameter, TypeScript checks the arguments you pass to the mock and the value it returns.
 
-A mock with an implementation, such as `jest.fn(() => 1)`, is reported too, even though TypeScript infers its type. `mock()` is not checked, and neither are JavaScript files.
+A mock with an implementation, such as `jest.fn(() => 1)`, is reported too, even though TypeScript infers its type. `mock()` isn't checked, and neither are JavaScript files.
 
 ## Examples
 

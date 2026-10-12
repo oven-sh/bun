@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-To read a `reduce()` you have to follow the accumulator through every return of the callback, and the value it starts with comes last, after the callback. The same code as a `for...of` loop names the result first and changes it in plain statements.
+To read a `reduce()`, you have to follow the accumulator through every return in the callback, and its starting value comes last, after the callback. Written as a `for...of` loop, the same code names the result first and updates it in plain statements.
 
 A callback that only combines two values with an operator, such as a sum, is allowed by default.
 

@@ -143,7 +143,7 @@ impl Settings {
             Err(reason) if like == Like::InstalledPrettier && !file.language().stands_alone => {
                 return file.hand_back(reason);
             }
-            // The rule stands in for nothing, so nobody else looks at the file.
+            // There's no package rule to fall back to, so report that the file wasn't checked.
             Err(reason) => {
                 // Behind the comments at the top, one of which may turn the rule off.
                 let at = cx.program_span().start;

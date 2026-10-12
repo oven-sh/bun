@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`process.exit()` stops the process at once. Output that has not been written yet is lost, `finally` blocks do not run, and the code that called yours gets no chance to handle the problem or clean up.
+`process.exit()` stops the process immediately. Output that hasn't been written yet is lost, `finally` blocks don't run, and the code that called yours doesn't get a chance to handle the problem or clean up.
 
-Throw an error. If nothing catches it, the process ends with a stack trace and a failing exit code. To end with a certain exit code, set `process.exitCode` and let the process finish by itself.
+Throw an error instead. If nothing catches it, the process ends with a stack trace and a failing exit code. To end with a specific exit code, set `process.exitCode` and let the process finish by itself.
 
 ## Examples
 
@@ -47,4 +47,4 @@ if (!config.valid) {
 
 ## When not to use it
 
-The entry file of a command line tool is a fair place for `process.exit()`, for example to stop while timers or sockets are still open.
+A command line tool's entry file is a reasonable place for `process.exit()`, for example to stop while timers or sockets are still open.

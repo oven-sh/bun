@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A plain `vi.fn()` is typed as a function that takes any arguments and returns `any`. TypeScript then accepts `mockReturnValue(42)` on a mock of a function that returns a string. With a type parameter, what you pass to the mock and what it returns are checked.
+A plain `vi.fn()` is typed as a function that takes any arguments and returns `any`. TypeScript then accepts `mockReturnValue(42)` on a mock of a function that returns a string. With a type parameter, TypeScript checks what you pass to the mock and what it returns.
 
-A mock with an implementation, such as `vi.fn(() => 1)`, is reported too, even though TypeScript infers its type. Only TypeScript files are checked.
+A mock with an implementation, such as `vi.fn(() => 1)`, is reported too, even though TypeScript infers its type. The rule only checks TypeScript files.
 
 ## Examples
 

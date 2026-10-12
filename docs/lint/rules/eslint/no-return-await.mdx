@@ -14,7 +14,7 @@ deprecated: true
 
 An `async` function already wraps what it returns in a promise, so the caller gets the same result from `return load()` and from `return await load()`.
 
-Inside a `try` block the `await` does matter: without it, a rejection is not caught by the `catch`. The rule does not report that.
+Inside a `try` block the `await` does matter. Without it, the `catch` doesn't catch a rejection. The rule doesn't report that case.
 
 `--fix-suggestions` removes the `await`.
 
@@ -55,4 +55,4 @@ async function getName(id) {
 
 ## When not to use it
 
-With `return await`, the function is still running when the promise rejects, so it shows up in the stack trace of the error. If you want that, leave the rule off. ESLint has deprecated this rule.
+With `return await`, the function is still running when the promise rejects, so it shows up in the error's stack trace. If you want that, leave the rule off. ESLint has deprecated this rule.

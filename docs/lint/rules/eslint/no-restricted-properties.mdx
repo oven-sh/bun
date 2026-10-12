@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Some properties should not be used in your project: a deprecated method, an API with a better replacement. You list them, and every use is reported with your own message.
+Some properties shouldn't be used in your project, like a deprecated method or an API with a better replacement. You list them, and every use is reported with your own message.
 
-The rule reports nothing until you give it a list. It sees `object.property`, `object["property"]` and destructuring such as `const { property } = object`.
+The rule does nothing until you give it a list. It checks `object.property`, `object["property"]` and destructuring such as `const { property } = object`.
 
 ## Examples
 
@@ -48,8 +48,8 @@ Each option is an object that describes one restriction. It needs `object`, `pro
 | --- | --- |
 | `object` | The name of the object. Without `property`, every property of this object is reported. |
 | `property` | The name of the property. Without `object`, the property is reported on every object. |
-| `allowProperties` | Only with `object` alone: properties of the object that are still allowed. |
-| `allowObjects` | Only with `property` alone: objects that may still have the property. |
+| `allowProperties` | Properties of the object that are still allowed. Only for a restriction with `object` alone. |
+| `allowObjects` | Objects that may still have the property. Only for a restriction with `property` alone. |
 | `message` | Text added to the end of the report. |
 
 A property on every object:

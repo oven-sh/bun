@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A project often has modules that some code should not import: a package that has been replaced, a Node.js module in code that also runs in the browser, the internal files of another package. This rule reports an `import` of them, and an `export ... from` as well.
+A project often has modules that some code shouldn't import, like a package that's been replaced, a Node.js module in code that also runs in the browser, or another package's internal files. This rule reports an `import` of them, and an `export ... from` as well.
 
-The rule reports nothing until you give it options. `require()` is not checked, and `import()` is only checked with an oxlint config.
+The rule does nothing until you give it options. `require()` isn't checked, and `import()` is only checked with an oxlint config.
 
 ## Examples
 
@@ -42,7 +42,7 @@ import debounce from "lodash/debounce";
 const moment = await import("moment");
 ```
 
-A name has to match the whole string, so `"lodash"` does not cover `"lodash/debounce"`. Use a pattern for that.
+A name must match the whole string, so `"lodash"` doesn't cover `"lodash/debounce"`. Use a pattern for that.
 
 ## Options
 
@@ -57,7 +57,7 @@ no-restricted-imports = ["error", { paths = ["moment"], patterns = ["lodash/*"] 
 
 | Key | What it does |
 | --- | --- |
-| `name` | The module, exactly as it is written in the `import`. Required. |
+| `name` | The module, exactly as it's written in the `import`. Required. |
 | `message` | Text added to the report. |
 | `importNames` | Report only these names from the module. `"default"` is the default import. |
 | `allowImportNames` | Report every name from the module except these. |
@@ -80,14 +80,14 @@ import type { Row } from "./database";
 
 ### `patterns`
 
-A list of strings in the syntax of `.gitignore`, where a pattern that starts with `!` makes an exception to the ones before it. With an oxlint config they are globs that have to match the whole module name.
+A list of strings in `.gitignore` syntax, where a pattern that starts with `!` makes an exception to the ones before it. With an oxlint config they're globs that must match the whole module name.
 
 Or a list of objects:
 
 | Key | What it does |
 | --- | --- |
 | `group` | A list of `.gitignore` patterns. Each object needs a `group` or a `regex`. |
-| `regex` | A regular expression that is tested on the module name. |
+| `regex` | A regular expression that's tested against the module name. |
 | `caseSensitive` | `true` makes `group` or `regex` case sensitive. Default `false`. |
 | `importNames`, `allowImportNames` | As in `paths`. |
 | `importNamePattern` | Report only the names that match this regular expression. |
@@ -101,7 +101,7 @@ With `patterns: ["@acme/billing/*", "!@acme/billing/testing"]`, this is reported
 import { ledger } from "@acme/billing/internal";
 ```
 
-And this is not:
+And this isn't:
 
 {/* good {"options": [{"patterns": ["@acme/billing/*", "!@acme/billing/testing"]}]} */}
 ```js

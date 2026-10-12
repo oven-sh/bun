@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A value that is created on one line and filled on the next takes two statements to say one thing. Put everything in the initializer, so the whole value can be read in one place.
+If you create a value on one line and fill it on the next, you're using two statements to say one thing. Put everything in the initializer, so you can read the whole value in one place.
 
-The rule looks at the statement directly after the one that creates the value:
+The rule looks at the statement right after the one that creates the value:
 
 | Created with | Reported next |
 | --- | --- |
@@ -58,7 +58,7 @@ const prices = new Map([
 ]);
 ```
 
-A change that reads the variable itself cannot move into the initializer, so it is allowed:
+A change that reads the variable itself can't move into the initializer, so it's allowed:
 
 {/* good */}
 ```js
@@ -66,7 +66,7 @@ const fruits = ["apple", "pear"];
 fruits.push(fruits.length);
 ```
 
-So is a change that comes after another statement:
+A change that comes after another statement is allowed too:
 
 {/* good */}
 ```js

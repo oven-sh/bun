@@ -37,8 +37,8 @@ pub struct Request<'r> {
     pub file_info_options: Option<&'r Json>,
     /// [`File::package_module`]
     pub package_module: Option<&'r [u8]>,
-    /// With [`Like::InstalledPrettier`]: the text has to be that of the packages which are installed. Else nothing is asked of
-    /// them.
+    /// Only used with [`Like::InstalledPrettier`]. If set, the output has to match the installed packages, so their versions
+    /// are checked. Otherwise nothing has to be installed.
     pub follows_packages: bool,
 }
 

@@ -16,7 +16,7 @@ In a monorepo, `../ui/button.js` only works while both packages stay where they 
 
 A file belongs to the closest `package.json` above it that has a `name`. The rule reports a relative import that resolves to a file in a package with a different name.
 
-`--fix` rewrites the path so that it starts with the package's name.
+`--fix` rewrites the path so it starts with the package's name.
 
 ## Examples
 
@@ -62,7 +62,7 @@ import { theme } from "./theme.js";
 | `esmodule` | `true` | Check `import`, `export .. from` and `import()`. |
 | `commonjs` | `false` | Also check `require()`. |
 | `amd` | `false` | Also check the dependencies of `define()` and of `require([..])`. |
-| `ignore` | `[]` | Regular expressions. A path that matches one of them is not checked. |
+| `ignore` | `[]` | Regular expressions. A path that matches one of them is skipped. |
 
 ```toml bunfig.toml
 [lint.rules]

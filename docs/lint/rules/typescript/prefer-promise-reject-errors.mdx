@@ -16,7 +16,7 @@ A rejected promise turns into a `throw` at the `await`. If the reason is a strin
 
 The rule checks `Promise.reject(...)` and calls to `reject` inside `new Promise((resolve, reject) => ...)`. Rejecting with nothing is reported too.
 
-This is `prefer-promise-reject-errors` with types: it looks at the type of the reason, so a variable that holds a string is reported and a class that extends `Error` is not. Turn the other rule off when you use this one.
+This is `prefer-promise-reject-errors` with types. It looks at the reason's type, so a variable that holds a string is reported and a class that extends `Error` isn't. Turn the other rule off when you use this one.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -73,7 +73,7 @@ async function retry(task: () => Promise<void>) {
 }
 ```
 
-With `allowThrowingUnknown: true` it is allowed:
+With `allowThrowingUnknown: true` it's allowed:
 
 {/* good {"options": [{"allowThrowingUnknown": true}]} */}
 ```ts
@@ -86,7 +86,7 @@ async function retry(task: () => Promise<void>) {
 }
 ```
 
-An entry of `allow` is a type name, or an object that also says where the type is from: `{ "from": "file", "name": "Failure" }`, `{ "from": "lib", "name": "Date" }`, or `{ "from": "package", "name": "Failure", "package": "some-package" }`. With the first of these, this is allowed:
+Each `allow` entry is a type name, or an object that also says where the type comes from: `{ "from": "file", "name": "Failure" }`, `{ "from": "lib", "name": "Date" }`, or `{ "from": "package", "name": "Failure", "package": "some-package" }`. With the first of these, this is allowed:
 
 {/* good {"options": [{"allow": [{"from": "file", "name": "Failure"}]}]} */}
 ```ts

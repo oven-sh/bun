@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`import type` tells the reader, and every tool that compiles one file at a time, that the import is gone at runtime. A plain `import` of something that is only used as a type leaves that open: the module may be loaded for its side effects, or not, depending on the compiler and its settings.
+`import type` tells the reader, and every tool that compiles one file at a time, that the import is gone at runtime. A plain `import` of something that's only used as a type leaves that open. The module may or may not be loaded for its side effects, depending on the compiler and its settings.
 
 `--fix` adds the `type` keyword, and splits the import if it also brings in values.
 
@@ -75,7 +75,7 @@ import { User } from "./models";
 export type Users = User[];
 ```
 
-By default, a type that is written as `import()` is reported:
+By default, a type written as `import()` is reported:
 
 {/* bad */}
 ```ts
@@ -89,7 +89,7 @@ export type Users = import("./models").User[];
 
 ## When not to use it
 
-The `verbatimModuleSyntax` option of TypeScript makes a missing `import type` a compile error. If it is on, you need this rule only for its fix.
+TypeScript's `verbatimModuleSyntax` option makes a missing `import type` a compile error. If it's on, you only need this rule for its fix.
 
 With `experimentalDecorators` and `emitDecoratorMetadata` both on, TypeScript needs some imported types at runtime, and `import type` removes them. The rule leaves the imports alone in a file that has a decorator. With `--type-aware` it reads both settings from your `tsconfig.json`, and checks such a file too if one of them is off.
 

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A loop that tests `i < 10` and then runs `i--` moves away from 10, so the test stays true and the loop never ends. It is almost always a typo: `--` for `++`, or `<` for `>`.
+A loop that tests `i < 10` and then runs `i--` moves away from 10, so the test stays true and the loop never ends. It's almost always a typo, like `--` for `++` or `<` for `>`.
 
-The rule looks at `++`, `--`, `+=` and `-=` on the counter. If it cannot tell whether the step is positive or negative, it reports nothing.
+The rule looks at `++`, `--`, `+=` and `-=` on the counter. If it can't tell whether the step is positive or negative, it reports nothing.
 
 This rule is on by default.
 
@@ -49,7 +49,7 @@ for (let i = items.length - 1; i >= 0; i -= 1) {
 }
 ```
 
-The sign of `step` is not known here, so the loop is left alone:
+The rule can't know the sign of `step` here, so it leaves the loop alone:
 
 {/* good */}
 ```js

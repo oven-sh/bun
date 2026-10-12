@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-HTML does not allow a link or a button inside another link or button. Browsers differ in what a click on the inner element does. In server-rendered HTML, the parser ends an `a` or a `button` where the next one starts and ignores a `form` inside a `form`, so the DOM does not match your JSX.
+HTML doesn't allow a link or a button inside another link or button. Browsers disagree about what a click on the inner element does. In server-rendered HTML, the parser ends an `a` or a `button` where the next one starts and ignores a `form` inside a `form`, so the DOM doesn't match your JSX.
 
 The inner element is reported at any depth, not only as a direct child. By default the rule knows these pairs:
 
@@ -23,7 +23,7 @@ The inner element is reported at any depth, not only as a direct child. By defau
 | `form` | `form` |
 | `label` | `label` |
 
-Only the tag names are compared, so a `Link` component that renders an `a` does not count as an `a`.
+Only the tag names are compared, so a `Link` component that renders an `a` doesn't count as an `a`.
 
 ## Examples
 
@@ -75,7 +75,7 @@ const row = (
 );
 ```
 
-The default pairs no longer apply then. Add them to the list if you want to keep them:
+Then the default pairs no longer apply. Add them to the list if you want to keep them:
 
 {/* good {"options": [{"pairs": [{"outer": "Link", "inner": "Button"}]}]} */}
 ```jsx

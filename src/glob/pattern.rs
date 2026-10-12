@@ -216,7 +216,7 @@ impl Pattern {
         match (self.has_extglob, self.hides_dots) {
             (_, true) => matcher::match_without_dot(pattern, path),
             (true, false) => matcher::match_with::<true>(pattern, path),
-            (false, false) => matcher::r#match(pattern, path),
+            (false, false) => matcher::match_on::<false>(pattern, path),
         }
     }
 

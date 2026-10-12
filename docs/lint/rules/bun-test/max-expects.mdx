@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A test with many assertions usually checks several things at once. The first `expect` that fails stops the test, so it hides the failures after it, and the test's name no longer says what broke.
+A test with many assertions usually checks several things at once. The first `expect` that fails stops the test and hides any failures after it, and the test's name no longer tells you what broke.
 
 By default a test can have 5 `expect()` calls. Each call after that is reported.
 
@@ -96,4 +96,4 @@ test("lists active users", () => {
 });
 ```
 
-A helper function has a count of its own. `expect.assertions()` and `expect.hasAssertions()` are not counted.
+A helper function gets its own count. `expect.assertions()` and `expect.hasAssertions()` aren't counted.

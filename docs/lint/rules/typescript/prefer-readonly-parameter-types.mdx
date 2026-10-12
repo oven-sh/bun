@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-A function that sorts, pushes to, or assigns into its argument changes the caller's data. The caller cannot see that from the call. If the parameter has a read-only type, TypeScript rejects those changes in the function body, and the signature promises the caller that the value comes back as it was.
+A function that sorts, pushes to, or assigns into its argument changes the caller's data. The caller can't see that from the call. If the parameter has a read-only type, TypeScript rejects those changes in the function body, and the signature promises the caller that the value comes back unchanged.
 
-The check is deep: a `readonly` array of objects that can be changed is still reported. Strings, numbers, and other primitives are always fine, and so are functions.
+The check is deep, so a `readonly` array of objects that can be changed is still reported. Strings, numbers, and other primitives are always fine, and so are functions.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -51,9 +51,9 @@ function repeat(text: string, times: number, done: () => void) {}
 | `allow` | `[]` | Types that are accepted as they are. |
 | `checkParameterProperties` | `true` | Check constructor parameters that declare a field, such as `private items: string[]`. |
 | `ignoreInferredTypes` | `false` | Skip parameters that have no type annotation. |
-| `treatMethodsAsReadonly` | `false` | Accept methods that are not marked `readonly`. |
+| `treatMethodsAsReadonly` | `false` | Accept methods that aren't marked `readonly`. |
 
-An entry of `allow` is a type name, or an object that also says where the type is from: `{ "from": "file", "name": "Draft" }`, `{ "from": "lib", "name": "Date" }`, or `{ "from": "package", "name": "Draft", "package": "some-package" }`.
+Each `allow` entry is a type name, or an object that also says where the type comes from: `{ "from": "file", "name": "Draft" }`, `{ "from": "lib", "name": "Date" }`, or `{ "from": "package", "name": "Draft", "package": "some-package" }`.
 
 A `Date` is reported by default:
 
@@ -62,14 +62,14 @@ A `Date` is reported by default:
 function format(date: Date) {}
 ```
 
-With `allow: [{ "from": "lib", "name": "Date" }]` it is accepted:
+With `allow: [{ "from": "lib", "name": "Date" }]` it's accepted:
 
 {/* good {"options": [{"allow": [{"from": "lib", "name": "Date"}]}]} */}
 ```ts
 function format(date: Date) {}
 ```
 
-The parameter of a callback often gets its type from the function you pass it to, which you may not control. Here `row` is a `string[]`, so it is reported:
+A callback's parameter often gets its type from the function you pass the callback to, which you might not control. Here `row` is a `string[]`, so it's reported:
 
 {/* bad */}
 ```ts
@@ -77,7 +77,7 @@ const rows = [["a", "b"], ["c"]];
 rows.forEach(row => console.log(row.length));
 ```
 
-With `ignoreInferredTypes: true` it is skipped:
+With `ignoreInferredTypes: true` it's skipped:
 
 {/* good {"options": [{"ignoreInferredTypes": true}]} */}
 ```ts
@@ -96,7 +96,7 @@ interface Store {
 function flush(store: Store) {}
 ```
 
-With `treatMethodsAsReadonly: true` it does not:
+With `treatMethodsAsReadonly: true` it doesn't:
 
 {/* good {"options": [{"treatMethodsAsReadonly": true}]} */}
 ```ts
@@ -109,4 +109,4 @@ function flush(store: Store) {}
 
 ## When not to use it
 
-This rule is strict. Most types from libraries and from the DOM are not read-only, and every function that takes one is reported until you list the type under `allow`.
+This rule is strict. Most library and DOM types aren't read-only, and every function that takes one is reported until you list the type under `allow`.

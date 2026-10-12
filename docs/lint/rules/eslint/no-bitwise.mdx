@@ -45,10 +45,10 @@ no-bitwise = ["error", { allow = ["&", "|"] }]
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `allow` | `[]` | Operators that are not reported. |
+| `allow` | `[]` | Operators that aren't reported. |
 | `int32Hint` | `false` | Allow `value \| 0`, a way to cut a number down to a 32-bit integer. |
 
-With `allow: ["&", "|"]`, this is not reported:
+With `allow: ["&", "|"]`, this isn't reported:
 
 {/* good {"options": [{"allow": ["&", "|"]}]} */}
 ```js

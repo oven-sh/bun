@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Next.js finds the data fetching functions of a page by their exact names. If you export `getStaticProp` or `getserverSideProps`, nothing complains: the function is never called and the page renders without its props.
+Next.js finds a page's data fetching functions by their exact names. If you export `getStaticProp` or `getserverSideProps`, nothing complains. The function is never called and the page renders without its props.
 
-The rule checks files under a `pages` directory, except `pages/api`. It reports an exported function or variable with a name that is one character away from `getStaticProps`, `getStaticPaths` or `getServerSideProps`.
+The rule checks files under a `pages` directory, except `pages/api`. It reports an exported function or variable with a name that's one character away from `getStaticProps`, `getStaticPaths` or `getServerSideProps`.
 
 `--fix-suggestions` corrects the name.
 

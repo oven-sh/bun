@@ -16,7 +16,7 @@ deprecated: false
 
 This is `prefer-destructuring` with types. `const [first] = items` only works if `items` can be iterated, so `items[0]` is reported only when the type of `items` is iterable or `any`. A declaration with a type annotation is left alone by default. Turn the other rule off when you use this one.
 
-A property is only reported if the variable has the same name. An element is only reported if the index is a whole number written out, such as `items[0]`.
+A property is only reported if the variable has the same name. An element is only reported if the index is a literal whole number, such as `items[0]`.
 
 `--fix` rewrites `const name = user.name`. Elements and plain assignments are reported but not fixed.
 
@@ -56,7 +56,7 @@ const label: string = user.name; // has a type annotation
 
 ## Options
 
-The rule takes two objects. The first says what to check, the second has the two `enforceFor` options.
+The rule takes two objects. The first says what to check, and the second has the two `enforceFor` options.
 
 ```toml bunfig.toml
 [lint.rules]
@@ -67,10 +67,10 @@ The rule takes two objects. The first says what to check, the second has the two
 | --- | --- | --- |
 | `object` | `true` | Report properties: `const name = user.name`. |
 | `array` | `true` | Report elements: `const first = items[0]`. |
-| `enforceForRenamedProperties` | `false` | Also report a property that goes into a variable with another name, a computed key, and a number key of an object that is not iterable. |
-| `enforceForDeclarationWithTypeAnnotation` | `false` | Also report declarations that have a type annotation. They are not fixed. |
+| `enforceForRenamedProperties` | `false` | Also report a property that goes into a variable with another name, a computed key, and a number key of an object that isn't iterable. |
+| `enforceForDeclarationWithTypeAnnotation` | `false` | Also report declarations that have a type annotation. They aren't fixed. |
 
-If you pass the first object, a key you leave out is `false`. With `{ object: true }`, elements are not reported:
+If you pass the first object, a key you leave out is `false`. With `{ object: true }`, elements aren't reported:
 
 {/* good {"options": [{"object": true}]} */}
 ```ts
@@ -90,7 +90,7 @@ const label = user.name;
 const best = scores[0];
 ```
 
-With `enforceForDeclarationWithTypeAnnotation`, so is this:
+With `enforceForDeclarationWithTypeAnnotation`, this is reported too:
 
 {/* bad {"options": [{"object": true}, {"enforceForDeclarationWithTypeAnnotation": true}]} */}
 ```ts
@@ -99,7 +99,7 @@ declare const user: { name: string };
 const name: string = user.name;
 ```
 
-To treat declarations and assignments differently, give the first object the keys `VariableDeclarator` and `AssignmentExpression`, each with its own `object` and `array`. With both off for `AssignmentExpression`, this is not reported:
+To treat declarations and assignments differently, give the first object the keys `VariableDeclarator` and `AssignmentExpression`, each with its own `object` and `array`. With both off for `AssignmentExpression`, this isn't reported:
 
 {/* good {"options": [{"VariableDeclarator": {"object": true, "array": true}, "AssignmentExpression": {"object": false, "array": false}}]} */}
 ```ts

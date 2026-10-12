@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Every branch in a function is one more path to keep in mind and to test. This rule counts them and reports a function that has more than 20.
+Every branch in a function is one more path to keep in mind and to test. This rule counts them and reports any function with more than 20.
 
-The count starts at 1. Each of these adds 1: `if`, `? :`, a loop, a `case`, a `catch`, `&&`, `||`, `??`, their assignment forms such as `||=`, `?.`, and a default value of a parameter or in destructuring. Nested functions are counted on their own. Class field initializers and static blocks are counted too.
+The count starts at 1. Each of these adds 1: `if`, `? :`, a loop, a `case`, a `catch`, `&&`, `||`, `??`, their assignment forms such as `||=`, `?.`, and a default value for a parameter or in destructuring. Nested functions are counted separately. Class field initializers and static blocks are counted too.
 
 ## Examples
 
@@ -57,14 +57,14 @@ function standardRate(country) {
 complexity = ["error", 10]
 ```
 
-The option is a number, which is the maximum, or an object:
+The option is either a number (the maximum) or an object:
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `max` | `20` | The highest complexity that is allowed. `maximum` is an older name for it. |
-| `variant` | `"classic"` | `"modified"` counts a whole `switch` as 1, however many `case`s it has. |
+| `max` | `20` | The highest complexity allowed. `maximum` is an older name for it. |
+| `variant` | `"classic"` | `"modified"` counts a whole `switch` as 1, no matter how many `case`s it has. |
 
-Three `case`s give this function a complexity of 4. `default` does not count:
+Three `case`s give this function a complexity of 4. `default` doesn't count:
 
 {/* bad {"options": [{"max": 3}]} */}
 ```js

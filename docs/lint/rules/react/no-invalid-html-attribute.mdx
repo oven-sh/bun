@@ -12,17 +12,17 @@ typeAware: false
 deprecated: false
 ---
 
-Browsers ignore a `rel` value they do not know. A typo such as `rel="noopenner"` looks like it protects the link, and does nothing.
+Browsers ignore a `rel` value they don't know. A typo such as `rel="noopenner"` looks like it protects the link, but it does nothing.
 
 The rule checks `rel` on HTML elements in JSX and in `React.createElement`. It reports:
 
-- a value that is not a link type at all, or not one for this element: `stylesheet` is for `<link>`, `noopener` is for `<a>`, `<area>` and `<form>`
+- a value that isn't a link type at all, or isn't one for this element: `stylesheet` is for `<link>`, `noopener` is for `<a>`, `<area>` and `<form>`
 - `rel` on an element other than `<a>`, `<area>`, `<form>` and `<link>`
-- an empty `rel`, or one that is not a string
+- an empty `rel`, or one that isn't a string
 - `shortcut` without `icon` after it
 - extra whitespace around or between the values
 
-Your own components are not checked. Most reports come with a suggestion that removes the invalid part.
+The rule doesn't check your own components. Most reports come with a suggestion that removes the invalid part.
 
 ## Examples
 
@@ -61,4 +61,4 @@ const next = <PageLink rel="following" to="/page/2" />;
 
 ## Options
 
-The option is the list of attributes to check. `"rel"` is the only attribute the rule knows, and it is the default: `["rel"]`.
+The option is the list of attributes to check. `"rel"` is the only attribute the rule knows, so the default is `["rel"]`.

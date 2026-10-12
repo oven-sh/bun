@@ -1,5 +1,5 @@
-//! What is wrong with the options of a rule, in plain words and with the place: for `[lint.rules]` of bunfig.toml and
-//! `--rule`, where no words of ESLint have to be kept.
+//! Turns schema errors for rule options into one readable message with a location. Used for bunfig.toml's `[lint.rules]`
+//! and `--rule`, where the output doesn't have to match ESLint's.
 
 use super::validate::{Of, SchemaError, Step, Why};
 use crate::linter::message::write_json;
@@ -7,14 +7,14 @@ use crate::options::Json;
 use bun_core::strings;
 use std::cmp::Ordering;
 
-/// [`mistake_in_options`](super::mistake_in_options)
+/// Returned by [`mistake_in_options`](super::mistake_in_options).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct OptionMistake {
-    /// From the options, which follow the severity, to what is wrong. What it leads to need not be there.
+    /// Path from the options array (without the severity) to the invalid value. The value may not exist.
     pub path: Vec<Step>,
-    /// The key at the end of `path` is wrong, not its value.
+    /// The last key in `path` is the problem, not its value.
     pub is_about_key: bool,
-    /// What is wrong, and on a second line what is expected, if that can be said.
+    /// The error, plus a second line with the expected values if they're known.
     pub message: Vec<u8>,
 }
 
@@ -49,11 +49,11 @@ fn counted(count: f64, noun: &str) -> Vec<u8> {
     .concat()
 }
 
-/// Where the mistake is that `error` is about, and whether that is a key.
+/// Path to the value that caused `error`, and whether the problem is the key itself.
 fn place_of(error: &SchemaError) -> (Vec<Step>, bool) {
     let mut path = error.path.clone();
     match &error.why {
-        // The first that is too many.
+        // Point at the first extra item.
         Why::Most(limit, Of::Items) => path.push(Step::Index(*limit as usize)),
         Why::Unknown(key, _) => path.push(Step::Key(key.clone())),
         _ => return (path, false),
@@ -61,7 +61,7 @@ fn place_of(error: &SchemaError) -> (Vec<Step>, bool) {
     (path, matches!(error.why, Why::Unknown(..)))
 }
 
-/// An alternative that fails later, or further in, has understood more of what is written.
+/// Orders error paths. A schema alternative that fails later or deeper matched more of the input, so its error is more useful.
 fn compare(a: &[Step], b: &[Step]) -> Ordering {
     let differing = a.iter().zip(b).find_map(|steps| match steps {
         (Step::Index(a), Step::Index(b)) if a != b => Some(a.cmp(b)),
@@ -70,7 +70,7 @@ fn compare(a: &[Step], b: &[Step]) -> Ordering {
     differing.unwrap_or_else(|| a.len().cmp(&b.len()))
 }
 
-/// What `why` asks for, after "Expected ".
+/// Adds what `why` expects to `into`. The items are printed after "Expected ".
 fn expected_by(why: &Why, into: &mut Vec<Vec<u8>>) {
     let limit = |bound: &str, limit: f64, of: Of| match of {
         Of::Value => [
@@ -110,7 +110,7 @@ fn expected_by(why: &Why, into: &mut Vec<Vec<u8>>) {
     }
 }
 
-/// `rule`: what the user calls the rule. `errors`: what Ajv says about its options.
+/// Picks the most useful of `errors` and describes it. `rule` is the rule name as the user wrote it.
 pub(super) fn explain(rule: &[u8], errors: &[SchemaError]) -> OptionMistake {
     let mut telling = errors.iter().filter(|it| !matches!(it.why, Why::Composite));
     let Some(first) = telling.next() else {

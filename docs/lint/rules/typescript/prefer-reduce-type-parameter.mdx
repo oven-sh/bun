@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-`reduce` takes the type of its result from the initial value, and `{}` or `[]` alone gives a type that is too narrow. `{} as Record<string, number>` fixes that, but an assertion also accepts a value that does not fit the type. `reduce<Record<string, number>>(..., {})` gives the same result type, and TypeScript still checks the initial value against it.
+`reduce` takes its result type from the initial value, and `{}` or `[]` alone gives you a type that's too narrow. `{} as Record<string, number>` fixes that, but an assertion also accepts a value that doesn't fit the type. `reduce<Record<string, number>>(..., {})` gives you the same result type, and TypeScript still checks the initial value against it.
 
-Only arrays and tuples are checked. If the value cannot be assigned to the asserted type, the assertion is needed and the call is left alone.
+Only arrays and tuples are checked. If the value can't be assigned to the asserted type, you need the assertion and the call is left alone.
 
 `--fix` moves the type from the assertion to the call.
 
@@ -54,7 +54,7 @@ function lengths(words: string[]) {
 }
 ```
 
-Here `{}` is not a valid `Summary`, so moving the type would be a type error:
+Here `{}` isn't a valid `Summary`, so moving the type would be a type error:
 
 {/* good */}
 ```ts

@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Two inline elements such as `<a>` or `<span>` that touch in the source render with nothing between them, so their text runs together on the page: "Log inSign up".
+Two inline elements such as `<a>` or `<span>` that touch in the source render with nothing between them, so their text runs together on the page, like "Log inSign up".
 
-The rule knows the inline elements of HTML, among them `a`, `b`, `button`, `code`, `em`, `i`, `img`, `input`, `label`, `select`, `small`, `span`, `strong` and `textarea`. It also checks an array of children passed to `React.createElement`.
+The rule knows HTML's inline elements, including `a`, `b`, `button`, `code`, `em`, `i`, `img`, `input`, `label`, `select`, `small`, `span`, `strong` and `textarea`. It also checks an array of children passed to `React.createElement`.
 
 ## Examples
 
@@ -48,7 +48,7 @@ const nav = (
 );
 ```
 
-Elements on separate lines are not reported, although JSX drops the line break and renders nothing between them. Write `{" "}` at the end of the line if you want a space there:
+Elements on separate lines aren't reported, even though JSX drops the line break and renders nothing between them. Write `{" "}` at the end of the line if you want a space there:
 
 {/* good */}
 ```jsx

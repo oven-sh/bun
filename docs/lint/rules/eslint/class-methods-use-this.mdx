@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A method that never touches `this` does not need an instance. Callers still have to create one to reach it. Make it `static`, or move it out of the class as a plain function.
+A method that never touches `this` doesn't need an instance, but callers still have to create one to call it. Make it `static`, or move it out of the class as a plain function.
 
-The rule checks methods, getters, setters, and fields that hold a function. Constructors and static members are not checked. Using `super` counts as using `this`.
+The rule checks methods, getters, setters, and fields that hold a function. Constructors and static members aren't checked. Using `super` counts as using `this`.
 
 ## Examples
 
@@ -48,9 +48,9 @@ class Cart {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `exceptMethods` | `[]` | Names of methods that are not checked. Write a private method with its `#`. |
-| `enforceForClassFields` | `true` | Also check functions that are the value of a field: `format = () => {}`. |
-| `ignoreOverrideMethods` | `false` | Do not check members marked `override` in TypeScript. |
+| `exceptMethods` | `[]` | Method names to skip. Write a private method with its `#`. |
+| `enforceForClassFields` | `true` | Also check fields that hold a function, like `format = () => {}`. |
+| `ignoreOverrideMethods` | `false` | Don't check members marked `override` in TypeScript. |
 | `ignoreClassesWithImplements` | not set | `"all"` skips every member of a class that has an `implements` clause. `"public-fields"` skips only its public members. |
 
 A framework may call a method on the instance whether it uses `this` or not:
@@ -84,7 +84,7 @@ class Guest extends User {
 }
 ```
 
-With `"public-fields"`, the interface may ask for `name()`, but it cannot ask for the private `prefix()`:
+With `"public-fields"`, the interface may ask for `name()`, but it can't ask for the private `prefix()`:
 
 {/* bad {"options": [{"ignoreClassesWithImplements": "public-fields"}], "count": 1} */}
 ```ts

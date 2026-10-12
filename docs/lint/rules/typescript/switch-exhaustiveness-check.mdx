@@ -12,9 +12,9 @@ typeAware: true
 deprecated: false
 ---
 
-When you add a member to a union or an enum, every `switch` on it needs a new `case`. TypeScript does not tell you which ones. The new value falls through the `switch` and nothing happens, or it lands in a `default` that was written for something else.
+When you add a member to a union or an enum, every `switch` on it needs a new `case`. TypeScript doesn't tell you which ones. The new value falls through the `switch` and nothing happens, or it lands in a `default` that was written for something else.
 
-This rule reports a `switch` on a union of literals or an enum that does not list every member, and names the ones that are missing. By default a `default` clause does not count as covering them.
+This rule reports a `switch` on a union of literals or an enum that doesn't list every member, and names the ones that are missing. By default a `default` clause doesn't count as covering them.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -60,7 +60,7 @@ function label(status: Status) {
 | --- | --- | --- |
 | `considerDefaultExhaustiveForUnions` | `false` | Let a `default` clause cover the members that have no `case`. |
 | `allowDefaultCaseForExhaustiveSwitch` | `true` | With `false`, report a `default` clause on a `switch` that already lists every member. |
-| `requireDefaultForNonUnion` | `false` | Require a `default` clause when the value is not a union of literals, such as a `string` or a `number`. |
+| `requireDefaultForNonUnion` | `false` | Require a `default` clause when the value isn't a union of literals, such as a `string` or a `number`. |
 | `defaultCaseCommentPattern` | `^no default$`, ignoring case | A regular expression. A comment after the last `case` that matches it counts as a `default` clause. |
 
 By default `"closed"` and `"merged"` are reported as missing here. With `considerDefaultExhaustiveForUnions`, the `default` covers them:
@@ -77,7 +77,7 @@ function isOpen(status: "open" | "closed" | "merged") {
 }
 ```
 
-A `default` on a complete `switch` hides the next member you add. With `allowDefaultCaseForExhaustiveSwitch` off, it is reported:
+A `default` on a complete `switch` hides the next member you add. With `allowDefaultCaseForExhaustiveSwitch` off, it's reported:
 
 {/* bad {"options": [{"allowDefaultCaseForExhaustiveSwitch": false}]} */}
 ```ts

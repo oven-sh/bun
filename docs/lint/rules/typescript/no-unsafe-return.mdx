@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-A function that returns `any` hands it to every caller. TypeScript stops checking whatever they do with the result, and nothing at the call shows it.
+A function that returns `any` hands it to every caller. TypeScript stops checking whatever they do with the result, and nothing at the call site tells you.
 
 The rule reports a returned `any` or `any[]`, a `Promise<any>` returned from an `async` function, and an `any` inside a generic type, such as a `Set<any>` returned as a `Set<string>`.
 
@@ -57,7 +57,7 @@ function loadConfig(text: string) {
 }
 ```
 
-A function with the return type `unknown` may return `any`, because callers have to check the value before they use it. A return type of `any` that you wrote yourself is allowed too:
+A function with the return type `unknown` can return `any`, because callers need to check the value before they use it. A return type of `any` that you wrote yourself is allowed too:
 
 {/* good */}
 ```ts

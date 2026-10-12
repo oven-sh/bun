@@ -12,12 +12,12 @@ typeAware: false
 deprecated: false
 ---
 
-A condition such as `age > 65 && age < 18` can never be true, so the code behind it never runs. It is usually a swapped operator, a swapped number, or a copy of a line that was not edited.
+A condition such as `age > 65 && age < 18` can never be true, so the code behind it never runs. It's usually a swapped operator, a swapped number, or a copied line that nobody edited.
 
 The rule reports:
 
-- Two comparisons of the same value with numbers, joined by `&&`, that cannot both be true: `age > 65 && age < 18`.
-- Two such comparisons where one already implies the other: `age > 18 && age > 65`.
+- Two comparisons of the same value with numbers, joined by `&&`, that can't both be true: `age > 65 && age < 18`.
+- Two comparisons like that where one already implies the other: `age > 18 && age > 65`.
 - A value compared with itself using `<`, `<=`, `>` or `>=`: `count < count`.
 - The same expression on both sides of `&&` or `||`: `isOpen && isOpen`, `a === b || b === a`.
 - An expression and its opposite: `isOpen && !isOpen`, `a === b || a !== b`.

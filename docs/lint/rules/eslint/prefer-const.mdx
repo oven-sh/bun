@@ -14,9 +14,9 @@ deprecated: false
 
 `let` tells the reader that the variable changes later. If it never does, `const` says so, and an assignment added by mistake becomes an error.
 
-A variable that is declared without a value and assigned exactly once, in the same block, is reported too: the declaration and the assignment can be one `const`.
+A variable that's declared without a value and assigned exactly once, in the same block, is reported too, because the declaration and the assignment can be one `const`.
 
-`--fix` changes `let` to `const` when every variable of the declaration has an initial value and can be `const`.
+`--fix` changes `let` to `const` when every variable in the declaration has an initial value and can be `const`.
 
 This rule is on by default in TypeScript files.
 
@@ -59,7 +59,7 @@ if (enabled) {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `destructuring` | `"any"` | `"any"` reports each variable of a destructuring that can be `const`. `"all"` reports only if all of them can. |
-| `ignoreReadBeforeAssign` | `false` | Ignore a variable that is read in code written above its only assignment. |
+| `ignoreReadBeforeAssign` | `false` | Ignore a variable that's read in code written above its only assignment. |
 
 Here `id` never changes but `name` does. By default `id` is reported:
 
@@ -69,7 +69,7 @@ let { id, name } = user;
 name = name.trim();
 ```
 
-With `"all"` it is not, because the declaration cannot become `const` as a whole:
+With `"all"` it isn't, because the whole declaration can't become `const`:
 
 {/* good {"options": [{"destructuring": "all"}]} */}
 ```js
@@ -77,7 +77,7 @@ let { id, name } = user;
 name = name.trim();
 ```
 
-`timer` is assigned once, so it is reported by default:
+`timer` is assigned once, so it's reported by default:
 
 {/* bad */}
 ```js
@@ -88,7 +88,7 @@ function stop() {
 timer = setTimeout(stop, 100);
 ```
 
-But `stop` reads `timer` above the line that assigns it, so the declaration cannot move down to the assignment. `ignoreReadBeforeAssign` allows this:
+But `stop` reads `timer` above the line that assigns it, so the declaration can't move down to the assignment. `ignoreReadBeforeAssign` allows this:
 
 {/* good {"options": [{"ignoreReadBeforeAssign": true}]} */}
 ```js

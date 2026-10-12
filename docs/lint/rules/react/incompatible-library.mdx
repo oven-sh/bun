@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-The React Compiler reuses a value from the last render as long as its inputs are the same. A few libraries return objects and functions that stay the same while the data behind them changes. Memoized, they would show stale data, so the compiler leaves every component and hook that calls one of them unoptimized. This rule tells you where that happens.
+The React Compiler reuses a value from the last render as long as its inputs are the same. A few libraries return objects and functions that stay the same while the data behind them changes. If they were memoized, they'd show stale data, so the compiler leaves every component and hook that calls one of them unoptimized. This rule tells you where that happens.
 
 | Package | What is reported |
 | --- | --- |
@@ -66,4 +66,4 @@ function Signup() {
 
 ## When not to use it
 
-If you do not build with the React Compiler, nothing is memoized for you and these APIs work as usual.
+If you don't build with the React Compiler, nothing is memoized for you and these APIs work as usual.

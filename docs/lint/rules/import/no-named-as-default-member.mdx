@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-After `import config from "./config"`, `config.load` is a property of the default export. It is not the named export `load` of the module. If the default export has no such property, you get `undefined`. If it has one, a named import says the same thing more directly and lets bundlers drop the exports you do not use.
+After `import config from "./config"`, `config.load` is a property of the default export. It isn't the module's named export `load`. If the default export doesn't have that property, you get `undefined`. If it does, a named import says the same thing more directly and lets bundlers drop the exports you don't use.
 
 The rule reads the imported module and reports `config.load` and `const { load } = config` if the module has a named export `load`.
 

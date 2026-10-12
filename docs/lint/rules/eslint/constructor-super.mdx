@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-In a class with `extends`, the constructor has to call `super()` before it uses `this` or returns. Without the call, `new` throws a `ReferenceError`. A second call throws too. These errors only show up when that path of the constructor runs.
+In a class with `extends`, the constructor must call `super()` before it uses `this` or returns. Without the call, `new` throws a `ReferenceError`. A second call throws too. These errors only show up when that path through the constructor runs.
 
-The rule follows every path through the constructor. It reports a path that has no `super()`, a path that calls it twice, and a `super()` in a class that extends something that cannot be a constructor, such as `null`.
+The rule follows every path through the constructor. It reports a path that has no `super()`, a path that calls it twice, and a `super()` in a class that extends something that can't be a constructor, such as `null`.
 
-This rule is on by default in JavaScript files. It is off in TypeScript files, where TypeScript reports a missing `super()` itself.
+This rule is on by default in JavaScript files. It's off in TypeScript files, where TypeScript already reports a missing `super()`.
 
 ## Examples
 

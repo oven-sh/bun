@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`EventEmitter` comes from `node:events`, so code that uses it needs a polyfill to run in a browser. `EventTarget` is a global in browsers, Bun, Node.js and Deno. It needs no import and adds nothing to a bundle.
+`EventEmitter` comes from `node:events`, so code that uses it needs a polyfill to run in a browser. `EventTarget` is a global in browsers, Bun, Node.js and Deno. It doesn't need an import and adds nothing to a bundle.
 
-The rule goes by the name: it reports `new EventEmitter()` and `extends EventEmitter`. An `EventEmitter` that comes from `eventemitter3` or `@angular/core` is not reported.
+The rule goes by the name, so it reports `new EventEmitter()` and `extends EventEmitter`. An `EventEmitter` that comes from `eventemitter3` or `@angular/core` isn't reported.
 
 ## Examples
 
@@ -49,4 +49,4 @@ const bus = new EventEmitter();
 
 ## When not to use it
 
-The two are not drop-in replacements. `emit()` passes any arguments to the listeners, and `dispatchEvent()` passes one `Event` object. For code that only runs in Bun or Node.js, `EventEmitter` is fine.
+The two aren't drop-in replacements. `emit()` passes any arguments to the listeners, and `dispatchEvent()` passes one `Event` object. For code that only runs in Bun or Node.js, `EventEmitter` is fine.

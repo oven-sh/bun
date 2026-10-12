@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Two overloads that return the same type and differ in one parameter say the same as one signature with a union type or an optional parameter. The overloads are longer, and they are also stricter than they look: a caller that has a `string | number` matches neither `(id: string)` nor `(id: number)`.
+Two overloads that return the same type and differ in one parameter say the same thing as one signature with a union type or an optional parameter. The overloads are longer, and they're also stricter than they look. A caller that has a `string | number` matches neither `(id: string)` nor `(id: number)`.
 
-Overloads that return different types are not reported.
+Overloads that return different types aren't reported.
 
 ## Examples
 
@@ -52,10 +52,10 @@ interface Parser {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreDifferentlyNamedParameters` | `false` | Do not report overloads where the parameters at the same position have different names. |
-| `ignoreOverloadsWithDifferentJSDoc` | `false` | Do not report overloads that have different `/** */` comments. |
+| `ignoreDifferentlyNamedParameters` | `false` | Don't report overloads where the parameters at the same position have different names. |
+| `ignoreOverloadsWithDifferentJSDoc` | `false` | Don't report overloads that have different `/** */` comments. |
 
-Different names often mean different things, which one signature cannot say. Not reported with `ignoreDifferentlyNamedParameters`:
+Different names often mean different things, which one signature can't say. Not reported with `ignoreDifferentlyNamedParameters`:
 
 {/* good {"options": [{"ignoreDifferentlyNamedParameters": true}]} */}
 ```ts

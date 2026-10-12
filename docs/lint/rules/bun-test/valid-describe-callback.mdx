@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`bun test` runs the callback of `describe` to collect the tests inside it. Without a callback there is nothing to collect. The callback is not a test, so it has no `done` to call.
+`bun test` runs the `describe` callback to collect the tests inside it. Without a callback there's nothing to collect. The callback isn't a test, so it has no `done` to call.
 
 This rule is on by default in files that import from `"bun:test"`.
 
@@ -62,7 +62,7 @@ describe("checkout", async () => {
 });
 ```
 
-`describe.todo` and `describe.skip` need only a title. A callback passed by name is assumed to be a function:
+`describe.todo` and `describe.skip` only need a title. A callback passed by name is assumed to be a function:
 
 {/* good */}
 ```ts
@@ -75,7 +75,7 @@ describe.skip("exports");
 describe("cart", cartTests);
 ```
 
-The callback of `describe.each` gets the values of a row, so it can have parameters:
+The `describe.each` callback gets a row's values, so it can have parameters:
 
 {/* good */}
 ```ts

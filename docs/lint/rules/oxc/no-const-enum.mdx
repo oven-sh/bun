@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-A `const enum` does not exist at runtime. TypeScript replaces each use with the member's value, and for that it has to read the file that declares the enum. A tool that compiles one file at a time cannot do that for an imported enum. If the enum is in a published `.d.ts` file, its values are copied into every package compiled against it, and they go stale when the enum changes.
+A `const enum` doesn't exist at runtime. TypeScript replaces each use with the member's value, and to do that it has to read the file that declares the enum. A tool that compiles one file at a time can't do that for an imported enum. If the enum is in a published `.d.ts` file, its values are copied into every package compiled against it, and they go stale when the enum changes.
 
 `--fix` removes `const`, which makes it a regular enum.
 

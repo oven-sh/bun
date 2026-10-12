@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Callbacks inside callbacks push the code to the right, and each level needs its own error handling. This rule reports a callback that is nested deeper than the maximum, which is 10 by default.
+Callbacks inside callbacks push the code to the right, and each level needs its own error handling. This rule reports any callback nested deeper than the maximum, which is 10 by default.
 
-A callback is a function expression or an arrow function that is passed as an argument to a call.
+A callback is a function expression or an arrow function that's passed as an argument to a call.
 
 ## Examples
 
@@ -50,12 +50,12 @@ max-nested-callbacks = ["error", 3]
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `max` | `10` | The deepest level that is allowed. `maximum` is an older name for it. |
-| `checkConstructorCallCallbacks` | `false` | Also count a function that is passed to `new`, as in `new Promise(() => {})`. |
+| `max` | `10` | The deepest level allowed. `maximum` is an older name for it. |
+| `checkConstructorCallCallbacks` | `false` | Also count a function passed to `new`, as in `new Promise(() => {})`. |
 
 A number alone is short for `{ "max": number }`.
 
-By default the function passed to `new Promise` is not a level:
+By default the function passed to `new Promise` doesn't count as a level:
 
 {/* good {"options": [1]} */}
 ```js
@@ -66,7 +66,7 @@ button.addEventListener("click", () => {
 });
 ```
 
-With `checkConstructorCallCallbacks` it is the second level:
+With `checkConstructorCallCallbacks` it's the second level:
 
 {/* bad {"options": [{"max": 1, "checkConstructorCallCallbacks": true}]} */}
 ```js

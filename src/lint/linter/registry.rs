@@ -53,33 +53,33 @@ impl NativePlugins {
     }
 }
 
-/// With which configurations a rule here can be named.
+/// The kinds of config a built-in rule is available with.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Modes {
-    /// Where neither ESLint nor oxlint has a configuration.
+    /// No ESLint or oxlint config.
     pub native: bool,
     pub eslint: bool,
     pub oxlint: bool,
 }
 
-/// [`Registry::names_of`]
+/// Returned by [`Registry::names_of`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Names {
-    /// What reports call the rule, but for the formats of oxlint.
+    /// The ID that reports print, except in oxlint's output formats.
     pub id: Vec<u8>,
-    /// What else a configuration or a comment can call it where neither ESLint nor oxlint has a configuration.
+    /// Other names that work in bunfig.toml and in comments when there's no ESLint or oxlint config.
     pub aliases: Vec<Vec<u8>>,
     pub modes: Modes,
 }
 
-/// [`Registry::why_missing`]
+/// Returned by [`Registry::why_missing`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Missing {
-    /// It is about the layout of the code, which is left to `bun format`.
+    /// A formatting rule. `bun format` handles those.
     Formatting,
-    /// It is of a plugin [none of whose rules is here](Plugin::has_no_rules).
+    /// The plugin is known, but [none of its rules are built in](Plugin::has_no_rules).
     OfPluginWithoutRules(Plugin),
-    /// Nobody has such a rule. The name of a rule that is close to it, if one is.
+    /// No such rule. Holds the closest rule name, if any is close enough.
     Unknown(Option<Vec<u8>>),
 }
 
@@ -384,16 +384,33 @@ impl Registry {
         self.get_preferring(plugin?, name, prefers_typescript)
     }
 
-    /// The rule that `id` names where neither ESLint nor oxlint has a configuration: every rule here, by every
-    /// [spelling](Plugin::spellings) of its plugin. Of the rule of a plugin for ESLint and oxlint's of the same name, the first.
+    /// Looks up `id` when there's no ESLint or oxlint config. Finds every built-in rule under every
+    /// [spelling](Plugin::spellings) of its plugin. If an ESLint plugin and oxlint both have the rule, the plugin's version wins.
     pub fn find_by_any_name(&self, id: &[u8]) -> Option<&'static RuleEntry> {
         let (prefix, name) = parse_rule_id(id);
         let found = Plugin::spelled(prefix).filter_map(|it| self.get(it, name));
         found.min_by_key(|it| it.meta.follows_oxlint)
     }
 
-    /// What the rule is called that `meta` is of, or that stands in its place where [any name](Registry::find_by_any_name)
-    /// counts.
+    /// If `meta` is a core rule with a typescript-eslint version, or that version, returns both (core rule first). Without an
+    /// ESLint or oxlint config they act as one rule. The core rule runs on JavaScript and the other on TypeScript.
+    pub fn pair_of(&self, meta: &Meta) -> Option<(&'static RuleEntry, &'static RuleEntry)> {
+        let base_of = |it: &Meta| it.extends_base_rule.unwrap_or(it.name);
+        let mut of_typescript = self.rules.iter().copied();
+        let mut of_typescript = of_typescript
+            .by_ref()
+            .filter(|it| it.meta.plugin == Plugin::TypeScript);
+        let extension = match meta.plugin {
+            Plugin::TypeScript => of_typescript.find(|it| it.meta.name == meta.name),
+            Plugin::Eslint => of_typescript.find(|it| base_of(it.meta) == meta.name),
+            _ => None,
+        }?;
+        let base = self.get(Plugin::Eslint, base_of(extension.meta).as_bytes())?;
+        Some((base, extension))
+    }
+
+    /// Returns the names of `meta`'s rule. If [`Registry::find_by_any_name`] prefers another version of the rule, returns
+    /// that version's names.
     pub fn names_of(&self, meta: &Meta) -> Names {
         let own = written(meta.plugin.prefix(), meta.name);
         let meta = self.find_by_any_name(&own).map_or(meta, |it| it.meta);
@@ -411,7 +428,7 @@ impl Registry {
         }
     }
 
-    /// Why [`Registry::find_by_any_name`] finds no `id`.
+    /// Explains why [`Registry::find_by_any_name`] didn't find `id`.
     pub fn why_missing(&self, id: &[u8]) -> Missing {
         let (prefix, name) = parse_rule_id(id);
         let of_eslint = if prefix == b"eslint" { name } else { id };
@@ -421,8 +438,8 @@ impl Registry {
         if let Some(plugin) = Plugin::spelled(prefix).find(|it| it.has_no_rules()) {
             return Missing::OfPluginWithoutRules(plugin);
         }
-        // The name has to be close. The plugin is as it is written if that is close to a spelling of it. Else, if the name is
-        // right or no plugin is written, as reports have it.
+        // The rule name has to be close. Keep the user's plugin prefix if it's close to a real spelling. Otherwise, if the name
+        // matches exactly or no prefix was typed, suggest the ID that reports print.
         let distance = |a: &[u8], b: &str| strings::edit_distance(a.iter().copied(), b.as_bytes());
         let is_close = |distance: usize, written: &[u8]| distance <= written.len().max(3) / 3;
         let close = self.rules.iter().flat_map(|it| {

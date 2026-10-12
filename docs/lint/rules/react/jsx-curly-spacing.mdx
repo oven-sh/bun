@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`value={ name }` and `value={name}` mean the same thing. A codebase that mixes them is harder to scan and gets whitespace-only diffs. By default the rule allows no space inside the braces of a prop or a spread. It does not check children.
+`value={ name }` and `value={name}` mean the same thing. A codebase that mixes them is harder to scan and gets whitespace-only diffs. By default the rule doesn't allow spaces inside the braces of a prop or a spread. It doesn't check children.
 
 `--fix` adds or removes the spaces.
 
@@ -40,7 +40,7 @@ The option is `"never"` (default), `"always"`, or an object:
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `when` | `"never"` | `"never"` allows no space inside the braces. `"always"` requires one on each side. |
+| `when` | `"never"` | `"never"` doesn't allow spaces inside the braces. `"always"` requires one on each side. |
 | `allowMultiline` | `true` | Allow a line break right after `{` and right before `}`. |
 | `spacing.objectLiterals` | same as `when` | `"always"` or `"never"` for braces that hold an object literal, as in `style={{ color }}`. |
 | `attributes` | `true` | Check props and spreads. `false` turns that off. An object with the three options above applies to props only. |

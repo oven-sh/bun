@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-`!` binds tighter than `in` and `instanceof`. So `!key in cache` means `(!key) in cache`, which asks if `cache` has a property called `"true"` or `"false"`. And `!error instanceof TypeError` is always `false`, because a boolean is not an instance of anything.
+`!` binds tighter than `in` and `instanceof`. So `!key in cache` means `(!key) in cache`, which asks if `cache` has a property called `"true"` or `"false"`. And `!error instanceof TypeError` is always `false`, because a boolean isn't an instance of anything.
 
-The rule cannot tell which meaning you want, so it suggests both: negate the whole expression, or put the negation in parentheses.
+The rule can't tell which meaning you want, so it suggests both: negate the whole expression, or put the negation in parentheses.
 
-This rule is on by default in JavaScript files. It is off in TypeScript files, where the type checker reports the same thing.
+This rule is on by default in JavaScript files. It's off in TypeScript files, where the type checker reports the same thing.
 
 ## Examples
 

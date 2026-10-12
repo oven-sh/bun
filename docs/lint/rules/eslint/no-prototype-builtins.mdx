@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`data.hasOwnProperty("id")` only works if `data` inherits the method and has no property of its own with that name. An object made with `Object.create(null)` does not inherit it, so the call throws. An object parsed from JSON can have its own `hasOwnProperty` key, so whoever sends the input can make the call throw too.
+`data.hasOwnProperty("id")` only works if `data` inherits the method and doesn't define a property with that name itself. An object made with `Object.create(null)` doesn't inherit it, so the call throws. An object parsed from JSON can have its own `hasOwnProperty` key, so anyone who sends the input can make the call throw too.
 
 The rule reports calls to `hasOwnProperty`, `isPrototypeOf` and `propertyIsEnumerable`. Use `Object.hasOwn()`, or call the method from `Object.prototype`.
 

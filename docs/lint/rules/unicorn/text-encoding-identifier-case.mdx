@@ -16,7 +16,7 @@ deprecated: false
 
 In three places it wants `"utf-8"`, the name the web standards use: `new TextDecoder("utf-8")`, `<meta charset="utf-8" />` and `<form acceptCharset="utf-8">`.
 
-The rule reports any string that is exactly one of these names, wherever it is, and JSX text such as `<span>UTF-8</span>`. Template literals are not checked.
+The rule reports any string that's exactly one of these names, wherever it appears, and JSX text such as `<span>UTF-8</span>`. Template literals aren't checked.
 
 `--fix` rewrites the string.
 

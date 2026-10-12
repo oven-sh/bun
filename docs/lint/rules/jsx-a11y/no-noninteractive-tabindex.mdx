@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Every element with `tabIndex={0}` is one more stop for the Tab key, and a keyboard user expects to be able to do something at each stop. A stop on plain content makes the way to the real controls longer, and there is nothing to do there.
+Every element with `tabIndex={0}` is one more stop for the Tab key, and a keyboard user expects to be able to do something at each stop. A stop on plain content gives them nothing to do and puts the real controls further away.
 
-`tabIndex={-1}` is not reported: it lets your code call `focus()` on the element and does not add a stop. Interactive elements, and elements with an interactive role such as `button`, may have any `tabIndex`. Components are not checked.
+`tabIndex={-1}` isn't reported, because it lets your code call `focus()` on the element without adding a stop. Interactive elements, and elements with an interactive role such as `button`, can have any `tabIndex`. Components aren't checked.
 
 ## Examples
 
@@ -39,8 +39,8 @@ const toggle = <div role="button" tabIndex={0} onClick={expand} />;
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `tags` | `[]` | Elements that may have a `tabIndex`. |
-| `roles` | `["tabpanel"]` | Non-interactive roles that may have a `tabIndex`. Your list replaces the default. |
+| `tags` | `[]` | Elements that can have a `tabIndex`. |
+| `roles` | `["tabpanel"]` | Non-interactive roles that can have a `tabIndex`. Your list replaces the default. |
 | `allowExpressionValues` | `true` | Allow a `tabIndex` or a `role` that is only known at run time, such as a variable. |
 
 {/* good {"options": [{"tags": ["pre"]}]} */}
@@ -74,7 +74,7 @@ const next = <button tabIndex={rowTabIndex} />;
 const cell = <Cell tabIndex={rowTabIndex} />;
 ```
 
-A conditional does not count as unknown. The rule looks at its first branch:
+A conditional doesn't count as unknown. The rule looks at its first branch:
 
 {/* bad */}
 ```jsx

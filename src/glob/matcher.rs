@@ -94,14 +94,16 @@ impl State {
     }
 
     #[inline(always)]
-    fn skip_to_separator(&mut self, path: &[u8], is_end_invalid: bool) {
+    fn skip_to_separator<const WINDOWS: bool>(&mut self, path: &[u8], is_end_invalid: bool) {
         if self.path_index as usize == path.len() {
             self.wildcard.path_index += 1;
             return;
         }
 
         let mut path_index = self.path_index;
-        while (path_index as usize) < path.len() && !is_separator(path[path_index as usize]) {
+        while (path_index as usize) < path.len()
+            && !is_separator::<WINDOWS>(path[path_index as usize])
+        {
             path_index += 1;
         }
 
@@ -152,7 +154,13 @@ struct Wildcard {
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.arena()
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_with::<false>(glob, path)
+    match_on::<{ cfg!(windows) }>(glob, path)
+}
+
+/// [`match`](r#match) for a path of the system that is named, whichever system this is. `WINDOWS`: `\` separates the segments of
+/// `path` too. Without it only `/` does: for what is no path of a file, and for a path that has been written with `/`.
+pub fn match_on<const WINDOWS: bool>(glob: &[u8], path: &[u8]) -> MatchResult {
+    match_as::<false, WINDOWS>(glob, path, false)
 }
 
 /// [`match`](r#match), and with `EXTGLOB` these too:
@@ -182,17 +190,23 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 /// Where an alternative starts and where a group has ended, the rest of the
 /// pattern is matched once for a position in the path. With `k` of `(`, `|`,
 /// `)`, `{`, `,`, `}` that takes `O(k * glob.len() * path.len()^2)` time.
+///
+/// Only `/` separates the segments of `path`, on every system.
 pub fn match_with<const EXTGLOB: bool>(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_as::<EXTGLOB>(glob, path, false)
+    match_as::<EXTGLOB, false>(glob, path, false)
 }
 
 /// [`match_with`] with `EXTGLOB`, where only a `.` in the pattern matches the `.`
 /// that a name of the path starts with: not "*", "?", "[.]", "**" or "!(a)".
 pub fn match_without_dot(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_as::<true>(glob, path, true)
+    match_as::<true, false>(glob, path, true)
 }
 
-fn match_as<const EXTGLOB: bool>(glob: &[u8], path: &[u8], hides_dots: bool) -> MatchResult {
+fn match_as<const EXTGLOB: bool, const WINDOWS: bool>(
+    glob: &[u8],
+    path: &[u8],
+    hides_dots: bool,
+) -> MatchResult {
     let mut state = State {
         glob_index: negations(glob, EXTGLOB) as u32,
         ..State::default()
@@ -208,7 +222,7 @@ fn match_as<const EXTGLOB: bool>(glob: &[u8], path: &[u8], hides_dots: bool) -> 
     // glob_start must point past the consumed `!` prefix so that a pattern-initial
     // `**` is still recognized as being at the start of a path segment.
     let glob_start = state.glob_index;
-    let matched = glob_match_impl::<EXTGLOB>(
+    let matched = glob_match_impl::<EXTGLOB, WINDOWS>(
         &mut state,
         glob,
         glob_start,
@@ -228,7 +242,7 @@ fn match_as<const EXTGLOB: bool>(glob: &[u8], path: &[u8], hides_dots: bool) -> 
 // `glob_start` is the index where the glob pattern starts
 #[inline(always)]
 // PERF: `inline(always)` on a fn that recurses through match_brace_branch — profile if hot.
-fn glob_match_impl<const EXTGLOB: bool>(
+fn glob_match_impl<const EXTGLOB: bool, const WINDOWS: bool>(
     state: &mut State,
     glob: &[u8],
     glob_start: u32,
@@ -310,7 +324,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
                                         break 'fallthrough;
                                     }
                                     let rest = path.get(at as usize..).unwrap_or_default();
-                                    match rest.iter().position(|it| is_separator(*it)) {
+                                    match rest.iter().position(|it| is_separator::<WINDOWS>(*it)) {
                                         Some(separator) => at += separator as u32 + 1,
                                         None => break 'fallthrough,
                                     }
@@ -340,7 +354,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
                                 if is_end_invalid
                                     && state.path_index as usize == path.len()
                                     && glob.len() - state.glob_index as usize == 2
-                                    && is_separator(glob[state.glob_index as usize])
+                                    && is_separator::<WINDOWS>(glob[state.glob_index as usize])
                                     && glob[state.glob_index as usize + 1] == b'*'
                                 {
                                     continue 'main_loop;
@@ -358,7 +372,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
                                     }
 
                                     // skip to separator
-                                    state.skip_to_separator(path, is_end_invalid);
+                                    state.skip_to_separator::<WINDOWS>(path, is_end_invalid);
                                     in_globstar = true;
                                     if is_hidden {
                                         state.wildcard.path_index = 0;
@@ -376,7 +390,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
 
                             if !in_globstar
                                 && (state.path_index as usize) < path.len()
-                                && is_separator(path[state.path_index as usize])
+                                && is_separator::<WINDOWS>(path[state.path_index as usize])
                             {
                                 state.wildcard = state.globstar;
                             }
@@ -385,7 +399,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
                         }
                         b'?' => {
                             if (state.path_index as usize) < path.len() {
-                                if !is_separator(path[state.path_index as usize]) {
+                                if !is_separator::<WINDOWS>(path[state.path_index as usize]) {
                                     state.glob_index += 1;
                                     state.path_index +=
                                         u32::from(rune_len_at(path, state.path_index as usize));
@@ -488,7 +502,13 @@ fn glob_match_impl<const EXTGLOB: bool>(
                                     continue 'main_loop;
                                 }
                             }
-                            return match_brace(state, glob, path, brace_stack, brace_budget);
+                            return match_brace::<WINDOWS>(
+                                state,
+                                glob,
+                                path,
+                                brace_stack,
+                                brace_budget,
+                            );
                         }
                         b',' | b'}' if !EXTGLOB => {
                             if state.brace_depth > 0 && skip_branch(state, glob, brace_stack) {
@@ -508,7 +528,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
                     let cc_len = strings::wtf8_byte_sequence_length(cc);
 
                     let is_match = if cc == b'/' {
-                        is_separator(path[state.path_index as usize])
+                        is_separator::<WINDOWS>(path[state.path_index as usize])
                     } else if cc_len > 1 {
                         let pi = state.path_index as usize;
                         let gi = state.glob_index as usize;
@@ -545,7 +565,7 @@ fn glob_match_impl<const EXTGLOB: bool>(
     true
 }
 
-fn match_brace(
+fn match_brace<const WINDOWS: bool>(
     state: &mut State,
     glob: &[u8],
     path: &[u8],
@@ -574,7 +594,7 @@ fn match_brace(
                 if !in_brackets {
                     brace_depth -= 1;
                     if brace_depth == 0 {
-                        if match_brace_branch(
+                        if match_brace_branch::<WINDOWS>(
                             state,
                             glob,
                             path,
@@ -595,7 +615,7 @@ fn match_brace(
                 // not a branch separator — same `!in_brackets` guard as the
                 // `{`/`}` arms above.
                 if brace_depth == 1 && !in_brackets {
-                    if match_brace_branch(
+                    if match_brace_branch::<WINDOWS>(
                         state,
                         glob,
                         path,
@@ -625,7 +645,7 @@ fn match_brace(
     false
 }
 
-fn match_brace_branch(
+fn match_brace_branch<const WINDOWS: bool>(
     state: &mut State,
     glob: &[u8],
     path: &[u8],
@@ -654,7 +674,7 @@ fn match_brace_branch(
     branch_state.glob_index = branch_index;
     branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
 
-    let matched = glob_match_impl::<false>(
+    let matched = glob_match_impl::<false, WINDOWS>(
         &mut branch_state,
         glob,
         branch_index,
@@ -783,7 +803,7 @@ pub(crate) fn token_at(glob: &[u8], at: usize, shape: &Shape) -> (Token, usize) 
 }
 
 /// Where the class that starts at `open` ends.
-pub(crate) fn class_end(glob: &[u8], open: usize) -> Option<usize> {
+pub fn class_end(glob: &[u8], open: usize) -> Option<usize> {
     let mut at = open + 1;
     at += usize::from(matches!(glob.get(at), Some(b'^' | b'!')));
     let character = |at: usize| {
@@ -863,7 +883,7 @@ struct Groups {
 #[inline(always)]
 fn is_hidden_name_at(path: &[u8], index: u32) -> bool {
     let index = index as usize;
-    path.get(index) == Some(&b'.') && (index == 0 || is_separator(path[index - 1]))
+    path.get(index) == Some(&b'.') && (index == 0 || is_separator::<false>(path[index - 1]))
 }
 
 /// Whether a name of `glob`, or the part of it that starts at `glob_start`, starts at `index`.
@@ -918,7 +938,7 @@ fn enter(
         path_index,
         ..State::default()
     };
-    glob_match_impl::<true>(
+    glob_match_impl::<true, false>(
         &mut state,
         glob,
         glob_start,
@@ -1043,7 +1063,7 @@ impl<'g> Group<'g> {
             if self.rest(glob, path, end, is_idle && end == path_index, groups) {
                 return true;
             }
-            if end as usize >= path.len() || is_separator(path[end as usize]) {
+            if end as usize >= path.len() || is_separator::<false>(path[end as usize]) {
                 return false;
             }
             end += u32::from(rune_len_at(path, end as usize));
@@ -1071,9 +1091,9 @@ impl<'g> Group<'g> {
             return true;
         }
         // The longest first: `12` of `{1..20}` before `1`.
-        let longest = match sequence.is_of_letters {
-            true => rest.len().min(1),
-            false => {
+        let longest = match sequence.of {
+            SequenceOf::Letters => rest.len().min(1),
+            SequenceOf::Numbers { .. } => {
                 let sign = usize::from(rest.first() == Some(&b'-'));
                 sign + rest[sign..]
                     .iter()
@@ -1127,9 +1147,15 @@ struct Sequence {
     to: i64,
     /// At least 1.
     step: i64,
-    /// How long each is at least, with zeros in front, if one of the two ends is written with a zero in front. Else 0.
-    width: usize,
-    is_of_letters: bool,
+    of: SequenceOf,
+}
+
+enum SequenceOf {
+    Letters,
+    /// `width`: how long each is at least, with zeros in front, if one of the two ends is written with a zero in front. Else 0.
+    Numbers {
+        width: usize,
+    },
 }
 
 impl Sequence {
@@ -1159,19 +1185,19 @@ impl Sequence {
                     from: i64::from(*from),
                     to: i64::from(*to),
                     step,
-                    width: 0,
-                    is_of_letters: true,
+                    of: SequenceOf::Letters,
                 })
             }
             _ => Some(Sequence {
                 from: number(from)?,
                 to: number(to)?,
                 step,
-                width: match is_padded(from) || is_padded(to) {
-                    true => from.len().max(to.len()),
-                    false => 0,
+                of: SequenceOf::Numbers {
+                    width: match is_padded(from) || is_padded(to) {
+                        true => from.len().max(to.len()),
+                        false => 0,
+                    },
                 },
-                is_of_letters: false,
             }),
         }
     }
@@ -1183,20 +1209,19 @@ impl Sequence {
 
     /// In place of a `\\` there is nothing.
     fn has_nothing(&self) -> bool {
-        self.is_of_letters && self.has_value(i64::from(b'\\'))
+        matches!(self.of, SequenceOf::Letters) && self.has_value(i64::from(b'\\'))
     }
 
     /// Whether `text`, a letter or a number, is one of them, written as it is written then.
     fn has(&self, text: &[u8]) -> bool {
-        if self.is_of_letters {
+        let SequenceOf::Numbers { width } = self.of else {
             return text[0] != b'\\' && self.has_value(i64::from(text[0]));
-        }
+        };
         let digits = text.strip_prefix(b"-").unwrap_or(text);
-        let zeros = digits
-            .iter()
-            .take_while(|it| **it == b'0')
-            .count()
-            .min(digits.len() - 1);
+        if digits.is_empty() {
+            return false;
+        }
+        let zeros = (digits.iter().take_while(|it| **it == b'0').count()).min(digits.len() - 1);
         let Some(value) = std::str::from_utf8(text)
             .ok()
             .and_then(|it| it.parse::<i64>().ok())
@@ -1206,8 +1231,8 @@ impl Sequence {
         self.has_value(value)
             && !(value == 0 && digits.len() < text.len())
             && match zeros {
-                0 => text.len() >= self.width,
-                _ => text.len() == self.width,
+                0 => text.len() >= width,
+                _ => text.len() == width,
             }
     }
 }
@@ -1302,7 +1327,11 @@ impl Shape {
     }
 }
 
-use bun_paths::is_sep_native as is_separator;
+/// Whether `c` separates the segments of a path.
+#[inline(always)]
+fn is_separator<const WINDOWS: bool>(c: u8) -> bool {
+    c == b'/' || WINDOWS && c == b'\\'
+}
 
 #[inline(always)]
 fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {

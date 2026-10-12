@@ -14,7 +14,7 @@ deprecated: false
 
 `slice`, `at`, `splice`, `toSpliced` and `subarray` count a negative index from the end, so `items.slice(items.length - 2)` can be `items.slice(-2)`.
 
-The rule only looks at the index arguments: the first two of `slice` and `subarray`, the first of the others.
+The rule only looks at the index arguments. That's the first two for `slice` and `subarray`, and the first for the others.
 
 `--fix` removes the `.length` part.
 
@@ -40,7 +40,7 @@ queue.splice(-1, 1);
 const rest = Array.prototype.slice.call(list, -2);
 ```
 
-The length has to be that of the same object, minus a number literal. Bracket access is not reported, because `items[-1]` is `undefined`:
+The length must come from the same object, minus a number literal. Bracket access isn't reported, because `items[-1]` is `undefined`:
 
 {/* good */}
 ```js

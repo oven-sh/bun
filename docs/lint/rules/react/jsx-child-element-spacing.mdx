@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-JSX removes a line break between text and an element, together with the indentation around it. HTML would show a space there. So the first example below renders as "Read thedocs", and nothing in the code says whether that was meant.
+JSX removes a line break between text and an element, along with the indentation around it. HTML would show a space there. So the first example below renders as "Read thedocs", and nothing in the code says whether that was on purpose.
 
 The rule reports a line break between text and an inline element such as `a`, `b`, `code`, `em`, `span`, or `strong`.
 
@@ -54,7 +54,7 @@ const help = (
 const short = <p>Read the <a href="/docs">docs</a></p>;
 ```
 
-To say that you want no space, put a comment in between:
+To show that you don't want a space, put a comment in between:
 
 {/* good */}
 ```jsx
@@ -67,7 +67,7 @@ const price = (
 );
 ```
 
-Block elements, `br`, and your own components are not checked:
+The rule doesn't check block elements, `br`, or your own components:
 
 {/* good */}
 ```jsx

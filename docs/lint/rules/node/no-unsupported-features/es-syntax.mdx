@@ -12,15 +12,15 @@ typeAware: false
 deprecated: false
 ---
 
-Syntax that is newer than the oldest Node.js you support is a `SyntaxError` there: the file does not load at all. You only find out when somebody runs it on that version.
+Syntax that's newer than the oldest Node.js you support is a `SyntaxError` there, so the file doesn't load at all. You only find out when somebody runs it on that version.
 
 The rule takes the versions you support from `engines.node` in your `package.json`. If nothing sets a range, it assumes `>=16.0.0`. Every version in the range must have the feature.
 
-Besides syntax, it reports newer built-ins such as `Object.hasOwn`, and newer methods such as `.at()` where the code shows that they are called on an array or a string.
+Besides syntax, it reports newer built-ins such as `Object.hasOwn`, and newer methods such as `.at()` when the code shows they're called on an array or a string.
 
 ## Examples
 
-Reported, because Node.js has static blocks since 16.11.0 and the `v` flag since 20.0.0:
+Reported, because Node.js has had static blocks since 16.11.0 and the `v` flag since 20.0.0:
 
 {/* bad {"count": 2} */}
 ```js
@@ -65,7 +65,7 @@ class Cache {
 }
 ```
 
-A method is reported if the value is an array or a string in plain sight:
+A method is reported if the value is obviously an array or a string:
 
 {/* bad */}
 ```js

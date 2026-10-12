@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Elements such as `<li>`, `<p>`, `<img>`, `<h1>` and `<main>` describe content. A screen reader does not announce them as something to press, and the Tab key skips them, so a click handler on one of them only works with a mouse.
+Elements such as `<li>`, `<p>`, `<img>`, `<h1>` and `<main>` describe content. A screen reader doesn't announce them as something you can press, and the Tab key skips them, so a click handler on one only works with a mouse.
 
 An element with a non-interactive role, such as `<div role="article">`, is treated the same way. For `<div>` and `<span>` without a role, see `jsx-a11y/no-static-element-interactions`.
 
@@ -53,7 +53,7 @@ const option = <li role="option" tabIndex={0} onClick={() => select(user)} />;
 | `handlers` | mouse, drag and keyboard handlers, `onFocus`, `onBlur`, `onLoad`, `onError` | The handlers to report. Your list replaces the default. |
 | an element name | see below | Handlers that are allowed on that element. |
 
-By default `onLoad` and `onError` are allowed on `<body>`, `<iframe>` and `<img>`, and `onKeyUp`, `onKeyDown` and `onKeyPress` on `<dialog>`. As soon as you set any option these are gone, so repeat the ones you want to keep.
+By default `onLoad` and `onError` are allowed on `<body>`, `<iframe>` and `<img>`, and `onKeyUp`, `onKeyDown` and `onKeyPress` are allowed on `<dialog>`. Setting any option drops these defaults, so repeat the ones you want to keep.
 
 {/* good */}
 ```jsx

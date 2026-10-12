@@ -14,7 +14,7 @@ deprecated: true
 
 An interface with no members checks almost nothing. `interface Options {}` accepts every value except `null` and `undefined`, the same as `{}`. An empty interface that extends one other type is only a second name for that type.
 
-An empty interface that extends two or more types is not reported, because it combines them.
+An empty interface that extends two or more types isn't reported, because it combines them.
 
 `--fix` rewrites an empty interface that extends one type to a type alias.
 

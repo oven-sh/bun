@@ -14,7 +14,7 @@ deprecated: false
 
 A promise can reject with anything: an `Error`, a string, `undefined`. TypeScript still types the parameter of a `.catch()` callback as `any`, so `error.message` compiles, and then throws if the value is `undefined`. With `: unknown`, TypeScript makes you check what you got first.
 
-The second argument of `.then()` is checked too. TypeScript's `useUnknownInCatchVariables` does the same for `catch (error)` clauses, but it does not reach these callbacks.
+The second argument of `.then()` is checked too. TypeScript's `useUnknownInCatchVariables` does the same for `catch (error)` clauses, but it doesn't reach these callbacks.
 
 This rule needs type information. Run `bun lint --type-aware`.
 

@@ -14,7 +14,7 @@ deprecated: false
 
 You read a numbered group as `match[1]`, which says nothing about what it holds, and the number shifts when you add a group in front of it. You read a named group as `match.groups.year`, and that stays correct when the pattern changes.
 
-A group that is only there for grouping can be non-capturing: `(?:...)`.
+A group that's only there for grouping can be non-capturing: `(?:...)`.
 
 A constant string passed to `RegExp()` or `new RegExp()` is checked too. The report comes with two suggestions: name the group, or make it non-capturing.
 

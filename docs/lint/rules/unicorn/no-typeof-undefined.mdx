@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`typeof value === "undefined"` is a long way to write `value === undefined`. You only need `typeof` for a name that may not be declared at all, where reading it throws a `ReferenceError`. So a variable that is not declared in the file is not reported by default.
+`typeof value === "undefined"` is a long way to write `value === undefined`. You only need `typeof` for a name that may not be declared at all, where reading it throws a `ReferenceError`. That's why a variable that isn't declared in the file isn't reported by default.
 
-`--fix` rewrites the comparison to `=== undefined` or `!== undefined`. For a variable that is not declared in the file, only `--fix-suggestions` does.
+`--fix` rewrites the comparison to `=== undefined` or `!== undefined`. For a variable that isn't declared in the file, only `--fix-suggestions` does.
 
 ## Examples
 
@@ -49,7 +49,7 @@ const isServer = typeof window === "undefined";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `checkGlobalVariables` | `false` | Also report `typeof` on a variable that is not declared in the file. |
+| `checkGlobalVariables` | `false` | Also report `typeof` on a variable that isn't declared in the file. |
 
 {/* bad {"options": [{"checkGlobalVariables": true}]} */}
 ```js

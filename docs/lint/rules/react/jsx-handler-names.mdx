@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A common React convention: a prop that takes an event handler starts with `on`, and the function that handles the event starts with `handle`. The rule reports an `on` prop that gets a function with another name, and a `handle` function that is passed to a prop with another name. Passing a prop through, as in `onBlur={props.onBlur}`, is fine.
+In a common React convention, a prop that takes an event handler starts with `on`, and the function that handles the event starts with `handle`. The rule reports an `on` prop that gets a function with another name, and a `handle` function that's passed to a prop with another name. Passing a prop through, as in `onBlur={props.onBlur}`, is fine.
 
-By default only members such as `this.handleChange` are checked. Local variables and inline functions are not. `ref` is never checked.
+By default the rule only checks members such as `this.handleChange`. It skips local variables and inline functions, and it never checks `ref`.
 
 ## Examples
 
@@ -51,11 +51,11 @@ class Form extends React.Component {
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `eventHandlerPrefix` | `"handle"` | The prefix of a handler function. |
-| `eventHandlerPropPrefix` | `"on"` | The prefix of a prop that takes a handler. |
+| `eventHandlerPrefix` | `"handle"` | The prefix for a handler function. |
+| `eventHandlerPropPrefix` | `"on"` | The prefix for a prop that takes a handler. |
 | `checkLocalVariables` | `false` | Also check handlers that are plain variables, such as `onChange={updateName}`. |
 | `checkInlineFunction` | `false` | Also check the function that an arrow function calls, such as `onChange={() => this.updateName()}`. |
-| `ignoreComponentNames` | `[]` | Components that are not checked. A name can be a glob pattern. |
+| `ignoreComponentNames` | `[]` | Components to skip. A name can be a glob pattern. |
 
 Function components keep their handlers in local variables, so they need `checkLocalVariables`:
 

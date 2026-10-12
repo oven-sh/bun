@@ -12,11 +12,11 @@ typeAware: false
 deprecated: false
 ---
 
-The value a setter returns goes nowhere: `user.name = "Ada"` evaluates to `"Ada"` whatever the setter does. A `return value` in a setter is dead code, or a sign that the function was meant to be a getter or a method.
+The value a setter returns goes nowhere. `user.name = "Ada"` evaluates to `"Ada"` no matter what the setter does. A `return value` in a setter is dead code, or a sign that the function was meant to be a getter or a method.
 
 The rule checks `set` in classes and object literals, and the `set` function of a descriptor passed to `Object.defineProperty`, `Object.defineProperties`, `Object.create` or `Reflect.defineProperty`. A bare `return;` to leave early is fine.
 
-This rule is on by default in JavaScript files. In TypeScript files it is off by default, because TypeScript reports the same mistake.
+This rule is on by default in JavaScript files. In TypeScript files it's off by default, because TypeScript reports the same mistake.
 
 ## Examples
 

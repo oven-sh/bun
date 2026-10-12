@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`/// <reference path="..." />` and `/// <reference types="..." />` pull another file or a type package into the current file from a comment. A comment is easy to overlook, tools that follow imports do not see it, and it stays behind when the code that needed it is gone. Use an `import` instead.
+`/// <reference path="..." />` and `/// <reference types="..." />` pull another file or a type package into the current file from a comment. A comment is easy to overlook, tools that follow imports don't see it, and it stays behind when the code that needed it is gone. Use an `import` instead.
 
 By default `path` references are always reported, `types` references are reported if the file also imports the same module, and `lib` references are allowed.
 

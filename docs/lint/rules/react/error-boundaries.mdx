@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-`<Chart />` does not call `Chart`. It only describes what to render, and React calls the component later, after your function has returned. So if `Chart` throws while rendering, the `try` around the JSX is long over and its `catch` never runs.
+`<Chart />` doesn't call `Chart`. It only describes what to render, and React calls the component later, after your function has returned. So if `Chart` throws while rendering, the `try` around the JSX is long over and its `catch` never runs.
 
-To handle an error from rendering, wrap the component in an error boundary.
+To handle a rendering error, wrap the component in an error boundary.
 
 ## Examples
 

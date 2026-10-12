@@ -1,5 +1,5 @@
 use bun_core::strings;
-pub use bun_glob::ignore::{IgnoreOptions, IgnoreRules};
+pub use bun_lint::ignore::{IgnoreOptions, IgnoreRules};
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -219,7 +219,7 @@ impl Globs {
         };
         let mut result = GlobResult::None;
         for (is_negated, pattern) in &self.patterns {
-            if bun_glob::r#match(pattern, source).matches() {
+            if bun_glob::matcher::match_on::<false>(pattern, source).matches() {
                 result = if *is_negated { GlobResult::Whitelist } else { GlobResult::Found };
                 if *is_negated && self.is_each_a_group {
                     break;

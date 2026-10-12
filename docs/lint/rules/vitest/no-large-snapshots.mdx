@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-Nobody reads a snapshot of several hundred lines in a review. When it changes, it gets updated without a look, and then the test passes whatever the code does. A short snapshot, or an assertion on the few values that matter, still tells you something when it fails.
+Nobody reads a snapshot that's several hundred lines long in a review. When it changes, someone updates it without looking, and then the test passes no matter what the code does. A short snapshot, or an assertion on the few values that matter, still tells you something when it fails.
 
-The rule counts the lines of the first argument of `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`. The limit is 50 lines. A snapshot that comes after a property matcher is not counted.
+The rule counts the lines in the first argument of `toMatchInlineSnapshot` and `toThrowErrorMatchingInlineSnapshot`. The limit is 50 lines. A snapshot that comes after a property matcher isn't counted.
 
 ## Examples
 
@@ -56,7 +56,7 @@ test("loads the user", () => {
 | --- | --- | --- |
 | `inlineMaxSize` | the value of `maxSize` | The most lines an inline snapshot can have. |
 | `maxSize` | `50` | The most lines a snapshot in a `.snap` file can have. |
-| `allowedSnapshots` | `{}` | Snapshots in `.snap` files that can have any length. A key is the path of a `.snap` file. Its value is a list of snapshot names or regular expressions. |
+| `allowedSnapshots` | `{}` | Snapshots in `.snap` files that can have any length. Each key is the path to a `.snap` file, and its value is a list of snapshot names or regular expressions. |
 
 An oxlint config never lints `.snap` files. There, `maxSize` only sets the default for `inlineMaxSize`, and `allowedSnapshots` has no effect.
 

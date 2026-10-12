@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-The characters U+0000 to U+001F are invisible and rarely appear in text you want to match. In a regular expression, one is often a typo in an escape, such as `\x0C` where `\xC0` was meant.
+The characters U+0000 to U+001F are invisible and rarely appear in text you want to match. When one shows up in a regular expression, it's often a typo in an escape, such as `\x0C` where you meant `\xC0`.
 
 The rule reports a raw control character and the escapes `\x0A`, `\u000A` and, with the `u` or `v` flag, `\u{A}`. It checks regular expression literals and strings passed to `RegExp`. Named escapes such as `\t`, `\n` and `\cJ` are allowed.
 
@@ -52,7 +52,7 @@ const lineBreak = new RegExp("\\n");
 
 ## When not to use it
 
-Some formats are built on control characters. Terminal color codes start with `\x1B`, so a pattern that strips them has to contain it. Disable the rule for that line:
+Some formats are built on control characters. Terminal color codes start with `\x1B`, so a pattern that strips them needs to contain it. Disable the rule for that line:
 
 {/* good */}
 ```js

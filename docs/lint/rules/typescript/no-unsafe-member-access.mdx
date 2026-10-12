@@ -12,7 +12,7 @@ typeAware: true
 deprecated: false
 ---
 
-TypeScript does not check a property that you read from an `any` value. A typo in the name, or a missing object in the middle of a chain, only shows up when the code runs. The result is `any` again, so the code that uses it is not checked either.
+TypeScript doesn't check a property that you read from an `any` value. A typo in the name, or a missing object in the middle of a chain, only shows up when the code runs. The result is `any` again, so the code that uses it isn't checked either.
 
 In a chain such as `response.user.name`, only the first unsafe step is reported.
 

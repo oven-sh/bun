@@ -266,18 +266,18 @@ impl Plugin {
         }
     }
 
-    /// What can be before the `/` where neither ESLint nor oxlint has a configuration: every name that either has for the
-    /// plugin. The first is [`Plugin::prefix`].
+    /// Prefixes accepted for this plugin's rules when there's no ESLint or oxlint config. Includes every name that either
+    /// tool uses. The first one is [`Plugin::prefix`].
     pub const fn spellings(self) -> &'static [&'static str] {
         match self {
-            // oxlint has both names for the rules of both.
+            // oxlint accepts both prefixes for both plugins. Here `react-hooks/` only works for the hooks rules.
             Plugin::ReactHooks => &["react-hooks", "react_hooks", "react"],
             Plugin::React => &["react"],
             plugin => plugin.names().prefixes,
         }
     }
 
-    /// The plugins that have `prefix` among their [spellings](Plugin::spellings).
+    /// Plugins that accept `prefix` as one of their [spellings](Plugin::spellings).
     pub fn spelled(prefix: &[u8]) -> impl Iterator<Item = Plugin> {
         let has = move |it: &Plugin| it.spellings().iter().any(|it| it.as_bytes() == prefix);
         Plugin::ALL.iter().copied().filter(has)

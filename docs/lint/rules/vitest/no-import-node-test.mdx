@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`node:test` exports `test`, `describe` and `it` too, so an editor's auto-import can pick it by mistake. Vitest does not collect tests registered with `node:test`, and reports that the file has no tests.
+`node:test` exports `test`, `describe` and `it` too, so an editor's auto-import can pick it by mistake. Vitest doesn't collect tests registered with `node:test`, and reports that the file has no tests.
 
 `--fix-suggestions` changes the source to `"vitest"`.
 

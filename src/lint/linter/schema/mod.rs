@@ -131,14 +131,15 @@ pub(crate) fn with_defaults(meta: &'static Meta, options: &[Json]) -> Vec<Json> 
 /// Validates `options`, which are what follows the severity, as ESLint's `validateRulesConfig` does.
 /// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`.
 pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<u8>> {
-    // A rule of oxlint has no schema, and passes over what it does not know.
+    // Rules ported from oxlint have no schema. They ignore options they don't know.
     if meta.follows_oxlint {
         return Ok(());
     }
     validate_by_id(&RuleId::Known(meta).to_vec(), options)
 }
 
-/// What is wrong with `options`, which follow the severity, in words of our own. `rule`: what the user calls the rule.
+/// Validates `options` (without the severity) and describes the problem in Bun's own words. `rule` is the rule name as the
+/// user wrote it.
 pub fn mistake_in_options(
     meta: &'static Meta,
     rule: &[u8],
@@ -274,7 +275,7 @@ fn validate_with(
     Err(message)
 }
 
-/// The same. `Err`: the errors of Ajv.
+/// Same as [`validate_with`], but returns the raw Ajv errors.
 fn errors_of(
     schema: Option<&Json>,
     defaults: &[Json],

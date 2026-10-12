@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-A `role` only changes what a screen reader announces. An `<h2 role="button">` is announced as a button, but it cannot be reached with the Tab key, does not react to Enter or Space, and is no longer in the list of headings. Keep the element and put a real `<button>` or `<a>` inside or around it.
+A `role` only changes what a screen reader announces. An `<h2 role="button">` is announced as a button, but you can't reach it with the Tab key, it doesn't react to Enter or Space, and it's no longer in the list of headings. Keep the element and put a real `<button>` or `<a>` inside or around it.
 
-Non-interactive elements include headings, `<p>`, `<li>`, `<img>`, `<article>`, `<main>` and `<table>`. `<div>` and `<span>` have no meaning of their own and may take any role. Only a `role` written as a string is checked.
+Non-interactive elements include headings, `<p>`, `<li>`, `<img>`, `<article>`, `<main>` and `<table>`. `<div>` and `<span>` don't mean anything by themselves, so they can take any role. Only a `role` written as a string is checked.
 
 ## Examples
 
@@ -47,7 +47,7 @@ const custom = <div role="button" tabIndex={0} onClick={toggle} />;
 
 ## Options
 
-An object that maps an element to the roles it may have. The default allows lists to be menus, tabs and trees:
+The option is an object that maps an element to the roles it's allowed to have. The default lets lists be menus, tabs and trees:
 
 ```json
 {

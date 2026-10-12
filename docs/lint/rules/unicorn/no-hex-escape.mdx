@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-`"\x1B"` and `"\u001B"` are the same character written in two ways. `\x` only reaches the first 256 characters, so a project that uses it ends up with both forms, and a search for one misses the other. `\u` works for every character.
+`"\x1B"` and `"\u001B"` are the same character written two ways. `\x` only reaches the first 256 characters, so a project that uses it ends up with both forms, and a search for one misses the other. `\u` works for every character.
 
 The rule checks strings, template literals, and regular expressions.
 
@@ -38,7 +38,7 @@ const reset = `\u001B[0m`;
 const controlCharacters = /[\u0000-\u001F]/;
 ```
 
-In `String.raw` and after an escaped backslash, `\x` is plain text and not an escape:
+In `String.raw` and after an escaped backslash, `\x` is plain text, not an escape:
 
 {/* good */}
 ```js

@@ -49,8 +49,8 @@ fn run<'a>(possible_vitest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
     {
         let (matcher_name, value) = if value == "true" { ("not.toBeTruthy", "false") } else { ("not.toBeFalsy", "true") };
         let report = ctx.report(span, PREFER_STRICT_BOOLEAN_MATCHERS).data("value", value).data("matcher_name", matcher_name);
-        if strings::trim(ctx.file.slice(Span::new(not.span.end, matcher.span.start)), b" \t\r\n") == b"." {
-            ctx.risky_fix(report, USE, Span::new(not.span.start, span.end), format!("toBe({value})"));
+        if strings::trim(ctx.file.slice(not.span.between(matcher.span)), b" \t\r\n") == b"." {
+            ctx.risky_fix(report, USE, not.span.to(span), format!("toBe({value})"));
         }
         return;
     }

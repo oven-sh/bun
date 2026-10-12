@@ -12,11 +12,11 @@ typeAware: true
 deprecated: false
 ---
 
-A function that returns `void` has no result to use. Code like `const saved = save(user)` or `return log(error)` suggests that there is one, and the reader goes looking for a value that does not exist. A `void` call belongs on its own line.
+A function that returns `void` has no result to use. Code like `const saved = save(user)` or `return log(error)` suggests there is one, and the reader goes looking for a value that doesn't exist. A `void` call belongs on its own line.
 
 A `void` call is still fine on the right of `&&`, `||` and `??`, and in the branches of `? :`, if the whole expression is a statement.
 
-`--fix` adds braces to an arrow function, and takes the call out of a `return`. A `void` value that is assigned or passed on is reported but not fixed.
+`--fix` adds braces to an arrow function, and takes the call out of a `return`. A `void` value that's assigned or passed on is reported but not fixed.
 
 This rule needs type information. Run `bun lint --type-aware`.
 
@@ -61,7 +61,7 @@ function onError(error: Error) {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `ignoreArrowShorthand` | `false` | Allow `() => log()`, an arrow function without braces. |
-| `ignoreVoidOperator` | `false` | Allow a `void` expression anywhere if it is marked with the `void` operator. `--fix` then adds `void` in arrow functions and returns. |
+| `ignoreVoidOperator` | `false` | Allow a `void` expression anywhere if it's marked with the `void` operator. `--fix` then adds `void` in arrow functions and returns. |
 | `ignoreVoidReturningFunctions` | `false` | Allow returning a `void` expression from a function that returns `void` itself. |
 
 {/* good {"options": [{"ignoreArrowShorthand": true}]} */}

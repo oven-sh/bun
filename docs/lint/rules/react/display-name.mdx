@@ -12,9 +12,9 @@ typeAware: false
 deprecated: false
 ---
 
-React DevTools, warnings, and component stacks show a component by its name. A component without one shows up as `Anonymous` or `Unknown`, and you cannot tell which of them failed.
+React DevTools, warnings, and component stacks show a component by its name. A component without one shows up as `Anonymous` or `Unknown`, so you can't tell which one failed.
 
-React takes the name from the function or class, or from the variable it is assigned to. So the rule mostly reports anonymous functions that are exported directly or passed to `memo` or `forwardRef`. A `displayName` property also counts.
+React takes the name from the function or class, or from the variable it's assigned to. So the rule mostly reports anonymous functions that are exported directly or passed to `memo` or `forwardRef`. A `displayName` property also counts.
 
 ## Examples
 
@@ -57,7 +57,7 @@ Search.displayName = "Search";
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `ignoreTranspilerName` | `false` | Do not count the name of the function, class, or variable. Only an explicit `displayName` counts. |
+| `ignoreTranspilerName` | `false` | Don't count the name of the function, class, or variable. Only an explicit `displayName` counts. |
 | `checkContextObjects` | `false` | Also require a `displayName` on the result of `createContext()`. |
 
 {/* bad {"options": [{"ignoreTranspilerName": true}]} */}

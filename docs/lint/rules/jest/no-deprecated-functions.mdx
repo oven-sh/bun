@@ -12,7 +12,7 @@ typeAware: false
 deprecated: false
 ---
 
-Jest has renamed or moved some of its functions. The old names keep working for a while and are then removed, so a test that uses one breaks on a later upgrade.
+Jest has renamed or moved some of its functions. The old names keep working for a while and then get removed, so a test that uses one breaks on a later upgrade.
 
 `--fix` writes the new name.
 
@@ -57,7 +57,7 @@ The full list:
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `jest.version` | `"29"` | Your Jest version, as a string. A function is only reported from the version in the table above. |
+| `jest.version` | `"29"` | Your Jest version, as a string. A function is only reported starting from the version in the table above. |
 
 ```toml bunfig.toml
 [lint.rules]

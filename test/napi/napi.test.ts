@@ -419,7 +419,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe("napi_get_version / node_api_create_external_string_*", () => {
     async function externalStringLifetime(mode: string, route?: string) {
       await using child = spawn({
-        cmd: [bunExe(), join(__dirname, "napi-app/external-string-lifetime-fixture.mjs"), mode, ...(route ? [route] : [])],
+        cmd: [
+          bunExe(),
+          join(__dirname, "napi-app/external-string-lifetime-fixture.mjs"),
+          mode,
+          ...(route ? [route] : []),
+        ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",

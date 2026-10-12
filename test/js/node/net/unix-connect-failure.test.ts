@@ -166,9 +166,7 @@ describe("a unix socket connect that fails at connect(2)", () => {
     assert.deepStrictEqual(events, ["error ENOENT"]);
   });
 
-  // uv_pipe_connect2 has no EALREADY: a later connect() replaces the request, and the one callback is for the latest.
-  // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L334
-  // Only in Bun: Node.js keeps the request that was replaced active, and its process never exits.
+  // uv_pipe_connect2 has no EALREADY, a later connect() replaces the request: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L334
   describe("a second connect() before the first is reported", () => {
     async function secondConnect(first: "missing" | "live", second: "missing" | "live") {
       const dir = makeDir();
@@ -214,6 +212,7 @@ describe("a unix socket connect that fails at connect(2)", () => {
       }
     }
 
+    // Only in Bun: Node.js keeps the request that was replaced active, and its process never exits.
     bunTest("missing then missing: one error", async () => {
       assert.deepStrictEqual(await secondConnect("missing", "missing"), {
         events: ["error ENOENT", "close true"],
@@ -266,12 +265,18 @@ describe("a unix socket connect that fails at connect(2)", () => {
   });
 
   // Node's Pipe handle has no setTypeOfService: the socket keeps the value.
-  posixTest("setTypeOfService() keeps the value until the failure is reported", async () => {
+  posixTest("setTypeOfService() keeps the value, also in the listeners of the failure", async () => {
+    const seen: Record<string, number> = {};
     const socket = net.connect(path.join(makeDir(), "none.sock"));
-    socket.on("error", () => {});
-    const closed = closeOf(socket);
-    assert.strictEqual(socket.setTypeOfService(0x10).getTypeOfService(), 0x10);
-    await closed;
+    seen.returned = socket.setTypeOfService(0x10).getTypeOfService();
+    socket.on("connectionAttemptFailed", () => {
+      seen.connectionAttemptFailed = socket.setTypeOfService(0x20).getTypeOfService();
+    });
+    socket.on("error", () => {
+      seen.error = socket.setTypeOfService(0x30).getTypeOfService();
+    });
+    await closeOf(socket);
+    assert.deepStrictEqual(seen, { returned: 0x10, connectionAttemptFailed: 0x20, error: 0x30 });
   });
 
   posixTest("a redial from 'error' returns to the event loop", async () => {
@@ -346,8 +351,7 @@ describe("a unix socket connect that fails at connect(2)", () => {
       );
     });
 
-    // A write made before the socket is assigned is flushed into the socket
-    // while it still connects, and the socket fails it when the connect fails.
+    // A write made before the socket is assigned is flushed while the socket connects, and fails when the connect fails.
     for (const [name, file, request, options] of [
       ["http, agent: false", "none.sock", http.request, { agent: false }],
       ["http, default agent", "none.sock", http.request, {}],
@@ -400,8 +404,7 @@ describe("a unix socket connect that fails at connect(2)", () => {
     });
   });
 
-  // The agent dials again for the next queued request when a socket closes. A socket that
-  // fails inside connect() has no request yet: nothing heard its 'error' and the agent looped.
+  // When a socket closes, the agent dials again for the next queued request: a socket that fails inside connect() has none yet.
   posixTest("an agent at its socket limit fails every queued request once", async () => {
     const target = path.join(makeDir(), "none.sock");
     const agent = new http.Agent({ maxSockets: 1 });
@@ -498,8 +501,7 @@ if (harness) {
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {
-      // A direct run, not `node --test`: the runner mode forks a second node
-      // process per file. node:test still exits non-zero on any failure.
+      // A direct run: `node --test` forks a second process per file, and node:test exits non-zero on a failure anyway.
       await using proc = Bun.spawn({
         cmd: [node!, fileURLToPath(import.meta.url)],
         env: harness.bunEnv,

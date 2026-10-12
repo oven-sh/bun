@@ -300,7 +300,7 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
-// On the handle: the `data` of a pipe connect that failed at connect(2) and is not reported yet.
+// On the handle: the `data` of a pipe connect that failed at connect(2). A later dial replaces `handle.data`.
 const kFailedPipeConnect = Symbol("kFailedPipeConnect");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
@@ -1918,8 +1918,7 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
-  // libuv returns only a name it cannot express and queues a connect(2) error on the loop:
-  // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L343
+  // libuv queues a connect(2) error on the loop and returns only a name it cannot express: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L343
   if (errno === 0 || errno === uv().UV_EINVAL) return errno;
   const handle = self._handle;
   // A 'connectionAttempt' listener destroyed the socket.
@@ -1930,12 +1929,11 @@ function kConnectPipe(self, req, address) {
 }
 
 function afterPipeConnectFailed(self, handle, data, req, errno) {
-  if (handle[kFailedPipeConnect] === data) handle[kFailedPipeConnect] = undefined;
   // A destroy() or a later connect() ended this request, as uv_pipe_connect2 replaces connect_req.
   if (self._handle === handle && handle.data === data) req.oncomplete(errno, handle, req, true, true);
 }
 
-// A failed pipe connect has no fd until it is reported, and Node's Pipe handle has no type of service.
+// A pipe handle whose connect failed has no fd, and Node's Pipe handle has no type of service.
 function isFailedPipeConnect(handle) {
   const data = handle[kFailedPipeConnect];
   return data !== undefined && data === handle.data;

@@ -376,14 +376,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_expr_mut(&mut self) -> Option<&mut S::SExpr> {
-        if let Data::SExpr(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn s_function(&self) -> Option<StoreRef<S::Function>> {
         if let Data::SFunction(v) = *self {
             Some(v)

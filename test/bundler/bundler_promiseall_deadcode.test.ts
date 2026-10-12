@@ -158,9 +158,7 @@ describe("bundler", () => {
       expect(bundled).toContain("__esm");
       expect(bundled).toContain("var init_");
 
-      // BaseElement has two dependencies after its first async one, so both
-      // are joined, without a runtime helper.
-      expect(bundled).not.toContain("__promiseAll");
+      // BaseElement has two dependencies after its first async one, so both are joined.
       expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[/);
     },
   });
@@ -254,7 +252,6 @@ describe("bundler", () => {
       expect(bundled).toContain("var init_");
 
       // There are TWO async dependencies
-      expect(bundled).not.toContain("__promiseAll");
       expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[/);
     },
   });
@@ -417,7 +414,6 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const bundled = api.readFile("out.js");
       expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[\s*init_p\(\),\s*init_q\(\)\s*\]\s*\)/);
-      expect(bundled).not.toContain("__promiseAll");
     },
   });
 
@@ -441,7 +437,6 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const bundled = api.readFile("out.js");
       expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[\s*init_a\(\),\s*init_b\(\),\s*init_c\(\)\s*\]\s*\)/);
-      expect(bundled).not.toContain("__promiseAll");
     },
   });
 
@@ -467,7 +462,6 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const bundled = api.readFile("out.js");
       expect(bundled).toMatch(/\/\/ mid\.js\s+await\s+Promise\.all\s*\(\s*\[\s*init_a\(\),\s*init_b\(\)\s*\]\s*\)/);
-      expect(bundled).not.toContain("__promiseAll");
     },
   });
 

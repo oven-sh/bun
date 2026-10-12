@@ -5106,8 +5106,7 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
-/// A wrapper's dependency statements in source order. `joined` starts at the
-/// first async dependency and ends in one `await`.
+/// A wrapper's dependency statements in source order. `joined` starts at the first async one.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
     joined: Vec<Joined>,
@@ -5223,14 +5222,7 @@ impl InsideWrapperPrefix {
         ))
     }
 
-    /// Moves the statements to the end of `out`. Two or more async
-    /// dependencies end in `await Promise.all([...])`. One ends in:
-    ///
-    /// ```text
-    /// Promise.resolve(init_a()).catch(() => {}); // `init_b()` can throw: no unhandled rejection
-    /// init_b();
-    /// init_a() && await init_a(); // `undefined` is a call back into an import cycle: no wait
-    /// ```
+    /// Moves the statements to the end of `out`, the `await` last.
     pub(crate) fn finish(&mut self, promise_ref: Ref, out: &mut Vec<Stmt>) {
         out.append(&mut self.stmts);
         if self.joined.is_empty() {
@@ -5269,6 +5261,7 @@ impl InsideWrapperPrefix {
                 Joined::Async(wrapper_ref, loc) => {
                     awaited.push(init_call(wrapper_ref, loc));
                     if last_sync.is_some_and(|last| index < last) {
+                        // `Promise.resolve(init_a()).catch(() => {})`: a later statement can throw.
                         let mut handler = bun_ast::ExprNodeList::init_capacity(1);
                         handler.append_assume_capacity(Expr::init(E::Arrow::default(), Loc::EMPTY));
                         out.push(Stmt::alloc(
@@ -5302,6 +5295,7 @@ impl InsideWrapperPrefix {
         }
 
         let value = match (awaited.len(), &self.joined[0]) {
+            // `init_a() && await init_a()`: `undefined` is a call back into an import cycle.
             (1, &Joined::Async(wrapper_ref, loc)) => Expr::init(
                 E::Binary {
                     op: bun_ast::OpCode::BinLogicalAnd,
@@ -5315,6 +5309,7 @@ impl InsideWrapperPrefix {
                 },
                 Loc::EMPTY,
             ),
+            // `await Promise.all([init_a(), init_d()])`
             _ => Expr::init(
                 E::Await {
                     value: promise_method(

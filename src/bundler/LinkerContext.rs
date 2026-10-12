@@ -5106,17 +5106,15 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
-/// The dependency statements that run inside a wrapper before the module
-/// body, in source order. An async dependency and the statements after it
-/// end in one `await`, so each dependency starts before the wrapper suspends.
+/// A wrapper's dependency statements in source order. `joined` starts at the
+/// first async dependency and ends in one `await`.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
     joined: Vec<Joined>,
 }
 
 enum Joined {
-    /// The wrapper of an async dependency. `init_x()` returns its promise,
-    /// the same one on every call.
+    /// `init_x` of an async dependency. Every call returns the same promise.
     Async(Ref, Loc),
     Sync(Stmt),
 }
@@ -5161,8 +5159,7 @@ impl InsideWrapperPrefix {
                 .all(|decl| matches!(decl.binding.data, bun_ast::binding::Data::BIdentifier(_)));
             debug_assert!(binds_identifiers);
             if binds_identifiers {
-                // `var ns = require_x();` after an async dependency: `var ns;`
-                // goes above the joined statements and `ns = require_x();` among them.
+                // `var ns = value;` becomes `var ns;` above and `ns = value;` in order.
                 let mut hoisted = G::DeclList::init_capacity(local.decls.len());
                 for decl in local.decls.iter() {
                     hoisted.push(G::Decl {
@@ -5226,20 +5223,14 @@ impl InsideWrapperPrefix {
         ))
     }
 
-    /// Moves the statements to the end of `out`, the `await` last:
+    /// Moves the statements to the end of `out`. Two or more async
+    /// dependencies end in `await Promise.all([...])`. One ends in:
     ///
     /// ```text
-    /// Promise.resolve(init_a()).catch(() => {});
+    /// Promise.resolve(init_a()).catch(() => {}); // `init_b()` can throw: no unhandled rejection
     /// init_b();
-    /// init_a() && await init_a();
+    /// init_a() && await init_a(); // `undefined` is a call back into an import cycle: no wait
     /// ```
-    ///
-    /// The first line starts `a` and gives its promise a handler, so a throw
-    /// from `init_b()` leaves no unhandled rejection. The last line waits
-    /// only for a promise: a call back into a module that is in its first
-    /// synchronous segment returns `undefined`, and an import cycle does not
-    /// wait for it. Two or more async dependencies end in
-    /// `await Promise.all([init_a(), init_d()])`.
     pub(crate) fn finish(&mut self, promise_ref: Ref, out: &mut Vec<Stmt>) {
         out.append(&mut self.stmts);
         if self.joined.is_empty() {

@@ -3747,23 +3747,14 @@ function scheduleDestroyIfNotDestroyed(target) {
     setImmediate(destroyIfNotDestroyedNT, target);
   }
 }
-// node reports a request that nghttp2 refuses as a stream error on a later tick. A stream that
-// user code closed before that keeps its code and gets no 'error' (node's onStreamClose).
-function rejectInvalidPathNT(session, req) {
+// node's onStreamClose: a stream that user code closed keeps its code and gets no 'error'.
+function rejectRequestNT(session, req) {
   if (req.closed) {
     req.destroy();
     return;
   }
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   emitStreamErrorNT(session, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
-}
-function rejectNoPayloadContentLengthNT(req) {
-  if (req.closed) {
-    req.destroy();
-    return;
-  }
-  req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
-  req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
@@ -6217,7 +6208,7 @@ class ClientHttp2Session extends Http2Session {
               const req = new ClientHttp2Stream(undefined, this, headers);
               req.authority = authority;
               req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-              process.nextTick(rejectInvalidPathNT, this, req);
+              process.nextTick(rejectRequestNT, this, req);
               process.nextTick(emitEventNT, req, "ready");
               return req;
             }
@@ -6232,7 +6223,7 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        process.nextTick(rejectNoPayloadContentLengthNT, req);
+        process.nextTick(rejectRequestNT, this, req);
         process.nextTick(emitEventNT, req, "ready");
         return req;
       }

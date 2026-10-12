@@ -165,7 +165,6 @@ pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
 }
 
 impl FileSettings {
-
     /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order. `parser`:
     /// `$parser` of the one that `languageOptions.parser` is from.
     pub fn from_objects(

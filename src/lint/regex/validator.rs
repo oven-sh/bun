@@ -126,8 +126,7 @@ mod said {
     pub(super) const LOOKAROUND: Said = ("Unterminated lookaround assertion", CLOSE_IT);
     pub(super) const CLASS: Said = ("Unterminated character class", CLOSE_IT);
     pub(super) const NESTED_CLASS: Said = ("Unterminated nested class", CLOSE_IT);
-    pub(super) const STRING_DISJUNCTION: Said =
-        ("Unterminated class string disjunction", CLOSE_IT);
+    pub(super) const STRING_DISJUNCTION: Said = ("Unterminated class string disjunction", CLOSE_IT);
     pub(super) const PROPERTY_ESCAPE: Said = ("Unterminated unicode property escape", CLOSE_IT);
     pub(super) const GROUP_NAME: Said = ("Unterminated capturing group name", CLOSE_IT);
     pub(super) const EXTENDED_ATOM_ESCAPE: Said = (

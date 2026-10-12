@@ -782,8 +782,7 @@ where
     /// [`Self::discard_response_body`] for a request this context can no longer respond to.
     fn discard_handler_result(&self, global_this: &JSGlobalObject, result: JSValue) {
         let Some(promise) = result.as_any_promise() else {
-            // A thrown value (what `on_response` hands to `error()`). After
-            // `server.upgrade()` the handler ran on, and nothing else reports it.
+            // A throw after `server.upgrade()`: nothing else reports it.
             if self.did_upgrade_web_socket() && result.to_error().is_some() {
                 let vm = global_this.bun_vm().as_mut();
                 let _ = vm.uncaught_exception(global_this, result, false);
@@ -1038,7 +1037,6 @@ where
     /// Takes one ref as the cell's claim on this context and remembers the
     /// cell in `promise_cell`. The settle reactions (`take()` + a field
     /// clear), `on_abort`, or the cell's destructor release the claim.
-    /// `held` rides in the cell; see [`Self::create_handler_promise_cell`].
     fn create_promise_cell(&self, global: &JSGlobalObject, held: JSValue) -> JSValue {
         debug_assert!(self.promise_cell.get().is_empty());
         self.ref_();
@@ -1047,13 +1045,8 @@ where
         cell
     }
 
-    /// [`Self::create_promise_cell`] for a pending promise that `fetch`, a
-    /// route or `error()` returned, to subscribe `ON_RESOLVE` / `ON_REJECT` with.
-    ///
-    /// The cell holds the promise when that subscription is what marks it
-    /// handled, so `on_reject` can report a rejection that follows
-    /// `server.upgrade()`. A promise the program already handles keeps its
-    /// own reporting.
+    /// The cell holds a handler's promise unless the program already handles
+    /// it: only then does `on_reject` owe the report after an upgrade.
     fn create_handler_promise_cell(
         &self,
         global: &JSGlobalObject,
@@ -1082,14 +1075,10 @@ where
     /// collects the promise; the settle reactions then see a null `take()`
     /// and no-op. A no-op when no claim is outstanding (the common case on
     /// paths reached from a settle reaction, which already cleared the field).
-    ///
-    /// An abort or an end also takes the handler's promise out of the cell, so
-    /// a later rejection is dropped with the request. After `server.upgrade()`
-    /// the handler is still running: its promise stays, and `on_reject`
-    /// reports a later rejection of it.
     pub(crate) fn reclaim_promise_cell(&self) {
         let cell = self.promise_cell.replace(JSValue::ZERO);
         if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
+            // After an upgrade the handler runs on: `on_reject` reports through the held promise.
             if !self.did_upgrade_web_socket() {
                 NativePromiseContext::take_held(cell);
             }
@@ -1101,19 +1090,15 @@ where
         ctx_log!("onReject");
 
         let arguments = callframe.arguments_as_array::<2>();
-        // Pass the rejection reason through verbatim (including `null` and
-        // `undefined`) so `error()` sees the same value the already-settled
-        // path delivers. Only an empty JSValue is normalized.
         let reason = if arguments[0].is_empty() {
             JSValue::UNDEFINED
         } else {
             arguments[0]
         };
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
-            // A termination path reclaimed the cell's claim; the context may
-            // already be gone. An abort or an end took the handler's promise
-            // with it. `server.upgrade()` left it: this reaction marked the
-            // promise handled, so nothing else reports the rejection.
+            // A termination path (abort, end, upgrade) reclaimed the cell's
+            // claim; the context may already be gone.
+            // Only an upgrade leaves the handler's promise in the cell.
             let promise = NativePromiseContext::take_held(arguments[1]);
             if !promise.is_empty() {
                 let vm = global.bun_vm().as_mut();
@@ -1124,6 +1109,9 @@ where
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
         ctx.ctx().promise_cell.set(JSValue::ZERO);
 
+        // Pass the rejection reason through verbatim (including `null` and
+        // `undefined`) so `error()` sees the same value the already-settled
+        // path delivers. Only an empty JSValue is normalized.
         ctx.ctx().handle_reject(reason);
         Ok(JSValue::UNDEFINED)
     }

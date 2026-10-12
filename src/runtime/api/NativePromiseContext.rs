@@ -166,8 +166,6 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
     NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
 }
 
-/// Hands back the `held` value the cell was created with and stops the cell
-/// rooting it. `JSValue::ZERO` if nothing is held.
 pub(crate) fn take_held(cell: JSValue) -> JSValue {
     Bun__NativePromiseContext__takeHeld(cell)
 }

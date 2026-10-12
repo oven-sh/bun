@@ -2592,6 +2592,22 @@ export const projects: Project[] = [
         `function x() { let { v } = y; g(v); v = 2; }`,
         `function z() { let v = 1; { let v = 2; g(v); v = 3; } g(v); }`,
       ),
+      "b.cjs": lines(
+        `try {`,
+        `\tthrow new Error();`,
+        `} catch (e) {`,
+        `\tvar e = 1;`,
+        `\t{`,
+        `\t\tvar e = 2;`,
+        `\t}`,
+        `\tassert.equal(e, 2);`,
+        `}`,
+        `assert.equal(e, undefined);`,
+      ),
+      "c.cjs": lines(
+        `var e = 0; try { throw x.e; } catch (e) { var e = 7; } assertEquals(0, e);`,
+        `let c = 1; c = 2; assertEquals(c);`,
+      ),
     },
   },
   {

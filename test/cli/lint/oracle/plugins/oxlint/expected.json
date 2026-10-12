@@ -1171,7 +1171,8 @@
   "a.cjs:19:20+1 eslint(no-useless-assignment)",
   "a.cjs:20:33+1 eslint(no-useless-assignment)",
   "a.cjs:21:37+1 eslint(no-useless-assignment)",
-  "a.cjs:22:46+1 eslint(no-useless-assignment)"
+  "a.cjs:22:46+1 eslint(no-useless-assignment)",
+  "c.cjs:2:5+1 eslint(no-useless-assignment)"
  ],
  "no-useless-assignment/finally": [
   "a.js:4:27+1 eslint(no-useless-assignment)",

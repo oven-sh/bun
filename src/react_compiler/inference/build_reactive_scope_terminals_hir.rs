@@ -11,8 +11,6 @@
 //!
 //! Ported from TypeScript `src/HIR/BuildReactiveScopeTerminalsHIR.ts`.
 
-use crate::collections::FxHashSet as HashSet;
-
 use crate::collections::IdBitSet;
 use crate::collections::IdMap;
 use crate::collections::IndexMap;
@@ -38,17 +36,18 @@ use crate::hir::visitors::terminal_operands;
 // getScopes
 // =============================================================================
 
-/// Collect all unique scopes from places in the function that have non-empty ranges.
+/// Collect all unique scopes from places in the function that have non-empty ranges,
+/// each where it is met first: the order of the TS `Set`.
 /// Corresponds to TS `getScopes(fn)`.
 fn get_scopes(func: &HirFunction, env: &Environment) -> Vec<ScopeId> {
-    let mut scope_ids: HashSet<ScopeId> = HashSet::default();
+    let mut scope_ids: Vec<ScopeId> = Vec::new();
     let mut seen: IdBitSet<ScopeId> = IdBitSet::new();
 
     let mut visit_place = |place: &Place| {
         if let Some(scope_id) = env.identifiers[place.identifier.0 as usize].scope {
             let range = &env.scopes[scope_id.0 as usize].range;
             if range.start != range.end && seen.insert(scope_id) {
-                scope_ids.insert(scope_id);
+                scope_ids.push(scope_id);
             }
         }
     };
@@ -62,7 +61,7 @@ fn get_scopes(func: &HirFunction, env: &Environment) -> Vec<ScopeId> {
         terminal_operands(&block.terminal).for_each(&mut visit_place);
     }
 
-    scope_ids.into_iter().collect()
+    scope_ids
 }
 
 // =============================================================================
@@ -102,9 +101,10 @@ fn collect_scope_rewrites(
 ) -> Result<Vec<TerminalRewriteInfo>, crate::diagnostics::CompilerDiagnostic> {
     let scope_ids = get_scopes(func, env);
 
-    // Sort: ascending by start, descending by end for ties
+    // Sort: ascending by start, descending by end for ties. Scopes with one range stay as
+    // they were met, as `Array.prototype.sort` leaves them.
     let mut items: Vec<ScopeId> = scope_ids;
-    items.sort_unstable_by(|a, b| {
+    items.sort_by(|a, b| {
         let a_range = &env.scopes[a.0 as usize].range;
         let b_range = &env.scopes[b.0 as usize].range;
         let start_diff = a_range.start.0.cmp(&b_range.start.0);

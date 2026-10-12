@@ -515,6 +515,29 @@ describe.concurrent("bun lint", () => {
         ]),
       ).toEqual(["1:51", "2:47", "4:51", "5:58", "6:45", "7:53", "8:56", "9:66", "10:51"]);
     });
+
+    test("two of them, and the variable of the function beside the parameter", async () => {
+      expect(
+        await places([
+          `try {`,
+          `\tthrow new Error();`,
+          `} catch (e) {`,
+          `\tvar e = 1;`,
+          `\t{`,
+          `\t\tvar e = 2;`,
+          `\t}`,
+          `\tassert.equal(e, 2);`,
+          `}`,
+          `assert.equal(e, undefined);`,
+        ]),
+      ).toEqual(["4:6"]);
+      expect(
+        await places([
+          `var e = 0; try { throw x.e; } catch (e) { var e = 7; } assertEquals(0, e);`,
+          `let c = 1; c = 2; assertEquals(c);`,
+        ]),
+      ).toEqual(["2:5"]);
+    });
   });
 
   describe("which files", () => {

@@ -53,10 +53,32 @@ export function minify_test(source: string, expected: string) {
   });
 }
 
-/** Like `minify_test`, with browser targets, so that fallbacks are in the output. */
+// A number that stands alone. A digit in a name, in a hex color or in a dimension is not one.
+const standaloneNumber = /(?<![\w#.-])-?(?:\d+\.?\d*|\.\d+)(?![\w.])/g;
+
+/**
+ * Returns `received` with each number that is close to the number at the same place in `expected`
+ * replaced by that number. A converted color goes through the math library of the platform, so
+ * its last digit is not the same on every platform (`lab(94.0295% ...)` on Linux is
+ * `lab(94.0296% ...)` on Windows).
+ */
+export function snapNumbers(received: string, expected: string): string {
+  const wanted = expected.match(standaloneNumber) ?? [];
+  let index = 0;
+  return received.replace(standaloneNumber, found => {
+    const want = wanted[index++];
+    const close = want !== undefined && Math.abs(+found - +want) <= 1e-4 * Math.max(1, Math.abs(+want));
+    return close ? want : found;
+  });
+}
+
+/**
+ * Like `minify_test`, with browser targets, so that fallbacks are in the output. A fallback is a
+ * converted color, so the numbers go through `snapNumbers`.
+ */
 export function minify_test_with_targets(source: string, expected: string, targets: Browsers) {
   test(source, () => {
-    expect(minifyTest(source, expected, targets)).toEqual(expected);
+    expect(snapNumbers(minifyTest(source, expected, targets), expected)).toEqual(expected);
   });
 }
 

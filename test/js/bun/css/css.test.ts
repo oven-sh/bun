@@ -7813,22 +7813,10 @@ describe("css tests", () => {
       );
       // `calc(l - 0.1)` adds a number to a percentage-typed keyword. It is not resolved, and it is
       // not `none`. The origin gets the fallback tiers of a color inside any value that is not resolved.
-      prefix_test(
+      minify_test_with_targets(
         ".foo { color: oklch(from oklch(0.5 0.1 40) calc(l - 0.1) c h) }",
-        indoc`
-          .foo {
-            color: oklch(from #924d35 calc(l - .1) c h);
-          }
-
-          @supports (color: lab(0% 0 0)) {
-            .foo {
-              color: oklch(from lab(41.2466% 28.0071 27.8824) calc(l - .1) c h);
-            }
-          }
-        `,
-        {
-          chrome: 95 << 16,
-        },
+        ".foo{color:oklch(from #924d35 calc(l - .1)c h)}@supports (color:lab(0% 0 0)){.foo{color:oklch(from lab(41.2466% 28.0071 27.8824) calc(l - .1)c h)}}",
+        { chrome: 95 << 16 },
       );
       minify_test(
         ".foo { color: oklch(from oklch(50% 0.1 40) calc(l - 0.1) c h) }",

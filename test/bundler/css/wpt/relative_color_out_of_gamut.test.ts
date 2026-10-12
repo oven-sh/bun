@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { snapNumbers } from "../../../js/bun/css/util";
 import { itBundled } from "../../expectBundled";
 
 // https://github.com/web-platform-tests/wpt/blob/master/css/css-color/parsing/relative-color-out-of-gamut.html
@@ -91,7 +92,7 @@ h1 {
         outfile: "out.css",
 
         onAfterBundle(api) {
-          api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+          const expected = `
 /* a.css */
 h1 {
   color: ${relative(srgb)};
@@ -112,7 +113,8 @@ ${
   }
 }
 `
-}`);
+}`;
+          expect(snapNumbers(api.readFile("/out.css"), expected)).toEqualIgnoringWhitespace(expected);
         },
       });
     }

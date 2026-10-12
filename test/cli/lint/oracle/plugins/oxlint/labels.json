@@ -1,4 +1,20 @@
 {
+ "names/that-only-oxc-or-only-eslint-takes-for-variables": [
+  "labels.js eslint(no-label-var) 4:5+1 \"Identifier 'a' found here.\" | 4:8+1 \"Label with the same name.\""
+ ],
+ "no-unexpected-multiline/calls-without-arguments": [
+  "a.ts eslint(no-unexpected-multiline) 15:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 17:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 21:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 23:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 25:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 27:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 3:3+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 5:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 7:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "a.ts eslint(no-unexpected-multiline) 9:1+1 \"this is parsed as a function call, which may be unintentional\"",
+  "division.js eslint(no-unexpected-multiline) 4:1+1 \"this is parsed as division, which may be unintentional\""
+ ],
  "no-unused-vars/declared-twice-in-an-ambient-namespace": [
   "a.ts eslint(no-unused-vars) 1:29+1 \"'A' is declared here\"",
   "a.ts eslint(no-unused-vars) 3:64+1 \"'K' is declared here\"",

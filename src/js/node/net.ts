@@ -298,6 +298,8 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
+// On the handle: the `data` of a pipe connect that failed at connect(2) and is not reported yet.
+const kFailedPipeConnect = Symbol("kFailedPipeConnect");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
@@ -1904,7 +1906,7 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  return kConnectDispatch(self, req, {
+  const errno = kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
     // Always half-open natively; see kConnect.
@@ -1914,6 +1916,25 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
+  // libuv returns only a name it cannot express and queues a connect(2) error on the loop:
+  // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L343
+  if (errno === 0 || errno === uv().UV_EINVAL) return errno;
+  const handle = self._handle;
+  const data = (handle[kFailedPipeConnect] = handle.data);
+  setImmediate(afterPipeConnectFailed, self, handle, data, req, errno);
+  return 0;
+}
+
+function afterPipeConnectFailed(self, handle, data, req, errno) {
+  if (handle[kFailedPipeConnect] === data) handle[kFailedPipeConnect] = undefined;
+  // A destroy() or a later connect() ended this request, as uv_pipe_connect2 replaces connect_req.
+  if (self._handle === handle && handle.data === data) req.oncomplete(errno, handle, req, true, true);
+}
+
+// A failed pipe connect has no fd until it is reported, and Node's Pipe handle has no type of service.
+function isFailedPipeConnect(handle) {
+  const data = handle[kFailedPipeConnect];
+  return data !== undefined && data === handle.data;
 }
 
 function kConnectDispatch(self, req, opts) {
@@ -2897,7 +2918,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
   }
   validateInt32(tos, "tos", 0, 255);
 
-  if (!this._handle || !this._handle.setTypeOfService) {
+  if (!this._handle || !this._handle.setTypeOfService || isFailedPipeConnect(this._handle)) {
     this[kSetTOS] = tos;
     return this;
   }
@@ -2915,7 +2936,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
 };
 
 Socket.prototype.getTypeOfService = function getTypeOfService() {
-  if (!this._handle || !this._handle.getTypeOfService) {
+  if (!this._handle || !this._handle.getTypeOfService || isFailedPipeConnect(this._handle)) {
     return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
   }
   const res = this._handle.getTypeOfService();

@@ -182,6 +182,16 @@ export const cases: Case[] = [
     reports: {},
     exitCode: 0,
   },
+  {
+    name: "the flags of a regular expression are the sum of 1,000,000 constants",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `const g = "g";\nnew RegExp("a", ${rep("g + ", 1_000_000)}g);\n`,
+    rules: { "require-unicode-regexp": "error" },
+    // Where the stack ends the flags are not known.
+    reports: {},
+    exitCode: 0,
+  },
 
   // ── more than the square ──
   {

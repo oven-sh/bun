@@ -30,6 +30,9 @@ fn replace_first(text: &[u8], start: usize, from: u8, to: u8) -> Option<Vec<u8>>
 /// oxlint's `resolve_flags`: those of the characters `u` and `v` that are in the flags that `e` is. `None` if it does not know
 /// them. `seen` has the identifiers on the way.
 fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<SmallVec<[u8; 2]>> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
     let of_text = |text: &[u8]| -> SmallVec<[u8; 2]> {
         b"uv".iter().copied().filter(|it| strings::contains_char(text, *it)).collect()
     };

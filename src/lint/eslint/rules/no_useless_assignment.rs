@@ -37,6 +37,8 @@ struct ScopeStack<'a> {
     try_statement_blocks: Vec<Span>,
     /// Those of them that have a `finally`, with a configuration of oxlint.
     finalized_blocks: Vec<Span>,
+    /// With a configuration of oxlint: the `while` and `for` statements whose test is a literal or missing.
+    endless_loops: Vec<Span>,
 }
 
 #[derive(Default)]
@@ -1468,7 +1470,10 @@ impl NoUselessAssignment {
     }
 
     fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let statements = NodeTags::from(StmtTag::Try) | StmtTag::ImportEquals.into();
+        let mut statements = NodeTags::from(StmtTag::Try) | StmtTag::ImportEquals.into();
+        if cx.language().is_oxlint {
+            statements = statements | StmtTag::While.into() | StmtTag::For.into();
+        }
         let enter = statements | NodeTags::EXPORT_SPEC | ExprTag::Ident.into();
         let exit = NodeTags::VAR_DECL | ExprTag::Assign.into() | ExprTag::Unary.into();
         for step in steps_of_code_path(root, enter, exit) {
@@ -1499,7 +1504,7 @@ impl NoUselessAssignment {
     fn verify<'a>(mut target: ScopeStack<'a>, cx: &mut Cx<'a, Self>) {
         // Each block ends where the last of those up to it ends: a block that starts before an
         // identifier is around it if one of these ends after it.
-        for blocks in [&mut target.try_statement_blocks, &mut target.finalized_blocks] {
+        for blocks in [&mut target.try_statement_blocks, &mut target.finalized_blocks, &mut target.endless_loops] {
             let mut end = 0;
             for block in blocks {
                 end = end.max(block.end);
@@ -1515,6 +1520,22 @@ impl NoUselessAssignment {
             following
                 .and_then(|it| end_of_block_around(&target.finalized_blocks, it.identifier))
                 .is_some_and(|end| last_read.is_some_and(|it| it.start >= end))
+        };
+        // For oxlint every loop can end at its test, be that `true` or missing: in `let a = 0; while (true) { a = f(); if (a)
+        // break; } return a;` the 0 is used.
+        let oxlint_takes_for_read_after_loop = |assignments: &[Assignment<'a>], index: usize, reads: &[Span]| {
+            let loop_around =
+                |index: usize| end_of_block_around(&target.endless_loops, assignments.get(index)?.identifier);
+            let Some(end) = loop_around(index + 1).filter(|&end| loop_around(index) != Some(end)) else {
+                return false;
+            };
+            let written = assignments.get(assignments.partition_point(|it| it.identifier.start < end));
+            reads.get(reads.partition_point(|it| it.start < end)).is_some_and(|read| {
+                written.is_none_or(|written| {
+                    read.start < written.identifier.start
+                        || written.expression.is_some_and(|it| it.start <= read.start && read.end <= it.end)
+                })
+            })
         };
         'variables: for (variable, assignments) in target.assignments {
             let Some(mut assignments) = assignments else {
@@ -1545,6 +1566,7 @@ impl NoUselessAssignment {
                 if !is_in_try_statement_block(identifier)
                     && uses.is_assignment_unused(index, next)
                     && !oxlint_takes_for_used(assignments.get(index + 1), read_references.last())
+                    && !oxlint_takes_for_read_after_loop(&assignments, index, &read_references)
                 {
                     // Only a debug build gets here with a variable that was passed over. Types are not walked: of a name in
                     // one it is not known in which segment it is.
@@ -1603,6 +1625,7 @@ impl NoUselessAssignment {
             assignments: FxHashMap::default(),
             try_statement_blocks: Vec::new(),
             finalized_blocks: Vec::new(),
+            endless_loops: Vec::new(),
         });
         cx.state.current_segments.code_path_start();
         cx.state.code_path_start_scopes.insert(scope);
@@ -1627,9 +1650,16 @@ impl NoUselessAssignment {
         cx.state.current_segments.segment_end(segment);
     }
 
-    /// At a `try` statement, or at an `import a = b.c`, whose `b` is a reference.
+    /// At a `try` statement, or at an `import a = b.c`, whose `b` is a reference. With a configuration of oxlint also at
+    /// a `while` or `for` statement.
     fn on_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
+            StmtKind::While { test, .. } | StmtKind::For { test: Some(test), .. } if !ast_utils::is_literal(test) => {}
+            StmtKind::While { .. } | StmtKind::For { .. } => {
+                if let Some(top) = cx.state.stack.last_mut() {
+                    top.endless_loops.push(statement.span());
+                }
+            }
             StmtKind::Try { block, finalizer, .. } => {
                 let is_finalized = finalizer.is_some() && cx.language().is_oxlint;
                 if let Some(top) = cx.state.stack.last_mut() {

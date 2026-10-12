@@ -197,16 +197,26 @@ fn equal_tokens_of_text_in_anything(left: &[u8], right: &[u8]) -> Option<bool> {
     if a.is_none() && b.is_none() {
         return Some(true);
     }
-    let can_be_more_than_itself =
-        |byte: Option<&u8>| matches!(byte, Some(..=b' ' | b'/' | b'*' | b'\\' | b'<' | b'!' | b'-' | 0x80..));
+    let can_be_more_than_itself = |byte: Option<&u8>| {
+        matches!(
+            byte,
+            Some(..=b' ' | b'/' | b'*' | b'\\' | b'<' | b'!' | b'-' | 0x80..)
+        )
+    };
     if can_be_more_than_itself(a)
         || can_be_more_than_itself(b)
-        || [&b"//"[..], b"/*", b"--"].into_iter().any(|it| strings::contains(common, it))
+        || [&b"//"[..], b"/*", b"--"]
+            .into_iter()
+            .any(|it| strings::contains(common, it))
     {
         return None;
     }
     // `\u0061` and `\u{61}`
-    let digits = common.iter().rev().take_while(|it| it.is_ascii_hexdigit() || **it == b'{').count();
+    let digits = common
+        .iter()
+        .rev()
+        .take_while(|it| it.is_ascii_hexdigit() || **it == b'{')
+        .count();
     (!common.get(..same - digits)?.ends_with(b"\\u")).then_some(false)
 }
 
@@ -225,7 +235,10 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
         let (before, rest) = text.split_at(at);
         rest.starts_with(b"-->") || rest.starts_with(b"--") && before.ends_with(b"<!")
     };
-    let in_anything = |l: usize, r: usize| match equal_tokens_of_text_in_anything(left.get(l..)?, right.get(r..)?)? {
+    let in_anything = |l: usize, r: usize| match equal_tokens_of_text_in_anything(
+        left.get(l..)?,
+        right.get(r..)?,
+    )? {
         true => (!has_slash_after_yield_or_await(left)).then_some(true),
         false => Some(false),
     };
@@ -254,7 +267,10 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
             continue;
         }
         if can_start_trivia(left.get(l)) || can_start_trivia(right.get(r)) {
-            let after = (skip_trivia(left, l as u32) as usize, skip_trivia(right, r as u32) as usize);
+            let after = (
+                skip_trivia(left, l as u32) as usize,
+                skip_trivia(right, r as u32) as usize,
+            );
             if (after.0 > l) != (after.1 > r) {
                 // A word that ends in one goes on in the other.
                 let goes_on = is_of_word(left.get(l)) || is_of_word(right.get(r));
@@ -267,7 +283,9 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
             (Some(&a), Some(&b)) => (a, b),
             _ => return Some(false),
         };
-        if a == b'-' && is_in_html_comment_mark(left, l) || b == b'-' && is_in_html_comment_mark(right, r) {
+        if a == b'-' && is_in_html_comment_mark(left, l)
+            || b == b'-' && is_in_html_comment_mark(right, r)
+        {
             return None;
         }
         if matches!(a, b'/' | b'\\' | 0x80..) || matches!(b, b'/' | b'\\' | 0x80..) {
@@ -292,7 +310,10 @@ pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Span
 fn equal_tokens_in<'a>(file: &'a File<'a>, left: Span, right: Span) -> bool {
     let of_all_tokens = || {
         let (left, right) = (file.tokens_in(left), file.tokens_in(right));
-        left.len() == right.len() && left.zip(right).all(|(l, r)| l.kind() == r.kind() && l.has_same_value(r))
+        left.len() == right.len()
+            && left
+                .zip(right)
+                .all(|(l, r)| l.kind() == r.kind() && l.has_same_value(r))
     };
     // In JSX whitespace can be text, and what a name is depends on where it is.
     if file.hir.jsx.is_empty()

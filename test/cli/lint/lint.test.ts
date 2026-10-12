@@ -1437,6 +1437,10 @@ describe.concurrent("bun lint", () => {
           `<error line="0" column="0" severity="error" message="${text}" source="" />`,
         );
         expect(await print("junit")).toContain(`<error message="${text}">line 0, column 0, ${text}</error>`);
+        // As oxlint 1.87: it is in a file without a name.
+        expect(await print("json")).toContain(
+          `{"message": "${text}","severity": "error","help": "Run \`oxlint --prune-suppressions\` to remove unused suppressions.","filename": "","labels": []}`,
+        );
       });
 
       // As oxlint 1.87. For ESLint the mark is in no column.

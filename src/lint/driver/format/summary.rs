@@ -103,7 +103,8 @@ pub(crate) fn without_files(format: Format, meta: &Meta, is_error: bool) -> Vec<
     out
 }
 
-/// What oxlint reports about `oxlint-suppressions.json`: errors of no rule, at no place, in a file without a name.
+/// What oxlint reports about `oxlint-suppressions.json`: errors of no rule, at no place, in a file without a name and without
+/// text.
 pub(crate) fn about_suppressions(has_unused: bool, has_new: bool) -> Option<FileResult> {
     let error = |text: &[u8], help: &'static str| LintMessage {
         message: text.to_vec(),
@@ -133,7 +134,7 @@ pub(crate) fn about_suppressions(has_unused: bool, has_new: bool) -> Option<File
         suppressed: Vec::new(),
         thrown: None,
         had_types: false,
-        text: None,
+        text: Some(Vec::new()),
         line_starts: None,
         is_fixed: false,
         fixed_text: None,

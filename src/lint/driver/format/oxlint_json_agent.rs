@@ -58,8 +58,7 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
             json_stringify(text.as_bytes(), out);
         }
     }
-    // A problem of no file has no source.
-    if !source.name.is_empty() {
+    if source.is_of_a_file {
         out.extend_from_slice(b",\"filename\": ");
         json_stringify(&source.name, out);
     }

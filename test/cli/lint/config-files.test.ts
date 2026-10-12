@@ -5115,6 +5115,20 @@ describe.skipIf(isWindows || process.getuid?.() === 0).concurrent("a file that c
     }
   });
 
+  // oxlint 1.87.0 has two kinds of problems without a place: one is in no file, the other in a file without a name.
+  test("in oxlint's JSON it has no filename, unlike what is said about the suppressions", async () => {
+    const config = JSON.stringify({ ...noVar, categories: { correctness: "off" } });
+    const stale = JSON.stringify({ "sub/b.js": { "no-debugger": { count: 1 } } });
+    const all = { ...files, ".oxlintrc.json": config, "oxlint-suppressions.json": stale };
+    const { raw } = await lint(all, ["-f", "json", "."], { before });
+    type Diagnostic = { message: string; filename?: string; labels: unknown[] };
+    const placeless = (JSON.parse(raw).diagnostics as Diagnostic[]).filter(it => it.labels.length === 0);
+    expect(placeless.map(it => [it.message.split(" ").slice(0, 4).join(" "), it.filename])).toEqual([
+      ["Failed to open file", undefined],
+      ["There are suppressions that", ""],
+    ]);
+  });
+
   // ESLint 10.12.0 and 8.57.1: "Error: EACCES: permission denied, open '<dir>/locked.js'", and nothing else.
   test.each([
     ["eslint.config.js", `export default [${JSON.stringify(noVar)}];`],

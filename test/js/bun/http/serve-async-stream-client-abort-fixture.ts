@@ -7,6 +7,16 @@
 // so the socket-close abort callback then fired with the *sink* pointer
 // instead of the RequestContext it was registered with — a type-confused
 // read that segfaulted (ASAN: heap-buffer-overflow in onAbort).
+//
+// The sink ends a body through tryEnd() only while the response head is not
+// sent, and a pull() that waits for a task has its head sent. So the wait
+// alternates between two kinds:
+//   a task:      the stream is parked when the abort arrives, and the sink
+//                then ends a chunked body on the dying socket.
+//   a microtask: the body ends before the head is sent, through tryEnd().
+
+let requests = 0;
+const wait = () => (requests++ % 2 === 0 ? Bun.sleep(0) : Promise.resolve());
 
 const server = Bun.serve({
   port: 0,
@@ -14,9 +24,9 @@ const server = Bun.serve({
     return new Response(
       new ReadableStream({
         async pull(controller) {
-          // The await is load-bearing: it parks the stream so the abort can
-          // interleave between stream completion and teardown.
-          await Bun.sleep(0);
+          // The await is load-bearing: it lets the abort interleave between
+          // stream completion and teardown.
+          await wait();
           controller.enqueue(new Uint8Array(8));
           controller.close();
         },

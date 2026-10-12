@@ -860,6 +860,34 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
 
+    /// Sends the rest of an HTTP/1 response head for a body that has produced
+    /// nothing yet: `Date`, the framing header and the blank line.
+    ///
+    /// A response with no status, one whose head is already out (`write`),
+    /// and one that `end`/`try_end` started are left alone: a `try_end` that
+    /// is parked on backpressure has written `Content-Length` and part of the
+    /// body, and a second header terminator would land inside that body.
+    ///
+    /// HTTP/2 and HTTP/3 still send HEADERS with the first DATA. An HTTP/3
+    /// body that fails ends its stream with a FIN, so HEADERS sent ahead of
+    /// a failure would make a complete, empty response. An HTTP/2 HEADERS
+    /// frame sent ahead takes a socket write of its own.
+    ///
+    /// The caller owns two preconditions. The response is live: one that a
+    /// sink ended may be freed or reused. `prepare_for_sendfile` did not run:
+    /// it terminates the head without a state bit.
+    pub fn commit_head(self) {
+        if matches!(self, AnyResponse::H3(_) | AnyResponse::H2(_)) {
+            return;
+        }
+        let open_head = State::HTTP_STATUS_CALLED | State::HTTP_RESPONSE_PENDING;
+        let committed = State::HTTP_WRITE_CALLED | State::HTTP_END_CALLED;
+        if self.state().bits() & (open_head | committed).bits() != open_head.bits() {
+            return;
+        }
+        self.corked(|| self.flush_headers(false));
+    }
+
     pub fn is_corked(self) -> bool {
         any_dispatch!(self, |r| r.is_corked())
     }

@@ -359,24 +359,14 @@ impl<'p, 's> Checker<'p, 's> {
                 keys.extend(self.key_type_of_prop(apparent, prop));
             }
         }
-        // `enumNumberIndexInfo`, the reverse mapping from a number to the name of a member, is
-        // omitted.
-        if !matches!(
-            self.data(apparent),
-            TypeData::Anon {
-                origin: Origin::EnumObject(_),
-                ..
-            }
-        ) {
-            for info in self.structured(members).index_infos() {
-                if self.is_key_type_included(info.key, include) {
-                    // `stringOrNumberType`, one type
-                    keys.push(if info.key == TypeId::STRING {
-                        self.union(&[TypeId::STRING, TypeId::NUMBER])
-                    } else {
-                        info.key
-                    });
-                }
+        for info in self.structured(members).index_infos() {
+            if !info.is_enum_number_index_info && self.is_key_type_included(info.key, include) {
+                // `stringOrNumberType`, one type
+                keys.push(if info.key == TypeId::STRING {
+                    self.union(&[TypeId::STRING, TypeId::NUMBER])
+                } else {
+                    info.key
+                });
             }
         }
         // `getUnionTypeEx`: a list of one type is that type, whatever origin is given.

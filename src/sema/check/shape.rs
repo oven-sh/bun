@@ -1726,11 +1726,8 @@ impl<'p, 's> Checker<'p, 's> {
                             continue;
                         }
                         let info = IndexInfo {
-                            key,
-                            value,
-                            readonly: member.flags.contains(Flags::READONLY),
                             declaration: Some((file, m)),
-                            components: ComponentsId::NONE,
+                            ..IndexInfo::new(key, value, member.flags.contains(Flags::READONLY))
                         };
                         // The first index signature for a key type wins.
                         if !b.shape.index.iter().any(|i| i.key == key) {
@@ -2118,11 +2115,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.union_reduced(&values[kind])
             };
             b.shape.index.push(IndexInfo {
-                key,
-                value,
-                readonly: readonly[kind],
-                declaration: None,
                 components: self.types().intern_components(&components[kind]),
+                ..IndexInfo::new(key, value, readonly[kind])
             });
         }
     }
@@ -3773,9 +3767,10 @@ impl<'p, 's> Checker<'p, 's> {
                     });
                 self.anonymous_members_in_place.pop();
                 if has_numbers {
-                    b.shape
-                        .index
-                        .push(IndexInfo::new(TypeId::NUMBER, TypeId::STRING, true));
+                    b.shape.index.push(IndexInfo {
+                        is_enum_number_index_info: true,
+                        ..IndexInfo::new(TypeId::NUMBER, TypeId::STRING, true)
+                    });
                 }
                 return b.shape;
             }
@@ -4460,16 +4455,28 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let mut own = prop.clone_in(self.arena);
                 self.instantiate_prop(&mut own, members.mapper);
+                // A spread has the symbol itself (`getSpreadSymbol`), with other `PropFlags`. With
+                // other modifiers, the two are combined, and get those of the declaration.
+                let modifiers = PropFlags::PRIVATE
+                    | PropFlags::PROTECTED
+                    | PropFlags::READONLY
+                    | PropFlags::OPTIONAL;
+                let is_own = |other: &Prop| {
+                    *other == own
+                        || matches!(own.source, PropSource::Symbol(_))
+                            && (&other.source, other.mapper) == (&own.source, own.mapper)
+                            && other.flags & modifiers == own.flags & modifiers
+                };
                 match b.position(prop.name) {
                     // The same property reached through two paths is added once.
                     Some(i) => {
                         if lists[i].is_empty() {
-                            if b.shape.props[i] != own {
+                            if !is_own(&b.shape.props[i]) {
                                 lists[i].reserve_exact(2);
                                 lists[i].push(b.shape.props[i].clone_in(self.arena));
                                 lists[i].push(own);
                             }
-                        } else if !lists[i].contains(&own) {
+                        } else if !lists[i].iter().any(is_own) {
                             lists[i].push(own);
                         }
                     }
@@ -4503,11 +4510,15 @@ impl<'p, 's> Checker<'p, 's> {
                 let every = |flag: PropFlags| list.iter().all(|p| p.flags.contains(flag));
                 // Optional if every property, method or accessor among them is: a variable of a
                 // module or of `globalThis` is not considered.
-                let optional = list
-                    .iter()
-                    .filter(|p| !matches!(p.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)))
-                    .all(|p| p.flags.contains(PropFlags::OPTIONAL));
+                let is_member = |p: &&Prop| !matches!(p.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym));
+                let optional =
+                    (list.iter().filter(is_member)).all(|p| p.flags.contains(PropFlags::OPTIONAL));
                 prop.flags.set(PropFlags::OPTIONAL, optional);
+                // The type is the intersection of theirs, in which that of such a variable has no
+                // `undefined`.
+                let has_variable = !list.iter().all(|p| is_member(&p));
+                prop.flags
+                    .set(PropFlags::WITHOUT_OPTIONALITY, optional && has_variable);
                 prop.flags
                     .set(PropFlags::READONLY, every(PropFlags::READONLY));
                 prop.flags.set(PropFlags::METHOD, every(PropFlags::METHOD));
@@ -4534,6 +4545,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 prop.source = PropSource::Intersected(whole, list.into());
                 prop.mapper = MapperId::IDENTITY;
+                self.set_modifiers_of_value_declaration(prop);
             }
         }
         b.shape
@@ -4982,6 +4994,8 @@ impl<'p, 's> Checker<'p, 's> {
                 b.shape.index.push(IndexInfo {
                     value,
                     readonly,
+                    is_enum_number_index_info: info.is_enum_number_index_info
+                        && info.readonly == readonly,
                     ..*info
                 });
             }
@@ -4995,7 +5009,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             Literalness::WithSpread
         };
-        b.shape.spread_of = Some((left, right));
+        b.shape.created_from = Some((left, right));
         b.shape.spread_rank = *rank;
         *rank += 1;
         self.synth(b.shape)
@@ -6655,11 +6669,37 @@ impl<'p, 's> Checker<'p, 's> {
             | PropSource::ReverseMapped(..) => None,
             PropSource::Copy(_, of, true) => of.iter().find_map(Self::value_declaration),
             PropSource::Intersected(_, parts) => {
-                let mut declared = parts.iter().filter_map(Self::value_declaration);
-                let first = declared.next()?;
-                declared.all(|other| other == first).then_some(first)
+                Self::value_declaration(Self::with_value_declaration_of_all(parts.iter())?)
             }
             source => Some(source),
+        }
+    }
+
+    /// `createUnionOrIntersectionProperty`: the first of `props` that has the `ValueDeclaration` of
+    /// the property that is made of them. `None`: none has one, or they have several.
+    pub(super) fn with_value_declaration_of_all<'a, 'b: 'a>(
+        props: impl Iterator<Item = &'a Prop<'b>>,
+    ) -> Option<&'a Prop<'b>> {
+        let mut declared = props.filter(|prop| Self::value_declaration(prop).is_some());
+        let first = declared.next()?;
+        let is_same = |other| Self::value_declaration(other) == Self::value_declaration(first);
+        declared.all(is_same).then_some(first)
+    }
+
+    /// `getDeclarationModifierFlagsFromSymbol` and `isReadonlySymbol` for what
+    /// `createUnionOrIntersectionProperty` has made: with a `ValueDeclaration`, its modifiers count,
+    /// not those of the constituents. The property of a mapped type has none.
+    fn set_modifiers_of_value_declaration(&mut self, prop: &mut Prop<'s>) {
+        if Self::value_declaration(prop).is_none() {
+            return;
+        }
+        let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(prop, false);
+        let is = |modifier| modifiers.contains(modifier);
+        prop.flags.set(PropFlags::PRIVATE, is(Flags::PRIVATE));
+        prop.flags.set(PropFlags::PROTECTED, is(Flags::PROTECTED));
+        // The modifier counts on a `SymbolFlagsProperty` only.
+        if is(Flags::READONLY) && !prop.flags.contains(PropFlags::ACCESSOR) {
+            prop.flags |= PropFlags::READONLY;
         }
     }
 
@@ -7424,13 +7464,15 @@ impl<'p, 's> Checker<'p, 's> {
             mapper: MapperId::IDENTITY,
             name_type: TypeId::UNRESOLVED,
         }));
-        Some(Prop {
+        let mut result = Prop {
             name,
             flags,
             source: PropSource::Intersected(containing_type, self.list_of(prop_set)),
             mapper: MapperId::IDENTITY,
             name_type: TypeId::UNRESOLVED,
-        })
+        };
+        self.set_modifiers_of_value_declaration(&mut result);
+        Some(result)
     }
 
     /// `compareProperties(sourceProp, targetProp, compareTypesEqual)`

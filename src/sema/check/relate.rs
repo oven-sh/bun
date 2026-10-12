@@ -6114,7 +6114,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDeclaringClass`
     pub(super) fn declaring_class(&self, prop: &Prop) -> Option<Sym> {
-        match prop.source {
+        match *Self::value_declaration(prop)? {
             PropSource::Symbol(sym) => self.declaring_class_of_symbol(sym),
             _ => None,
         }

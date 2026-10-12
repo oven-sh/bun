@@ -1998,22 +1998,10 @@ impl<'p, 's> Checker<'p, 's> {
                     .iter()
                     .map(|p| self.type_of_prop_with_missing(p, sm.mapper))
                     .collect();
-                // `enumNumberIndexInfo`, the only index signature of an enum object, contributes nothing.
-                if !matches!(
-                    self.data(source),
-                    TypeData::Anon {
-                        origin: Origin::EnumObject(_),
-                        ..
-                    }
-                ) {
-                    let indexed = self.structured(sm);
-                    types.extend(
-                        indexed
-                            .index_infos()
-                            .iter()
-                            .map(|i| self.instantiate(i.value, sm.mapper)),
-                    );
-                }
+                let indexed = self.structured(sm);
+                let infos = indexed.index_infos().iter();
+                let infos = infos.filter(|info| !info.is_enum_number_index_info);
+                types.extend(infos.map(|i| self.instantiate(i.value, sm.mapper)));
                 let all = self.union(&types);
                 let template = self.mapped_template(target);
                 self.infer_types(n, all, template);

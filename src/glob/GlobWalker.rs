@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+use crate::matcher::{Dots, Shape};
 use bun_alloc::AllocError;
 use bun_collections::AutoBitSet;
 use bun_core::Error;
@@ -244,6 +245,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) basename_excluding_special_syntax_component_idx: u32,
 
     pub(crate) pattern_components: Vec<Component>,
+    /// `Shape::of` each component's pattern, so matching an entry doesn't parse the groups again.
+    component_shapes: Vec<Shape>,
     pub matched_paths: MatchedMap,
 
     pub(crate) dot: bool,
@@ -1326,6 +1329,8 @@ impl<A: Accessor> WorkItem<A> {
 pub struct Component {
     pub(crate) start: u32,
     pub(crate) len: u32,
+    /// Position in `pattern_components`.
+    index: u32,
 
     pub(crate) syntax_hint: SyntaxHint,
     pub(crate) trailing_sep: bool,
@@ -1336,6 +1341,7 @@ impl Default for Component {
         Self {
             start: 0,
             len: 0,
+            index: 0,
             syntax_hint: SyntaxHint::None,
             trailing_sep: false,
         }
@@ -1447,6 +1453,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             basename_excluding_special_syntax_component_idx: 0,
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
+            component_shapes: Vec::new(),
             matched_paths: MatchedMap::default(),
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
@@ -1461,6 +1468,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
+        for (index, component) in this.pattern_components.iter_mut().enumerate() {
+            component.index = index as u32;
+            this.component_shapes
+                .push(Shape::of(component.pattern_slice(&this.pattern)));
+        }
 
         // copy arena after all allocations are successful
 
@@ -1782,7 +1794,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     fn match_pattern_slow(&self, pattern_component: &Component, filepath: &[u8]) -> bool {
-        crate::r#match(pattern_component.pattern_slice(&self.pattern), filepath).matches()
+        crate::matcher::match_prepared::<{ cfg!(windows) }>(
+            pattern_component.pattern_slice(&self.pattern),
+            &self.component_shapes[pattern_component.index as usize],
+            filepath,
+            Dots::Match,
+        )
+        .matches()
     }
 
     /// Create an empty ComponentSet sized for this pattern.

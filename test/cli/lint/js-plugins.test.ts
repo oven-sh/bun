@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
+import { cases as codePathCases, fileOf, isTypeScript } from "./oracle/jsplugins/code-paths/cases.mjs";
 
 afterAll(endChildren);
 
@@ -2624,6 +2625,110 @@ export default {
       expect(required.stdout).toContain("Cannot find module 'is-not-installed-anywhere'");
       expect(awaited.exitCode).toBe(0);
       expect(asked).toEqual([]);
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("code paths in JavaScript plugins", () => {
+  const oracle = join(import.meta.dir, "oracle", "jsplugins", "code-paths");
+  const trace = readFileSync(join(oracle, "trace.cjs"), "utf8");
+  // Recorded with ESLint 10.12.0 by record.mjs in that directory.
+  const expected: Record<string, string> = JSON.parse(
+    Buffer.from(Bun.zstdDecompressSync(readFileSync(join(oracle, "expected.json.zst")))).toString(),
+  );
+  const eslintConfig = (rule: string) => `const trace = require("./trace.cjs");
+    module.exports = ["module", "script", "commonjs"].map(sourceType => ({
+      files: [sourceType + "/*.js"],
+      plugins: { trace },
+      rules: { "trace/${rule}": "error" },
+      languageOptions: { sourceType, parserOptions: { ecmaFeatures: { jsx: true } } },
+    }));`;
+  const filesOf = (cases: typeof codePathCases) => Object.fromEntries(cases.map(it => [fileOf(it), it.code]));
+  const slashes = (path: string) => path.replaceAll("\\", "/");
+
+  test(
+    "events, graphs and traverseSegments match ESLint in JavaScript files",
+    async () => {
+      const cases = codePathCases.filter(it => !isTypeScript(it));
+      const files = { "trace.cjs": trace, "eslint.config.cjs": eslintConfig("all"), ...filesOf(cases) };
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(raw);
+      for (const it of cases) {
+        const messages = results.find(result => slashes(result.filePath).endsWith(`/${fileOf(it)}`))?.messages;
+        expect({ name: it.name, traces: messages?.map(message => message.message) }).toEqual({
+          name: it.name,
+          traces: [expected[it.name]],
+        });
+      }
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "events, graphs and traverseSegments match ESLint's analyzer in TypeScript files",
+    async () => {
+      const cases = codePathCases.filter(isTypeScript);
+      const config = { ignorePatterns: ["trace.cjs"], jsPlugins: ["./trace.cjs"], rules: { "trace/all": "error" } };
+      const files = { "trace.cjs": trace, ".oxlintrc.json": oxlintrc(config), ...filesOf(cases) };
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      const diagnostics: { filename: string; message: string }[] = JSON.parse(raw).diagnostics;
+      for (const it of cases) {
+        const traces = diagnostics.filter(diagnostic => slashes(diagnostic.filename) === it.name);
+        expect({ name: it.name, traces: traces.map(diagnostic => diagnostic.message) }).toEqual({
+          name: it.name,
+          traces: [expected[it.name]],
+        });
+      }
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "CodePath and CodePathSegment have the same properties as in ESLint",
+    async () => {
+      const files = { "trace.cjs": trace, "eslint.config.cjs": eslintConfig("layout"), "module/a.js": "a;" };
+      const { raw } = await lint(files, ["-f", "json"]);
+      // The message under ESLint 10.12.0.
+      const results: { messages: { message: string }[] }[] = JSON.parse(raw);
+      expect(results.flatMap(result => result.messages.map(message => message.message.split("\n")))).toEqual([
+        [
+          "CodePath own(id:value:wec,origin:value:wec,upper:value:wec,childCodePaths:value:wec,internal:value:) prototype(constructor:value:wc,initialSegment:getter:c,finalSegments:getter:c,returnedSegments:getter:c,thrownSegments:getter:c,traverseSegments:value:wc) keys(id,origin,upper,childCodePaths)",
+          "CodePathSegment own(id:value:wec,nextSegments:value:wec,prevSegments:value:wec,allNextSegments:value:wec,allPrevSegments:value:wec,reachable:value:wec,internal:value:) prototype(constructor:value:wc,isLoopedPrevSegment:value:wc) keys(id,nextSegments,prevSegments,allNextSegments,allPrevSegments,reachable)",
+          "in: initialSegment,traverseSegments,internal",
+          'JSON: {"id":"s1","origin":"program","upper":null,"childCodePaths":[]} {"id":"s1_1","nextSegments":[],"prevSegments":[],"allNextSegments":[],"allPrevSegments":[],"reachable":true}',
+          "the same array each time: true",
+          "without options: s1_1,s1_1,s1_1",
+          "controller: skip,break",
+        ],
+      ]);
+    },
+    timeout,
+  );
+
+  test(
+    "an error thrown from a code path listener or a traverseSegments callback names the rule",
+    async () => {
+      const plugin = `const fail = () => { throw new Error("thrown on purpose"); };
+        module.exports = { meta: { name: "throws" }, rules: {
+          listener: { create: () => ({ onCodePathSegmentStart: fail }) },
+          callback: { create: () => ({ onCodePathEnd: codePath => codePath.traverseSegments(fail) }) },
+        } };`;
+      const run = async (rule: string) => {
+        const config = `const throws = require("./plugin.cjs");
+          module.exports = [{ plugins: { throws }, rules: { "throws/${rule}": "error" } }];`;
+        const { stderr, exitCode } = await lint({ "eslint.config.cjs": config, "plugin.cjs": plugin, "a.js": "a;\n" }, [
+          "a.js",
+        ]);
+        return { lines: stderr.split("\n").filter(line => /^error:|^Rule:/.test(line)), exitCode };
+      };
+      // ESLint 10.12.0 prints the same two lines and exits with 2.
+      expect(await Promise.all([run("listener"), run("callback")])).toEqual([
+        { lines: ["error: thrown on purpose", 'Rule: "throws/listener"'], exitCode: 2 },
+        { lines: ["error: thrown on purpose", 'Rule: "throws/callback"'], exitCode: 2 },
+      ]);
     },
     timeout,
   );

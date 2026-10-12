@@ -485,11 +485,15 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCodePaths, (JSGlobalObject * globalObject, CallFr
     // Puts the list at `at` into a property of `object`. Returns false if there's no memory.
     auto putList = [&](JSObject* object, PropertyOffset offset, uint32_t at, JSArray* from) {
         auto items = message.lists.subspan(at + 1, message.lists[at]);
-        JSArray* list = JSArray::tryCreate(vm, arrayStructure, items.size());
-        if (!list) [[unlikely]]
-            return false;
-        for (unsigned i = 0; i < items.size(); ++i)
-            list->setIndexQuickly(vm, i, from->getIndexQuickly(items[i]));
+        JSArray* list;
+        {
+            ObjectInitializationScope initializationScope(vm);
+            list = JSArray::tryCreateUninitializedRestricted(initializationScope, arrayStructure, items.size());
+            if (!list) [[unlikely]]
+                return false;
+            for (unsigned i = 0; i < items.size(); ++i)
+                list->initializeIndex(initializationScope, i, from->getIndexQuickly(items[i]));
+        }
         object->putDirectOffset(vm, offset, list);
         return true;
     };

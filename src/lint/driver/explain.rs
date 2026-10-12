@@ -11,12 +11,13 @@ use bstr::BStr;
 use bun_core::fmt::TerminalHyperlink;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{FileConfig, Registry};
+use bun_lint::linter::{FileConfig, Registry, schema_and_defaults};
 use bun_lint::options::Json;
 use bun_lint::rule::{Fixable, Kind, Meta, Plugin};
 use bun_md::ansi_renderer::{Theme, detect_light_background, render_to_ansi};
 use bun_sema::util::FxHashMap;
 use std::io::Write;
+use std::sync::Arc;
 
 macro_rules! pretty {
     ($($arg:tt)*) => {
@@ -45,12 +46,12 @@ fn page_of(meta: &Meta) -> Option<&'static [u8]> {
     Some(&page[..strings::index_of_char_usize(page, 0).unwrap_or(page.len())])
 }
 
-/// How severe the rules are that are on where nobody has configured anything.
-struct Defaults(FxHashMap<(Plugin, &'static str), Severity>);
+/// Severity and options of the rules that are on when nothing is configured.
+struct Defaults(FxHashMap<(Plugin, &'static str), (Severity, Arc<[Json]>)>);
 
 impl Defaults {
     fn new(registry: &Registry) -> Defaults {
-        let mut severities = FxHashMap::default();
+        let mut on = FxHashMap::default();
         let config = configs::defaults(registry);
         for path in [&b"/a.js"[..], b"/a.jsx", b"/a.ts", b"/a.tsx"] {
             let Some(FileConfig::Matched(of_file)) =
@@ -63,17 +64,23 @@ impl Defaults {
                 .filter(|it| it.severity != Severity::Off)
             {
                 let meta = rule.entry.meta;
-                let severity = severities
+                let (severity, _) = on
                     .entry((meta.plugin, meta.name))
-                    .or_insert(rule.severity);
+                    .or_insert_with(|| (rule.severity, Arc::clone(&rule.options)));
                 *severity = (*severity).max(rule.severity);
             }
         }
-        Defaults(severities)
+        Defaults(on)
     }
 
     fn get(&self, meta: &Meta) -> Option<Severity> {
-        self.0.get(&(meta.plugin, meta.name)).copied()
+        self.0.get(&(meta.plugin, meta.name)).map(|it| it.0)
+    }
+
+    fn options(&self, meta: &Meta) -> &[Json] {
+        self.0
+            .get(&(meta.plugin, meta.name))
+            .map_or(&[], |it| &it.1)
     }
 }
 
@@ -116,6 +123,8 @@ pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
             (names.modes.eslint, b"eslint"),
             (names.modes.oxlint, b"oxlint"),
         ];
+        let (schema, default_options) = schema_and_defaults(native, defaults.options(native))
+            .map_or((Json::Null, Json::Null), |it| (it.0, Json::Array(it.1)));
         object(vec![
             (b"scope", text(scope)),
             (b"value", text(meta.name.as_bytes())),
@@ -175,6 +184,8 @@ pub(crate) fn write_rules_as_json(out: &mut Vec<u8>, registry: &Registry) {
                         .collect(),
                 ),
             ),
+            (b"schema", schema),
+            (b"default_options", default_options),
         ])
     });
     write_indented(out, &Json::Array(rules.collect()), 0);

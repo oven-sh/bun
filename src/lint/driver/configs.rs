@@ -247,6 +247,20 @@ fn is_written_for_oxlint(path: &[u8]) -> bool {
         || schema.is_some_and(|it| strings::contains(it, b"oxlint"))
 }
 
+/// Checks `directory/package.json` for React in `dependencies`, `devDependencies` or `peerDependencies`.
+///
+/// Returns `None` when this file can't decide and the caller should use the next one up: it doesn't exist, isn't a JSON
+/// object, or has none of the three fields (a nested `{ "type": "module" }`, for example). An empty `"dependencies": {}`
+/// still counts as a decision.
+pub(crate) fn depends_on_react(directory: &[u8]) -> Option<bool> {
+    let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
+    let package = bun_lint::json::parse(&package).filter(|it| it.as_object().is_some())?;
+    let fields: [&[u8]; 3] = [b"dependencies", b"devDependencies", b"peerDependencies"];
+    let mut declared = fields.iter().filter_map(|it| package.get(it)).peekable();
+    declared.peek()?;
+    Some(declared.any(|it| it.get(b"react").is_some()))
+}
+
 /// A configuration that has been read.
 pub(crate) struct Loaded {
     pub(crate) config: Config,
@@ -341,7 +355,7 @@ pub(crate) struct Loader<'l> {
     /// `Inferred` need not ask the system for them.
     pub(crate) searched_from: Guarded<Vec<Vec<u8>>>,
     pub(crate) tsconfigs: Guarded<Vec<Vec<u8>>>,
-    /// [`Loader::is_of_react`], by directory.
+    /// Cache for [`Loader::is_of_react`], keyed by directory.
     of_react: Guarded<FxHashMap<Vec<u8>, bool>>,
 }
 
@@ -1941,7 +1955,8 @@ impl<'l> Loader<'l> {
         loaded.flavor == Flavor::BuiltIn && *self.has_file_of_eslint.get_or_init(has_one)
     }
 
-    /// Whether the `package.json` that is closest to `directory`, whose files have `loaded`, depends on React. Only the defaults ask.
+    /// Returns true if the closest package.json that [lists dependencies](depends_on_react), from `directory` up, has React.
+    /// Only the built-in defaults care, so this is always false with an ESLint or oxlint config.
     pub(crate) fn is_of_react(&self, loaded: &Loaded, directory: &[u8]) -> bool {
         if loaded.flavor != Flavor::BuiltIn {
             return false;
@@ -1949,19 +1964,12 @@ impl<'l> Loader<'l> {
         if let Some(known) = self.of_react.lock().get(directory) {
             return *known;
         }
-        let depends = |directory: &[u8]| {
-            let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
-            let package = bun_lint::json::parse(&package).filter(|it| it.as_object().is_some())?;
-            let fields: [&[u8]; 3] = [b"dependencies", b"devDependencies", b"peerDependencies"];
-            let has = |it: &&[u8]| package.get(it).is_some_and(|it| it.get(b"react").is_some());
-            Some(fields.iter().any(has))
-        };
-        let found = paths::ancestors(directory).find_map(depends) == Some(true);
+        let found = paths::ancestors(directory).find_map(depends_on_react) == Some(true);
         self.of_react.lock().insert(directory.to_vec(), found);
         found
     }
 
-    /// What `loaded` has for the file at `path`.
+    /// Resolves the config for one file. Use this instead of `loaded.config.get()`, which doesn't know about React projects.
     pub(crate) fn config_of(&self, loaded: &Loaded, path: &[u8]) -> FileConfig {
         match loaded.config.get(self.linter.registry(), path) {
             FileConfig::Matched(config) if !self.is_of_react(loaded, paths::dirname(path)) => {

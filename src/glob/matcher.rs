@@ -251,7 +251,7 @@ fn is_beside_dot(path: &[u8], index: u32) -> bool {
 pub(crate) fn has_closed_segment<const WINDOWS: bool>(path: &[u8], dots: Dots) -> bool {
     let mut from = 0;
     while let Some(dot) = strings::index_of_char_pos(path, b'.', from) {
-        if is_closed_segment_at::<WINDOWS>(path, dot as u32, dots) {
+        if is_closed_segment_at(path, dot as u32, dots, WINDOWS) {
             return true;
         }
         from = dot + 1;
@@ -261,9 +261,10 @@ pub(crate) fn has_closed_segment<const WINDOWS: bool>(path: &[u8], dots: Dots) -
 
 /// Returns true if no wildcard may match at `index`. That's the case inside or right after a `.` or `..` segment and,
 /// with [`Dots::Hide`], at the start of a segment that starts with `.`.
-fn is_closed_segment_at<const WINDOWS: bool>(path: &[u8], index: u32, dots: Dots) -> bool {
+fn is_closed_segment_at(path: &[u8], index: u32, dots: Dots, is_windows: bool) -> bool {
     let index = index as usize;
-    let is_start = |at: usize| at == 0 || is_separator::<WINDOWS>(path[at - 1]);
+    let is_separator = |c: u8| c == b'/' || is_windows && c == b'\\';
+    let is_start = |at: usize| at == 0 || is_separator(path[at - 1]);
     if dots == Dots::Hide && path.get(index) == Some(&b'.') && is_start(index) {
         return true;
     }
@@ -280,9 +281,7 @@ fn is_closed_segment_at<const WINDOWS: bool>(path: &[u8], index: u32, dots: Dots
         .count();
     is_start(start)
         && matches!(dots, 1 | 2)
-        && path
-            .get(start + dots)
-            .is_none_or(|it| is_separator::<WINDOWS>(*it))
+        && path.get(start + dots).is_none_or(|it| is_separator(*it))
 }
 
 /// Bytes that are always literal in a pattern.
@@ -340,7 +339,7 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                 // `**` can still match nothing, so it's handled below.
                 if STRICT
                     && matches!(ch, b'*' | b'?' | b'[')
-                    && is_closed_segment_at::<WINDOWS>(path, state.path_index, dots)
+                    && is_closed_segment_at(path, state.path_index, dots, WINDOWS)
                     && !glob[state.glob_index as usize..].starts_with(b"**")
                     && glob.get(state.glob_index as usize + 1) != Some(&b'(')
                 {
@@ -378,7 +377,7 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                                 skip_globstars(glob, &mut state.glob_index);
                             }
                             let is_closed = STRICT
-                                && is_closed_segment_at::<WINDOWS>(path, state.path_index, dots);
+                                && is_closed_segment_at(path, state.path_index, dots, WINDOWS);
                             let before = state.wildcard;
 
                             // `{**,a}/b`: the `/` that makes this a globstar comes after the group.
@@ -402,7 +401,7 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                                     }) {
                                         return true;
                                     }
-                                    if STRICT && is_closed_segment_at::<WINDOWS>(path, at, dots) {
+                                    if STRICT && is_closed_segment_at(path, at, dots, WINDOWS) {
                                         break 'fallthrough;
                                     }
                                     let rest = path.get(at as usize..).unwrap_or_default();
@@ -421,6 +420,13 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                             {
                                 while let Some(&found) = path.get(state.path_index as usize)
                                     && found != wanted
+                                    && !is_separator::<WINDOWS>(found)
+                                {
+                                    state.path_index += 1;
+                                }
+                            } else if !is_globstar && state.glob_index as usize + 1 == glob.len() {
+                                // A trailing `*` takes the rest of the segment.
+                                while let Some(&found) = path.get(state.path_index as usize)
                                     && !is_separator::<WINDOWS>(found)
                                 {
                                     state.path_index += 1;
@@ -1030,6 +1036,20 @@ impl<'g> Group<'g> {
                 {
                     continue;
                 }
+                // A literal alternative doesn't need a nested run. Repeating groups keep it for its stack check.
+                let text = &glob[it.start as usize..it.end as usize];
+                if !is_empty
+                    && !matches!(self.kind, b'*' | b'+')
+                    && text.iter().all(|byte| IS_PLAIN[*byte as usize])
+                {
+                    let end = path_index + text.len() as u32;
+                    if path[path_index as usize..].starts_with(text)
+                        && self.leave::<WINDOWS>(glob, path, end, false, groups)
+                    {
+                        return true;
+                    }
+                    continue;
+                }
                 let inside = Inside {
                     group: Some(self),
                     end: it.end,
@@ -1067,7 +1087,7 @@ impl<'g> Group<'g> {
         }
         groups.has_negation = true;
         if is_one
-            || groups.is_strict && is_closed_segment_at::<WINDOWS>(path, path_index, groups.dots)
+            || groups.is_strict && is_closed_segment_at(path, path_index, groups.dots, WINDOWS)
         {
             return false;
         }

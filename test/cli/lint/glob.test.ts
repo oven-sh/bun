@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { relative } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -7,7 +7,7 @@ afterAll(endChildren);
 
 const env = { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, GITHUB_ACTIONS: undefined };
 
-// Each of these rules reports this code once, so that one run tells which of 16 patterns are for which files.
+// Each rule reports this code exactly once, so a single run shows which of up to 16 patterns match which files.
 const rules = [
   "no-var",
   "eqeqeq",
@@ -43,7 +43,7 @@ x = new Object();
 x;
 `;
 
-/** The files that each of `patterns` is for, as `files` of an object of an `eslint.config.mjs`. */
+/** Uses each pattern as `files` in an `eslint.config.mjs` and returns the files it matched. */
 async function filesOf(patterns: string[], files: string[], more: object[] = []) {
   const objects = patterns.map((pattern, index) => ({ files: [pattern], rules: { [rules[index]]: "error" } }));
   using dir = tempDir("bun-lint-glob", {
@@ -99,8 +99,8 @@ const js =
   "a.css.js a.js app/(group)/a.js app/group/a.js lib/a.js lib/x/a.js src/.js src/a.js src/aab.js src/ab.js src/abc.js src/b.js src/bbc.js src/c.js src/x/a.js";
 const all = [...files].sort().join(" ");
 
-// What ESLint 10.12 lints with each.
-test.concurrent("?( ), *( ), +( ), @( ) and !( ) in `files`", async () => {
+// The expected files come from ESLint 10.12.
+test.concurrent("extglob patterns in `files` match the same files as ESLint", async () => {
   const expected = [
     ["**/*.?(c|m)js", ["a.cjs", "a.mjs", ...js.split(" ")].sort().join(" ")],
     ["**/*.@(js|ts)", [...js.split(" "), "a.test.ts", "a.ts", "src/a.test.ts", "src/x/y.ts"].sort().join(" ")],
@@ -115,19 +115,19 @@ test.concurrent("?( ), *( ), +( ), @( ) and !( ) in `files`", async () => {
         .filter(it => /^(src|lib)\//.test(it))
         .join(" "),
     ],
-    // In each other, and with braces.
+    // Nested groups, and groups mixed with braces
     ["src/@(a|{b,c}).js", "src/a.js src/b.js src/c.js"],
     [
       "**/+(a|*(b)c).js",
       "a.js app/(group)/a.js app/group/a.js lib/a.js lib/x/a.js src/a.js src/abc.js src/bbc.js src/c.js src/x/a.js",
     ],
-    // Parentheses alone are characters.
+    // Parentheses without a prefix are literal.
     ["app/(group)/*.js", "app/(group)/a.js"],
     [
       "**/*.{js,?(m)ts}",
       [...js.split(" "), "a.mts", "a.test.ts", "a.ts", "src/a.test.ts", "src/x/y.ts"].sort().join(" "),
     ],
-    // A `**` at the end of an alternative that ends the pattern.
+    // `**` at the end of an alternative that ends the pattern
     [
       "{lib/*.js,src/**}",
       all
@@ -135,9 +135,9 @@ test.concurrent("?( ), *( ), +( ), @( ) and !( ) in `files`", async () => {
         .filter(it => it === "lib/a.js" || it.startsWith("src/"))
         .join(" "),
     ],
-    // Not what starts with `a` or `b`: what follows the group counts.
+    // `!(a|b)` only rejects a name if the rest of the pattern matches after `a` or `b`.
     ["src/!(a|b)*.js", "src/.js src/c.js"],
-    // To ESLint a `!` at the start negates the pattern, whatever follows it.
+    // For ESLint a leading `!` always negates the pattern, even before `(`.
     ["!(src)/**/*.js", all],
     ["**/@(a|b).!(js)", "a.cjs a.css.js a.mjs a.mts a.test.ts a.ts a.tsx src/a.test.ts"],
     ["src/?(a)?(b).js", "src/.js src/a.js src/ab.js src/b.js"],
@@ -150,7 +150,7 @@ test.concurrent("?( ), *( ), +( ), @( ) and !( ) in `files`", async () => {
   ).toEqual(expected);
 });
 
-test.concurrent("a directory in `ignores`: `a`, `a/`, `a/*`, `a/**`, and what `!` takes back", async () => {
+test.concurrent("`ignores` handles `a`, `a/`, `a/*`, `a/**` and `!` like ESLint", async () => {
   const files = [
     "a.js",
     "out/a.js",
@@ -162,11 +162,11 @@ test.concurrent("a directory in `ignores`: `a`, `a/`, `a/*`, `a/**`, and what `!
     "dir/a.js",
   ];
   const ignores = ["**/out", "gen/*", "!gen/keep", "all/**", "!all/keep", "dir/", "@(no|none)/**"];
-  // `all/**` has the directory `all`, which is not read then. `gen/*` does not have `gen`.
+  // `all/**` ignores the directory `all` itself, so nothing in it can be re-included. `gen/*` doesn't ignore `gen`.
   expect(await filesOf(["**/*.js"], files, [{ ignores }])).toEqual([["**/*.js", "a.js gen/keep/a.js"]]);
 });
 
-test.concurrent("many groups, and groups in groups, take no time to speak of", async () => {
+test.concurrent("patterns with many or deeply nested groups match quickly", async () => {
   const name = Buffer.alloc(60, "a").toString();
   const expected = [
     [`${Buffer.alloc(120, "*(a|a)").toString()}b.js`, ""],
@@ -182,8 +182,8 @@ test.concurrent("many groups, and groups in groups, take no time to speak of", a
   ).toEqual(expected);
 });
 
-// eslint-plugin-import asks minimatch without `dot`.
-test.concurrent("for the rules of import no `*` and no `**` takes the dot that a name starts with", async () => {
+// eslint-plugin-import calls minimatch without `dot`.
+test.concurrent("wildcards in import rule options don't match a leading dot", async () => {
   const code = 'import "./a.css";\nimport "./a.less";\nimport "./a.scss";\n';
   const styles = { "a.css": "", "a.less": "", "a.scss": "" };
   const inside = (directory: string) =>
@@ -191,7 +191,7 @@ test.concurrent("for the rules of import no `*` and no `**` takes the dot that a
       Object.entries({ "a.js": code, ...styles }).map(([name, text]) => [`${directory}/${name}`, text]),
     );
   using dir = tempDir("bun-lint-glob", {
-    // `{**,}/` is `**/` or `/`.
+    // `{**,}/` means `**/` or `/`.
     "bunfig.toml": `[lint.rules]\n"import/no-unassigned-import" = ["error", { allow = ["{**,}/*.css", "**/*.less"] }]\n`,
     ...inside("src/x"),
     ...inside(".hidden/x"),
@@ -214,7 +214,7 @@ test.concurrent("for the rules of import no `*` and no `**` takes the dot that a
   expect(exitCode).toBe(1);
 });
 
-/** `file:line` of what is reported in a project with these files. */
+/** Lints a project with these files and returns each report as `file:line`. */
 async function reported(files: Record<string, string>, args: string[]) {
   using dir = tempDir("bun-lint-glob", files);
   await using proc = spawn({
@@ -234,7 +234,7 @@ async function reported(files: Record<string, string>, args: string[]) {
     .sort();
 }
 
-test.concurrent("import/no-extraneous-dependencies: `**/*.test.js` is not for a file in .storybook", async () => {
+test.concurrent("import/no-extraneous-dependencies: `**/*.test.js` doesn't match files in .storybook", async () => {
   const code = 'import dev from "dev";\nexport default dev;\n';
   const files = {
     "bunfig.toml": `[lint.rules]\n"import/no-extraneous-dependencies" = ["error", { devDependencies = ["**/*.test.js"] }]\n`,
@@ -251,7 +251,7 @@ test.concurrent("import/no-extraneous-dependencies: `**/*.test.js` is not for a 
 test.concurrent.each([
   [", patternOptions = { dot = true }", ["a.js:2"]],
   ["", []],
-])("import/order: patternOptions.dot of a path group%s", async (options, expected) => {
+])("import/order honors patternOptions.dot%s", async (options, expected) => {
   const group = `{ pattern = "~/**", group = "builtin", position = "before"${options} }`;
   const files = {
     "bunfig.toml": `[lint.rules]\n"import/order" = ["error", { pathGroups = [${group}], pathGroupsExcludedImportTypes = [] }]\n`,
@@ -276,7 +276,7 @@ test.concurrent("brace sequences in `files` match the same files as ESLint", asy
     ["x{a..c}.js", "a b c"],
     ["x{d..a..2}.js", "b d"],
     ["x{{1..2},a}.js", "1 2 a"],
-    // Not from one number to another, nor from one letter to another.
+    // Not sequences
     ["x{1..a}.js", ""],
     ["x{1..3,a}.js", "a"],
     ["x{a}.js", "{a}"],
@@ -299,20 +299,33 @@ test.concurrent("brace sequences in `files` match the same files as ESLint", asy
   ).toEqual(expected);
 });
 
-test.concurrent.each(["*[\\", "*[a\\", "[a-\\", "[\\", "{[\\}", "@([\\)", "\\", "[", "{", "@(", "{1..", "[!", "[^\\"])(
-  "a pattern that ends in the middle of something matches nothing: %s",
-  async pattern => {
-    using dir = tempDir("bun-lint-glob", { "a.js": "", "eslint.config.mjs": "export default [{}];\n" });
-    await using proc = spawn({
-      cmd: [bunExe(), "lint", pattern],
-      env,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("");
-    expect(stderr).toContain("No files matching the pattern");
-    expect(exitCode).toBe(2);
-  },
-);
+// On Windows `\` is the root of the current drive, which is a directory to lint.
+const backslash = isWindows ? [] : ["\\"];
+test.concurrent.each([
+  "*[\\",
+  "*[a\\",
+  "[a-\\",
+  "[\\",
+  "{[\\}",
+  "@([\\)",
+  "[",
+  "{",
+  "@(",
+  "{1..",
+  "[!",
+  "[^\\",
+  ...backslash,
+])("an incomplete pattern matches no files: %s", async pattern => {
+  using dir = tempDir("bun-lint-glob", { "a.js": "", "eslint.config.mjs": "export default [{}];\n" });
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", pattern],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("No files matching the pattern");
+  expect(exitCode).toBe(2);
+});

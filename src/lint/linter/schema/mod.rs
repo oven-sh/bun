@@ -128,6 +128,21 @@ pub(crate) fn with_defaults(meta: &'static Meta, options: &[Json]) -> Vec<Json> 
     }
 }
 
+/// A rule's `meta.schema`, and `options` merged over its `meta.defaultOptions`. `None` if the rule takes no options. Also
+/// `None` for rules ported from oxlint, which have no schema.
+pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Json, Vec<Json>)> {
+    if meta.follows_oxlint {
+        return None;
+    }
+    let found = find(&RuleId::Known(meta).to_vec())?;
+    let [schema, defaults @ ..] = found.as_array()? else {
+        return None;
+    };
+    let defaults = defaults.first().and_then(Json::as_array);
+    let merged = deep_merge_arrays(defaults.unwrap_or_default(), options);
+    Some((schema.clone(), merged))
+}
+
 /// Validates `options`, which are what follows the severity, as ESLint's `validateRulesConfig` does.
 /// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`.
 pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<u8>> {

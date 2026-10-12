@@ -609,6 +609,8 @@ function lastDescendants() {
 const codePathOrigins = ["program", "function", "class-field-initializer", "class-static-block"];
 // Templates for `native.codePaths`, which builds the objects. Only ESLint's getters and methods live here.
 let codePathShapes;
+// The same for a configuration for ESLint 8, where a code path also has `currentSegments`.
+let legacyCodePathShapes;
 {
   class CodePath {
     get initialSegment() {
@@ -684,8 +686,21 @@ let codePathShapes;
     }
   }
 
+  const legacyPrototype = Object.defineProperties(
+    {},
+    {
+      ...Object.getOwnPropertyDescriptors(CodePath.prototype),
+      currentSegments: {
+        get() {
+          return this.internal.currentSegments;
+        },
+        configurable: true,
+      },
+    },
+  );
+  const codePathKeys = ["id", "origin", "upper", "childCodePaths", "internal"];
   codePathShapes = [
-    native.shape(CodePath.prototype, ["id", "origin", "upper", "childCodePaths", "internal"], "", 1),
+    native.shape(CodePath.prototype, codePathKeys, "", 1),
     native.shape(
       Object.prototype,
       ["initialSegment", "finalSegments", "returnedForkContext", "thrownForkContext"],
@@ -699,6 +714,7 @@ let codePathShapes;
     ),
     native.shape(Object.prototype, ["used", "loopedPrevSegments"], true),
   ];
+  legacyCodePathShapes = [native.shape(legacyPrototype, codePathKeys, "", 1), ...codePathShapes.slice(1)];
 }
 
 // Walks the tree with `walk` and calls the code path listeners between the node listeners, where ESLint calls them. The
@@ -706,24 +722,35 @@ let codePathShapes;
 function traverseWithCodePaths(walk, enter, leave) {
   ask(CODE_PATHS);
   const buffer = buffers[CODE_PATHS];
-  const [paths, segments] = native.codePaths(codePathShapes, codePathOrigins, buffer);
+  const isLegacy = fileSettings.isLegacy === true;
+  const [paths, segments] = native.codePaths(isLegacy ? legacyCodePathShapes : codePathShapes, codePathOrigins, buffer);
+  if (isLegacy) for (const path of paths) path.internal.currentSegments = [];
+  // The code paths that have started and not ended, to keep `currentSegments` up to date.
+  const open = [];
   // Four words per event: see `code_path/estree.rs`.
   const events = new Uint32Array(buffer, 16, 4 * new Uint32Array(buffer, 0, 1)[0]);
-  const callsByKind = codePathEventNames.map(name => codePathCalls.get(name));
+  const callsByKind = codePathEventNames.map(name => codePathCalls.get(name) ?? []);
   let at = 0;
   let step = 0;
   // Emits the events that come before the next step.
   const emit = () => {
     for (; at < events.length && events[at] === step; at += 4) {
       const kind = events[at + 1] & 7;
-      const calls = callsByKind[kind];
-      if (calls === undefined) continue;
-      const node = nodes[events[at + 1] >>> 3];
       const first = (kind < 2 ? paths : segments)[events[at + 2]];
-      for (const { entry, listener } of calls) {
+      if (isLegacy) {
+        if (kind === 0) open.push(first.internal);
+        else if (kind === 2 || kind === 4) open.at(-1).currentSegments = [...open.at(-1).currentSegments, first];
+      }
+      const node = nodes[events[at + 1] >>> 3];
+      for (const { entry, listener } of callsByKind[kind]) {
         currentRule = entry;
         if (kind === 6) listener(first, segments[events[at + 3]], node);
         else listener(first, node);
+      }
+      if (isLegacy) {
+        if (kind === 1) open.pop();
+        else if (kind === 3 || kind === 5)
+          open.at(-1).currentSegments = open.at(-1).currentSegments.filter(it => it !== first);
       }
     }
     step++;
@@ -745,16 +772,6 @@ function traverseWithCodePaths(walk, enter, leave) {
 // ───────────── the traversal ─────────────
 
 let isTraversing = false;
-
-// Tells the listeners for the event `name` of the code path analysis.
-function emitCodePathEvent(name, args) {
-  const calls = codePathCalls.get(name);
-  if (calls === undefined) return;
-  for (const call of calls) {
-    currentRule = call.entry;
-    call.listener(...args);
-  }
-}
 
 function callAll(calls, node) {
   for (let i = 0; i < calls.length; i++) {
@@ -825,8 +842,7 @@ function traverse() {
     return;
   }
   const last = lastDescendants();
-  // Calls `enterNode` and `leaveNode` with the number of each node that `isLeft` says has to be left, and `enterNode` with
-  // that of every other.
+  // Visits every node in traversal order. `leaveNode` is only called for the nodes that `isLeft` accepts.
   const walk = (enterNode, leaveNode, isLeft) => {
     const open = [];
     for (let id = 0; id < count; id++) {
@@ -841,26 +857,7 @@ function traverse() {
     while (open.length > 0) leaveNode(open.pop());
   };
   if (codePathCalls === null) return walk(enter, leave, id => exitCalls(id) !== undefined);
-  if (process.env.BUN_LINT_NATIVE_CODE_PATHS === "1") return traverseWithCodePaths(walk, enter, leave);
-  // As in ESLint the whole file is analyzed before the first listener is called: a rule sees the finished graph. A step is
-  // the number of a node to enter, the complement of that of one to leave, or an event and its arguments.
-  const steps = [];
-  let current = 0;
-  const analyzer = new CodePathAnalyzer({
-    enterNode: () => steps.push(current),
-    leaveNode: () => steps.push(~current),
-    emit: (name, args) => steps.push([name, args]),
-  });
-  walk(
-    id => analyzer.enterNode(nodes[(current = id)]),
-    id => analyzer.leaveNode(nodes[(current = id)]),
-    () => true,
-  );
-  for (const step of steps) {
-    if (typeof step !== "number") emitCodePathEvent(step[0], step[1]);
-    else if (step >= 0) enter(step);
-    else leave(~step);
-  }
+  traverseWithCodePaths(walk, enter, leave);
 }
 
 // ───────────── a file ─────────────

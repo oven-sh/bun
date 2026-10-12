@@ -50,6 +50,8 @@ interface Listed {
   deprecated: boolean;
   on_by_default: "error" | "warn" | false;
   modes: ("native" | "eslint" | "oxlint")[];
+  schema: unknown[] | Record<string, unknown> | null;
+  default_options: unknown[] | null;
 }
 
 const listRules = async () => JSON.parse((await lint({}, ["--rules", "-f", "json"])).stdout) as Listed[];
@@ -70,7 +72,7 @@ describe.concurrent("--rules -f json", () => {
     const rules = await listRules();
     expect(rules.length).toBeGreaterThan(1000);
     expect([...new Set(rules.map(it => Object.keys(it).join()))]).toEqual([
-      "scope,value,category,type_aware,fix,default,docs_url,id,aliases,description,kind,deprecated,on_by_default,modes",
+      "scope,value,category,type_aware,fix,default,docs_url,id,aliases,description,kind,deprecated,on_by_default,modes,schema,default_options",
     ]);
     expect(rules.find(it => it.id === "@typescript-eslint/no-floating-promises")).toEqual({
       scope: "typescript",
@@ -87,7 +89,36 @@ describe.concurrent("--rules -f json", () => {
       deprecated: false,
       on_by_default: false,
       modes: ["native", "eslint", "oxlint"],
+      schema: [expect.objectContaining({ type: "object", additionalProperties: false })],
+      default_options: [],
     });
+  });
+
+  test("schema and default_options describe a rule's options", async () => {
+    const rules = new Map((await listRules()).map(it => [it.id, it]));
+    const options = (id: string) => ({
+      schema: rules.get(id)!.schema,
+      default_options: rules.get(id)!.default_options,
+    });
+    expect(options("no-console")).toEqual({
+      schema: [
+        {
+          type: "object",
+          properties: { allow: { type: "array", items: { type: "string" }, minItems: 1, uniqueItems: true } },
+          additionalProperties: false,
+        },
+      ],
+      default_options: [{}],
+    });
+    expect(options("eqeqeq").default_options).toEqual(["always"]);
+    // No options.
+    expect(options("no-debugger")).toEqual({ schema: null, default_options: null });
+    // Rules ported from oxlint take options but have no schema.
+    expect(options("unicorn/filename-case")).toEqual({ schema: null, default_options: null });
+    // Includes the options that Bun's built-in config sets.
+    for (const id of ["no-unused-vars", "@typescript-eslint/no-unused-vars"])
+      expect(options(id).default_options).toEqual([expect.objectContaining({ argsIgnorePattern: "^_" })]);
+    expect([...rules.values()].filter(it => (it.schema === null) !== (it.default_options === null))).toEqual([]);
   });
 
   test("is the same whatever config the project has", async () => {

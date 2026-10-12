@@ -4,7 +4,7 @@
 //! for everything in it that the configuration has `files` for. Directories are listed on all
 //! threads, one level of the tree at a time, and one that the configuration ignores is not entered.
 
-use crate::configs::{Flavor, Loaded, Loader};
+use crate::configs::{Flavor, Loaded, Loader, depends_on_react};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
@@ -155,7 +155,7 @@ struct Directory {
     /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
     /// alone about what it is nearest to.
     is_hidden: bool,
-    /// [`Loader::is_of_react`] for the directory that it is in or, for the one that is searched, for itself.
+    /// [`Loader::is_of_react`] for the parent directory. For the search root, for the directory itself.
     is_of_react: bool,
 }
 
@@ -331,11 +331,12 @@ fn search(
                 return;
             }
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
+            // The listing already tells us whether there's a package.json, so most directories just inherit the answer.
             let has_package = || entries.iter().any(|it| it.name == b"package.json");
-            let is_of_react = match directory.relative.is_empty() || !has_package() {
-                true => directory.is_of_react,
-                false => loader.is_of_react(&own, &directory.path),
-            };
+            let decides =
+                !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn && has_package();
+            let of_own_package = decides.then(|| depends_on_react(&directory.path)).flatten();
+            let is_of_react = of_own_package.unwrap_or(directory.is_of_react);
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {

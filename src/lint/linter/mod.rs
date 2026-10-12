@@ -67,7 +67,7 @@ pub use resolved::{
     severity_of,
 };
 use resolved::{Prepared, Slot};
-pub use schema::{OptionMistake, Step, mistake_in_options};
+pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, refusal_of_oxfmt,
     refusal_of_prettier, refused_by_prettier_with,

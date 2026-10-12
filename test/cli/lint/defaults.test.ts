@@ -407,6 +407,40 @@ export function useThing(a, on) {
     expect(reports).toEqual([...found("App.jsx"), ...found("deep/er/App.jsx"), ...found("mail/web/App.jsx")]);
   });
 
+  test.each([
+    ["only has other fields", `{ "type": "module" }`],
+    ["is empty", "{}"],
+    ["is not an object", "[]"],
+  ])("a nested package.json that %s falls back to the one above it", async (_, nested) => {
+    const files = {
+      "package.json": dependingOn("dependencies"),
+      "src/package.json": nested,
+      "src/App.jsx": component,
+      "src/deep/App.jsx": component,
+    };
+    const [searched, named, piped, printed] = await Promise.all([
+      lint(files, []),
+      lint(files, ["src/App.jsx", "src/deep/App.jsx"]),
+      lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
+      lint(files, ["--print-config", "src/App.jsx"]),
+    ]);
+    expect(searched.reports).toEqual([...found("src/App.jsx"), ...found("src/deep/App.jsx")]);
+    expect(named.reports).toEqual(searched.reports);
+    expect(piped.reports).toEqual(found("src/Other.jsx"));
+    expect(printed.json.rules["react-hooks/rules-of-hooks"]).toEqual([2]);
+  });
+
+  test("a nested package.json with empty dependencies turns the React rules off", async () => {
+    const files = {
+      "package.json": dependingOn("dependencies"),
+      "server/package.json": `{ "dependencies": {} }`,
+      "server/App.jsx": component,
+    };
+    const [searched, named] = await Promise.all([lint(files, []), lint(files, ["server/App.jsx"])]);
+    expect(searched.reports).toEqual([]);
+    expect(named.reports).toEqual([]);
+  });
+
   test("a file that is named, and standard input", async () => {
     const files = { "package.json": dependingOn("dependencies"), "src/App.jsx": component };
     const [named, piped] = await Promise.all([

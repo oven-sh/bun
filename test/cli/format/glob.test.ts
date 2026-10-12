@@ -37,23 +37,23 @@ const names = [
 ];
 const project = { ...Object.fromEntries(names.map(name => [name, ugly])), ".prettierrc.json": "{}" };
 
-// What Prettier 3.9 lists for each.
+// The expected files come from Prettier 3.9.
 test.concurrent.each([
   ["src/**/*.@(js|ts)", "src/a.js src/b.ts src/x/d.js"],
   ["{a,src/x/*}.?(c)js", "a.cjs a.js src/x/d.js"],
   ["lib/!(deep)*.js", "lib/f.js"],
   ["**/+(a|d).js", "a.js src/a.js src/x/d.js"],
-  // To Prettier parentheses alone are a group too.
+  // Prettier also treats parentheses without a prefix as a group.
   ["(src|lib)/*.js", "lib/f.js src/a.js"],
-  // And `a/**` matches `a`.
+  // `a/**` also matches `a` itself.
   ["lib/*/**", "lib/deep/g.js lib/deep/h.min.js lib/f.js"],
-])("a pattern on the command line: %s", async (pattern, expected) => {
+])("the command line pattern %s lists the same files as Prettier", async (pattern, expected) => {
   const { stdout, exitCode } = await format(project, ["-l", pattern]);
   expect(stdout.trim().split("\n").sort().join(" ")).toBe(expected);
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("`files` and `excludeFiles` of an override of Prettier", async () => {
+test.concurrent("extglob patterns work in `files` and `excludeFiles` of Prettier overrides", async () => {
   const overrides = [
     { files: "*.?(c|m)js", options: { semi: false } },
     { files: "src/**/*.@(ts|tsx)", options: { tabWidth: 8 } },
@@ -79,11 +79,11 @@ test.concurrent("`files` and `excludeFiles` of an override of Prettier", async (
 });
 
 test.concurrent.each([
-  // Braces around one thing are characters.
+  // Braces without a comma are literal.
   ["{a.js}", "a.js", "  "],
   ["{a.js,b.js}", "a.js", "    "],
   ["*.{js}", "a.js", "  "],
-  // A `**` crosses `/` wherever it is.
+  // `**` crosses `/` anywhere in the section name.
   ["**.js", "lib/deep/a.js", "    "],
   ["lib/**.js", "lib/deep/a.js", "    "],
   ["lib/**.js", "a.js", "  "],
@@ -91,10 +91,10 @@ test.concurrent.each([
   ["li**/a.js", "lib/deep/a.js", "    "],
   ["li**", "lib/deep/a.js", "    "],
   ["lib/*.js", "lib/deep/a.js", "  "],
-  // Without a `/` it is for a name in any directory.
+  // A section without `/` matches in any directory.
   ["a.js", "lib/deep/a.js", "    "],
   ["/a.js", "lib/deep/a.js", "  "],
-])("a section of .editorconfig for Prettier: [%s] and %s", async (section, name, indent) => {
+])(".editorconfig section [%s] with %s behaves like Prettier", async (section, name, indent) => {
   const files = { ".prettierrc.json": "{}", ".editorconfig": `root = true\n[${section}]\nindent_size = 4\n` };
   const { stdout, exitCode } = await format(files, ["--stdin-filepath", name], ugly);
   expect(stdout).toBe(`if (a) {\n${indent}b(1);\n}\n`);
@@ -123,7 +123,7 @@ const numbered = [
   "d",
 ];
 
-// What Prettier 3.9 does with each. fast-glob counts from the first to the second. micromatch makes a class of characters.
+// The expected results come from Prettier 3.9. fast-glob expands `{1..3}` to 1, 2 and 3. micromatch turns it into the class `[1-3]`.
 test.concurrent.each([
   ["x{1..3}.js", "1 2 3", "1 2 3"],
   ["x{3..1}.js", "1 2 3", "1 2 3"],
@@ -135,7 +135,7 @@ test.concurrent.each([
   ["x{c..a}.js", "a b c", "a b c"],
   ["x{-1..1}.js", "-1 0 1", "1"],
   ["x{a}.js", "", ""],
-])("%s on the command line and in an override of Prettier", async (pattern, listed, overridden) => {
+])("%s behaves like Prettier on the command line and in an override", async (pattern, listed, overridden) => {
   const files = Object.fromEntries(numbered.map(it => [`x${it}.js`, "a( 1 )\n"]));
   const names = (text: string) =>
     text
@@ -169,7 +169,7 @@ test.concurrent.each([
   ["{-1..1}.js", "-1.js", "    "],
   ["{3..1}.js", "2.js", "    "],
   ["v{1..2}/*.js", "v2/a.js", "    "],
-])("numbers in a section of .editorconfig for Prettier: [%s] and %s", async (section, name, indent) => {
+])(".editorconfig number range [%s] with %s behaves like Prettier", async (section, name, indent) => {
   const files = { ".prettierrc.json": "{}", ".editorconfig": `root = true\n[${section}]\nindent_size = 4\n` };
   const { stdout, exitCode } = await format(files, ["--stdin-filepath", name], ugly);
   expect(stdout).toBe(`if (a) {\n${indent}b(1);\n}\n`);

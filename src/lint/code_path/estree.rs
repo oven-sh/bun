@@ -161,20 +161,24 @@ fn push_event(events: &mut Vec<u32>, step: u32, id: u32, event: Event) {
 }
 
 impl<'a> Walker<'_, '_, 'a> {
+    #[inline]
     fn node(&self, id: u32) -> VNode<'a> {
         self.tree.nodes[id as usize]
     }
 
+    #[inline]
     fn node_type(&self, id: u32) -> NodeType {
         NodeType::ALL[self.tree.types[id as usize] as usize]
     }
 
     /// `None` for the `Program`.
+    #[inline]
     fn parent(&self, id: u32) -> Option<u32> {
         (id != 0).then(|| self.tree.parents[id as usize])
     }
 
     /// Runs `then` with the builder. Events it emits fire at the current step with the node `id`.
+    #[inline]
     fn with<T>(
         &mut self,
         id: u32,
@@ -187,6 +191,7 @@ impl<'a> Walker<'_, '_, 'a> {
     }
 
     /// Runs `then` with the state of the current code path.
+    #[inline]
     fn with_state(&mut self, id: u32, then: impl FnOnce(&mut State, &mut Cx<'_, 'a>)) {
         self.with(id, |builder, cx| {
             if let Some(state) = builder.states.last_mut() {
@@ -195,8 +200,20 @@ impl<'a> Walker<'_, '_, 'a> {
         });
     }
 
+    /// Whether the rules know about every segment change so far.
+    #[inline]
+    fn is_settled(&self) -> bool {
+        self.builder
+            .states
+            .last()
+            .is_none_or(|state| state.current_segments[..] == *state.head_segments())
+    }
+
+    #[inline]
     fn forward_current_to_head(&mut self, id: u32) {
-        self.with(id, |builder, cx| builder.forward_current_to_head(cx));
+        if !self.is_settled() {
+            self.with(id, |builder, cx| builder.forward_current_to_head(cx));
+        }
     }
 
     fn start_code_path(&mut self, id: u32, origin: Origin) {
@@ -425,10 +442,8 @@ impl<'a> Walker<'_, '_, 'a> {
         let (node, node_type) = (self.node(id), self.node_type(id));
         if node_type == NodeType::Identifier {
             // Most nodes are identifiers outside of `try`, with nothing left to tell the rules.
-            let is_idle = self.builder.states.last().is_none_or(|state| {
-                !state.is_in_try() && state.current_segments[..] == *state.head_segments()
-            });
-            if is_idle {
+            let is_in_try = self.builder.states.last().is_some_and(State::is_in_try);
+            if !is_in_try && self.is_settled() {
                 return;
             }
             if self.is_identifier_reference(id) {

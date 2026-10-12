@@ -329,8 +329,8 @@ pub struct VirtualMachine {
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
     pub pending_ipc: Option<PendingIpc>,
-    /// The process started as a `node:cluster` worker and is not set up yet. `reload_entry_point` takes it.
-    pub(crate) cluster_worker_pending: bool,
+    /// The process started as a `node:cluster` worker. Each entry-point funnel sets the worker up before user code.
+    pub(crate) is_cluster_worker: bool,
     pub hot_reload_counter: u32,
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
@@ -3432,8 +3432,7 @@ impl VirtualMachine {
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
             arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
         }
-        let is_cluster_worker = core::mem::take(&mut self.cluster_worker_pending);
-        let needs_pre_execution = is_cluster_worker
+        let needs_pre_execution = self.is_cluster_worker
             || bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self
                 .worker_ref()
@@ -4307,7 +4306,7 @@ impl VirtualMachine {
         if let Some(unique_id) = map.get(b"NODE_UNIQUE_ID") {
             bun_dotenv::omit_cluster_unique_id_from_child_env();
             // Node.js sets a worker up for a non-empty value, with or without a channel.
-            self.cluster_worker_pending = self.is_main_thread() && !unique_id.is_empty();
+            self.is_cluster_worker = self.is_main_thread() && !unique_id.is_empty();
         }
 
         // Node.js checks if this is set to "1" and no other value
@@ -5652,6 +5651,11 @@ impl VirtualMachine {
         self.event_loop_mut().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+
+        // Under `--isolate` each file has a new global, so this runs once per file.
+        if self.is_cluster_worker {
+            crate::cpp::Bun__preExecutionBootstrap(self.global());
+        }
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {

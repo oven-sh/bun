@@ -205,13 +205,13 @@ pub fn inside_as<'p>(style: Style, directory: &[u8], path: &'p [u8]) -> Option<&
     }
 }
 
-/// Whether `path` is `directory`, or inside of it. Both are resolved.
-pub fn is_at_or_inside(directory: &[u8], path: &[u8]) -> bool {
-    let is_same = match Style::of(directory) {
-        Style::Posix => directory == path,
-        Style::Windows => directory.eq_ignore_ascii_case(path),
+/// Whether `path` is `outer`, or inside of it. Both are resolved.
+pub fn is_at_or_inside(outer: &[u8], path: &[u8]) -> bool {
+    let is_same = match Style::of(outer) {
+        Style::Posix => outer == path,
+        Style::Windows => outer.eq_ignore_ascii_case(path),
     };
-    is_same || inside(directory, path).is_some()
+    is_same || inside(outer, path).is_some()
 }
 
 /// `path.dirname(path)`. A root is its own directory.

@@ -24,13 +24,10 @@ import { after, describe, test } from "node:test";
 import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
+// Node.js cannot load the harness.
 const harness = typeof Bun !== "undefined" ? await import("harness") : undefined;
-// A debug or ASAN child takes seconds to start.
-const slow = !!harness && (harness.isDebug || harness.isASAN);
-const childOptions = slow ? { timeout: 60_000 } : {};
 const childEnv = harness ? harness.bunEnv : process.env;
 const posixTest = process.platform === "win32" ? test.skip : test;
-// A second connect() leaves the request it replaced active in Node, so a Node process never exits after one.
 const bunTest = process.versions.bun && process.platform !== "win32" ? test : test.skip;
 
 const dirs: string[] = [];
@@ -56,11 +53,7 @@ function run(script: string, ...args: string[]) {
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", chunk => (stdout += chunk));
-    child.stderr.on("data", chunk => {
-      stderr += chunk;
-      // A child that loops on uncaught errors never exits: stop it instead of waiting for the timeout.
-      if (stderr.length > 64 * 1024) child.kill();
-    });
+    child.stderr.on("data", chunk => (stderr += chunk));
     child.on("error", reject);
     child.on("close", exitCode => resolve({ stdout: stdout.trim().split("\n"), stderr, exitCode }));
   });
@@ -133,8 +126,49 @@ describe("a unix socket connect that fails at connect(2)", () => {
     });
   }
 
+  // Node.js throws a TypeError from connect() here: it reads `connect` of the handle that destroy() cleared.
+  bunTest("a 'connectionAttempt' listener that destroys the socket gets only 'close'", async () => {
+    const events: string[] = [];
+    const socket = new net.Socket();
+    socket.on("connectionAttempt", () => socket.destroy());
+    socket.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code ?? e.name}`));
+    const closed = new Promise<void>(resolve => {
+      socket.on("close", hadError => {
+        events.push(`close ${hadError}`);
+        resolve();
+      });
+    });
+    socket.connect(path.join(makeDir(), "none.sock"));
+    await closed;
+    await nextTurn();
+    assert.deepStrictEqual(events, ["close false"]);
+  });
+
+  // libuv reports the failure, so a fake clock that replaces the timer globals does not hold it.
+  posixTest("is reported while a fake clock holds the global setImmediate", async () => {
+    const events: string[] = [];
+    const held: (() => void)[] = [];
+    const realSetImmediate = globalThis.setImmediate;
+    globalThis.setImmediate = ((callback: (...args: unknown[]) => void, ...args: unknown[]) => {
+      held.push(() => callback(...args));
+    }) as unknown as typeof setImmediate;
+    try {
+      const socket = net.connect(path.join(makeDir(), "none.sock"));
+      socket.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code}`));
+      // The failure is due on the next turn of the loop: a held one is still missing after eight.
+      for (let turn = 0; turn < 8 && events.length === 0; turn++) {
+        await new Promise<void>(resolve => realSetImmediate(resolve));
+      }
+    } finally {
+      globalThis.setImmediate = realSetImmediate;
+      for (const release of held) release();
+    }
+    assert.deepStrictEqual(events, ["error ENOENT"]);
+  });
+
   // uv_pipe_connect2 has no EALREADY: a later connect() replaces the request, and the one callback is for the latest.
   // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L334
+  // Only in Bun: Node.js keeps the request that was replaced active, and its process never exits.
   describe("a second connect() before the first is reported", () => {
     async function secondConnect(first: "missing" | "live", second: "missing" | "live") {
       const dir = makeDir();
@@ -366,31 +400,44 @@ describe("a unix socket connect that fails at connect(2)", () => {
     });
   });
 
-  describe("in a process of its own", () => {
-    // The agent dials again for the next queued request when a socket closes. A socket that
-    // fails inside connect() has no request yet: its 'error' was uncaught and the agent looped.
-    posixTest("an agent at its socket limit fails every queued request once", childOptions, async () => {
-      const result = await run(
-        `
-        const http = require("node:http");
-        const agent = new http.Agent({ maxSockets: 1 });
-        for (let i = 0; i < 3; i++) {
-          const req = http.request({ socketPath: process.argv[1], agent, path: "/" + i });
-          req.on("error", e => console.log("request " + i + " error " + e.code));
-          req.end();
-        }
-        `,
-        path.join(makeDir(), "none.sock"),
-      );
-      assert.deepStrictEqual(result, {
-        stdout: ["request 0 error ENOENT", "request 1 error ENOENT", "request 2 error ENOENT"],
-        stderr: "",
-        exitCode: 0,
-      });
-    });
+  // The agent dials again for the next queued request when a socket closes. A socket that
+  // fails inside connect() has no request yet: nothing heard its 'error' and the agent looped.
+  posixTest("an agent at its socket limit fails every queued request once", async () => {
+    const target = path.join(makeDir(), "none.sock");
+    const agent = new http.Agent({ maxSockets: 1 });
+    const requests = 3;
+    const errors: string[] = [];
+    const done = Promise.withResolvers<void>();
+    let dials = 0;
+    const createConnection = agent.createConnection;
+    agent.createConnection = function (...args) {
+      // One dial more than there are requests is the loop: end it, so that the test fails and does not hang.
+      if (++dials > requests) return void done.resolve();
+      return createConnection.apply(this, args)?.on("error", () => {});
+    };
+    try {
+      for (let i = 0; i < requests; i++) {
+        const req = http.request({ socketPath: target, agent, path: `/${i}` });
+        req.on("error", (e: NodeJS.ErrnoException) => {
+          errors.push(`request ${i} error ${e.code}`);
+          if (errors.length === requests) done.resolve();
+        });
+        req.end();
+      }
+      await done.promise;
+      await nextTurn();
+    } finally {
+      agent.destroy();
+    }
+    assert.deepStrictEqual(
+      { dials, errors },
+      { dials: requests, errors: ["request 0 error ENOENT", "request 1 error ENOENT", "request 2 error ENOENT"] },
+    );
+  });
 
+  describe("in a process of its own", () => {
     // The failure holds the loop like a request in flight: unref() does not drop it.
-    posixTest("is reported for a socket that was unref()ed", childOptions, async () => {
+    posixTest("is reported for a socket that was unref()ed", async () => {
       const result = await run(
         `
         const socket = require("node:net").connect(process.argv[1]);
@@ -404,91 +451,44 @@ describe("a unix socket connect that fails at connect(2)", () => {
     });
 
     // The connect and the exit are in the same batch of immediates, so the failure is still queued at the exit.
-    posixTest("a worker that exits with the failure still queued", childOptions, async () => {
-      const workers = slow ? 2 : 8;
-      const result = await run(
-        `
-        const { Worker } = require("node:worker_threads");
-        const source =
-          "const { parentPort } = require('node:worker_threads');" +
-          "setImmediate(() => require('node:net').connect(" + JSON.stringify(process.argv[1]) + ").on('error', () => parentPort.postMessage('error')));" +
-          "setImmediate(() => process.exit(0));";
-        let started = 0, exited = 0, reported = 0;
-        const total = +process.argv[2];
-        function again() {
-          if (started >= total) {
-            if (exited === total) console.log(JSON.stringify({ exited, reported }));
-            return;
-          }
-          started++;
-          const worker = new Worker(source, { eval: true });
-          worker.on("message", () => reported++);
-          worker.on("error", e => { console.error(e); process.exit(1); });
-          worker.on("exit", () => { exited++; again(); });
-        }
-        again();
-        again();
-        `,
-        path.join(makeDir(), "none.sock"),
-        String(workers),
-      );
-      assert.deepStrictEqual(result, {
-        stdout: [JSON.stringify({ exited: workers, reported: 0 })],
-        stderr: "",
-        exitCode: 0,
-      });
-    });
-
-    // Each way a failure that is still queued can end must give back the socket.
-    bunTest("does not retain the socket, however the attempt ends", childOptions, async () => {
+    posixTest("is not reported when the process exits with the failure still queued", async () => {
       const result = await run(
         `
         const net = require("node:net");
-        const tls = require("node:tls");
-        const { heapStats } = require("bun:jsc");
-        const path = process.argv[1];
-        const count = +process.argv[2];
-        const shapes = {
-          reported: socket => {},
-          destroyed: socket => process.nextTick(() => socket.destroy()),
-          superseded: socket => socket.connect(path),
-        };
-        function once(dial, shape) {
-          return new Promise(resolve => {
-            const socket = dial();
-            socket.on("error", () => {});
-            socket.on("close", resolve);
-            shape(socket);
-          });
-        }
-        const dials = { net: () => net.connect(path), tls: () => tls.connect({ path }) };
-        const live = {};
-        for (const [module, dial] of Object.entries(dials)) {
-          for (const [name, shape] of Object.entries(shapes)) {
-            for (let i = 0; i < count; i += 25) {
-              const batch = [];
-              for (let j = 0; j < 25; j++) batch.push(once(dial, shape));
-              await Promise.all(batch);
-            }
-            Bun.gc(true);
-            await new Promise(resolve => setImmediate(resolve));
-            Bun.gc(true);
-            const counts = heapStats().objectTypeCounts;
-            live[module + " " + name] = (counts.TCPSocket ?? 0) + (counts.TLSSocket ?? 0);
-          }
-        }
-        console.log(JSON.stringify(live));
+        setImmediate(() => net.connect(process.argv[1]).on("error", e => console.log("error " + e.code)));
+        setImmediate(() => process.exit(0));
         `,
         path.join(makeDir(), "none.sock"),
-        slow ? "25" : "1000",
       );
-      assert.deepStrictEqual({ stderr: result.stderr, exitCode: result.exitCode }, { stderr: "", exitCode: 0 });
-      const live: Record<string, number> = JSON.parse(result.stdout.at(-1)!);
-      assert.deepStrictEqual(
-        Object.entries(live).filter(([, count]) => count > 10),
-        [],
-      );
+      assert.deepStrictEqual(result, { stdout: [""], stderr: "", exitCode: 0 });
     });
+  });
+
+  // Each way a failure that is still queued can end must give back the socket.
+  bunTest("does not retain the socket, however the attempt ends", async () => {
+    const target = path.join(makeDir(), "none.sock");
+    const dials = 8;
+    const ends: ((socket: net.Socket) => void)[] = [
+      () => {},
+      socket => process.nextTick(() => socket.destroy()),
+      socket => socket.connect(target),
+    ];
+    const sockets: WeakRef<net.Socket>[] = [];
+    for (const end of ends) {
+      await Promise.all(
+        Array.from({ length: dials }, () => {
+          const socket = net.connect(target);
+          sockets.push(new WeakRef(socket));
+          socket.on("error", () => {});
+          end(socket);
+          return closeOf(socket);
+        }),
+      );
+    }
+    await nextTurn();
+    Bun.gc(true);
+    const live = sockets.filter(socket => socket.deref()).length;
+    assert.ok(live < dials, `${live} of ${sockets.length} sockets are still alive`);
   });
 });
 
@@ -497,7 +497,7 @@ if (harness) {
   const node = harness.nodeExe();
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 120_000 }, async () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

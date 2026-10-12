@@ -278,6 +278,8 @@ const checkServerIdentityInHandshake = $newRustFunction(
 const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
+// Not the global: a fake clock replaces that one, and it must not hold what libuv reports from the loop.
+const setImmediateNative = $newCppFunction("node/NodeTimers.cpp", "functionSetImmediate", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -1920,8 +1922,10 @@ function kConnectPipe(self, req, address) {
   // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L343
   if (errno === 0 || errno === uv().UV_EINVAL) return errno;
   const handle = self._handle;
+  // A 'connectionAttempt' listener destroyed the socket.
+  if (!handle) return errno;
   const data = (handle[kFailedPipeConnect] = handle.data);
-  setImmediate(afterPipeConnectFailed, self, handle, data, req, errno);
+  setImmediateNative(afterPipeConnectFailed, self, handle, data, req, errno);
   return 0;
 }
 

@@ -141,6 +141,53 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  if (isBun) {
+    // https://github.com/oven-sh/bun/issues/45020
+    test("resolves/rejects notice a promise settled through setImmediate while a socket keeps the loop active", async () => {
+      const { bunEnv, bunExe, tempDir } = require("harness");
+      using dir = tempDir("expect-resolves-immediate", {
+        "immediate.test.js": `
+          const { afterAll, expect, test } = require("bun:test");
+          const server = require("node:net").createServer().listen(0, "127.0.0.1");
+          afterAll(() => server.close());
+          const hop = () => new Promise(resolve => setImmediate(resolve));
+          async function settle(value, fail) {
+            for (let i = 0; i < 3; i++) await hop();
+            if (fail) throw new Error(value);
+            return value;
+          }
+          test("called from the test body", async () => {
+            await expect(settle("a", true)).rejects.toThrow("a");
+            await expect(settle("b", false)).resolves.toBe("b");
+          });
+          test("called after an await", async () => {
+            await hop();
+            await expect(settle("c", true)).rejects.toThrow("c");
+            await expect(settle("d", false)).resolves.toBe("d");
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "immediate.test.js"],
+        cwd: String(dir),
+        // The GC timer is otherwise what wakes a nested loop blocked in the poll (~1 s per hop);
+        // without it the unfixed build hangs instead of stalling.
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+        // Bound the child so it doesn't outlive the runner when this test times out on the unfixed build.
+        timeout: 20_000,
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const summary = stderr.split(/\r?\n/).filter(line => /^ \d+ (pass|fail)$/.test(line));
+      expect({ summary, exitCode, signalCode: proc.signalCode }).toEqual({
+        summary: [" 2 pass", " 0 fail"],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

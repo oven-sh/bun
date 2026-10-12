@@ -949,6 +949,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
+    // An immediate can settle the promise a nested `wait_for_promise` waits on, or queue
+    // microtasks a nested exit() doesn't drain: don't block in the poll after running any.
+    // https://github.com/oven-sh/bun/issues/45020
+    // SAFETY: `el` is the live per-thread event loop.
+    let ran_immediates = !unsafe { &*el }.immediate_tasks.is_empty();
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
@@ -956,7 +961,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if ran_immediates || has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1021,6 +1026,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
+            || ran_immediates
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.

@@ -178,7 +178,13 @@ fn may_hold_merge_key(data: &[u8]) -> bool {
 }
 
 fn invalid_lockfile(log: &mut bun_ast::Log, args: core::fmt::Arguments<'_>) -> Error {
-    log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+    // the message names ranges and lockfile keys, which can be URLs with credentials
+    let message = args.to_string();
+    log.add_error_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!("{}", crate::migration::RedactedUrls(message.as_bytes())),
+    );
     Error::InvalidYarnBerryLockfile
 }
 

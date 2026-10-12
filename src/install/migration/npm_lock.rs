@@ -757,7 +757,7 @@ impl<'a> Migrator<'a> {
                             bun_core::warn!(
                                 "skipped \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
                                 bstr::BStr::new(name),
-                                bstr::BStr::new(spec),
+                                super::RedactedUrls(spec),
                                 bstr::BStr::new(if key.is_empty() { &b"."[..] } else { key }),
                             );
                         }

@@ -1822,7 +1822,7 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
       cmd: [bunExe(), "pm", "migrate", "-f", ...flags],
       cwd: dir,
       env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -1841,6 +1841,18 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
   const verbose = await migrate(String(stale), "--verbose");
   expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "b@^1.0.0"; bun resolves it');
   expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "c@^1.0.0"; bun resolves it');
+
+  // a range can be a tarball URL with credentials
+  const token = "npm_" + Buffer.alloc(36, "A").toString();
+  using url = project({ a: "^1.0.0", direct: `http://carol:s3cret@localhost:1/direct-1.0.0.tgz?token=${token}` }, [
+    "a",
+  ]);
+  const masked = await migrate(String(url));
+  expect(masked.stderr).toContain(
+    'warn: yarn.lock has no entry for "direct@http://carol:******@localhost:1/direct-1.0.0.tgz?token=***"',
+  );
+  expect(masked.stderr).not.toContain("s3cret");
+  expect(masked.stderr).not.toContain(token);
 
   // a peer is not a yarn.lock entry
   using complete = project({ a: "^1.0.0" }, ["a"]);

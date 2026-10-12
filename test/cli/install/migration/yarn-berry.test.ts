@@ -1352,6 +1352,26 @@ catalogs:
     "yarn.lock": yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
   });
 
+  test.concurrent("a range with a password is not printed", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-reject",
+          dependencies: { direct: "http://carol:s3cret@localhost:1/direct-1.0.0.tgz" },
+        }),
+        "yarn.lock": yarnLock({ "berry-reject@workspace:.": [`resolution: "berry-reject@workspace:."`] }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain(
+      `error: yarn.lock has no entry for "direct@http://carol:******@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
+    );
+    expect(stderr).not.toContain("s3cret");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("a registry URL with a password is not printed", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },

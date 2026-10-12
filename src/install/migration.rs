@@ -427,6 +427,39 @@ fn migrate_npm_lockfile<'a>(
     }))
 }
 
+/// `text` with the password, npm token and UUID of every `http(s)://` URL in it
+/// masked. A range or a lockfile key that is printed can be a tarball URL with
+/// credentials.
+pub(crate) struct RedactedUrls<'a>(pub(crate) &'a [u8]);
+
+impl core::fmt::Display for RedactedUrls<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut rest = self.0;
+        while let Some(at) = strings::index_of(rest, b"://") {
+            let before = &rest[..at];
+            let start = if before.ends_with(b"https") {
+                at - 5
+            } else if before.ends_with(b"http") {
+                at - 4
+            } else {
+                write!(f, "{}", bstr::BStr::new(&rest[..at + 3]))?;
+                rest = &rest[at + 3..];
+                continue;
+            };
+            let end = strings::index_of_any(&rest[start..], b" \t\n\"")
+                .map_or(rest.len(), |len| start + len as usize);
+            write!(
+                f,
+                "{}{}",
+                bstr::BStr::new(&rest[..start]),
+                bun_core::fmt::redacted_npm_url(&rest[start..end])
+            )?;
+            rest = &rest[end..];
+        }
+        write!(f, "{}", bstr::BStr::new(rest))
+    }
+}
+
 /// A dependency with no entry in the lockfile (the lockfile is older than a
 /// package.json) is left for the install to resolve, to a version the lockfile
 /// does not name. Peers and optional dependencies are not always locked, and a
@@ -459,7 +492,7 @@ pub(crate) fn warn_unlocked_dependencies(
     let count = unlocked().count();
     for dep in unlocked().take(if log_level.is_verbose() { count } else { 1 }) {
         let name = bstr::BStr::new(dep.name.slice(buf));
-        let range = bstr::BStr::new(dep.version.literal.slice(buf));
+        let range = RedactedUrls(dep.version.literal.slice(buf));
         if count == 1 || log_level.is_verbose() {
             bun_core::warn!(
                 "{} has no entry for \"{}@{}\"; bun resolves it",

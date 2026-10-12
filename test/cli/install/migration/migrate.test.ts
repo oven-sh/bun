@@ -1340,7 +1340,7 @@ describe("package-lock.json migration fixes", () => {
           "node_modules/x": {
             version: "1.0.0",
             resolved: "https://registry.npmjs.org/x/-/x-1.0.0.tgz",
-            dependencies: { y: "^1.0.0" },
+            dependencies: { y: "^1.0.0", z: "http://carol:s3cret@localhost:1/z-1.0.0.tgz" },
           },
         },
       }),
@@ -1350,6 +1350,9 @@ describe("package-lock.json migration fixes", () => {
     expect(stderr).toContain(
       'warn: skipped "y@^1.0.0" from package-lock.json: no entry for this dependency of "node_modules/x"',
     );
+    // a range can be a tarball URL with credentials
+    expect(stderr).toContain('warn: skipped "z@http://carol:******@localhost:1/z-1.0.0.tgz" from package-lock.json');
+    expect(stderr).not.toContain("s3cret");
     expect(lock.packages.x[2]).toStrictEqual({});
     expect(exitCode).toBe(0);
   });

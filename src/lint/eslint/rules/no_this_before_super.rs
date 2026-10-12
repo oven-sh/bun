@@ -36,6 +36,8 @@ pub struct State<'a> {
     seg_info_map: FxHashMap<u32, SegmentInfo<'a>>,
     /// `winding_switches`
     winding_switches: Option<Vec<u32>>,
+    /// With a configuration of oxlint: in the arguments of how many `super()` that it takes for called the current node is.
+    called_around: u32,
 }
 
 impl<'a> State<'a> {
@@ -159,6 +161,7 @@ impl NoThisBeforeSuper {
             }
         }
         cx.state.seg_info_map.clear();
+        cx.state.called_around = 0;
     }
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -241,13 +244,11 @@ impl NoThisBeforeSuper {
             // oxlint takes `super()` for called before its arguments. If it sees a `this` in them, it is never called.
             let call = e.parent().as_expr().and_then(Expr::as_call).filter(|_| is_oxlint);
             if !call.is_some_and(|call| oxlint_contains_this_or_super(call.args())) {
-                if is_oxlint {
-                    Self::mark_as_called(cx);
-                }
+                cx.state.called_around += u32::from(is_oxlint);
                 return;
             }
         }
-        if e.is_jsx_tag_name() && !is_oxlint {
+        if e.is_jsx_tag_name() && !is_oxlint || cx.state.called_around > 0 {
             return;
         }
         for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
@@ -261,9 +262,16 @@ impl NoThisBeforeSuper {
         let Node::Expr(e) = node else {
             return;
         };
-        if e.as_call().is_some_and(|call| call.callee().tag() == ExprTag::Super) && !cx.language().is_oxlint {
-            Self::mark_as_called(cx);
+        let Some(call) = e.as_call().filter(|call| call.callee().tag() == ExprTag::Super) else {
+            return;
+        };
+        if cx.language().is_oxlint {
+            if oxlint_contains_this_or_super(call.args()) {
+                return;
+            }
+            cx.state.called_around = cx.state.called_around.saturating_sub(1);
         }
+        Self::mark_as_called(cx);
     }
 
     fn mark_as_called(cx: &mut Cx<'_, Self>) {

@@ -192,24 +192,6 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     return stackStringValue;
 }
 
-static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
-{
-    JSValue prepareStackTrace = {};
-    if (lexicalGlobalObject->inherits<Zig::GlobalObject>()) {
-        if (auto prepare = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            prepareStackTrace = prepare;
-        }
-    } else {
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
-        prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
-        CLEAR_IF_EXCEPTION(scope);
-    }
-
-    return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
-}
-
 WTF::String formatStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
@@ -573,42 +555,59 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
+// The realm's Error constructor is the only place Error.prepareStackTrace is stored. Returns the
+// function to call, or nullptr for the default formatting: the property was never written, holds
+// the default function, or holds a value that is not callable. A getter on the property can throw.
+static JSObject* userPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* errorConstructor = lexicalGlobalObject->errorConstructor();
+    const JSC::Identifier& propertyName = WebCore::builtinNames(vm).prepareStackTracePublicName();
+
+    JSValue value;
+    unsigned attributes = 0;
+    PropertyOffset offset = errorConstructor->structure()->get(vm, propertyName, attributes);
+    if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor))) {
+        // Inherited or an accessor: an ordinary Get, as V8 does. A getter that reads a stack gets the default formatting.
+        globalObject->isInsideErrorPrepareStackTraceCallback = true;
+        auto leaveCallback = WTF::makeScopeExit([&] {
+            globalObject->isInsideErrorPrepareStackTraceCallback = false;
+        });
+        value = errorConstructor->getIfPropertyExists(lexicalGlobalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } else if (attributes & PropertyAttribute::CustomValue) {
+        return nullptr;
+    } else {
+        value = errorConstructor->getDirect(offset);
+    }
+
+    if (!value || !value.isCallable())
+        return nullptr;
+    // getConcurrently() is null until the default exists, so this never creates it.
+    if (value.asCell() == globalObject->m_errorConstructorPrepareStackTraceInternalValue.getConcurrently())
+        return nullptr;
+    return asObject(value);
+}
+
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
-
-    Zig::GlobalObject* globalObject = nullptr;
-    JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
-    lexicalGlobalObject = errorInstance->globalObject();
-    globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    JSC::JSGlobalObject* lexicalGlobalObject = errorInstance->globalObject();
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-    if (!globalObject) {
-        // node:vm will use a different JSGlobalObject
+    // node:vm will use a different JSGlobalObject
+    if (!globalObject)
         globalObject = defaultGlobalObject(vm);
-        if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-            auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
-            auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
-        }
-    } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-        if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
+
+    // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
+    if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
+        JSObject* prepareStackTrace = userPrepareStackTrace(vm, globalObject, lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (prepareStackTrace) {
+            globalObject->isInsideErrorPrepareStackTraceCallback = true;
+            auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace);
+            globalObject->isInsideErrorPrepareStackTraceCallback = false;
+            RELEASE_AND_RETURN(scope, result);
         }
     }
 

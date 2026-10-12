@@ -147,6 +147,7 @@ using namespace JSC;
     macro(peekPromiseStatus) \
     macro(pokePromiseAsHandled) \
     macro(port) \
+    macro(prepareStackTrace) \
     macro(prev) \
     macro(preventAbort) \
     macro(preventCancel) \

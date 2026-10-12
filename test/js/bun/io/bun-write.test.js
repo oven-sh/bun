@@ -577,6 +577,17 @@ const IS_UV_FS_COPYFILE_DISABLED =
         },
       ],
       [
+        { title: `Bun.write(path, "")`, write: `await Bun.write("/dev/stdout", "")`, result: "0" },
+        {
+          title: "Bun.write(path, new Uint8Array(0))",
+          write: `await Bun.write("/dev/stdout", new Uint8Array(0))`,
+          result: "0",
+        },
+        {
+          title: "Bun.write(path, new Blob([]))",
+          write: `await Bun.write("/dev/stdout", new Blob([]))`,
+          result: "0",
+        },
         {
           title: "Bun.write(path, Bun.file(empty))",
           write: `await Bun.write("/dev/stdout", Bun.file(process.env.EMPTY_SRC))`,

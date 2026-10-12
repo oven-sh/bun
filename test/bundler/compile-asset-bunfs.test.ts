@@ -116,6 +116,26 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readdirCode: errcode(() => fs.readdirSync(cfg)),
         };
 
+        // fs.Dir over the embedded tree: there is no directory on disk to open.
+        const relativeToRoot = (e: fs.Dirent) => path.relative(root, path.join(e.parentPath, e.name));
+        function readAllSync(d: fs.Dir) {
+          const seen: string[] = [];
+          for (let e; (e = d.readSync()); ) seen.push(relativeToRoot(e));
+          d.closeSync();
+          return seen.sort();
+        }
+        const recursiveForAwait: string[] = [];
+        for await (const e of await fs.promises.opendir(root, { recursive: true })) {
+          recursiveForAwait.push(relativeToRoot(e));
+        }
+        const opendir = {
+          sync: readAllSync(fs.opendirSync(root)),
+          recursiveSync: readAllSync(fs.opendirSync(root, { recursive: true, bufferSize: 2 })),
+          recursiveForAwait: recursiveForAwait.sort(),
+          missing: (() => { try { fs.opendirSync(missing); } catch (e: any) { return [e.code, e.syscall, e.path]; } })(),
+          fileCode: errcode(() => fs.opendirSync(cfg)),
+        };
+
         // Bun.Glob over the embedded tree (issue #40932)
         const realDir = fs.mkdtempSync(path.join(os.tmpdir(), "bunfs-glob-real-"));
         fs.writeFileSync(path.join(realDir, "real.txt"), "x");
@@ -144,7 +164,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         };
         fs.rmSync(realDir, { recursive: true, force: true });
 
-        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, glob, realDirPosix }));
+        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, opendir, glob, realDirPosix }));
       `,
         "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
@@ -212,6 +232,13 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         enoent: { code: "ENOENT", path: r.missing, exists: false },
         missing: expect.stringMatching(/[/\\]root[/\\]does-not-exist$/),
         singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
+        opendir: {
+          sync: ["_app", "empty.txt", "favicon.svg", "index.html"],
+          recursiveSync: expectedRecursive,
+          recursiveForAwait: expectedRecursive,
+          missing: ["ENOENT", "opendir", r.missing],
+          fileCode: "ENOTDIR",
+        },
         glob: {
           scanSync: ["empty.txt", "favicon.svg", "index.html"],
           scanAsync: ["empty.txt", "favicon.svg", "index.html"],

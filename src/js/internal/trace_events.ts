@@ -52,6 +52,7 @@ const rawReadFileSync = fsBinding.readFileSync.bind(fsBinding);
 const kAsyncHooksCat = "node,node.async_hooks";
 const kFsSyncCat = "node,node.fs,node.fs.sync";
 const kFsAsyncCat = "node,node.fs,node.fs.async";
+const kFsDirSyncCat = "node,node.fs_dir,node.fs_dir.sync";
 const kFsDirAsyncCat = "node,node.fs_dir,node.fs_dir.async";
 const kConsoleCat = "node,node.console";
 const kRejectionsCat = "node,node.promises.rejections";
@@ -220,6 +221,7 @@ function installInstrumentation() {
     !fsInstrumented &&
     (isCategoryGroupEnabled(kFsSyncCat) ||
       isCategoryGroupEnabled(kFsAsyncCat) ||
+      isCategoryGroupEnabled(kFsDirSyncCat) ||
       isCategoryGroupEnabled(kFsDirAsyncCat))
   ) {
     fsInstrumented = true;
@@ -629,48 +631,47 @@ function installFsInstrumentation() {
     const originalCb = binding[method + "Cb"];
     if (typeof originalCb === "function") binding[method + "Cb"] = wrapFsCallbackMethod(originalCb, asyncOps[method]);
   }
-  // fs.opendir never reaches the binding (Bun's Dir reads lazily), so wrap the
-  // node:fs export for the node.fs_dir.async category.
-  const fsExports = require("node:fs");
-  const originalOpendir = fsExports.opendir;
-  if (typeof originalOpendir === "function") {
-    fsExports.opendir = function opendir(...args) {
-      if (isCategoryGroupEnabled(kFsDirAsyncCat)) {
-        emitEvent("b", kFsDirAsyncCat, "opendir");
-        emitEvent("e", kFsDirAsyncCat, "opendir");
-      }
-      return originalOpendir.$apply(this, args);
-    };
+  // fs.Dir on its native stream: node's fs_dir categories, named after the libuv requests.
+  const dirSyncOps: Record<string, string> = {
+    opendirSync: "opendir",
+    dirReadSync: "readdir",
+    dirCloseSync: "closedir",
+  };
+  for (const method in dirSyncOps) {
+    binding[method] = wrapFsSyncMethod(binding[method], [dirSyncOps[method]], kFsDirSyncCat, "fs_dir.sync.");
   }
+  binding.opendirCb = wrapFsCallbackMethod(binding.opendirCb, ["opendir"], kFsDirAsyncCat);
+  binding.dirRead = wrapFsAsyncMethod(binding.dirRead, ["readdir"], kFsDirAsyncCat);
+  binding.dirClose = wrapFsAsyncMethod(binding.dirClose, ["closedir"], kFsDirAsyncCat);
 }
 
-function wrapFsSyncMethod(original, names: string[]) {
+function wrapFsSyncMethod(original, names: string[], cat = kFsSyncCat, prefix = "fs.sync.") {
   return function (...args) {
-    if (suppressFsEvents || !isCategoryGroupEnabled(kFsSyncCat)) return original.$apply(this, args);
-    for (let i = 0; i < names.length; i++) emitEvent("B", kFsSyncCat, "fs.sync." + names[i]);
+    if (suppressFsEvents || !isCategoryGroupEnabled(cat)) return original.$apply(this, args);
+    for (let i = 0; i < names.length; i++) emitEvent("B", cat, prefix + names[i]);
     try {
       return original.$apply(this, args);
     } finally {
-      for (let i = names.length - 1; i >= 0; i--) emitEvent("E", kFsSyncCat, "fs.sync." + names[i]);
+      for (let i = names.length - 1; i >= 0; i--) emitEvent("E", cat, prefix + names[i]);
     }
   };
 }
 
-function emitFsAsyncEnd(names: string[]) {
-  for (let i = names.length - 1; i >= 0; i--) emitEvent("e", kFsAsyncCat, names[i]);
+function emitFsAsyncEnd(names: string[], cat: string) {
+  for (let i = names.length - 1; i >= 0; i--) emitEvent("e", cat, names[i]);
 }
 
-function wrapFsAsyncMethod(original, names: string[]) {
+function wrapFsAsyncMethod(original, names: string[], cat = kFsAsyncCat) {
   return function (...args) {
-    if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
-    for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
+    if (suppressFsEvents || !isCategoryGroupEnabled(cat)) return original.$apply(this, args);
+    for (let i = 0; i < names.length; i++) emitEvent("b", cat, names[i]);
     let result;
     try {
       result = original.$apply(this, args);
     } catch (err) {
       // Balance the 'b' events when the binding throws synchronously
       // (e.g. argument validation), mirroring wrapFsSyncMethod's finally.
-      emitFsAsyncEnd(names);
+      emitFsAsyncEnd(names, cat);
       throw err;
     }
     if (result && typeof result.then === "function") {
@@ -678,36 +679,36 @@ function wrapFsAsyncMethod(original, names: string[]) {
       // never handles the returned promise.
       return result.then(
         value => {
-          emitFsAsyncEnd(names);
+          emitFsAsyncEnd(names, cat);
           return value;
         },
         err => {
-          emitFsAsyncEnd(names);
+          emitFsAsyncEnd(names, cat);
           throw err;
         },
       );
     }
-    emitFsAsyncEnd(names);
+    emitFsAsyncEnd(names, cat);
     return result;
   };
 }
 
 // The callback arm of the binding (`xCb(callback, ...args)`): the span ends when the operation calls back.
-function wrapFsCallbackMethod(original, names: string[]) {
+function wrapFsCallbackMethod(original, names: string[], cat = kFsAsyncCat) {
   return function (callback, ...args) {
-    if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, arguments);
-    for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
+    if (suppressFsEvents || !isCategoryGroupEnabled(cat)) return original.$apply(this, arguments);
+    for (let i = 0; i < names.length; i++) emitEvent("b", cat, names[i]);
     try {
       return original.$call(
         this,
         function () {
-          emitFsAsyncEnd(names);
+          emitFsAsyncEnd(names, cat);
           return callback.$apply(undefined, arguments);
         },
         ...args,
       );
     } catch (err) {
-      emitFsAsyncEnd(names);
+      emitFsAsyncEnd(names, cat);
       throw err;
     }
   };

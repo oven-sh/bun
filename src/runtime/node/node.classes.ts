@@ -2,6 +2,16 @@ import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
+    name: "DirStream",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    estimatedSize: true,
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "FSWatcher",
     construct: false,
     noConstructor: true,
@@ -166,6 +176,13 @@ export default [
       readvCb: { fn: "readvCb", length: 5 },
       fdatasyncCb: { fn: "fdatasyncCb", length: 3 },
       readdirCb: { fn: "readdirCb", length: 4 },
+      // `fs.Dir` on its native stream (a `DirStream`).
+      opendirSync: { async: false, fn: "opendirSync", length: 3 },
+      opendirCb: { fn: "opendirCb", length: 4 },
+      dirRead: { async: true, fn: "dirRead", length: 2 },
+      dirReadSync: { async: false, fn: "dirReadSync", length: 2 },
+      dirClose: { async: true, fn: "dirClose", length: 1 },
+      dirCloseSync: { async: false, fn: "dirCloseSync", length: 1 },
       Dirent: { getter: "getDirent" },
       Stats: { getter: "getStats" },
     },

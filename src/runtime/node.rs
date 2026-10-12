@@ -93,6 +93,8 @@ pub(crate) mod win_watcher;
 pub(crate) mod memory_pressure;
 #[path = "node/node_fs_binding.rs"]
 pub(crate) mod node_fs_binding;
+#[path = "node/node_fs_dir.rs"]
+pub(crate) mod node_fs_dir;
 #[path = "node/node_fs_stat_watcher.rs"]
 pub(crate) mod node_fs_stat_watcher;
 #[path = "node/node_fs_watcher.rs"]

@@ -3344,14 +3344,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `checkExpression` of what a `for (.. in ..)` iterates, for the type of its variable: not
-    /// `checkExpressionCached`, so the loops whose types are being computed stay in sight.
-    fn type_of_iterated_expr(&mut self, file: FileId, expr: ExprId) -> TypeId {
+    /// What a `for (.. in ..)` or a `for (.. of ..)` iterates is checked with `checkExpression`
+    /// for the type of the variable, not with `checkExpressionCached`: the loops whose types are
+    /// being computed stay in sight.
+    fn with_loops_in_sight<T>(&mut self, check: impl FnOnce(&mut Self) -> T) -> T {
         let resolutions = self.resolutions_below(self.stack.len());
         self.quick_initializers.push(resolutions);
-        let ty = self.type_of_expr(file, expr);
+        let checked = check(self);
         self.quick_initializers.pop();
-        ty
+        checked
     }
 
     /// `getTypeForVariableLikeDeclaration`, followed by `widenTypeForVariableLikeDeclaration` if
@@ -3377,7 +3378,7 @@ impl<'p, 's> Checker<'p, 's> {
             match hir[parent].kind {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
                     // The keys of a generic type are its own keys, restricted to strings.
-                    let object = self.type_of_iterated_expr(file, expr);
+                    let object = self.with_loops_in_sight(|c| c.type_of_expr(file, expr));
                     let object = self.non_nullable_type_if_needed(object);
                     let keys = self.keyof(object);
                     if matches!(
@@ -3395,11 +3396,9 @@ impl<'p, 's> Checker<'p, 's> {
                     is_await,
                     ..
                 } if left == stmt => {
-                    // `checkRightHandSideOfForOf` checks the expression with `checkExpression`.
-                    let resolutions = self.resolutions_below(self.stack.len());
-                    self.quick_initializers.push(resolutions);
-                    let element = self.check_right_hand_side_of_for_of(file, expr, is_await);
-                    self.quick_initializers.pop();
+                    let element = self.with_loops_in_sight(|c| {
+                        c.check_right_hand_side_of_for_of(file, expr, is_await)
+                    });
                     return if is_name {
                         self.widened_for_declaration(element, Some((file, decl.pat)))
                     } else {

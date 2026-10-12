@@ -1000,7 +1000,9 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
                 span: callee.span(),
             };
             let members = Members::new();
-            return parse_jest_expect_fn_call(node, call_expr, members, name, local, head, kind);
+            return parse_jest_expect_fn_call(
+                node, call_expr, members, name, local, head, kind, runner,
+            );
         }
         let is_valid = || match kind {
             JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
@@ -1039,7 +1041,9 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
 
     let kind = JestFnKind::from(name);
     if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
-        return parse_jest_expect_fn_call(node, call_expr, members, name, local, head, kind);
+        return parse_jest_expect_fn_call(
+            node, call_expr, members, name, local, head, kind, runner,
+        );
     }
 
     // Only the whole of `x().y.z()` is a call of Jest, not the `x()`.
@@ -1093,9 +1097,10 @@ fn parse_jest_expect_fn_call<'a>(
     local: &'a [u8],
     head: KnownMemberExpressionProperty<'a>,
     kind: JestFnKind,
+    runner: Runner,
 ) -> Option<ParsedJestFnCall<'a>> {
     let (modifier_indices, matcher_index, mut expect_error) =
-        match find_modifiers_and_matcher(&members) {
+        match find_modifiers_and_matcher(&members, runner) {
             Ok((modifiers, matcher)) => (modifiers, Some(matcher), None),
             Err(error) => (SmallVec::new(), None, Some(error)),
         };
@@ -1132,6 +1137,7 @@ fn parse_jest_expect_fn_call<'a>(
 /// The indices of the modifiers and of the matcher.
 fn find_modifiers_and_matcher(
     members: &[KnownMemberExpressionProperty],
+    runner: Runner,
 ) -> Result<(SmallVec<[usize; 2]>, usize), ExpectError> {
     use KnownMemberExpressionParentKind::{Call, Member};
     let mut modifiers = SmallVec::<[usize; 2]>::new();
@@ -1141,6 +1147,10 @@ fn find_modifiers_and_matcher(
             return Ok((modifiers, index));
         }
         let is_known = match modifiers.first().and_then(|first| members.get(*first)) {
+            // In any order, and more than once. The last two are of `expect` itself: `expect.resolvesTo.stringContaining("a")`.
+            _ if runner == Runner::Bun => {
+                member.is_any_of(&["not", "resolves", "rejects", "resolvesTo", "rejectsTo"])
+            }
             None => member.is_any_of(&["not", "resolves", "rejects"]),
             // After `resolves` and `rejects` there can be a `not`.
             Some(first) => {

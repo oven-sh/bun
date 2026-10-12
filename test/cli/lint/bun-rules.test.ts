@@ -1649,6 +1649,7 @@ const testRules: Record<string, Case[]> = {
     inTest(`«expect(1)»;`),
     inTest(`«expect(1).toBe»;`),
     inTest(`«expect(1).never.toBe(1)»;`),
+    inTest(`expect(a).toEqual({ b: «expect.resolvesSo.stringContaining("c")» });`),
     inTest(`«expect()».toBe(1);`),
     inTest(`«expect(1, 2, 3)».toBe(1);`),
     { code: inTest(`«expect(a).resolves.toBe(1)»;`), suggestions: [inTest(`await expect(a).resolves.toBe(1);`)] },
@@ -1661,6 +1662,17 @@ const testRules: Record<string, Case[]> = {
     inTest(`expect.unreachable();`),
     inTest(`expect(1)[matcher]();`),
     inTest(`await expect(a).resolves.not.toBe(1);`),
+    inTest(`await expect(a).not.resolves.toBe(1);`),
+    inTest(`expect(1).not.not.toBe(1);`),
+    // Of `expect` itself, wherever a value can be.
+    inTest(`expect(a).toEqual({ b: expect.resolvesTo.stringContaining("c") });`),
+    inTest(`expect(a).toEqual({ b: expect.rejectsTo.stringContaining("c") });`),
+    inTest(`expect(a).toEqual([expect.rejectsTo.anything()]);`),
+    inTest(`expect(a).toEqual(expect.resolvesTo.any(Number));`),
+    inTest(`const b = expect.rejectsTo.stringContaining("c");`),
+    inTest(`expect(a).toEqual({ b: expect.not.resolvesTo.stringContaining("c") });`),
+    inTest(`expect(a).toEqual({ b: expect.resolvesTo.not.stringContaining("c") });`),
+    inTest(`expect(a).toEqual({ b: expect.not.stringContaining("c") });`),
   ].map(inBunTest),
 
   "valid-title": [

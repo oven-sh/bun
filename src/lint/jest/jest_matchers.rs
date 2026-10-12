@@ -383,8 +383,8 @@ pub(crate) mod prefer_to_have_been_called_times {
         {
             ctx.report(possible_jest_node.node, PREFER_TO_HAVE_BEEN_CALLED_TIMES)
                 .fix(|fixer| {
-                    let mut code =
-                        [b"expect(".as_slice(), outer_text(mocked), b")".as_slice()].concat();
+                    let (expect, rest) = parsed_expect_call.around_first_argument(ctx.runner);
+                    let mut code = [expect, b"(".as_slice(), outer_text(mocked), rest].concat();
                     for modifier in parsed_expect_call.modifiers() {
                         code.push(b'.');
                         code.extend_from_slice(fixer.file().slice(modifier.span));
@@ -446,13 +446,15 @@ pub(crate) mod prefer_to_have_length {
                 }
                 let modifier =
                     super_mem_expr.map(|it| Span::new(expr_call_expr.span().end, it.span().end));
+                let (expect, rest) = parsed_expect_call.around_first_argument(ctx.runner);
                 let code = [
-                    b"expect(".as_slice(),
+                    expect,
+                    b"(".as_slice(),
                     file.slice(Span::new(
                         static_mem_expr.span().start,
                         measured.outer_span().end,
                     )),
-                    b")".as_slice(),
+                    rest,
                     file.slice(modifier.unwrap_or_default()),
                     b".toHaveLength".as_slice(),
                 ];
@@ -481,6 +483,7 @@ pub(crate) mod prefer_expect_resolves {
         {
             ctx.report(await_expr, EXPECT_RESOLVES).fix(|fixer| {
                 let (local, argument) = (jest_expect_fn_call.local, outer_text(argument));
+                let (_, rest) = jest_expect_fn_call.around_first_argument(ctx.runner);
                 fixer.replace(
                     expect,
                     [
@@ -488,7 +491,8 @@ pub(crate) mod prefer_expect_resolves {
                         local,
                         b"(".as_slice(),
                         argument,
-                        b").resolves".as_slice(),
+                        rest,
+                        b".resolves".as_slice(),
                     ]
                     .concat(),
                 )
@@ -760,7 +764,7 @@ pub(crate) mod prefer_to_contain {
                 print_expression(&mut code, expect_call_expr.callee());
                 code.push(b'(');
                 print_expression(&mut code, object);
-                code.push(b')');
+                code.extend_from_slice(jest_expect_fn_call.around_first_argument(ctx.runner).1);
                 code.extend_from_slice(negation.as_bytes());
                 code.extend_from_slice(b".toContain(");
                 print_expression(&mut code, argument);

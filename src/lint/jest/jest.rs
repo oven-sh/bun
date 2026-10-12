@@ -773,6 +773,20 @@ impl<'a> ParsedExpectFnCall<'a> {
         self.members.get(self.matcher_index?)
     }
 
+    /// How a fix that writes `expect(a)` again starts and ends: `expect(` and `)`. That is all that a fix of oxlint writes. For Bun
+    /// it is the name as the file has it, and with the `)` all that follows the first argument: the `, "why")` of `expect(a, "why")`.
+    pub(crate) fn around_first_argument(&self, runner: Runner) -> (&'a [u8], &'a [u8]) {
+        let written = (self.head.parent.filter(|_| runner == Runner::Bun))
+            .zip(self.expect_arguments.and_then(List::first));
+        match written {
+            Some((call, first)) => {
+                let rest = Span::new(first.outer_span().end, call.span().end);
+                (self.local, call.file().slice(rest))
+            }
+            None => (b"expect", b")"),
+        }
+    }
+
     /// In the order of the source.
     pub(crate) fn modifiers(&self) -> impl Iterator<Item = &KnownMemberExpressionProperty<'a>> {
         self.modifier_indices

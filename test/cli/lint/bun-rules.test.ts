@@ -1724,6 +1724,55 @@ const testRules: Record<string, Case[]> = {
     inTest(`expect(a).toHaveBeenCalledTimes(2);`),
   ].map(inBunTest),
 
+  // A fix that writes `expect(..)` again keeps the message, and the name that `expect` has in the file.
+  "prefer-called-times": [
+    {
+      code: inTest(`«expect(a, "why").toHaveBeenCalledOnce()»;`),
+      output: inTest(`expect(a, "why").toHaveBeenCalledTimes(1);`),
+    },
+    {
+      code: inTest(`«expect(a, /* b */ why /* c */).not.toHaveBeenCalledOnce()»;`),
+      output: inTest(`expect(a, /* b */ why /* c */).not.toHaveBeenCalledTimes(1);`),
+    },
+    { code: inTest(`«expect(a).toHaveBeenCalledOnce()»;`), output: inTest(`expect(a).toHaveBeenCalledTimes(1);`) },
+    {
+      code: `import { expect as check } from "bun:test";\n«check(a, "why").toHaveBeenCalledOnce()»;`,
+      output: `import { expect as check } from "bun:test";\ncheck(a, "why").toHaveBeenCalledTimes(1);`,
+    },
+  ].map(inBunTest),
+
+  "prefer-expect-type-of": [
+    {
+      code: inTest(`«expect(typeof a, "why").toBe("string")»;`),
+      output: inTest(`expect(a, "why").toBeTypeOf("string");`),
+    },
+    { code: inTest(`«expect(typeof a).toBe("string")»;`), output: inTest(`expect(a).toBeTypeOf("string");`) },
+  ].map(inBunTest),
+
+  "prefer-to-have-been-called-times": [
+    {
+      code: inTest(`«expect(a.mock.calls, "why").toHaveLength(1)»;`),
+      output: inTest(`expect(a, "why").toHaveBeenCalledTimes(1);`),
+    },
+  ].map(inBunTest),
+
+  "prefer-to-have-length": [
+    { code: inTest(`expect(a.length, "why").«toBe»(1);`), output: inTest(`expect(a, "why").toHaveLength(1);`) },
+    { code: inTest(`expect(a.length, "why").not.«toBe»(1);`), output: inTest(`expect(a, "why").not.toHaveLength(1);`) },
+  ].map(inBunTest),
+
+  "prefer-expect-resolves": [
+    { code: inTest(`expect(«await a», "why").toBe(1);`), output: inTest(`await expect(a, "why").resolves.toBe(1);`) },
+  ].map(inBunTest),
+
+  "prefer-to-contain": [
+    { code: inTest(`expect(a.includes(1), "why").«toBe»(true);`), output: inTest(`expect(a, "why").toContain(1);`) },
+  ].map(inBunTest),
+
+  "prefer-comparison-matcher": [
+    { code: inTest(`expect(a < 1, "why").«toBe»(true);`), output: inTest(`expect(a, "why").toBeLessThan(1);`) },
+  ].map(inBunTest),
+
   "require-hook": [
     `«setup()»;`,
     `describe("a", () => {\n  «setup()»;\n});`,

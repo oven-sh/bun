@@ -105,6 +105,73 @@ const greyJpeg = Buffer.from(
   "base64",
 );
 
+// A valid ICC v2 profile: 128-byte header, tag table, tags. `space` is the
+// data colour space at 16..20. GRAY has one tone curve; the others have three
+// curves and three colorants. `payload` rides in a private tag.
+function iccProfile(space: "GRAY" | "RGB " | "CMYK" | "Lab ", payload?: Uint8Array): Buffer {
+  const xyz = (x: number, y: number, z: number) => {
+    const tag = Buffer.alloc(20);
+    tag.write("XYZ ", 0, "latin1");
+    tag.writeInt32BE(x, 8);
+    tag.writeInt32BE(y, 12);
+    tag.writeInt32BE(z, 16);
+    return tag;
+  };
+  // prettier-ignore
+  const gamma22 = Buffer.from([0x63, 0x75, 0x72, 0x76, 0, 0, 0, 0, 0, 0, 0, 1, 0x02, 0x33, 0, 0]); // "curv", one u8Fixed8 entry
+  const name = "test " + space.trim();
+  const tags: [string, Buffer][] = [
+    [
+      "desc",
+      Buffer.concat([
+        Buffer.from("desc\0\0\0\0"),
+        Buffer.from([0, 0, 0, name.length + 1]),
+        Buffer.from(name + "\0"),
+        Buffer.alloc(78),
+      ]),
+    ],
+    ["cprt", Buffer.from("text\0\0\0\0none\0")],
+    ["wtpt", xyz(0xf6d6, 0x10000, 0xd32d)],
+  ];
+  if (space === "GRAY") tags.push(["kTRC", gamma22]);
+  else {
+    tags.push(["rTRC", gamma22], ["gTRC", gamma22], ["bTRC", gamma22]);
+    tags.push(
+      ["rXYZ", xyz(0x6fa2, 0x38f5, 0x0390)],
+      ["gXYZ", xyz(0x6299, 0xb785, 0x18da)],
+      ["bXYZ", xyz(0x24a0, 0x0f84, 0xb6cf)],
+    );
+  }
+  // dataType: signature, reserved, flag 1 (binary), bytes.
+  if (payload) tags.push(["bunT", Buffer.concat([Buffer.from("data\0\0\0\0\0\0\0\x01", "latin1"), payload])]);
+  const table = Buffer.alloc(4 + tags.length * 12);
+  table.writeUInt32BE(tags.length, 0);
+  const bodies: Buffer[] = [];
+  let offset = 128 + table.length;
+  tags.forEach(([signature, body], i) => {
+    table.write(signature, 4 + i * 12, "latin1");
+    table.writeUInt32BE(offset, 8 + i * 12);
+    table.writeUInt32BE(body.length, 12 + i * 12);
+    const padding = (4 - (body.length % 4)) % 4;
+    bodies.push(body, Buffer.alloc(padding));
+    offset += body.length + padding;
+  });
+  const header = Buffer.alloc(128);
+  header.writeUInt32BE(offset, 0); // profile size
+  header.writeUInt32BE(0x02100000, 8); // version 2.1
+  header.write("mntr", 12, "latin1"); // device class
+  header.write(space, 16, "latin1"); // data colour space
+  header.write("XYZ ", 20, "latin1"); // profile connection space
+  header.writeUInt16BE(2026, 24); // creation date
+  header.writeUInt16BE(1, 26);
+  header.writeUInt16BE(1, 28);
+  header.write("acsp", 36, "latin1"); // file signature
+  header.writeInt32BE(0xf6d6, 68); // D50 illuminant
+  header.writeInt32BE(0x10000, 72);
+  header.writeInt32BE(0xd32d, 76);
+  return Buffer.concat([header, table, ...bodies]);
+}
+
 function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, number, number, number] {
   const i = (y * w + x) * 4;
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
@@ -585,25 +652,17 @@ describe("Bun.Image", () => {
       return null;
     }
 
-    // The two ICC header fields Bun.Image reads before it writes a profile:
-    // the data colour space at 16..20 and the file signature at 36..40.
-    function withIccHeader(payload: Uint8Array, space = "RGB ", signature = "acsp"): Uint8Array {
-      const profile = Uint8Array.from(payload);
-      profile.set(Buffer.from(space, "latin1"), 16);
-      profile.set(Buffer.from(signature, "latin1"), 36);
-      return profile;
-    }
-
     // Distinctive binary payload that round-trips through libspng's
     // deflate/inflate and libjpeg-turbo's APP2 chunking without
     // modification. Neither library validates ICC internals. The wide byte
     // range (0-255, prime-step LCG) exercises binary-safe transport so a
-    // stray text-mode decode would corrupt and fail the round-trip. 384
-    // bytes fits comfortably in a single APP2 segment; the multi-segment
-    // case is covered by `bigProfile` below.
+    // stray text-mode decode would corrupt and fail the round-trip. It rides
+    // in a private tag of a valid RGB profile, the only kind Bun.Image
+    // writes. The profile fits comfortably in a single APP2 segment; the
+    // multi-segment case is covered by `bigProfile` below.
     const rawPayload = new Uint8Array(384);
     for (let i = 0; i < rawPayload.length; i++) rawPayload[i] = (i * 37 + 11) & 0xff;
-    const fakeProfile = withIccHeader(rawPayload);
+    const fakeProfile = iccProfile("RGB ", rawPayload);
 
     // Above libjpeg-turbo's 65 519-byte per-APP2 split threshold so the
     // PNG → JPEG path emits two APP2 segments and exercises the
@@ -612,7 +671,7 @@ describe("Bun.Image", () => {
     // suite fast.
     const bigRawPayload = new Uint8Array(70_000);
     for (let i = 0; i < bigRawPayload.length; i++) bigRawPayload[i] = (i * 131 + 7) & 0xff;
-    const bigProfile = withIccHeader(bigRawPayload);
+    const bigProfile = iccProfile("RGB ", bigRawPayload);
 
     test("PNG iCCP survives PNG re-encode byte-for-byte", async () => {
       const src = pngWithIccp(cornersPng, fakeProfile);
@@ -825,75 +884,13 @@ describe("Bun.Image", () => {
     // so its one-channel profile does not describe the output (PNG spec, iCCP:
     // the profile "shall be an RGB color space for color images (color types
     // 2, 3, and 6)"). The profile's own header decides, not the source: an
-    // RGB profile on a greyscale source is kept.
+    // RGB profile on a greyscale source is kept. Nothing converts the samples
+    // in place of a dropped profile: the output keeps the stored values.
 
-    // A valid ICC v2 profile: 128-byte header, tag table, tags. `space` is the
-    // data colour space. GRAY has one tone curve; the others have three curves
-    // and three colorants.
-    function iccProfile(space: "GRAY" | "RGB " | "CMYK"): Buffer {
-      const xyz = (x: number, y: number, z: number) => {
-        const tag = Buffer.alloc(20);
-        tag.write("XYZ ", 0, "latin1");
-        tag.writeInt32BE(x, 8);
-        tag.writeInt32BE(y, 12);
-        tag.writeInt32BE(z, 16);
-        return tag;
-      };
-      // prettier-ignore
-      const gamma22 = Buffer.from([0x63, 0x75, 0x72, 0x76, 0, 0, 0, 0, 0, 0, 0, 1, 0x02, 0x33, 0, 0]); // "curv", one u8Fixed8 entry
-      const name = "test " + space.trim();
-      const tags: [string, Buffer][] = [
-        [
-          "desc",
-          Buffer.concat([
-            Buffer.from("desc\0\0\0\0"),
-            Buffer.from([0, 0, 0, name.length + 1]),
-            Buffer.from(name + "\0"),
-            Buffer.alloc(78),
-          ]),
-        ],
-        ["cprt", Buffer.from("text\0\0\0\0none\0")],
-        ["wtpt", xyz(0xf6d6, 0x10000, 0xd32d)],
-      ];
-      if (space === "GRAY") tags.push(["kTRC", gamma22]);
-      else {
-        tags.push(["rTRC", gamma22], ["gTRC", gamma22], ["bTRC", gamma22]);
-        tags.push(
-          ["rXYZ", xyz(0x6fa2, 0x38f5, 0x0390)],
-          ["gXYZ", xyz(0x6299, 0xb785, 0x18da)],
-          ["bXYZ", xyz(0x24a0, 0x0f84, 0xb6cf)],
-        );
-      }
-      const table = Buffer.alloc(4 + tags.length * 12);
-      table.writeUInt32BE(tags.length, 0);
-      const bodies: Buffer[] = [];
-      let offset = 128 + table.length;
-      tags.forEach(([signature, body], i) => {
-        table.write(signature, 4 + i * 12, "latin1");
-        table.writeUInt32BE(offset, 8 + i * 12);
-        table.writeUInt32BE(body.length, 12 + i * 12);
-        const padding = (4 - (body.length % 4)) % 4;
-        bodies.push(body, Buffer.alloc(padding));
-        offset += body.length + padding;
-      });
-      const header = Buffer.alloc(128);
-      header.writeUInt32BE(offset, 0); // profile size
-      header.writeUInt32BE(0x02100000, 8); // version 2.1
-      header.write("mntr", 12, "latin1"); // device class
-      header.write(space, 16, "latin1"); // data colour space
-      header.write("XYZ ", 20, "latin1"); // profile connection space
-      header.writeUInt16BE(2026, 24); // creation date
-      header.writeUInt16BE(1, 26);
-      header.writeUInt16BE(1, 28);
-      header.write("acsp", 36, "latin1"); // file signature
-      header.writeInt32BE(0xf6d6, 68); // D50 illuminant
-      header.writeInt32BE(0x10000, 72);
-      header.writeInt32BE(0xd32d, 76);
-      return Buffer.concat([header, table, ...bodies]);
-    }
     const grayProfile = iccProfile("GRAY");
     const rgbProfile = iccProfile("RGB ");
     const cmykProfile = iccProfile("CMYK");
+    const labProfile = iccProfile("Lab ");
 
     // 32×8, 8-bit, opaque grey ramp stored as PNG colour type 0 (grey),
     // 2 (RGB), 3 (indexed) or 4 (grey + alpha).
@@ -1022,6 +1019,7 @@ describe("Bun.Image", () => {
       ["RGB PNG (colour type 2) with a GRAY profile", () => rampPng(2, grayProfile), grayProfile],
       ["indexed PNG (colour type 3) with a GRAY profile", () => rampPng(3, grayProfile), grayProfile],
       ["RGBA PNG (colour type 6) with a CMYK profile", () => pngWithIccp(gradientPng, cmykProfile), cmykProfile],
+      ["RGB PNG (colour type 2) with a Lab profile", () => rampPng(2, labProfile), labProfile],
       ["YCbCr JPEG with a GRAY profile", () => rampJpeg(grayProfile), grayProfile],
       ["YCbCr JPEG with a CMYK profile", () => rampJpeg(cmykProfile), cmykProfile],
       ["WebP with a GRAY profile", () => rampWebp(grayProfile), grayProfile],
@@ -1038,10 +1036,13 @@ describe("Bun.Image", () => {
       expect(await profileOnEveryOutput(await source(), rgbProfile)).toEqual(onEveryOutput("source profile"));
     });
 
+    const patched = (profile: Uint8Array, at: number, text: string) => {
+      const copy = Buffer.from(profile);
+      copy.write(text, at, "latin1");
+      return copy;
+    };
     // `GRAY` in the data colour space field, `RGB ` in the fields on both sides of it.
-    const grayBetweenRgb = Buffer.from(withIccHeader(rawPayload, "GRAY"));
-    grayBetweenRgb.write("RGB ", 12, "latin1");
-    grayBetweenRgb.write("RGB ", 20, "latin1");
+    const grayBetweenRgb = patched(patched(patched(fakeProfile, 12, "RGB "), 16, "GRAY"), 20, "RGB ");
 
     test.each<[string, string, Uint8Array]>([
       ["a payload with no ICC header", "no profile", rawPayload],
@@ -1049,7 +1050,7 @@ describe("Bun.Image", () => {
       ["39 bytes, short of the file signature", "no profile", fakeProfile.subarray(0, 39)],
       ["127 bytes, one short of the ICC header", "no profile", fakeProfile.subarray(0, 127)],
       ["128 bytes, the whole ICC header", "source profile", fakeProfile.subarray(0, 128)],
-      ["a file signature one bit off `acsp`", "no profile", withIccHeader(rawPayload, "RGB ", "acsq")],
+      ["a file signature one bit off `acsp`", "no profile", patched(fakeProfile, 36, "acsq")],
       ["`GRAY` at 16..20 with `RGB ` next to it", "no profile", grayBetweenRgb],
     ])("%s: %s on every output", async (_name, status, payload) => {
       expect(await profileOnEveryOutput(pngWithIccp(cornersPng, payload), payload)).toEqual(onEveryOutput(status));

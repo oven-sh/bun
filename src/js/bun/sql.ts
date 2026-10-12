@@ -1117,7 +1117,8 @@ function ensureDefaultSQL() {
 
 var defaultSQLObject: Bun.SQL = function sql(strings, ...values) {
   if (new.target) {
-    return SQL(strings);
+    // For `new sql(x)`, `values[0]` would read `Array.prototype[0]`.
+    return SQL(strings, values.length ? values[0] : undefined);
   }
 
   ensureDefaultSQL();

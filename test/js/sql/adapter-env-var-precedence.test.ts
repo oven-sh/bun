@@ -1,7 +1,8 @@
 import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
+import { join } from "node:path";
 
 declare module "bun" {
   namespace SQL {
@@ -1012,6 +1013,104 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.password).toBe("urlpass"); // URL password (not env)
         expect(options.options.database).toBe("urldb"); // URL database should remain
       });
+    });
+  });
+
+  describe("the default client called with new", () => {
+    // `new sql(...)` and `new postgres(...)` construct a separate client, like `new SQL(...)`.
+    // The types declare a constructor only for `SQL`.
+    const sql = Bun.sql as unknown as typeof SQL;
+    const postgres = Bun.postgres as unknown as typeof SQL;
+
+    const cases: [label: string, url: string | URL, options: any, expected: object][] = [
+      ["sqlite", "sqlite://:memory:", { safeIntegers: true }, { adapter: "sqlite", safeIntegers: true }],
+      [
+        "sqlite, adapter in the options",
+        "postgres://u:p@h:5432/db",
+        { adapter: "sqlite", filename: ":memory:" },
+        { adapter: "sqlite", filename: ":memory:" },
+      ],
+      [
+        "postgres",
+        "postgres://u:p@h:5432/db",
+        { max: 3, tls: true },
+        { adapter: "postgres", max: 3, sslMode: 2, tls: { serverName: "h" } },
+      ],
+      [
+        "postgres, URL object",
+        new URL("postgres://u:p@h:5432/db"),
+        { hostname: "other", idleTimeout: 5 },
+        { adapter: "postgres", hostname: "other", idleTimeout: 5000 },
+      ],
+      ["mysql", "mysql://u:p@h:3306/db", { max: 3 }, { adapter: "mysql", max: 3 }],
+      ["mysql, adapter in the options", "u:p@h/db", { adapter: "mysql" }, { adapter: "mysql", port: 3306 }],
+    ];
+
+    test.each(cases)("new sql(url, options) applies the options: %s", async (_label, url, options, expected) => {
+      await using fromDefaultClient = new sql(url, options);
+      await using fromClass = new SQL(url, options);
+
+      expect(fromDefaultClient.options).toMatchObject(expected);
+      expect(fromDefaultClient.options).toEqual(fromClass.options);
+    });
+
+    test("new postgres(url, options) applies the options", async () => {
+      await using client = new postgres("postgres://u:p@h:5432/db", { max: 3 });
+      expect(client.options).toMatchObject({ adapter: "postgres", hostname: "h", max: 3 });
+    });
+
+    test("a SQLite client opened with { readonly: true } refuses a write", async () => {
+      using dir = tempDir("sql-default-client-readonly", {});
+      const filename = join(String(dir), "app.db");
+      {
+        await using setup = new SQL(`sqlite://${filename}`);
+        await setup`CREATE TABLE t (id INTEGER)`;
+      }
+
+      await using db = new sql(`sqlite://${filename}`, { readonly: true });
+      await expect(db`INSERT INTO t VALUES (1)`.execute()).rejects.toThrow("attempt to write a readonly database");
+      expect(await db`SELECT count(*) AS n FROM t`).toEqual([{ n: 0 }]);
+    });
+
+    test("new sql(url, options) rejects an invalid option", () => {
+      expect(() => new sql("postgres://u:p@h:5432/db", { max: 0 })).toThrow("options.max");
+    });
+
+    test("new sql(url) does not take its options from Array.prototype", async () => {
+      // An index key on Array.prototype changes the array storage of the whole realm, so a child process sets it.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const sql = Bun.sql;
+            const url = "postgres://u:p@h:5432/db";
+            Array.prototype[0] = { max: 7 };
+            const max = [new sql(url).options.max, new sql(url, { max: 3 }).options.max];
+            delete Array.prototype[0];
+            console.log(JSON.stringify(max));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[10,3]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("one argument is the URL or the options, and no argument reads the environment", async () => {
+      await using fromUrl = new sql("postgres://u:p@h:5432/db");
+      expect(fromUrl.options).toMatchObject({ adapter: "postgres", hostname: "h", max: 10 });
+
+      await using fromOptions = new sql({ url: "mysql://u:p@h:3306/db", max: 3 });
+      expect(fromOptions.options).toMatchObject({ adapter: "mysql", hostname: "h", max: 3 });
+
+      process.env.DATABASE_URL = "mysql://envuser@envhost:3307/envdb";
+      await using fromEnvironment = new sql();
+      expect(fromEnvironment.options).toMatchObject({ adapter: "mysql", hostname: "envhost", port: 3307 });
     });
   });
 });

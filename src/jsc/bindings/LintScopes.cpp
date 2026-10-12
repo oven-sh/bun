@@ -457,10 +457,12 @@ private:
                 value = hasParent ? nodeOrNull(it[3]) : jsUndefined();
                 break;
             case Field::Index:
-                value = !hasParent ? jsUndefined() : it[4] == none ? jsNull() : jsNumber(it[4]);
+                value = !hasParent ? jsUndefined() : it[4] == none ? jsNull()
+                                                                   : jsNumber(it[4]);
                 break;
             case Field::Kind:
-                value = !hasParent ? jsUndefined() : it[6] ? string(firstKind + it[6] - 1) : jsNull();
+                value = !hasParent ? jsUndefined() : it[6] ? string(firstKind + it[6] - 1)
+                                                           : jsNull();
                 break;
             case Field::Rest:
                 value = jsBoolean(it[5] & isRest);
@@ -618,7 +620,9 @@ private:
                 asArray(value)->setIndexQuickly(m_vm, i / 2, definition);
                 for (PropertyOffset at = 0; at < static_cast<PropertyOffset>(definitionShape.program.size()); ++at) {
                     Field field = static_cast<Field>(definitionShape.program[at]);
-                    definition->putDirectOffset(m_vm, at, field == Field::Name ? m_nodes->getIndexQuickly(pairs[i]) : field == Field::Node ? nodeOrNull(pairs[i + 1]) : field == Field::Id ? jsNumber(m_message.definitionCount + i / 2 + 1) : definitionShape.like->getDirect(at));
+                    definition->putDirectOffset(m_vm, at, field == Field::Name ? m_nodes->getIndexQuickly(pairs[i]) : field == Field::Node ? nodeOrNull(pairs[i + 1])
+                            : field == Field::Id                                                                                           ? jsNumber(m_message.definitionCount + i / 2 + 1)
+                                                                                                                                           : definitionShape.like->getDirect(at));
                 }
             }
         }

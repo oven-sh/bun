@@ -180,7 +180,9 @@ JSObject* createToken(JSGlobalObject* globalObject, LintHost* host, LintTokenLis
         case LintTokenKind::Line: {
             // `<!--` and `-->` are comments too.
             auto first = start < host->textString().length() ? host->textString().codeUnitAt(start) : 0;
-            value = slice(vm, host, start + (first == '<' ? 4 : first == '-' ? 3 : 2), end);
+            value = slice(vm, host, start + (first == '<' ? 4 : first == '-' ? 3
+                                                                             : 2),
+                end);
             break;
         }
         case LintTokenKind::Block:
@@ -883,10 +885,10 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetTokenByRangeStart, (JSGlobalObject * globalObj
     RELEASE_AND_RETURN(scope, JSValue::encode(tokenAt(globalObject, host, ref)));
 }
 
-#define LINT_TOKEN_METHOD(name, implementation, where, isForward)                     \
-    JSC_DEFINE_HOST_FUNCTION(name, (JSGlobalObject * globalObject, CallFrame* callFrame)) \
-    {                                                                                 \
-        return implementation<Where::where>(globalObject, callFrame, isForward);      \
+#define LINT_TOKEN_METHOD(name, implementation, where, isForward)                          \
+    JSC_DEFINE_HOST_FUNCTION(name, (JSGlobalObject * globalObject, CallFrame * callFrame)) \
+    {                                                                                      \
+        return implementation<Where::where>(globalObject, callFrame, isForward);           \
     }
 
 LINT_TOKEN_METHOD(jsLintGetFirstToken, oneTokenMethod, Inside, true)

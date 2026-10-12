@@ -783,10 +783,15 @@ fn has_overriding_export_statement<'a>(body: List<'a, Stmt<'a>>, any_default: bo
 /// Sets `variable.eslintUsed`, which other rules see as well: ESLint's own `no-unused-vars`. `only_types`: as oxlint,
 /// which reports the variables, classes and enums of an ambient namespace.
 fn mark_declaration_child_as_used(node: Stmt, only_types: bool) {
+    // Of what is declared several times, oxlint goes by the first: `class A {} interface A {}`.
+    let is_marked = |it: &Symbol| {
+        let first = it.declarations().next();
+        !only_types || !matches!(first, Some(Declaration::Class(_) | Declaration::Enum(_) | Declaration::Var(_)))
+    };
     match node.kind() {
         // A `FunctionDeclaration` is not ambient, a `TSDeclareFunction` is.
         StmtKind::Fn(function) if function.has_body() => {}
-        StmtKind::Fn(function) => function.symbol().into_iter().for_each(Symbol::mark_used),
+        StmtKind::Fn(function) => function.symbol().into_iter().filter(is_marked).for_each(Symbol::mark_used),
         StmtKind::Class(_) | StmtKind::Enum(_) | StmtKind::Var(_) if only_types => {}
         StmtKind::Class(class) => class.symbol().into_iter().for_each(Symbol::mark_used),
         StmtKind::Interface(_)
@@ -794,7 +799,7 @@ fn mark_declaration_child_as_used(node: Stmt, only_types: bool) {
         | StmtKind::Enum(_)
         | StmtKind::Module(_)
         | StmtKind::Var(_) => {
-            Node::Stmt(node).declared_symbols().into_iter().for_each(Symbol::mark_used);
+            Node::Stmt(node).declared_symbols().into_iter().filter(is_marked).for_each(Symbol::mark_used);
         }
         _ => {}
     }

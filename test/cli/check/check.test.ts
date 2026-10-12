@@ -3374,6 +3374,35 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // The checker has a thousand questions open at the most, which is less than its stack holds. That one was refused for that was
+    // forgotten: the walk over the tree asked again at every level, each time down to where the last was refused, and about an
+    // argument first about every call around it: minutes to days. What is refused so is refused whole, as where the stack runs
+    // out: the file is said to be incomplete, and what is wrong inside such an expression is not reported.
+    test.skipIf(isDebug || isASAN).each([
+      ["calls", "f(", ")", 3_000],
+      ["new", "new f(", ")", 3_000],
+      ["array literals", "[", "]", 3_000],
+      ["spread array literals", "[...", "]", 3_000],
+      ["object literals", "{ a: ", " }", 3_000],
+      ["template literals", "`${", "}`", 2_500],
+      ["conditions", "f ? ", " : 0", 15_000],
+      ["assignments", "a = ", "", 15_000],
+      ["!", "!", "", 15_000],
+      ["typeof", "typeof ", "", 15_000],
+    ])(
+      "%s in each other",
+      async (_, open, close, depth) => {
+        using dir = project({
+          "a.ts": `declare const f: any;\ndeclare let a: any;\nexport const r = ${repeat(open, depth)}1${repeat(close, depth)};\nexport const wrong: number = "";\n`,
+        });
+        const { stdout, exitCode } = await check(dir, [], {}, 10_000);
+        expect(stdout).toBe(`a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+        expect(exitCode).toBe(1);
+      },
+      // Longer than the child may take, which does not outlive the test then.
+      20_000,
+    );
+
     // The literal has its members when the properties that assignments declare are added, and above eight properties
     // a name is looked up in an index.
     test.each([

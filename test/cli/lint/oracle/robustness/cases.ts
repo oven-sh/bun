@@ -78,6 +78,25 @@ export const cases: Case[] = [
     reports: {},
     exitCode: 0,
   },
+  // The type checker asked again at every level what it had refused at the one before: minutes to days.
+  ...(
+    [
+      ["calls", "f(", ")"],
+      ["array literals", "[", "]"],
+      ["object literals", "{ a: ", " }"],
+    ] as const
+  ).map(
+    ([what, open, close]): Case => ({
+      name: `3,000 ${what} in each other, for a rule that needs types`,
+      isHeavy: true,
+      file: "a.ts",
+      text: () => `declare const f: any;\nexport const r = ${rep(open, 3_000)}1${rep(close, 3_000)};\n`,
+      rules: { "typescript/no-floating-promises": "error" },
+      args: typed,
+      reports: {},
+      exitCode: 0,
+    }),
+  ),
   {
     name: "an array type with 30,000 suffixes in a parameter of a function type",
     file: "a.ts",

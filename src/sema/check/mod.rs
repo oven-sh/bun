@@ -1963,35 +1963,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.unwind_to = usize::MAX;
             self.restart_with = None;
         }
-        let span_of = |c: &Self, q: Query| match q {
-            Query::Expr(file, e) | Query::Call(file, e) => {
-                Some((file, c.start_of(file, e), c.end_of_expr(file, e)))
-            }
-            Query::TypeNode(file, node) => {
-                let node = &c.hir(file)[node];
-                Some((file, node.pos, node.end.max(node.pos)))
-            }
-            _ => None,
-        };
-        let is_refused = |c: &Self, (file, start, end): (FileId, u32, u32)| {
-            let contains =
-                |outer: &(FileId, u32, u32)| outer.0 == file && outer.1 <= start && end <= outer.2;
-            c.refused_expressions.iter().any(contains)
-        };
-        let queried = span_of(self, q);
         let is_low = self.is_stack_low();
         if is_low {
-            let mut in_flight = self.stack.iter().chain([&q]);
-            let outermost = in_flight.find_map(|&q| Some((q, span_of(self, q)?)));
-            if let Some((outermost, span)) = outermost
-                && !is_refused(self, span)
-            {
-                let span = match outermost {
-                    Query::TypeNode(..) => self.span_of_statement_around(span),
-                    _ => span,
-                };
-                self.refused_expressions.push(span);
-            }
+            self.refuse_outermost_in_flight(q);
         }
         // Every later `enter` takes this path.
         self.work_trap = if self.refused_expressions.is_empty() {
@@ -1999,12 +1973,53 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.work + 1
         };
-        if !is_low && !queried.is_some_and(|queried| is_refused(self, queried)) {
+        if !is_low && !self.is_refused(q) {
             return false;
         }
         self.last_enter = EnterOutcome::Refused;
         self.bailed_out();
         true
+    }
+
+    /// The file, start and end of the expression or the type node that `q` is about.
+    fn span_of_query(&self, q: Query) -> Option<(FileId, u32, u32)> {
+        match q {
+            Query::Expr(file, e) | Query::Call(file, e) => {
+                Some((file, self.start_of(file, e), self.end_of_expr(file, e)))
+            }
+            Query::TypeNode(file, node) => {
+                let node = &self.hir(file)[node];
+                Some((file, node.pos, node.end.max(node.pos)))
+            }
+            _ => None,
+        }
+    }
+
+    fn is_in_refused_expression(&self, (file, start, end): (FileId, u32, u32)) -> bool {
+        let contains =
+            |outer: &(FileId, u32, u32)| outer.0 == file && outer.1 <= start && end <= outer.2;
+        self.refused_expressions.iter().any(contains)
+    }
+
+    /// Whether `q` is about a part of one of `refused_expressions`.
+    fn is_refused(&self, q: Query) -> bool {
+        !self.refused_expressions.is_empty()
+            && (self.span_of_query(q)).is_some_and(|span| self.is_in_refused_expression(span))
+    }
+
+    /// Adds the outermost expression or type node in flight to `refused_expressions`. `q` is the innermost.
+    fn refuse_outermost_in_flight(&mut self, q: Query) {
+        let mut in_flight = self.stack.iter().chain([&q]);
+        let outermost = in_flight.find_map(|&q| Some((q, self.span_of_query(q)?)));
+        if let Some((outermost, span)) = outermost
+            && !self.is_in_refused_expression(span)
+        {
+            let span = match outermost {
+                Query::TypeNode(..) => self.span_of_statement_around(span),
+                _ => span,
+            };
+            self.refused_expressions.push(span);
+        }
     }
 
     /// `checkSourceElement` is no query, and asks for the type of a type node after it has visited what is in the node. So
@@ -2069,6 +2084,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.unwind_to = 0;
                 self.restart_with = None;
                 self.ran_out_of_stack.set(true);
+                self.refuse_outermost_in_flight(q);
             }
         }
         self.bailed_out_from(self.unwind_to);

@@ -129,9 +129,11 @@ pub struct LanguageOptions {
     /// The configuration is one of oxlint: where a rule of oxlint does something else than the rule of ESLint or of the plugin
     /// that it is a port of, oxlint is followed.
     pub is_oxlint: bool,
-    /// `namespace A.B { }` is a namespace `B` that is declared in the scope of a namespace `A`, as for oxc. Not with a plugin in
-    /// JavaScript: oxlint hands those the scopes of typescript-eslint, where the two names declare nothing.
-    pub nests_dotted_namespaces: bool,
+    /// The scopes are those of oxc where they differ from typescript-eslint's: `namespace A.B { }` is a namespace `B` that is
+    /// declared in the scope of a namespace `A`; outside strict code a function that JavaScript declares in a block is a
+    /// variable of the function around; the name in a closing tag of JSX is a reference. Not with a plugin in JavaScript:
+    /// oxlint hands those the scopes of typescript-eslint.
+    pub has_scopes_of_oxc: bool,
     /// The configuration is one of ESLint 8: what only that has a say about. There `/* eslint-env mocha */` defines the variables of
     /// an environment, and espree reads the edition of the language that is configured and no later one.
     pub eslint_8: Option<Arc<crate::linter::config::Eslint8>>,
@@ -375,7 +377,7 @@ impl LanguageOptions {
                 .any(|key| is_truthy(parser_options.get(key))),
             refuses_what_parser_refuses: true,
             is_oxlint: false,
-            nests_dotted_namespaces: false,
+            has_scopes_of_oxc: false,
             eslint_8: None,
             eslint_major: 10,
             without_modules: false,
@@ -477,7 +479,7 @@ impl Default for LanguageOptions {
             wants_types: false,
             refuses_what_parser_refuses: true,
             is_oxlint: false,
-            nests_dotted_namespaces: false,
+            has_scopes_of_oxc: false,
             eslint_8: None,
             eslint_major: 10,
             without_modules: false,

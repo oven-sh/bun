@@ -659,7 +659,7 @@ impl<'f> Collector<'f, '_> {
     fn unvisited_tags(&self) -> Vec<ExprId> {
         let hir = &self.file.hir;
         let mut skipped: Vec<ExprId> = Vec::new();
-        if self.is_javascript {
+        if self.is_javascript && !self.file.language().has_scopes_of_oxc {
             let skips_opening_tags = self.file.language().eslint_major < 10;
             for jsx in hir.jsx {
                 let tags = [Some(jsx.close_tag), skips_opening_tags.then_some(jsx.tag)];

@@ -294,7 +294,7 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             match m.name {
                 // `namespace A.B { }` declares nothing that a name can refer to.
                 hir::ModuleName::Ident(name)
-                    if file.language().nests_dotted_namespaces
+                    if file.language().has_scopes_of_oxc
                         || !scopes::is_after_dot(file, m)
                             && scopes::after_dot(file, m).is_none() =>
                 {
@@ -440,12 +440,34 @@ fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry
     (entries, in_order)
 }
 
+/// Where oxc has the function `f`, which is `entries[index]` and is declared in the scope `here`, if that is elsewhere: outside
+/// strict code a plain function in a block is a variable of the function around, unless that has declared the name before.
+fn scope_of_function_in_block<'a>(
+    file: &'a File<'a>,
+    tree: &ScopeTree,
+    entries: &[Entry],
+    index: usize,
+    f: hir::FnId,
+    here: u32,
+) -> Option<u32> {
+    let around = tree.scopes.get(here as usize)?.variable_scope;
+    let (raw, it) = (file.hir.fns.get(f.idx())?, entries.get(index)?);
+    let not_plain = hir::Flags::ASYNC.union(hir::Flags::GENERATOR);
+    let is_moved = around != here
+        && raw.kind == FnKind::Decl
+        && !raw.flags.intersects(not_plain)
+        && !scopes::is_strict_for_oxc(file, tree, here)
+        && !(entries.iter())
+            .any(|other| other.name == it.name && other.scope == around && other.pos < it.pos);
+    is_moved.then_some(around)
+}
+
 /// Finds the scope that each is declared in, from the scope that its name is written in. Those
 /// that declare no variable are left without. Returns how many are declared in each scope, at the
 /// index after that of the scope.
 #[inline(never)]
-fn assign_scopes(
-    file: &File,
+fn assign_scopes<'a>(
+    file: &'a File<'a>,
     tree: &ScopeTree,
     entries: &mut [Entry],
     in_order: &[u64],
@@ -453,9 +475,18 @@ fn assign_scopes(
     let (hir, bound) = (&file.hir, &file.bound);
     let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
     let mut cursor = tree.cursor();
+    let moves_functions = file.language().has_scopes_of_oxc
+        && file.is_javascript()
+        && crate::utils::oxlint::source_type(file) != crate::language::SourceType::Module;
     for &key in in_order {
+        let here = cursor.seek(entries[key as u32 as usize].pos);
+        let moved_to = match entries[key as u32 as usize].decl {
+            Decl::Fn(f) if moves_functions => {
+                scope_of_function_in_block(file, tree, entries, key as u32 as usize, f, here)
+            }
+            _ => None,
+        };
         let it = &mut entries[key as u32 as usize];
-        let here = cursor.seek(it.pos);
         let mut is_catch = false;
         (it.scope, it.flags) = match it.decl {
             Decl::Var(_) => {
@@ -482,7 +513,7 @@ fn assign_scopes(
                     (scope.copied().unwrap_or(NONE), VALUE)
                 }
             },
-            Decl::Fn(_) => (here, VALUE),
+            Decl::Fn(_) => (moved_to.unwrap_or(here), VALUE),
             Decl::Class(c) => match bound.class_owner.get(c.idx()) {
                 Some(ClassOwner::Expr(_)) => (
                     tree.of_class.get(c.idx()).copied().unwrap_or(NONE),

@@ -172,6 +172,31 @@ pub(crate) fn kind_of_function(file: &File, f: usize) -> Option<ScopeKind> {
     })
 }
 
+/// Whether the scope is strict for oxc, in a file that is no module: it is in a class, or below a `"use strict"`.
+/// [`ScopeData::is_strict`] takes every file for a module there.
+pub(crate) fn is_strict_for_oxc<'a>(file: &'a File<'a>, tree: &ScopeTree, scope: u32) -> bool {
+    let mut at = tree.scopes.get(scope as usize);
+    while let Some(it) = at {
+        let is_strict = match (it.kind, it.block) {
+            (ScopeKind::Class, _) => true,
+            (_, Block::File) => has_use_strict(file, file.body().iter().map(|it| it.id())),
+            (_, Block::Fn(f)) => match file.hir.fns.get(f.idx()).map(|it| it.body) {
+                Some(hir::FnBody::Block(statements)) => {
+                    let ids = file.hir.ids.get(statements.range()).unwrap_or_default();
+                    has_use_strict(file, ids.iter().map(|&it| hir::StmtId(it)))
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_strict {
+            return true;
+        }
+        at = tree.scopes.get(it.parent as usize);
+    }
+    false
+}
+
 /// The statements start with a `"use strict"` directive.
 fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) -> bool {
     let hir = &file.hir;
@@ -963,7 +988,7 @@ impl<'f, 'a> Collector<'f, 'a> {
             return;
         };
         // `namespace A.B.C { }` is one declaration, which the HIR stores as three.
-        if self.file.language().nests_dotted_namespaces {
+        if self.file.language().has_scopes_of_oxc {
             self.declaration(ScopeKind::TsModule, it.stmt, it.name_pos);
         } else if !is_after_dot(self.file, it) {
             self.declaration(ScopeKind::TsModule, it.stmt, last_name_pos(self.file, it));

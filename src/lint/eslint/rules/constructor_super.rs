@@ -33,17 +33,86 @@ fn oxlint_is_possible_constructor(mut e: Expr<'_>) -> bool {
             | ExprKind::String(_)
             | ExprKind::True
             | ExprKind::False
-            | ExprKind::BigInt(_)
-            | ExprKind::Null => return false,
+            | ExprKind::BigInt(_) => return false,
             _ => return true,
         };
+    }
+}
+
+/// The one `null` that oxlint knows in an `extends`.
+fn is_plain_null(e: Expr<'_>) -> bool {
+    e.tag() == ExprTag::Null && !e.is_parenthesized()
+}
+
+fn is_super_call(e: Expr<'_>) -> bool {
+    e.as_call().is_some_and(|call| call.callee().tag() == ExprTag::Super)
+}
+
+/// Whether `e` is all of a statement, without parentheses.
+fn is_statement(e: Expr<'_>) -> bool {
+    !e.is_parenthesized() && matches!(e.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::Expr)
+}
+
+/// Of `a ? super() : b;` the `super()` that oxlint finds, which is the first of two, and the other branch. It takes it
+/// for called whatever `a` is.
+fn oxlint_branches(cond: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
+    let ExprKind::Cond { yes, no, .. } = cond.kind() else {
+        return None;
+    };
+    let is_found = |e: Expr<'_>| is_super_call(e) && !e.is_parenthesized();
+    match is_statement(cond) {
+        true if is_found(yes) => Some((yes, no)),
+        true if is_found(no) => Some((no, yes)),
+        _ => None,
+    }
+}
+
+/// Whether oxlint finds the `super()` that `e` is: it looks at the statements and at the tests, not into expressions.
+/// `super(), a();`, `(super());` and `return super();` are without one for it.
+fn oxlint_finds(e: Expr<'_>) -> bool {
+    if e.is_parenthesized() {
+        return false;
+    }
+    match e.parent() {
+        Node::Case(_) => true,
+        Node::Stmt(parent) => match parent.kind() {
+            StmtKind::Expr(_) | StmtKind::If { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. } => true,
+            StmtKind::For { test, .. } => test == Some(e),
+            StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => expr == e,
+            _ => false,
+        },
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Cond { test, .. } => test == e || oxlint_branches(parent).is_some_and(|(call, _)| call == e),
+            ExprKind::Binary { op: BinOp::And | BinOp::Nullish, left, .. } => left == e,
+            ExprKind::Binary { op: BinOp::Or, left, .. } => {
+                left == e || is_statement(parent) && is_super_call(left) && !left.is_parenthesized()
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// A loop that only a `break` ends. oxlint has a way past it as past every other.
+fn is_endless(statement: Stmt<'_>) -> bool {
+    match statement.kind() {
+        StmtKind::For { test, .. } => test.is_none_or(|test| test.tag() == ExprTag::True),
+        StmtKind::While { test, .. } => test.tag() == ExprTag::True,
+        _ => false,
+    }
+}
+
+fn super_class_of(constructor: Func<'_>) -> Option<Expr<'_>> {
+    match constructor.owner().parent() {
+        Node::Class(class) => class.extends(),
+        _ => None,
     }
 }
 
 /// ESLint's `isPossibleConstructor`
 fn is_possible_constructor(mut e: Expr<'_>) -> bool {
     if e.file().language().is_oxlint {
-        return oxlint_is_possible_constructor(e);
+        return !is_plain_null(e) && oxlint_is_possible_constructor(e);
     }
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return true;
@@ -140,6 +209,9 @@ fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSup
         return false;
     };
     let (file, callee, whole) = (constructor.file(), call.callee().span(), constructor.span());
+    if file.language().is_oxlint && call.callee().parent().as_expr().is_some_and(Expr::is_parenthesized) {
+        return false;
+    }
     if !constructor.returns().all(|it| it.span().start > callee.start) {
         return false;
     }
@@ -207,10 +279,13 @@ pub struct State<'a> {
     super_callees: Option<Vec<Expr<'a>>>,
     /// The statements of the file that [are winding](is_winding), in source order, once a constructor asks.
     winding: Option<Vec<Stmt<'a>>>,
-    /// With a configuration of oxlint: a way back in a loop of the constructor leads to a `super()` again.
-    is_called_again_in_loop: bool,
-    /// The first `super()` of the constructor that can be reached.
-    first_call: Option<Span>,
+    /// With a configuration of oxlint, which reports when it has seen all of the constructor: the `super()` that it
+    /// finds and that can be reached, in source order.
+    found: Vec<Expr<'a>>,
+    /// There is a way past one of them that the segments do not have.
+    is_passed_over: bool,
+    /// One of them is called after another, or again.
+    is_repeated: bool,
 }
 
 impl<'a> State<'a> {
@@ -280,8 +355,9 @@ impl ConstructorSuper {
             }
         }
         cx.state.seg_info_map.clear();
-        cx.state.is_called_again_in_loop = false;
-        cx.state.first_call = None;
+        cx.state.found.clear();
+        cx.state.is_passed_over = false;
+        cx.state.is_repeated = false;
     }
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -292,10 +368,7 @@ impl ConstructorSuper {
                     && func.kind() == FnKind::Constructor
                     && !func.flags().contains(Flags::STATIC) =>
             {
-                match func.owner().parent() {
-                    Node::Class(class) => class.extends(),
-                    _ => None,
-                }
+                super_class_of(func)
             }
             _ => None,
         };
@@ -307,14 +380,13 @@ impl ConstructorSuper {
     }
 
     fn on_code_path_end<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let (Some(FuncInfo { has_extends: true, .. }), Node::Func(func)) = (cx.state.func_infos.pop(), node)
+        let (Some(FuncInfo { has_extends: true, super_is_constructor, .. }), Node::Func(func)) =
+            (cx.state.func_infos.pop(), node)
         else {
             return;
         };
-        // For oxlint a loop runs not at all or several times, and it says the former.
-        if cx.state.is_called_again_in_loop {
-            cx.report(func.owner(), MISSING_SOME);
-            return;
+        if cx.language().is_oxlint {
+            return Self::on_end_for_oxlint(func, super_is_constructor, code_path, cx);
         }
         let returned_segments = code_path.returned_segments();
         if returned_segments.iter().all(|it| cx.state.is_called_in_every_path(*it)) {
@@ -322,6 +394,38 @@ impl ConstructorSuper {
         }
         let called_in_some_paths = returned_segments.iter().any(|it| cx.state.is_called_in_some_path(*it));
         cx.report(func.owner(), if called_in_some_paths { MISSING_SOME } else { MISSING_ALL });
+    }
+
+    fn on_end_for_oxlint<'a>(
+        func: Func<'a>,
+        super_is_constructor: bool,
+        code_path: CodePath<'a>,
+        cx: &mut Cx<'a, Self>,
+    ) {
+        let found = std::mem::take(&mut cx.state.found);
+        let Some((first, rest)) = found.split_first() else {
+            // Where it finds none it does not ask how the constructor ends, but after `extends null`.
+            let is_expected = super_is_constructor
+                || super_class_of(func).is_some_and(is_plain_null)
+                    && !func.returns().any(|it| matches!(it.as_return(), Some(Some(_))));
+            if is_expected {
+                cx.report(func.owner(), MISSING_ALL);
+            }
+            return;
+        };
+        if !super_is_constructor {
+            return;
+        }
+        let returned_segments = code_path.returned_segments();
+        if cx.state.is_passed_over || !returned_segments.iter().all(|it| cx.state.is_called_in_every_path(*it)) {
+            cx.report(func.owner(), MISSING_SOME);
+        }
+        if cx.state.is_repeated {
+            for call in rest {
+                cx.report(*call, DUPLICATE)
+                    .labels_with(|labels| labels.push(first.span(), "`super()` was first called here."));
+            }
+        }
     }
 
     fn on_segment_start<'a>(&self, segment: Segment<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -338,11 +442,14 @@ impl ConstructorSuper {
         let id = segment.id();
         cx.state.seg_info_map.insert(id, unknown);
         let before = cx.state.seen_prev_segments(segment);
+        let is_beside_call = cx.language().is_oxlint
+            && matches!((node, node.parent()), (Node::Expr(e), Node::Expr(parent))
+                if oxlint_branches(parent).is_some_and(|(_, other)| other == e));
         let called = Called {
             // The segment of the update of a `for` is made in advance, before what precedes it is
             // seen. It is never the only one before another: this makes the others decide.
-            in_every_path: before.any && before.called.in_every_path || is_update_of_for(node),
-            in_some_paths: before.any && before.called.in_some_paths,
+            in_every_path: before.any && before.called.in_every_path || is_update_of_for(node) || is_beside_call,
+            in_some_paths: before.any && before.called.in_some_paths || is_beside_call,
         };
         if let Some(info) = cx.state.seg_info_map.get_mut(&id) {
             info.called = called;
@@ -382,7 +489,9 @@ impl ConstructorSuper {
         if before.called.in_some_paths {
             let again = std::mem::take(&mut info.valid_nodes);
             if cx.language().is_oxlint {
-                cx.state.is_called_again_in_loop |= !again.is_empty();
+                // For oxlint a loop runs not at all or several times.
+                cx.state.is_passed_over |= !again.is_empty();
+                cx.state.is_repeated |= !again.is_empty();
             } else {
                 for node in again {
                     cx.report(node, DUPLICATE);
@@ -395,7 +504,8 @@ impl ConstructorSuper {
         let Node::Expr(e) = node else {
             return;
         };
-        if !e.as_call().is_some_and(|call| call.callee().tag() == ExprTag::Super) {
+        let is_oxlint = cx.language().is_oxlint;
+        if !is_super_call(e) || is_oxlint && !oxlint_finds(e) {
             return;
         }
         let Some(&FuncInfo {
@@ -409,18 +519,25 @@ impl ConstructorSuper {
         let (Some(last), is_duplicate) = cx.state.mark_current_segments(code_path) else {
             return;
         };
-        let first_call = *cx.state.first_call.get_or_insert_with(|| e.span());
-        if is_duplicate {
-            cx.report(e, DUPLICATE).labels_with(|labels| labels.push(first_call, "`super()` was first called here."));
+        if is_oxlint {
+            let constructor = cx.state.constructor.map(Node::Func);
+            // What a `for`-`in` goes through is in the loop for it.
+            let is_in_head = matches!(e.parent(), Node::Stmt(it) if matches!(it.tag(), StmtTag::ForIn | StmtTag::ForOf));
+            let mut around = node.ancestors().take_while(|it| Some(*it) != constructor);
+            cx.state.found.push(e);
+            cx.state.is_repeated |= is_duplicate || is_in_head;
+            cx.state.is_passed_over |= is_in_head
+                || !is_duplicate && around.any(|it| matches!(it, Node::Stmt(it) if is_endless(it)));
+        }
+        if is_duplicate && !is_oxlint {
+            cx.report(e, DUPLICATE);
         } else if !super_is_constructor {
-            let class = cx.state.constructor.map(|it| it.owner().parent());
+            let super_class = cx.state.constructor.and_then(super_class_of);
             cx.report(e, BAD_SUPER).labels_with(|labels| {
-                if let Some(Node::Class(class)) = class
-                    && let Some(super_class) = class.extends()
-                {
-                    labels.push(super_class.outer_span(), match super_class.tag() {
-                        ExprTag::Null if !super_class.is_parenthesized() => "`null` does not provide a constructor to call.",
-                        _ => "This superclass expression is not constructable.",
+                if let Some(super_class) = super_class {
+                    labels.push(super_class.outer_span(), match is_plain_null(super_class) {
+                        true => "`null` does not provide a constructor to call.",
+                        false => "This superclass expression is not constructable.",
                     });
                 }
             });
@@ -457,7 +574,10 @@ impl Rule for ConstructorSuper {
         let Some(super_class) = class.extends() else {
             return;
         };
-        let constructors = class.members().iter().filter(|it| it.kind() == MemberKind::Constructor);
+        let is_constructor = |it: &Member<'a>| it.kind() == MemberKind::Constructor && !it.flags().contains(Flags::STATIC);
+        // oxlint looks at the first, which is without a body where there are overloads.
+        let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
+        let constructors = class.members().iter().filter(is_constructor).take(count);
         for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
             if !(is_possible_constructor(super_class) && calls_super_plainly(constructor, cx)) {
                 self.check_constructor(constructor, cx);

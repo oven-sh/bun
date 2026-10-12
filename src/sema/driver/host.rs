@@ -1154,7 +1154,8 @@ impl Host for Disk {
     fn builtin_files(&self, loaded: &[Option<Module<'_>>], atoms: &Interner<'_>) -> Vec<(Vec<u8>, Builtin)> {
         let Some(compiled) = &self.compiled else { return Vec::new() };
         let is_code = |module: &Module<'_>| compiled.code.contains(module.path.text);
-        let is_entry_point = |module: &Module<'_>| compiled.entry_points.iter().any(|path| **path == *module.path.text);
+        let entry_points: FxHashSet<&[u8]> = compiled.entry_points.iter().map(Vec::as_slice).collect();
+        let is_entry_point = |module: &Module<'_>| entry_points.contains(module.path.text);
         let has = |is_so: &dyn Fn(&Module<'_>) -> bool| -> Vec<bool> { loaded.iter().map(|module| module.as_ref().is_some_and(is_so)).collect() };
         let mut is_compiled = has(&is_code);
         // A bundle has its entry points. Without a bundler, the program is what they lead to.
@@ -1165,7 +1166,7 @@ impl Host for Disk {
                 pending.extend(module.edges.iter().map(|edge| edge.idx()));
             }
         }
-        let found = crate::builtins::find(loaded, atoms, &is_compiled);
+        let found = crate::builtins::find(loaded, atoms, &is_compiled, &|count, work| self.parallel(count, work));
         let archive = bun_builtin_syntax::Archive::embedded();
         let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id)));
         let functions = archive.manifest().function_files().iter().map(|file| ([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), Builtin::Functions));
@@ -1217,6 +1218,7 @@ impl Host for Disk {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            options.one_name_is_one_binding,
         );
         self.spent(Phase::Parse, parsing);
         self.spent(Phase::Lower, began.elapsed().saturating_sub(parsing));

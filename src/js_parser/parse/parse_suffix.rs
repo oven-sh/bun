@@ -163,7 +163,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.next()?;
             // `parsePropertyAccessExpressionRest`: a private name is not allowed in an optional
             // chain. That is a rule of TypeScript's: ECMAScript has `a?.b.#c`.
-            if old_optional_chain.is_some() && p.is_tolerant() && !p.lexer.is_javascript_file() {
+            if old_optional_chain.is_some() && p.is_tolerant() {
                 p.lexer.ts_error(name_range, 18030);
             }
             let ref_ = p.store_name_in_ref(name);
@@ -426,7 +426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     p.lexer.next()?;
                     // `parsePropertyAccessExpressionRest`: a private name is not allowed in an
                     // optional chain. That is a rule of TypeScript's: ECMAScript has `a?.#b`.
-                    if p.is_tolerant() && !p.lexer.is_javascript_file() {
+                    if p.is_tolerant() {
                         p.lexer.ts_error(name_range, 18030);
                     }
                     let ref_ = p.store_name_in_ref(name);

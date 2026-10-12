@@ -460,6 +460,7 @@ pub fn summarize<'s>(
     atoms: &bun_sema::atom::Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    bigint_names_are_digits: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
     // How long `parse_stmts_up_to` took. The rest is lowering.
     let parsing = core::cell::Cell::new(core::time::Duration::ZERO);
@@ -500,6 +501,7 @@ pub fn summarize<'s>(
         options.tolerant = true;
         // `initializeState`
         options.is_javascript = is_js || is_json;
+        options.bigint_names_are_digits = bigint_names_are_digits;
         let define = crate::Define::default();
         let mut log = bun_ast::Log::init();
         let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, arena)

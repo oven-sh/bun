@@ -20,7 +20,7 @@ use build::Problem;
 use bun_sema::check::{Checker, Program as Checked};
 use bun_sema::hir::{FileKind, StmtKind};
 use bun_sema::program::FileId;
-use bun_sema::util::InParallel;
+use bun_sema::util::{InParallel, for_each_mut};
 use fragment::Fragments;
 pub use link::Explain;
 use link::{Elsewhere, Errors, Linked};
@@ -75,6 +75,9 @@ pub struct Constants {
     pub own_paths: Option<fn(&[u8]) -> Vec<u8>>,
     /// What is built is run by `bun test`, which lets a file use `test`, `expect` and the like without importing them.
     pub has_test_globals: bool,
+    pub ignores_dce_annotations: bool,
+    pub jsx_has_side_effects: bool,
+    pub minifies_syntax: bool,
 }
 
 impl Constants {
@@ -152,6 +155,7 @@ impl<'a> Translation<'a> {
             c.note_uses_of_functions_in(file);
         }
         fragments.put(build::translate_file(c, shared, file));
+        c.forget_answers_by_expression();
     }
 
     /// `Request::compile`. `errors`: where the checker has found errors. An error stands only if it lies in code that is in the
@@ -201,6 +205,10 @@ impl<'a> Translation<'a> {
                     Elsewhere::DroppedImport => "in a dropped import".to_owned(),
                     Elsewhere::NotReached(name) => format!("in `{name}`, which is not reached"),
                     Elsewhere::NoModule => "the file is not in the program".to_owned(),
+                    Elsewhere::RegExpLiteral => "in a regular expression literal, which the engine parses".to_owned(),
+                    Elsewhere::PrivateNameInOptionalChain => "a private name in an optional chain of JavaScript, which ECMAScript has".to_owned(),
+                    Elsewhere::PrivateNameOfEnclosingClass => "a private name of JavaScript that an enclosing class declares, which ECMAScript looks for when it runs".to_owned(),
+                    Elsewhere::StaticMemberNamedConstructor => "a static member of JavaScript named `constructor`, which ECMAScript has".to_owned(),
                 })
             })
             .collect();
@@ -217,16 +225,28 @@ impl<'a> Translation<'a> {
     /// The same as what the engine reads, with `Translated::errors_that_stand`. `Err`: what could not be translated. Nothing, if an
     /// error stands.
     pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> (Result<Vec<u8>, Vec<String>>, Vec<bool>) {
-        let translated = self.finish(program, in_parallel, errors);
-        let written = if translated.errors_that_stand.contains(&true) {
+        let Translated { program: linked, problems, errors_that_stand, .. } = self.finish(program, in_parallel, errors);
+        let written = if errors_that_stand.contains(&true) {
             Err(Vec::new())
-        } else if !translated.problems.is_empty() {
-            Err(translated.problems)
+        } else if !problems.is_empty() {
+            Err(problems)
         } else {
-            Ok(format::write(&translated.program, in_parallel))
+            Ok(format::write(&linked, in_parallel))
         };
-        (written, translated.errors_that_stand)
+        release(linked, in_parallel);
+        (written, errors_that_stand)
     }
+}
+
+pub fn release(mut program: ir::Program, in_parallel: InParallel<'_>) {
+    const FUNCTIONS_OF_A_SLICE: usize = 256;
+    let mut funcs = std::mem::take(&mut program.funcs);
+    let mut parts: Vec<ir::Program> = vec![program];
+    while !funcs.is_empty() {
+        let slice = funcs.split_off(funcs.len().saturating_sub(FUNCTIONS_OF_A_SLICE));
+        parts.push(ir::Program { funcs: slice, ..Default::default() });
+    }
+    for_each_mut(&mut parts, in_parallel, &|part| drop(std::mem::take(part)));
 }
 
 const IS_BEGUN: &str = "`begin` comes first";

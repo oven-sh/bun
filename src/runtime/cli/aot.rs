@@ -50,6 +50,26 @@ pub(crate) fn as_dyn(
     }
 }
 
+pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
+    let end_of_line = |text: &[u8]| (0..text.len()).find(|&at| matches!(text[at..], [b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..])).unwrap_or(text.len());
+    if text.starts_with(b"#!") {
+        text = &text[end_of_line(text)..];
+    }
+    loop {
+        text = text.trim_ascii_start();
+        text = match text {
+            [] => return true,
+            [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => rest,
+            [b'/', b'/', rest @ ..] => &rest[end_of_line(rest)..],
+            [b'/', b'*', rest @ ..] => match rest.windows(2).position(|pair| pair == b"*/") {
+                Some(end) => &rest[end + 2..],
+                None => return false,
+            },
+            _ => return false,
+        };
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: bool) -> ! {
     if let Some(why) = why_unsupported(&CompileTarget::default()) {
@@ -81,6 +101,12 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     if for_tests {
         args.push(b"--rewrite-jest-for-tests".to_vec());
     }
+    if ctx.bundler_options.ignore_dce_annotations {
+        args.push(b"--ignore-dce-annotations".to_vec());
+    }
+    if ctx.args.jsx.as_ref().is_some_and(|jsx| jsx.side_effects) {
+        args.push(b"--jsx-side-effects".to_vec());
+    }
     // What is a builtin module to the program that runs is one to the build.
     if bun_resolve_builtins::expose_internals_enabled() {
         args.push(b"--expose-internals".to_vec());
@@ -97,6 +123,23 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     }
     if let Some(tsconfig) = &ctx.args.tsconfig_override {
         option(b"--tsconfig-override", tsconfig);
+    }
+    if let Some(jsx) = &ctx.args.jsx {
+        for (name, value) in [
+            (&b"--jsx-factory"[..], &jsx.factory),
+            (b"--jsx-fragment", &jsx.fragment),
+            (b"--jsx-import-source", &jsx.import_source),
+        ] {
+            if !value.is_empty() {
+                option(name, value);
+            }
+        }
+        use bun_options_types::schema::api::JsxRuntime;
+        match jsx.runtime {
+            JsxRuntime::Classic => option(b"--jsx-runtime", b"classic"),
+            JsxRuntime::Automatic => option(b"--jsx-runtime", b"automatic"),
+            _ => {}
+        }
     }
     for (name, values) in [
         (&b"--conditions"[..], &ctx.args.conditions),

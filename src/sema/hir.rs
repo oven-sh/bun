@@ -663,6 +663,7 @@ pub struct Call {
     pub chain: Chain,
     /// `TaggedTemplateExpression.Template`. Its substitutions are `args`.
     pub template: ExprId,
+    pub can_be_unwrapped_if_unused: bool,
 }
 
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).

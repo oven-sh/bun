@@ -217,6 +217,19 @@ pub(super) struct State {
     added: Vec<Subject>,
     /// The index of the outermost prediction in progress that the innermost one has asked for. `usize::MAX`: none.
     outermost_asked: usize,
+    declared: FxHashMap<(FileId, ExprId), bool>,
+    predicted: FxHashMap<(FileId, ExprId), Option<TypeId>>,
+}
+
+impl State {
+    pub(super) fn nothing_is_in_progress(&self) -> bool {
+        self.in_progress.is_empty()
+    }
+
+    pub(super) fn forget_answers_by_expression(&mut self) {
+        self.declared.clear();
+        self.predicted.clear();
+    }
 }
 
 impl Default for State {
@@ -230,6 +243,8 @@ impl Default for State {
             provisional: FxHashMap::default(),
             added: Vec::new(),
             outermost_asked: usize::MAX,
+            declared: FxHashMap::default(),
+            predicted: FxHashMap::default(),
         }
     }
 }
@@ -264,10 +279,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the program is held to the checker's type of the expression. In JavaScript nothing is declared: the types are what the
     /// checker infers. That goes for what TypeScript reads from an object or gets from a function of JavaScript too.
     pub fn has_declared_type(&mut self, file: FileId, e: ExprId) -> bool {
-        let hir = self.hir(file);
         if self.is_untyped_file(file) {
             return false;
         }
+        if let Some(&known) = self.aot.javascript.declared.get(&(file, e)) {
+            return known;
+        }
+        let asked = self.nothing_is_assumed();
+        let found = self.find_has_declared_type(file, e);
+        if self.may_be_kept(asked) {
+            self.aot.javascript.declared.insert((file, e), found);
+        }
+        found
+    }
+
+    fn find_has_declared_type(&mut self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
         // A declaration without a body is a prediction: see `trust.rs`.
         if self.unvouched_claim(file, e).is_some() {
             return false;
@@ -303,6 +330,18 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// What the value of the expression probably is. `None`: nothing is known of it.
     pub fn predicted_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        if let Some(&known) = self.aot.javascript.predicted.get(&(file, e)) {
+            return known;
+        }
+        let asked = self.nothing_is_assumed();
+        let found = self.find_predicted_type_of_expr(file, e);
+        if self.may_be_kept(asked) {
+            self.aot.javascript.predicted.insert((file, e), found);
+        }
+        found
+    }
+
+    fn find_predicted_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let checked = self.type_of_expr(file, e);
         // What the program stores on a prototype says more than `any`, and more than a declaration without a body.
         if matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
@@ -1276,7 +1315,7 @@ impl<'p, 's> Checker<'p, 's> {
                 for &(_, target) in bound.assignments_to(bound.pat_symbol[pat.idx()]) {
                     let Parent::Expr(assignment) = bound.expr_parent[target.idx()] else { return None };
                     let ExprKind::Assign { op: None, target: to, value } = hir[assignment].kind else { return None };
-                    if to != target {
+                    if to != target || self.store_to_target(file, target).is_none() {
                         return None;
                     }
                     let stored = self.property_holding(file, value, depth + 1)?;

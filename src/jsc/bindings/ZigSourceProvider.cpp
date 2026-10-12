@@ -17,7 +17,6 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/InitializeThreading.h>
-#include <JavaScriptCore/AOTFacts.h>
 #include <JavaScriptCore/AOTProgramData.h>
 #include <JavaScriptCore/AOTFunction.h>
 #include <zstd.h>
@@ -329,7 +328,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
 
 // `bun build --compile --bytecode` with a payload order file (--bytecode-order): one payload for the whole link.
 // Created, fed and finished on the bundler's bytecode thread (it uses that thread's bytecode VM).
-extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::EncoderStringTable* externalStrings, const uint64_t* hotFunctions, size_t hotFunctionCount, const uint64_t* knownFunctions, size_t knownFunctionCount, const uint64_t* evaluatedModules, size_t evaluatedModuleCount, const uint64_t* notEvaluatedModules, size_t notEvaluatedModuleCount, bool compileAheadOfTime, const uint8_t* facts, size_t factsSize)
+extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::EncoderStringTable* externalStrings, const uint64_t* hotFunctions, size_t hotFunctionCount, const uint64_t* knownFunctions, size_t knownFunctionCount, const uint64_t* evaluatedModules, size_t evaluatedModuleCount, const uint64_t* notEvaluatedModules, size_t notEvaluatedModuleCount, bool compileAheadOfTime)
 {
     JSC::VM& vm = vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
@@ -346,12 +345,6 @@ extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::Encod
     options.definePlainInstanceFieldsInConstructor |= compileAheadOfTime;
     options.keepAllSourceLineStarts |= compileAheadOfTime;
     vm.useImmutableIntrinsics |= compileAheadOfTime;
-#if ENABLE(AOT)
-    JSC::AOT::Facts::load(vm, std::span { facts, factsSize });
-#else
-    UNUSED_PARAM(facts);
-    UNUSED_PARAM(factsSize);
-#endif
     return new JSC::BytecodeLinkEncoder(vm, externalStrings, WTF::move(hints));
 }
 
@@ -520,6 +513,7 @@ extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t string
         return true;
     } };
     Vector<uint8_t> image = JSC::AOT::ProgramData::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), codeImage.span(), positions, reportableSites.span(), variablesExportedByModules.span());
+    JSC::AOT::ProgramData::release(reportableSites);
     append(ctx, image.span().data(), image.size());
 }
 
@@ -551,6 +545,11 @@ extern "C" bool Bun__AOT__isCompiledEntryPoint(uint32_t module)
 #else
     return false;
 #endif
+}
+
+extern "C" size_t Bun__AOT__imageAlignment()
+{
+    return JSC::aotImageAlignment();
 }
 
 extern "C" bool Bun__AOT__imageStringTable(const uint8_t* bytes, size_t length, size_t* result)
@@ -586,16 +585,13 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
     if (isInExecutable && fileDescriptor >= 0)
         close(fileDescriptor);
 #endif
+    if (const char* reason = use.imageRejectionReason ? use.imageRejectionReason : use.programDataRejectionReason) {
+        fprintf(stderr, "error: this program's compiled code cannot be used: %s\n", reason);
+        exit(1);
+    }
     if (!verbose)
         return;
-    if (use.programDataRejectionReason)
-        fprintf(stderr, "[aot] not using the program data: %s\n", use.programDataRejectionReason);
-    else
-        fprintf(stderr, "[aot] program data: %zu bytes\n", use.programDataSize);
-    if (use.imageRejectionReason) {
-        fprintf(stderr, "[aot] not using the image: %s\n", use.imageRejectionReason);
-        return;
-    }
+    fprintf(stderr, "[aot] program data: %zu bytes\n", use.programDataSize);
     fprintf(stderr, "[aot] image: %zu bytes, %zu of code at %p, %u regular expressions\n", length, use.codeSizeInBytes, use.code, JSC::aotImageRegExpCount({ bytes, length }).value_or(0));
 #if !OS(WINDOWS)
     if (!strcmp(verbose, "2") && use.codeSizeInBytes > 4096) {

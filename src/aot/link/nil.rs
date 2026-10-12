@@ -8,8 +8,9 @@
 
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
-use crate::ir::{Def, Func, Layout, MethodKind, Op, Program, Strs, Target, Term, Why, class_flags, func_flags, method_flags, only_function_flags};
-use bun_sema::check::given::{Jump, NO_JUMP, parameters_handed_elements, NULL, NilFlows, NilFlowsInFunction, Origin, PlaceEvent, UNDEFINED, Use, nil_reaching, stored_values_read};
+use crate::ir::{Def, Func, Layout, MethodKind, Op, Prediction, Program, Strs, Target, Term, Why, class_flags, func_flags, method_flags, only_function_flags};
+use bun_sema::check::given::{Jump, NO_JUMP, parameters_handed_elements, NULL, NilEdges, STRANGER, NilFlowsInFunction, Origin, PlaceEvent, UNDEFINED, Use, add_nil_flows_in, nil_reaching, stored_values_read};
+use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -333,8 +334,13 @@ struct Report<'a> {
 impl Report<'_> {
     /// The node of the field. An object that is looked at through a view is one of its members, and what a cast turns it into has what it had.
     fn field(&mut self, layout: LayoutId, field: u32) -> u32 {
+        self.connected.insert((layout, field));
+        self.nodes.field(layout, field)
+    }
+
+    fn connect(&mut self, layout: LayoutId, field: u32) {
         let node = self.nodes.field(layout, field);
-        if self.connected.insert((layout, field)) {
+        {
             let own = &self.program.layouts[layout.idx()];
             let name = own.fields[field as usize].name;
             for &other in own.members.iter().chain(&own.specializations).filter(|&&other| other != layout) {
@@ -342,10 +348,16 @@ impl Report<'_> {
                     let there = self.nodes.field(other, same);
                     self.edges.push((node, there));
                     self.edges.push((there, node));
+                    let (of_view, of_member) = (own.fields[field as usize].declared, self.program.layouts[other.idx()].fields[same as usize].declared);
+                    if of_view.is_some() && of_member.is_some() && of_view != self.program.tys.anything && of_member != self.program.tys.anything {
+                        let missing = self.program.tys.get(of_member).prims & prim::NULLISH & !self.program.tys.get(of_view).prims;
+                        if missing != 0 {
+                            self.origins.push((node, missing as u8));
+                        }
+                    }
                 }
             }
         }
-        node
     }
 
     /// `list.map(n => ..)`: the function is called with an element. `elements`: `parameters_handed_elements`.
@@ -403,6 +415,13 @@ impl Report<'_> {
                 match func.op(v) {
                     // There need be no element, and an element that is there may be `undefined`: nothing is known of what a container holds.
                     Some(Op::ElemGet { .. } | Op::IterGet { .. }) => flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() }),
+                    Some(&Op::Coerce { value, to, why })
+                        if why == Why::Forced
+                            || matches!(why, Why::Flow | Why::Claim | Why::Store | Why::Cast) && !func.has(func_flags::IS_HIDDEN_IN_STACK_TRACES) && has_only_empty_views(&program.tys, &program.layouts, to) =>
+                    {
+                        hand_on(&mut flows, value, node(v));
+                        flows.origins.push(Origin { node: node(v), nil: STRANGER, block: at, unless: Vec::new() });
+                    }
                     Some(&Op::Coerce { value, to, why }) => {
                         if matches!(why, Why::NonNull(_) | Why::Coerce) {
                             continue;
@@ -533,9 +552,86 @@ impl Report<'_> {
     }
 }
 
-fn with_room(tys: &mut DeclaredTable, ty: TyId, nil: u8) -> TyId {
+struct Overlay<'a> {
+    known: &'a DeclaredTable,
+    added: Vec<Declared>,
+    ids: FxHashMap<Declared, TyId>,
+    anything: TyId,
+}
+
+impl Overlay<'_> {
+    fn over(known: &DeclaredTable) -> Overlay<'_> {
+        Overlay { known, added: Vec::new(), ids: FxHashMap::default(), anything: known.anything }
+    }
+    fn get(&self, id: TyId) -> &Declared {
+        match id.idx().checked_sub(self.known.list.len()) {
+            None => self.known.get(id),
+            Some(index) => &self.added[index],
+        }
+    }
+    fn intern(&mut self, declared: Declared) -> TyId {
+        if let Some(id) = self.known.find(&declared).or_else(|| self.ids.get(&declared).copied()) {
+            return id;
+        }
+        let id = TyId::new(self.known.list.len() + self.added.len());
+        self.added.push(declared.clone());
+        self.ids.insert(declared, id);
+        id
+    }
+}
+
+struct Slice<'a> {
+    first: usize,
+    funcs: &'a mut [Func],
+    has_wider_values: &'a mut [bool],
+    tys: Overlay<'a>,
+    roomier: Roomier,
+}
+
+fn for_each_slice(tys: &mut DeclaredTable, funcs: &mut [Func], has_wider_values: &mut [bool], roomier: &mut Roomier, in_parallel: InParallel<'_>, work: &(dyn Fn(&mut Slice<'_>) + Sync)) {
+    let known = tys.list.len();
+    let added: Vec<Vec<Declared>> = {
+        let tys: &DeclaredTable = tys;
+        let mut slices: Vec<Slice<'_>> = (funcs.chunks_mut(FUNCTIONS_OF_A_TASK).zip(has_wider_values.chunks_mut(FUNCTIONS_OF_A_TASK)).enumerate())
+            .map(|(number, (funcs, has_wider_values))| Slice { first: number * FUNCTIONS_OF_A_TASK, funcs, has_wider_values, tys: Overlay::over(tys), roomier: Roomier::default() })
+            .collect();
+        for_each_mut(&mut slices, in_parallel, &|slice| work(slice));
+        for slice in &slices {
+            roomier.parameters += slice.roomier.parameters;
+            roomier.results += slice.roomier.results;
+            roomier.narrowed += slice.roomier.narrowed;
+            roomier.casts_to_empty_views.extend_from_slice(&slice.roomier.casts_to_empty_views);
+        }
+        slices.into_iter().map(|slice| slice.tys.added).collect()
+    };
+    let renamed: Vec<Vec<TyId>> = added.into_iter().map(|added| added.into_iter().map(|declared| tys.intern(declared)).collect()).collect();
+    let mut slices: Vec<(&mut [Func], &Vec<TyId>)> = funcs.chunks_mut(FUNCTIONS_OF_A_TASK).zip(&renamed).filter(|slice| !slice.1.is_empty()).collect();
+    for_each_mut(&mut slices, in_parallel, &|(funcs, renamed)| {
+        let rename = |ty: &mut TyId| {
+            if ty.is_some() && ty.idx() >= known {
+                *ty = renamed[ty.idx() - known];
+            }
+        };
+        for func in funcs.iter_mut() {
+            for value in &mut func.values {
+                rename(&mut value.ty);
+                if let Def::Op(Op::Coerce { to, .. }) = &mut value.def {
+                    rename(to);
+                }
+            }
+            rename(&mut func.result);
+            rename(&mut func.this_declared);
+            func.captures.iter_mut().chain(&mut func.params).for_each(rename);
+        }
+    });
+}
+
+fn with_room(tys: &mut Overlay<'_>, ty: TyId, nil: u8) -> TyId {
     if nil == 0 || ty.is_none() || ty == tys.anything {
         return ty;
+    }
+    if nil & STRANGER != 0 {
+        return tys.anything;
     }
     let described = tys.get(ty);
     if described.is_never() || nil as u32 & !described.prims == 0 {
@@ -546,7 +642,7 @@ fn with_room(tys: &mut DeclaredTable, ty: TyId, nil: u8) -> TyId {
 }
 
 /// What of `undefined` and `null` the one type has and the other has no room for.
-fn nil_too_much(tys: &DeclaredTable, have: TyId, want: TyId) -> u32 {
+fn nil_too_much(tys: &Overlay<'_>, have: TyId, want: TyId) -> u32 {
     if have.is_none() || want.is_none() || have == want || want == tys.anything {
         return 0;
     }
@@ -554,7 +650,7 @@ fn nil_too_much(tys: &DeclaredTable, have: TyId, want: TyId) -> u32 {
 }
 
 /// The value as the place takes it. Where it has more room than the place, a test has shown that there is no need: it is narrowed, by an operation that is put at the end of `ops`.
-fn narrowed(func: &mut Func, tys: &mut DeclaredTable, ops: &mut Vec<V>, made: &mut FxHashMap<(V, TyId), V>, value: V, want: TyId) -> V {
+fn narrowed(func: &mut Func, tys: &mut Overlay<'_>, ops: &mut Vec<V>, made: &mut FxHashMap<(V, TyId), V>, value: V, want: TyId) -> V {
     if value.is_none() {
         return value;
     }
@@ -578,7 +674,7 @@ fn narrowed(func: &mut Func, tys: &mut DeclaredTable, ops: &mut Vec<V>, made: &m
 }
 
 /// A condition, or what is negated: a boolean when it was translated, which may be nothing by now.
-fn as_boolean(func: &mut Func, tys: &DeclaredTable, ops: &mut Vec<V>, boolean: TyId, value: V) -> V {
+fn as_boolean(func: &mut Func, tys: &Overlay<'_>, ops: &mut Vec<V>, boolean: TyId, value: V) -> V {
     if nil_too_much(tys, func.ty(value), boolean) == 0 {
         return value;
     }
@@ -596,19 +692,58 @@ pub(super) struct Roomier {
     pub(super) fields: usize,
     pub(super) variables: usize,
     pub(super) narrowed: usize,
+    pub(super) casts_to_empty_views: Vec<(u32, u32, TyId)>,
 }
 
-pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
+fn is_empty_view(layout: &Layout) -> bool {
+    layout.members.is_empty() && !layout.admits_foreign && !layout.is_allocated
+}
+
+fn has_only_empty_views(tys: &DeclaredTable, layouts: &[Layout], ty: TyId) -> bool {
+    if ty.is_none() || ty == tys.anything {
+        return false;
+    }
+    let described = tys.get(ty);
+    !described.parts.is_empty()
+        && !described.any_object
+        && !described.any_function
+        && described.prims & !prim::NULLISH == 0
+        && described.ints.is_none()
+        && described.parts.iter().all(|part| matches!(part, Part::Class(view) if view.is_some() && is_empty_view(&layouts[view.idx()])))
+}
+
+const FUNCTIONS_OF_A_TASK: usize = 256;
+
+pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'_>) -> Roomier {
     let nodes = Nodes::of(program);
     let initialize = program.strs.intern(b"Initialize");
     let reaching = {
-        let mut report = Report { program: &*program, nodes: &nodes, initialize, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default() };
-        let functions = (0..program.funcs.len()).map(|index| report.function(index)).collect();
-        nil_reaching(&NilFlows { nodes: nodes.count, edges: report.edges, origins: report.origins, functions })
+        let program: &Program = program;
+        let report = || Report { program, nodes: &nodes, initialize, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default() };
+        let mut slices: Vec<(usize, Report<'_>, NilEdges)> = (0..program.funcs.len()).step_by(FUNCTIONS_OF_A_TASK).map(|first| (first, report(), NilEdges::default())).collect();
+        for_each_mut(&mut slices, in_parallel, &|(first, report, found)| {
+            for index in (*first..program.funcs.len()).take(FUNCTIONS_OF_A_TASK) {
+                let flows = report.function(index);
+                add_nil_flows_in(&flows, found);
+            }
+            found.edges.extend(report.edges.drain(..).map(|(from, to)| (from, to, NIL | STRANGER)));
+            found.origins.append(&mut report.origins);
+        });
+        let mut connecting = report();
+        let mut connected: Vec<(LayoutId, u32)> = slices.iter().flat_map(|slice| slice.1.connected.iter().copied()).collect();
+        connected.sort_unstable_by_key(|&(layout, field)| (layout.idx(), field));
+        connected.dedup();
+        for (layout, field) in connected {
+            connecting.connect(layout, field);
+        }
+        let between_fields = NilEdges { edges: connecting.edges.into_iter().map(|(from, to)| (from, to, NIL | STRANGER)).collect(), origins: connecting.origins };
+        nil_reaching(nodes.count, slices.iter().map(|slice| &slice.2).chain([&between_fields]))
     };
     let mut roomier = Roomier::default();
-    let is_unboxed = |tys: &DeclaredTable, ty: TyId| ty.is_some() && ty != tys.anything && !tys.get(ty).has_objects() && tys.get(ty).prims & prim::CELLS == 0 && !tys.get(ty).is_never();
-    let Program { tys, funcs, layouts, globals, .. } = program;
+    let is_unboxed = |tys: &Overlay<'_>, ty: TyId| ty.is_some() && ty != tys.anything && !tys.get(ty).has_objects() && tys.get(ty).prims & prim::CELLS == 0 && !tys.get(ty).is_never();
+    let Program { tys: table, funcs, layouts, globals, .. } = program;
+    let mut over = Overlay::over(table);
+    let tys = &mut over;
     for (index, layout) in layouts.iter_mut().enumerate() {
         for (number, field) in layout.fields.iter_mut().enumerate() {
             let wider = with_room(tys, field.declared, reaching[nodes.field(LayoutId::new(index), number as u32) as usize]);
@@ -621,7 +756,14 @@ pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
         roomier.variables += usize::from(wider != global.declared && is_unboxed(tys, global.declared));
         global.declared = wider;
     }
-    for (index, func) in funcs.iter_mut().enumerate() {
+    for declared in over.added {
+        table.intern(declared);
+    }
+    let (layouts, globals): (&[Layout], &[crate::ir::Global]) = (layouts, globals);
+    let mut has_wider_values = vec![false; funcs.len()];
+    for_each_slice(table, funcs, &mut has_wider_values, &mut roomier, in_parallel, &|Slice { first, funcs, has_wider_values, tys, roomier }| {
+      for (offset, func) in funcs.iter_mut().enumerate() {
+        let index = *first + offset;
         // The values whose types had neither `undefined` nor `null` and have now.
         let mut is_given_room = vec![false; func.values.len()];
         for number in 0..func.values.len() {
@@ -629,11 +771,22 @@ pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
             if nil == 0 {
                 continue;
             }
+            has_wider_values[offset] = true;
             let value = &mut func.values[number];
             is_given_room[number] = value.ty.is_some() && value.ty != tys.anything && tys.get(value.ty).prims & prim::NULLISH == 0;
+            let is_empty = |view: &Part| matches!(view, Part::Class(view) if view.is_some() && is_empty_view(&layouts[view.idx()]));
+            if nil & STRANGER != 0 && value.ty.is_some() && value.ty != tys.anything && value.prediction == Prediction::None && !tys.get(value.ty).parts.iter().any(is_empty) {
+                value.prediction = Prediction::Ty(value.ty);
+            }
             value.ty = with_room(tys, value.ty, nil);
-            if let Def::Op(Op::Coerce { to, .. }) = &mut value.def {
+            if let Def::Op(Op::Coerce { to, why, .. }) = &mut value.def {
+                if nil & STRANGER != 0 && matches!(why, Why::Flow | Why::Claim | Why::Store | Why::Cast) && has_only_empty_views(tys.known, layouts, *to) {
+                    roomier.casts_to_empty_views.push((index as u32, number as u32, *to));
+                }
                 *to = with_room(tys, *to, nil);
+                if *why == Why::Forced || nil & STRANGER != 0 {
+                    *why = Why::Upcast;
+                }
             }
         }
         // `x!` where there is nothing that it could find.
@@ -697,17 +850,25 @@ pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
                 *declared = wider;
             }
         }
-    }
+      }
+    });
     // The uses behind a test, and what has to be a boolean.
-    let boolean = tys.intern(Declared::prims(prim::BOOLEAN));
-    for index in 0..funcs.len() {
-        let counts_tests = !has_handlers(&funcs[index]);
-        for block in 0..funcs[index].blocks.len() {
-            let before = std::mem::take(&mut funcs[index].blocks[block].ops);
+    let boolean = table.intern(Declared::prims(prim::BOOLEAN));
+    let handed: Vec<SmallVec<[TyId; 8]>> = (funcs.iter())
+        .map(|called| {
+            let receiver = called.has(func_flags::HAS_THIS).then_some(called.this_declared);
+            called.captures.iter().copied().chain(receiver).chain(called.params.iter().copied()).collect()
+        })
+        .collect();
+    for_each_slice(table, funcs, &mut has_wider_values, &mut roomier, in_parallel, &|Slice { funcs, has_wider_values, tys, roomier, .. }| {
+      for (_, func) in funcs.iter_mut().enumerate().filter(|&(offset, _)| has_wider_values[offset]) {
+        let counts_tests = !has_handlers(func);
+        for block in 0..func.blocks.len() {
+            let before = std::mem::take(&mut func.blocks[block].ops);
             let mut ops: Vec<V> = Vec::with_capacity(before.len());
             let mut made: FxHashMap<(V, TyId), V> = FxHashMap::default();
             for v in before {
-                let Some(mut op) = funcs[index].op(v).cloned() else {
+                let Some(mut op) = func.op(v).cloned() else {
                     ops.push(v);
                     continue;
                 };
@@ -715,9 +876,9 @@ pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
                 let mut wanted: SmallVec<[(&mut V, TyId); 4]> = SmallVec::new();
                 match &mut op {
                     Op::Not(value) => {
-                        let tested = as_boolean(&mut funcs[index], tys, &mut ops, boolean, *value);
+                        let tested = as_boolean(func, tys, &mut ops, boolean, *value);
                         if tested != *value {
-                            funcs[index].values[v.idx()].def = Def::Op(Op::Not(tested));
+                            func.values[v.idx()].def = Def::Op(Op::Not(tested));
                         }
                     }
                     _ if !counts_tests => {}
@@ -730,11 +891,11 @@ pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
                     }
                     Op::GlobalSet(global, value) => wanted.push((value, globals[global.idx()].declared)),
                     Op::Operation { name, args } if *name == initialize => {
-                        let receiver = funcs[index].ty(args[0]);
+                        let receiver = func.ty(args[0]);
                         let view = if receiver.is_some() { tys.get(receiver).only_layout() } else { None };
                         let names: SmallVec<[V; 8]> = args.iter().copied().collect();
                         for (number, value) in args.iter_mut().enumerate().skip(2).step_by(2) {
-                            if let (Some(view), Some(&Op::Str(name))) = (view, funcs[index].op(names[number - 1]))
+                            if let (Some(view), Some(&Op::Str(name))) = (view, func.op(names[number - 1]))
                                 && let Some(field) = layouts[view.idx()].field(name)
                             {
                                 wanted.push((value, layouts[view.idx()].fields[field as usize].declared));
@@ -742,7 +903,7 @@ pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
                         }
                     }
                     Op::PropSet { obj, name, value } => {
-                        let receiver = funcs[index].ty(*obj);
+                        let receiver = func.ty(*obj);
                         if receiver.is_some()
                             && let Some(view) = tys.get(receiver).only_layout()
                             && let Some(field) = layouts[view.idx()].field(*name)
@@ -751,58 +912,56 @@ pub(super) fn make_room_for_nil(program: &mut Program) -> Roomier {
                         }
                     }
                     Op::CallDirect { func: callee, args } | Op::Closure { func: callee, captures: args } | Op::ClosureOnce { func: callee, captures: args, .. } => {
-                        let called = &funcs[callee.idx()];
-                        let receiver = called.has(func_flags::HAS_THIS).then_some(called.this_declared);
-                        let types: SmallVec<[TyId; 8]> = called.captures.iter().copied().chain(receiver).chain(called.params.iter().copied()).collect();
-                        wanted.extend(args.iter_mut().zip(types));
+                        wanted.extend(args.iter_mut().zip(handed[callee.idx()].iter().copied()));
                     }
                     _ => {}
                 }
                 let mut has_changed = false;
                 for (value, want) in wanted {
-                    let fitting = narrowed(&mut funcs[index], tys, &mut ops, &mut made, *value, want);
+                    let fitting = narrowed(func, tys, &mut ops, &mut made, *value, want);
                     has_changed |= fitting != *value;
                     *value = fitting;
                 }
                 if has_changed {
-                    funcs[index].values[v.idx()].def = Def::Op(op);
+                    func.values[v.idx()].def = Def::Op(op);
                 }
                 ops.push(v);
             }
-            let mut term = funcs[index].blocks[block].term.take();
+            let mut term = func.blocks[block].term.take();
             if let Some(Term::Branch { cond, .. }) = &mut term {
-                *cond = as_boolean(&mut funcs[index], tys, &mut ops, boolean, *cond);
+                *cond = as_boolean(func, tys, &mut ops, boolean, *cond);
             }
             match &mut term {
                 _ if !counts_tests => {}
-                Some(Term::Return(value)) if !funcs[index].has(func_flags::ASYNC | func_flags::GENERATOR) => {
-                    let want = funcs[index].result;
-                    *value = narrowed(&mut funcs[index], tys, &mut ops, &mut made, *value, want);
+                Some(Term::Return(value)) if !func.has(func_flags::ASYNC | func_flags::GENERATOR) => {
+                    let want = func.result;
+                    *value = narrowed(func, tys, &mut ops, &mut made, *value, want);
                 }
-                Some(Term::Jump(target)) => fit_arguments(&mut funcs[index], tys, &mut ops, &mut made, target),
+                Some(Term::Jump(target)) => fit_arguments(func, tys, &mut ops, &mut made, target),
                 Some(Term::Branch { then, otherwise, .. }) => {
-                    roomier.narrowed += fit_arguments_on_the_way(&mut funcs[index], tys, then);
-                    roomier.narrowed += fit_arguments_on_the_way(&mut funcs[index], tys, otherwise);
+                    roomier.narrowed += fit_arguments_on_the_way(func, tys, then);
+                    roomier.narrowed += fit_arguments_on_the_way(func, tys, otherwise);
                 }
                 Some(Term::Switch { cases, default, .. }) => {
                     for case in cases {
-                        roomier.narrowed += fit_arguments_on_the_way(&mut funcs[index], tys, &mut case.1);
+                        roomier.narrowed += fit_arguments_on_the_way(func, tys, &mut case.1);
                     }
-                    roomier.narrowed += fit_arguments_on_the_way(&mut funcs[index], tys, default);
+                    roomier.narrowed += fit_arguments_on_the_way(func, tys, default);
                 }
                 _ => {}
             }
             roomier.narrowed += made.len();
-            funcs[index].blocks[block].term = term;
-            funcs[index].blocks[block].ops = ops;
+            func.blocks[block].term = term;
+            func.blocks[block].ops = ops;
         }
-    }
+      }
+    });
     roomier
 }
 
 /// The same for one way out of several. What the test shows that decides between them holds on that way alone: `Branch typeof x === "string" ? b1(x) : b2()`. So the narrowing stands in a block of
 /// its own on the way. How many values were narrowed.
-fn fit_arguments_on_the_way(func: &mut Func, tys: &mut DeclaredTable, target: &mut Target) -> usize {
+fn fit_arguments_on_the_way(func: &mut Func, tys: &mut Overlay<'_>, target: &mut Target) -> usize {
     let (mut ops, mut made) = (Vec::new(), FxHashMap::default());
     let mut fitted = Target { block: target.block, args: target.args.clone() };
     fit_arguments(func, tys, &mut ops, &mut made, &mut fitted);
@@ -815,7 +974,7 @@ fn fit_arguments_on_the_way(func: &mut Func, tys: &mut DeclaredTable, target: &m
     made.len()
 }
 
-fn fit_arguments(func: &mut Func, tys: &mut DeclaredTable, ops: &mut Vec<V>, made: &mut FxHashMap<(V, TyId), V>, target: &mut Target) {
+fn fit_arguments(func: &mut Func, tys: &mut Overlay<'_>, ops: &mut Vec<V>, made: &mut FxHashMap<(V, TyId), V>, target: &mut Target) {
     let parameters: SmallVec<[V; 8]> = func.blocks[target.block.idx()].params.iter().copied().collect();
     for (argument, parameter) in target.args.iter_mut().zip(parameters) {
         let want = func.ty(parameter);

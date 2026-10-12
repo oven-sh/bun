@@ -164,6 +164,7 @@ impl<'f, 's> Binder<'f, 's> {
                 f.fns.len()
             ],
             requires_scope_change: vec![false; f.fns.len()],
+            one_name_is_one_binding: options.one_name_is_one_binding,
             fn_symbol: vec![SymbolId::NONE; f.fns.len()],
             class_symbol: vec![SymbolId::NONE; f.classes.len()],
             class_owner: vec![ClassOwner::Stmt(StmtId::NONE); f.classes.len()],
@@ -578,7 +579,12 @@ impl<'f, 's> Binder<'f, 's> {
                     if there.intersects(accessor) && there & accessor != includes & accessor {
                         self.b.symbols[existing.idx()].flags |= accessor;
                     }
-                    self.new_symbol(SymFlags::empty(), name)
+                    let one_binding = SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::FUNCTION;
+                    if self.options.one_name_is_one_binding && self.f.is_js && includes.intersects(one_binding) && there.intersects(one_binding) && !(there | includes).intersects(SymFlags::VALUE.difference(one_binding)) {
+                        existing
+                    } else {
+                        self.new_symbol(SymFlags::empty(), name)
+                    }
                 }
             }
         };
@@ -1635,6 +1641,7 @@ impl<'f, 's> Binder<'f, 's> {
             // The name of a method or an accessor is a child of it: its locals are searched. From
             // there `useResult` is false for a type and for a function scoped variable.
             if let ScopeKind::FunctionName(f) = s.kind
+                && !b.one_name_is_one_binding
                 && let Some(&symbol) =
                     tables[b.scopes[b.fns[f.idx()].scope.idx()].locals.idx()].get(&name)
                 && b.symbols[symbol.idx()]
@@ -3007,7 +3014,16 @@ impl<'f, 's> Binder<'f, 's> {
             PatKind::Missing => {}
             // `bindVariableDeclarationOrBindingElement`, `bindParameter`
             PatKind::Ident(_) => {
-                let (decl, flags, excludes) = if self.b.required_by(self.f, pat).is_some() {
+                let is_required = self.b.required_by(self.f, pat).is_some();
+                let is_required_in_block = is_required
+                    && self.options.one_name_is_one_binding
+                    && flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
+                    && self.b.container_scope(self.scope) != self.scope;
+                if is_required_in_block {
+                    self.bind_block_scoped_declaration(Decl::Require(pat), SymFlags::ALIAS, SymFlags::ALIAS_EXCLUDES);
+                    return;
+                }
+                let (decl, flags, excludes) = if is_required {
                     (
                         Decl::Require(pat),
                         SymFlags::ALIAS,
@@ -4423,6 +4439,9 @@ impl<'f, 's> Binder<'f, 's> {
             // `bindCallExpressionFlow`
             ExprKind::Call(c) => {
                 let call = &self.f[c];
+                if matches!(self.f[call.callee].kind, ExprKind::Ident(name) if self.atoms.bytes(name) == b"eval") {
+                    self.b.expr_scope.insert(id, self.scope);
+                }
 
                 // The control flow seen by an immediately invoked function includes the evaluation
                 // of the arguments.

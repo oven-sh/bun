@@ -166,6 +166,7 @@ pub struct Options<'a> {
     pub tolerant: bool,
     /// `NodeFlagsJavaScriptFile`, with `tolerant`.
     pub is_javascript: bool,
+    pub bigint_names_are_digits: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -204,6 +205,7 @@ impl<'a> Default for Options<'a> {
             is_entry_point: false,
             tolerant: false,
             is_javascript: false,
+            bigint_names_are_digits: false,
         }
     }
 }
@@ -295,6 +297,7 @@ impl<'a> Options<'a> {
             is_entry_point: self.is_entry_point,
             tolerant: self.tolerant,
             is_javascript: self.is_javascript,
+            bigint_names_are_digits: self.bigint_names_are_digits,
         }
     }
 
@@ -373,6 +376,7 @@ impl<'a> Options<'a> {
             is_entry_point: false,
             tolerant: false,
             is_javascript: false,
+            bigint_names_are_digits: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts

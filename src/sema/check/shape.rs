@@ -6692,9 +6692,30 @@ impl<'p, 's> Checker<'p, 's> {
             c.is_boolean(t) || c.is_pattern_literal(t) || c.every_type(t, |c, m| c.is_unit(m))
         };
         let mut may = false;
+        const FEW_MEMBERS: usize = 8;
+        let is_indexed = all.len() > FEW_MEMBERS;
+        let mut holders: FxHashMap<Atom, SmallVec<[u32; 4]>> = FxHashMap::default();
         for (at, &later) in all.iter().enumerate().skip(1) {
+            if is_indexed {
+                let ahead = at as u32 - 1;
+                for prop in &all[at - 1].shape().props {
+                    let of_name = holders.entry(prop.name).or_default();
+                    if of_name.last() != Some(&ahead) {
+                        of_name.push(ahead);
+                    }
+                }
+            }
             for prop in &later.shape().props {
-                for &earlier in &all[..at] {
+                let indexed: &[u32] = if is_indexed {
+                    holders
+                        .get(&prop.name)
+                        .map_or(&[][..], |of_name| &of_name[..])
+                } else {
+                    &[]
+                };
+                let count = if is_indexed { indexed.len() } else { at };
+                for k in 0..count {
+                    let earlier = all[if is_indexed { indexed[k] as usize } else { k }];
                     let Some(other) = earlier.resolved.prop(prop.name) else {
                         continue;
                     };

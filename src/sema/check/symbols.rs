@@ -4937,6 +4937,31 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkIteratedTypeOrElementType`: the type that `for (const x of ty)` binds `x` to (`for
     /// await` if `is_async`), and the element type that `...ty` and `yield* ty` produce. A type
     /// that is not iterable, such as `never`, is an error, and the result of an error is any.
+    pub fn type_of_iterator(&mut self, ty: TypeId) -> Option<TypeId> {
+        self.resolve_known_symbol(b"iterator");
+        let Some((method, false)) = self.declared_property(ty, known::sym_iterator) else { return None };
+        if self.is_any(method) {
+            return None;
+        }
+        let mut iterators = Vec::new();
+        let all_signatures = self.signatures(method, false);
+        for &sig in &all_signatures {
+            let params = self.sig_params(sig);
+            if self.min_argument_count(&params) == 0 {
+                iterators.push(self.sig_return(sig));
+            }
+        }
+        match iterators[..] {
+            [iterator] => Some(iterator),
+            _ => None,
+        }
+    }
+
+    pub fn declares_method(&mut self, ty: TypeId, name: Atom) -> bool {
+        let Some((method, false)) = self.declared_property(ty, name) else { return false };
+        self.function_of_type(method).is_some_and(|(file, func)| self.hir(file)[func].kind == FnKind::Method)
+    }
+
     pub fn iterated_type(&mut self, ty: TypeId, is_async: bool) -> TypeId {
         match self.iterated_type_if_any(ty, is_async) {
             Some(element) => element,

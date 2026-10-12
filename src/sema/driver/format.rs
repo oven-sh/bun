@@ -649,6 +649,20 @@ fn is_missing_bun_types(report: &Report) -> bool {
     report.diagnostics.iter().any(is_about_bun_types)
 }
 
+pub fn note_on_bun_types(report: &Report) -> Option<(usize, &'static [u8])> {
+    let mut names = report.not_installed.iter().flat_map(|it| &it.names);
+    if names.any(|name| name == b"@types/bun") {
+        return None;
+    }
+    let last = report.diagnostics.iter().rposition(is_about_bun_types)?;
+    let note: &'static [u8] = if report.has_bun_types_installed {
+        b"Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: \"types\": [\"bun\"]"
+    } else {
+        b"Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun"
+    };
+    Some((last, note))
+}
+
 /// Whether `d` is about a global or module that `@types/bun` declares.
 pub(crate) fn is_about_bun_types(d: &Diagnostic) -> bool {
     match d.code {

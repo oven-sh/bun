@@ -74,6 +74,8 @@ pub enum Capture {
     This(Receiver),
     /// The `arguments` object of the function.
     Arguments(FnId),
+    NewTarget(FnId),
+    HomeObject(FnId),
 }
 
 /// Where a variable lives that a function other than the one that declares it refers to.
@@ -143,6 +145,8 @@ enum Need {
     Environment(Activation, Sym),
     This(Receiver),
     Arguments(FnId),
+    NewTarget(FnId),
+    HomeObject(FnId),
     Class(ClassId),
 }
 
@@ -166,16 +170,13 @@ struct FileCaptures {
     /// By class that is not evaluated once: what its members need from outside.
     imports: FxHashMap<ClassId, Vec<Capture>>,
     declared_closures: FxHashMap<FnId, DeclaredClosure>,
-    /// By function declaration that nothing is stored to and that is not there once and for all: where its name is used as a value.
-    uses_as_value: FxHashMap<FnId, Vec<ExprId>>,
     /// The loops where what is evaluated before the first iteration makes a function that refers to a variable the loop binds.
     captured_ahead_of_iterations: FxHashSet<StmtId>,
-    /// By activation with an environment: the functions that capture it, in order.
-    capturing_environment: FxHashMap<Activation, Vec<FnId>>,
     receivers: FxHashMap<FnId, Receiver>,
     /// By function expression whose one closure per environment that environment keeps: the index of the field, behind the variables.
     kept_expressions: FxHashMap<FnId, (Activation, u32)>,
     expressions_kept: FxHashMap<Activation, Vec<FnId>>,
+    generators_called_through_closures: FxHashSet<ExprId>,
 }
 
 /// A reference to something that is not there once and for all.
@@ -255,32 +256,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `None`: the function is no declaration, is assigned to, is never used as a value, or is declared once and for all.
+    pub fn is_generator_called_through_its_closure(&mut self, file: FileId, callee: ExprId) -> bool {
+        self.captures_of_file(file).generators_called_through_closures.contains(&callee)
+    }
+
     pub fn declared_closure(&mut self, file: FileId, func: FnId) -> Option<DeclaredClosure> {
         self.captures_of_file(file).declared_closures.get(&func).copied()
-    }
-
-    /// Where the name of the function declaration is used as a value. `None`: that is not known, something is stored to the name.
-    pub(super) fn uses_of_declaration_as_value(&mut self, file: FileId, func: FnId) -> Option<Vec<ExprId>> {
-        let symbol = self.bound(file).fn_symbol[func.idx()];
-        if symbol.is_none() || !self.bound(file).assignments_to(symbol).is_empty() || self.is_stored_through_casts(file, symbol) {
-            return None;
-        }
-        Some(self.captures_of_file(file).uses_as_value.get(&func).cloned().unwrap_or_default())
-    }
-
-    pub(super) fn functions_capturing(&mut self, file: FileId, activation: Activation) -> Vec<FnId> {
-        self.captures_of_file(file).capturing_environment.get(&activation).cloned().unwrap_or_default()
-    }
-
-    /// The first class whose environment holds the capture for its members.
-    pub(super) fn class_importing(&mut self, file: FileId, capture: Capture) -> Option<ClassId> {
-        self.captures_of_file(file).imports.iter().filter(|it| it.1.contains(&capture)).map(|it| *it.0).min()
-    }
-
-    pub(super) fn activations_with_environment(&mut self, file: FileId) -> Vec<Activation> {
-        let mut all: Vec<Activation> = self.captures_of_file(file).environments.keys().copied().collect();
-        all.sort_unstable();
-        all
     }
 
     /// `(a as T) = value`, which the binder does not take for an assignment to `a`.
@@ -354,7 +335,7 @@ impl<'p, 's> Checker<'p, 's> {
                     MemberOwner::Class(class) => return Code::Constructor(class),
                     _ => self.parent_of_node(file, at),
                 },
-                _ => self.parent_of_node(file, at),
+                _ => self.parent_by_evaluation(file, at),
             };
         }
     }
@@ -374,7 +355,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Parent::Case(case) => return Some(Activation::Block(bound.case_stmt[case.idx()])),
                 Parent::FnBody(func) => return Some(Activation::Call(func)),
                 Parent::ParamDefault(p) => return Some(Activation::Call(bound.param_fn[p.idx()])),
-                _ => self.parent_of_node(file, at),
+                _ => self.parent_by_evaluation(file, at),
             };
         }
     }
@@ -468,7 +449,7 @@ impl<'p, 's> Checker<'p, 's> {
                     at = bound.stmt_parent[s.idx()];
                     continue;
                 }
-                Parent::MemberInit(member) | Parent::MemberKey(member) => Some(member),
+                Parent::MemberInit(member) => Some(member),
                 Parent::FnBody(func) => match bound.fns[func.idx()].owner {
                     FnOwner::Member(member) => Some(member),
                     _ => None,
@@ -480,7 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return Some(class);
             }
-            at = self.parent_of_node(file, at);
+            at = self.parent_by_evaluation(file, at);
         }
     }
 
@@ -509,12 +490,17 @@ impl<'p, 's> Checker<'p, 's> {
             if func.is_some() && hir[func].kind != FnKind::Arrow {
                 return Receiver::Function(func);
             }
-            at = self.parent_of_node(file, at);
+            at = self.parent_by_evaluation(file, at);
         }
     }
 
+    fn is_made_within_class(&self, file: FileId, func: FnId, class: ClassId) -> bool {
+        let bound = self.bound(file);
+        matches!(bound.fns[func.idx()].owner, FnOwner::Expr(made) if self.is_within_class(file, bound.expr_parent[made.idx()], class))
+    }
+
     fn is_class_evaluated_once(&self, file: FileId, class: ClassId) -> bool {
-        self.is_evaluated_once(file, self.bound(file).class_owner[class.idx()].to_parent())
+        self.is_evaluated_once(file, self.bound(file).class_owner[class.idx()].to_parent()) && !self.is_class_named_by_computed_key(file, class)
     }
 
     // ───────────────────────────── which variables are copied ─────────────────────────────
@@ -639,7 +625,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Site::Parameter(p) => bound.param_fn[p.idx()],
                 Site::File | Site::Initializer(_) => return false,
             };
-            if !matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_)) || matches!(closures.get(&func), Some(DeclaredClosure::MadeAtEntry)) {
+            if !matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_)) || matches!(closures.get(&func), Some(DeclaredClosure::MadeAtEntry)) || self.is_declared_over_parameter(file, func) {
                 return false;
             }
             // A name that is stored to is a variable, which is given the closure where the scope is entered. Its mentions are not listed.
@@ -647,8 +633,53 @@ impl<'p, 's> Checker<'p, 's> {
             if name.is_none() || bound.symbols[name.idx()].flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(name).is_empty() || self.is_stored_through_casts(file, name) {
                 return false;
             }
+            if bound.symbols[name.idx()].decls.iter().any(|decl| matches!(decl, Decl::Var(_) | Decl::Param(_))) {
+                return false;
+            }
             return !looked_at.insert(func) || mentions.get(&func).is_none_or(|by| by.iter().all(|&mention| self.is_evaluated_once_bound(file, mention, site, end, mentions, closures, looked_at)));
         }
+    }
+
+    fn is_declared_over_parameter(&self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let FnOwner::Stmt(stmt) = bound.fns[func.idx()].owner else { return false };
+        let Parent::FnBody(around) = bound.stmt_parent[stmt.idx()] else { return false };
+        hir[around].params.iter().any(|p| self.binds_name(file, hir[p].pat, hir[func].name))
+    }
+
+    fn binds_name(&self, file: FileId, pat: PatId, name: Atom) -> bool {
+        let hir = self.hir(file);
+        match hir[pat].kind {
+            crate::hir::PatKind::Missing => false,
+            crate::hir::PatKind::Ident(bound) => bound == name,
+            crate::hir::PatKind::Object(props) => props.iter().any(|p| self.binds_name(file, hir[p].value, name)),
+            crate::hir::PatKind::Array(elements) => elements.iter().any(|e| self.binds_name(file, hir[e].pat, name)),
+        }
+    }
+
+    fn is_created_after_statement(&self, file: FileId, stmt: StmtId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::FnBody(func) = bound.stmt_parent[stmt.idx()] else { return false };
+        let (mut at, mut outermost) = (bound.expr_parent[e.idx()], FnId::NONE);
+        loop {
+            at = match at {
+                Parent::None | Parent::File => return false,
+                Parent::FnBody(body) if body == func => break,
+                Parent::ParamDefault(p) if bound.param_fn[p.idx()] == func => return false,
+                Parent::FnBody(inner) => {
+                    outermost = inner;
+                    self.parent_of_node(file, at)
+                }
+                Parent::ParamDefault(p) => {
+                    outermost = bound.param_fn[p.idx()];
+                    self.parent_of_node(file, at)
+                }
+                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
+                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                _ => self.parent_by_evaluation(file, at),
+            };
+        }
+        outermost.is_some() && matches!(bound.fns[outermost.idx()].owner, FnOwner::Expr(made) if hir[made].pos >= hir[stmt].loc.end)
     }
 
     /// `references`: those to the variable from code other than the code that declares it.
@@ -663,6 +694,9 @@ impl<'p, 's> Checker<'p, 's> {
             Decl::Var(pat) => {
                 let PatParent::Var(d) = root_declaration(bound, pat) else { return Some(NotCopied::Declaration) };
                 let stmt = bound.var_stmt[d.idx()];
+                if hir[d].kind == VarKind::Var && stmt.is_some() && hir[d].init.is_some() && !hir.is_js && !self.has_direct_eval(file) {
+                    return references.iter().any(|&e| !self.is_created_after_statement(file, stmt, e)).then_some(NotCopied::Declaration);
+                }
                 if !matches!(hir[d].kind, VarKind::Let | VarKind::Const) || stmt.is_none() {
                     return Some(NotCopied::Declaration);
                 }
@@ -712,10 +746,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             // What another file declares, which may take types to find, is of no interest here.
-            let resolved = match self.binding_by_block(file, e, name) {
-                Some(found) => found,
-                None => self.resolve_identifier(file, e, name, true).ok().flatten(),
-            };
+            let resolved = self.resolve_identifier(file, e, name, true).ok().flatten();
             let Some(sym) = resolved else { continue };
             let Some((declared_in, decl)) = self.declaration_of_variable(sym) else { continue };
             if declared_in != file {
@@ -732,7 +763,8 @@ impl<'p, 's> Checker<'p, 's> {
             let Decl::Fn(declared) = reference.decl else { return None };
             let symbol = &bound.symbols[reference.sym.id.idx()];
             let is_own_name = matches!(bound.fns[declared.idx()].owner, FnOwner::Expr(_));
-            if !is_own_name && (symbol.flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(reference.sym.id).is_empty() || this.is_stored_through_casts(file, reference.sym.id)) {
+            let is_variable = symbol.decls.iter().any(|decl| matches!(decl, Decl::Var(_) | Decl::Param(_)));
+            if !is_own_name && (is_variable || symbol.flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(reference.sym.id).is_empty() || this.is_stored_through_casts(file, reference.sym.id)) {
                 return None;
             }
             // Of an overloaded function, the declaration with the body. Of several, the last, which is what the name stands for.
@@ -750,9 +782,25 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         // A function expression whose own name is used as a value may capture the scope of that name, which nobody but itself has at hand.
+        let atoms = self.atoms();
+        let hands_over_a_generator = |func: FnId, e: ExprId| {
+            hir[func].flags.contains(Flags::GENERATOR)
+                && match bound.expr_parent[e.idx()] {
+                    Parent::Expr(call) => match bound.expr_parent[call.idx()] {
+                        Parent::Stmt(s) => !matches!(hir[s].kind, StmtKind::ForOf { expr, is_await: false, .. } if expr == call),
+                        Parent::Expr(dot) => {
+                            !(matches!(hir[dot].kind, ExprKind::Dot { obj, name, chain: Chain::No, .. } if obj == call && matches!(atoms.bytes(name), b"next" | b"return" | b"throw"))
+                                && matches!(bound.expr_parent[dot.idx()], Parent::Expr(step) if matches!(hir[step].kind, ExprKind::Call(stepped) if hir[stepped].callee == dot && hir[stepped].chain == Chain::No)))
+                        }
+                        _ => true,
+                    },
+                    _ => false,
+                }
+        };
+        let is_callee = |e: ExprId| matches!(bound.expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Call(call) if hir[call].callee == e && hir[call].chain == Chain::No));
+        let mut through_closures: FxHashSet<ExprId> = FxHashSet::default();
         let mut names_itself: FxHashSet<FnId> = (references.iter())
-            .filter(|reference| !is_called_directly(reference.e))
-            .filter_map(|reference| declared_function(self, reference))
+            .filter_map(|reference| declared_function(self, reference).filter(|&func| !is_called_directly(reference.e) || hands_over_a_generator(func, reference.e)))
             .filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)))
             .collect();
         // So may one whose `arguments` object shows it: `arguments.callee`.
@@ -777,14 +825,19 @@ impl<'p, 's> Checker<'p, 's> {
                 && !self.is_class_evaluated_once(file, class)
                 && self.is_within_class(file, bound.expr_parent[reference.e.idx()], class)
             {
-                raw.entry(node).or_default().insert(Need::Class(class));
+                if reference.code != reference.holder {
+                    raw.entry(node).or_default().insert(Need::Class(class));
+                }
                 continue;
             }
             if let Some(func) = declared_function(self, reference) {
                 edges.insert((node, Node::Code(self.code_of_fn(file, func))));
                 mentions.entry(func).or_default().push(reference.e);
                 // The name of a function expression within it stands for the closure that the evaluation of the expression made.
-                if !is_called_directly(reference.e) && matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_) | FnOwner::Expr(_)) {
+                if (!is_called_directly(reference.e) || hands_over_a_generator(func, reference.e)) && matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_) | FnOwner::Expr(_)) {
+                    if is_callee(reference.e) && hands_over_a_generator(func, reference.e) {
+                        through_closures.insert(reference.e);
+                    }
                     uses_as_value.entry(func).or_default().push((reference.e, reference.code, reference.holder));
                     symbol_of_function.insert(func, (reference.sym, reference.decl));
                     if reference.code != reference.holder {
@@ -798,8 +851,11 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(func) = self.callee_with_captures_at_hand(reference.sym)
                 && !names_itself.contains(&func)
             {
-                edges.insert((node, Node::Code(Code::Function(func))));
-                continue;
+                if !hands_over_a_generator(func, reference.e) {
+                    edges.insert((node, Node::Code(Code::Function(func))));
+                    continue;
+                }
+                through_closures.insert(reference.e);
             }
             if reference.code != reference.holder {
                 raw.entry(node).or_default().insert(Need::Variable(reference.sym));
@@ -835,7 +891,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             match self.receiver_at(file, parent) {
                 Receiver::None => {}
-                Receiver::Static(class) if self.is_class_evaluated_once(file, class) => {}
+                Receiver::Static(class) if self.is_class_evaluated_once(file, class) || !self.is_made_within_class(file, func, class) => {}
                 Receiver::Static(class) => {
                     raw.entry(Node::Code(Code::Function(func))).or_default().insert(Need::Class(class));
                 }
@@ -847,7 +903,13 @@ impl<'p, 's> Checker<'p, 's> {
         for &e in index.of(ExprTag::Super) {
             let parent = bound.expr_parent[e.idx()];
             let code = self.code_at(file, parent);
-            if let Some(class) = self.class_around(file, parent) {
+            let method_of_literal = match self.receiver_at(file, parent) {
+                Receiver::Function(func) if matches!(hir[func].kind, FnKind::Method | FnKind::Getter | FnKind::Setter) && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)) => Some(func),
+                _ => None,
+            };
+            if let Some(method) = method_of_literal {
+                raw.entry(Node::Code(code)).or_default().insert(Need::HomeObject(method));
+            } else if let Some(class) = self.class_around(file, parent).filter(|&class| !matches!(code, Code::Function(func) if hir[func].kind == FnKind::Arrow && !self.is_made_within_class(file, func, class))) {
                 raw.entry(Node::Code(code)).or_default().insert(Need::Class(class));
             }
             // `super.m()` passes `this`.
@@ -856,6 +918,7 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 match self.receiver_at(file, parent) {
                     Receiver::None => {}
+                    Receiver::Static(class) if !self.is_made_within_class(file, func, class) => {}
                     Receiver::Static(class) => {
                         raw.entry(Node::Code(code)).or_default().insert(Need::Class(class));
                     }
@@ -863,6 +926,15 @@ impl<'p, 's> Checker<'p, 's> {
                         raw.entry(Node::Code(code)).or_default().insert(Need::This(receiver));
                     }
                 }
+            }
+        }
+        for &e in index.of(ExprTag::NewTarget) {
+            let parent = bound.expr_parent[e.idx()];
+            if let Code::Function(func) = self.code_at(file, parent)
+                && hir[func].kind == FnKind::Arrow
+                && let Receiver::Function(owner) = self.receiver_at(file, parent)
+            {
+                raw.entry(Node::Code(Code::Function(func))).or_default().insert(Need::NewTarget(owner));
             }
         }
         let mut private_names: Vec<(ExprId, ClassId)> = bound.private_class.iter().map(|(&e, &class)| (e, class)).collect();
@@ -881,6 +953,19 @@ impl<'p, 's> Checker<'p, 's> {
             edges.insert((Node::Code(self.code_at(file, parent)), Node::Code(Code::Function(func))));
             if hir[func].kind == FnKind::Arrow {
                 found.receivers.insert(func, self.receiver_at(file, parent));
+            }
+        }
+        for i in 0..bound.fns.len() {
+            let func = FnId(i as u32);
+            let FnOwner::Stmt(stmt) = bound.fns[i].owner else { continue };
+            let name = bound.fn_symbol[i];
+            if name.is_none() || matches!(hir[func].body, FnBody::None) {
+                continue;
+            }
+            let symbol = &bound.symbols[name.idx()];
+            let is_variable = symbol.decls.iter().any(|decl| matches!(decl, Decl::Var(_) | Decl::Param(_)));
+            if is_variable || symbol.flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(name).is_empty() || self.is_stored_through_casts(file, name) {
+                edges.insert((Node::Code(self.code_at(file, bound.stmt_parent[stmt.idx()])), Node::Code(self.code_of_fn(file, func))));
             }
         }
         let mut classes: Vec<ClassId> = Vec::new();
@@ -907,6 +992,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Where the closures of function declarations are kept.
         let mut kept: FxHashMap<Activation, Vec<(Sym, FnId, ExprId)>> = FxHashMap::default();
         let mut kept_if_there_is_an_environment: Vec<(Activation, Sym, FnId, ExprId)> = Vec::new();
+        found.generators_called_through_closures = through_closures;
         let mut functions: Vec<FnId> = uses_as_value.keys().copied().collect();
         functions.sort_unstable();
         for func in functions {
@@ -914,7 +1000,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(holder) = self.activation_binding(file, decl) else { continue };
             let Some(activation) = self.scope_declaring(file, decl, holder) else { continue };
             let uses = &uses_as_value[&func];
-            if !mapped.functions.contains_key(&func) && uses.iter().all(|used| self.use_of_value(file, used.0, false) & argument_use::OBSERVED == 0) {
+            if !mapped.functions.contains_key(&func) && !self.hir(file)[func].flags.contains(Flags::GENERATOR) && uses.iter().all(|used| self.use_of_value(file, used.0) & argument_use::OBSERVED == 0) {
                 found.declared_closures.insert(func, DeclaredClosure::Unobserved);
                 if let Activation::Call(outermost) = activation
                     && bound.fns[outermost.idx()].enclosing.is_none()
@@ -981,7 +1067,21 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mut by_root: FxHashMap<Activation, Vec<Sym>> = FxHashMap::default();
-        let needs_environment = |held: &[Sym]| held.len() > MOST_COPIES || held.iter().any(|sym| found.not_copied.contains_key(sym));
+        let is_bound_to_literal = |sym: &Sym| {
+            let Some((Decl::Var(pat), _)) = captured.get(sym) else { return false };
+            let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return false };
+            let mut init = hir[d].init;
+            while init.is_some()
+                && let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = hir[init].kind
+            {
+                init = expr;
+            }
+            init.is_some() && matches!(hir[init].kind, ExprKind::Object(_))
+        };
+        let lives_in_environment = |held: &[Sym], sym: &Sym| {
+            (held.len() > MOST_COPIES || held.iter().any(|sym| found.not_copied.contains_key(sym))) && (found.not_copied.contains_key(sym) || !is_bound_to_literal(sym))
+        };
+        let needs_environment = |held: &[Sym]| held.iter().any(|sym| lives_in_environment(held, sym));
         for (&scope, held) in &by_activation {
             if !needs_environment(held) {
                 continue;
@@ -994,10 +1094,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 around = self.scope_around(file, outer);
             }
-            by_root.entry(root).or_default().extend(held);
+            by_root.entry(root).or_default().extend(held.iter().filter(|sym| lives_in_environment(held, sym)));
         }
-        for held in by_activation.values().filter(|held| !needs_environment(held)) {
-            for &sym in held {
+        for held in by_activation.values() {
+            for &sym in held.iter().filter(|sym| !lives_in_environment(held, sym)) {
                 found.variables.insert(sym, CapturedVariable::Copied);
             }
         }
@@ -1063,8 +1163,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let decl = captured.get(&sym).map(|it| it.0).or_else(|| symbol_of_function.values().find(|it| it.0 == sym).map(|it| it.1));
                     decl.and_then(|decl| this.activation_binding(file, decl)).flatten().map_or(Code::Module, |func| this.code_of_fn(file, func))
                 }
-                Need::Closure(func) => this.code_at(file, this.parent_of_node(file, Parent::FnBody(func))),
-                Need::This(Receiver::Function(func)) | Need::Arguments(func) => this.code_of_fn(file, func),
+                Need::Closure(func) | Need::HomeObject(func) => this.code_at(file, this.parent_of_node(file, Parent::FnBody(func))),
+                Need::This(Receiver::Function(func)) | Need::Arguments(func) | Need::NewTarget(func) => this.code_of_fn(file, func),
                 Need::This(Receiver::Instance(class)) => Code::Constructor(class),
                 Need::This(Receiver::Static(class)) | Need::Class(class) => this.code_at(file, bound.class_owner[class.idx()].to_parent()),
                 Need::This(Receiver::None) => Code::Module,
@@ -1088,6 +1188,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &class in &classes {
             owners.entry(Need::Class(class)).or_insert_with(|| owner_of(self, Need::Class(class)));
+        }
+        for (&node, needed) in needs.iter_mut() {
+            if let Node::Code(code) = node {
+                needed.retain(|need| owners[need] != code);
+            }
         }
         loop {
             let mut has_grown = false;
@@ -1119,6 +1224,8 @@ impl<'p, 's> Checker<'p, 's> {
                     Need::Closure(_) => None,
                     Need::This(receiver) => Some(Capture::This(receiver)),
                     Need::Arguments(func) => Some(Capture::Arguments(func)),
+                    Need::NewTarget(func) => Some(Capture::NewTarget(func)),
+                    Need::HomeObject(func) => Some(Capture::HomeObject(func)),
                     // What is kept with a class that is evaluated once is static.
                     Need::Class(class) => classes.contains(&class).then_some(Capture::Environment(Activation::Class(class))),
                 })
@@ -1159,17 +1266,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let mut capturing: Vec<(FnId, &Vec<Capture>)> = found.of_functions.iter().map(|it| (*it.0, it.1)).collect();
-        capturing.sort_unstable_by_key(|it| it.0);
-        let mut capturing_environment: FxHashMap<Activation, Vec<FnId>> = FxHashMap::default();
-        for (func, captures) in capturing {
-            for &capture in captures {
-                if let Capture::Environment(activation) = capture {
-                    capturing_environment.entry(activation).or_default().push(func);
-                }
-            }
-        }
-        found.capturing_environment = capturing_environment;
         let mut expressions: Vec<FnId> = found.of_functions.keys().copied().collect();
         expressions.sort_unstable();
         for func in expressions {
@@ -1177,14 +1273,14 @@ impl<'p, 's> Checker<'p, 's> {
                 && let [Capture::Environment(activation @ Activation::Call(outermost))] = found.of_functions[&func][..]
                 && bound.fns[outermost.idx()].enclosing.is_none()
                 && bound.fns[func.idx()].enclosing != outermost
-                && self.use_of_value(file, e, false) & argument_use::OBSERVED == 0
+                && !self.hir(file)[func].flags.contains(Flags::GENERATOR)
+                && self.use_of_value(file, e) & argument_use::OBSERVED == 0
             {
                 let kept = found.expressions_kept.entry(activation).or_default();
                 found.kept_expressions.insert(func, (activation, (found.environments[&activation].len() + kept.len()) as u32));
                 kept.push(func);
             }
         }
-        found.uses_as_value = uses_as_value.into_iter().map(|(func, uses)| (func, uses.into_iter().map(|used| used.0).collect())).collect();
         found
     }
 
@@ -1249,6 +1345,8 @@ impl<'p, 's> Checker<'p, 's> {
                     Capture::Variable(sym) => name_of(sym),
                     Capture::This(_) => "this".to_owned(),
                     Capture::Arguments(_) => "arguments".to_owned(),
+                    Capture::NewTarget(_) => "new.target".to_owned(),
+                    Capture::HomeObject(_) => "the home object".to_owned(),
                 })
                 .collect();
             lines.push(format!("captures: function {} captures {}", name_of_fn(func), list.join(", ")));

@@ -542,6 +542,8 @@ impl JSType {
     pub const StringObject: JSType = JSType(96);
 
     pub const DerivedStringObject: JSType = JSType(97);
+    pub const SlimClosure: JSType = JSType(99);
+    pub const SlimClosureWithProperties: JSType = JSType(100);
 
     pub const Event: JSType = JSType(0b11101111);
     pub const DOMWrapper: JSType = JSType(0b11101110);
@@ -607,6 +609,8 @@ impl JSType {
                 | JSType::AsyncGenerator
                 | JSType::JSDate
                 | JSType::JSFunction
+                | JSType::SlimClosure
+                | JSType::SlimClosureWithProperties
                 | JSType::Generator
                 | JSType::Map
                 | JSType::MapIterator
@@ -644,7 +648,11 @@ impl JSType {
     pub fn is_function(self) -> bool {
         matches!(
             self,
-            JSType::JSFunction | JSType::FunctionExecutable | JSType::InternalFunction
+            JSType::JSFunction
+                | JSType::SlimClosure
+                | JSType::SlimClosureWithProperties
+                | JSType::FunctionExecutable
+                | JSType::InternalFunction
         )
     }
 
@@ -795,6 +803,8 @@ impl JSType {
                 | JSType::DerivedArray
                 | JSType::ErrorInstance
                 | JSType::JSFunction
+                | JSType::SlimClosure
+                | JSType::SlimClosureWithProperties
                 | JSType::InternalFunction
                 | JSType::ArrayBuffer
                 | JSType::BigInt64Array

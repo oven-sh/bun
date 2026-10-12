@@ -299,6 +299,16 @@ public:
             if (lengthJSValue.isNumber()) {
                 this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
             }
+        } else if (value.isCell() && isSlimClosureType(value.asCell()->type())) {
+            JSObject* fn = asObject(value);
+            JSValue nameValue = fn->get(global, vm.propertyNames->name);
+            RETURN_IF_EXCEPTION(scope, );
+            nameToUse = nameValue.toWTFString(global);
+            RETURN_IF_EXCEPTION(scope, );
+            JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, );
+            if (lengthJSValue.isNumber())
+                this->putDirect(vm, vm.propertyNames->length, lengthJSValue, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
         } else if (auto* fn = dynamicDowncast<JSMockFunction>(value)) {
             JSValue nameValue = fn->get(global, vm.propertyNames->name);
             RETURN_IF_EXCEPTION(scope, );
@@ -1584,7 +1594,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         } else {
             // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
             // the Accessor attribute, so a GetterSetter installed here would escape to script as a raw cell.
-            if (propertyKey == vm.propertyNames->prototype && object->inherits<JSC::JSFunction>()) {
+            if (propertyKey == vm.propertyNames->prototype && (object->inherits<JSC::JSFunction>() || isSlimClosureType(object->type()))) {
                 throwVMError(globalObject, scope, "Cannot spy on the `prototype` property because it is not a function"_s);
                 return {};
             }

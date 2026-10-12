@@ -47,9 +47,9 @@
 
 use super::callees::{Callee, Hole};
 use super::creation::CreationsByView;
-use super::escape_closure::{Certainty, ClosureInput, Doubt, EscapeClosure, Escapes, ForClosure, place_not_seen_through};
+use super::escape_closure::Escapes;
 use super::first_stores::ConstructionsByView;
-use super::flows::{Membership, OriginOfData, Place, Question, Reach, WhyForeign};
+use super::flows::{Answer, Membership, OriginOfData, Place, Question, Reach, WhyForeign};
 use super::trust::Claim;
 use crate::atom::Atom;
 use crate::types::TypeId;
@@ -261,12 +261,13 @@ pub struct Sizes {
     pub admitting_untyped: usize,
     pub transitions: usize,
     pub bytes: usize,
+    pub answers_not_known: usize,
 }
 
 impl Sizes {
     pub fn line(&self) -> String {
         format!(
-            "{} views, {} allocated; edges: {} declared, {} upcasts, {} casts, {} tests, {} tests between field types; {} rounds, {} pairs met, {} asked about in {} questions; {} memberships, the largest set {}, {} listed transitions; {} fit without a flow; {} vouched targets have too many candidates; {} supertypes admit untyped objects; {} KB",
+            "{} views, {} allocated; edges: {} declared, {} upcasts, {} casts, {} tests, {} tests between field types; {} rounds, {} pairs met, {} asked about in {} questions; {} memberships, the largest set {}, {} listed transitions; {} fit without a flow; {} vouched targets have too many candidates; {} supertypes admit untyped objects; {} KB; {} answers not known",
             self.views,
             self.allocated,
             self.declared_edges,
@@ -284,7 +285,8 @@ impl Sizes {
             self.fitting_without_flow,
             self.with_too_many_candidates,
             self.admitting_untyped,
-            self.bytes / 1024
+            self.bytes / 1024,
+            self.answers_not_known
         )
     }
 }
@@ -326,8 +328,6 @@ pub(super) struct Gathered {
     pub creations: CreationsByView,
     pub constructions: ConstructionsByView,
     pub escapes: Escapes,
-    /// Of the views.
-    pub index_of: FxHashMap<TypeId, u32>,
 }
 
 /// The objects that a built-in may freeze, or give another prototype: see `alterations.rs`.
@@ -345,6 +345,9 @@ pub(super) struct AlteredViews {
 /// The state between two rounds.
 pub struct Subtypes {
     gathered: Gathered,
+    completes_by_fit: bool,
+    about_kinds: Vec<(Question, u32, WhyForeign)>,
+    members_by_flow: Vec<Vec<u32>>,
     /// The number of views. A number from here on stands for what is not laid out: this one for whatever stays where upcasts take it,
     /// the next ones for the types in `seen`, which also pass the casts that they fit.
     nodes: u32,
@@ -445,7 +448,21 @@ fn may_fit(made: &Facts, view: &Facts) -> bool {
 
 impl Subtypes {
     pub(super) fn new(gathered: Gathered, clock: Clock) -> Subtypes {
+        Subtypes::new_run(gathered, clock, false)
+    }
+
+    pub fn begin_again(self) -> Subtypes {
+        let members_by_flow = self.sets.iter().map(|set| set[..set.partition_point(|&member| member < self.nodes)].to_vec()).collect();
+        let mut gathered = self.gathered;
+        gathered.about_kinds = self.about_kinds;
+        let mut again = Subtypes::new_run(gathered, self.clock, true);
+        again.members_by_flow = members_by_flow;
+        again
+    }
+
+    fn new_run(gathered: Gathered, clock: Clock, completes_by_fit: bool) -> Subtypes {
         let nodes = gathered.types.len();
+        let about_kinds = if completes_by_fit { Vec::new() } else { gathered.about_kinds.clone() };
         let mut seen: Vec<TypeId> = gathered.foreign.iter().filter_map(|let_in| let_in.1).collect();
         seen.sort_unstable_by_key(|ty| ty.0);
         seen.dedup();
@@ -492,6 +509,9 @@ impl Subtypes {
             transitions: 0,
             over_budget: None,
             gathered,
+            completes_by_fit,
+            about_kinds,
+            members_by_flow: Vec::new(),
         };
         subtypes.begin();
         subtypes
@@ -1303,23 +1323,31 @@ impl Subtypes {
     }
 
     /// The answers to `questions` and to `own_questions`, in their order. Starts the next round.
-    pub fn advance(&mut self, answers: &[bool], own_answers: &[bool]) {
+    pub fn advance(&mut self, answers: &[Answer], own_answers: &[Answer]) {
         debug_assert!(answers.len() == self.questions.len() && own_answers.len() == self.own_questions.len());
+        self.sizes.answers_not_known += answers.iter().chain(own_answers).filter(|&&answer| answer == Answer::NotKnown).count();
         self.say("the answers");
         self.sizes.rounds += 1;
         // They are the first questions of the first round. The first yes is the same however the questions were shared out: nothing
         // before it is left out.
         for (at, (_, view, why)) in std::mem::take(&mut self.gathered.about_kinds).into_iter().enumerate() {
-            if answers[at] {
+            if answers[at] != Answer::No {
                 self.let_in(view, self.nodes, why);
             }
         }
-        let is_yes = |at: u32| at == YES || (at != NONE && if at & OWN != 0 { own_answers[(at & !OWN) as usize] } else { answers[at as usize] });
+        let answer_at = |at: u32| match at {
+            YES => Answer::Yes,
+            NONE => Answer::No,
+            at if at & OWN != 0 => own_answers[(at & !OWN) as usize],
+            at => answers[at as usize],
+        };
         let pairs = std::mem::take(&mut self.pairs);
-        let decided: Vec<(u32, u32, u32, bool, bool, bool)> = pairs.iter().map(|pair| (pair.member, pair.target, pair.from, pair.may_change, is_yes(pair.fits), is_yes(pair.is_fitted))).collect();
+        let decided: Vec<(u32, u32, u32, bool, Answer, Answer)> = pairs.iter().map(|pair| (pair.member, pair.target, pair.from, pair.may_change, answer_at(pair.fits), answer_at(pair.is_fitted))).collect();
         self.questions.clear();
         self.own_questions.clear();
         for (member, target, from, may_change, fits, is_fitted) in decided {
+            let may_become_for_all_that_is_known = fits == Answer::No && is_fitted == Answer::NotKnown;
+            let (fits, is_fitted) = (fits != Answer::No, is_fitted == Answer::Yes);
             if from == NONE {
                 // Whatever is in a place of the one may get to a place of the other, now and later.
                 if fits {
@@ -1332,6 +1360,8 @@ impl Subtypes {
             }
             let verdict = if member > self.nodes {
                 if fits { Verdict::Passes } else { Verdict::Refused }
+            } else if may_become_for_all_that_is_known {
+                Verdict::Admitted
             } else {
                 self.verdict(member, target, fits, is_fitted)
             };
@@ -1496,7 +1526,7 @@ impl Subtypes {
             let fitting: Vec<u32> = Self::candidates_for(&lists, facts).into_iter().filter(may_be_new).take(MOST_CANDIDATES_OF_WHAT_IS_MADE + 1).collect();
             if fitting.len() > most {
                 // One of them may bring most of the others, unless they are beyond all measure.
-                let large = if asked_first.is_none() && fitting.len() <= MOST_CANDIDATES_OF_WHAT_IS_MADE { self.large_candidates_for(&lists, target) } else { Vec::new() };
+                let large = if self.completes_by_fit && asked_first.is_none() && fitting.len() <= MOST_CANDIDATES_OF_WHAT_IS_MADE { self.large_candidates_for(&lists, target) } else { Vec::new() };
                 if !large.is_empty() {
                     self.met.extend(large.iter().map(|&view| (view, NONE, target, false)));
                     self.asked_first.insert(target, large);
@@ -1509,7 +1539,9 @@ impl Subtypes {
             for &name in facts.live.iter() {
                 targets_by_name.entry(name).or_default().push(target);
             }
-            self.bring_together(&fitting, NONE, target, false);
+            if self.completes_by_fit {
+                self.bring_together(&fitting, NONE, target, false);
+            }
         }
         self.candidates = Some(lists);
         self.to_complete = again;
@@ -1537,7 +1569,7 @@ impl Subtypes {
     }
 
     /// Once there are no more questions.
-    pub fn finish(mut self, let_through: &ForClosure) -> Membership {
+    pub fn finish(mut self) -> Membership {
         self.say("done");
         if self.clock.is_loud && self.over_budget.is_none() {
             self.report();
@@ -1550,6 +1582,9 @@ impl Subtypes {
             let set = &self.sets[view];
             let laid_out = set.partition_point(|&member| member < self.nodes);
             reach.members = set[..laid_out].to_vec();
+            if let Some(by_flow) = self.members_by_flow.get(view) {
+                reach.members_by_fit = reach.members.iter().copied().filter(|member| by_flow.binary_search(member).is_err()).collect();
+            }
             reach.specializations = self.becomes[view].clone();
             reach.is_allocated = set.binary_search(&(view as u32)).is_ok();
             reach.is_transition_target_only = reach.is_allocated && self.gathered.facts[view].flags & (HAS_SITE | IS_COPIED) == 0;
@@ -1619,89 +1654,22 @@ impl Subtypes {
         for (&(layout, name), &callee) in &held {
             held_by[layout as usize].push((name, callee));
         }
-        // The same for the facts, with what `Object.assign` and a spread copy from field to field.
-        let mut known_by: Vec<FxHashMap<Atom, Callee>> = held_by.iter().map(|held| held.iter().copied().collect()).collect();
-        let mut is_copied_into_blindly = vec![false; views];
-        let copies = EscapeClosure::copies(&self.gathered.escapes, &self.gathered.index_of);
-        // By layout: how often what is known of it has changed. By copy: the sum over its sources at its last turn. Where that is what it was,
-        // the copy brings what it has brought.
-        let mut grown = vec![0u64; views];
-        let mut sources_as_of: Vec<Option<u64>> = vec![None; copies.len()];
-        loop {
-            let mut has_grown = false;
-            for (&(source, target), as_of) in copies.iter().zip(&mut sources_as_of) {
-                let sources: &[u32] = source.map_or(&[], |source| &self.sets[source as usize]);
-                let now = sources.iter().filter(|&&layout| (layout as usize) < views).map(|&layout| grown[layout as usize]).sum();
-                if as_of.replace(now) == Some(now) {
-                    continue;
-                }
-                let targets: Vec<u32> = self.sets[target as usize].iter().copied().filter(|&layout| (layout as usize) < views).collect();
-                let is_blind = source.is_none() || sources.iter().any(|&layout| (layout as usize) >= views || is_copied_into_blindly[layout as usize]);
-                let mut read: FxHashMap<Atom, Callee> = FxHashMap::default();
-                for &layout in sources.iter().filter(|&&layout| (layout as usize) < views) {
-                    for (&name, &callee) in &known_by[layout as usize] {
-                        let joined = read.entry(name).or_default();
-                        *joined = joined.join(callee);
-                    }
-                }
-                for layout in targets {
-                    if is_blind && !std::mem::replace(&mut is_copied_into_blindly[layout as usize], true) {
-                        has_grown = true;
-                        grown[layout as usize] += 1;
-                    }
-                    for (&name, &callee) in &read {
-                        let joined = known_by[layout as usize].entry(name).or_default();
-                        let both = joined.join(callee);
-                        if both != *joined {
-                            has_grown = true;
-                            grown[layout as usize] += 1;
-                            *joined = both;
-                        }
-                    }
-                }
-            }
-            if !has_grown {
-                break;
-            }
-        }
-        let unknown_callees: Vec<(u32, Place)> = (known_by.iter().enumerate()).filter_map(|(layout, known)| Some((layout as u32, known.values().filter_map(|&held| place_not_seen_through(held)).min()?))).collect();
-        let admits_untyped: Vec<bool> = reached.iter().map(|reach| reach.admits_foreign).collect();
-        let is_allocated: Vec<bool> = reached.iter().map(|reach| reach.is_allocated).collect();
-        let fields = &self.gathered.fields;
-        let held_by_fields = |view: u32| -> Vec<u32> { fields.of_views[view as usize].iter().flat_map(|&(_, ty)| fields.views_in[ty as usize].iter().copied()).collect() };
-        let closure = EscapeClosure::close(
-            &self.gathered.escapes,
-            &ClosureInput { views, index_of: &self.gathered.index_of, sets: &self.sets, admits_untyped: &admits_untyped, is_allocated: &is_allocated, held_by_fields: &held_by_fields, types: let_through, unknown_callees: &unknown_callees },
-        );
         // What a built-in may alter whose operand nothing is said of.
         let is_marked = |reach: &Reach, alteration: usize| reach.is_allocated && if alteration == 0 { reach.may_be_frozen } else { reach.may_have_other_prototype };
         let mut altered_by = [[0u32; 3]; 2];
         for alteration in 0..2 {
             let altered = &self.gathered.altered[alteration];
             altered_by[alteration][0] = reached.iter().filter(|reach| is_marked(reach, alteration)).count() as u32;
-            for layout in (0..views).filter(|&layout| altered.is_anything || altered.is_untyped && closure.escaped[layout].is_some()) {
-                mark(&mut reached[layout], alteration);
+            if altered.is_anything || altered.is_untyped {
+                for reach in &mut reached {
+                    mark(reach, alteration);
+                }
             }
             altered_by[alteration][1] = reached.iter().filter(|reach| is_marked(reach, alteration)).count() as u32;
             altered_by[alteration][2] = u32::from(altered.is_anything);
         }
         let (alteration_sites, untyped_alterations) = self.gathered.escapes.with_alterations(|noted| (noted.sites(), noted.untyped_places()));
         let (widest_alterations, doors) = self.gathered.escapes.with_alterations(|noted| (noted.widest(), noted.doors()));
-        let doubt_about = |layout: u32, name: Atom, callee: Callee| -> Option<Doubt> {
-            if closure.escaped[layout as usize].is_some() {
-                Some(Doubt::Escaped)
-            } else if closure.is_open[layout as usize] || closure.open_fields.contains(&(layout, name)) {
-                Some(Doubt::OpenedField)
-            } else if is_copied_into_blindly[layout as usize] {
-                Some(Doubt::CopiedBlindly)
-            } else if closure.is_copied_into[layout as usize] {
-                Some(Doubt::Retagged)
-            } else if known_by[layout as usize].get(&name).is_some_and(|&known| known != Callee::Nothing && known != callee) {
-                Some(Doubt::CopiedFromAnother)
-            } else {
-                None
-            }
-        };
         // Then by supertype: a read through it finds an object of any subtype.
         let mut callees_unresolved: Vec<(u32, Atom, Callee)> = Vec::new();
         for (view, reach) in reached.iter_mut().enumerate() {
@@ -1714,23 +1682,17 @@ impl Subtypes {
             }
             for (name, callee) in read {
                 match callee {
-                    Callee::One(file, func) => {
-                        let doubt = if reach.admits_foreign { Some(Doubt::AdmitsUntyped) } else { reach.members.iter().filter_map(|&layout| doubt_about(layout, name, callee)).min() };
-                        reach.callees.push((name, file, func, doubt.map_or(Certainty::Fact, Certainty::Predicted)));
-                    }
+                    Callee::One(file, func) => reach.callees.push((name, file, func)),
                     callee => callees_unresolved.push((view as u32, name, callee)),
                 }
             }
-            reach.callees.sort_unstable_by_key(|&(name, file, func, _)| (file, func, name.0));
+            reach.callees.sort_unstable_by_key(|&(name, file, func)| (file, func, name.0));
         }
         self.say("the callees");
         self.gathered.creations.apply(&mut reached);
         self.gathered.constructions.apply(&mut reached, &self.gathered.facts, &self.becomes);
-        let (escaped, escapes_by_door) = (closure.escaped, closure.by_door);
         Membership {
             views: reached,
-            escaped,
-            escapes_by_door,
             alteration_sites,
             altered_by,
             untyped_alterations,

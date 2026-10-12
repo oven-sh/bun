@@ -171,4 +171,7 @@ impl DeclaredTable {
     pub fn get(&self, id: TyId) -> &Declared {
         &self.list[id.idx()]
     }
+    pub fn find(&self, declared: &Declared) -> Option<TyId> {
+        self.ids.get(declared).copied()
+    }
 }

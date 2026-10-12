@@ -79,6 +79,16 @@ impl Scan<'_, '_> {
         }
     }
 
+    fn take_in(&mut self, later: Scan<'_, '_>) {
+        for specifier in later.named {
+            self.name(specifier);
+        }
+        self.read.extend(later.read);
+        self.door = self.door.or(later.door);
+        self.hands_on_global_object |= later.hands_on_global_object;
+        self.listens_for_messages |= later.listens_for_messages;
+    }
+
     /// The global that the module `specifier` stands for.
     fn global_of_module(&self, specifier: Atom) -> Option<usize> {
         let text = self.atoms.bytes(specifier);
@@ -291,10 +301,28 @@ impl Scan<'_, '_> {
     }
 }
 
+fn looked_through<'a, 's>(empty: &(dyn Fn() -> Scan<'a, 's> + Sync), files: &[&File<'_>], in_parallel: crate::InParallel<'_>) -> Scan<'a, 's> {
+    const FILES_OF_A_TASK: usize = 64;
+    let slices: Vec<&[&File<'_>]> = files.chunks(FILES_OF_A_TASK).collect();
+    let found: Vec<std::sync::OnceLock<Scan<'a, 's>>> = slices.iter().map(|_| std::sync::OnceLock::new()).collect();
+    in_parallel(slices.len(), &|slice| {
+        let mut scan = empty();
+        for hir in slices[slice] {
+            scan.file(hir);
+        }
+        _ = found[slice].set(scan);
+    });
+    let mut all = empty();
+    for later in found.into_iter().flat_map(std::sync::OnceLock::into_inner) {
+        all.take_in(later);
+    }
+    all
+}
+
 /// `is_compiled`: by file, whether its code is in the program.
-pub(crate) fn find(loaded: &[Option<Module<'_>>], atoms: &Interner<'_>, is_compiled: &[bool]) -> Found {
+pub(crate) fn find(loaded: &[Option<Module<'_>>], atoms: &Interner<'_>, is_compiled: &[bool], in_parallel: crate::InParallel<'_>) -> Found {
     let manifest = Archive::embedded().manifest();
-    let mut scan = Scan {
+    let empty = || Scan {
         atoms,
         get_builtin_module: atoms.lookup(b"getBuiltinModule"),
         globals: GLOBALS.map(|global| atoms.lookup(global.0)),
@@ -306,11 +334,8 @@ pub(crate) fn find(loaded: &[Option<Module<'_>>], atoms: &Interner<'_>, is_compi
         hands_on_global_object: false,
         listens_for_messages: false,
     };
-    for (module, _) in loaded.iter().zip(is_compiled).filter(|it| *it.1) {
-        if let Some(module) = module {
-            scan.file(&module.hir);
-        }
-    }
+    let files: Vec<&File<'_>> = loaded.iter().zip(is_compiled).filter(|it| *it.1).filter_map(|it| it.0.as_ref()).map(|module| &module.hir).collect();
+    let scan = looked_through(&empty, &files, in_parallel);
     let mut roots: Vec<u32> = Vec::new();
     let mut why: FxHashMap<u32, Why> = FxHashMap::default();
     let mut add = |id: u32, reason: Why| {

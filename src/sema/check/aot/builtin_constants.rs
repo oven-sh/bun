@@ -1,6 +1,6 @@
 //! A constant that holds a built-in: `const hasOwnProperty = Object.prototype.hasOwnProperty`, `const ObjectKeys = Object.keys`.
 
-use super::builtins_generated::{BUILTIN_ENTRIES, BuiltinKind};
+use super::builtins_generated::{BUILTIN_ENTRIES, BuiltinKind, REPLACEABLE_GLOBALS};
 use crate::bind::{Decl, Parent, PatParent, SymFlags};
 use crate::check::Checker;
 use crate::check::errors_names_and_exports::root_declaration;
@@ -56,10 +56,18 @@ impl<'p, 's> Checker<'p, 's> {
         let path = match hir[init].kind {
             ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, .. } => left,
             ExprKind::Cond { test, yes, .. } => {
-                let ExprKind::Binary { op: BinOp::EqEqEq | BinOp::EqEq, left, right } = hir[test].kind else { return None };
-                let (kind, name) = if matches!(hir[left].kind, ExprKind::String(_)) { (right, left) } else { (left, right) };
-                let (ExprKind::Unary { op: UnOp::Typeof, operand }, ExprKind::String(name)) = (hir[kind].kind, hir[name].kind) else { return None };
-                if self.atoms().bytes(name) != b"function" || !self.is_path_to_builtin_function(file, operand) || !self.are_same_paths(file, operand, yes) {
+                let asked = match hir[test].kind {
+                    ExprKind::Binary { op: BinOp::EqEqEq | BinOp::EqEq, left, right } => {
+                        let (kind, name) = if matches!(hir[left].kind, ExprKind::String(_)) { (right, left) } else { (left, right) };
+                        let (ExprKind::Unary { op: UnOp::Typeof, operand }, ExprKind::String(name)) = (hir[kind].kind, hir[name].kind) else { return None };
+                        if self.atoms().bytes(name) != b"function" {
+                            return None;
+                        }
+                        operand
+                    }
+                    _ => test,
+                };
+                if !self.is_path_to_builtin_function(file, asked) || !self.are_same_paths(file, asked, yes) {
                     return None;
                 }
                 yes
@@ -100,6 +108,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => (of, false),
         };
         let ExprKind::Ident(global) = hir[holder].kind else { return false };
-        has_function(is_method, self.atoms().bytes(global), &name) && self.names_global(file, holder, global)
+        let is_replaceable = REPLACEABLE_GLOBALS.iter().any(|replaceable| replaceable.as_bytes() == self.atoms().bytes(global));
+        !is_replaceable && has_function(is_method, self.atoms().bytes(global), &name) && self.names_global(file, holder, global)
     }
 }

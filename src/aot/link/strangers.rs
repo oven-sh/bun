@@ -4,7 +4,7 @@
 
 use super::nil::{Nodes, before_casts, fields_named, functions_called, targets_of};
 use crate::declared::Part;
-use crate::id::{LayoutId, TyId, V};
+use crate::id::{FuncId, LayoutId, StrId, TyId, V};
 use crate::ir::{Func, LayoutKind, Op, Prediction, Program, Term, Why, func_flags};
 use bun_sema::check::given::{KindFlows, kinds_reaching};
 use rustc_hash::FxHashSet;
@@ -97,6 +97,391 @@ const DOORS: [&str; 16] = [
 
 fn names_a_layout(program: &Program, ty: TyId) -> bool {
     ty.is_some() && program.tys.get(ty).parts.iter().any(|part| matches!(part, Part::Class(_)))
+}
+
+pub(super) fn label_receivers_of_one_row(program: &mut Program) -> Vec<String> {
+    struct Receiver {
+        func: u32,
+        accesses: Vec<(V, bool, StrId)>,
+        made: u32,
+    }
+    const NO_ROW: u32 = u32::MAX;
+    let define_field = program.strs.find(b"DefineField");
+    let mut rows: Vec<Vec<StrId>> = Vec::new();
+    let mut number_of_row: rustc_hash::FxHashMap<Vec<StrId>, u32> = Default::default();
+    let mut receivers: Vec<Receiver> = Vec::new();
+    let mut functions = 0usize;
+    for (index, func) in program.funcs.iter().enumerate() {
+        if func.has(func_flags::IS_TYPED | func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
+            continue;
+        }
+        functions += 1;
+        let this = match func.blocks.first() {
+            Some(entry) if func.has(func_flags::HAS_THIS) && entry.params.len() > func.params.len() => entry.params[func.captures.len().min(entry.params.len() - func.params.len() - 1)],
+            _ => V::NONE,
+        };
+        let mut literals: Vec<(V, Option<Vec<StrId>>)> = Vec::new();
+        let first = receivers.len();
+        let mut place_of: rustc_hash::FxHashMap<V, usize> = Default::default();
+        for block in &func.blocks {
+            for &v in &block.ops {
+                let (obj, is_store, name) = match func.op(v) {
+                    Some(Op::NewObject) => {
+                        literals.push((v, Some(Vec::new())));
+                        continue;
+                    }
+                    Some(Op::Operation { name, args }) => {
+                        let Some(&made) = args.first() else { continue };
+                        let made = before_casts(func, made);
+                        let is_definition = Some(*name) == define_field && args.len() == 3;
+                        if !is_definition && !program.strs.get(*name).starts_with(b"CopyDataProperties") {
+                            continue;
+                        }
+                        if let Some(literal) = literals.iter_mut().find(|literal| literal.0 == made) {
+                            let key = match is_definition.then(|| func.op(before_casts(func, args[1]))).flatten() {
+                                Some(&Op::Str(key)) => Some(key),
+                                _ => None,
+                            };
+                            match key {
+                                Some(key) => {
+                                    if let Some(row) = &mut literal.1
+                                        && !row.contains(&key)
+                                    {
+                                        row.push(key);
+                                    }
+                                }
+                                None => literal.1 = None,
+                            }
+                        }
+                        continue;
+                    }
+                    Some(&Op::PropGet { obj, name }) => (obj, false, name),
+                    Some(&Op::PropSet { obj, name, .. }) => (obj, true, name),
+                    _ => continue,
+                };
+                let place = *place_of.entry(before_casts(func, obj)).or_insert_with(|| {
+                    receivers.push(Receiver { func: index as u32, accesses: Vec::new(), made: NO_ROW });
+                    receivers.len() - 1
+                });
+                receivers[place].accesses.push((v, is_store, name));
+            }
+        }
+        let mut number = |row: Vec<StrId>| {
+            let next = rows.len() as u32;
+            *number_of_row.entry(row.clone()).or_insert_with(|| {
+                rows.push(row);
+                next
+            })
+        };
+        for (_, row) in literals {
+            if let Some(row) = row.filter(|row| !row.is_empty()) {
+                number(row);
+            }
+        }
+        if let Some(&place) = place_of.get(&this).filter(|_| this.is_some()) {
+            debug_assert!(place >= first);
+            let mut made: Vec<StrId> = Vec::new();
+            for &(_, is_store, name) in &receivers[place].accesses {
+                if is_store && !made.contains(&name) {
+                    made.push(name);
+                }
+            }
+            if !made.is_empty() {
+                receivers[place].made = number(made);
+            }
+        }
+    }
+    let mut having: rustc_hash::FxHashMap<StrId, Vec<u32>> = Default::default();
+    for (number, row) in rows.iter().enumerate() {
+        for &name in row {
+            having.entry(name).or_default().push(number as u32);
+        }
+    }
+    let names_of = |receiver: &Receiver| {
+        let mut names: Vec<StrId> = Vec::new();
+        for &(_, _, name) in &receiver.accesses {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    };
+    let rows_with_all = |names: &[StrId]| -> Vec<u32> {
+        let Some(fewest) = names.iter().map(|name| having.get(name).map_or(&[][..], |list| &list[..])).min_by_key(|list| list.len()) else { return Vec::new() };
+        fewest.iter().copied().filter(|&row| names.iter().all(|name| rows[row as usize].contains(name))).collect()
+    };
+    let mut is_grown = vec![false; rows.len()];
+    for receiver in &receivers {
+        if !receiver.accesses.iter().any(|access| access.1) {
+            continue;
+        }
+        let names = names_of(receiver);
+        if !rows_with_all(&names).is_empty() {
+            continue;
+        }
+        for name in &names {
+            for &row in having.get(name).map_or(&[][..], |list| &list[..]) {
+                if row == receiver.made || is_grown[row as usize] {
+                    continue;
+                }
+                let of_row = &rows[row as usize];
+                let is_extra = |name: StrId| !of_row.contains(&name) && receiver.accesses.iter().any(|access| access.1 && access.2 == name);
+                if names.iter().any(|&name| is_extra(name)) && names.iter().all(|&name| of_row.contains(&name) || is_extra(name)) {
+                    let shared: Vec<StrId> = names.iter().copied().filter(|&name| of_row.contains(&name)).collect();
+                    if rows_with_all(&shared).len() <= 3 {
+                        is_grown[row as usize] = true;
+                    }
+                }
+            }
+        }
+    }
+    let mut counted = [[0usize; 2]; 4];
+    let mut labelled: Vec<(FuncId, V)> = Vec::new();
+    for receiver in &receivers {
+        let found = rows_with_all(&names_of(receiver));
+        let class = match found[..] {
+            [] => 3,
+            [row] if is_grown[row as usize] => 1,
+            [_] => 0,
+            _ => 2,
+        };
+        counted[class][0] += 1;
+        counted[class][1] += receiver.accesses.len();
+        if class == 0 {
+            labelled.extend(receiver.accesses.iter().map(|access| (FuncId(receiver.func), access.0)));
+        }
+    }
+    labelled.sort_unstable();
+    program.accesses_of_one_row = labelled;
+    let mut lines = vec![format!("rows: untyped functions {functions}; rows born in the text {} (grown by the text: {}); receivers {}", rows.len(), is_grown.iter().filter(|&&grown| grown).count(), receivers.len())];
+    for (class, what) in ["LABELLED: one row, not grown", "one row, GROWN in the text", "several rows have the names", "no birth in the text has the names"].iter().enumerate() {
+        lines.push(format!("rows: {:>7} receivers, {:>8} accesses: {what}", counted[class][0], counted[class][1]));
+    }
+    lines
+}
+
+struct FlowOfLiterals {
+    dominators: Vec<Vec<u64>>,
+    successors: Vec<Vec<usize>>,
+    uses: rustc_hash::FxHashMap<V, Vec<usize>>,
+}
+
+impl FlowOfLiterals {
+    fn of(func: &Func) -> FlowOfLiterals {
+        let count = func.blocks.len();
+        let words = count.div_ceil(64);
+        let successors: Vec<Vec<usize>> = func.blocks.iter().map(|block| targets_of(block.term.as_ref()).iter().map(|target| target.block.idx()).collect()).collect();
+        let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); count];
+        for (number, targets) in successors.iter().enumerate() {
+            for &target in targets {
+                predecessors[target].push(number);
+            }
+        }
+        let mut dominators = vec![vec![!0u64; words]; count];
+        dominators[0] = vec![0u64; words];
+        dominators[0][0] = 1;
+        let mut has_changed = true;
+        while has_changed {
+            has_changed = false;
+            for number in 1..count {
+                if predecessors[number].is_empty() {
+                    continue;
+                }
+                let mut met = vec![!0u64; words];
+                for &predecessor in &predecessors[number] {
+                    for word in 0..words {
+                        met[word] &= dominators[predecessor][word];
+                    }
+                }
+                met[number / 64] |= 1 << (number % 64);
+                if met != dominators[number] {
+                    dominators[number] = met;
+                    has_changed = true;
+                }
+            }
+        }
+        let mut uses: rustc_hash::FxHashMap<V, Vec<usize>> = Default::default();
+        for (number, block) in func.blocks.iter().enumerate() {
+            let mut note = |operand: V| {
+                if operand.is_none() {
+                    return;
+                }
+                let before = before_casts(func, operand);
+                if matches!(func.op(before), Some(Op::NewObject)) {
+                    let known = uses.entry(before).or_default();
+                    if known.last() != Some(&number) {
+                        known.push(number);
+                    }
+                }
+            };
+            for &v in &block.ops {
+                if let Some(op) = func.op(v) {
+                    op.for_each_operand(&mut note);
+                }
+            }
+            if let Some(term) = &block.term {
+                term.for_each_operand(&mut note);
+                for target in targets_of(Some(term)) {
+                    for &argument in target.args.iter() {
+                        note(argument);
+                    }
+                }
+            }
+        }
+        FlowOfLiterals { dominators, successors, uses }
+    }
+
+    fn dominates(&self, above: usize, below: usize) -> bool {
+        self.dominators[below][above / 64] >> (above % 64) & 1 != 0
+    }
+
+    fn lies_in_a_cycle(&self, block: usize, but_through: usize) -> bool {
+        let mut seen = vec![false; self.successors.len()];
+        let mut work = self.successors[block].clone();
+        while let Some(next) = work.pop() {
+            if next == block {
+                return true;
+            }
+            if next != but_through && !std::mem::replace(&mut seen[next], true) {
+                work.extend_from_slice(&self.successors[next]);
+            }
+        }
+        false
+    }
+}
+
+#[derive(Default)]
+struct WindowOfLiteral {
+    row: Vec<StrId>,
+    defined_at_the_birth: usize,
+    stores: Vec<(V, StrId)>,
+    defines_behind: Vec<(V, StrId)>,
+}
+
+fn window_of_literal(func: &Func, flow: &FlowOfLiterals, strs: &crate::ir::Strs, define_field: Option<StrId>, it: V, born_in: usize, behind: usize) -> WindowOfLiteral {
+    let mut window = WindowOfLiteral::default();
+    let is_it = |operand: V| operand.is_some() && before_casts(func, operand) == it;
+    let no_uses = Vec::new();
+    let uses = flow.uses.get(&it).unwrap_or(&no_uses);
+    let mut done: Vec<usize> = Vec::new();
+    let (mut present, mut from) = (born_in, behind);
+    loop {
+        let block = &func.blocks[present];
+        for &v in &block.ops[from.min(block.ops.len())..] {
+            let Some(op) = func.op(v) else { continue };
+            let goes_on = match op {
+                &Op::Coerce { value, why, .. } => !is_it(value) || why == crate::ir::Why::Upcast,
+                Op::Await(_) | Op::Yield(_) => false,
+                Op::Operation { name, args } if Some(*name) == define_field && args.len() == 3 && is_it(args[0]) => match func.op(before_casts(func, args[1])) {
+                    Some(&Op::Str(key)) if !is_it(args[2]) && window.stores.is_empty() && strs.get(key) != b"__proto__" => {
+                        if !window.row.contains(&key) {
+                            window.row.push(key);
+                        }
+                        if present == born_in && window.defines_behind.is_empty() && !(block.ops.last() == Some(&v) && matches!(block.term, Some(Term::Invoke { .. }))) {
+                            window.defined_at_the_birth = window.row.len();
+                        } else {
+                            window.defines_behind.push((v, key));
+                        }
+                        true
+                    }
+                    _ => false,
+                },
+                &Op::PropSet { obj, name, value } if is_it(obj) => {
+                    let goes_on = !is_it(value) && strs.get(name) != b"__proto__";
+                    if goes_on {
+                        if !window.row.contains(&name) {
+                            window.row.push(name);
+                        }
+                        window.stores.push((v, name));
+                    }
+                    goes_on
+                }
+                &Op::PropGet { obj, name } if is_it(obj) => window.row.contains(&name),
+                _ => {
+                    let mut others = 0usize;
+                    op.for_each_operand(|operand| others += usize::from(is_it(operand)));
+                    others == 0
+                }
+            };
+            if !goes_on {
+                return window;
+            }
+        }
+        let mut is_seen = false;
+        if let Some(term) = &block.term {
+            term.for_each_operand(|operand| is_seen |= is_it(operand));
+            is_seen |= targets_of(Some(term)).iter().any(|target| target.args.iter().any(|&argument| is_it(argument)));
+        }
+        if is_seen {
+            return window;
+        }
+        done.push(present);
+        let later: Vec<usize> = uses.iter().copied().filter(|number| !done.contains(number)).collect();
+        let Some(&next) = later.iter().find(|&&next| later.iter().all(|&other| flow.dominates(next, other))) else { return window };
+        if !flow.dominates(present, next) || flow.lies_in_a_cycle(next, born_in) {
+            return window;
+        }
+        (present, from) = (next, 0);
+    }
+}
+
+pub(super) fn find_first_stores(program: &mut Program, in_parallel: bun_sema::util::InParallel<'_>) -> Vec<String> {
+    const FUNCTIONS_OF_A_TASK: usize = 256;
+    let define_field = program.strs.find(b"DefineField");
+    let strs = &program.strs;
+    type Found = (Vec<(FuncId, V, u32)>, [usize; 5]);
+    let mut tasks: Vec<(usize, &mut [Func], Found)> = program.funcs.chunks_mut(FUNCTIONS_OF_A_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_OF_A_TASK, funcs, Found::default())).collect();
+    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first, funcs, (found, counted))| {
+        for (index, func) in funcs.iter_mut().enumerate() {
+            let births: Vec<(V, usize, usize)> = func.blocks.iter().enumerate().flat_map(|(number, block)| block.ops.iter().enumerate().filter(|&(_, &v)| matches!(func.op(v), Some(Op::NewObject))).map(move |(at, &v)| (v, number, at + 1))).collect();
+            if births.is_empty() {
+                continue;
+            }
+            let flow = FlowOfLiterals::of(func);
+            let mut rewritten: Vec<(V, V, StrId, V)> = Vec::new();
+            for (it, born_in, behind) in births {
+                let window = window_of_literal(func, &flow, strs, define_field, it, born_in, behind);
+                counted[0] += 1;
+                if window.row.len() == window.defined_at_the_birth || window.row.len() > 62 || window.row.iter().any(|&name| is_index_name(strs.get(name))) {
+                    continue;
+                }
+                counted[1] += 1;
+                counted[2] += window.defines_behind.len();
+                counted[3] += window.stores.len();
+                for &(define, name) in &window.defines_behind {
+                    if let Some(Op::Operation { args, .. }) = func.op(define) {
+                        rewritten.push((define, args[0], name, args[2]));
+                    }
+                }
+                let mut is_stored = vec![false; window.row.len()];
+                for (store, name) in window.defines_behind.into_iter().chain(window.stores) {
+                    if let Some(place) = window.row.iter().position(|&other| other == name).filter(|&place| place >= window.defined_at_the_birth) {
+                        let is_first = !std::mem::replace(&mut is_stored[place], true);
+                        found.push((FuncId::new(*first + index), store, 1 << 30 | u32::from(is_first) << 9 | 1 << 8 | place as u32));
+                        counted[4] += 1;
+                    }
+                }
+            }
+            for (define, obj, name, value) in rewritten {
+                func.values[define.idx()].def = crate::ir::Def::Op(Op::PropSet { obj, name, value });
+            }
+        }
+    });
+    let mut found: Vec<(FuncId, V, u32)> = Vec::new();
+    let mut counted = [0usize; 5];
+    for (_, _, (found_here, counted_here)) in tasks {
+        found.extend(found_here);
+        for number in 0..5 {
+            counted[number] += counted_here[number];
+        }
+    }
+    program.known_places.extend(found);
+    program.known_places.sort_unstable();
+    vec![format!("firsts: births of literals {}; with a window that adds names {}; in those windows: DefineFields behind the birth's block, rewritten {} · stores by name {}; words written {}", counted[0], counted[1], counted[2], counted[3], counted[4])]
+}
+
+fn is_index_name(name: &[u8]) -> bool {
+    !name.is_empty() && name.len() <= 10 && name.iter().all(u8::is_ascii_digit) && (name == b"0" || name[0] != b'0') && std::str::from_utf8(name).ok().and_then(|text| text.parse::<u64>().ok()).is_some_and(|number| number < u32::MAX as u64)
 }
 
 pub(super) fn explain(program: &Program) -> Vec<String> {

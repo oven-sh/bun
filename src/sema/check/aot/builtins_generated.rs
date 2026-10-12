@@ -33,6 +33,7 @@ pub(super) const BUILTINS: &[(&str, &str)] = &[
     ("WeakSet", "add delete has"),
     ("console", "assert clear count countReset debug dir dirxml error group groupCollapsed groupEnd info log profile profileEnd table time timeEnd timeLog timeStamp trace warn"),
 ];
+pub(super) const REPLACEABLE_GLOBALS: &[&str] = &["console"];
 
 /// What a built-in may do with an operand. The letters of the header of generate-aot-builtins.py, in their order.
 #[allow(dead_code)]

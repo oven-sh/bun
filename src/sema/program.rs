@@ -5703,6 +5703,7 @@ impl<'s> Files<'s> {
             before_es2020: is_before(ScriptTarget::ES2020),
             before_es2017: is_before(ScriptTarget::ES2017),
             names_make_commonjs: options.names_make_commonjs,
+            one_name_is_one_binding: options.one_name_is_one_binding,
         };
         let mut bound = bind::bind(&hir, bind_options, atoms, arena);
         // The same result as when the parser runs out of stack: an empty HIR, which `check_file`
@@ -5718,6 +5719,13 @@ impl<'s> Files<'s> {
                 ..host.parse(arena, path, b"", atoms, options)
             };
             bound = bind::bind(&hir, bind_options, atoms, arena);
+        }
+        if options.gives_direct_evals_their_scopes
+            && !is_lib
+            && let Some(rewritten) = crate::direct_eval::give_direct_evals_their_scopes(&hir, &bound, atoms)
+        {
+            let as_it_is = Options { gives_direct_evals_their_scopes: false, ..options.clone() };
+            return Self::parse_and_bind(arena, host, &as_it_is, atoms, path, is_lib, specifies_esm, Cow::Owned(rewritten));
         }
         (hir, bound)
     }
@@ -7661,7 +7669,9 @@ impl<'s> Files<'s> {
             }
             // The name of a method or an accessor is a child of it: its locals are searched. From
             // there `useResult` is false for a type and for a function scoped variable.
-            if let ScopeKind::FunctionName(f) = s.kind {
+            if let ScopeKind::FunctionName(f) = s.kind
+                && !bound.one_name_is_one_binding
+            {
                 let function = bound.fns[f.idx()].scope;
                 let locals = bound.scopes[function.idx()].locals;
                 let held = bound.lookup(locals, name).map(|id| self.sym(file, id));

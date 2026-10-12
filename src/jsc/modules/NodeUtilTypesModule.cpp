@@ -960,8 +960,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
 
     auto* function = dynamicDowncast<JSFunction>(value);
 #if ENABLE(AOT)
-    if (function) {
-        auto declaredAs = JSC::AOT::Typed::declaredAs(function);
+    if (value.isCell()) {
+        auto declaredAs = JSC::AOT::Typed::declaredAs(value.asCell());
         if (declaredAs == JSC::AOT::Typed::DeclaredAs::AsyncFunction || declaredAs == JSC::AOT::Typed::DeclaredAs::AsyncGeneratorFunction)
             return JSValue::encode(jsBoolean(true));
     }

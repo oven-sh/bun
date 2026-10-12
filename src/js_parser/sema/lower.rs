@@ -1362,6 +1362,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     None => written,
                 };
                 let text = bun_sema::json::bigint_token_value(token);
+                let text = if self.p.options.bigint_names_are_digits { bun_sema::json::parse_pseudo_big_int(&text) } else { text };
                 PropKey::Name(self.b.atom(&text))
             }
             _ => PropKey::None,
@@ -1859,7 +1860,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.is_ambient |= !is_accessor && modifiers.iter().any(|it| it.0 == Flags::AMBIENT);
         member.key = self.key(key, is_computed);
         // `getDeclarationName`: a bigint name declares nothing.
-        let is_named_by_bigint = !is_computed && matches!(key.data, Data::EBigInt(_));
+        let is_named_by_bigint = !is_computed && matches!(key.data, Data::EBigInt(_)) && !self.p.options.bigint_names_are_digits;
         if is_named_by_bigint {
             member.key = PropKey::None;
         }
@@ -1913,7 +1914,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                 // `parsePropertyOrMethodDeclaration`: after `*` it is a method name.
                 && !f.func.flags.contains(ast::flags::Function::IsGenerator)
                 && after_string.is_none_or(|next| next == self.pos_of(f.func.open_parens_loc));
-            let is_constructor = is_named_constructor && property.kind == G::PropertyKind::Normal;
+            let is_constructor = is_named_constructor
+                && property.kind == G::PropertyKind::Normal
+                && !(self.b.is_js && member.flags.contains(Flags::STATIC));
             let (member_kind, fn_kind) = match property.kind {
                 G::PropertyKind::Get => (MemberKind::Getter, FnKind::Getter),
                 G::PropertyKind::Set => (MemberKind::Setter, FnKind::Setter),
@@ -2162,6 +2165,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         anchor: ast::Loc,
         close: ast::Loc,
         chain: Chain,
+        can_be_unwrapped_if_unused: bool,
     ) -> CallId {
         let type_args = match self.note(anchor, Mark::TypeArguments) {
             Some(at) => self.type_args_at(at),
@@ -2184,6 +2188,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             close_pos,
             chain,
             template: ExprId::NONE,
+            can_be_unwrapped_if_unused,
         })
     }
 
@@ -2344,6 +2349,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             close_pos,
                             chain: Chain::No,
                             template,
+                            can_be_unwrapped_if_unused: false,
                         }))
                     }
                     None => ExprKind::Template { exprs },
@@ -2452,12 +2458,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                     e.close_paren_loc,
                     e.close_paren_loc,
                     Self::chain(e.optional_chain),
+                    e.can_be_unwrapped_if_unused != ast::CanBeUnwrapped::Never,
                 ))
             }
             Data::ENew(e) => {
                 let callee = self.expr(&e.target);
                 let args = self.exprs(e.args.iter());
-                ExprKind::New(self.call(callee, args, expr.loc, e.close_parens_loc, Chain::No))
+                ExprKind::New(self.call(callee, args, expr.loc, e.close_parens_loc, Chain::No, e.can_be_unwrapped_if_unused != ast::CanBeUnwrapped::Never))
             }
             Data::EUnary(e) => {
                 let op = match e.op {
@@ -2678,7 +2685,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 _ => PropKind::Init,
             };
             // Neither does a bigint.
-            if !is_computed && matches!(key_in_source.data, Data::EBigInt(_)) {
+            if !is_computed && matches!(key_in_source.data, Data::EBigInt(_)) && !self.p.options.bigint_names_are_digits {
                 key = PropKey::None;
             }
             let mut value = match (&property.value, kind) {

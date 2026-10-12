@@ -19,6 +19,7 @@ bun_threading.workspace = true
 bun_wyhash.workspace = true
 bstr.workspace = true
 hashbrown.workspace = true
+libc.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
 bitflags.workspace = true

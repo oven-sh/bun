@@ -519,7 +519,7 @@ impl Tag {
             JSType::RegExpObject => Tag::String,
             JSType::Symbol => Tag::Symbol,
             JSType::BooleanObject => Tag::Boolean,
-            JSType::JSFunction => Tag::Function,
+            JSType::JSFunction | JSType::SlimClosure | JSType::SlimClosureWithProperties => Tag::Function,
             JSType::WeakMap | JSType::Map => Tag::Map,
             JSType::WeakSet | JSType::Set => Tag::Set,
             JSType::JSDate => Tag::JSON,

@@ -7,7 +7,6 @@ use super::ByFile;
 use crate::atom::{Atom, known};
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
-use crate::check::errors_names_and_exports::root_declaration;
 use crate::hir::{
     BinOp, CallId, Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
     VarKind,
@@ -206,22 +205,10 @@ struct FileFacts {
     mentioning_new_target: FxHashSet<FnId>,
     /// The functions that mention `super`, also from within an arrow function. No arrow functions themselves.
     mentioning_super: FxHashSet<FnId>,
+    mentioning_this: FxHashSet<FnId>,
     /// `this_may_be_uninitialized`
     with_uninitialized_this: FxHashSet<FnId>,
-    /// `binding_of_identifier`
-    required_in_blocks: Vec<RequiredInBlock>,
-}
-
-/// `const name = require("m")`, `let { name } = require("m")` in JavaScript, in a block, a clause or the head of a loop.
-struct RequiredInBlock {
-    name: Atom,
-    pat: PatId,
-    symbol: SymbolId,
-    /// Of the statement that is the scope.
-    start: u32,
-    end: u32,
-    /// `is_hidden_variable_required_in_block`
-    is_hidden_variable: bool,
+    tested_by_private_name: FxHashSet<ClassId>,
 }
 
 /// What follows from the declaration of a class and from the facts of the class it extends.
@@ -238,8 +225,6 @@ pub struct ClassFacts {
     /// `new` may yield another object than the one that was made for it: the constructor, or one that it hands the object on to, has a
     /// `return` with a value.
     pub may_return_another_object: bool,
-    /// The class, or a class whose static members it inherits, has a static member with a computed name, `Symbol.hasInstance` for one.
-    pub has_computed_static_member: bool,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -314,17 +299,19 @@ impl<'p, 's> Checker<'p, 's> {
         let files = self.files();
         let code = self.files_declaring_classes();
         let mut by_name: FxHashMap<Atom, Vec<Sym>> = FxHashMap::default();
+        let mut found = ReifiedNamespaces::default();
         // What a file declares whose code is elsewhere is made by that code: an object like any that is not the program's.
         for &file in code.iter().filter(|&&file| self.is_compiled(file)) {
             let (hir, bound) = (self.hir(file), self.bound(file));
             for (m, module) in hir.modules.iter().enumerate() {
                 let m = ModuleId(m as u32);
-                if module.flags.contains(Flags::AMBIENT) || !bound.is_instantiated_module(m, false) {
+                if module.flags.contains(Flags::AMBIENT) || !bound.is_instantiated_module(m, true) {
                     continue;
                 }
                 let namespace = files.export_symbol_of_value_symbol_if_exported(files.sym(file, bound.module_symbol[m.idx()]));
                 // Merged with a function, a class or an enum, it is that object.
                 if files.flags(namespace).intersects(SymFlags::FUNCTION | SymFlags::CLASS | SymFlags::ENUM) {
+                    found.namespaces.insert(namespace);
                     continue;
                 }
                 let named = by_name.entry(files.symbol(namespace).name).or_default();
@@ -333,8 +320,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let mut found = ReifiedNamespaces::default();
-        if by_name.is_empty() {
+        if by_name.is_empty() && found.namespaces.is_empty() {
             return found;
         }
         let is_candidate = |sym: Sym| by_name.get(&files.symbol(sym).name).is_some_and(|named| named.contains(&sym));
@@ -345,7 +331,7 @@ impl<'p, 's> Checker<'p, 's> {
             is_module_object_made |= !index.of(ExprTag::ImportCall).is_empty() || index.of(ExprTag::Call).iter().any(|&e| crate::bind::required_specifier(hir, e).is_some());
             for &e in index.of(ExprTag::Ident) {
                 let Some(symbol) = bound.symbols.get(bound.expr_symbol[e.idx()].idx()) else { continue };
-                if !symbol.flags.intersects(SymFlags::VALUE_MODULE | SymFlags::ALIAS) || is_object_of_access(e) || bound.is_in_type_query(e) {
+                if !symbol.flags.intersects(SymFlags::VALUE_MODULE | SymFlags::ALIAS) || bound.is_in_type_query(e) {
                     continue;
                 }
                 let sym = files.export_symbol_of_value_symbol_if_exported(files.sym(file, bound.expr_symbol[e.idx()]));
@@ -391,44 +377,8 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    /// What the identifier `e` refers to when the program runs. That is `symbol_of_identifier`, but for `const { a } = require("m")` in
-    /// JavaScript: to the type checker it is an alias, which is declared in the scope of the function or the file, whatever block it
-    /// stands in, and a second one of the name in another block is a symbol that no name finds. Within the block the name stands for
-    /// what the block binds. Outside it stands for what it stands for around the function or the file.
     pub fn binding_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
-        match self.binding_by_block(file, e, name) {
-            Some(found) => found,
-            None => self.symbol_of_identifier(file, e, name),
-        }
-    }
-
-    /// `None`: the identifier refers to what the binder has found for it.
-    pub(super) fn binding_by_block(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Option<Sym>> {
-        let required = &self.class_facts_of_file(file).required_in_blocks;
-        if required.is_empty() {
-            return None;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (found, pos) = (bound.expr_symbol[e.idx()], hir[e].pos);
-        // Anything else that the binder has found is declared in a scope of its own, further in.
-        if found.is_some() && !bound.symbols[found.idx()].decls.iter().any(|decl| matches!(decl, Decl::Require(_))) {
-            return None;
-        }
-        let innermost = required.iter().filter(|binding| binding.name == name && (binding.start..binding.end).contains(&pos)).min_by_key(|binding| binding.end - binding.start);
-        if let Some(binding) = innermost {
-            return Some(Some(self.files().sym(file, binding.symbol)));
-        }
-        let outermost = required.iter().find(|binding| binding.symbol == found)?;
-        let declared_in = bound.scope_of_declaration(hir, Decl::Require(outermost.pat)).some()?;
-        Some(match bound.scopes[bound.container_scope(declared_in).idx()].parent.some() {
-            Some(outer) => self.files().resolve_name(file, outer, name, SymFlags::VALUE),
-            None => self.files().global(name, SymFlags::VALUE),
-        })
-    }
-
-    /// Whether it is such a binding that no name finds and that is no `const`: the binder has the stores to it down for another symbol.
-    pub fn is_hidden_variable_required_in_block(&mut self, sym: Sym) -> bool {
-        self.class_facts_of_file(sym.file).required_in_blocks.iter().any(|binding| binding.symbol == sym.id && binding.is_hidden_variable)
+        self.symbol_of_identifier(file, e, name)
     }
 
     /// Of an intersection with a primitive. `string & DisposableString` is an OBJECT that converts to a string: a part is of a class, or has a
@@ -523,12 +473,64 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether every declaration of the interface is ambient: it stands in a declaration file, or under `declare global`, `declare module`,
     /// `declare namespace`. Such an interface says what the host hands out, and what it requires is a wish: `interface ProcessEnv { KEY:
     /// string }`. It is a declaration without a body, which nothing is held to.
+    fn symbols_of_parameters_redeclared_in_body(&self, file: FileId, func: FnId) -> Vec<SymbolId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let f = &hir[func];
+        if !f.params.iter().any(|p| hir[p].default.is_some() || !matches!(hir[hir[p].pat].kind, PatKind::Ident(_))) {
+            return Vec::new();
+        }
+        let mut pats: Vec<PatId> = f.params.iter().map(|p| hir[p].pat).collect();
+        let mut redeclared: Vec<SymbolId> = Vec::new();
+        while let Some(pat) = pats.pop() {
+            match hir[pat].kind {
+                PatKind::Missing => {}
+                PatKind::Ident(_) => {
+                    let id = bound.pat_symbol[pat.idx()];
+                    if id.is_some() && bound.symbols[id.idx()].decls.as_slice().iter().any(|decl| matches!(decl, Decl::Var(_) | Decl::Fn(_))) {
+                        redeclared.push(id);
+                    }
+                }
+                PatKind::Object(props) => pats.extend(props.iter().map(|p| hir[p].value)),
+                PatKind::Array(elems) => pats.extend(elems.iter().map(|e| hir[e].pat)),
+            }
+        }
+        redeclared
+    }
+
+    pub fn parameters_redeclared_in_body(&mut self, file: FileId, func: FnId) -> Vec<(Sym, u32, u32)> {
+        let hir = self.hir(file);
+        let f = &hir[func];
+        let FnBody::Block(stmts) = f.body else { return Vec::new() };
+        let (Some(first_parameter), Some(first_statement)) = (f.params.iter().next(), hir.ids(stmts).next()) else { return Vec::new() };
+        let redeclared = self.symbols_of_parameters_redeclared_in_body(file, func);
+        if redeclared.is_empty() {
+            return Vec::new();
+        }
+        let (start, end) = (hir[first_parameter].pos, hir[first_statement].start);
+        let mut closed_over: Vec<(Sym, u32, u32)> = Vec::new();
+        for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+            let ExprKind::Ident(name) = hir[e].kind else { continue };
+            if !(start..end).contains(&hir[e].pos) || self.enclosing_fn_of_expr(file, e) == Some(func) {
+                continue;
+            }
+            let resolved = self.resolve_identifier(file, e, name, true).ok().flatten();
+            if let Some(sym) = resolved
+                && sym.file == file
+                && redeclared.contains(&sym.id)
+                && !closed_over.iter().any(|found| found.0 == sym)
+            {
+                closed_over.push((sym, start, end));
+            }
+        }
+        closed_over
+    }
+
     pub fn is_ambient_interface(&self, interface: Sym) -> bool {
         let declarations = self.files().decls(interface);
-        !declarations.is_empty()
+        declarations.iter().any(|(_, decl)| matches!(decl, Decl::Interface(_)))
             && declarations.into_iter().all(|(file, decl)| {
                 let hir = self.hir(file);
-                matches!(decl, Decl::Interface(_)) && (hir.kind == FileKind::Declaration || hir.is_ambient(hir.node(decl)))
+                !matches!(decl, Decl::Class(_)) && (hir.kind == FileKind::Declaration || hir.is_ambient(hir.node(decl)))
             })
     }
 
@@ -583,8 +585,8 @@ impl<'p, 's> Checker<'p, 's> {
         let operand = self.non_nullable(operand);
         self.parts(operand).to_vec().into_iter().any(|part| match *self.data(part) {
             TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_) | Origin::ClassStatic(_), .. } => true,
-            TypeData::Ref { target, .. } => self.files().module(target.file).is_lib || self.is_array_like(part) || self.built_in_extended_by(part).is_some(),
-            _ => false,
+            TypeData::Ref { target, .. } => self.files().module(target.file).is_lib || self.is_array_like(part) || self.built_in_extended_by(part).is_some() || self.is_declared_only_record(part),
+            _ => self.is_declared_only_record(part),
         })
     }
 
@@ -647,28 +649,30 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `base`: the facts of the class of the program that the `extends` clause names, if it names one.
-    pub fn class_facts(&mut self, file: FileId, class: ClassId, base: Option<ClassFacts>) -> ClassFacts {
+    pub fn class_facts(&mut self, file: FileId, class: ClassId, base: Option<ClassFacts>, extended: &[(FileId, ClassId)]) -> ClassFacts {
         let found = self.class_facts_of_file(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
         let c = &hir[class];
         // A class in JavaScript gets its fields by assignments to `this`, wherever they are.
         let constructor = self.constructor_of_class(file, class);
         let is_initialized_in_order = !constructor.is_some_and(|func| found.with_uninitialized_this.contains(&func));
-        let is_laid_out = !self.is_untyped_file(file) && (c.extends.is_none() || base.is_some_and(|base| base.is_laid_out) && is_initialized_in_order) && {
+        let is_evaluated_once = self.is_evaluated_once(file, bound.class_owner[class.idx()].to_parent()) && !self.is_class_named_by_computed_key(file, class);
+        let is_laid_out = is_evaluated_once && !self.is_untyped_file(file) && (c.extends.is_none() || base.is_some_and(|base| base.is_laid_out) && is_initialized_in_order) && {
             let instances = self.type_of_instances(file, class);
             !self.is_redefined_somewhere(instances)
+        } && {
+            let constructing: Vec<(FileId, ClassId)> = std::iter::once((file, class)).chain(extended.iter().copied()).collect();
+            !found.tested_by_private_name.contains(&class) || self.construction_keeps_this(&constructing)
         };
         // A class that is not laid out constructs what it extends by its value, as the language has it, whatever that is.
         let base = base.filter(|_| is_laid_out);
         let mentions_new_target = constructor.is_some_and(|func| found.mentioning_new_target.contains(&func));
         let returns_value = constructor.is_some_and(|func| bound.ids(bound.fns[func.idx()].returns).any(|stmt| matches!(hir[stmt].kind, StmtKind::Return(value) if value.is_some())));
-        let has_computed_static_member = c.members.iter().any(|member| hir[member].flags.contains(Flags::STATIC) && matches!(hir[member].key, PropKey::Computed(_)));
         ClassFacts {
             is_laid_out,
-            is_evaluated_once: self.is_evaluated_once(file, bound.class_owner[class.idx()].to_parent()),
+            is_evaluated_once,
             takes_new_target: mentions_new_target || c.extends.is_some() && !is_laid_out || base.is_some_and(|base| base.takes_new_target),
             may_return_another_object: returns_value || base.is_some_and(|base| base.may_return_another_object),
-            has_computed_static_member: has_computed_static_member || base.is_some_and(|base| base.has_computed_static_member),
         }
     }
 
@@ -876,6 +880,50 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub(super) fn is_class_named_by_computed_key(&self, file: FileId, class: ClassId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let ClassOwner::Expr(mut e) = bound.class_owner[class.idx()] else { return false };
+        loop {
+            match bound.expr_parent[e.idx()] {
+                Parent::Expr(around) if matches!(hir[around].kind, ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::AsConst(_) | ExprKind::NonNull(_) | ExprKind::Instantiation { .. }) => e = around,
+                _ => break,
+            }
+        }
+        hir[class].name.is_none()
+            && match bound.expr_parent[e.idx()] {
+                Parent::Prop(prop) => matches!(hir[prop].key, PropKey::Computed(_)),
+                Parent::MemberInit(member) => matches!(hir[member].key, PropKey::Computed(_)),
+                _ => false,
+            }
+    }
+
+    pub(super) fn parent_by_evaluation(&self, file: FileId, at: Parent) -> Parent {
+        let bound = self.bound(file);
+        match at {
+            Parent::MemberKey(member) => match bound.member_owner[member.idx()] {
+                MemberOwner::Class(class) => bound.class_owner[class.idx()].to_parent(),
+                _ => self.parent_of_node(file, at),
+            },
+            Parent::Decorator(class, _) => bound.class_owner[class.idx()].to_parent(),
+            Parent::MethodKey(prop) => Parent::Expr(bound.prop_owner[prop.idx()]),
+            _ => self.parent_of_node(file, at),
+        }
+    }
+
+    pub(super) fn function_evaluating(&self, file: FileId, mut at: Parent) -> Option<FnId> {
+        let bound = self.bound(file);
+        loop {
+            at = match at {
+                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
+                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                Parent::FnBody(func) => return Some(func),
+                Parent::ParamDefault(p) => return Some(bound.param_fn[p.idx()]),
+                Parent::None | Parent::File => return None,
+                _ => self.parent_by_evaluation(file, at),
+            };
+        }
+    }
+
     /// Whether the node is evaluated at most once while the program runs: it is at the level of a module, in no function, static block or
     /// initializer of an instance field, and in no loop.
     pub fn is_evaluated_once(&self, file: FileId, node: Parent) -> bool {
@@ -935,6 +983,25 @@ impl<'p, 's> Checker<'p, 's> {
                 extended.iter().any(|&extended| self.is_assignable(class_object, extended))
             })
             .collect()
+    }
+
+    pub fn classes_named_by_typeof(&mut self) -> FxHashSet<(FileId, ClassId)> {
+        let mut found = FxHashSet::default();
+        for file in (0..self.files().modules.len() as u32).map(FileId) {
+            let hir = self.hir(file);
+            for node in hir.types.iter() {
+                let TypeNodeKind::Typeof { expr, .. } = node.kind else { continue };
+                if expr.is_none() {
+                    continue;
+                }
+                let ExprKind::Ident(name) = hir[expr].kind else { continue };
+                let Some(sym) = self.symbol_named_by(file, expr, name) else { continue };
+                if let Some((of, Decl::Class(class))) = self.declaration_of_variable(sym) {
+                    found.insert((of, class));
+                }
+            }
+        }
+        found
     }
 
     /// Appends the names of the global objects that the file does more with than the engine's knowledge of them allows for.
@@ -1063,14 +1130,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `prototype_property_names_in` of every file that is loaded.
     pub(super) fn prototype_property_names(&mut self) -> &'p FxHashSet<Atom> {
-        if let Some(known) = self.p.aot.classes.prototype_property_names.get() {
-            return known;
-        }
-        let mut names = Vec::new();
-        for file in self.files_declaring_classes() {
-            self.prototype_property_names_in(file, &mut names);
-        }
-        self.p.aot.classes.prototype_property_names.get_or_init(|| names.into_iter().collect())
+        let program = self.p;
+        program.aot.classes.prototype_property_names.get_or_init(|| {
+            let mut names = Vec::new();
+            for file in self.files_declaring_classes() {
+                self.prototype_property_names_in(file, &mut names);
+            }
+            names.into_iter().collect()
+        })
     }
 
     /// Whether the objects that the function initializes may inherit from anything: the function is a `ConstructorFunction`, and the
@@ -1759,12 +1826,29 @@ impl<'p, 's> Checker<'p, 's> {
         let mut found = FileFacts::default();
         // The function whose `this` and `new.target` the expression sees.
         let receiver_of = |e: ExprId| {
-            let mut func = self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE);
+            let mut func = self.function_evaluating(file, bound.expr_parent[e.idx()]).unwrap_or(FnId::NONE);
             while func.is_some() && hir[func].kind == FnKind::Arrow {
-                func = bound.fns[func.idx()].enclosing;
+                func = match bound.fns[func.idx()].owner {
+                    FnOwner::Expr(made) => self.function_evaluating(file, bound.expr_parent[made.idx()]).unwrap_or(FnId::NONE),
+                    _ => FnId::NONE,
+                };
             }
             func.some()
         };
+        let function_handed_this = |e: ExprId| {
+            let mut at = bound.expr_parent[e.idx()];
+            loop {
+                at = match at {
+                    Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
+                    Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                    Parent::FnBody(func) if hir[func].kind != FnKind::Arrow => return Some(func),
+                    Parent::ParamDefault(p) if hir[bound.param_fn[p.idx()]].kind != FnKind::Arrow => return Some(bound.param_fn[p.idx()]),
+                    Parent::None | Parent::File | Parent::MemberInit(_) => return None,
+                    _ => self.parent_by_evaluation(file, at),
+                };
+            }
+        };
+        found.mentioning_this.extend(index.of(ExprTag::This).iter().filter_map(|&e| function_handed_this(e)));
         found.mentioning_new_target.extend(index.of(ExprTag::NewTarget).iter().filter_map(|&e| receiver_of(e)));
         found.mentioning_super.extend(index.of(ExprTag::Super).iter().filter_map(|&e| receiver_of(e)));
         let mut mentions_of_this: FxHashMap<FnId, Vec<ExprId>> = FxHashMap::default();
@@ -1793,24 +1877,11 @@ impl<'p, 's> Checker<'p, 's> {
                 found.with_uninitialized_this.insert(func);
             }
         }
-        for pat in (0..if hir.is_js { hir.pats.len() as u32 } else { 0 }).map(PatId) {
-            if let PatKind::Ident(name) = hir[pat].kind
-                && bound.required_by(hir, pat).is_some()
-                && let PatParent::Var(declaration) = root_declaration(bound, pat)
-                && hir[declaration].kind != VarKind::Var
+        for (&e, &class) in bound.private_class.iter() {
+            if let ExprKind::PrivateIdentifier(name) = hir[e].kind
+                && hir[class].members.iter().any(|member| hir[member].key == PropKey::Private(name) && !hir[member].flags.contains(Flags::STATIC))
             {
-                let around = match bound.stmt_parent[bound.var_stmt[declaration.idx()].idx()] {
-                    Parent::Stmt(around) => around,
-                    Parent::Case(clause) => bound.case_stmt[clause.idx()],
-                    _ => StmtId::NONE,
-                };
-                if around.is_some() {
-                    let symbol = bound.pat_symbol[pat.idx()];
-                    let is_found_by_name = (bound.scope_of_declaration(hir, Decl::Require(pat)).some())
-                        .is_some_and(|scope| self.files().resolve_name(file, bound.container_scope(scope), name, SymFlags::ALIAS) == Some(self.files().sym(file, symbol)));
-                    let is_hidden_variable = hir[declaration].kind != VarKind::Const && !is_found_by_name;
-                    found.required_in_blocks.push(RequiredInBlock { name, pat, symbol, start: hir[around].start, end: hir[around].loc.end, is_hidden_variable });
-                }
+                found.tested_by_private_name.insert(class);
             }
         }
         found
@@ -1831,12 +1902,36 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the function, which is no arrow function, looks at its `this`: it mentions `this` or `super`, also from within an arrow
     /// function, or it is a constructor, which initializes it.
     pub(super) fn uses_this(&mut self, file: FileId, func: FnId) -> bool {
-        self.hir(file)[func].kind == FnKind::Constructor || self.bound(file).fns[func.idx()].contains_this || self.class_facts_of_file(file).mentioning_super.contains(&func)
+        self.hir(file)[func].kind == FnKind::Constructor || self.looks_at_this(file, func) || self.class_facts_of_file(file).mentioning_super.contains(&func)
+    }
+
+    pub fn looks_at_this(&mut self, file: FileId, func: FnId) -> bool {
+        self.bound(file).fns[func.idx()].contains_this || self.class_facts_of_file(file).mentioning_this.contains(&func)
     }
 
     /// Whether there is one of what the declaration binds for as long as the program runs, so that it needs no environment to live in.
     pub fn is_bound_once(&self, file: FileId, decl: Decl) -> bool {
         self.activation_binding(file, decl).is_none()
+    }
+
+    pub fn is_in_heritage_or_computed_key_of(&self, file: FileId, e: ExprId, class: ClassId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = bound.expr_parent[e.idx()];
+        loop {
+            at = match at {
+                Parent::ClassExtends(around) if around == class => return true,
+                Parent::MemberKey(member) if matches!(bound.member_owner[member.idx()], MemberOwner::Class(around) if around == class) => return true,
+                Parent::None | Parent::File | Parent::FnBody(_) | Parent::ParamDefault(_) => return false,
+                Parent::MemberInit(member) if !hir[member].flags.contains(Flags::STATIC) => return false,
+                Parent::Expr(outer) if outer.is_some() => bound.expr_parent[outer.idx()],
+                Parent::Stmt(outer) if outer.is_some() => bound.stmt_parent[outer.idx()],
+                _ => self.parent_of_node(file, at),
+            };
+        }
+    }
+
+    pub fn is_written_in_class(&self, file: FileId, e: ExprId, class: ClassId) -> bool {
+        self.enclosing_classes(file, e).contains(&class)
     }
 
     /// The function whose activations each have their own of what the declaration binds. `Some(None)`: the turns of a loop of the module
@@ -1870,7 +1965,7 @@ impl<'p, 's> Checker<'p, 's> {
             Decl::Class(class) => bound.class_owner[class.idx()].to_parent(),
             _ => return None,
         };
-        match self.enclosing_fn(file, node) {
+        match self.function_evaluating(file, node) {
             Some(func) => Some(Some(func)),
             None if self.is_evaluated_once(file, node) => None,
             None => Some(None),

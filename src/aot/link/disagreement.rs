@@ -5,7 +5,7 @@ use super::{At, By, Elsewhere, Finder, Index, Reach, place_of_error};
 use crate::declared::{DeclaredTable, Part, prim};
 use crate::fragment::{Fragment, FuncKey, Function, GlobalKey, LayoutKey, NO_FILE, Shape, Variable};
 use crate::id::{FuncId, LayoutId, StrId, TyId};
-use crate::ir::{Def, Func, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Prediction, STATIC_FIELD_IS_ANNOTATED, Strs, class_flags, field_flags, func_flags, method_flags, only_function_flags};
+use crate::ir::{Def, Func, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Prediction, Strs, class_flags, field_flags, func_flags, method_flags, only_function_flags};
 use bun_sema::bind::{ClassOwner, FnOwner, Parent, SymFlags};
 use bun_sema::check::{Identity, Program as Checked};
 use bun_sema::hir::{Flags, FnId, PatKind, TypeNodeKind};
@@ -361,7 +361,7 @@ impl Finder<'_> {
         let variable = |variable: Option<u32>| match variable {
             None => "absent".to_owned(),
             Some(NO_VARIABLE) => "-".to_owned(),
-            Some(variable) => format!("{}{}", variable & !STATIC_FIELD_IS_ANNOTATED, if variable & STATIC_FIELD_IS_ANNOTATED != 0 { " annotated" } else { "" }),
+            Some(variable) => variable.to_string(),
         };
         for (i, (method, same)) in local.methods.iter().zip(&out.methods).enumerate().filter(|_| lists_methods) {
             if method.kind != same.kind {
@@ -376,17 +376,15 @@ impl Finder<'_> {
             if self.func(method.func) != Some(same.func) {
                 found.push(format!("method {i}: function: here {}, kept {}", self.func_here(method.func), self.func_kept(same.func)));
             }
-            if self.variable(method.key, 0, has_module_variables) != Some(same.key) {
-                found.push(format!("method {i}: variable of the key: here {}, kept {}", variable(self.variable(method.key, 0, has_module_variables)), variable(Some(same.key))));
+            if self.variable(method.key, has_module_variables) != Some(same.key) {
+                found.push(format!("method {i}: variable of the key: here {}, kept {}", variable(self.variable(method.key, has_module_variables)), variable(Some(same.key))));
             }
         }
         for (i, (field, same)) in local.static_fields.iter().zip(&out.static_fields).enumerate() {
             if self.str(field.0) != Some(same.0) {
                 found.push(format!("static field {i}: the names differ"));
             }
-            if self.variable(field.1, STATIC_FIELD_IS_ANNOTATED, has_module_variables) != Some(same.1) {
-                found.push(format!("static field {i}: variable: here {}, kept {}", variable(self.variable(field.1, STATIC_FIELD_IS_ANNOTATED, has_module_variables)), variable(Some(same.1))));
-            }
+            found.extend(self.difference_of_tys(kept, &format!("static field {i}: declared type"), field.1, same.1));
         }
         found
     }
@@ -590,6 +588,10 @@ pub(super) fn of_undefined_layout(checked: &Checked<'_>, fragments: &[Fragment],
         Some(Elsewhere::DroppedImport) => "an import that is dropped",
         Some(Elsewhere::NotReached(_)) => "a function or a module that is not reached",
         Some(Elsewhere::NoModule) => "a file that has no fragment",
+        Some(Elsewhere::RegExpLiteral) => "a regular expression literal",
+        Some(Elsewhere::PrivateNameInOptionalChain) => "a private name in an optional chain",
+        Some(Elsewhere::PrivateNameOfEnclosingClass) => "a private name that an enclosing class declares",
+        Some(Elsewhere::StaticMemberNamedConstructor) => "a static member named `constructor`",
     };
     let own = index.by_file.get(&file).map(|&number| &fragments[number as usize]);
     let in_its_own = match own.map(|own| own.layouts.iter().find(|other| other.key == shape.key)) {

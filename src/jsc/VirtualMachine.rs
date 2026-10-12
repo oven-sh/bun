@@ -153,10 +153,6 @@ pub struct VirtualMachine {
     pub main_is_html_entrypoint: bool,
     /// The entry point was compiled ahead of time, together with what `bun:main` does after it.
     pub main_is_compiled: bool,
-    /// The entry point is not compiled, but the executable is: no `bun:main` is made for it either. Native code calls
-    /// `builtins/EntryPoint.ts` once it has run.
-    pub starts_server_natively: bool,
-    pub has_looked_for_server: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -800,16 +796,6 @@ impl ExitHandler {
         vm.entry_evaluation_started || vm.worker.is_none()
     }
 
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__hasToLookForServer(vm: &VirtualMachine) -> bool {
-        vm.starts_server_natively && !vm.has_looked_for_server
-    }
-
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__didLookForServer(vm: &mut VirtualMachine) {
-        vm.has_looked_for_server = true;
-    }
-
     /// The module-registry key of the current entry load's root: the
     /// `bun:main` wrapper when the entry is transpiled through it, else the
     /// entry path itself (see `reload_entry_point`). Borrowed.
@@ -817,11 +803,7 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation
-            && !vm.main_is_html_entrypoint
-            && !vm.main_is_compiled
-            && !vm.starts_server_natively
-        {
+        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint && !vm.main_is_compiled {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
             bun_core::StringView::borrow_utf8(vm.main())
@@ -3131,7 +3113,6 @@ unsafe extern "C" {
     // The returned cell pointer is GC-owned (caller checks before deref).
     safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
     safe fn Bun__AOT__isCompiledEntryPoint(module: u32) -> bool;
-    fn Bun__lookForServerOnceEvaluated(global: &JSGlobalObject, promise: *mut JSInternalPromise);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3525,14 +3506,8 @@ impl VirtualMachine {
             && (self.standalone_module_graph)
                 .and_then(|graph| graph.program_data_index(entry_path))
                 .is_some_and(|module| Bun__AOT__isCompiledEntryPoint(module));
-        self.starts_server_natively = !self.main_is_compiled
-            && !self.main_is_html_entrypoint
-            && self.preload.is_empty()
-            && self.standalone_module_graph.is_some_and(|graph| !graph.aot_image().is_empty());
-        self.has_looked_for_server = false;
-        let has_wrapper = !self.main_is_compiled && !self.starts_server_natively;
 
-        if !self.main_is_html_entrypoint && has_wrapper {
+        if !self.main_is_html_entrypoint && !self.main_is_compiled {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
                 if !(hooks.generate_entry_point)(self, watch, entry_path) {
@@ -3541,7 +3516,7 @@ impl VirtualMachine {
             }
         }
 
-        if !self.transpiler.options.disable_transpilation && has_wrapper {
+        if !self.transpiler.options.disable_transpilation && !self.main_is_compiled {
             if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
                     // SAFETY: hook contract.
@@ -3626,10 +3601,6 @@ impl VirtualMachine {
                 jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
                     .map(NonNull::as_ptr)
                     .ok_or(crate::CrateError::JSError)?;
-            if self.starts_server_natively {
-                // SAFETY: `promise` is a live JSC heap cell.
-                unsafe { Bun__lookForServerOnceEvaluated(self.global(), promise) };
-            }
             self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         }

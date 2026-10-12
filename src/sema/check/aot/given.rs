@@ -15,19 +15,17 @@ use crate::util::FxHashMap;
 /// What may be in a place beyond its type, and what a test shows a value not to be.
 pub const UNDEFINED: u8 = 1;
 pub const NULL: u8 = 1 << 1;
+pub const STRANGER: u8 = 1 << 2;
 
 /// In the place of a jump: none.
 pub const NO_JUMP: u32 = u32::MAX;
 
 #[derive(Default)]
-pub struct NilFlows {
-    /// Nodes are numbered from 0.
-    pub nodes: u32,
+pub struct NilEdges {
     /// Whatever the first holds the second may: from a place to a read of it, from the result of a function to a call.
-    pub edges: Vec<(u32, u32)>,
+    pub edges: Vec<(u32, u32, u8)>,
     /// What comes into being in a node whatever is tested: what somebody hands over of whom nothing is known.
     pub origins: Vec<(u32, u8)>,
-    pub functions: Vec<NilFlowsInFunction>,
 }
 
 /// Values are numbered within the function, as whoever reports likes: a test and a use mean the same value by the same number.
@@ -90,10 +88,12 @@ pub fn stored_values_read(function: &NilFlowsInFunction, events: &[Vec<PlaceEven
     if blocks == 0 || events.iter().all(|events| !events.iter().any(|event| matches!(event, PlaceEvent::Read { .. }))) {
         return found;
     }
-    let mut arriving: Vec<Vec<u32>> = vec![Vec::new(); blocks];
+    let (mut arriving, mut leaving): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![Vec::new(); blocks], vec![Vec::new(); blocks]);
     for (index, jump) in function.jumps.iter().enumerate() {
         arriving[jump.to as usize].push(index as u32);
+        leaving[jump.from as usize].push(index as u32);
     }
+    let loop_of = loops_of(function, &leaving);
     // At the end of each block that has been gone through.
     let mut at_end: Vec<Option<Held>> = vec![None; blocks];
     let mut pending: Vec<u32> = vec![0];
@@ -146,9 +146,9 @@ pub fn stored_values_read(function: &NilFlowsInFunction, events: &[Vec<PlaceEven
         }
         at_end[block] = Some(held);
         is_done[block] = true;
-        for jump in function.jumps.iter().filter(|jump| jump.from as usize == block) {
+        for jump in leaving[block].iter().map(|&index| &function.jumps[index as usize]) {
             let next = jump.to as usize;
-            if !is_done[next] && arriving[next].iter().all(|&index| is_done[function.jumps[index as usize].from as usize] || leads_to(function, next as u32, function.jumps[index as usize].from)) {
+            if !is_done[next] && arriving[next].iter().all(|&index| is_done[function.jumps[index as usize].from as usize] || loop_of[next] == loop_of[function.jumps[index as usize].from as usize]) {
                 pending.push(next as u32);
             }
         }
@@ -156,19 +156,50 @@ pub fn stored_values_read(function: &NilFlowsInFunction, events: &[Vec<PlaceEven
     found
 }
 
-/// Whether control gets from the one block to the other.
-fn leads_to(function: &NilFlowsInFunction, from: u32, to: u32) -> bool {
-    let mut is_seen = vec![false; function.blocks as usize];
-    let mut pending = vec![from];
-    while let Some(block) = pending.pop() {
-        if block == to {
-            return true;
+fn loops_of(function: &NilFlowsInFunction, leaving: &[Vec<u32>]) -> Vec<u32> {
+    const NONE: u32 = u32::MAX;
+    let blocks = leaving.len();
+    let (mut number, mut lowest, mut loop_of) = (vec![NONE; blocks], vec![NONE; blocks], vec![NONE; blocks]);
+    let (mut open, mut path): (Vec<u32>, Vec<(u32, usize)>) = (Vec::new(), Vec::new());
+    let (mut numbers, mut loops) = (0, 0);
+    for start in 0..blocks as u32 {
+        if number[start as usize] != NONE {
+            continue;
         }
-        if !std::mem::replace(&mut is_seen[block as usize], true) {
-            pending.extend(function.jumps.iter().filter(|jump| jump.from == block).map(|jump| jump.to));
+        path.push((start, 0));
+        while let Some(top) = path.last_mut() {
+            let (block, here) = (top.0, top.0 as usize);
+            if number[here] == NONE {
+                (number[here], lowest[here]) = (numbers, numbers);
+                numbers += 1;
+                open.push(block);
+            }
+            if let Some(&index) = leaving[here].get(top.1) {
+                top.1 += 1;
+                let to = function.jumps[index as usize].to;
+                if number[to as usize] == NONE {
+                    path.push((to, 0));
+                } else if loop_of[to as usize] == NONE {
+                    lowest[here] = lowest[here].min(number[to as usize]);
+                }
+                continue;
+            }
+            path.pop();
+            if let Some(above) = path.last() {
+                lowest[above.0 as usize] = lowest[above.0 as usize].min(lowest[here]);
+            }
+            if lowest[here] == number[here] {
+                while let Some(member) = open.pop() {
+                    loop_of[member as usize] = loops;
+                    if member == block {
+                        break;
+                    }
+                }
+                loops += 1;
+            }
         }
     }
-    false
+    loop_of
 }
 
 /// By node: what may get there.
@@ -186,37 +217,31 @@ pub fn parameters_handed_elements(method: &[u8], is_array: bool) -> &'static [us
     }
 }
 
-pub fn nil_reaching(flows: &NilFlows) -> Vec<u8> {
-    const NIL: u8 = UNDEFINED | NULL;
-    let mut reaching = vec![0u8; flows.nodes as usize];
+pub fn add_nil_flows_in(function: &NilFlowsInFunction, found: &mut NilEdges) {
+    let NilEdges { edges, origins } = found;
+    add_edges_in(function, edges, &mut |node, nil| origins.push((node, nil)));
+}
+
+pub fn nil_reaching<'a>(nodes: u32, parts: impl Iterator<Item = &'a NilEdges> + Clone) -> Vec<u8> {
+    let mut reaching = vec![0u8; nodes as usize];
     let mut pending: Vec<u32> = Vec::new();
-    // What of the first node the second gets.
-    let mut edges: Vec<(u32, u32, u8)> = flows.edges.iter().map(|&(from, to)| (from, to, NIL)).collect();
-    for &(node, nil) in &flows.origins {
+    for &(node, nil) in parts.clone().flat_map(|part| &part.origins) {
         if reaching[node as usize] | nil != reaching[node as usize] {
             reaching[node as usize] |= nil;
             pending.push(node);
         }
     }
-    for function in &flows.functions {
-        add_edges_in(function, &mut edges, &mut |node, nil| {
-            if reaching[node as usize] | nil != reaching[node as usize] {
-                reaching[node as usize] |= nil;
-                pending.push(node);
-            }
-        });
-    }
     // The edges by the node they leave.
-    let mut first = vec![0u32; flows.nodes as usize + 1];
-    for edge in &edges {
+    let mut first = vec![0u32; nodes as usize + 1];
+    for edge in parts.clone().flat_map(|part| &part.edges) {
         first[edge.0 as usize + 1] += 1;
     }
-    for node in 0..flows.nodes as usize {
+    for node in 0..nodes as usize {
         first[node + 1] += first[node];
     }
     let mut at = first.clone();
-    let mut leaving = vec![(0u32, 0u8); edges.len()];
-    for &(from, to, nil) in &edges {
+    let mut leaving = vec![(0u32, 0u8); first[nodes as usize] as usize];
+    for &(from, to, nil) in parts.flat_map(|part| &part.edges) {
         leaving[at[from as usize] as usize] = (to, nil);
         at[from as usize] += 1;
     }
@@ -239,6 +264,13 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
     const NONE: u32 = u32::MAX;
     let blocks = function.blocks as usize;
     if blocks == 0 {
+        return;
+    }
+    if blocks == 1 && function.jumps.is_empty() {
+        for origin in &function.origins {
+            originate(origin.node, origin.nil);
+        }
+        edges.extend(function.uses.iter().map(|used| (used.from, used.to, NIL | STRANGER)));
         return;
     }
     let (mut following, mut preceding): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![Vec::new(); blocks], vec![Vec::new(); blocks]);
@@ -350,9 +382,7 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
                 if used.jump != NO_JUMP {
                     stopped |= function.jumps[used.jump as usize].shown.iter().filter(|it| it.0 == used.value).fold(0, |all, it| all | it.1);
                 }
-                if NIL & !stopped != 0 {
-                    edges.push((used.from, used.to, NIL & !stopped));
-                }
+                edges.push((used.from, used.to, (NIL | STRANGER) & !stopped));
             }
         }
         match dominated[block].get(top.1) {

@@ -119,7 +119,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
 #if ENABLE(AOT)
-    if (auto reported = stackFrame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
+    if (auto reported = stackFrame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart); reported && stackFrame.hasLineAndColumnInfo()) {
         position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.line).zeroBasedInt();
         position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.column).zeroBasedInt();
         position.byte_position = -1;

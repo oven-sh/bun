@@ -31,10 +31,10 @@ use crate::declared::{Declared, DeclaredTable, Part};
 use crate::format::line_table;
 use crate::fragment::{Definition, Fragment, FuncKey, Function, GlobalKey, Ids, LayoutKey, Mentioning, Mentions, ModulePart, NO_FILE, Notes, Used, for_each_id_of_func, for_each_id_of_global, for_each_id_of_layout};
 use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Prediction, Program, STATIC_FIELD_IS_ANNOTATED, Strs, Term, class_flags, field_flags, func_flags, method_flags};
+use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Prediction, Program, Strs, Term, class_flags, field_flags, func_flags, method_flags};
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
-use bun_sema::check::{Certainty, Checker, Doubt, Identity, Int32Verdict, MethodStore, Noted, NumberFlow, Program as Checked, Question, compute_ecma_line_starts, expected_int32};
+use bun_sema::check::{Answer, Checker, Identity, Int32Verdict, MethodStore, Noted, NumberFlow, Program as Checked, Question, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
 use bun_sema::program::{Builtin, FileId};
 use bun_sema::resolve::get_relative_path_from_directory;
@@ -48,7 +48,6 @@ use std::hash::Hash;
 use std::time::{Duration, Instant};
 
 mod disagreement;
-mod share;
 mod nil;
 mod reads;
 mod strangers;
@@ -75,22 +74,16 @@ pub struct Linked {
 /// What the link says of what it has decided, for whoever asks why.
 #[derive(Default, Copy, Clone)]
 pub struct Explain {
-    /// How many function expressions that capture nothing are one function value, and why the others are not: `share::share_functions`.
-    pub shared: bool,
     /// Why each view that admits objects that are not laid out does: `Checker::explain_foreign`.
     pub foreign: bool,
     /// Which views have members only because a test has been left out, and from where: `Checker::explain_members`.
     pub members: bool,
-    /// Which layouts untyped code may get hold of, and which fields hold one function for a fact: `Checker::explain_escapes`.
-    pub escapes: bool,
     /// How many layouts a built-in may freeze or give another prototype, and how many stores test for it, in numbers alone: `Checker::explain_alterations`.
     pub alterations: bool,
     /// Which variables of numbers and booleans may be read before anything is stored to them: `Checker::explain_uninitialized`.
     pub uninitialized: bool,
     /// What each function captures, which variables are copied and which activations have an environment, and why: `Checker::explain_captures`.
     pub captures: bool,
-    /// Which environments and closures are unreachable once the activation that made them has ended, and what keeps the others: `Checker::explain_escape`.
-    pub escape: bool,
     /// Which fields have a name that nothing stores: `explain_fields`.
     pub fields: bool,
     /// In what a fragment and the program differ, and what a class is that nobody defines: `disagreement`.
@@ -117,6 +110,8 @@ pub struct Explain {
     pub literals: bool,
     /// How far the objects that are not laid out get, by place, from where they come into being; nothing is applied: `strangers::explain`.
     pub strangers: bool,
+    pub rows: bool,
+    pub firsts: bool,
     /// The end of the path of a file, and a line: the object literals that begin on it, each with its row of `literals`, and the functions that have an operation of that line, as they are in the end.
     pub literal_at: Option<(&'static str, u32)>,
     /// How many of the places and of the reads of typed code go by a fact: `explain_given`.
@@ -605,7 +600,7 @@ struct Numbering<'a> {
     layouts: Vec<At>,
     globals: Vec<At>,
     /// By number: the file and its name.
-    modules: Vec<(FileId, StrId)>,
+    modules: Vec<FileId>,
     func_ids: FxHashMap<FuncKey, FuncId>,
     layout_ids: FxHashMap<LayoutKey, LayoutId>,
     global_ids: FxHashMap<GlobalKey, GlobalId>,
@@ -785,12 +780,8 @@ impl<'a> Numbering<'a> {
         if let Some(&known) = self.module_ids.get(&file) {
             return known;
         }
-        let path = match self.index.by_file.get(&file) {
-            Some(&fragment) => self.str(fragment, self.fragments[fragment as usize].path),
-            None => StrId::NONE,
-        };
         let id = ModuleId::new(self.modules.len());
-        self.modules.push((file, path));
+        self.modules.push(file);
         self.module_ids.insert(file, id);
         id
     }
@@ -959,7 +950,7 @@ fn explain_start(program: &Program, evaluating: &[(FuncId, FuncKey)]) -> Vec<Str
         .collect()
 }
 
-fn entry_function(name: StrId, anything: TyId, roots: &[FuncId]) -> Func {
+fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<FuncId>) -> Func {
     let mut func = Func {
         name,
         module: ModuleId::NONE,
@@ -979,7 +970,8 @@ fn entry_function(name: StrId, anything: TyId, roots: &[FuncId]) -> Func {
     for &root in roots {
         func.append(entry, Op::CallDirect { func: root, args: ir::Args::new() }, 0, anything);
     }
-    func.blocks[entry.idx()].term = Some(Term::Return(V::NONE));
+    let yielded = import.map_or(V::NONE, |import| func.append(entry, Op::FuncRef(import), 0, anything));
+    func.blocks[entry.idx()].term = Some(Term::Return(yielded));
     func
 }
 
@@ -1018,13 +1010,13 @@ impl Finder<'_> {
         if local.is_none() { Some(local) } else { self.all.funcs.get(&self.fragment.funcs[local.idx()].key).copied() }
     }
 
-    /// A variable of a class, see `Layout::environment`. `flags`: the bits that are no part of the number.
-    fn variable(&self, local: u32, flags: u32, is_module_variable: bool) -> Option<u32> {
+    /// A variable of a class, see `Layout::environment`.
+    fn variable(&self, local: u32, is_module_variable: bool) -> Option<u32> {
         if !is_module_variable || local == NO_VARIABLE {
             return Some(local);
         }
-        let global = self.all.globals.get(&self.fragment.globals[(local & !flags) as usize].key)?;
-        Some(global.0 | local & flags)
+        let global = self.all.globals.get(&self.fragment.globals[local as usize].key)?;
+        Some(global.0)
     }
 
     fn ty(&mut self, local: TyId) -> Option<TyId> {
@@ -1121,13 +1113,12 @@ impl Finder<'_> {
                 || method.flags != same.flags
                 || self.str(method.name) != Some(same.name)
                 || self.func(method.func) != Some(same.func)
-                || self.variable(method.key, 0, has_module_variables) != Some(same.key)
+                || self.variable(method.key, has_module_variables) != Some(same.key)
             {
                 return false;
             }
         }
-        (local.static_fields.iter().zip(&out.static_fields))
-            .all(|(field, same)| self.str(field.0) == Some(same.0) && self.variable(field.1, STATIC_FIELD_IS_ANNOTATED, has_module_variables) == Some(same.1))
+        (local.static_fields.iter().zip(&out.static_fields)).all(|(field, same)| self.str(field.0) == Some(same.0) && self.ty(field.1) == Some(same.1))
     }
 }
 
@@ -1258,21 +1249,35 @@ fn describe_in_tasks<'s>(
     (described, ran_out_of_stack)
 }
 
-/// How many questions a checker is made for. A checker finds again what another has found, so few are better than many. The number
+/// How many questions a checker is made for. A checker finds again what another has found, and one that is cut short holds up all behind it. The number
 /// does not show in the answers.
-const QUESTIONS_OF_A_CHECKER: usize = 4096;
+const QUESTIONS_OF_A_CHECKER: usize = 64;
 
 /// `Checker::answer`, shared out, and whether the stack has run out for one of the checkers.
-fn answers_to(program: &Checked<'_>, questions: &[Question], stored: &FxHashSet<Atom>, in_parallel: InParallel<'_>) -> (Vec<bool>, bool) {
-    let mut slices: Vec<(&[Question], Vec<bool>, bool)> = questions.chunks(QUESTIONS_OF_A_CHECKER).map(|slice| (slice, Vec::new(), false)).collect();
-    for_each_mut(&mut slices, in_parallel, &|(slice, answers, ran_out_of_stack)| {
+fn answers_to(program: &Checked<'_>, questions: &[Question], stored: &FxHashSet<Atom>, cut_short: &mut Vec<(TypeId, TypeId, u8)>, in_parallel: InParallel<'_>) -> (Vec<Answer>, bool) {
+    let known: &[(TypeId, TypeId, u8)] = cut_short;
+    let mut slices: Vec<(&[Question], Vec<Answer>, bool, Vec<(TypeId, TypeId, u8)>)> = questions.chunks(QUESTIONS_OF_A_CHECKER).map(|slice| (slice, Vec::new(), false, Vec::new())).collect();
+    for_each_mut(&mut slices, in_parallel, &|(slice, answers, ran_out_of_stack, cut_now)| {
         let mut c = program.checker();
         c.begin_stack_budget();
+        c.know_questions_cut_short(known);
         *answers = c.answer(slice, stored);
         *ran_out_of_stack = c.take_ran_out_of_stack();
+        *cut_now = c.questions_cut_short();
     });
+    for slice in &mut slices {
+        keep_questions_cut_short(cut_short, std::mem::take(&mut slice.3));
+    }
     let ran_out_of_stack = slices.iter().any(|slice| slice.2);
     (slices.into_iter().flat_map(|slice| slice.1).collect(), ran_out_of_stack)
+}
+
+fn keep_questions_cut_short(kept: &mut Vec<(TypeId, TypeId, u8)>, mut more: Vec<(TypeId, TypeId, u8)>) {
+    if !more.is_empty() {
+        kept.append(&mut more);
+        kept.sort_unstable_by_key(|question| (question.0.0, question.1.0, question.2));
+        kept.dedup();
+    }
 }
 
 // ───────────────────────────── the names of properties ─────────────────────────────
@@ -1354,23 +1359,6 @@ impl Names {
             }
         }
         names
-    }
-}
-
-/// A static field that the class object shows as a property: whoever has got hold of the class object stores to that by name, which no
-/// operation on the variable shows. Of such a variable, in an environment or of a module, there is no fact about what it holds.
-fn drop_facts_about_static_fields(program: &mut Program) {
-    let shown: Vec<(LayoutId, u32)> = (program.layouts.iter())
-        .flat_map(|class| class.static_fields.iter().map(|field| (class.environment, field.1)))
-        .filter(|&(_, variable)| variable != NO_VARIABLE)
-        .map(|(environment, variable)| (environment, variable & !STATIC_FIELD_IS_ANNOTATED))
-        .collect();
-    for (environment, variable) in shown {
-        if environment.is_some() {
-            program.layouts[environment.idx()].fields[variable as usize].only_function_flags = 0;
-        } else {
-            program.globals[variable as usize].only_function_flags = 0;
-        }
     }
 }
 
@@ -1552,6 +1540,10 @@ pub enum Elsewhere {
     /// Nothing of the file is in the program, and no module of the program imports it, be it through files that are themselves no
     /// modules of the program.
     NoModule,
+    RegExpLiteral,
+    PrivateNameInOptionalChain,
+    PrivateNameOfEnclosingClass,
+    StaticMemberNamedConstructor,
 }
 
 /// The files that are no modules of the program and that a module of the program imports, straight away or through others of them: for
@@ -1674,6 +1666,10 @@ pub fn link(
     for &root in &roots {
         reach.key(&fragments, &index, root, true);
     }
+    for import in entry_points.iter().filter_map(|files| files.first()).map(|&first| FuncKey::DynamicImport(first, false)).filter(|import| index.funcs.contains_key(import)) {
+        reach.key(&fragments, &index, import, true);
+        reach.values.insert(import);
+    }
     // No code outside a module of the runtime names a function of it, so one that cannot be translated is left out by itself.
     let mut builtin_modules_left_out: Vec<(u32, Problem)> = Vec::new();
     let mut builtin_functions_left_out: Vec<(u32, Problem)> = Vec::new();
@@ -1758,7 +1754,41 @@ pub fn link(
     let Errors { places, in_dropped_imports, imported_by } = errors;
     let mut imported_for_types: Option<FxHashSet<FileId>> = None;
     let mut is_imported_for_types = |file: FileId| imported_for_types.get_or_insert_with(|| files_imported_for_types(&fragments, &reach, &mut *imported_by)).contains(&file);
-    let place_of = |(&place, &is_in_dropped_import): (&(FileId, u32), &bool)| place_of_error(checked, &fragments, &index, &reach, place, &mut is_imported_for_types).or(is_in_dropped_import.then_some(Elsewhere::DroppedImport));
+    let is_in_regexp_literal = |(file, pos): (FileId, u32)| checked.files.hir(file).exprs.iter().any(|e| matches!(e.kind, hir::ExprKind::Regex) && e.pos < pos && pos < e.end);
+    let is_private_name_in_optional_chain = |(file, pos): (FileId, u32)| {
+        let hir = checked.files.hir(file);
+        let is_in_chain = |mut at: hir::ExprId| loop {
+            let (chain, inner) = match hir[at].kind {
+                hir::ExprKind::Dot { obj, chain, .. } | hir::ExprKind::Index { obj, chain, .. } => (chain, obj),
+                hir::ExprKind::Call(call) => (hir[call].chain, hir[call].callee),
+                hir::ExprKind::NonNull(inner) => (hir::Chain::No, inner),
+                _ => return false,
+            };
+            if chain != hir::Chain::No {
+                return true;
+            }
+            at = inner;
+        };
+        hir.is_js && hir::is_private_name_at(hir, pos) && (0..hir.exprs.len() as u32).map(hir::ExprId).any(|e| matches!(hir[e].kind, hir::ExprKind::Dot { name_pos, .. } if name_pos == pos) && is_in_chain(e))
+    };
+    let is_private_name_of_enclosing_class = |(file, pos): (FileId, u32)| {
+        let (hir, bound) = (checked.files.hir(file), checked.files.bound(file));
+        hir.is_js && hir::is_private_name_at(hir, pos) && (0..hir.exprs.len() as u32).map(hir::ExprId).any(|e| {
+            matches!(hir[e].kind, hir::ExprKind::Dot { obj, name_pos, .. } if name_pos == pos && !matches!(hir[obj].kind, hir::ExprKind::Super))
+                && bound.private_class.contains_key(&e)
+                && !hir.exprs.iter().any(|around| matches!(around.kind, hir::ExprKind::Unary { op: hir::UnOp::Delete, operand } if operand == e))
+        })
+    };
+    let is_static_member_named_constructor = |(file, pos): (FileId, u32)| {
+        let hir = checked.files.hir(file);
+        hir.is_js && hir.members.iter().any(|member| (member.name_pos == pos || hir.modifier_list(member.modifiers).iter().any(|modifier| modifier.pos == pos && modifier.kind == hir::ModifierKind::Keyword(Flags::STATIC))) && member.flags.contains(Flags::STATIC) && matches!(member.kind, hir::MemberKind::Method | hir::MemberKind::Getter | hir::MemberKind::Setter) && matches!(member.key, hir::PropKey::Name(name) if checked.files.atoms.bytes(name) == b"constructor"))
+    };
+    let place_of = |(&place, &is_in_dropped_import): (&(FileId, u32), &bool)| {
+        let elsewhere = place_of_error(checked, &fragments, &index, &reach, place, &mut is_imported_for_types).or(is_in_dropped_import.then_some(Elsewhere::DroppedImport));
+        elsewhere.or_else(|| is_in_regexp_literal(place).then_some(Elsewhere::RegExpLiteral)).or_else(|| is_private_name_in_optional_chain(place).then_some(Elsewhere::PrivateNameInOptionalChain))
+            .or_else(|| is_private_name_of_enclosing_class(place).then_some(Elsewhere::PrivateNameOfEnclosingClass))
+            .or_else(|| is_static_member_named_constructor(place).then_some(Elsewhere::StaticMemberNamedConstructor))
+    };
     let errors: Vec<Option<Elsewhere>> = places.iter().zip(in_dropped_imports).map(place_of).collect();
     // Nothing comes of a program with an error in it.
     if errors.iter().any(Option::is_none) {
@@ -1820,6 +1850,7 @@ pub fn link(
     }
     let mut extended_globals: Vec<StrId> = Vec::new();
     let mut prototype_property_names: Vec<StrId> = Vec::new();
+    let mut regexp_literals: Vec<(StrId, StrId)> = Vec::new();
     let mut stores_to_methods: Vec<(FileId, MethodStore<Identity>)> = Vec::new();
     for (number, fragment) in fragments.iter().enumerate() {
         if numbering.module_ids.contains_key(&fragment.file) && !is_opaque(fragment.file) {
@@ -1829,6 +1860,11 @@ pub fn link(
             for &name in &fragment.prototype_property_names {
                 prototype_property_names.push(numbering.str(number as u32, name));
             }
+            if !of_the_runtime.contains(&fragment.file) {
+                for &(pattern, flags) in &fragment.regexp_literals {
+                    regexp_literals.push((numbering.str(number as u32, pattern), numbering.str(number as u32, flags)));
+                }
+            }
             stores_to_methods.extend(fragment.stores_to_methods.iter().map(|store| (fragment.file, store.clone())));
         }
     }
@@ -1837,6 +1873,8 @@ pub fn link(
         names.sort_unstable_by(|&a, &b| strs.get(a).cmp(strs.get(b)));
         names.dedup();
     }
+    regexp_literals.sort_unstable_by_key(|&(pattern, flags)| (pattern.0, flags.0));
+    regexp_literals.dedup();
     times.add("number", &mut since);
 
     // From here on the fragments are taken apart. What was noted is put together, with the types in the place of what the fragments call
@@ -1895,22 +1933,23 @@ pub fn link(
         }
     });
 
-    let mut program = Program { strs, tys, extended_globals, prototype_property_names, entries: (0..entry_points.len()).map(FuncId::new).collect(), ..Program::default() };
+    let mut program = Program { strs, tys, extended_globals, prototype_property_names, regexp_literals, entries: (0..entry_points.len()).map(FuncId::new).collect(), ..Program::default() };
     for entry_point in entry_points {
         // A file that only declares has no code to start with.
         let run: Vec<FuncId> = entry_point.iter().filter_map(|&root| func_ids.get(&FuncKey::Module(root)).copied()).collect();
-        program.funcs.push(entry_function(name_of_entry, program.tys.anything, &run));
+        let import = entry_point.first().and_then(|&first| func_ids.get(&FuncKey::DynamicImport(first, false)).copied());
+        program.funcs.push(entry_function(name_of_entry, program.tys.anything, &run, import));
     }
     program.funcs.extend(funcs.into_iter().map(|(func, _)| func));
     program.builtin_modules = builtin_roots.iter().map(|(id, root)| (*id, func_ids[root])).collect();
     program.builtin_functions = builtin_functions.iter().map(|(id, root, visibility)| (*id, func_ids[root], *visibility)).collect();
     let init_of = |file: FileId| func_ids.get(&FuncKey::Module(file)).copied().unwrap_or(FuncId::NONE);
-    let mut line_tables: Vec<(FileId, Vec<u8>)> = modules.iter().map(|&(file, _)| (file, Vec::new())).collect();
+    let mut line_tables: Vec<(FileId, Vec<u8>)> = modules.iter().map(|&file| (file, Vec::new())).collect();
     for_each_mut(&mut line_tables, in_parallel, &|(file, table)| {
         let text = &checked.files.hir(*file).text;
         *table = line_table(text, &compute_ecma_line_starts(text));
     });
-    for (&(file, path), (_, line_table)) in modules.iter().zip(line_tables) {
+    for (&file, (_, line_table)) in modules.iter().zip(line_tables) {
         // A module of the runtime is shown by the name the module loader has for it: native code goes by that text.
         let builtin = match checked.files.module(file).builtin {
             Some(Builtin::Module(id)) => bun_builtin_syntax::Archive::embedded().manifest().module(id),
@@ -1918,10 +1957,11 @@ pub fn link(
         };
         let shown = match builtin {
             Some(module) => module.name.to_vec(),
-            None if shows_whole_paths => checked.files.module(file).file_name().to_vec(),
+            None if shows_whole_paths || checked.files.module(file).file_name().starts_with(bun_builtin_syntax::VIRTUAL_ROOT) => checked.files.module(file).file_name().to_vec(),
             None => get_relative_path_from_directory(shown_from, checked.files.module(file).file_name(), checked.files.is_case_sensitive),
         };
-        program.modules.push(ir::Module { path, init: init_of(file), display_path: program.strs.intern(&shown), line_table });
+        let display_path = program.strs.intern(&shown);
+        program.modules.push(ir::Module { path: display_path, init: init_of(file), display_path, line_table });
     }
     for &at in &globals {
         let ir::Global { name, module, declared, initialization, only_function, only_function_flags } = fragments[at.fragment as usize].globals[at.index as usize].global;
@@ -2022,26 +2062,27 @@ pub fn link(
         }
     }
 
-    // What is found in the place of a static member is handed the class object it is found from as `this`, and may construct it.
+    // A class that is not laid out constructs what it extends by its value. Where that may be a class that is laid out, the objects of
+    // that layout do not all have the prototype object of that class.
     let has_replaced_static_member = |layout: &Layout| layout.methods.iter().any(|method| method.flags & method_flags::STATIC != 0 && method.flags & method_flags::MAY_BE_REPLACED != 0);
-    for &(layout, ty) in &views {
-        let Some((file, class)) = classes[layout.idx()] else { continue };
+    for &(layout, _) in views.iter().filter(|view| classes[view.0.idx()].is_some()) {
         let mut at = layout;
         while at.is_some() && !has_replaced_static_member(&program.layouts[at.idx()]) {
             at = program.layouts[at.idx()].base;
         }
         if at.is_some() {
             classes_as_values.push(layout);
-            if !c.hir(file)[class].flags.contains(Flags::ABSTRACT) {
-                c.note_allocation(ty);
-            }
         }
     }
-    noted.absorb(c.take_noted());
-
-    // A class that is not laid out constructs what it extends by its value. Where that may be a class that is laid out, the objects of
-    // that layout do not all have the prototype object of that class.
-    classes_as_values.retain(|class| class.is_some());
+    let named_by_typeof = c.classes_named_by_typeof();
+    for layout in (0..program.layouts.len()).map(LayoutId::new).filter(|layout| classes[layout.idx()].is_some_and(|class| named_by_typeof.contains(&class))) {
+        let mut at = layout;
+        while at.is_some() {
+            classes_as_values.push(at);
+            at = program.layouts[at.idx()].base;
+        }
+    }
+    classes_as_values.retain(|class| class.is_some() && program.layouts[class.idx()].class_flags & class_flags::IS_LAID_OUT != 0);
     classes_as_values.sort_unstable();
     classes_as_values.dedup();
     let class_of = |layout: &LayoutId| classes[layout.idx()];
@@ -2062,7 +2103,6 @@ pub fn link(
 
     times.add("classes", &mut since);
 
-    drop_facts_about_static_fields(&mut program);
     let is_of_opaque_file: Vec<bool> = classes.iter().map(|class| class.is_some_and(|class| is_opaque(class.0))).collect();
     let mut names = Names::of(&program, &is_of_opaque_file, in_parallel);
     // A name that the program has no string for is the name of no field.
@@ -2114,21 +2154,27 @@ pub fn link(
     let mut subtypes = c.begin_subtypes(noted, &asked, field_types, stored, explain.progress);
     times.add("flows", &mut since);
     let mut has_run_out = false;
-    while !subtypes.questions().is_empty() || !subtypes.own_questions().is_empty() {
-        let (answers, has_this_run_out) = answers_to(checked, subtypes.questions(), subtypes.stored(), in_parallel);
-        subtypes.say("the answers of the other checkers");
-        let own_answers = c.answer(subtypes.own_questions(), subtypes.stored());
-        has_run_out |= has_this_run_out;
-        times.add("answers", &mut since);
-        subtypes.advance(&answers, &own_answers);
-        times.add("flows", &mut since);
+    let mut cut_short = Vec::new();
+    for is_second_run in [false, true] {
+        if is_second_run {
+            subtypes = subtypes.begin_again();
+        }
+        while !subtypes.questions().is_empty() || !subtypes.own_questions().is_empty() {
+            let (answers, has_this_run_out) = answers_to(checked, subtypes.questions(), subtypes.stored(), &mut cut_short, in_parallel);
+            subtypes.say("the answers of the other checkers");
+            c.know_questions_cut_short(&cut_short);
+            let own_answers = c.answer(subtypes.own_questions(), subtypes.stored());
+            keep_questions_cut_short(&mut cut_short, c.questions_cut_short());
+            has_run_out |= has_this_run_out;
+            times.add("answers", &mut since);
+            subtypes.advance(&answers, &own_answers);
+            times.add("flows", &mut since);
+        }
     }
     if let Some(table) = subtypes.is_over_budget() {
         problems.push(Problem { file: nowhere, pos: 0, what: format!("a program with so many flows between its types: {table} is over its budget").into() });
     }
-    let let_through = c.let_through_for_closure(&asked, explain.escapes);
-    times.add("escapes", &mut since);
-    let mut membership = subtypes.finish(&let_through);
+    let membership = subtypes.finish();
     times.add("flows", &mut since);
     say("the subtypes are found");
     if ran_out_of_stack || has_run_out || c.take_ran_out_of_stack() {
@@ -2144,15 +2190,13 @@ pub fn link(
         }
         out.admits_foreign = reach.admits_foreign;
         out.members = layouts_at(&reach.members);
+        out.members_by_fit = layouts_at(&reach.members_by_fit);
         out.specializations = layouts_at(&reach.specializations);
         // What is stored under a name in the objects of a view is seen as far as the types go: a prediction.
-        for &(name, file, func, certainty) in &reach.callees {
+        for &(name, file, func) in &reach.callees {
             let field = program.strs.find(checked.files.atoms.bytes(name)).and_then(|name| out.field(name));
             if let (Some(field), Some(&func)) = (field, func_ids.get(&FuncKey::Function(file, func))) {
                 out.fields[field as usize].only_function = func;
-                if certainty == Certainty::Fact {
-                    out.fields[field as usize].only_function_flags = ir::only_function_flags::OR_NIL;
-                }
             }
         }
         for &(name, is_at_every_creation) in &reach.set_at_creation {
@@ -2182,27 +2226,6 @@ pub fn link(
                 if out.kind == LayoutKind::Record {
                     out.class_flags |= class_flags::MAY_HAVE_OTHER_PROTOTYPE;
                 }
-            }
-        }
-    }
-    // A field that is absent is read from the prototype chain. So which function it holds is a fact only if it is always there, or nothing can be
-    // found by its name: no object of a class, no record that may inherit from anything, no name that `Object.prototype` has.
-    let on_object_prototype: Vec<StrId> = NAMES_ON_OBJECT_PROTOTYPE.iter().filter_map(|name| program.strs.find(name.as_bytes())).collect();
-    for (&(layout, _), reach) in views.iter().zip(&mut membership.views) {
-        let view = &program.layouts[layout.idx()];
-        let members = || view.members.iter().map(|member| &program.layouts[member.idx()]);
-        let may_inherit = members().chain([view]).any(|layout| layout.kind != LayoutKind::Record || layout.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0);
-        let is_always_there = |layout: &Layout, name: StrId| {
-            layout.field(name).is_some_and(|field| layout.fields[field as usize].flags & (field_flags::OPTIONAL | field_flags::ABSENT_AT_BIRTH | field_flags::NEVER_SEEN_ABSENT) == field_flags::NEVER_SEEN_ABSENT)
-        };
-        let is_inherited = |field: &ir::Field| field.only_function_flags == ir::only_function_flags::OR_NIL && (may_inherit || on_object_prototype.contains(&field.name)) && !members().all(|layout| is_always_there(layout, field.name));
-        let inherited: Vec<usize> = (0..view.fields.len()).filter(|&field| is_inherited(&view.fields[field])).collect();
-        for field in inherited {
-            let field = &mut program.layouts[layout.idx()].fields[field];
-            field.only_function_flags = 0;
-            let name = program.strs.get(field.name);
-            for callee in reach.callees.iter_mut().filter(|callee| checked.files.atoms.bytes(callee.0) == name) {
-                callee.3 = Certainty::Predicted(Doubt::MayBeInherited);
             }
         }
     }
@@ -2303,7 +2326,7 @@ pub fn link(
     }
     times.add("answers", &mut since);
     reads::type_by_the_members(&mut program);
-    let roomier = nil::make_room_for_nil(&mut program);
+    let roomier = nil::make_room_for_nil(&mut program, in_parallel);
     times.add("nil", &mut since);
     say("the subtypes are in the program");
     times.add("members", &mut since);
@@ -2325,7 +2348,11 @@ pub fn link(
     let mut line_starts: Vec<(FileId, StrId, Vec<u32>)> = Vec::new();
     for at in declared_at.iter().flatten() {
         declaring.entry(at.file).or_insert_with(|| {
-            let shown = get_relative_path_from_directory(shown_from, checked.files.module(at.file).file_name(), checked.files.is_case_sensitive);
+            let name = checked.files.module(at.file).file_name();
+            let shown = match name.starts_with(bun_builtin_syntax::VIRTUAL_ROOT) {
+                true => name.to_vec(),
+                false => get_relative_path_from_directory(shown_from, name, checked.files.is_case_sensitive),
+            };
             line_starts.push((at.file, program.strs.intern(&shown), Vec::new()));
             line_starts.len() - 1
         });
@@ -2386,10 +2413,12 @@ pub fn link(
         explained.append(&mut c.explain_foreign(&asked, &membership));
     }
     if explain.members {
+        explained.push(format!("members: {} casts to views that have no member are no tests", roomier.casts_to_empty_views.len()));
+        for &(func, value, to) in &roomier.casts_to_empty_views {
+            let views: Vec<String> = program.tys.get(to).parts.iter().filter_map(|part| if let Part::Class(view) = part { Some(view.idx().to_string()) } else { None }).collect();
+            explained.push(format!("members: no test: f{func} v{value} to shape {}", views.join(" ")));
+        }
         explained.append(&mut c.explain_members(&asked, &membership));
-    }
-    if explain.escapes {
-        explained.append(&mut c.explain_escapes(&asked, &membership));
     }
     if explain.alterations {
         explained.append(&mut c.explain_alterations(&membership));
@@ -2448,11 +2477,6 @@ pub fn link(
             explained.append(&mut c.explain_captures(file));
         }
     }
-    if explain.escape {
-        for &file in &translated {
-            explained.append(&mut c.explain_escape(file));
-        }
-    }
     if explain.fields {
         explained.append(&mut explain_fields(&program, &names));
     }
@@ -2470,7 +2494,7 @@ pub fn link(
     }
     if let Some((name, line)) = explain.literal_at {
         explained.append(&mut literals_shown);
-        for (module, &(file, _)) in modules.iter().enumerate().filter(|(_, module)| program.strs.get(module.1).ends_with(name.as_bytes())) {
+        for (module, &file) in modules.iter().enumerate().filter(|&(_, &file)| checked.files.module(file).file_name().ends_with(name.as_bytes())) {
             let starts = compute_ecma_line_starts(&checked.files.hir(file).text);
             let from = starts.get(line as usize - 1).copied().unwrap_or(u32::MAX);
             let to = starts.get(line as usize).copied().unwrap_or(u32::MAX);
@@ -2491,15 +2515,21 @@ pub fn link(
         explained.push(format!("integers: under {} of the {} names of fields that numbers are seen to get to, they are expected to be int32s", by_text.iter().filter(|verdict| verdict.is_expected_int32()).count(), by_text.len()));
         explained.append(&mut c.explain_int32_fields(&by_text));
     }
-    let mut has_escaped = vec![true; program.layouts.len()];
-    for (&(layout, _), escaped) in views.iter().zip(&membership.escaped) {
-        has_escaped[layout.idx()] = escaped.is_some();
+    let (marked_values, mut remarks_on_collections) = crate::build::literals::sizes_of_sets_of_strings(&program);
+    program.marked_values = marked_values;
+    if explain.literals {
+        explained.append(&mut remarks_on_collections);
     }
-    let shared = share::share_functions(&mut program, &has_escaped);
-    times.add("shared functions", &mut since);
-    if explain.shared {
-        explained.push(format!("shared: {} function expressions capture nothing; {} of them are one function value", shared.candidates, shared.shared));
-        explained.extend(shared.refused.iter().map(|(why, sites)| format!("shared: {sites} are not: {why}")));
+    times.add("collections", &mut since);
+    let mut rows = strangers::label_receivers_of_one_row(&mut program);
+    times.add("rows", &mut since);
+    let mut firsts = strangers::find_first_stores(&mut program, in_parallel);
+    times.add("firsts", &mut since);
+    if explain.firsts {
+        explained.append(&mut firsts);
+    }
+    if explain.rows {
+        explained.append(&mut rows);
     }
     let members = membership.sizes.line();
     since = Instant::now();

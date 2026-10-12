@@ -2487,10 +2487,6 @@ impl<'a> LinkerContext<'a> {
             },
             mangled_props: Some(mangled_props),
             module_info,
-            type_tags: self.facts.as_ref().and_then(|facts| {
-                let source = &parse_graph.input_files.items_source()[source_index.get() as usize];
-                facts.tags_for(source.path.text)
-            }),
             ..Default::default()
         };
 

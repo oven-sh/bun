@@ -875,6 +875,8 @@ impl Response {
             if json_value.is_undefined()
                 || json_value.is_symbol()
                 || json_value.js_type() == bun_jsc::JSType::JSFunction
+                || json_value.js_type() == bun_jsc::JSType::SlimClosure
+                || json_value.js_type() == bun_jsc::JSType::SlimClosureWithProperties
             {
                 let err = global_this
                     .create_type_error_instance(format_args!("Value is not JSON serializable"));

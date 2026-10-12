@@ -2844,6 +2844,8 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
 
         switch (cell->type()) {
         case JSC::JSFunctionType:
+        case JSC::SlimClosureType:
+        case JSC::SlimClosureWithPropertiesType:
         case JSC::InternalFunctionType:
             *result = napi_function;
             return napi_clear_last_error(env);

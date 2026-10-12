@@ -1489,6 +1489,7 @@ impl<'a> Transpiler<'a> {
                     is_entry_point: false,
                     tolerant: false,
                     is_javascript: false,
+                    bigint_names_are_digits: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;

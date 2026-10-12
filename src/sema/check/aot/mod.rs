@@ -29,8 +29,7 @@ mod undeclared_fields;
 
 pub use callees::{Callee, Hole, OnlyFunction};
 pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver};
-pub use escape::{Keeper, argument_use};
-pub use escape_closure::{ByDoor, Certainty, Door, Doubt, EscapeCause, ForClosure};
+pub use escape::argument_use;
 pub use classes::{ClassFacts, MethodStore, ReplacedMethods};
 pub use commonjs::{CommonJsExports, ExportsMention};
 pub use first_stores::FirstStore;
@@ -38,7 +37,7 @@ pub use identity::Identity;
 pub use int32_fields::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
 pub use javascript::CodeOfImport;
 pub use kinds::kind;
-pub use flows::{BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
+pub use flows::{Answer, BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
 pub use subtypes::{Cause, FieldTypes, Sizes, Subtypes};
 pub use storage::{Evaluates, Primitive, Recovery, ReferenceRead, Storage};
 pub use trust::Claim;
@@ -47,6 +46,7 @@ use super::Checker;
 use super::relate::Relation;
 use crate::atom::known;
 use crate::hir::ExprsByKind;
+use crate::local::MaybeLocal;
 use crate::program::FileId;
 use crate::types::{TypeData, TypeId};
 use std::sync::OnceLock;
@@ -138,7 +138,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `{}`, `Object`, an interface without members: a string or a number is one as well. `object` is not meant.
     /// A type that data from outside the program is looked at as: whatever the data holds is there.
     pub fn admits_primitives(&mut self, ty: TypeId) -> bool {
-        ty != TypeId::OBJECT && !matches!(self.data(ty), TypeData::Union(_)) && (self.is_empty_object_type(ty) || ty == self.global_ref(known::Object, &[]) || self.is_tainted(ty))
+        if ty == TypeId::OBJECT || matches!(self.data(ty), TypeData::Union(_)) {
+            return false;
+        }
+        let by_itself = match self.aot.flows.takes_primitives_by_itself.get(&ty) {
+            Some(&known) => known,
+            None => {
+                let found = self.is_empty_object_type(ty) || ty == self.global_ref(known::Object, &[]);
+                self.aot.flows.takes_primitives_by_itself.insert(ty, found);
+                found
+            }
+        };
+        by_itself || self.is_tainted(ty)
     }
 
     /// `is_assignable`, for a question that checking the program need not have asked, and whose answer only saves something. `false` also
@@ -154,6 +165,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The same for any relation.
     fn is_provably_related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
         if self.aot.flows.cut_short.contains(&(source, target, relation as u8)) {
+            self.aot.flows.times_not_known += 1;
             return false;
         }
         let (cuts, fuel) = (self.cuts(), self.fuel.get());
@@ -162,10 +174,19 @@ impl<'p, 's> Checker<'p, 's> {
         let burnt = fuel.min(FUEL) - self.fuel.get();
         self.fuel.set(if fuel == u64::MAX { fuel } else { fuel - burnt });
         if self.cuts() != cuts {
+            self.aot.flows.times_not_known += 1;
             self.aot.flows.cut_short.insert((source, target, relation as u8));
             return false;
         }
         is_related
+    }
+
+    pub fn questions_cut_short(&self) -> Vec<(TypeId, TypeId, u8)> {
+        self.aot.flows.cut_short.iter().copied().filter(|question| !question.is_local()).collect()
+    }
+
+    pub fn know_questions_cut_short(&mut self, questions: &[(TypeId, TypeId, u8)]) {
+        self.aot.flows.cut_short.extend(questions.iter().copied());
     }
 
     pub fn says_nothing(&self, ty: TypeId) -> bool {

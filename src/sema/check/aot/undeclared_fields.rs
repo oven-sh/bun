@@ -165,24 +165,23 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn functions_storing_through_assertions(&mut self, files: &[FileId]) -> &'p [(FileId, FnId)] {
         let shared = &self.p.aot.undeclared_fields.storing_through_assertions;
-        if let Some(known) = shared.get() {
-            return known;
-        }
-        let mut functions: Vec<(FileId, FnId)> = Vec::new();
-        for &file in files {
-            let hir = self.hir(file);
-            for &e in self.exprs_by_kind_of(file).of(ExprTag::Assign) {
-                let ExprKind::Assign { op: None, target, .. } = hir[e].kind else { continue };
-                let ExprKind::Dot { obj, .. } = hir[target].kind else { continue };
-                if matches!(hir[obj].kind, ExprKind::As { expr, .. } if matches!(hir[expr].kind, ExprKind::This))
-                    && let Some(func) = self.enclosing_fn_of_expr(file, e)
-                    && !functions.contains(&(file, func))
-                {
-                    functions.push((file, func));
+        shared.get_or_init(|| {
+            let mut functions: Vec<(FileId, FnId)> = Vec::new();
+            for &file in files {
+                let hir = self.hir(file);
+                for &e in self.exprs_by_kind_of(file).of(ExprTag::Assign) {
+                    let ExprKind::Assign { op: None, target, .. } = hir[e].kind else { continue };
+                    let ExprKind::Dot { obj, .. } = hir[target].kind else { continue };
+                    if matches!(hir[obj].kind, ExprKind::As { expr, .. } if matches!(hir[expr].kind, ExprKind::This))
+                        && let Some(func) = self.enclosing_fn_of_expr(file, e)
+                        && !functions.contains(&(file, func))
+                    {
+                        functions.push((file, func));
+                    }
                 }
             }
-        }
-        shared.get_or_init(|| functions)
+            functions
+        })
     }
 
     /// The first interface without type parameters that is declared to extend `extended` and declares the property itself. None if

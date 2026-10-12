@@ -4578,6 +4578,42 @@ impl<'p, 's> Checker<'p, 's> {
         None
     }
 
+    fn is_refused_by_a_type_written_there(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        (object, index): (TypeId, TypeId),
+        access_flags: AccessFlags,
+    ) -> bool {
+        if self.is_boolean(index) || self.is_tuple(object) {
+            return false;
+        }
+        let TypeData::Union(keys) = self.data(index) else {
+            return false;
+        };
+        let is_no_object = tf::PRIMITIVE | tf::NON_PRIMITIVE | tf::UNKNOWN;
+        if !matches!(r.relation, Relation::Assignable | Relation::AssignableAsStored)
+            || self.has_type_variables(object)
+            || !self.every_type(source, |c, part| c.flags(part) & is_no_object != 0)
+        {
+            return false;
+        }
+        let mut written: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(keys.len());
+        for &key in keys.iter() {
+            let Some(ty) = self.indexed_access_with_flags(object, key, access_flags) else {
+                return false;
+            };
+            if self.is_any(ty) {
+                return false;
+            }
+            if !written.contains(&ty) {
+                written.push(ty);
+            }
+        }
+        let product = (written.iter()).fold(1usize, |size, &ty| size.saturating_mul(self.parts(ty).len()));
+        product < 100_000 && (written.iter()).any(|&ty| !self.is_related_to_ex::<false>(r, source, ty, REC_TARGET, STATE_TARGET).holds())
+    }
+
     /// `structuredTypeRelatedToWorker`. `sd`, `td`: the `TypeData` of `source` and `target`.
     pub(super) fn structured_type_related_to_worker<const REPORT: bool>(
         &mut self,
@@ -4737,17 +4773,22 @@ impl<'p, 's> Checker<'p, 's> {
                         self.base_constraint_or_type(object),
                         self.base_constraint_or_type(index),
                     );
+                    let access_flags = if base_object != object {
+                        AccessFlags::WRITING | AccessFlags::NO_INDEX_SIGNATURES
+                    } else {
+                        AccessFlags::WRITING
+                    };
                     if !self.is_generic_object_type(base_object)
                         && !self.is_generic_index_type(base_index)
-                        && let Some(constraint) = self.indexed_access_with_flags(
-                            base_object,
-                            base_index,
-                            if base_object != object {
-                                AccessFlags::WRITING | AccessFlags::NO_INDEX_SIGNATURES
-                            } else {
-                                AccessFlags::WRITING
-                            },
-                        )
+                        && (REPORT
+                            || !self.is_refused_by_a_type_written_there(
+                                r,
+                                source,
+                                (base_object, base_index),
+                                access_flags,
+                            ))
+                        && let Some(constraint) =
+                            self.indexed_access_with_flags(base_object, base_index, access_flags)
                     {
                         if REPORT && shared.original_error_chain.is_some() {
                             r.restore_error_state(&shared.save_error_state);

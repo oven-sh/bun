@@ -2469,8 +2469,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             )
         };
+        let is_for_direct_eval = matches!(self.bound(file).expr_parent[e.idx()], Parent::Prop(p)
+            if matches!(hir[p].key, PropKey::Name(key) if self.atoms().bytes(key) == crate::direct_eval::KEY_OF_SCOPE));
         let Some(t) = self.try_get_this_type_at_ex(file, this, container) else {
-            if !self.p.files.options.no_implicit_this {
+            if !self.p.files.options.no_implicit_this || is_for_direct_eval {
                 return TypeId::ANY;
             }
             let is_shadowed = self
@@ -2486,6 +2488,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if captured_by_arrow_function
             && self.p.files.options.no_implicit_this
+            && !is_for_direct_eval
             && is_global_this(self, t)
         {
             self.error_at(node, 7041, &[]);

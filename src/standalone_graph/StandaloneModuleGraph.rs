@@ -997,13 +997,13 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         const HAS_AOT_IMAGE                 = 1 << 14;
         const PRESERVES_SOURCE_PATHS        = 1 << 15;
-        const NAMES_SYSTEM_CA_CERTIFICATES  = 1 << 16;
     }
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 unsafe extern "C" {
+    safe fn Bun__AOT__imageAlignment() -> usize;
     fn Bun__AOT__imageStringTable(bytes: *const u8, len: usize, result: *mut usize) -> bool;
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
     fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
@@ -1600,7 +1600,7 @@ pub(crate) fn to_bytes(
                 // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
                 string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
             } else if output_file.output_kind == options::OutputKind::AotImage {
-                string_builder.cap += bytes.len() + AOT_IMAGE_ALIGNMENT + 3 * size_of::<u32>();
+                string_builder.cap += bytes.len() + Bun__AOT__imageAlignment() + 3 * size_of::<u32>();
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
@@ -1897,7 +1897,7 @@ pub(crate) fn to_bytes(
         shared
     });
     let aot_image_ptr =
-        aot_image.map(|image| append_aligned(&mut string_builder, image, AOT_IMAGE_ALIGNMENT));
+        aot_image.map(|image| append_aligned(&mut string_builder, image, Bun__AOT__imageAlignment()));
     let mut bytecode_string_table_ptr = bytecode_string_table_ptr;
     if let Some(image_ptr) = aot_image_ptr {
         if let Some((offset, length)) = image_string_table {
@@ -2029,12 +2029,6 @@ pub(crate) fn to_bytes(
         | Flags::SOURCE_TEXT_CONTIGUOUS
         | Flags::HAS_SOURCE_HASHES
         | Flags::HAS_BUILTIN_BYTECODE;
-    if output_files.iter().any(|file| {
-        matches!(file.output_kind, options::OutputKind::EntryPoint | options::OutputKind::Chunk)
-            && matches!(&file.value, options::OutputFileValue::Buffer { bytes } if bun_core::strings::contains(bytes, b"getCACertificates"))
-    }) {
-        flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
-    }
     if bytecode_string_table_ptr.length != 0 {
         let mut record = [0u8; 8];
         record[0..4].copy_from_slice(&bytecode_string_table_ptr.offset.to_le_bytes());
@@ -3602,8 +3596,6 @@ fn append_bytecode_aligned(
 ) -> StringPointer {
     append_aligned(string_builder, bytecode, 128)
 }
-
-const AOT_IMAGE_ALIGNMENT: usize = 16 * 1024;
 
 fn append_aligned(
     string_builder: &mut bun_core::StringBuilder,

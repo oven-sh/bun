@@ -1792,7 +1792,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         }
         return true;
     }
-    case JSFunctionType: {
+    case JSFunctionType:
+    case SlimClosureType:
+    case SlimClosureWithPropertiesType: {
         return false;
     }
 
@@ -2110,6 +2112,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case BigUint64ArrayType:
     case StringObjectType:
     case JSFunctionType:
+    case SlimClosureType:
+    case SlimClosureWithPropertiesType:
     case JSAsJSONType:
     case JSDOMWrapperType:
     case GlobalObjectType:
@@ -4945,6 +4949,9 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
         }
     }
 
+    if (isSlimClosureType(obj->type()))
+        return toStringAdopt(JSC::AOT::nameOfSlimClosure(obj));
+
     if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
 
         WTF::String actualName = function->name(vm);
@@ -5195,7 +5202,7 @@ void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJS
 
     // Do not call .getObject() on it.
     // https://github.com/oven-sh/bun/issues/13311
-    JSC::Exception* exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::LeaveToUnwinder);
+    JSC::Exception* exception = JSC::Exception::create(vm, value);
     scope.throwException(arg1, exception);
 }
 

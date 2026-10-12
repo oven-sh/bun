@@ -3,16 +3,17 @@
 //! record is that of the header. The sizes of the records travel along, so that a difference is an error and not a wrong program.
 
 use crate::declared::Part;
-use crate::id::V;
+use crate::id::{FuncId, V};
 use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, Why};
 use bun_sema::util::{InParallel, for_each_mut};
 
 pub const MAGIC: u32 = 0x5249_5442;
-pub const VERSION: u32 = 26;
+pub const VERSION: u32 = 30;
 pub const NONE: u32 = u32::MAX;
 /// In the prediction of a value: the other bits number a function, which the value is expected to be a closure of, and not a type.
 pub const PREDICTION_IS_CLOSURE: u32 = 1 << 31;
 pub const PREDICTION_IS_BY_KEY: u32 = 1 << 30;
+pub const RECEIVER_IS_OF_ONE_ROW: u32 = 1 << 29;
 /// In the type of a parameter of a function: it is written down. The other bits number the type. Not in `NONE`.
 pub const PARAMETER_IS_ANNOTATED: u32 = 1 << 31;
 
@@ -229,7 +230,7 @@ pub fn record(def: &Def) -> Record<'_> {
                 Why::NonNull(_) => 2,
                 Why::Claim => 3,
                 Why::Flow => 4,
-                Why::Upcast => 5,
+                Why::Upcast | Why::Forced => 5,
                 Why::Coerce => 6,
                 Why::CoerceFreshGraph => 6 | 2 << 8,
             };
@@ -345,7 +346,7 @@ struct Writer {
     targets: Vec<u32>,
 }
 
-const SIZES: [u32; 12] = [2, 8, 4, 18, 8, 5, 6, 5, 16, 10, 11, 3];
+const SIZES: [u32; 12] = [2, 8, 4, 20, 8, 5, 6, 5, 16, 10, 11, 3];
 
 impl Writer {
     /// The words as a list in the pool: where it starts and how long it is.
@@ -355,13 +356,35 @@ impl Writer {
         [start, self.words.len() as u32 - start]
     }
 
-    fn functions(&mut self, funcs: &[Func]) {
-        for func in funcs {
+    fn functions(&mut self, funcs: &[Func], first: usize, accesses_of_one_row: &[(FuncId, V)], marked_values: &[Vec<V>], known_places: &[(FuncId, V, u32)]) {
+        let mut is_marked: Vec<bool> = Vec::new();
+        for (index, func) in funcs.iter().enumerate() {
+            let id = FuncId::new(first + index);
+            let mut placed = known_places[known_places.partition_point(|access| access.0 < id)..].iter().take_while(|access| access.0 == id).peekable();
+            let marked_values = &marked_values[first + index];
+            is_marked.clear();
+            if !marked_values.is_empty() {
+                is_marked.resize(func.values.len(), false);
+            }
+            for v in marked_values {
+                if let Some(mark) = is_marked.get_mut(v.idx()) {
+                    *mark = true;
+                }
+            }
+            let mut labelled = accesses_of_one_row[accesses_of_one_row.partition_point(|access| access.0 < id)..].iter().take_while(|access| access.0 == id).peekable();
             let parameters = self.list(func.params.iter().enumerate().map(|(i, t)| if t.is_some() && func.why_of_param(i) == Why::Cast { t.0 | PARAMETER_IS_ANNOTATED } else { t.0 }));
             let captures = self.list(func.captures.iter().map(|ty| ty.0));
             let (blocks, values) = (self.blocks.len() as u32 / SIZES[9], self.values.len() as u32 / SIZES[10]);
-            for value in &func.values {
-                let r = record(&value.def);
+            for (number, value) in func.values.iter().enumerate() {
+                let mut r = record(&value.def);
+                if is_marked.get(number) == Some(&true) {
+                    r.immediates[1] = 1;
+                }
+                let is_labelled = labelled.next_if(|access| access.1.idx() == number).is_some();
+                let place = placed.next_if(|access| access.1.idx() == number).map(|access| access.2);
+                assert!(place.is_none() || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a place stands on what is no access by name");
+                assert!(placed.peek().is_none_or(|access| access.1.idx() > number), "two words stand on one access, or the table is not sorted");
+                assert!(!is_labelled || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a label stands on what is no access by name");
                 let arguments = self.list(r.args.iter().map(|v| v.0));
                 let prediction = match value.prediction {
                     Prediction::None => NONE,
@@ -376,7 +399,7 @@ impl Writer {
                     r.children[1].0,
                     r.children[2].0,
                     r.immediates[0],
-                    r.immediates[1],
+                    place.unwrap_or(if is_labelled { RECEIVER_IS_OF_ONE_ROW } else { r.immediates[1] }),
                     arguments[0],
                     arguments[1],
                     value.ty.0,
@@ -476,8 +499,9 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
             w.methods.extend([method.name.0, method.func.0, method.kind as u32, method.flags as u32, method.key]);
         }
         let members = w.list(layout.members.iter().map(|member| member.0));
+        let members_by_fit = w.list(layout.members_by_fit.iter().map(|member| member.0));
         let specializations = w.list(layout.specializations.iter().map(|specialization| specialization.0));
-        let static_fields = w.list(layout.static_fields.iter().flat_map(|&(name, variable)| [name.0, variable]));
+        let static_fields = w.list(layout.static_fields.iter().flat_map(|&(name, declared)| [name.0, declared.0]));
         w.shapes.extend([
             layout.kind as u32,
             layout.name.0,
@@ -490,6 +514,8 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
             u32::from(layout.is_allocated) | u32::from(layout.may_be_frozen) << 1 | layout.class_flags | u32::from(layout.admits_foreign) << 7,
             members[0],
             members[1],
+            members_by_fit[0],
+            members_by_fit[1],
             specializations[0],
             specializations[1],
             layout.environment.0,
@@ -500,14 +526,16 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
         ]);
     }
     for global in &p.globals {
-        w.variables.extend([global.name.0, global.module.0, global.declared.0, global.initialization as u32, global.only_function.0, global.only_function_flags as u32]);
+        w.variables.extend([global.name.0, global.module.0, global.declared.0, if global.initialization == crate::ir::Initialization::Lazy { crate::ir::Initialization::Undefined as u32 } else { global.initialization as u32 }, global.only_function.0, global.only_function_flags as u32]);
     }
     for module in &p.modules {
         w.modules.extend([module.path.0, module.init.0, module.display_path.0, w.bytes.len() as u32, module.line_table.len() as u32]);
         w.bytes.extend_from_slice(&module.line_table);
     }
-    let mut slices: Vec<(&[Func], Writer)> = p.funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, Writer::default())).collect();
-    for_each_mut(&mut slices, in_parallel, &|(funcs, slice)| slice.functions(funcs));
+    let mut slices: Vec<((usize, &[Func]), Writer)> = p.funcs.chunks(FUNCTIONS_OF_A_SLICE).enumerate().map(|(number, funcs)| ((number * FUNCTIONS_OF_A_SLICE, funcs), Writer::default())).collect();
+    let none_is_marked: Vec<Vec<V>> = if p.marked_values.len() == p.funcs.len() { Vec::new() } else { vec![Vec::new(); p.funcs.len()] };
+    let marked_values = if p.marked_values.len() == p.funcs.len() { &p.marked_values } else { &none_is_marked };
+    for_each_mut(&mut slices, in_parallel, &|((first, funcs), slice)| slice.functions(funcs, *first, &p.accesses_of_one_row, marked_values, &p.known_places));
     let mut before = [w.words.len() as u32, 0, 0, 0];
     let mut slices: Vec<(Writer, [u32; 4])> = (slices.into_iter())
         .map(|(_, slice)| {
@@ -530,12 +558,13 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     let builtin_functions = list(&mut p.builtin_functions.iter().flat_map(|&(id, func, visibility)| [id, func.0, visibility]));
     let functions_by_key = list(&mut p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
     let entries = list(&mut p.entries.iter().map(|func| func.0));
+    let regexp_literals = list(&mut p.regexp_literals.iter().flat_map(|&(pattern, flags)| [pattern.0, flags.0]));
 
     let number_of_bytes = w.bytes.len() as u32;
     while w.bytes.len() % 4 != 0 {
         w.bytes.push(0);
     }
-    const HEADER_WORDS: usize = 5 + 14 * 2 + 12 + 12;
+    const HEADER_WORDS: usize = 5 + 14 * 2 + 14 + 12;
     let of_slices = |table: fn(&Writer) -> &[u32]| slices.iter().map(move |(slice, _)| table(slice));
     let tables: [(Vec<&[u32]>, u32); 13] = [
         (std::iter::once(&head[..]).chain(of_slices(|slice| &slice.words[..])).chain([&w.words[..]]).collect(), 1),
@@ -567,6 +596,7 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     header.extend(builtin_functions);
     header.extend(functions_by_key);
     header.extend(entries);
+    header.extend(regexp_literals);
     header.extend(SIZES.iter().map(|words| words * 4));
     header[2] = offset as u32;
     debug_assert_eq!(header.len(), HEADER_WORDS);

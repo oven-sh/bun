@@ -25,7 +25,7 @@ enum Awaiting {
     /// The block has one predecessor: the variable holds here what it holds there.
     Only(BlockId),
     /// The values at the ends of `preds` meet in `param` of `block`. That of `preds[at]` is looked for.
-    Join { block: BlockId, param: V, preds: Vec<BlockId>, at: usize },
+    Join { block: BlockId, param: V, preds: Vec<BlockId>, at: usize, only: Option<V> },
 }
 
 pub struct FuncBuilder {
@@ -110,6 +110,7 @@ impl FuncBuilder {
             return;
         }
         let from = self.block;
+        let term = if self.is_dead_here() { Term::Unreachable } else { term };
         term.for_each_target(|t| {
             debug_assert!(!self.states[t.block.idx()].is_sealed, "a sealed block gets no new predecessor");
             self.states[t.block.idx()].preds.push(from);
@@ -145,12 +146,14 @@ impl FuncBuilder {
     /// It keeps its own list of where it has to go on: a function has as many blocks in a row as it has statements.
     fn read_in(&mut self, var: Var, block: BlockId) -> V {
         let mut awaiting: Vec<Awaiting> = Vec::new();
+        let mut found_held: Vec<V> = Vec::new();
         let mut block = block;
         loop {
             // Up from `block` to where the variable has a value.
             let mut with_one_pred_in_a_row = 0;
             let mut value = loop {
                 if let Some(&v) = self.states[block.idx()].defs.get(&var) {
+                    found_held.push(v);
                     break v;
                 }
                 let (is_sealed, preds) = (self.states[block.idx()].is_sealed, self.states[block.idx()].preds.len());
@@ -181,7 +184,7 @@ impl FuncBuilder {
                 self.states[block.idx()].defs.insert(var, param);
                 let preds = self.preds_of(block);
                 let first = preds[0];
-                awaiting.push(Awaiting::Join { block, param, preds, at: 0 });
+                awaiting.push(Awaiting::Join { block, param, preds, at: 0, only: None });
                 block = first;
                 with_one_pred_in_a_row = 0;
             };
@@ -192,18 +195,49 @@ impl FuncBuilder {
                     Some(Awaiting::Only(below)) => {
                         self.states[below.idx()].defs.insert(var, value);
                     }
-                    Some(Awaiting::Join { block: join, param, preds, at }) => {
+                    Some(Awaiting::Join { block: join, param, preds, at, only }) => {
                         self.pass(preds[at], join, value);
+                        let only = if at == 0 { Some(value) } else { only.filter(|&only| only == value) };
                         if let Some(&next) = preds.get(at + 1) {
-                            awaiting.push(Awaiting::Join { block: join, param, preds, at: at + 1 });
+                            awaiting.push(Awaiting::Join { block: join, param, preds, at: at + 1, only });
                             block = next;
                             break;
                         }
-                        value = param;
+                        value = match only {
+                            Some(only) if only != param && !found_held.contains(&param) && self.takes_back(join, param, &preds) => {
+                                self.states[join.idx()].defs.insert(var, only);
+                                only
+                            }
+                            _ => param,
+                        };
                     }
                 }
             }
         }
+    }
+
+    fn takes_back(&mut self, block: BlockId, param: V, preds: &[BlockId]) -> bool {
+        if self.func.blocks[block.idx()].params.last() != Some(&param) {
+            return false;
+        }
+        self.func.blocks[block.idx()].params.pop();
+        for pred in preds {
+            if let Some(term) = &mut self.func.blocks[pred.idx()].term {
+                term.for_each_target_mut(|t| {
+                    if t.block == block {
+                        t.args.pop();
+                    }
+                });
+            }
+        }
+        if param.idx() + 1 == self.func.values.len() {
+            self.func.values.pop();
+        } else {
+            let undefined = self.undefined;
+            self.func.values[param.idx()] = crate::ir::Value { def: crate::ir::Def::Op(Op::Undefined), pos: 0, ty: undefined, prediction: Prediction::None };
+            self.func.blocks[block.idx()].ops.insert(0, param);
+        }
+        true
     }
 
     /// Passes the value as one more argument wherever `pred` goes on to `block`.

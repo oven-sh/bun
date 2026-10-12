@@ -87,6 +87,12 @@ pub(super) struct State {
     used_as_arrays: FxHashMap<FileId, Rc<FxHashSet<SymbolId>>>,
 }
 
+impl State {
+    pub(super) fn nothing_grows(&self) -> bool {
+        self.growing.is_none()
+    }
+}
+
 /// How far control flow tells what a variable holds.
 #[derive(Copy, Clone)]
 struct Told {
@@ -850,6 +856,8 @@ impl<'p, 's> Checker<'p, 's> {
                     ExprKind::Ident(_) if self.names_global_object(file, callee, b"String") => kind::STRING,
                     ExprKind::Ident(_) if self.names_global_object(file, callee, b"Boolean") => kind::BOOLEAN,
                     ExprKind::Ident(_) if self.names_global_object(file, callee, b"Number") => kind::NUMBER,
+                    ExprKind::Ident(_) if self.names_global_object(file, callee, b"Symbol") => kind::SYMBOL,
+                    ExprKind::Dot { obj, name, chain: Chain::No, .. } if self.atoms().bytes(name) == b"for" && self.names_global_object(file, obj, b"Symbol") => kind::SYMBOL,
                     ExprKind::Ident(_) if self.function_named_by_text(file, callee).is_some() => match self.function_named_by_text(file, callee) {
                         Some(func) => self.kinds_returned_by(file, func),
                         None => kind::ANYTHING,

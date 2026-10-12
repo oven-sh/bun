@@ -685,6 +685,7 @@ impl Dump<'_, '_> {
             close_pos,
             chain,
             template,
+            can_be_unwrapped_if_unused: _,
         } = node!(self, depth, label, calls, id);
         put!(
             self,

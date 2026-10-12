@@ -664,21 +664,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// `--aot-explain=alterations`. Numbers alone.
     pub fn explain_alterations(&mut self, membership: &Membership) -> Vec<String> {
         let allocated: Vec<&super::flows::Reach> = membership.views.iter().filter(|reach| reach.is_allocated).collect();
-        let escaped = membership.views.iter().zip(&membership.escaped).filter(|(reach, escaped)| reach.is_allocated && escaped.is_some()).count();
-        let mut lines = vec![format!("alterations: {} allocated layouts, {escaped} of them have escaped", allocated.len())];
+        let mut lines = vec![format!("alterations: {} allocated layouts", allocated.len())];
         for (alteration, what) in Alteration::ALL.into_iter().zip(["integrity level", "prototype"]) {
             let [object_type, type_parameter, untyped, depends, no_layout, as_value, to_null] = membership.alteration_sites[alteration as usize];
             lines.push(format!(
                 "alterations: {what}: places by the type of the operand: an object type {object_type}, a type parameter {type_parameter}, nothing said {untyped}, another type that depends on a type parameter or a spread {depends}, no layout {no_layout}; the built-in as a value {as_value}; to null {to_null}"
             ));
             let marked = allocated.iter().filter(|reach| if alteration == Alteration::IntegrityLevel { reach.may_be_frozen } else { reach.may_have_other_prototype }).count();
-            let [by_types, with_escaped, is_anything] = membership.altered_by[alteration as usize];
+            let [by_types, in_all, is_anything] = membership.altered_by[alteration as usize];
             for (language, places) in ["TypeScript", "JavaScript"].into_iter().zip(membership.untyped_alterations[alteration as usize]) {
                 let by_form: Vec<String> = FORMS.iter().zip(places).filter(|of_form| of_form.1 != [0; AROUND.len()]).map(|(form, by_around)| format!("{form} {by_around:?}")).collect();
                 lines.push(format!("alterations: {what}: nothing said, {language}, by the form of the operand, each {AROUND:?}: {}", by_form.join(", ")));
             }
-            lines.push(format!("alterations: {what}: {marked} allocated layouts are marked: {by_types} by types and type parameters, {with_escaped} with those that have escaped, every layout: {}", is_anything != 0));
-            for (which, first) in ["all that has escaped", "every layout"].into_iter().zip(membership.widest_alterations[alteration as usize]) {
+            lines.push(format!("alterations: {what}: {marked} allocated layouts are marked: {by_types} by types and type parameters, {in_all} in all, every layout: {}", is_anything != 0));
+            for (which, first) in ["every layout, nothing being said of the operand", "every layout"].into_iter().zip(membership.widest_alterations[alteration as usize]) {
                 if let Some(first) = first {
                     lines.push(format!("alterations: {what}: where: the first place that marks {which}: {}", self.place_for_people(first)));
                 }

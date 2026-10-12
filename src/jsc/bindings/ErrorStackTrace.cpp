@@ -225,9 +225,11 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
 #if ENABLE(AOT)
     } else if (auto reported = frame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
         m_isCompiledAheadOfTime = true;
-        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(reported->lineColumn.line), OrdinalNumber::fromOneBasedInt(reported->lineColumn.column) };
-        m_sourcePositionsState = SourcePositionsState::Calculated;
-        m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode;
+        if (frame.hasLineAndColumnInfo()) {
+            m_sourcePositions = { OrdinalNumber::fromOneBasedInt(reported->lineColumn.line), OrdinalNumber::fromOneBasedInt(reported->lineColumn.column) };
+            m_sourcePositionsState = SourcePositionsState::Calculated;
+            m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode;
+        }
 #endif
     } else if (auto* codeBlock = frame.codeBlock()) {
         auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
@@ -297,7 +299,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-    auto url = m_isCompiledAheadOfTime && (!m_stackFrame->isBuiltinFunction() || !Zig::sourceURL(m_stackFrame->ownerExecutable()->source()).isEmpty()) ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
+    auto url = m_isCompiledAheadOfTime && (!m_stackFrame->isBuiltinFunction() || !m_stackFrame->ownerExecutable() || !Zig::sourceURL(m_stackFrame->ownerExecutable()->source()).isEmpty()) ? Zig::sourceURL(m_vm, *m_stackFrame) : Zig::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
@@ -579,7 +581,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         }
 
 #if ENABLE(AOT)
-        if (frame.isTypedAOTFrame() && codeType == JSC::CodeType::FunctionCode) {
+        if (frame.isTypedAOTFrame() && codeType == JSC::CodeType::FunctionCode && !(frame.isAsyncFrame() && JSC::AOT::typedFunctionHasGivenName(frame.typedAOTFunction()))) {
             functionName = JSC::AOT::typedFunctionName(frame.typedAOTFunction());
         }
 #endif
@@ -589,6 +591,10 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         }
     } else if (callee) {
         functionName = Zig::functionName(vm, callee);
+#if ENABLE(AOT)
+    } else if (frame.isTypedAOTFrame()) {
+        functionName = JSC::AOT::typedFunctionName(frame.typedAOTFunction());
+#endif
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {

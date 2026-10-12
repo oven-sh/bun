@@ -215,11 +215,23 @@ fn run(args: &[String]) {
             }
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
+            const OWN_FLAGS: [&str; 42] = ["--agent", "--all", "--aot", "--aot-explain", "--aot-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--memory", "--min-tasks", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
+            const EXPLAINED: [&str; 25] = ["alterations", "arguments", "builtins", "callees", "captures", "deferred", "disagreements", "errors", "fields", "firsts", "foreign", "given", "integers", "keys", "kinds", "literals", "members", "parsed", "predictions", "progress", "react", "react-locations", "rows", "strangers", "uninitialized"];
             for rejected in &command_line.rejected {
-                // A flag that is no compiler option is one of the tool's own, looked for below.
+                let flag = text(&rejected.flag);
+                // A flag that is no compiler option is one of the tool's own, looked for below, or an error.
                 if !matches!(rejected.error, bun_sema_driver::FlagError::Unknown) {
-                    let flag = text(&rejected.flag);
                     error_line!("{flag} is left out: it has no value that it accepts");
+                    continue;
+                }
+                let value = rejected.value.as_deref().map(text).unwrap_or_default();
+                if !OWN_FLAGS.contains(&&*flag) {
+                    error_line!("error: Unknown flag \"{flag}\"");
+                    std::process::exit(1);
+                }
+                if flag == "--aot-explain" && !EXPLAINED.contains(&&*value) && !value.starts_with("literals=") {
+                    error_line!("error: Unknown flag \"{flag}={value}\"");
+                    std::process::exit(1);
                 }
             }
             let lib_dir = variable(bun_core::zstr!("BUN_SEMA_TS_LIB"));
@@ -303,7 +315,6 @@ fn run(args: &[String]) {
             // `--aot-explain=predictions`: every place where a declaration without a body was taken for a prediction, with counts.
             // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
             // `--aot-explain=captures`: which captured variables are copied, which activations keep an environment and the first reason why, and what each function captures.
-            // `--aot-explain=escape`: of each environment and function expression whether it is unreachable once the activation that made it has ended, and what keeps it if not.
             // `--aot-explain=parsed`: by where a value of type `any` or `unknown` comes from, how many views it is held to in containers, and whether that flags them. The first nine lines are numbers alone.
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
             // `--aot-explain=callees`: the variables and fields that may hold a function and have no one function, or none that is a fact, each with the hole in the proof.
@@ -311,7 +322,7 @@ fn run(args: &[String]) {
             // `--aot-explain=literals`: how many object literals are made as the type they stand under, and for the others the first thing that stands in the way. Numbers alone.
             // `--aot-explain=literals=<the end of a path>:<line>`: the literals that begin on the line, each with its row, and the functions that have an operation of the line, as they are in the end.
             let literal_at = args.iter().find_map(|a| a.strip_prefix("--aot-explain=literals=")?.rsplit_once(':')).and_then(|(name, line)| Some((&*name.to_string().leak(), line.parse().ok()?)));
-            let explain = bun_aot::Explain { shared: has("--aot-explain=shared"), strangers: has("--aot-explain=strangers"), literal_at, literals: has("--aot-explain=literals"), keys: has("--aot-explain=keys"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), members: has("--aot-explain=members"), escapes: has("--aot-explain=escapes"), alterations: has("--aot-explain=alterations"), uninitialized: has("--aot-explain=uninitialized"), kinds: has("--aot-explain=kinds"), arguments: has("--aot-explain=arguments"), captures: has("--aot-explain=captures"), escape: has("--aot-explain=escape"), fields: has("--aot-explain=fields"), disagreements: has("--aot-explain=disagreements"), integers: has("--aot-explain=integers"), predictions: has("--aot-explain=predictions"), callees: has("--aot-explain=callees"), progress: has("--aot-explain=progress"), parsed: has("--aot-explain=parsed"), deferred: has("--aot-explain=deferred") };
+            let explain = bun_aot::Explain { strangers: has("--aot-explain=strangers"), rows: has("--aot-explain=rows"), firsts: has("--aot-explain=firsts"), literal_at, literals: has("--aot-explain=literals"), keys: has("--aot-explain=keys"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), members: has("--aot-explain=members"), alterations: has("--aot-explain=alterations"), uninitialized: has("--aot-explain=uninitialized"), kinds: has("--aot-explain=kinds"), arguments: has("--aot-explain=arguments"), captures: has("--aot-explain=captures"), fields: has("--aot-explain=fields"), disagreements: has("--aot-explain=disagreements"), integers: has("--aot-explain=integers"), predictions: has("--aot-explain=predictions"), callees: has("--aot-explain=callees"), progress: has("--aot-explain=progress"), parsed: has("--aot-explain=parsed"), deferred: has("--aot-explain=deferred") };
             let translation = bun_aot::Translation::new(&constants).explaining(explain);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
@@ -408,6 +419,9 @@ fn run(args: &[String]) {
                     let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write(&translated.program, in_parallel)).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
+                    let written_in = started.elapsed().as_secs_f64();
+                    bun_aot::release(translated.program, in_parallel);
+                    error_line!("aot: the linked program was released in {:.3} s", started.elapsed().as_secs_f64() - written_in);
                     return translated.errors_that_stand;
                 }
                 output_line!("{}", translated.program.dump().trim_end());

@@ -1415,7 +1415,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 table,
                 order,
                 c.options.aot,
-                c.facts.as_ref().map_or(&[][..], |facts| &facts.table),
             );
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);

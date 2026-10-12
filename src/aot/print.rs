@@ -175,7 +175,7 @@ impl Program {
                 o.push_str(" foreign");
             }
             o.push('\n');
-            for (what, layouts) in [("members", &layout.members), ("specializations", &layout.specializations)] {
+            for (what, layouts) in [("members", &layout.members), ("members by fit", &layout.members_by_fit), ("specializations", &layout.specializations)] {
                 if !layouts.is_empty() {
                     let _ = write!(o, "  {what}");
                     for other in layouts {
@@ -217,11 +217,12 @@ impl Program {
                     let _ = writeln!(o, " {:?} f{}{}", method.kind, method.func.0, if method.flags & method_flags::MAY_BE_REPLACED != 0 { " replaced" } else { "" });
                 }
             }
-            for &(name, variable) in &layout.static_fields {
+            for &(name, declared) in &layout.static_fields {
                 o.push_str("  static field ");
                 self.quoted(o, name);
-                let annotated = if variable & crate::ir::STATIC_FIELD_IS_ANNOTATED != 0 { " annotated" } else { "" };
-                let _ = writeln!(o, " variable {}{annotated}", variable & !crate::ir::STATIC_FIELD_IS_ANNOTATED);
+                o.push(' ');
+                ty(o, declared);
+                o.push('\n');
             }
         }
         for (i, global) in self.globals.iter().enumerate().filter(|_| shows_the_rest) {
@@ -233,7 +234,7 @@ impl Program {
             ty(o, global.declared);
             o.push_str(match global.initialization {
                 crate::ir::Initialization::Uninitialized => "",
-                crate::ir::Initialization::Undefined => " undefined",
+                crate::ir::Initialization::Undefined | crate::ir::Initialization::Lazy => " undefined",
                 crate::ir::Initialization::NeverSeen => " never seen uninitialized",
                 crate::ir::Initialization::NeverSeenAndStoredOnce => " never seen uninitialized, stored once",
             });

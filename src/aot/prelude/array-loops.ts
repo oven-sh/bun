@@ -663,7 +663,6 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
     const n = a.length;
     if (n < 2) return a;
     let undefinedCount = 0;
-    let isMoved = false;
     if (isDoubleArray(a)) {
         let from: number[] = $newDoubleArray(n);
         let count = 0;
@@ -682,7 +681,6 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
                     const y: number = $getDoubleIndex(from, j);
                     if (!(+$call<any>(f, undefined, y, x) > 0)) break;
                     $putDoubleIndex(from, j + 1, y);
-                    isMoved = true;
                 }
                 $putDoubleIndex(from, j + 1, x);
             }
@@ -706,7 +704,6 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
                         for (; left < high; left = (left + 1) | 0) $putDoubleIndex(to, left, $getDoubleIndex(from, left));
                         continue;
                     }
-                    isMoved = true;
                     while (left < middle && right < high) {
                         const x: number = $getDoubleIndex(from, left);
                         const y: number = $getDoubleIndex(from, right);
@@ -727,7 +724,6 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
                 to = swapped;
             }
         }
-        if (!isMoved && count === n) return a;
         let k = 0;
         for (; k < count; k++) {
             const x: number = $getDoubleIndex(from, k);
@@ -760,7 +756,6 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
                     const y: T = $getContiguousIndex<T>(from, j);
                     if (!(+$call<any>(f, undefined, y, x) > 0)) break;
                     $putContiguousIndex(from, j + 1, y);
-                    isMoved = true;
                 }
                 $putContiguousIndex(from, j + 1, x);
             }
@@ -784,7 +779,6 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
                         for (; left < high; left = (left + 1) | 0) $putContiguousIndex(to, left, $getContiguousIndex<T>(from, left));
                         continue;
                     }
-                    isMoved = true;
                     while (left < middle && right < high) {
                         const x: T = $getContiguousIndex<T>(from, left);
                         const y: T = $getContiguousIndex<T>(from, right);
@@ -805,7 +799,6 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
                 to = swapped;
             }
         }
-        if (!isMoved && count === n) return a;
         let k = 0;
         for (; k < count; k++) {
             const x = $getContiguousIndex<T>(from, k);

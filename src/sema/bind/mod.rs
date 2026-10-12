@@ -931,6 +931,7 @@ pub struct BoundIn<S: Storage> {
     /// `requiresScopeChange` is true for some parameter, indexed by function: names in its parameters then
     /// resolve to variables of its body.
     pub requires_scope_change: S::List<bool>,
+    pub one_name_is_one_binding: bool,
     /// `node.Symbol`. For an unnamed function expression and for an arrow function `NONE` means
     /// that it has not been created: see `symbol_of_expando_initializer`.
     pub fn_symbol: S::List<SymbolId>,
@@ -1254,6 +1255,9 @@ impl<S: Storage> BoundIn<S> {
         // Among the members of a class or an interface only the type parameters are in scope, as
         // types: `class C<T> { T = 1 }`.
         if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
+            return false;
+        }
+        if self.one_name_is_one_binding && matches!(from, ScopeKind::Param(_)) && ((meaning & flags).contains(SymFlags::FUNCTION) || flags.contains(SymFlags::ALIAS)) && !flags.contains(SymFlags::PARAMETER) {
             return false;
         }
         let f = match from {
@@ -1781,6 +1785,7 @@ impl BoundBuilder {
             type_param_scope: copy_to_arena(&mut self.type_param_scope, arena),
             fns: copy_to_arena(&mut self.fns, arena),
             requires_scope_change: copy_to_arena(&mut self.requires_scope_change, arena),
+            one_name_is_one_binding: self.one_name_is_one_binding,
             fn_symbol: copy_to_arena(&mut self.fn_symbol, arena),
             class_symbol: copy_to_arena(&mut self.class_symbol, arena),
             class_owner: copy_to_arena(&mut self.class_owner, arena),
@@ -1853,6 +1858,7 @@ pub struct BindOptions {
     pub before_es2017: bool,
     /// `Options::names_make_commonjs`
     pub names_make_commonjs: bool,
+    pub one_name_is_one_binding: bool,
 }
 
 /// `bindSourceFile`

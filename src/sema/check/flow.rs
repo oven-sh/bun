@@ -6149,13 +6149,18 @@ impl<'p, 's> Checker<'p, 's> {
         if element.is_never() {
             return self.auto_array_type;
         }
+        if let Some(&known) = self.final_array_types.get(&ty) {
+            return known;
+        }
         let element = if self.is_union(element) {
             let parts = self.parts(element);
             self.union_reduced(parts)
         } else {
             element
         };
-        self.array_of(element)
+        let array = self.array_of(element);
+        self.final_array_types.insert(ty, array);
+        array
     }
 
     /// The type at a join of control flow paths. Evolving arrays stay evolving if all the types are
@@ -6313,25 +6318,33 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::EvolvingArray(element) = *self.data(ty) else {
             return ty;
         };
+        if let Some(&known) = self.evolving_arrays_grown.get(&(ty, file, value)) {
+            return known;
+        }
         let hir = self.hir(file);
-        let added = match hir[value].kind {
+        let (added, typed) = match hir[value].kind {
             ExprKind::Spread(inner) => {
                 let spread = self.context_free_type_of_expression(file, inner);
-                self.iterated_type_of_spread(spread)
+                (self.iterated_type_of_spread(spread), inner)
             }
-            _ => self.context_free_type_of_expression(file, value),
+            _ => (self.context_free_type_of_expression(file, value), value),
         };
         let added = self.base_of_literal(added);
         let added = self.regular_type_of_object_literal(added);
-        if self
+        let grown = if self
             .parts(added)
             .iter()
             .all(|a| self.parts(element).contains(a))
         {
-            return ty;
+            ty
+        } else {
+            let element = self.union(&[element, added]);
+            self.evolving_array(element)
+        };
+        if (self.p.context_free_expr_types).get(&self.task, &(file, typed)).is_some() {
+            self.evolving_arrays_grown.insert((ty, file, value), grown);
         }
-        let element = self.union(&[element, added]);
-        self.evolving_array(element)
+        grown
     }
 
     /// `getTypeAtFlowNode`
@@ -6660,6 +6673,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let reference = &walk.reference;
         while let Some((then, shared_flow)) = pending.pop() {
+            if let Pending::Mutation(expr) = then {
+                ty = self.after_array_mutation(file, ty, expr);
+                if shared_flow.is_some() {
+                    walk.shared_flows
+                        .push(shared_flow, FlowType { ty, incomplete });
+                }
+                continue;
+            }
             // A condition is applied to the finalized array type; if it narrows nothing, the array
             // stays evolving.
             let seen = self.finalize_evolving_array(ty);
@@ -6679,10 +6700,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Pending::Assert(call) => self.narrow_by_assertion(reference, seen, call),
                 Pending::Compound => self.base_of_literal(seen),
-                Pending::Mutation(expr) => {
-                    ty = self.after_array_mutation(file, ty, expr);
-                    seen
-                }
+                Pending::Mutation(_) => seen,
             };
             if narrowed != seen {
                 ty = FlowType::new(narrowed, incomplete).ty;

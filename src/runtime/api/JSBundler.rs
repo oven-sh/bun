@@ -1401,6 +1401,14 @@ pub(crate) mod js_bundler {
                 if this.format != options::Format::Esm {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot requires format: 'esm'")));
                 }
+                let not_honoured = [
+                    ("drop", this.drop.keys().iter().any(|dropped| **dropped != *b"debugger")),
+                    ("banner with code", !crate::cli::aot::is_only_comments(&this.banner.list)),
+                    ("footer with code", !crate::cli::aot::is_only_comments(&this.footer.list)),
+                ];
+                if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
+                    return Err(global_this.throw_invalid_arguments(format_args!("compile.aot: not compiled yet: {option}")));
+                }
                 this.bytecode = true;
             }
 

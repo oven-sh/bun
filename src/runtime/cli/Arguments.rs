@@ -2508,6 +2508,15 @@ fn parse_build_command_options(
             Output::err_generic("--aot: {}", format_args!("{}", why));
             Global::crash();
         }
+        let not_honoured = [
+            ("--drop", args.options(b"--drop").iter().any(|dropped| *dropped != b"debugger")),
+            ("--banner with code", args.option(b"--banner").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
+            ("--footer with code", args.option(b"--footer").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
+        ];
+        if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
+            Output::err_generic("--aot: not compiled yet: {}", format_args!("{}", option));
+            Global::crash();
+        }
     }
 
     if let Some(path) = args.option(b"--compile-executable-path") {

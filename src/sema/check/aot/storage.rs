@@ -9,6 +9,7 @@
 //! the program to that.
 
 use super::ByFile;
+use super::captures::Receiver;
 use super::int32_fields::RunBy;
 use super::libraries::Vouched;
 use crate::atom::Atom;
@@ -23,7 +24,7 @@ use crate::hir::{
     PropKey, PropKind, Span, StmtId, StmtKind, TypeNodeKind, UnOp, VarDeclId, VarKind,
 };
 use crate::program::{FileId, Sym};
-use crate::types::{EnumValue, MapperId, Prop, PropSource, TypeId};
+use crate::types::{EnumValue, MapperId, Prop, PropSource, TypeData, TypeId, TypeKey};
 use crate::util::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -45,6 +46,8 @@ pub(super) struct Shared {
     casts_returned: ByFile<Vec<(FnId, ExprId)>>,
     /// `Checker::is_tainted`
     pub(super) given: OnceLock<super::flows::Given>,
+    handed_strangers_by_untyped_code: OnceLock<FxHashSet<Sym>>,
+    calls_that_may_redefine: OnceLock<Vec<(FileId, ExprId)>>,
 }
 
 /// A memoized query whose answer may depend on itself: see `Checker::solve`.
@@ -54,8 +57,7 @@ pub(super) enum Query {
     Result(FileId, FnId),
     HostCallback(FileId, FnId),
     Claim(FileId, ExprId),
-    ArgumentUse(FileId, ParamId, bool),
-    Retained(FileId, FnId),
+    ArgumentUse(FileId, ParamId),
 }
 
 struct InFlight {
@@ -88,14 +90,22 @@ pub(super) struct State {
     results: FxHashMap<(FileId, FnId), (TypeId, bool)>,
     /// See `Checker::solve`. Outermost first.
     in_flight: Vec<InFlight>,
+    being_told_of: u32,
     /// The outermost query in flight whose assumption has been relied on since the innermost one began.
     outermost_relied_on: Outermost,
     /// By function expression: see `is_host_callback`.
     host_callbacks: FxHashMap<(FileId, FnId), bool>,
+    let_out: FxHashMap<(FileId, FnId), bool>,
+    mentions: FxHashMap<FileId, Rc<FxHashMap<SymbolId, Vec<ExprId>>>>,
+    second_bodies: FxHashMap<(FileId, FnId), bool>,
+    second_body: Option<(FileId, u32, u32)>,
+    set_aside: Option<Box<SetAside>>,
     /// By property: see `may_find_field_blank`.
     blank_fields: FxHashMap<Sym, bool>,
     /// By `const`: see `constant_held_by`.
     constants: FxHashMap<Sym, Option<Primitive>>,
+    long_string_constants: FxHashMap<Sym, Option<Primitive>>,
+    folding_long_strings: bool,
     /// By module: see `end_of_inert_prefix`. 0 while it is being found.
     inert_prefixes: RefCell<FxHashMap<FileId, u32>>,
     /// By module: see `is_deferred_module`.
@@ -107,8 +117,20 @@ pub(super) struct State {
     /// `Checker::declares_lazy_variable`. `None`: being found out.
     lazy_declarations: FxHashMap<(FileId, VarDeclId), Option<bool>>,
     uses_of_top_level: FxHashMap<FileId, Rc<UsesOfTopLevel>>,
+    yielded: FxHashMap<(FileId, ExprId), TypeId>,
+    reads: FxHashMap<(FileId, ExprId), Option<ReferenceRead>>,
     /// `Checker::is_redefined_somewhere`
     redefinitions: Option<Rc<[Redefinition]>>,
+}
+
+#[derive(Default)]
+struct SetAside {
+    told_of: FxHashMap<Sym, ToldOf>,
+    stored: FxHashMap<Sym, TypeId>,
+    results: FxHashMap<(FileId, FnId), (TypeId, bool)>,
+    trust: super::trust::State,
+    integers: super::integers::State,
+    kinds: super::kinds::State,
 }
 
 /// `Object.defineProperty(target, key, descriptor)`, where the descriptor is not seen to leave a writable, enumerable and configurable data property: the type of `target`, and the names that
@@ -371,10 +393,11 @@ struct FileFacts {
     cleared: Vec<u64>,
     /// The same: a variable, a parameter or a class that the code that declares it refers to where it may be in its dead zone.
     referred_to_early: Vec<u64>,
-    /// The same: a variable or a class that some code of the file refers to where it may be in its dead zone, or that the file exports.
+    /// The same: a variable or a class that some code of the file refers to where it may be in its dead zone.
     found_early: Vec<u64>,
     /// The same: a variable or a class that a closure refers to that may be made while it is in its dead zone, or that is `found_early`.
     captured_early: Vec<u64>,
+    seen_by_importers: Vec<u64>,
     /// The same: a variable that is stored to as `(a as T) = value`, which is not among `Bound::assignments_to`.
     stored_through_casts: Vec<u64>,
     /// What the constructors and the initializers of instance fields do with `this`, sorted by class.
@@ -469,6 +492,28 @@ enum Stored {
 const MOST_INERT_LENGTH: f64 = 65536.0;
 /// See `constant_held_by`.
 const MOST_BYTES_OF_CONSTANT: usize = 64;
+const MAX_FOLDED_STRING_PART_LEN: usize = 16384;
+
+fn end_of_substitution(text: &[u8], mut i: usize) -> usize {
+    while i < text.len() && text[i] != b'}' {
+        match (text[i], text.get(i + 1)) {
+            (b'/', Some(b'*')) => {
+                i += 2;
+                while i < text.len() && !text[i..].starts_with(b"*/") {
+                    i += 1;
+                }
+                i += 2;
+            }
+            (b'/', Some(b'/')) => {
+                while i < text.len() && !matches!(text[i], b'\n' | b'\r') && !text[i..].starts_with(b"\xE2\x80\xA8") && !text[i..].starts_with(b"\xE2\x80\xA9") {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    i + 1
+}
 
 fn set(bits: &mut [u64], symbol: SymbolId) {
     if let Some(word) = bits.get_mut(symbol.idx() / 64) {
@@ -506,12 +551,80 @@ impl<'p, 's> Checker<'p, 's> {
         stored
     }
 
+    fn without_number_literals(&mut self, ty: TypeId) -> TypeId {
+        self.map_type(ty, |c, part| if matches!(c.data(part), TypeData::NumberLit { .. } | TypeData::BigIntLit { .. }) { c.base_of_literal(part) } else { part })
+    }
+
+    pub fn without_number_literals_in_arguments(&mut self, ty: TypeId) -> TypeId {
+        self.map_type(ty, |c, part| c.without_number_literals_in_arguments_of(part, 4, false))
+    }
+
+    pub fn without_number_literals_given(&mut self, ty: TypeId) -> TypeId {
+        let ty = self.without_number_literals(ty);
+        self.without_number_literals_in_arguments(ty)
+    }
+
+    fn without_number_literals_in_arguments_of(&mut self, part: TypeId, depth: u32, is_under_an_argument: bool) -> TypeId {
+        if depth == 0 {
+            return part;
+        }
+        match self.data(part) {
+            TypeData::Ref { target, .. } if self.files().module(target.file).is_lib && !self.is_reference_to_global(part, crate::atom::known::ReadonlyArray, 1) => {
+                let not_known_before = self.aot.flows.times_not_known;
+                let arguments = self.type_arguments(part);
+                let mapped: Vec<TypeId> = arguments.iter().map(|&argument| self.argument_without_number_literals(argument, depth - 1)).collect();
+                if mapped[..] == *arguments {
+                    return part;
+                }
+                let rebuilt = self.intern_key(TypeKey::Ref { target: *target, args: &mapped });
+                self.seen_wider(part, rebuilt, not_known_before)
+            }
+            TypeData::Tuple { flags, readonly: false, .. } if is_under_an_argument => {
+                let not_known_before = self.aot.flows.times_not_known;
+                let elements = self.type_arguments(part);
+                let mapped: Vec<TypeId> = elements.iter().map(|&element| self.argument_without_number_literals(element, depth - 1)).collect();
+                if mapped[..] == *elements {
+                    return part;
+                }
+                let rebuilt = self.normalized_tuple(&mapped, flags, false);
+                self.seen_wider(part, rebuilt, not_known_before)
+            }
+            _ => part,
+        }
+    }
+
+    fn seen_wider(&mut self, part: TypeId, wider: TypeId, not_known_before: usize) -> TypeId {
+        if self.is_provably_assignable(part, wider) {
+            wider
+        } else if self.aot.flows.times_not_known != not_known_before {
+            TypeId::UNKNOWN
+        } else {
+            part
+        }
+    }
+
+    fn argument_without_number_literals(&mut self, argument: TypeId, depth: u32) -> TypeId {
+        let argument = self.without_number_literals(argument);
+        self.map_type(argument, |c, part| c.without_number_literals_in_arguments_of(part, depth, true))
+    }
+
     fn find_type_stored_to(&mut self, sym: Sym, declared: TypeId) -> TypeId {
+        if let Some((file, Decl::Param(pat) | Decl::Var(pat))) = self.files().value_declaration(sym)
+            && self.is_in_second_body(file, self.hir(file)[pat].pos)
+        {
+            return TypeId::UNKNOWN;
+        }
         if let Some((file, Decl::Param(pat))) = self.files().value_declaration(sym)
             && let PatParent::Param(p) = root_declaration(self.bound(file), pat)
             && self.is_param_predicted(file, p)
         {
             return TypeId::UNKNOWN;
+        }
+        if let Some((file, Decl::Param(pat))) = self.files().value_declaration(sym)
+            && let PatParent::Param(p) = root_declaration(self.bound(file), pat)
+            && self.hir(file)[p].ty.is_none()
+        {
+            return self.without_number_literals(declared);
         }
         let Some((file, Decl::Var(pat))) = self.files().value_declaration(sym) else { return declared };
         let hir = self.hir(file);
@@ -521,6 +634,9 @@ impl<'p, 's> Checker<'p, 's> {
             let is_given = hir[d].pat == pat && hir[d].init.is_some() && self.is_laid_out_nowhere(declared) && self.is_predicted(file, hir[d].init);
             return if is_given { TypeId::UNKNOWN } else { declared };
         }
+        let is_bound_by_a_loop = hir[d].init.is_none() && self.iterable_of_loop_variable(file, d).is_some();
+        let declared = if is_bound_by_a_loop || hir[d].pat != pat || matches!(hir[d].kind, VarKind::Let | VarKind::Var) { self.without_number_literals(declared) } else { declared };
+        let declared = self.without_number_literals_in_arguments(declared);
         // What a pattern takes out of a prediction, or a loop out of a predicted iterable, is a prediction: `const { size } = fs.statSync(p)`,
         // `for (const name of fs.readdirSync(p))`.
         if hir[d].pat != pat || hir[d].init.is_none() {
@@ -623,6 +739,18 @@ impl<'p, 's> Checker<'p, 's> {
             ty = next;
         }
         false
+    }
+
+    pub fn is_taken_out_of_prediction(&mut self, file: FileId, pat: PatId) -> bool {
+        let hir = self.hir(file);
+        match root_declaration(self.bound(file), pat) {
+            PatParent::Var(d) if hir[d].ty.is_none() && hir[d].pat != pat => {
+                let source = if hir[d].init.is_some() { hir[d].init } else { self.iterable_of_loop_variable(file, d) };
+                source.is_some() && (self.is_predicted(file, source) || (hir[d].init.is_some() && self.takes_predicted_prop(file, pat, source)))
+            }
+            PatParent::Param(p) => self.is_param_predicted(file, p),
+            _ => false,
+        }
     }
 
     /// `xs` of `for (const x of xs)`, for the declaration of `x`.
@@ -756,6 +884,33 @@ impl<'p, 's> Checker<'p, 's> {
     /// `a || b` may yield `b`, and `a && b` may yield `undefined`. What the checker leaves out of `a` because the operator has tested
     /// for it stays out.
     pub fn type_yielded_by(&mut self, file: FileId, e: ExprId) -> TypeId {
+        if let Some(&known) = self.aot.storage.yielded.get(&(file, e)) {
+            return known;
+        }
+        let asked = self.nothing_is_assumed();
+        let found = self.find_type_yielded_by(file, e);
+        let found = self.without_number_literals_in_arguments(found);
+        if self.may_be_kept(asked) {
+            self.aot.storage.yielded.insert((file, e), found);
+        }
+        found
+    }
+
+    pub(super) fn nothing_is_assumed(&self) -> Option<u32> {
+        (self.aot.storage.in_flight.is_empty() && self.aot.storage.being_told_of == 0 && self.aot.javascript.nothing_is_in_progress() && self.aot.kinds.nothing_grows()).then(|| self.times_half_of_stack_was_in_use())
+    }
+
+    pub(super) fn may_be_kept(&self, asked: Option<u32>) -> bool {
+        asked == Some(self.times_half_of_stack_was_in_use())
+    }
+
+    pub fn forget_answers_by_expression(&mut self) {
+        self.aot.storage.yielded.clear();
+        self.aot.storage.reads.clear();
+        self.aot.javascript.forget_answers_by_expression();
+    }
+
+    fn find_type_yielded_by(&mut self, file: FileId, e: ExprId) -> TypeId {
         if self.is_half_of_stack_in_use() {
             return TypeId::ANY;
         }
@@ -763,7 +918,13 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Unary { op: UnOp::Not, .. } => return TypeId::BOOLEAN,
             ExprKind::Binary { op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish), left, right } | ExprKind::Assign { op: Some(op @ (BinOp::And | BinOp::Or | BinOp::Nullish)), target: left, value: right } => (Some(op), left, right),
             ExprKind::Cond { yes, no, .. } => (None, yes, no),
-            ExprKind::Binary { op: BinOp::Comma, right: expr, .. } | ExprKind::Assign { op: None, value: expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) => return self.type_yielded_by(file, expr),
+            ExprKind::Binary { op: BinOp::Comma, right: expr, .. } | ExprKind::Assign { op: None, value: expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) => {
+                let yielded = self.type_yielded_by(file, expr);
+                return match self.held_besides_what_flow_tells(file, expr) {
+                    Some(held) => self.union(&[yielded, held]),
+                    None => yielded,
+                };
+            }
             // Of an operand that other code may have stored to since it was narrowed, only what it is declared to be is known.
             ExprKind::Binary { op, left, right } | ExprKind::Assign { op: Some(op), target: left, value: right }
                 if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor) =>
@@ -777,6 +938,13 @@ impl<'p, 's> Checker<'p, 's> {
             // What a function whose result is inferred returns may be more than the checker infers: see `result_of_fn`.
             ExprKind::Call(_) if self.has_declared_type(file, e) => {
                 let own = self.type_of_expr(file, e);
+                let own = match self.resolved_signature(file, e).sig {
+                    Some(sig) => match self.sig_decl(sig) {
+                        Some((of, func, _)) if self.return_type_of_fn(of, func) == self.sig_return(sig) => own,
+                        _ => self.without_number_literals_given(own),
+                    },
+                    None => own,
+                };
                 // What a callback of the host returns is held to nothing, whoever calls it.
                 if let Some(sig) = self.resolved_signature(file, e).sig
                     && let Some((of, func, _)) = self.sig_decl(sig)
@@ -844,7 +1012,11 @@ impl<'p, 's> Checker<'p, 's> {
             // `!` asserts that there is something, and nothing of what it is.
             ExprKind::NonNull(expr) => {
                 let yielded = self.type_yielded_by(file, expr);
-                return if yielded == self.type_of_expr(file, expr) { self.type_of_expr(file, e) } else { self.non_nullable(yielded) };
+                let without_nil = if yielded == self.type_of_expr(file, expr) { self.type_of_expr(file, e) } else { self.non_nullable(yielded) };
+                return match self.held_besides_what_flow_tells(file, e) {
+                    Some(held) => self.union(&[without_nil, held]),
+                    None => without_nil,
+                };
             }
             ExprKind::Dot { .. } => {
                 return match self.property_read_of_coerced(file, e) {
@@ -936,6 +1108,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn storage_of_param(&mut self, file: FileId, p: ParamId) -> Storage {
         let param = &self.hir(file)[p];
         let ty = if self.is_param_predicted(file, p) { TypeId::UNKNOWN } else { self.type_of_param(file, p) };
+        let ty = if param.ty.is_none() { self.without_number_literals(ty) } else { ty };
         Storage { ty, starts_undefined: param.default.is_some() || param.flags.contains(Flags::OPTIONAL) }
     }
 
@@ -1056,12 +1229,337 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether only a declaration without a body says what arrives for the parameter: it has no annotation of its own.
     fn is_param_predicted(&mut self, file: FileId, p: ParamId) -> bool {
         let func = self.bound(file).param_fn[p.idx()];
+        if self.is_in_second_body(file, self.hir(file)[self.hir(file)[p].pat].pos) {
+            return true;
+        }
         self.hir(file)[p].ty.is_none() && func.is_some() && self.is_host_callback(file, func)
+    }
+
+    fn is_in_second_body(&self, file: FileId, pos: u32) -> bool {
+        self.aot.storage.second_body.is_some_and(|(of, start, end)| of == file && start <= pos && pos < end)
+    }
+
+    pub fn translate_second_body(&mut self, root: Option<(FileId, FnId)>) {
+        let span = root.map(|(file, func)| (file, self.hir(file)[func].start, self.end_of_fn(file, func)));
+        if span == self.aot.storage.second_body {
+            return;
+        }
+        self.forget_answers_by_expression();
+        if let Some(aside) = self.aot.storage.set_aside.take() {
+            let SetAside { told_of, stored, results, trust, integers, kinds } = *aside;
+            self.aot.storage.told_of = told_of;
+            self.aot.storage.stored = stored;
+            self.aot.storage.results = results;
+            self.aot.trust = trust;
+            self.aot.integers = integers;
+            self.aot.kinds = kinds;
+        }
+        if span.is_some() {
+            let storage = &mut self.aot.storage;
+            let (told_of, stored, results) = (std::mem::take(&mut storage.told_of), std::mem::take(&mut storage.stored), std::mem::take(&mut storage.results));
+            let (trust, integers, kinds) = (std::mem::take(&mut self.aot.trust), std::mem::take(&mut self.aot.integers), std::mem::take(&mut self.aot.kinds));
+            self.aot.storage.set_aside = Some(Box::new(SetAside { told_of, stored, results, trust, integers, kinds }));
+        }
+        self.aot.storage.second_body = span;
+    }
+
+    pub fn has_second_body(&mut self, file: FileId, func: FnId) -> bool {
+        if func.is_none() || self.is_untyped_file(file) || !self.is_compiled(file) {
+            return false;
+        }
+        if let Some(&known) = self.aot.storage.second_bodies.get(&(file, func)) {
+            return known;
+        }
+        let found = self.find_has_second_body(file, func);
+        self.aot.storage.second_bodies.insert((file, func), found);
+        found
+    }
+
+    fn find_has_second_body(&mut self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let f = &hir[func];
+        if !matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_) | FnOwner::Stmt(_)) || matches!(f.body, FnBody::None) {
+            return false;
+        }
+        if f.this_param.is_some() || f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || f.params.iter().any(|p| hir[p].flags.contains(Flags::REST)) {
+            return false;
+        }
+        let sees_nothing_of_a_call = match f.kind {
+            FnKind::Arrow => self.receiver_of_arrow(file, func) == Receiver::None,
+            FnKind::Decl => !bound.fns[func.idx()].contains_this,
+            FnKind::Expr => !bound.fns[func.idx()].contains_this && f.name.is_none(),
+            _ => false,
+        };
+        if !sees_nothing_of_a_call || self.mentions_new_target(file, func) {
+            return false;
+        }
+        let (start, end) = (f.start, self.end_of_fn(file, func));
+        if (0..hir.classes.len() as u32).map(ClassId).any(|class| start <= hir[class].start && hir[class].start < end) {
+            return false;
+        }
+        !self.places_taking_objects(file, func).is_empty() && (self.is_host_callback(file, func) || self.is_let_out(file, func) || self.is_handed_strangers_by_untyped_code(file, func))
+    }
+
+    pub fn what_the_written_type_leaves_out(&mut self, file: FileId, p: ParamId) -> (bool, bool, bool) {
+        let written = self.type_of_param(file, p);
+        let parameter = &self.hir(file)[p];
+        let may_be_left_out = parameter.default.is_some() || parameter.flags.contains(Flags::OPTIONAL);
+        let parts: Vec<TypeId> = self.parts(written).to_vec();
+        let may_be_anything = self.admits_nil(written) || parts.iter().any(|&part| part.is_any() || matches!(part, TypeId::UNKNOWN | TypeId::UNRESOLVED) || self.is_instantiable(part));
+        let no_undefined = !may_be_left_out && !self.admits_undefined(written);
+        let no_null = !may_be_anything && !parts.iter().any(|part| part.is_null());
+        let no_objects = !may_be_anything && !parts.is_empty() && parts.into_iter().all(|part| self.has_primitive_flag(part));
+        (no_undefined, no_null, no_objects)
+    }
+
+    fn places_taking_objects(&mut self, file: FileId, func: FnId) -> Vec<usize> {
+        let parameters: Vec<ParamId> = self.hir(file)[func].params.iter().collect();
+        (parameters.into_iter().enumerate())
+            .filter(|&(_, p)| {
+                self.hir(file)[p].ty.is_some() && {
+                    let written = self.type_of_param(file, p);
+                    !self.says_nothing(written) && !self.every_type(written, |c, part| c.is_primitive(part) || c.is_nullish(part))
+                }
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn is_handed_strangers_by_untyped_code(&mut self, file: FileId, func: FnId) -> bool {
+        let program = self.p;
+        program.aot.storage.handed_strangers_by_untyped_code.get_or_init(|| self.find_handed_strangers_by_untyped_code());
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol = match bound.fns[func.idx()].owner {
+            FnOwner::Stmt(_) => bound.symbol_of_declaration(Decl::Fn(func)),
+            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => bound.pat_symbol[hir[d].pat.idx()],
+                _ => return false,
+            },
+            _ => return false,
+        };
+        if symbol.is_none() {
+            return false;
+        }
+        let sym = self.files().sym(file, symbol);
+        let exported = self.files().export_symbol_of_value_symbol_if_exported(sym);
+        program.aot.storage.handed_strangers_by_untyped_code.get().is_some_and(|handed| handed.contains(&sym) || handed.contains(&exported))
+    }
+
+    fn find_handed_strangers_by_untyped_code(&mut self) -> FxHashSet<Sym> {
+        let mut found: FxHashSet<Sym> = FxHashSet::default();
+        for other in (0..self.files().modules.len() as u32).map(FileId) {
+            if !self.is_compiled(other) || !self.is_untyped_file(other) {
+                continue;
+            }
+            let (hir, bound) = (self.hir(other), self.bound(other));
+            for &name in self.exprs_by_kind_of(other).of(ExprTag::Ident) {
+                let local = bound.expr_symbol[name.idx()];
+                if local.is_none() {
+                    continue;
+                }
+                let local = self.files().sym(other, local);
+                if !self.files().flags(local).contains(SymFlags::ALIAS) {
+                    continue;
+                }
+                let Some(target) = self.files().resolve_alias(local) else { continue };
+                if self.is_untyped_file(target.file) || found.contains(&target) {
+                    continue;
+                }
+                let declared = match self.files().value_declaration(target) {
+                    Some((of, Decl::Fn(func))) => Some((of, func)),
+                    Some((of, Decl::Var(pat))) => match root_declaration(self.bound(of), pat) {
+                        PatParent::Var(d) if self.hir(of)[d].pat == pat && self.hir(of)[d].init.is_some() => match self.hir(of)[self.hir(of)[d].init].kind {
+                            ExprKind::Fn(func) => Some((of, func)),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some((of, func)) = declared else { continue };
+                if !self.is_compiled(of) {
+                    continue;
+                }
+                let call = match bound.expr_parent[name.idx()] {
+                    Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                        ExprKind::Call(call) if hir[call].callee == name => Some(call),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let is_handed_strangers = match call {
+                    None => true,
+                    Some(call) => {
+                        let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+                        arguments.iter().any(|&argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
+                            || self.places_taking_objects(of, func).into_iter().any(|place| {
+                                arguments.get(place).is_some_and(|&argument| !matches!(hir[argument].kind, ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_) | ExprKind::Null))
+                            })
+                    }
+                };
+                if is_handed_strangers {
+                    found.insert(target);
+                }
+            }
+        }
+        found
+    }
+
+    pub fn is_let_out(&mut self, file: FileId, func: FnId) -> bool {
+        if let Some(&known) = self.aot.storage.let_out.get(&(file, func)) {
+            return known;
+        }
+        let found = self.find_is_let_out(file, func);
+        self.aot.storage.let_out.insert((file, func), found);
+        found
+    }
+
+    fn find_is_let_out(&mut self, file: FileId, func: FnId) -> bool {
+        let bound = self.bound(file);
+        if self.is_untyped_file(file) {
+            return false;
+        }
+        let mentions: Vec<ExprId> = match bound.fns[func.idx()].owner {
+            FnOwner::Expr(e) => vec![e],
+            FnOwner::Stmt(_) => self.mentions_of(file, bound.symbol_of_declaration(Decl::Fn(func))),
+            _ => return false,
+        };
+        mentions.into_iter().any(|mention| self.enters_place_that_says_nothing(file, mention))
+    }
+
+    fn mentions_of(&mut self, file: FileId, symbol: SymbolId) -> Vec<ExprId> {
+        if symbol.is_none() {
+            return Vec::new();
+        }
+        if !self.aot.storage.mentions.contains_key(&file) {
+            let bound = self.bound(file);
+            let mut by_symbol: FxHashMap<SymbolId, Vec<ExprId>> = FxHashMap::default();
+            for &name in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+                let named = bound.expr_symbol[name.idx()];
+                if named.is_some() {
+                    by_symbol.entry(named).or_default().push(name);
+                }
+            }
+            self.aot.storage.mentions.insert(file, Rc::new(by_symbol));
+        }
+        self.aot.storage.mentions[&file].get(&symbol).cloned().unwrap_or_default()
+    }
+
+    fn enters_place_that_says_nothing(&mut self, file: FileId, mut e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            let parent = match bound.expr_parent[e.idx()] {
+                Parent::Expr(parent) if parent.is_some() => parent,
+                Parent::VarInit(d) if hir[d].ty.is_some() => {
+                    let written = self.type_from_node(file, hir[d].ty);
+                    return self.says_nothing(written);
+                }
+                Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) && matches!(hir[e].kind, ExprKind::Fn(_)) => {
+                    let mentions = self.mentions_of(file, bound.pat_symbol[hir[d].pat.idx()]);
+                    return mentions.into_iter().any(|mention| self.enters_place_that_says_nothing(file, mention));
+                }
+                Parent::Stmt(stmt) if stmt.is_some() => return matches!(hir[stmt].kind, StmtKind::Throw(_)),
+                _ => return false,
+            };
+            match hir[parent].kind {
+                ExprKind::Call(call) | ExprKind::New(call) => {
+                    if hir[call].callee == e {
+                        return false;
+                    }
+                    self.prepare_enclosing(file, e);
+                    return self.contextual_type(file, e, ContextFlags::empty()).is_none_or(|expected| self.says_nothing(expected));
+                }
+                ExprKind::Assign { op: None, target, value } if value == e => {
+                    let held = self.type_of_expr(file, target);
+                    return self.says_nothing(held);
+                }
+                ExprKind::As { .. } => {
+                    let seen_as = self.type_of_expr(file, parent);
+                    if self.says_nothing(seen_as) {
+                        return true;
+                    }
+                }
+                ExprKind::Array(_) | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } => {}
+                ExprKind::Cond { test, .. } if test != e => {}
+                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, right, .. } if right == e => {}
+                _ => return false,
+            }
+            e = parent;
+        }
     }
 
     /// The same for the `this` of a function that is no arrow function.
     fn is_this_predicted(&mut self, file: FileId, func: FnId) -> bool {
-        self.hir(file)[func].this_param.is_none() && self.is_host_callback(file, func)
+        self.hir(file)[func].this_param.is_none() && (self.is_host_callback(file, func) || self.is_member_of_literal_written_under_any(file, func) || self.is_member_of_literal_left_ordinary(file, func))
+    }
+
+    fn is_member_of_literal_left_ordinary(&mut self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let FnOwner::Expr(member) = bound.fns[func.idx()].owner else { return false };
+        let Parent::Prop(prop) = bound.expr_parent[member.idx()] else { return false };
+        let literal = bound.prop_owner[prop.idx()];
+        if literal.is_none() {
+            return false;
+        }
+        let ExprKind::Object(props) = hir[literal].kind else { return false };
+        let has_accessor = props.iter().any(|p| matches!(hir[p].kind, PropKind::Getter | PropKind::Setter));
+        let is_plain = props.iter().all(|p| hir[p].kind != PropKind::Spread && matches!(hir[p].key, PropKey::Name(name) if self.atoms().bytes(name) != b"__proto__"));
+        has_accessor && !is_plain || self.is_literal_assigned_onto(file, literal) || self.is_only_copied_from(file, literal)
+    }
+
+    pub fn is_literal_assigned_onto(&mut self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        if !matches!(hir[e].kind, ExprKind::Object(_)) {
+            return false;
+        }
+        let Parent::Expr(parent) = self.bound(file).expr_parent[e.idx()] else { return false };
+        matches!(hir[parent].kind, ExprKind::Call(call) if hir.ids(hir[call].args).next() == Some(e)) && self.is_overlay_onto_first_argument(file, parent)
+    }
+
+    pub fn is_only_copied_from(&mut self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = e;
+        loop {
+            let parent = match bound.expr_parent[at.idx()] {
+                Parent::Prop(prop) => return hir[prop].kind == PropKind::Spread,
+                Parent::Expr(parent) => parent,
+                _ => return false,
+            };
+            match hir[parent].kind {
+                ExprKind::Satisfies { .. } | ExprKind::AsConst(_) | ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {}
+                ExprKind::Cond { test, .. } if test != at => {}
+                ExprKind::Binary { op: BinOp::Comma, right, .. } if right == at => {}
+                ExprKind::Call(call) => return hir.ids(hir[call].args).skip(1).any(|argument| argument == at) && self.is_object_assign(file, parent),
+                _ => return false,
+            }
+            at = parent;
+        }
+    }
+
+    fn is_member_of_literal_written_under_any(&mut self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let FnOwner::Expr(member) = bound.fns[func.idx()].owner else { return false };
+        let Parent::Prop(prop) = bound.expr_parent[member.idx()] else { return false };
+        let literal = bound.prop_owner[prop.idx()];
+        literal.is_some() && matches!(hir[literal].kind, ExprKind::Object(_)) && self.is_written_under_any(file, literal)
+    }
+
+    pub fn is_written_under_any(&mut self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut outermost = e;
+        loop {
+            outermost = match bound.expr_parent[outermost.idx()] {
+                Parent::Prop(prop) if bound.prop_owner[prop.idx()].is_some() => bound.prop_owner[prop.idx()],
+                Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => parent,
+                _ => break,
+            };
+        }
+        let outer = match bound.expr_parent[outermost.idx()] {
+            Parent::VarInit(decl) if hir[decl].ty.is_some() => self.contextual_type_of_literal(file, outermost),
+            Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::As { .. }) => Some(self.type_of_expr(file, parent)),
+            _ => None,
+        };
+        outer.is_some_and(|ty| self.is_any(ty))
     }
 
     /// The function whose `this` the expression sees: the nearest one around it that is no arrow function.
@@ -1259,12 +1757,13 @@ impl<'p, 's> Checker<'p, 's> {
         self.prepare_fn(file, func);
         let is_part = matches!(self.bound(file).fns[func.idx()].owner, FnOwner::Expr(written) if self.is_part_that_is_spread(file, written));
         if !is_part
-            && let Some(expected) = self.declared_or_contextual_return_type(file, func, ContextFlags::empty())
+            && !self.is_called_for_assignment_pattern(file, func)
+            && let Some(expected) = self.declared_or_contextual_return_type(file, func, ContextFlags::SKIP_BINDING_PATTERNS)
             && !expected.is_never()
             && expected != TypeId::UNRESOLVED
             && !self.is_instantiable(expected)
         {
-            return (expected, true);
+            return (self.without_number_literals_given(expected), true);
         }
         let (found, is_final) = self.solve(Query::Result(file, func), u64::from(inferred.0), u64::from(TypeId::UNKNOWN.0), |c| u64::from(c.find_result_of_fn(file, func, inferred).0));
         let found = (TypeId(found as u32), false);
@@ -1272,6 +1771,23 @@ impl<'p, 's> Checker<'p, 's> {
             self.aot.storage.results.insert((file, func), found);
         }
         found
+    }
+
+    fn is_called_for_assignment_pattern(&self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let FnOwner::Expr(mut yielded) = bound.fns[func.idx()].owner else { return false };
+        loop {
+            let Parent::Expr(parent) = bound.expr_parent[yielded.idx()] else { return false };
+            match hir[parent].kind {
+                ExprKind::Assign { op: None, target, value } if value == yielded => return matches!(hir[target].kind, ExprKind::Array(_) | ExprKind::Object(_)),
+                ExprKind::Call(call) if hir[call].callee == yielded => {}
+                ExprKind::Await(_) | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } | ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, .. } => {}
+                ExprKind::Cond { yes, no, .. } if yes == yielded || no == yielded => {}
+                ExprKind::Binary { op: BinOp::And | BinOp::Comma, right, .. } if right == yielded => {}
+                _ => return false,
+            }
+            yielded = parent;
+        }
     }
 
     fn find_result_of_fn(&mut self, file: FileId, func: FnId, inferred: TypeId) -> TypeId {
@@ -1404,15 +1920,29 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = &self.aot.storage.redefinitions {
             return known.clone();
         }
+        let program = self.p;
+        let calls = program.aot.storage.calls_that_may_redefine.get_or_init(|| {
+            let mut calls = Vec::new();
+            for file in (0..self.files().modules.len() as u32).map(FileId) {
+                if !self.is_compiled(file) || self.is_untyped_file(file) || self.hir(file).kind == FileKind::Json {
+                    continue;
+                }
+                let hir = self.hir(file);
+                for &e in self.exprs_by_kind_of(file).of(ExprTag::Call) {
+                    if let ExprKind::Call(call) = hir[e].kind
+                        && let ExprKind::Dot { name, .. } | ExprKind::Ident(name) = hir[hir[call].callee].kind
+                        && name.is_some()
+                        && matches!(self.atoms().bytes(name), b"defineProperty" | b"defineProperties")
+                    {
+                        calls.push((file, e));
+                    }
+                }
+            }
+            calls
+        });
         let mut found = Vec::new();
-        for file in (0..self.files().modules.len() as u32).map(FileId) {
-            if !self.is_compiled(file) || self.is_untyped_file(file) || self.hir(file).kind == FileKind::Json {
-                continue;
-            }
-            let calls: Vec<ExprId> = self.exprs_by_kind_of(file).of(ExprTag::Call).to_vec();
-            for e in calls {
-                self.find_redefinition_by(file, e, &mut found);
-            }
+        for &(file, e) in calls {
+            self.find_redefinition_by(file, e, &mut found);
         }
         let found: Rc<[Redefinition]> = found.into();
         self.aot.storage.redefinitions = Some(found.clone());
@@ -1539,6 +2069,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// The checker keeps what it has found out about a place across a call, though what is called may store to the place. For a
     /// property or an element any code that has got hold of the object may. For a variable only the code in its scope can.
     pub fn reference_read_by(&mut self, file: FileId, e: ExprId) -> Option<ReferenceRead> {
+        if let Some(&known) = self.aot.storage.reads.get(&(file, e)) {
+            return known;
+        }
+        let asked = self.nothing_is_assumed();
+        let found = self.find_reference_read_by(file, e);
+        if self.may_be_kept(asked) {
+            self.aot.storage.reads.insert((file, e), found);
+        }
+        found
+    }
+
+    fn find_reference_read_by(&mut self, file: FileId, e: ExprId) -> Option<ReferenceRead> {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Ident(name) => {
@@ -1569,6 +2111,12 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 if declared != TypeId::UNRESOLVED
                     && let Some((prop, mapper)) = self.prop_ref(apparent, name)
+                    && self.type_of_prop(prop, MapperId::IDENTITY) != self.type_of_prop(prop, mapper)
+                {
+                    declared = self.without_number_literals_given(declared);
+                }
+                if declared != TypeId::UNRESOLVED
+                    && let Some((prop, mapper)) = self.prop_ref(apparent, name)
                     && matches!(prop.source, PropSource::Literal(..))
                 {
                     let held = self.type_held_by_prop(prop, mapper);
@@ -1580,8 +2128,9 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Index { obj, index, .. } if !matches!(hir[obj].kind, ExprKind::Super) => {
                 let object = self.type_of_expr(file, obj);
                 let object = self.non_nullable(object);
+                let object = self.without_number_literals_in_arguments(object);
                 let key = self.type_of_expr(file, index);
-                let declared = self.indexed_access_if_any(object, key, true).unwrap_or(TypeId::UNRESOLVED);
+                let declared = if object == TypeId::UNKNOWN { TypeId::UNKNOWN } else { self.indexed_access_if_any(object, key, true).unwrap_or(TypeId::UNRESOLVED) };
                 Some(ReferenceRead { declared, is_narrowing_reliable: false, may_be_undefined: true, is_asserted: false })
             }
             _ => None,
@@ -1623,6 +2172,13 @@ impl<'p, 's> Checker<'p, 's> {
         let own = self.type_of_prop(prop, mapper);
         let PropSource::Literal(file, written) = prop.source else { return own };
         let value = self.hir(file)[written].value;
+        let is_written_out = value.is_some()
+            && match self.hir(file)[value].kind {
+                ExprKind::Number(_) | ExprKind::BigInt(_) => true,
+                ExprKind::Unary { op: UnOp::Minus, operand } => matches!(self.hir(file)[operand].kind, ExprKind::Number(_) | ExprKind::BigInt(_)),
+                _ => false,
+            };
+        let own = if is_written_out || prop.flags.contains(crate::types::PropFlags::READONLY) { own } else { self.without_number_literals_given(own) };
         match if value.is_some() { self.held_besides_what_flow_tells(file, value) } else { None } {
             Some(held) => self.union(&[own, held]),
             None => own,
@@ -1647,7 +2203,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (held, may_be_undefined) = match self.reference_read_by(file, e) {
             Some(read) if !read.is_narrowing_reliable => (read.declared, read.may_be_undefined || is_left_out),
             Some(read) => (self.type_of_expr(file, e), read.may_be_undefined || is_left_out),
-            None if matches!(self.hir(file)[e].kind, ExprKind::As { .. } | ExprKind::NonNull(_)) => (self.type_yielded_by(file, e), is_left_out),
+            None if matches!(self.hir(file)[e].kind, ExprKind::As { .. } | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } | ExprKind::AsConst(_) | ExprKind::Assign { op: None, .. } | ExprKind::Binary { op: BinOp::Comma, .. }) => (self.type_yielded_by(file, e), is_left_out),
             None => (self.type_of_expr(file, e), is_left_out),
         };
         (held, may_be_undefined || self.admits_nil(held))
@@ -1664,9 +2220,46 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub fn catch_parameter_named_again_by(&self, file: FileId, pat: PatId) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let PatKind::Ident(name) = hir[pat].kind else { return None };
+        let PatParent::Var(d) = root_declaration(bound, pat) else { return None };
+        if hir[d].kind != VarKind::Var {
+            return None;
+        }
+        let mut inner = bound.var_stmt[d.idx()];
+        let mut parent = Parent::Stmt(inner);
+        loop {
+            parent = match parent {
+                Parent::Stmt(at) if at.is_some() => {
+                    if let StmtKind::Try { param, handler, .. } = hir[at].kind
+                        && handler == inner
+                        && param.is_some()
+                        && matches!(hir[hir[param].pat].kind, PatKind::Ident(caught) if caught == name)
+                    {
+                        return bound.pat_symbol[hir[param].pat.idx()].some();
+                    }
+                    inner = at;
+                    bound.stmt_parent[at.idx()]
+                }
+                Parent::Case(_) => self.parent_of_node(file, parent),
+                _ => return None,
+            };
+        }
+    }
+
     /// Whether the variable is stored to as `(a as T) = value`, which is not among `Bound::assignments_to`.
     pub(super) fn is_stored_through_casts(&self, file: FileId, local: SymbolId) -> bool {
         has(&self.storage_facts(file).stored_through_casts, local)
+    }
+
+    pub fn is_member_of_declared_enum(&self, declared: Sym, file: FileId, member: crate::hir::EnumMemberId) -> bool {
+        self.files().decls_of(declared).iter().any(|&(of, decl)| {
+            matches!(decl, Decl::Enum(declaration) if of == file
+                && self.hir(of)[declaration].members.iter().any(|it| it == member)
+                && !self.hir(of)[declaration].flags.contains(Flags::CONST)
+                && (!self.is_compiled(of) || self.hir(of)[declaration].flags.contains(Flags::AMBIENT)))
+        })
     }
 
     fn where_flow_tells_of(&mut self, sym: Sym) -> ToldOf {
@@ -1675,7 +2268,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // For a variable that is stored to itself by way of another.
         self.aot.storage.told_of.insert(sym, ToldOf::Nowhere);
+        self.aot.storage.being_told_of += 1;
         let found = self.find_where_flow_tells_of(sym);
+        self.aot.storage.being_told_of -= 1;
         self.aot.storage.told_of.insert(sym, found);
         found
     }
@@ -1705,7 +2300,7 @@ impl<'p, 's> Checker<'p, 's> {
             return ToldOf::Nowhere;
         }
         let targets = bound.assignments_to(local);
-        if has(&self.storage_facts(file).stored_through_casts, local) || !targets.iter().all(|&(_, target)| self.site_of(file, bound.expr_parent[target.idx()]) == Some(site)) {
+        if has(&self.storage_facts(file).stored_through_casts, local) || !targets.iter().all(|&(_, target)| self.site_of(file, bound.expr_parent[target.idx()]) == Some(site) && !self.is_in_default_of_assignment_pattern(file, target)) {
             return ToldOf::Nowhere;
         }
         // The checker's type of the variable is that of its initializer.
@@ -1719,7 +2314,7 @@ impl<'p, 's> Checker<'p, 's> {
             for &(_, target) in targets {
                 let Parent::Expr(parent) = bound.expr_parent[target.idx()] else { return ToldOf::Nowhere };
                 match hir[parent].kind {
-                    ExprKind::Assign { target: to, value, .. } if to == target => stored.push(value),
+                    ExprKind::Assign { target: to, value, .. } if to == target && self.store_to_target(file, target).is_some() => stored.push(value),
                     ExprKind::Unary { .. } => {}
                     _ => return ToldOf::Nowhere,
                 }
@@ -1752,6 +2347,45 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `(x as number) + 1`: `held` is the checker's type of the operand and besides only what a cast lets through: nil, which the operator converts, and objects, of which the operand
     /// is asserted to be none: `has_no_objects_by_its_type`.
+    pub fn yields_nil_that_a_cast_left(&mut self, file: FileId, e: ExprId) -> bool {
+        self.yields_nil_that_a_cast_left_but_by(file, e, &mut Vec::new())
+    }
+
+    fn yields_nil_that_a_cast_left_but_by(&mut self, file: FileId, e: ExprId, seen: &mut Vec<Sym>) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::As { .. } => true,
+            ExprKind::Satisfies { expr, .. } => self.yields_nil_that_a_cast_left_but_by(file, expr, seen),
+            ExprKind::Cond { yes, no, .. } => self.yields_nil_that_a_cast_left_but_by(file, yes, seen) || self.yields_nil_that_a_cast_left_but_by(file, no, seen),
+            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, right } => {
+                self.yields_nil_that_a_cast_left_but_by(file, left, seen) || self.yields_nil_that_a_cast_left_but_by(file, right, seen)
+            }
+            ExprKind::Binary { op: BinOp::Comma, right, .. } => self.yields_nil_that_a_cast_left_but_by(file, right, seen),
+            ExprKind::Assign { op: None, value, .. } => self.yields_nil_that_a_cast_left_but_by(file, value, seen),
+            ExprKind::Ident(name) => {
+                let Some(sym) = self.symbol_named_by(file, e, name) else { return false };
+                if seen.contains(&sym) {
+                    return false;
+                }
+                seen.push(sym);
+                let Some((of, Decl::Var(pat))) = self.declaration_of_variable(sym) else { return false };
+                let mut stored: Vec<ExprId> = Vec::new();
+                if let PatParent::Var(d) = root_declaration(self.bound(of), pat)
+                    && self.hir(of)[d].pat == pat
+                    && self.hir(of)[d].init.is_some()
+                {
+                    stored.push(self.hir(of)[d].init);
+                }
+                let targets: Vec<ExprId> = self.bound(of).assignments_to(sym.id).iter().map(|assignment| assignment.1).collect();
+                stored.extend(targets.into_iter().filter_map(|target| match self.store_to_target(of, target) {
+                    Some(super::integers::Store::Value(value)) => Some(value),
+                    _ => None,
+                }));
+                stored.into_iter().any(|value| self.yields_nil_that_a_cast_left_but_by(of, value, seen))
+            }
+            _ => false,
+        }
+    }
+
     fn is_asserted_as_operand(&mut self, file: FileId, operand: ExprId, held: TypeId) -> bool {
         let declared = self.type_of_expr(file, operand);
         if !self.is_asserted_where_it_is_used(file, operand) {
@@ -2016,9 +2650,9 @@ impl<'p, 's> Checker<'p, 's> {
         let local = bound.symbol_of_declaration(decl);
         let Some(symbol) = bound.symbols.get(local.idx()) else { return false };
         // What other files see is referred to by code that is not looked at here.
+        let is_seen_by_importers = bound.modifier_flags(self.hir(file), decl).contains(Flags::EXPORT) || self.files().sym(file, local) != sym || has(&self.storage_facts(file).seen_by_importers, local);
         let is_seen_elsewhere = symbol.flags.contains(SymFlags::MERGED)
-            || bound.modifier_flags(self.hir(file), decl).contains(Flags::EXPORT)
-            || self.files().sym(file, local) != sym
+            || is_seen_by_importers
             || !self.files().module(file).is_module() && matches!(self.dead_zone_of(file, decl), Some((Site::File, _)));
         !is_seen_elsewhere && self.dead_zone_of(file, decl).is_some() && !has(early(self.storage_facts(file)), local)
     }
@@ -2029,6 +2663,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// it is. Where the language has it throw because the declaration has not been evaluated yet, whoever translates the reference sees to
     /// that. A long string stays a variable: each reference would be a copy of it.
     pub fn constant_held_by(&mut self, sym: Sym) -> Option<Primitive> {
+        if self.aot.storage.folding_long_strings {
+            if let Some(&known) = self.aot.storage.long_string_constants.get(&sym) {
+                return known;
+            }
+            self.aot.storage.long_string_constants.insert(sym, None);
+            let found = self.initializer_of_const(sym).and_then(|(file, init)| self.constant_value_of(file, init)).filter(|value| !matches!(*value, Primitive::String(text) if self.atoms().bytes(text).len() > MAX_FOLDED_STRING_PART_LEN));
+            self.aot.storage.long_string_constants.insert(sym, found);
+            return found;
+        }
         if let Some(&known) = self.aot.storage.constants.get(&sym) {
             return known;
         }
@@ -2081,6 +2724,16 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Primitive::String(self.atoms().intern(&text))
             }
+            ExprKind::TaggedTemplate(call) if self.is_string_raw_tag(file, call) => {
+                let raw = self.template_raw_strings(file, call);
+                let mut text = raw.first()?.clone();
+                for (i, substitution) in hir.ids(hir[call].args).enumerate() {
+                    let value = self.constant_value_of(file, substitution)?;
+                    text.extend_from_slice(self.text_of_primitive(value));
+                    text.extend_from_slice(raw.get(i + 1)?);
+                }
+                Primitive::String(self.atoms().intern(&text))
+            }
             ExprKind::Ident(name) if self.names_global_constant(file, e, name) => match self.atoms().bytes(name) {
                 b"NaN" => Primitive::Number(f64::NAN),
                 b"Infinity" => Primitive::Number(f64::INFINITY),
@@ -2098,6 +2751,9 @@ impl<'p, 's> Checker<'p, 's> {
                     Decl::EnumMember(member) => Some((of, member)),
                     _ => None,
                 })?;
+                if self.is_member_of_declared_enum(declared, of, member) {
+                    return None;
+                }
                 match self.enum_member_value(of, member)? {
                     EnumValue::Number(bits) => Primitive::Number(f64::from_bits(bits)),
                     EnumValue::String(text) => Primitive::String(text),
@@ -2208,9 +2864,9 @@ impl<'p, 's> Checker<'p, 's> {
         replaced.contains(&path)
     }
 
-    /// Whether the file is a module that is compiled with the program. As long as nobody has said which are: whether it is no declaration file.
+    /// Whether the file is a module that is compiled with the program. As long as nobody has said which are, none is.
     pub(super) fn is_compiled(&self, file: FileId) -> bool {
-        self.hir(file).kind != FileKind::Declaration && self.p.aot.storage.modules.get().is_none_or(|modules| modules.cycle.contains_key(&file))
+        self.hir(file).kind != FileKind::Declaration && self.p.aot.storage.modules.get().is_some_and(|modules| modules.cycle.contains_key(&file))
     }
 
     /// Whether the `let`, the `const` or the class, declared at the top level of a module, is initialized before any code runs that
@@ -2576,7 +3232,6 @@ impl<'p, 's> Checker<'p, 's> {
             && matches!(hir[stmt].kind, StmtKind::Var(_))
             && matches!(bound.stmt_parent[stmt.idx()], Parent::File)
             && self.files().module(file).is_module()
-            && !self.files().module(file).is_commonjs()
             && self.makes_something(file, hir[d].init)
             && self.is_inert(file, hir[d].init)
             && self.finds_the_same_whenever(file, hir[d].init)
@@ -2613,14 +3268,16 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Array(elements) => hir.ids(elements).all(|element| self.finds_the_same_whenever(file, element)),
             ExprKind::Object(props) => props.iter().all(|p| self.finds_the_same_whenever(file, hir[p].value)),
             ExprKind::Class(class) => {
-                self.finds_the_same_whenever(file, hir[class].extends)
+                let extends = hir[class].extends;
+                (extends.is_none() || matches!(hir[extends].kind, ExprKind::Ident(name) if self.bound(file).expr_symbol[extends.idx()].is_none() || self.names_class_or_function(file, extends, name, false)))
+                    && self.finds_the_same_whenever(file, extends)
                     && hir[class].members.iter().all(|member| hir[member].kind != MemberKind::Property || !hir[member].flags.contains(Flags::STATIC) || self.finds_the_same_whenever(file, hir[member].init))
             }
             ExprKind::New(call) => self.finds_the_same_whenever(file, hir[call].callee) && hir.ids(hir[call].args).all(|argument| self.finds_the_same_whenever(file, argument)),
             // What `Object.freeze` freezes it has made itself. A function that only makes something keeps what an argument stands for and looks at nothing in it.
             ExprKind::Call(call) => {
                 let only_makes = self.calls_what_only_makes(file, call).is_some();
-                hir.ids(hir[call].args).all(|argument| (only_makes || !matches!(hir[argument].kind, ExprKind::Ident(_))) && self.finds_the_same_whenever(file, argument))
+                hir.ids(hir[call].args).all(|argument| (only_makes || self.makes_something(file, argument)) && self.finds_the_same_whenever(file, argument))
             }
             ExprKind::Unary { operand, .. } => self.finds_the_same_whenever(file, operand),
             ExprKind::Binary { left, right, .. } => self.finds_the_same_whenever(file, left) && self.finds_the_same_whenever(file, right),
@@ -2736,6 +3393,38 @@ impl<'p, 's> Checker<'p, 's> {
         "a class"
     }
 
+    pub fn is_default_export_as_good_as_binding(&mut self, file: FileId, e: ExprId, sym: Sym) -> bool {
+        if self.is_put_first(file) {
+            return true;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Stmt(export) = bound.expr_parent[e.idx()] else { return false };
+        let from = match self.declaration_of_variable(sym) {
+            Some((of, decl @ (Decl::Var(_) | Decl::Class(_)))) if of == file => match self.dead_zone_of(file, decl) {
+                Some((Site::File, end)) if end != u32::MAX => end,
+                _ => return false,
+            },
+            Some((of, Decl::Fn(_))) if of == file => 0,
+            _ => return false,
+        };
+        let to = hir[export].loc.pos;
+        for stmt in hir.ids(hir.body) {
+            let at = hir[stmt].loc;
+            if at.pos >= to || at.end <= from {
+                continue;
+            }
+            let is_inert = match hir[stmt].kind {
+                StmtKind::Var(decls) => decls.iter().filter(|&d| hir[d].loc.pos >= from).all(|d| matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) && self.is_inert(file, hir[d].init)),
+                _ if at.pos < from => true,
+                _ => self.is_inert_statement(file, stmt),
+            };
+            if !is_inert {
+                return false;
+            }
+        }
+        from <= to
+    }
+
     fn is_put_first(&self, module: FileId) -> bool {
         let shared = &self.p.aot.storage;
         shared.modules.get().is_some_and(|modules| *shared.put_first.get_or_init(self.p.files.modules.len(), module, || modules.puts_first(module)))
@@ -2804,7 +3493,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_decorated = |modifiers: Span<ModifierId>| modifiers.iter().any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)));
         let extends = hir[class].extends;
         !is_decorated(hir[class].modifiers)
-            && (extends.is_none() || matches!(hir[extends].kind, ExprKind::Ident(name) if self.is_inert_name(file, extends, name) || self.names_global(file, extends, name)))
+            && (extends.is_none() || matches!(hir[extends].kind, ExprKind::Ident(name) if self.is_inert_name(file, extends, name) && self.names_class_or_function(file, extends, name, true) || self.names_global(file, extends, name)))
             && hir[class].members.iter().all(|member| {
                 let m = &hir[member];
                 !is_decorated(m.modifiers)
@@ -2813,6 +3502,24 @@ impl<'p, 's> Checker<'p, 's> {
                     && !m.flags.contains(Flags::ACCESSOR)
                     && (m.kind != MemberKind::Property || !m.flags.contains(Flags::STATIC) || self.is_inert(file, m.init))
             })
+    }
+
+    fn names_class_or_function(&mut self, file: FileId, e: ExprId, name: Atom, or_function: bool) -> bool {
+        let Some(sym) = self.symbol_named_by(file, e, name) else { return false };
+        match self.declaration_of_variable(sym) {
+            Some((_, Decl::Class(_))) => true,
+            Some((_, Decl::Fn(_))) => or_function,
+            _ => self.class_held_by_constant(sym).is_some(),
+        }
+    }
+
+    fn makes_typed_array(&self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::As { expr, .. } => self.makes_typed_array(file, expr),
+            ExprKind::New(call) => matches!(hir[hir[call].callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name).len() > 5 && self.atoms().bytes(name).ends_with(b"Array")),
+            _ => false,
+        }
     }
 
     /// Whether evaluating the expression, at the top level of its module, runs no code of the program and cannot throw. `NONE` is.
@@ -2847,7 +3554,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.atoms().bytes(name) == b"freeze"
                     && matches!(hir[obj].kind, ExprKind::Ident(object) if self.atoms().bytes(object) == b"Object" && self.names_global(file, obj, object))
                     && hir[call].args.len() == 1
-                    && hir.ids(hir[call].args).all(|argument| self.is_inert(file, argument))
+                    && hir.ids(hir[call].args).all(|argument| self.is_inert(file, argument) && !self.makes_typed_array(file, argument))
             }
             ExprKind::Unary { op: UnOp::Not | UnOp::Typeof | UnOp::Void, operand } => self.is_inert(file, operand),
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, left, right } => self.is_inert(file, left) && self.is_inert(file, right),
@@ -3046,7 +3753,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(symbol) = bound.symbols.get(bound.expr_symbol[e.idx()].idx()) else { return false };
         !symbol.decls.is_empty()
             && symbol.decls.iter().all(|&decl| match decl {
-                Decl::Param(pat) => matches!(bound.pat_parent[pat.idx()], PatParent::Param(p) if bound.param_fn[p.idx()] == func),
+                Decl::Param(pat) => matches!(bound.pat_parent[pat.idx()], PatParent::Param(p) if bound.param_fn[p.idx()] == func) && !self.may_find_parameter_unbound(file, pat, e),
                 Decl::Var(pat) => matches!(bound.pat_parent[pat.idx()], PatParent::Var(d) if {
                     let stmt = bound.var_stmt[d.idx()];
                     hir[d].kind == VarKind::Const && stmt.is_some() && self.enclosing_fn(file, Parent::Stmt(stmt)) == Some(func) && hir[stmt].loc.end <= hir[e].pos
@@ -3094,6 +3801,72 @@ impl<'p, 's> Checker<'p, 's> {
         (is_of_object && hir[call].args.len() == 1 && matches!(hir[literal].kind, ExprKind::Object(_)) && self.is_inert(file, literal)).then_some(yields_pairs)
     }
 
+    pub fn fold_constant_string(&mut self, file: FileId, e: ExprId) -> Option<(Atom, Vec<ExprId>)> {
+        let around = std::mem::replace(&mut self.aot.storage.folding_long_strings, true);
+        let value = self.constant_value_of(file, e);
+        self.aot.storage.folding_long_strings = around;
+        let Some(Primitive::String(text)) = value else { return None };
+        if self.atoms().bytes(text).len() > 4 * MAX_FOLDED_STRING_PART_LEN {
+            return None;
+        }
+        let mut names = Vec::new();
+        self.collect_identifiers(file, e, &mut names);
+        Some((text, names))
+    }
+
+    fn collect_identifiers(&self, file: FileId, e: ExprId, names: &mut Vec<ExprId>) {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Ident(_) if self.bound(file).expr_symbol[e.idx()].is_some() => names.push(e),
+            ExprKind::Template { exprs } => hir.ids(exprs).for_each(|hole| self.collect_identifiers(file, hole, names)),
+            ExprKind::TaggedTemplate(call) => hir.ids(hir[call].args).for_each(|hole| self.collect_identifiers(file, hole, names)),
+            ExprKind::Unary { operand, .. } => self.collect_identifiers(file, operand, names),
+            ExprKind::Binary { left, right, .. } => {
+                self.collect_identifiers(file, left, names);
+                self.collect_identifiers(file, right, names);
+            }
+            ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::As { expr, .. } => self.collect_identifiers(file, expr, names),
+            _ => {}
+        }
+    }
+
+    fn is_string_raw_tag(&mut self, file: FileId, call: CallId) -> bool {
+        let hir = self.hir(file);
+        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[hir[call].callee].kind else { return false };
+        hir[call].close_pos == u32::MAX && self.atoms().bytes(name) == b"raw" && matches!(hir[obj].kind, ExprKind::Ident(string) if self.atoms().bytes(string) == b"String" && self.names_global(file, obj, string))
+    }
+
+    pub fn template_raw_strings(&self, file: FileId, call: CallId) -> Vec<Vec<u8>> {
+        let hir = self.hir(file);
+        let start = hir[hir[call].template].pos as usize;
+        let (text, mut ends) = (&hir.text[start..], hir.ids(hir[call].args).map(|substitution| hir[substitution].end as usize));
+        let (mut pieces, mut piece, mut i) = (Vec::new(), Vec::new(), 1);
+        while i < text.len() {
+            match text[i] {
+                b'`' => break,
+                b'\\' if i + 1 < text.len() && text[i + 1] != b'\r' => {
+                    piece.extend_from_slice(&text[i..i + 2]);
+                    i += 2;
+                }
+                b'$' if text.get(i + 1) == Some(&b'{') => {
+                    let Some(end) = ends.next() else { return Vec::new() };
+                    pieces.push(std::mem::take(&mut piece));
+                    i = end_of_substitution(text, end.saturating_sub(start));
+                }
+                b'\r' => {
+                    piece.push(b'\n');
+                    i += if text.get(i + 1) == Some(&b'\n') { 2 } else { 1 };
+                }
+                byte => {
+                    piece.push(byte);
+                    i += 1;
+                }
+            }
+        }
+        pieces.push(piece);
+        pieces
+    }
+
     /// `new Map()`, `new Int32Array(8)`, `new Set([a, b])`: a class of the engine, with no argument, with a length that is written down and small enough
     /// for the allocation not to fail while anything else works, or with its contents written out.
     fn makes_object_of_engine(&mut self, file: FileId, call: CallId) -> bool {
@@ -3136,6 +3909,23 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((file, decl)) = self.declaration_of_variable(sym) else { return false };
         let local = self.bound(file).symbol_of_declaration(decl);
         has(&self.storage_facts(file).referred_to_early, local)
+    }
+
+    fn site_run_by(&self, file: FileId, mut parent: Parent) -> Option<Site> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            parent = match parent {
+                Parent::MemberInit(member) if !hir[member].flags.contains(Flags::STATIC) => return Some(Site::Initializer(member)),
+                Parent::MemberInit(member) | Parent::MemberKey(member) => match bound.member_owner[member.idx()] {
+                    MemberOwner::Class(class) => bound.class_owner[class.idx()].to_parent(),
+                    _ => return self.site_of(file, parent),
+                },
+                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
+                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::File | Parent::None => return self.site_of(file, parent),
+                _ => self.parent_of_node(file, parent),
+            };
+        }
     }
 
     /// What a direct child of `parent` is a part of. `None`: that is not known.
@@ -3289,7 +4079,7 @@ impl<'p, 's> Checker<'p, 's> {
         let index = self.exprs_by_kind_of(file);
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let words = bound.symbols.len() / 64 + 1;
-        let mut found = FileFacts { read_unassigned: vec![0; words], cleared: vec![0; words], referred_to_early: vec![0; words], found_early: vec![0; words], captured_early: vec![0; words], stored_through_casts: vec![0; words], this: Vec::new() };
+        let mut found = FileFacts { read_unassigned: vec![0; words], cleared: vec![0; words], referred_to_early: vec![0; words], found_early: vec![0; words], captured_early: vec![0; words], seen_by_importers: vec![0; words], stored_through_casts: vec![0; words], this: Vec::new() };
         let mut declared: Vec<Option<Declared>> = vec![None; bound.symbols.len()];
         // The reads of variables that hold `undefined` at first, by the code that declares them.
         let mut reads: Vec<(SymbolId, ExprId)> = Vec::new();
@@ -3300,6 +4090,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let Some(how) = declared.get_mut(symbol.idx()) else { continue };
             let how = *how.get_or_insert_with(|| self.how_declared(file, symbol));
+            if matches!(parent, Parent::Stmt(stmt) if matches!(hir[stmt].kind, StmtKind::ExportDefault(_))) {
+                set(&mut found.read_unassigned, symbol);
+                set(&mut found.seen_by_importers, symbol);
+            }
             if how.end_of_dead_zone != 0
                 && let Some(site) = how.site
                 && !self.is_made_after(file, e, site, how.end_of_dead_zone)
@@ -3321,7 +4115,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let is_in_place = self.site_of(file, parent) == how.site;
-            if is_early && is_in_place {
+            if is_early && (is_in_place || self.site_run_by(file, parent) == how.site) {
                 set(&mut found.referred_to_early, symbol);
             }
             if is_read && is_in_place {
@@ -3345,8 +4139,19 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+        for name in [crate::atom::known::exports, crate::atom::known::module] {
+            if let Some(declared_again) = self.commonjs_variable_declared_again(file, name) {
+                set(&mut found.stored_through_casts, declared_again.id);
+            }
+        }
         for &symbol in self.variables_of_reified_namespaces(file) {
             set(&mut found.stored_through_casts, symbol);
+        }
+        for pat in 0..hir.pats.len() {
+            if let Some(symbol) = self.catch_parameter_named_again_by(file, PatId(pat as u32)) {
+                set(&mut found.stored_through_casts, symbol);
+                set(&mut found.stored_through_casts, bound.pat_symbol[pat]);
+            }
         }
         for &(e, ..) in bound.identifiers_in_parameters.iter() {
             let symbol = bound.expr_symbol[e.idx()];
@@ -3356,6 +4161,20 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.may_find_parameter_unbound(file, pat, e)
             {
                 set(&mut found.referred_to_early, symbol);
+            }
+        }
+        if files.jsx_runtime(file).is_none() {
+            for &e in index.of(ExprTag::Jsx) {
+                for is_fragment_tag in [false, true] {
+                    if let (_, Some(named)) = self.classic_jsx_factory(file, e, is_fragment_tag)
+                        && named.file == file
+                    {
+                        set(&mut found.stored_through_casts, named.id);
+                        set(&mut found.read_unassigned, named.id);
+                        set(&mut found.found_early, named.id);
+                        set(&mut found.captured_early, named.id);
+                    }
+                }
             }
         }
         // `export { a }`: other files read it.
@@ -3368,8 +4187,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && exported.file == file
                 {
                     set(&mut found.read_unassigned, exported.id);
-                    set(&mut found.found_early, exported.id);
-                    set(&mut found.captured_early, exported.id);
+                    set(&mut found.seen_by_importers, exported.id);
                 }
             }
         }
@@ -3427,7 +4245,7 @@ impl<'p, 's> Checker<'p, 's> {
                             }
                             _ => false,
                         };
-                        if is_store {
+                        if is_store && !matches!(target, FlowTarget::Expr(e) if self.is_in_default_of_assignment_pattern(file, e)) {
                             break;
                         }
                         before
@@ -3477,8 +4295,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `extended`: the classes of the program that the class extends, the nearest first, up to one that extends nothing. Empty for a
     /// class with an `extends` clause: it is not known what that stands for.
     ///
-    /// The order that is assumed: what the class extends constructs the object, then come the parameter properties and the
-    /// initializers, those in the order of their declaration, then what follows `super(..)` in the constructor.
+    /// The order: what the class extends constructs the object, then the initializers in the order of their declaration, then the
+    /// parameter properties (with `assigns_fields` those come first), then what follows `super(..)`. What is answered holds for both.
     pub fn field_starts_undefined(&mut self, sym: Sym, extended: &[(FileId, ClassId)]) -> bool {
         let Some((file, decl)) = self.files().value_declaration(sym) else { return true };
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -3573,7 +4391,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether nobody gets hold of an object while the first of the classes, each of which extends the next, constructs it.
-    fn construction_keeps_this(&mut self, classes: &[(FileId, ClassId)]) -> bool {
+    pub(super) fn construction_keeps_this(&mut self, classes: &[(FileId, ClassId)]) -> bool {
         let Some((&(file, class), extended)) = classes.split_first() else { return true };
         if let Some(&known) = self.aot.storage.keeps_this.get(&(file, class)) {
             return known;

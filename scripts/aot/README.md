@@ -20,6 +20,3 @@ BUN_AOT_OPTIONS=aotMapFilePath=app.map bun build --compile --compile-aot app.ts 
 The tests are `test/bundler/bundler_compile_aot*.test.ts`, `test/cli/run/run-aot.test.ts` and `test/cli/test/test-aot.test.ts`. The programs
 in `test/bundler/compile-aot/` print what they compute, and must print the same with and without ahead-of-time compilation,
 in every configuration that `bundler_compile_aot_programs.test.ts` lists.
-
-In WebKit, `Tools/Scripts/aot/fuzz.py` mutates `JSTests/stress` and compares the interpreter with compiled code in the `jsc`
-shell, and `run-jsc-stress-tests` has the modes `aot` and `aot-validate`.

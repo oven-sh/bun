@@ -837,6 +837,13 @@ impl<'p, 's> Checker<'p, 's> {
             && self.symbol_of_identifier(file, e, written).is_some_and(|found| self.hir(found.file).kind == FileKind::Declaration)
     }
 
+    pub fn well_known_symbol_named_by(&mut self, file: FileId, e: ExprId) -> Option<Atom> {
+        match self.hir(file)[e].kind {
+            ExprKind::Dot { obj, name, .. } if self.names_global_object(file, obj, b"Symbol") => Some(name),
+            _ => None,
+        }
+    }
+
     /// A call of a built-in function that yields an integer whenever it yields. Nothing can be put in the place of one: a function of `Math`, a
     /// method of a string, which has no properties of its own. Not a method of an array: an own property shadows it, and may yield
     /// any number.
@@ -939,16 +946,47 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the flow nodes do not tell when the expression is evaluated. As the binder has it, `continue` with the label of a `for` loop
     /// goes to the head of the loop, past the update; `break` and `continue` leave a `try` statement past its `finally` block; and
     /// every test of a `switch` is the first.
+    pub(super) fn is_in_default_of_assignment_pattern(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut child = e;
+        let mut parent = bound.expr_parent[e.idx()];
+        loop {
+            match parent {
+                Parent::Expr(outer) if outer.is_some() => {
+                    if matches!(hir[outer].kind, ExprKind::Assign { op: None, value, .. } if value == child) && (bound.is_shorthand_property_assignment(hir, outer) || bound.get_assignment_target(hir, outer).is_some()) {
+                        return true;
+                    }
+                    child = outer;
+                }
+                Parent::Prop(_) | Parent::PropKey(..) | Parent::ClassExtends(_) | Parent::Stmt(_) | Parent::VarInit(_) | Parent::Case(_) => {}
+                Parent::MethodKey(prop) => {
+                    parent = Parent::Expr(bound.prop_owner[prop.idx()]);
+                    continue;
+                }
+                Parent::MemberKey(member) => parent = Parent::MemberInit(member),
+                Parent::MemberInit(member) if hir[member].flags.contains(Flags::STATIC) => {}
+                Parent::FnBody(func) if hir[func].kind == FnKind::StaticBlock => {}
+                _ => return false,
+            }
+            parent = self.parent_of_node(file, parent);
+        }
+    }
+
     pub(super) fn runs_off_the_flow(&self, file: FileId, e: ExprId) -> bool {
+        if self.is_in_default_of_assignment_pattern(file, e) {
+            return true;
+        }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut child = Child::Expr(e);
         let mut parent = bound.expr_parent[e.idx()];
+        let mut is_in_try_statement = false;
         loop {
             match parent {
                 Parent::Case(_) => return true,
                 Parent::Stmt(outer) if outer.is_some() => match hir[outer].kind {
                     StmtKind::For { update, .. } if child == Child::Expr(update) && self.is_labeled_statement(file, outer) => return true,
-                    StmtKind::Try { finalizer, .. } if child == Child::Stmt(finalizer) => return true,
+                    StmtKind::Try { finalizer, .. } if child == Child::Stmt(finalizer) || is_in_try_statement => return true,
+                    StmtKind::Try { .. } => is_in_try_statement = true,
                     _ => {}
                 },
                 Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_) | Parent::Module(_) | Parent::File | Parent::None => return false,
@@ -999,6 +1037,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_eval = |call: &ExprId| matches!(hir[*call].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"eval"));
         uses.has_direct_eval = by_kind.of(ExprTag::Call).iter().any(is_eval);
         uses.stored_through_assertions.extend(self.variables_of_reified_namespaces(file));
+        uses.stored_through_assertions.extend((0..hir.pats.len()).filter_map(|pat| self.catch_parameter_named_again_by(file, crate::hir::PatId(pat as u32)).map(|caught| [caught, bound.pat_symbol[pat]])).flatten());
         for tag in [ExprTag::As, ExprTag::Satisfies] {
             for &e in by_kind.of(tag) {
                 if bound.get_assignment_target(hir, e).is_some() {
@@ -1022,6 +1061,17 @@ impl<'p, 's> Checker<'p, 's> {
             match call {
                 Some(call) => calls.iter_mut().for_each(|calls| calls.push(call)),
                 None => *calls = None,
+            }
+        }
+        if self.files().jsx_runtime(file).is_none() {
+            for &e in by_kind.of(ExprTag::Jsx) {
+                for is_fragment_tag in [false, true] {
+                    if let (_, Some(named)) = self.classic_jsx_factory(file, e, is_fragment_tag)
+                        && named.file == file
+                    {
+                        uses.calls.insert(named.id, None);
+                    }
+                }
             }
         }
         if !bound.private_class.is_empty() {
@@ -1070,6 +1120,9 @@ impl<'p, 's> Checker<'p, 's> {
         let symbol = bound.symbols.get(at.id.idx())?;
         let uses = self.uses_of_integers_in(file);
         if symbol.flags.contains(SymFlags::MERGED) || uses.stored_through_assertions.contains(&at.id) || uses.has_direct_eval {
+            return None;
+        }
+        if self.commonjs_variable_declared_again(file, symbol.name) == Some(at) {
             return None;
         }
         let mut place = Place { is_followed: true, ..Place::default() };

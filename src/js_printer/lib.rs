@@ -1383,8 +1383,6 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
-
-    pub type_tags: Option<&'a [(u32, u32)]>,
 }
 
 impl<'a> Options<'a> {
@@ -1441,7 +1439,6 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
-            type_tags: None,
         }
     }
 }
@@ -2430,26 +2427,6 @@ pub(crate) mod __gated_printer {
             !symbol.must_not_be_renamed()
         }
 
-        #[inline]
-        pub(crate) fn print_type_tag(&mut self, anchor: bun_ast::Loc) {
-            let Some(tags) = self.options.type_tags else {
-                return;
-            };
-            let Ok(anchor) = u32::try_from(anchor.start) else {
-                return;
-            };
-            let Ok(index) = tags.binary_search_by_key(&anchor, |entry| entry.0) else {
-                return;
-            };
-            const DIGITS: &[u8; 64] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$";
-            let tag = tags[index].1;
-            let mut text = [1u8; 7];
-            for (i, digit) in text[1..].iter_mut().enumerate() {
-                *digit = DIGITS[(u64::from(tag) >> (6 * (5 - i)) & 63) as usize];
-            }
-            self.print(&text);
-        }
-
         pub(crate) fn add_source_mapping(&mut self, location: bun_ast::Loc) {
             if !GENERATE_SOURCE_MAP {
                 return;
@@ -2517,12 +2494,10 @@ pub(crate) mod __gated_printer {
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
             _is_arrow: bool,
-            tag_at: bun_ast::Loc,
         ) {
             let wrap = true;
 
             if wrap {
-                self.print_type_tag(tag_at);
                 if let Some(loc) = open_paren_loc {
                     self.add_source_mapping(loc);
                 }
@@ -2558,7 +2533,6 @@ pub(crate) mod __gated_printer {
                 slice_of(func.args),
                 func.flags.contains(G::FnFlags::HasRestArg),
                 false,
-                func.open_parens_loc,
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
@@ -2573,7 +2547,6 @@ pub(crate) mod __gated_printer {
 
             self.print_space();
 
-            self.print_type_tag(class.body_loc);
             self.add_source_mapping(class.body_loc);
             self.print(b"{");
             self.print_newline();
@@ -3499,7 +3472,7 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
                     let args = e.args.slice();
-                    if !args.is_empty() || level.gte(Level::Postfix) || self.options.type_tags.is_some() {
+                    if !args.is_empty() || level.gte(Level::Postfix) {
                         self.print(b"(");
 
                         if !args.is_empty() {
@@ -3511,7 +3484,6 @@ pub(crate) mod __gated_printer {
                             }
                         }
 
-                        self.print_type_tag(expr.loc);
                         if e.close_parens_loc.start > expr.loc.start {
                             self.add_source_mapping(e.close_parens_loc);
                         }
@@ -3582,7 +3554,6 @@ pub(crate) mod __gated_printer {
                         }
                     }
                     if e.close_paren_loc.start > expr.loc.start {
-                        self.print_type_tag(e.close_paren_loc);
                         self.add_source_mapping(e.close_paren_loc);
                     }
                     self.print(b")");
@@ -3870,7 +3841,6 @@ pub(crate) mod __gated_printer {
                         &e.args,
                         e.has_rest_arg,
                         true,
-                        expr.loc,
                     );
                     self.print_whitespacer(ws!(b" => "));
 
@@ -3944,7 +3914,6 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EArray(e) => {
-                    self.print_type_tag(expr.loc);
                     self.add_source_mapping(expr.loc);
                     self.print(b"[");
                     let items = e.items.slice();
@@ -3995,9 +3964,6 @@ pub(crate) mod __gated_printer {
 
                     if wrap {
                         self.print(b"(");
-                    }
-                    if !IS_JSON {
-                        self.print_type_tag(expr.loc);
                     }
                     self.add_source_mapping(expr.loc);
                     self.print(b"{");
@@ -4326,7 +4292,6 @@ pub(crate) mod __gated_printer {
                             level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall),
                         );
                     } else {
-                        self.print_type_tag(expr.loc);
                         self.print_identifier(name);
                     }
 
@@ -4434,9 +4399,6 @@ pub(crate) mod __gated_printer {
 
                     if !did_print {
                         self.print_space_before_identifier();
-                        if !self.is_lazy_namespace(e.ref_) {
-                            self.print_type_tag(expr.loc);
-                        }
                         self.add_source_mapping(expr.loc);
                         self.print_namespace_symbol(
                             e.ref_,
@@ -7142,7 +7104,6 @@ pub(crate) mod __gated_printer {
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
-                    bun_ast::Loc::EMPTY,
                 );
                 self.print_space();
                 self.print(b"{\n");
@@ -7258,7 +7219,6 @@ pub(crate) mod __gated_printer {
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
-                    bun_ast::Loc::EMPTY,
                 );
                 self.print(b" => {\n");
                 self.indent();

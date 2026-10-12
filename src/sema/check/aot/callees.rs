@@ -12,11 +12,11 @@
 //! g`, `o[key] = g`, `Object.assign`) is not among them, so what comes of them is a PREDICTION: the call tests for it.
 
 use super::flows::Place;
-use crate::bind::{Decl, FnOwner, Parent, PatParent, SymFlags, UNREACHABLE};
+use crate::bind::{Decl, FnOwner, Parent, PatParent, SymFlags};
 use crate::check::Checker;
 use crate::check::errors_names_and_exports::root_declaration;
 use crate::atom::Atom;
-use crate::hir::{BinOp, Chain, ExprId, ExprKind, FileKind, Flags, FnBody, FnId, FnKind, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind};
+use crate::hir::{BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind};
 use crate::program::{FileId, Sym};
 use crate::util::FxHashMap;
 
@@ -194,6 +194,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn find_callee_of_variable(&mut self, sym: Sym) -> Result<OnlyFunction, Hole> {
         // `export default EventEmitter as any`, by way of an import. Nothing else is ever bound to it. It is left a prediction.
         if let Some((file, value)) = self.expression_exported_as(sym) {
+            if self.only_declares(file) {
+                return Err(Hole::Declaration);
+            }
             let exported = self.callee_yielded_by(file, value, 0);
             let Callee::One(file, func) = exported.callee else { return Err(Hole::Stored(exported.callee)) };
             return Ok(OnlyFunction { file, func, may_be_nil: exported.may_be_nil, outermost: sym, is_predicted: true });
@@ -201,7 +204,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (file, decl) = self.declaration_of_variable(sym).ok_or(Hole::Declaration)?;
         let (hir, bound) = (self.hir(file), self.bound(file));
         // What a declaration file declares, other code stores to. What a script declares, the other scripts see.
-        if hir.kind == FileKind::Declaration || !self.files().module(file).is_module() {
+        if self.only_declares(file) || !self.files().module(file).is_module() {
             return Err(Hole::Declaration);
         }
         let local = bound.symbol_of_declaration(decl);
@@ -212,7 +215,8 @@ impl<'p, 's> Checker<'p, 's> {
         let (declared_by, mut stored) = match decl {
             Decl::Var(pat) => {
                 let PatParent::Var(d) = root_declaration(bound, pat) else { return Err(Hole::Declaration) };
-                if symbol.decls.iter().filter(|&&decl| !self.declares_only_a_type(sym, decl)).count() != 1 || hir[d].flags.contains(Flags::AMBIENT) {
+                let is_declared_by_statement = bound.var_stmt[d.idx()].some().is_some_and(|stmt| matches!(hir[stmt].kind, StmtKind::Var(_)));
+                if !is_declared_by_statement || symbol.decls.iter().filter(|&&decl| !self.declares_only_a_type(sym, decl)).count() != 1 || hir[d].flags.contains(Flags::AMBIENT) {
                     return Err(Hole::Declaration);
                 }
                 let first = if hir[d].pat != pat {
@@ -257,12 +261,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Err(Hole::Store(Place { file, pos: hir[declared_by].start }));
         }
         for &(_, target) in bound.assignments_to(local) {
-            let otherwise = Err(Hole::Store(Place { file, pos: hir[target].pos }));
-            let Parent::Expr(parent) = bound.expr_parent[target.idx()] else { return otherwise };
-            let ExprKind::Assign { op: None | Some(BinOp::And | BinOp::Or | BinOp::Nullish), target: to, value } = hir[parent].kind else { return otherwise };
-            if to != target {
-                return otherwise;
-            }
+            let Some(super::integers::Store::Value(value)) = self.store_to_target(file, target) else { return Err(Hole::Store(Place { file, pos: hir[target].pos })) };
             stored = stored.join(self.callee_yielded_by(file, value, 0));
         }
         let Callee::One(file, func) = stored.callee else { return Err(Hole::Stored(stored.callee)) };
@@ -292,26 +291,39 @@ impl<'p, 's> Checker<'p, 's> {
         let returned: Vec<ExprId> = match hir[func].body {
             FnBody::None => return None,
             FnBody::Expr(body) => vec![body],
-            FnBody::Block(_) => {
-                let end = bound.fns[func.idx()].end;
-                if end.is_some() && end != UNREACHABLE && self.is_reachable(file, end) {
+            FnBody::Block(stmts) => {
+                if !self.ends_by_leaving(file, stmts) {
                     return None;
                 }
                 bound.ids(bound.fns[func.idx()].returns).map(|stmt: StmtId| if let StmtKind::Return(value) = hir[stmt].kind { value } else { ExprId::NONE }).collect()
             }
         };
+        if self.mentions_arguments_object(file, func) || self.has_direct_eval(file) {
+            return None;
+        }
         let mut handed_back = None;
         for value in returned {
-            // `return Debug.fail(..)` does not return.
-            if value.is_some() && self.type_of_expr(file, value).is_never() {
-                continue;
-            }
             let parameter = if value.is_some() { self.parameter_yielded_by(file, func, value, 0)? } else { return None };
             if handed_back.replace(parameter).is_some_and(|other| other != parameter) {
                 return None;
             }
         }
         handed_back
+    }
+
+    fn ends_by_leaving(&self, file: FileId, stmts: IdList<StmtId>) -> bool {
+        let hir = self.hir(file);
+        let last = hir.ids(stmts).filter(|&stmt| !matches!(hir[stmt].kind, StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty)).last();
+        last.is_some_and(|last| self.leaves(file, last))
+    }
+
+    fn leaves(&self, file: FileId, stmt: StmtId) -> bool {
+        match self.hir(file)[stmt].kind {
+            StmtKind::Return(_) | StmtKind::Throw(_) => true,
+            StmtKind::Block(stmts) => self.ends_by_leaving(file, stmts),
+            StmtKind::If { yes, no, .. } => no.is_some() && self.leaves(file, yes) && self.leaves(file, no),
+            _ => false,
+        }
     }
 
     /// `e`: an expression in the body of `func`. The parameter of `func` that is its value, whenever it has one.
@@ -335,7 +347,16 @@ impl<'p, 's> Checker<'p, 's> {
                 if declared_in != file || bound.param_fn[parameter.idx()] != func || !matches!(hir[pat].kind, PatKind::Ident(_)) {
                     return None;
                 }
-                let is_plain = hir[parameter].default.is_none() && !hir[parameter].flags.contains(Flags::REST) && bound.assignments_to(bound.symbol_of_declaration(Decl::Param(pat))).is_empty();
+                let local = bound.symbol_of_declaration(Decl::Param(pat));
+                let is_declared_once = bound.symbols.get(local.idx()).is_some_and(|symbol| matches!(symbol.decls.as_slice(), [Decl::Param(_)]));
+                let names_function_of_body = matches!(hir[func].body, FnBody::Block(stmts) if hir.ids(stmts).any(|stmt| matches!(hir[stmt].kind, StmtKind::Fn(inner) if hir[inner].name == name)));
+                let is_plain = hir[parameter].default.is_none()
+                    && !hir[parameter].flags.contains(Flags::REST)
+                    && is_declared_once
+                    && !names_function_of_body
+                    && bound.assignments_to(local).is_empty()
+                    && !self.is_stored_through_casts(file, local)
+                    && !self.is_stored_through_assertions(file, local);
                 let number = hir[func].params.iter().position(|other| other == parameter)?;
                 is_plain.then_some(number as u32)
             }
@@ -357,6 +378,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let sym = self.symbol_of_identifier(file, hir[call].callee, name)?;
         let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym)? } else { sym };
+        if self.is_stored_to_through_cast(sym) {
+            return None;
+        }
         let (of, func) = match self.function_declared_as(sym) {
             Some(declared) => declared,
             None => self.only_function_of_variable(sym).filter(|only| !only.may_be_nil && !only.is_predicted).map(|only| (only.file, only.func))?,
@@ -375,7 +399,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn function_declared_as(&self, sym: Sym) -> Option<(FileId, FnId)> {
         let (file, decl @ Decl::Fn(_)) = self.files().value_declaration(sym)? else { return None };
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.kind == FileKind::Declaration || self.is_untyped_file(file) {
+        if self.only_declares(file) || self.is_untyped_file(file) {
             return None;
         }
         let local = bound.symbol_of_declaration(decl);
@@ -525,9 +549,12 @@ impl<'p, 's> Checker<'p, 's> {
                 let sym = self.symbol_of_identifier(file, e, variable)?;
                 let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym)? } else { sym };
                 if let Some((of, exported)) = self.expression_exported_as(sym) {
-                    return self.literal_yielded_by(of, exported, depth + 1);
+                    return if self.only_declares(of) { None } else { self.literal_yielded_by(of, exported, depth + 1) };
                 }
                 let (of, Decl::Var(pat)) = self.files().value_declaration(sym)? else { return None };
+                if self.only_declares(of) {
+                    return None;
+                }
                 let declaring = self.hir(of);
                 let PatParent::Var(d) = root_declaration(self.bound(of), pat) else { return None };
                 if declaring[d].pat != pat {

@@ -3074,6 +3074,17 @@ impl<'a> Lexer<'a> {
             });
         }
 
+        if for_pragma && self.tolerant {
+            let mut rest = &text[0..end_comment_text];
+            while let Some(i) = strings::index_of_any(rest, b"@#") {
+                rest = &rest[i + 1..];
+                if strings::has_prefix_with_word_boundary(rest, b"__PURE__") {
+                    self.has_pure_comment_before = true;
+                    break;
+                }
+            }
+        }
+
         // The type checker reads the pragmas it recognizes from `all_comments`
         // (`process_pragmas_into_fields`).
         if !for_pragma || self.tolerant {

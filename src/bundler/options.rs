@@ -844,6 +844,7 @@ pub(crate) fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
+    keeps_inputs: bool,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
@@ -966,6 +967,22 @@ pub(crate) fn defines_from_transform_options(
         drop.iter().copied(),
     );
 
+    let inputs: Vec<(Box<[u8]>, Box<[u8]>)> = if keeps_inputs {
+        (user_defines.keys().iter().zip(user_defines.values().iter()))
+            .map(|(key, value)| (Box::from(key.as_ref()), Box::from(value.as_ref())))
+            .chain((environment_defines.keys().iter().zip(environment_defines.values().iter())).filter_map(|(key, value)| match &value.value {
+                defines::DefineValue::EString(text) if text.is_utf8() => {
+                    let mut quoted = bun_core::MutableString::init_empty();
+                    bun_js_printer::quote_for_json(text.slice8(), &mut quoted, false).ok()?;
+                    Some((Box::from(key.as_ref()), quoted.take_slice().into_boxed_slice()))
+                }
+                _ => None,
+            }))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let mut define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
@@ -973,9 +990,7 @@ pub(crate) fn defines_from_transform_options(
         omit_unused_global_calls,
     )?;
     define.user_hash = user_hash;
-    define.user_inputs = (user_defines.keys().iter().zip(user_defines.values().iter()))
-        .map(|(key, value)| (Box::from(key.as_ref()), Box::from(value.as_ref())))
-        .collect();
+    define.user_inputs = inputs;
     Ok(define)
 }
 
@@ -1238,6 +1253,9 @@ pub struct TypeChecked<'a, 'i> {
     pub features: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// `BundleOptions::rewrite_jest_for_tests`
     pub rewrite_jest_for_tests: bool,
+    pub ignore_dce_annotations: bool,
+    pub jsx_side_effects: bool,
+    pub minify_syntax: bool,
     /// `BundleOptions::preserve_source_paths`
     pub preserve_source_paths: bool,
     /// The path of each of `sources` in which the React Compiler has given a function a cache, and the module as it leaves it, as
@@ -1754,6 +1772,7 @@ impl<'a> BundleOptions<'a> {
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
+            self.analyze.is_some(),
             arena,
         )?;
         self.defines_loaded = true;

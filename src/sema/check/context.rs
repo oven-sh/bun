@@ -1182,7 +1182,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         self.prepare_enclosing(file, e);
-        self.apparent_type_of_contextual_type(file, e, ContextFlags::empty())
+        self.apparent_type_of_contextual_type(file, e, ContextFlags::SKIP_BINDING_PATTERNS)
     }
 
     /// `getApparentTypeOfContextualType`

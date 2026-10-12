@@ -27,6 +27,7 @@ pub fn parse<'s>(
         atoms,
         experimental_decorators,
         false,
+        false,
     )
     .0
 }

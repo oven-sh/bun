@@ -123,9 +123,84 @@ impl<'s> Program<'s> {
     }
 }
 
+#[cfg(unix)]
+struct SignalStack(*mut libc::c_void);
+
+#[cfg(unix)]
+impl SignalStack {
+    const SIZE: usize = 512 * 1024;
+
+    fn new() -> SignalStack {
+        let none = SignalStack(core::ptr::null_mut());
+        let mut current = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: 0,
+            ss_size: 0,
+        };
+        // SAFETY: `current` is a place for what the thread has.
+        if unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) } != 0
+            || current.ss_flags & libc::SS_DISABLE == 0
+        {
+            return none;
+        }
+        // SAFETY: a new anonymous mapping, where the kernel puts it.
+        let memory = unsafe {
+            libc::mmap(
+                core::ptr::null_mut(),
+                Self::SIZE,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+        if memory == libc::MAP_FAILED {
+            return none;
+        }
+        let stack = libc::stack_t {
+            ss_sp: memory,
+            ss_flags: 0,
+            ss_size: Self::SIZE,
+        };
+        // SAFETY: the mapping has `SIZE` bytes and stays until `drop` has taken it from the thread.
+        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } != 0 {
+            // SAFETY: nothing refers to the mapping.
+            unsafe { libc::munmap(memory, Self::SIZE) };
+            return none;
+        }
+        SignalStack(memory)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SignalStack {
+    fn drop(&mut self) {
+        if self.0.is_null() {
+            return;
+        }
+        let disabled = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: Self::SIZE,
+        };
+        // SAFETY: on the thread of `new`, which has no alternate stack when the mapping goes.
+        unsafe {
+            libc::sigaltstack(&raw const disabled, core::ptr::null_mut());
+            libc::munmap(self.0, Self::SIZE);
+        }
+    }
+}
+
+#[cfg(unix)]
+thread_local! {
+    static SIGNAL_STACK: SignalStack = SignalStack::new();
+}
+
 impl<'s> Checker<'_, 's> {
     /// Called at the start of a task, or of a checker outside the plan. See `TASK_STACK`.
     pub fn begin_stack_budget(&mut self) {
+        #[cfg(unix)]
+        SIGNAL_STACK.with(|_| {});
         let left = bun_core::StackCheck::init().remaining();
         assert!(
             left >= TASK_STACK,

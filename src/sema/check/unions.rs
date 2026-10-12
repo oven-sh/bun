@@ -439,11 +439,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Up to here they were ordered by id.
         self.sort_type_set(actual, &mut members);
+        let is_totally_ordered = members.len() >= Self::MEMBERS_WORTH_INSERTING_INTO && !self.has_compared_without_total_order.get();
         let first_new_type_id = self.types().first_new_type_id();
         let union = match members[..] {
             [] => TypeId::NEVER,
             _ => self.union_of_named_unions(actual, &members),
         };
+        if is_totally_ordered && matches!(self.data(union), TypeData::Union(all) if all[..] == members[..]) {
+            self.totally_ordered_unions.borrow_mut().insert(union);
+        }
         if includes_removed_pattern && self.types().is_new_since(union, first_new_type_id) {
             self.types().mark_without_primitive_union(union);
         }
@@ -2373,6 +2377,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// Puts `members`, what is left of the `typeSet` of `getUnionTypeWorker(actual, ..)`, into the
     /// order of that set.
     fn sort_type_set(&self, actual: &[TypeId], members: &mut Flat) {
+        if let Some(inserted) = self.inserted_into_ordered_union(actual, members) {
+            *members = inserted;
+            return;
+        }
         // FOR SPEED: a total order gives one result, however it is reached.
         self.sort_types(members);
         if !self.has_compared_without_total_order.get() {
@@ -2389,6 +2397,30 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         *members = type_set;
+    }
+
+    const MEMBERS_WORTH_INSERTING_INTO: usize = 64;
+
+    fn inserted_into_ordered_union(&self, actual: &[TypeId], members: &Flat) -> Option<Flat> {
+        if members.len() < Self::MEMBERS_WORTH_INSERTING_INTO {
+            return None;
+        }
+        let ordered = actual.iter().copied().find(|ty| self.totally_ordered_unions.borrow().contains(ty))?;
+        let parts = self.parts(ordered);
+        if parts.len() > members.len() || members.len() - parts.len() > 8 {
+            return None;
+        }
+        let of_ordered: crate::util::FxHashSet<TypeId> = parts.iter().copied().collect();
+        let others: smallvec::SmallVec<[TypeId; 8]> = members.iter().copied().filter(|member| !of_ordered.contains(member)).collect();
+        if parts.len() + others.len() != members.len() {
+            return None;
+        }
+        self.has_compared_without_total_order.set(false);
+        let mut inserted = Flat::from_slice(parts);
+        for other in others {
+            self.insert_type(&mut inserted, other);
+        }
+        (!self.has_compared_without_total_order.get()).then_some(inserted)
     }
 
     /// Sorts by `CompareTypes`. `has_compared_without_total_order` tells whether that is an order

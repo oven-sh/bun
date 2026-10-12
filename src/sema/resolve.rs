@@ -425,6 +425,7 @@ pub struct Options {
     /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
     /// file afterwards leaves it off.
     pub drops_unreferenced: bool,
+    pub gives_direct_evals_their_scopes: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
     pub captures_suggestions: bool,
@@ -494,6 +495,7 @@ pub struct Options {
     /// JavaScript without imports and exports that names `exports` or `module` is a CommonJS module, as it is for the runtime. TypeScript wants `require(..)`, `module.exports = ..` or
     /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
     pub names_make_commonjs: bool,
+    pub one_name_is_one_binding: bool,
     /// What `getUndefinedProperty` makes has no declaration and is not readonly. TypeScript makes one for a name from the first property it is asked for, whose declarations it keeps: which
     /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
     /// has to be the same in every task.

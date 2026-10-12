@@ -847,6 +847,9 @@ fn analyze_on_this_thread(
         defines,
         features,
         rewrite_jest_for_tests,
+        ignore_dce_annotations,
+        jsx_side_effects,
+        minify_syntax,
         preserve_source_paths,
         react_compiler_outputs,
         jsx,
@@ -855,6 +858,9 @@ fn analyze_on_this_thread(
     let mut constants = bun_aot::Constants {
         own_paths: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
         has_test_globals: rewrite_jest_for_tests,
+        ignores_dce_annotations: ignore_dce_annotations,
+        jsx_has_side_effects: jsx_side_effects,
+        minifies_syntax: minify_syntax || preserve_source_paths,
         root: from_native(cwd),
         defines: defines.iter().map(|(name, value)| (name.to_vec(), value.to_vec())).collect(),
         features: features.map(<[u8]>::to_vec).collect(),
@@ -904,14 +910,22 @@ fn analyze_on_this_thread(
     }
     // `TypeChecked::react_compiler_outputs`: the code is under a path of its own. What is written is no code any more, so no root by that: it is
     // checked in its own right.
-    let mut code_of: std::collections::HashMap<Vec<u8>, Vec<u8>> = Default::default();
+    let mut code_of: bun_sema_driver::FxHashMap<Vec<u8>, Vec<u8>> = Default::default();
+    let mut places_in_code: bun_sema_driver::FxHashMap<Vec<u8>, Vec<usize>> = Default::default();
+    for (place, known) in code.iter().enumerate() {
+        places_in_code.entry(known.clone()).or_default().push(place);
+    }
+    let mut known_paths: bun_sema_driver::FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
     for (path, javascript) in react_compiler_outputs {
         let elsewhere = [path, b".js"].concat();
         provided.already_read.insert(from_native(&elsewhere), javascript.to_vec());
-        for known in code.iter_mut().filter(|known| ***known == *path) {
-            known.clone_from(&elsewhere);
+        if let Some(places) = places_in_code.remove(path) {
+            for &place in &places {
+                code[place].clone_from(&elsewhere);
+            }
+            places_in_code.entry(elsewhere.clone()).or_default().extend(places);
         }
-        if !paths.iter().any(|known| **known == *path) {
+        if known_paths.insert(path.to_vec()) {
             paths.push(path.to_vec());
         }
         code_of.insert(from_native(path), from_native(&elsewhere));
@@ -929,6 +943,7 @@ fn analyze_on_this_thread(
     }
     // What one entry function runs: an entry point of the bundle, then what `bun:main` does once that has run.
     let mut entry_functions: Vec<[Vec<u8>; 2]> = Vec::new();
+    let mut names_of_entry_functions: Vec<Vec<u8>> = Vec::new();
     for entry_point in own_entry_points.filter(|path| paths.iter().any(|it| it == path)) {
         let name = match entry_functions.len() {
             0 => "main.js".to_owned(),
@@ -940,9 +955,14 @@ fn analyze_on_this_thread(
         provided.already_read.insert(from_native(&main), wrapper.contents.into_vec());
         code.push(main.clone());
         if let Some(resolved) = &mut constants.resolved {
-            resolved.insert((from_native(&main), entry_point.to_vec()), from_native(entry_point));
+            let to = from_native(entry_point);
+            let to = code_of.get(&to).cloned().unwrap_or(to);
+            resolved.insert((from_native(&main), entry_point.to_vec()), to);
         }
-        entry_functions.push([entry_point.to_vec(), main]);
+        let is_replaced = code_of.contains_key(&from_native(entry_point));
+        let root = if is_replaced { [entry_point, b".js"].concat() } else { entry_point.to_vec() };
+        entry_functions.push([root, main]);
+        names_of_entry_functions.push(entry_point.to_vec());
     }
     if entry_functions.is_empty() {
         return None;
@@ -987,7 +1007,7 @@ fn analyze_on_this_thread(
         translation.note_file(checker, file);
     };
     let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
-    let compiled_entry_points = || entry_functions.iter().map(|roots| roots[0].clone().into_boxed_slice()).collect();
+    let compiled_entry_points = || names_of_entry_functions.iter().map(|name| name.clone().into_boxed_slice()).collect();
     let analyze = |program: &bun_sema_driver::Program,
                    in_parallel: bun_sema_driver::InParallel<'_>,
                    errors: &[(bun_sema_driver::FileId, u32)]|
@@ -995,8 +1015,6 @@ fn analyze_on_this_thread(
         if let Some(path) = bun_core::env_var::BUN_AOT_TYPED_FILE.get() {
             if let Ok(typed) = std::fs::read(String::from_utf8_lossy(path).as_ref()) {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
-                    table: Box::default(),
-                    tags: Default::default(),
                     typed: Some(typed.into_boxed_slice()),
                     entry_points: compiled_entry_points(),
                 });
@@ -1007,8 +1025,6 @@ fn analyze_on_this_thread(
         match typed {
             Ok(typed) => {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
-                    table: Box::default(),
-                    tags: Default::default(),
                     typed: Some(typed.into_boxed_slice()),
                     entry_points: compiled_entry_points(),
                 });
@@ -1060,6 +1076,9 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         defines: _,
         features: _,
         rewrite_jest_for_tests: _,
+        ignore_dce_annotations: _,
+        jsx_side_effects: _,
+        minify_syntax: _,
         preserve_source_paths: _,
         react_compiler_outputs: _,
         jsx: _,
@@ -1106,7 +1125,8 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
 
 /// The errors as those of a build.
 fn add_to_log(report: &Report, log: &mut bun_ast::Log) {
-    for reported in &report.diagnostics {
+    let note = format::note_on_bun_types(report);
+    for (index, reported) in report.diagnostics.iter().enumerate() {
         let kind = match reported.category {
             Category::Error => bun_ast::Kind::Err,
             Category::Warning => bun_ast::Kind::Warn,
@@ -1120,7 +1140,15 @@ fn add_to_log(report: &Report, log: &mut bun_ast::Log) {
             kind,
             data: log_data_of(reported),
             metadata: format::metadata_of(reported),
-            notes: reported.related.iter().map(log_data_of).collect(),
+            notes: (reported.related.iter().map(log_data_of))
+                .chain(
+                    note.filter(|note| note.0 == index)
+                        .map(|note| bun_ast::Data {
+                            text: std::borrow::Cow::Borrowed(note.1),
+                            location: None,
+                        }),
+                )
+                .collect(),
             ..Default::default()
         });
     }

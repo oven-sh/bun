@@ -131,7 +131,7 @@ public:
     bool isConstructor() const
     {
         if (m_isCompiledAheadOfTime)
-            return m_stackFrame->isConstructor();
+            return m_stackFrame->isConstructor() && !m_stackFrame->isBuiltinFunction();
         return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 

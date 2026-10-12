@@ -13,12 +13,12 @@
 //! What the engine implements itself stays trusted: `BUILTINS`. So do the libraries that the toolchain vouches for: `libraries.rs`.
 
 use crate::atom::{Atom, SYMBOL_NAME_PREFIX};
-use crate::bind::{Decl, MemberOwner, SymFlags};
+use crate::bind::{Decl, MemberOwner, PatParent, SymFlags};
 use crate::check::Checker;
 use super::builtins_generated::BUILTINS;
 use super::flows::Place;
 use super::storage::Query;
-use crate::hir::{ExprId, ExprKind, FnBody, MemberKind};
+use crate::hir::{ExprId, ExprKind, FnBody, MemberKind, VarKind};
 use crate::program::{FileId, Sym};
 use crate::types::{Prop, PropSource, TypeData, TypeId};
 use crate::util::FxHashMap;
@@ -174,7 +174,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(name) => {
                 let sym = self.symbol_of_identifier(file, e, name)?;
                 let sym = if self.files.flags(sym).contains(SymFlags::ALIAS) { self.files.resolve_alias(sym)? } else { sym };
-                (self.is_ambient_value(sym) && !self.is_builtin_global(sym)).then_some(Claim::Binding)
+                (self.is_ambient_value(sym) && !self.is_builtin_global(sym) || self.is_narrowed_from_untyped(file, e, sym)).then_some(Claim::Binding)
             }
             ExprKind::Dot { obj, name, .. } => {
                 if matches!(hir[obj].kind, ExprKind::Super) {
@@ -244,6 +244,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether no declaration of the symbol that gives it a value has code behind it: all are in a declaration file or under `declare`, and
     /// no function among them has a body. An enum is its constants, wherever it is declared.
+    fn is_narrowed_from_untyped(&mut self, file: FileId, e: ExprId, sym: Sym) -> bool {
+        let is_constant = matches!(self.declaration_of_variable(sym), Some((of, Decl::Var(pat))) if matches!(self.bound(of).pat_parent[pat.idx()], PatParent::Var(d) if self.hir(of)[d].kind == VarKind::Const));
+        if !is_constant && !(self.is_annotated(sym) && matches!(self.declaration_of_variable(sym), Some((_, Decl::Var(_) | Decl::Param(_))))) {
+            return false;
+        }
+        let declared = self.type_of_symbol(sym);
+        let says_nothing_of_fields = self.parts(declared).to_vec().into_iter().all(|part| {
+            part.is_any() || matches!(part, TypeId::UNKNOWN | TypeId::OBJECT | TypeId::UNDEFINED | TypeId::NULL) || !self.is_instantiable(part) && (self.is_empty_object_type(part) || self.says_nothing_of_fields(part))
+        });
+        if !says_nothing_of_fields {
+            return false;
+        }
+        let narrowed = self.type_of_expr(file, e);
+        narrowed != declared && !self.says_nothing(narrowed) && self.parts(narrowed).to_vec().into_iter().any(|part| self.says_properties(part) && self.built_in_extended_by(part).is_none() && self.element_of_array_subtype(part).is_none())
+    }
+
     fn is_ambient_value(&mut self, sym: Sym) -> bool {
         if let Some(&known) = self.aot.trust.ambient.get(&sym) {
             return known;

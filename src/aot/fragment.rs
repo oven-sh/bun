@@ -14,7 +14,7 @@
 use crate::build::Problem;
 use crate::declared::DeclaredTable;
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{Block, Def, Field, Func, Global, Layout, Literal, Method, NO_VARIABLE, Op, Prediction, STATIC_FIELD_IS_ANNOTATED, Strs, Value, Why};
+use crate::ir::{Block, Def, Field, Func, Global, Layout, Literal, Method, NO_VARIABLE, Op, Prediction, Strs, Value, Why};
 use bun_sema::bind::SymbolId;
 use bun_sema::check::{Identity, MethodStore, Noted, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
@@ -35,6 +35,8 @@ pub enum FuncKey {
     /// Evaluates the initializer of a variable of a module and stores it, when the variable is first read.
     Initializer(FileId, SymbolId),
     Function(FileId, FnId),
+    TypedBody(FileId, FnId),
+    SecondBody(FileId, FnId),
     /// The constructor of a class that declares none.
     DefaultConstructor(FileId, ClassId),
     /// Yields the object an enum is as a value.
@@ -57,6 +59,8 @@ impl FuncKey {
             | FuncKey::DynamicImport(file, _)
             | FuncKey::Initializer(file, _)
             | FuncKey::Function(file, _)
+            | FuncKey::TypedBody(file, _)
+            | FuncKey::SecondBody(file, _)
             | FuncKey::DefaultConstructor(file, _)
             | FuncKey::EnumObject(file, _)
             | FuncKey::NamespaceObject(file, _)
@@ -241,7 +245,6 @@ pub struct Body {
     pub class: LayoutId,
     /// The classes whose declarations the function evaluates, by their layouts.
     pub declares: Vec<LayoutId>,
-    /// The classes that are laid out and whose class objects the function uses as values.
     pub classes_as_values: Vec<LayoutId>,
     /// The names of the properties that the function makes and that none of its operations stores: a field of a class that starts as
     /// `undefined`.
@@ -325,6 +328,7 @@ pub struct Fragment {
     pub altered_globals: Vec<StrId>,
     /// `Checker::prototype_property_names_in`
     pub prototype_property_names: Vec<StrId>,
+    pub regexp_literals: Vec<(StrId, StrId)>,
     /// `Checker::stores_to_methods_in`, with identities in the place of types. Every type in it is kept.
     pub stores_to_methods: Vec<MethodStore<Identity>>,
     /// Of a file of builtin functions: what native code asks for a function by, the function, its `ImplementationVisibility` as a number.
@@ -476,14 +480,14 @@ fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
     }
 }
 
-/// A variable of a class, which is a module variable: see `Layout::environment`. `flags`: the bits that are no part of the number.
-fn pass_variable(variable: &mut u32, flags: u32, ids: &mut impl Ids) {
+/// A variable of a class, which is a module variable: see `Layout::environment`.
+fn pass_variable(variable: &mut u32, ids: &mut impl Ids) {
     if *variable == NO_VARIABLE {
         return;
     }
-    let mut global = GlobalId(*variable & !flags);
+    let mut global = GlobalId(*variable);
     ids.global(&mut global);
-    *variable = global.0 | *variable & flags;
+    *variable = global.0;
 }
 
 pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
@@ -501,6 +505,7 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         may_be_frozen: _,
         admits_foreign: _,
         members,
+        members_by_fit,
         specializations,
         declared_path,
         declared_line: _,
@@ -527,17 +532,15 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         pass!(ids.str(name));
         pass!(ids.func(func, Used::AsMember));
         if has_module_variables {
-            pass_variable(key, 0, ids);
+            pass_variable(key, ids);
         }
     }
     pass!(ids.layout(environment));
-    for (name, variable) in static_fields {
+    for (name, declared) in static_fields {
         pass!(ids.str(name));
-        if has_module_variables {
-            pass_variable(variable, STATIC_FIELD_IS_ANNOTATED, ids);
-        }
+        pass!(ids.ty(declared));
     }
-    for other in members.iter_mut().chain(specializations) {
+    for other in members.iter_mut().chain(members_by_fit).chain(specializations) {
         pass!(ids.layout(other));
     }
     pass!(ids.str(declared_path));

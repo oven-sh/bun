@@ -3,7 +3,7 @@
 
 use crate::declared::Part;
 use crate::id::{LayoutId, TyId};
-use crate::ir::{Def, Op, Program, STATIC_FIELD_IS_ANNOTATED, Why, field_flags};
+use crate::ir::{Def, Op, Program, Why, field_flags};
 use bun_sema::check::FieldTypes;
 use bun_sema::types::TypeId;
 
@@ -78,11 +78,7 @@ pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)]) -> Fi
         })
         .collect();
     let of_static_fields = (program.layouts.iter())
-        .flat_map(|layout| layout.static_fields.iter().map(move |field| (layout, (field.1 & !STATIC_FIELD_IS_ANNOTATED) as usize)))
-        .filter_map(|(layout, variable)| match layout.environment.is_some() {
-            true => program.layouts[layout.environment.idx()].fields.get(variable).map(|field| field.declared),
-            false => program.globals.get(variable).map(|global| global.declared),
-        })
+        .flat_map(|layout| layout.static_fields.iter().map(|field| field.1))
         .filter(|declared| declared.is_some())
         .map(|declared| declared.0)
         .collect();

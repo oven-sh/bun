@@ -94,9 +94,6 @@ pub mod field_flags {
     pub const DECLARED_WITHOUT_UNDEFINED: u16 = 1 << 12;
 }
 
-/// In the variable of a static field that is a module variable: the same as `field_flags::ANNOTATED`.
-pub const STATIC_FIELD_IS_ANNOTATED: u32 = 1 << 31;
-
 /// A string or a number that a type names.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Literal {
@@ -203,9 +200,7 @@ pub struct Layout {
     /// Of a class that is not evaluated once: the layout of the environment the class object closes over. A variable of the class is a
     /// field of that, by its index. `NONE`: a variable of the class is a module variable, by its number.
     pub environment: LayoutId,
-    /// Of a class with fixed members: the static fields by name, each with the variable of the class it is. The class object shows them
-    /// as properties. `static #name` is not among them. See `STATIC_FIELD_IS_ANNOTATED`.
-    pub static_fields: Vec<(StrId, u32)>,
+    pub static_fields: Vec<(StrId, TyId)>,
     /// Something makes objects of it: an allocation, or a cast that turns an object into one.
     pub is_allocated: bool,
     /// The program is seen to freeze or seal objects that are looked at as a type this is a member of.
@@ -216,6 +211,7 @@ pub struct Layout {
     /// The layout as a way to look at objects: the allocated layouts whose type is assignable to this type, itself among them if it is
     /// allocated. No other object of the program is in a place of this type. Sorted.
     pub members: Vec<LayoutId>,
+    pub members_by_fit: Vec<LayoutId>,
     /// What a cast may turn an object into that was allocated with this layout: layouts that have all its fields. Sorted.
     pub specializations: Vec<LayoutId>,
     /// Where the type or the class is declared, for messages: the path, as `Module::display_path` has it, and the line, from 1. `NONE` and
@@ -252,6 +248,7 @@ pub enum Initialization {
     NeverSeen = 2,
     /// The same, and there is one store, that of its declaration: a read yields the same whenever it is made.
     NeverSeenAndStoredOnce = 3,
+    Lazy = 4,
 }
 
 pub struct Module {
@@ -297,6 +294,8 @@ pub mod func_flags {
     pub const IS_OF_BUILTIN_MODULE: u16 = 1 << 9;
     /// Its frames only exist because of how the code is compiled. Stack traces leave them out.
     pub const IS_HIDDEN_IN_STACK_TRACES: u16 = 1 << 10;
+    pub const NAME_IS_GIVEN: u16 = 1 << 11;
+    pub const IS_CODE_OF_MODULE: u16 = 1 << 12;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -356,6 +355,7 @@ pub enum Why {
     /// object it does what `Cast` does, and an object that nothing can be done with stays what it is. So what it yields need not be a
     /// `T`: `to` is `T`, and the type of the value is what is known of it afterwards.
     Coerce,
+    Forced,
     /// The same of what nobody else can hold, nor anything below it: `JSON.parse(text) as T`: plain data is made what `T` says, all the way down. `Checker::is_fresh_graph_by_text`.
     CoerceFreshGraph,
 }
@@ -751,6 +751,8 @@ pub struct Program {
     /// The names that the modules of the program define on an object written as `E.prototype` (`Checker::prototype_property_names_in`).
     /// The run time lets no other name of a field be defined on the `prototype` object of a function. Sorted.
     pub prototype_property_names: Vec<StrId>,
+    pub regexp_literals: Vec<(StrId, StrId)>,
+    pub marked_values: Vec<Vec<V>>,
     /// By registry id, ascending: the function that evaluates a builtin module and returns its value.
     pub builtin_modules: Vec<(u32, FuncId)>,
     /// By id, ascending: a builtin function of the runtime that is compiled with the program, and its `ImplementationVisibility` as a number.
@@ -758,6 +760,8 @@ pub struct Program {
     /// A property, a key, and the one function of the program whose closures are stored under the key in the dictionaries that are held under the property: `e.on("x", listener)`. Ascending.
     /// A prediction.
     pub functions_by_key: Vec<(StrId, StrId, FuncId)>,
+    pub accesses_of_one_row: Vec<(FuncId, V)>,
+    pub known_places: Vec<(FuncId, V, u32)>,
     /// Runs the program.
     /// What is run first, by entry point, in their order. The first is that of the executable itself. One of them is run in an instance of the program, once.
     pub entries: Vec<FuncId>,

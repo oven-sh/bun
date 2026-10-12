@@ -43,13 +43,22 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
-    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
+#if ENABLE(AOT)
+    using AsyncFunction = JSC::JSCell;
+#else
+    using AsyncFunction = JSC::JSAsyncFunctionGenerator;
+#endif
+    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> AsyncFunction* {
         JSC::InternalFieldTuple* tuple = nullptr;
         if (dynamicCastValue(context, &tuple))
             context = tuple->getInternalField(0);
+#if ENABLE(AOT)
+        return JSC::Interpreter::asyncFunctionIn(context);
+#else
         JSC::JSAsyncFunctionGenerator* generator = nullptr;
         dynamicCastValue(context, &generator);
         return generator;
+#endif
     };
 
     // Walk reaction->context → generator. If context is not a generator (e.g.
@@ -64,7 +73,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
-    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
+    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> AsyncFunction* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
@@ -105,12 +114,21 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
+    AsyncFunction* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
         JSC::Interpreter::appendAsyncStackFrame(vm, owner, results, gen);
+#if ENABLE(AOT)
+        gen = JSC::Interpreter::appendDirectAsyncCallers(vm, owner, results, gen, maxStackSize);
+        if (!gen)
+            break;
+        JSC::JSPromise* returnPromise = JSC::Interpreter::promiseOfAsyncFunction(gen);
+        if (!returnPromise)
+            break;
+#else
         JSC::JSPromise* returnPromise = nullptr;
         if (!dynamicCastValue(gen->context(), &returnPromise))
             break;
+#endif
         gen = getAwaitingGenerator(returnPromise);
     }
 }

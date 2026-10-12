@@ -521,32 +521,28 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-export function createOnWarning(process, redirectPath, disabledArr, writeToUntouchedStderr, appendToFile) {
+export function createOnWarning(process, redirectPath, disabledArr) {
+  const appendFileSync = redirectPath ? require("node:fs").appendFileSync : undefined;
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
   const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
   let traceWarningHelperShown = false;
 
   function writeOut(message) {
-    if (redirectPath) {
-      // Simplification vs Node's writeToFile (single fd, async): open per-write and
-      // fall back to stderr per-warning; open failures retry on the next warning.
-      const appended = appendToFile(redirectPath, message + "\n");
-      if (appended) return;
-      // Native code does not do it on this platform.
-      if (appended === undefined) {
-        try {
-          require("node:fs").appendFileSync(redirectPath, message + "\n");
-          return;
-        } catch {}
+    if (appendFileSync) {
+      try {
+        appendFileSync(redirectPath, message + "\n");
+        return;
+      } catch {
+        // Simplification vs Node's writeToFile (single fd, async): open per-write and
+        // fall back to stderr per-warning; open failures retry on the next warning.
       }
     }
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    // Nor is it materialized for this line alone: while nobody has looked at process.stderr, native code writes it.
-    if (!writeToUntouchedStderr(message + "\n")) process.stderr.write(message + "\n");
+    process.stderr.write(message + "\n");
   }
 
   interface ProcessWarning extends Error {

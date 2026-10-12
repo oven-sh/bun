@@ -122,13 +122,12 @@ pub use aot::{CommonJsExports, ExportsMention};
 pub use aot::Identity;
 pub use aot::given;
 pub use aot::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
-pub use aot::{BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
+pub use aot::{Answer, BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
 pub use aot::{Cause, FieldTypes, Sizes, Subtypes};
 pub use aot::{Evaluates, FirstStore, Primitive, Recovery, ReferenceRead, Storage, kind};
 pub use aot::Claim;
 pub use aot::{Callee, Hole, OnlyFunction};
-pub use aot::{ByDoor, Certainty, Door, Doubt, EscapeCause, ForClosure};
-pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Keeper, Receiver, argument_use};
+pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver, argument_use};
 pub use call::ResolvedCall;
 pub use shape::Members;
 pub use spans::compute_ecma_line_starts;
@@ -768,6 +767,7 @@ impl<'s> Program<'s> {
             type_arguments_in_instantiation: Vec::new(),
             conditional_constraint_depth: 0,
             deepest_stack: std::cell::Cell::new(0),
+            times_half_of_stack_was_in_use: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
@@ -787,6 +787,9 @@ impl<'s> Program<'s> {
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
+            totally_ordered_unions: Default::default(),
+            final_array_types: Default::default(),
+            evolving_arrays_grown: Default::default(),
             symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: false,
@@ -1464,6 +1467,7 @@ pub struct Checker<'p, 's> {
     /// `conditionalConstraintDepth`
     conditional_constraint_depth: u32,
     deepest_stack: std::cell::Cell<usize>,
+    times_half_of_stack_was_in_use: std::cell::Cell<u32>,
     ran_out_of_stack: std::cell::Cell<bool>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
     times_cut_short: std::cell::Cell<u64>,
@@ -1499,6 +1503,9 @@ pub struct Checker<'p, 's> {
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
+    totally_ordered_unions: std::cell::RefCell<crate::util::FxHashSet<TypeId>>,
+    final_array_types: FxHashMap<TypeId, TypeId>,
+    evolving_arrays_grown: FxHashMap<(TypeId, FileId, ExprId), TypeId>,
     /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
     symbol_ids: Option<std::cell::RefCell<symbol_ids::SymbolIds>>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
@@ -1889,7 +1896,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// typescript-go ends at `instantiationCount`, on a stack that grows.
     #[inline]
     pub(crate) fn is_half_of_stack_in_use(&self) -> bool {
-        self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2
+        let is_in_use = self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit / 2;
+        if is_in_use {
+            self.times_half_of_stack_was_in_use.set(self.times_half_of_stack_was_in_use.get().wrapping_add(1));
+        }
+        is_in_use
+    }
+
+    pub(crate) fn times_half_of_stack_was_in_use(&self) -> u32 {
+        self.times_half_of_stack_was_in_use.get()
     }
 
     /// The maximum stack in use at any query.

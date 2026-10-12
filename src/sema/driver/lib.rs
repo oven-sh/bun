@@ -44,7 +44,7 @@ use bun_sema::resolve::{
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
-use bun_sema::util::{FxHashMap, FxHashSet};
+pub use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
 use std::borrow::Cow;
@@ -1122,11 +1122,19 @@ pub fn check_provided_then<R>(
         }
     }
     let mut disk = host::Disk::with_already_read(threads, already_read, &project);
+    let paths_of = |disk: &host::Disk, named: Vec<&[u8]>| -> Vec<Vec<u8>> {
+        let mut paths: Vec<(&[u8], Vec<u8>)> = named.into_iter().map(|named| (named, Vec::new())).collect();
+        bun_sema::util::for_each_mut(&mut paths, &|count, work| disk.parallel(count, work), &|(named, path)| {
+            *path = to_path(&disk.as_written(&host::from_argument(&cwd, named)), disk.is_case_sensitive()).into_owned();
+        });
+        paths.into_iter().map(|(_, path)| path).collect()
+    };
     if compiles_builtin_modules {
-        let path = |path: &Vec<u8>| to_path(&disk.as_written(&host::from_argument(&cwd, path)), disk.is_case_sensitive()).into_owned();
+        let entry_points = paths_of(&disk, request.paths.iter().map(Vec::as_slice).collect());
+        let code = paths_of(&disk, request.code.iter().map(Vec::as_slice).collect());
         disk.compiled = Some(host::Compiled {
-            entry_points: request.paths.iter().map(path).collect(),
-            code: request.code.iter().map(path).collect(),
+            entry_points,
+            code: code.into_iter().collect(),
             builtin_modules: Default::default(),
         });
     }
@@ -1135,17 +1143,11 @@ pub fn check_provided_then<R>(
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
-    let script_kinds = request.script_kinds.iter().map(|(path, kind)| {
-        let path = disk.as_written(&host::from_argument(&cwd, path));
-        (to_path(&path, disk.is_case_sensitive()).into_owned(), *kind)
-    });
-    disk.script_kinds = script_kinds.collect();
+    let script_kinds = paths_of(&disk, request.script_kinds.iter().map(|(path, _)| path.as_slice()).collect());
+    disk.script_kinds = script_kinds.into_iter().zip(request.script_kinds.iter().map(|&(_, kind)| kind)).collect();
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
-    let jsx_of_files = provided.jsx_of_files.into_iter().map(|(path, of_file)| {
-        let path = disk.as_written(&host::from_argument(&cwd, &path));
-        (to_path(&path, disk.is_case_sensitive()).into_owned(), of_file)
-    });
-    disk.jsx_of_files = jsx_of_files.collect();
+    let jsx_of_files = paths_of(&disk, provided.jsx_of_files.iter().map(|(path, _)| path.as_slice()).collect());
+    disk.jsx_of_files = jsx_of_files.into_iter().zip(provided.jsx_of_files.into_iter().map(|(_, of_file)| of_file)).collect();
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -1859,6 +1861,7 @@ fn check_project_of(
         project.options.allow_js = true;
     }
     if request.is_one_program {
+        project.options.gives_direct_evals_their_scopes = true;
         project.options.tolerate_removed_options();
         project.options.emit_nothing();
         project.options.ignore_paths_of(|specifier| {
@@ -2790,6 +2793,7 @@ fn check_named_files(
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything && !request.is_one_program;
     project.options.names_make_commonjs = request.is_one_program;
+    project.options.one_name_is_one_binding = request.is_one_program;
     project.options.undefined_properties_name_nobody = request.is_one_program;
     project.options.reports_uninitialized_variables = project.options.strict_null_checks
         && (project.options.strict_variable_initialization).unwrap_or(request.is_one_program);
@@ -3069,7 +3073,7 @@ fn check_named_files(
         |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool, bool)>| {
             let mut checker = new_checker(expected);
             if let Some((step, index, is_read_later, withholds_expressions)) = task {
-                checker.begin_task(step as u32, index as u32, is_read_later);
+                checker.begin_task((step + usize::from(visits_in_tasks)) as u32, index as u32, is_read_later);
                 checker.set_checker_count(checker_count as u32);
                 if checker_count == 1 && request.plan_options.reproduces_symbol_ids {
                     checker.hand_out_symbol_ids();
@@ -3124,7 +3128,7 @@ fn check_named_files(
     // `place`: the step of the task, and its index in the step.
     let check_ahead = |file: FileId, range: (u32, u32), expected: Requested, place: [usize; 2]| {
         let mut checker = new_checker(expected);
-        checker.begin_task(place[0] as u32, place[1] as u32, true);
+        checker.begin_task((place[0] + usize::from(visits_in_tasks)) as u32, place[1] as u32, true);
         let everything = request.plan_options.split_publishes_everything;
         let obstacles = checker.check_statements_ahead(file, range, everything);
         Outcome {
@@ -3143,7 +3147,7 @@ fn check_named_files(
     let visit_chunk = |files: &[FileId], place: Option<[usize; 2]>, visited: Visited<'_>, is_visited_again: bool| {
         let mut checker = new_checker(Requested::All);
         if let Some(place) = place {
-            checker.begin_task(place[0] as u32, place[1] as u32, true);
+            checker.begin_task((place[0] + usize::from(visits_in_tasks)) as u32, place[1] as u32, true);
             if !is_visited_again && !request.retains_everything {
                 checker.withhold_tables_of_expressions();
             }
@@ -3486,7 +3490,12 @@ fn check_named_files(
             });
             finish_files();
             let syntactic = std::mem::take(&mut *found.lock());
-            if !syntactic.is_empty() {
+            let fails_no_build = |found: &Diagnostic| {
+                request.after_file.is_some()
+                    && found.code == 18030
+                    && (program.files.by_path.get(&found.path)).is_some_and(|file| program.files.hir(file).is_js)
+            };
+            if !syntactic.iter().all(fails_no_build) {
                 // `GetProgramDiagnostics` is not called. An incremental program asks for them when
                 // `Emit` writes its build info (`ensureHasErrorsForState`).
                 if explains_files {
@@ -3517,6 +3526,28 @@ fn check_named_files(
             }
         }
         let emits_first = options.emits_first && !options.no_emit_on_error;
+        if visits_in_tasks && program.files_without_whole_trees().is_empty() {
+            let mut finished = program.find_what_is_given(threads, 0, &|count, work| {
+                std::thread::scope(|scope| {
+                    for index in 0..count {
+                        std::thread::Builder::new()
+                            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                            .spawn_scoped(scope, move || {
+                                bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
+                                work(index);
+                            })
+                            .expect("a thread");
+                    }
+                });
+            });
+            if checker_count == 0 {
+                let is_invalid = program.validate(&finished);
+                let mut at = is_invalid.iter();
+                finished.retain(|_| !*at.next().unwrap());
+                program.link(&mut finished, &in_parallel);
+                program.publish(&mut finished, &in_parallel, request.digests);
+            }
+        }
         for type_checked in [!emits_first, emits_first] {
             check_files(Requested::All, type_checked);
             report.diagnostics.append(&mut found.lock());

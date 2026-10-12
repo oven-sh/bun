@@ -61,7 +61,11 @@ impl Program<'_> {
     /// when the program is loaded. Not every such file is reported: one that is only code is not checked.
     pub fn files_without_whole_trees(&self) -> Vec<FileId> {
         (self.files.modules.iter().enumerate())
-            .filter(|(_, module)| module.hir.has_parse_diagnostics || module.hir.has_errors || module.hir.ran_out_of_stack)
+            .filter(|(_, module)| {
+                let mut reported = module.hir.diagnostics.iter().filter(|found| found.kind == crate::hir::DiagnosticKind::Parse).peekable();
+                let is_what_its_text_says = module.hir.is_js && reported.peek().is_some() && reported.all(|found| found.code == 18030);
+                module.hir.has_parse_diagnostics && !is_what_its_text_says || module.hir.has_errors || module.hir.ran_out_of_stack
+            })
             .map(|(i, _)| FileId(i as u32))
             .collect()
     }

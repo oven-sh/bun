@@ -581,7 +581,9 @@ The driver automatically [begins](https://www.sqlite.org/lang_transaction.html) 
 <Note>
 **The wrapped function must be synchronous.** The driver commits when the wrapped function returns, so the function must finish all of its work before it returns.
 
-If the wrapped function returns a promise or another thenable, the driver rolls back the transaction and the call throws a `TypeError`. The rollback does not stop work that the function already started. A statement that runs after the first `await` runs after the rollback, so the rollback does not undo it. If no transaction is open on the connection at that time, the statement commits on its own. If one is open, for example a `BEGIN` that you hold across the `await`, the statement joins that transaction.
+If the wrapped function is an `async` function, each call of the transaction function throws a `TypeError` before the transaction begins, and the wrapped function does not run. `db.transaction()` itself accepts the function.
+
+If another kind of function returns a promise or another thenable, the driver rolls back the transaction and the call throws a `TypeError`. The rollback does not stop work that the function already started. A statement that runs after the first `await` runs after the rollback, so the rollback does not undo it. If no transaction is open on the connection at that time, the statement commits on its own. If one is open, for example a `BEGIN` that you hold across the `await`, the statement joins that transaction.
 
 A generator function does not run its body during the call. Its statements run when you iterate the result, outside the transaction.
 

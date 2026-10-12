@@ -369,7 +369,9 @@ declare module "bun:sqlite" {
      * transaction is rolled back (and the exception propagates as usual).
      *
      * The callback must be synchronous, because Bun commits the transaction
-     * when the callback returns. If the callback returns a promise or another
+     * when the callback returns. If the callback is an `async` function, each
+     * call throws a `TypeError` before the transaction begins, and the callback
+     * does not run. If another kind of callback returns a promise or another
      * thenable, Bun rolls back the transaction and the call throws a
      * `TypeError`. Bun cannot stop asynchronous work that the callback already
      * started. A later statement of that work runs after the rollback: it

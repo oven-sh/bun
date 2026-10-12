@@ -10,6 +10,9 @@ const defineProperties = Object.defineProperties;
 const toStringTag = Symbol.toStringTag;
 const isArray = Array.isArray;
 const isTypedArray = ArrayBuffer.isView;
+const getPrototypeOf = Object.getPrototypeOf;
+const FunctionPrototype = Function.prototype;
+const AsyncFunctionPrototype = getPrototypeOf(async function () {});
 
 let internalFieldTuple;
 
@@ -603,16 +606,18 @@ class Database implements SqliteTypes.Database {
 
     const db = this;
     const controller = getController(db, self);
+    // Not in better-sqlite3: refuse an async function before BEGIN, so that its body never starts.
+    const wrap = isAsyncFunction(fn) ? refuseTransaction : wrapTransaction;
 
     // Each version of the transaction function has these same properties
     const properties = {
-      default: { value: wrapTransaction(fn, db, controller.default) },
-      deferred: { value: wrapTransaction(fn, db, controller.deferred) },
+      default: { value: wrap(fn, db, controller.default) },
+      deferred: { value: wrap(fn, db, controller.deferred) },
       immediate: {
-        value: wrapTransaction(fn, db, controller.immediate),
+        value: wrap(fn, db, controller.immediate),
       },
       exclusive: {
-        value: wrapTransaction(fn, db, controller.exclusive),
+        value: wrap(fn, db, controller.exclusive),
       },
       database: { value: this, enumerable: true },
     };
@@ -653,6 +658,24 @@ const getController = (db, _self) => {
   }
   return controller;
 };
+
+// True for an async function of any realm, and for a bound function or a Proxy of one of this realm
+const isAsyncFunction = fn => {
+  const prototype = getPrototypeOf(fn);
+  if (prototype === AsyncFunctionPrototype) return true;
+  if (prototype === FunctionPrototype) return false;
+  const types = require("node:util/types");
+  // types.isAsyncFunction is also true for an async generator function, which db.transaction() does not refuse
+  return types.isAsyncFunction(fn) && !types.isGeneratorFunction(fn);
+};
+
+// Return a transaction function that refuses to start: its callback is an async function
+const refuseTransaction: typeof wrapTransaction = () =>
+  function transaction() {
+    throw new TypeError(
+      "db.transaction() callback must be synchronous, but it is an async function. Remove async/await from the callback, or move the awaited work outside the transaction.",
+    );
+  };
 
 // Return a new transaction function by wrapping the given function
 const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) =>

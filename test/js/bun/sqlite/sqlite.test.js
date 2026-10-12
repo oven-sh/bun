@@ -1360,6 +1360,148 @@ describe("db.transaction() with a callback that is not synchronous", () => {
     });
     expect(exitCode).toBe(1);
   });
+
+  describe("when the callback is an async function", () => {
+    const asyncFunctionMessage =
+      "db.transaction() callback must be synchronous, but it is an async function. Remove async/await from the callback, or move the awaited work outside the transaction.";
+    const refusal = { type: "TypeError", message: asyncFunctionMessage };
+    const AsyncFunction = (async () => {}).constructor;
+
+    // Each callback counts a start of its body in its first argument.
+    const asyncFunctions = {
+      "an async arrow function": () => async started => {
+        started.count++;
+      },
+      "an async function expression": () =>
+        async function (started) {
+          started.count++;
+        },
+      "an async method": () =>
+        ({
+          async method(started) {
+            started.count++;
+          },
+        }).method,
+      "a function from the AsyncFunction constructor": () => new AsyncFunction("started", "started.count++"),
+      "a bound async function": () =>
+        async function (started) {
+          started.count++;
+        }.bind(null),
+      "a Proxy of an async function": () =>
+        new Proxy(async started => {
+          started.count++;
+        }, {}),
+      "an async function from node:vm": () => vm.runInNewContext("async started => { started.count++; }"),
+      "an async function that throws before any await": () => async started => {
+        started.count++;
+        throw new Error("the body must not start");
+      },
+    };
+
+    it.each(Object.keys(asyncFunctions))("refuses %s at the call, before BEGIN", kind => {
+      const db = openAccounts();
+      const started = { count: 0 };
+
+      // db.transaction() accepts the function and returns the same kind of wrapper as for a synchronous callback.
+      const tx = db.transaction(asyncFunctions[kind]());
+      const sync = db.transaction(() => {});
+      expect({ name: tx.name, length: tx.length, keys: Reflect.ownKeys(tx), database: tx.database === db }).toEqual({
+        name: sync.name,
+        length: sync.length,
+        keys: Reflect.ownKeys(sync),
+        database: true,
+      });
+
+      for (const variant of variants) {
+        expect({ variant, thrown: thrownBy(() => call(tx, variant, started)) }).toEqual({ variant, thrown: refusal });
+      }
+
+      // Nested: the outer transaction stays open and commits its own statement.
+      const outer = db.transaction(() => {
+        debit(db, 1);
+        expect(thrownBy(() => tx(started))).toEqual(refusal);
+        expect(db.inTransaction).toBe(true);
+      });
+      outer();
+
+      // Inside a transaction that the caller began by hand: the refusal leaves that transaction open.
+      db.run("BEGIN");
+      expect(thrownBy(() => tx(started))).toEqual(refusal);
+      const openAfterRefusal = db.inTransaction;
+      db.run("ROLLBACK");
+
+      expect({
+        started: started.count,
+        openAfterRefusal,
+        inTransaction: db.inTransaction,
+        balances: balances(db),
+      }).toEqual({ started: 0, openAfterRefusal: true, inTransaction: false, balances: [99, 0] });
+    });
+
+    it("does not run BEGIN, so a write lock of another connection does not change the error", () => {
+      using dir = tempDir("sqlite-transaction-refused", {});
+      const file = path.join(String(dir), "locked.sqlite");
+      const holder = new Database(file);
+      const db = new Database(file);
+      try {
+        holder.run("CREATE TABLE t (x)");
+        const tx = db.transaction(async () => {});
+        holder.run("BEGIN IMMEDIATE");
+        expect({ immediate: thrownBy(() => tx.immediate()), exclusive: thrownBy(() => tx.exclusive()) }).toEqual({
+          immediate: refusal,
+          exclusive: refusal,
+        });
+        holder.run("ROLLBACK");
+      } finally {
+        db.close();
+        holder.close();
+      }
+    });
+
+    it("throws the closed-database error from db.transaction(), and the refusal from a wrapper made earlier", () => {
+      const closedBeforeCreation = new Database(":memory:");
+      closedBeforeCreation.close();
+      const errorForSyncCallback = thrownBy(() => closedBeforeCreation.transaction(() => {}));
+      expect(errorForSyncCallback.type).toBe("RangeError");
+      expect(thrownBy(() => closedBeforeCreation.transaction(async () => {}))).toEqual(errorForSyncCallback);
+
+      const db = new Database(":memory:");
+      const tx = db.transaction(async () => {});
+      db.close();
+      expect(thrownBy(() => tx())).toEqual(refusal);
+    });
+
+    it.concurrent("creates no promise, so no rejection is left behind", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            import { Database } from "bun:sqlite";
+            const db = new Database(":memory:");
+            db.run("CREATE TABLE t (x)");
+            const tx = db.transaction(async () => {
+              db.run("INSERT INTO t VALUES (1)");
+              await 0;
+              throw new Error("boom from the callback");
+            });
+            try {
+              tx();
+            } catch (e) {
+              console.log("caught", e.constructor.name);
+            }
+            console.log("rows", db.query("SELECT count(*) AS c FROM t").get().c);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "caught TypeError\nrows 0\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 // this bug was fixed by ensuring FinalObject has no more than 64 properties

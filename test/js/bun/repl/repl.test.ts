@@ -804,6 +804,20 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("a line that ends inside a try echoes its value", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "var disposed = []",
+        "using resource = { value: 41, [Symbol.dispose]() { disposed.push(this.value) } }; resource.value + 1",
+        "disposed",
+        "try { 40 + 3 } catch {}",
+        "try { throw new Error('caught') } catch (e) { e.message }",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["[]", "42", "[ 41 ]", "43", '"caught"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("multiline input", () => {

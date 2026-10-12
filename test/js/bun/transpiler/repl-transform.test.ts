@@ -84,6 +84,11 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toMatch(/^var c;$/m);
       expect(result).not.toMatch(/^\s+(var|let|const) (handle|a|b|c)\b/m);
     });
+
+    test("the value of a line with a top-level using is returned from inside the lowered try block", () => {
+      const result = transpiler.transformSync("using handle = open(); handle.value");
+      expect(result).toMatch(/try \{[^}]*return \{\s*__proto__: null,\s*value: handle\.value\s*\};\s*\} catch/);
+    });
   });
 
   describe("REPL session with node:vm", () => {
@@ -124,6 +129,12 @@ describe("Bun.Transpiler replMode", () => {
     test("await expression", async () => {
       const result = await runRepl("await Promise.resolve(100)");
       expect(result).toEqual({ value: 100 });
+    });
+
+    test("a try statement has the value of its block, or of its catch clause", async () => {
+      expect(await runRepl("try { 42 } catch {}")).toEqual({ value: 42 });
+      expect(await runRepl("try { throw 1 } catch { 43 }")).toEqual({ value: 43 });
+      expect(await runRepl("try { 44 } finally { 45 }")).toEqual({ value: 44 });
     });
 
     test("await with variable", async () => {

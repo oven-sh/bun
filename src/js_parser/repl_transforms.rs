@@ -660,7 +660,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
     /// Wrap the last expression in return { value: expr }
     fn repl_wrap_last_expression_with_return<'bump>(
         &mut self,
-        inner_stmts: &mut BumpVec<'bump, Stmt>,
+        inner_stmts: &mut [Stmt],
         bump: &'bump Bump,
     ) {
         if !inner_stmts.is_empty() {
@@ -679,6 +679,17 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                             },
                             last_stmt.loc,
                         );
+                        break;
+                    }
+                    // A `try` has the value of its block or of its `catch`, and the lowering of a top-level `using` puts the whole input in one.
+                    StmtData::STry(data) => {
+                        self.repl_wrap_last_expression_with_return(data.body.slice_mut(), bump);
+                        if let Some(catch) = &data.catch {
+                            self.repl_wrap_last_expression_with_return(
+                                catch.body.slice_mut(),
+                                bump,
+                            );
+                        }
                         break;
                     }
                     _ => break,

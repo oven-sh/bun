@@ -118,6 +118,7 @@ Read `rule.rs` (module docs) first, then `ast/mod.rs`. `eslint/rules/{no_debugge
 - File `no_foo_bar.rs`, struct `NoFooBar`, `Meta::eslint("no-foo-bar", ..)` / `Meta::typescript(..)`. `use bun_lint::prelude::*;`
 - The struct holds the parsed options and nothing else. It is shared by all threads. Per-file state is `type State<'a>`, returned by `start`, reached as `cx.state`. `no_state!();` writes both for a rule that keeps nothing and is for every file.
 - One `const NAME: Message = Message::new("messageId", "Text with {{placeholders}}.")` per upstream message, with upstream's `messageId` and text verbatim.
+- A message that does not tell what is wrong and what to do gets a hint: `.hint("One sentence.")` or `.hint_with(|| ..)` on the report, `.hints()` on `Meta`, and a case in `test/cli/lint/hints.test.ts`. `pretty`, `agent` and the language server print it under the message, no other format does, and never with a configuration of oxlint. It is Bun's own text: one line, about 90 characters, plain words. All work for it is in the closure, which runs only for a report that is shown.
 - `Meta` mirrors upstream `meta`: `kind`, `.fixable(..)`, `.has_suggestions()`, `.recommended()` / `.presets(..)`, `.requires_types()`, `.deprecated()`, `.extends_base_rule(..)`.
 - Options: apply upstream's `defaultOptions` / schema defaults by hand in `new`. `options.object(0)` is empty when missing, so every lookup falls back to the default.
 - The doc comment on the struct is upstream's `meta.docs.description`.

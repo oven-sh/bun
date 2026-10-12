@@ -95,7 +95,7 @@ pub enum Notation {
 pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
     with_parsed(notation, text, from_parsed)
         .map_err(|error| error.message)?
-        .ok_or_else(|| b"It is nested too deeply".to_vec())
+        .ok_or_else(|| b"This file is nested too deeply".to_vec())
 }
 
 /// What is wrong with a text, and where. The first line and the first column are 1.

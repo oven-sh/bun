@@ -17,6 +17,7 @@ const RULES: &[Param] = &[
         "--rule <rule>...                Set a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"
     ),
     clap::param!("--rules                         List the built-in rules"),
+    clap::param!("--explain <rule>                Print the documentation of a rule"),
     clap::param!("--init                          Add a <b>[lint]<r> section to <b>bunfig.toml<r>"),
     clap::param!(
         "--global <name>...              Define global variables: <b>--global a,b:true<r>"
@@ -252,8 +253,8 @@ pub const HELP: Help = Help {
         b"rules",
         b"explain",
         b"type-aware",
+        b"quiet",
         b"max-warnings",
-        b"format",
         b"init",
         b"doctor",
     ],
@@ -264,7 +265,7 @@ const _: () = assert!(
     "A flag of `bun lint` has no description, so `--help --all` leaves it out."
 );
 
-pub const PARAMS: &[Param] = clap::concat_params!(
+pub(crate) const PARAMS: &[Param] = clap::concat_params!(
     RULES, FILES, OUTPUT, FIXING, TYPES, OTHER, OF_ESLINT, OF_OXLINT, OPPOSITES
 );
 
@@ -468,6 +469,8 @@ pub struct Options {
     pub fix_safely: bool,
     /// oxlint's `--rules`: lists the rules, and lints nothing.
     pub rules: bool,
+    /// Prints the page about this rule, and lints nothing.
+    pub explain: Option<Vec<u8>>,
     /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
     /// in `plugins`, and whether it is on.
     pub plugins: Vec<(&'static [u8], bool)>,
@@ -566,6 +569,7 @@ impl Default for Options {
             fix_dangerously: false,
             fix_safely: false,
             rules: false,
+            explain: None,
             plugins: Vec::new(),
             type_aware: None,
             infer_globals: None,
@@ -677,11 +681,7 @@ impl Options {
                     b"eslint" => Tool::Eslint,
                     b"oxlint" => Tool::Oxlint,
                     _ => {
-                        return error(&[
-                            b"Option flavor: '",
-                            text,
-                            b"' not one of eslint or oxlint.",
-                        ]);
+                        return error(&[b"--flavor must be eslint or oxlint, not \"", text, b"\""]);
                     }
                 })
             }
@@ -758,7 +758,7 @@ impl Options {
                         ]);
                     }
                     _ => {
-                        return error(&[b"--threads takes a number, not \"", text, b"\"."]);
+                        return error(&[b"--threads takes a number, not \"", text, b"\""]);
                     }
                 },
             },
@@ -794,14 +794,13 @@ impl Options {
                 Ok(which) => self.native_plugin_rules = which,
                 Err(name) => {
                     return error(&[
-                        b"Option native-plugin-rules: '",
+                        b"Unknown plugin \"",
                         name,
-                        b"' not one of ",
+                        b"\" in --native-plugin-rules\n  Available plugins: ",
                         NativePlugins::names()
                             .collect::<Vec<_>>()
                             .join(", ")
                             .as_bytes(),
-                        b".",
                     ]);
                 }
             },
@@ -814,6 +813,7 @@ impl Options {
             // Type errors are what `bun check` reports.
             b"type-check" => self.type_check = is_on,
             b"rules" => self.rules = is_on,
+            b"explain" => self.explain = owned(),
             _ if is_on && name.ends_with(b"-plugin") => {
                 let plugin = &name[..name.len() - b"-plugin".len()];
                 self.plugins.push(match plugin.strip_prefix(b"disable-") {

@@ -5,13 +5,21 @@ use bun_lint::rule::Plugin;
 /// Disallows `oxlint-disable` or `eslint-disable` comments without specifying rules.
 pub struct NoAbusiveEslintDisable;
 
-const ESLINT: Message =
-    Message::new("", "Unexpected `eslint-disable` comment that does not specify any rules to disable.");
-const OXLINT: Message =
-    Message::new("", "Unexpected `oxlint-disable` comment that does not specify any rules to disable.");
+const ESLINT: Message = Message::new(
+    "",
+    "Unexpected `eslint-disable` comment that does not specify any rules to disable.",
+);
+const OXLINT: Message = Message::new(
+    "",
+    "Unexpected `oxlint-disable` comment that does not specify any rules to disable.",
+);
 
 impl Rule for NoAbusiveEslintDisable {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-abusive-eslint-disable", Kind::Suggestion);
+    const META: Meta = Meta::oxlint(
+        Plugin::Unicorn,
+        "no-abusive-eslint-disable",
+        Kind::Suggestion,
+    );
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -31,18 +39,28 @@ impl Rule for NoAbusiveEslintDisable {
             let comment_span = comment.comment_value_span();
             let text = cx.slice(comment_span);
             // The `*` of `/**`, or a word.
-            if text.first().is_some_and(|it| it.is_ascii_graphic() && !matches!(it, b'e' | b'o')) {
+            if text
+                .first()
+                .is_some_and(|it| it.is_ascii_graphic() && !matches!(it, b'e' | b'o'))
+            {
                 continue;
             }
             let text = strings::trim_unicode_whitespace_start(text);
-            let (message, rest) = match (text.strip_prefix(b"eslint-disable"), text.strip_prefix(b"oxlint-disable")) {
+            let (message, rest) = match (
+                text.strip_prefix(b"eslint-disable"),
+                text.strip_prefix(b"oxlint-disable"),
+            ) {
                 (Some(rest), _) => (ESLINT, rest),
                 (_, Some(rest)) => (OXLINT, rest),
                 _ => continue,
             };
-            let rest = rest.strip_prefix(b"-next-line").or_else(|| rest.strip_prefix(b"-line")).unwrap_or(rest);
+            let rest = rest
+                .strip_prefix(b"-next-line")
+                .or_else(|| rest.strip_prefix(b"-line"))
+                .unwrap_or(rest);
             // `eslint-disablefoo` is nothing.
-            if !rest.is_empty() && strings::trim_unicode_whitespace_start(rest).len() == rest.len() {
+            if !rest.is_empty() && strings::trim_unicode_whitespace_start(rest).len() == rest.len()
+            {
                 continue;
             }
             let (mut has_rule, mut invalid_rules) = (false, 0);
@@ -52,7 +70,15 @@ impl Rule for NoAbusiveEslintDisable {
             });
             let count = if has_rule { invalid_rules } else { 1 };
             for _ in 0..count {
-                cx.report(comment_span, message);
+                let report = cx.report(comment_span, message);
+                // A comment of ESLint turns off what is reported at it. As eslint-plugin-unicorn: before the line starts.
+                if !cx.file().language().is_oxlint {
+                    let line = cx.file().line_of(comment_span.start);
+                    report.start_at(Position {
+                        line,
+                        column: u32::MAX,
+                    });
+                }
             }
         }
     }
@@ -67,9 +93,9 @@ fn for_each_rule_name<'t>(text: &'t [u8], mut emit_rule: impl FnMut(&'t [u8])) {
     while let Some((index, ch)) = chars.next() {
         // `--`, or `-` between blanks: the rest says why.
         let is_description_start = ch == u32::from(b'-')
-            && chars
-                .peek()
-                .is_some_and(|&(_, c)| c == u32::from(b'-') || previous.is_some_and(is_whitespace) && is_whitespace(c));
+            && chars.peek().is_some_and(|&(_, c)| {
+                c == u32::from(b'-') || previous.is_some_and(is_whitespace) && is_whitespace(c)
+            });
         if is_description_start {
             rule_end = index;
             break;
@@ -91,5 +117,9 @@ fn for_each_rule_name<'t>(text: &'t [u8], mut emit_rule: impl FnMut(&'t [u8])) {
 /// `rule`, `plugin/rule`, `@scope/rule`, `@scope/plugin/rule`
 fn is_valid_rule_name(rule_name: &[u8]) -> bool {
     let segment_count = strings::count_char(rule_name, b'/') + 1;
-    if rule_name.starts_with(b"@") { segment_count == 2 || segment_count == 3 } else { segment_count <= 2 }
+    if rule_name.starts_with(b"@") {
+        segment_count == 2 || segment_count == 3
+    } else {
+        segment_count <= 2
+    }
 }

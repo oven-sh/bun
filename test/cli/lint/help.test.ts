@@ -22,6 +22,19 @@ describe.concurrent.each([
   {
     command: "lint",
     source: "src/lint/driver/cli.rs",
+    common: [
+      "fix",
+      "staged",
+      "changed",
+      "rule",
+      "rules",
+      "explain",
+      "type-aware",
+      "quiet",
+      "max-warnings",
+      "init",
+      "doctor",
+    ],
     headings: [
       "Rules",
       "Files",
@@ -36,14 +49,27 @@ describe.concurrent.each([
   {
     command: "format",
     source: "src/lint/driver/fmt/cli.rs",
+    common: [
+      "check",
+      "staged",
+      "changed",
+      "stdin-filepath",
+      "print-width",
+      "use-tabs",
+      "no-semi",
+      "single-quote",
+      "init",
+      "doctor",
+    ],
     headings: ["Options", "Files", "Output", "Other", "Compatibility with Prettier", "Compatibility with oxfmt"],
   },
-])("bun $command", ({ command, source, headings }) => {
+])("bun $command", ({ command, source, common, headings }) => {
   test("--help is short", async () => {
     const { stdout, stderr, exitCode } = await run(command, "--help");
     const lines = stdout.trimEnd().split("\n");
     expect(lines[0]).toBe(`Usage: bun ${command} [flags] [...files, directories or patterns]`);
     expect(stdout.match(/^\S.*:$/gm)).toEqual(["Flags:", "Examples:"]);
+    expect(Object.keys(listed(stdout))).toEqual(common);
     expect(lines.filter(line => line.startsWith(`  bun ${command}`))).toHaveLength(3);
     expect(lines.slice(-2)).toEqual([
       `Full documentation is available at https://bun.com/docs/runtime/${command}`,
@@ -70,7 +96,6 @@ describe.concurrent.each([
 
   test("--help says about a flag what --help --all says", async () => {
     const [short, all] = await Promise.all([run(command, "--help"), run(command, "--help", "--all")]);
-    expect(Object.keys(listed(short.stdout)).length).toBeGreaterThan(5);
     expect(listed(all.stdout)).toMatchObject(listed(short.stdout));
   });
 

@@ -68,7 +68,7 @@ bun lint
 
 ✖ 1 problem (0 errors, 1 warning)
 
-Linted 3 files [77.36ms]
+Linted 3 files [73.16ms]
 ```
 
 You don't need the `eslint` package. To learn the API, read ESLint's guide to [plugins](https://eslint.org/docs/latest/extend/plugins).
@@ -93,7 +93,9 @@ export default [
 ];
 ```
 
-Six plugins are built into Bun and run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, and `prettier`. `bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
+With an ESLint config, six plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, and `prettier`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
+
+`bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
 
 ## Performance
 

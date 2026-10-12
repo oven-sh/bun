@@ -19,7 +19,9 @@ impl Rule for NoOctal {
             cx.report(literal, NO_OCTAL).hint_with(|| {
                 let text = std::str::from_utf8(literal.text()).ok()?;
                 Some(match u64::from_str_radix(text, 8) {
-                    Ok(value) => format!("It is octal: {text} is {value}. Write 0o{value:o} to make that clear."),
+                    Ok(value) => {
+                        format!("The leading 0 makes it octal, so {text} is {value}. Write 0o{value:o} to make that clear.")
+                    }
                     Err(_) => "The leading zero does nothing here. Remove it.".to_owned(),
                 })
             });

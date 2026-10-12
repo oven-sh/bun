@@ -37,6 +37,9 @@ pub struct Request<'r> {
     pub file_info_options: Option<&'r Json>,
     /// [`File::package_module`]
     pub package_module: Option<&'r [u8]>,
+    /// With [`Like::InstalledPrettier`]: the text has to be that of the packages which are installed. Else nothing is asked of
+    /// them.
+    pub follows_packages: bool,
 }
 
 /// Why the text would not be that of the package.

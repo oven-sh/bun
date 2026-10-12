@@ -67,8 +67,10 @@ fn report<'a>(
     let report = cx.report(range, UNNECESSARY_ESCAPE).data("character", character).hint_with(|| {
         let character = bstr::BStr::new(character);
         Some(match suggests_escaping_backslash {
-            true => format!("\\{character} is the same as {character}. Remove the backslash, or write \\\\ for a real one."),
-            false => format!("\\{character} is the same as {character} here. Remove the backslash."),
+            true => format!(
+                "\"\\{character}\" is the same as \"{character}\". Remove the backslash, or write \\\\ for a real one."
+            ),
+            false => format!("\"\\{character}\" is the same as \"{character}\" here. Remove the backslash."),
         })
     });
     let report = report.suggest(remove, |fixer| fixer.remove(range));

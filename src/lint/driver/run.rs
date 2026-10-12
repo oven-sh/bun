@@ -10,7 +10,7 @@ use crate::lint::{Context, elapsed};
 use crate::results::{Counts, FileResult};
 use crate::suppressions::{self, Suppressions};
 use crate::typed::{self, Typed};
-use crate::{Linter, fs, git, paths};
+use crate::{Linter, explain, fs, git, paths};
 use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -18,7 +18,7 @@ use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
-    FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
+    FileConfig, LintMessage, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
 };
 use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
@@ -54,6 +54,8 @@ pub struct Script<'s> {
     pub source: Source,
     /// The working directory.
     pub cwd: &'s [u8],
+    /// The configuration file that it is about.
+    pub path: &'s [u8],
 }
 
 impl Script<'_> {
@@ -264,7 +266,7 @@ fn is_ordered_by_bytes(path: &[u8]) -> bool {
     path.iter().all(|&byte| byte < 0xEE)
 }
 
-struct Run<'r> {
+pub(crate) struct Run<'r> {
     options: &'r Options,
     environment: &'r Environment<'r>,
     out: Outcome,
@@ -287,11 +289,24 @@ struct Suppressed {
 }
 
 /// What was linted.
-struct Linted {
-    results: Vec<FileResult>,
+pub(crate) struct Linted {
+    pub(crate) results: Vec<FileResult>,
     files: usize,
     /// `--list-files`
     listed: Option<Vec<Vec<u8>>>,
+}
+
+impl<'r> Run<'r> {
+    pub(crate) fn new(options: &'r Options, environment: &'r Environment<'r>) -> Run<'r> {
+        Run {
+            options,
+            environment,
+            out: Outcome::default(),
+            began: Instant::now(),
+            is_for_oxlint: None,
+            modules: None,
+        }
+    }
 }
 
 impl Run<'_> {
@@ -427,12 +442,13 @@ impl Run<'_> {
         Some(text.to_vec())
     }
 
-    /// ESLint's `lintText`.
-    fn lint_text(
+    /// ESLint's `lintText`. `with_types`: the rules that need types run, if the configuration asks for them.
+    pub(crate) fn lint_text(
         &self,
         loader: &Loader,
         context: &Context,
         text: Vec<u8>,
+        with_types: bool,
     ) -> Result<Linted, Fatal> {
         let cwd = &self.environment.cwd;
         let name = self
@@ -509,7 +525,8 @@ impl Run<'_> {
             inferred.files(vec![path.clone()]);
         }
         let has_rules_with_types = config.has_enabled(|it| it.requires_types);
-        let needs_types = name.is_some()
+        let needs_types = with_types
+            && name.is_some()
             && loader.wants_types(&loaded, config)
             && (has_rules_with_types || context.checks_types);
         if needs_types {
@@ -843,14 +860,17 @@ impl Run<'_> {
         if let Some(only) = options.only.as_ref().filter(|_| options.stdin) {
             return self.refuse_flag(&only.refusal_of_stdin("--stdin"));
         }
-        let registry = Registry::new(&[
-            bun_lint_eslint::RULES,
-            bun_lint_typescript::RULES,
-            bun_lint_plugins::RULES,
-            bun_lint_unicorn::RULES,
-            bun_lint_react::RULES,
-            bun_lint_jest::RULES,
-        ]);
+        let registry = crate::rules::registry();
+        if let Some(rule) = &options.explain {
+            match explain::explain(&registry, rule, environment, options.color) {
+                Ok(page) => self.out.stdout = page,
+                Err(why) => {
+                    self.error(&why);
+                    self.out.exit_code = 2;
+                }
+            }
+            return self.out;
+        }
         let linter = Linter::new(registry.answering_for(options.native_plugin_rules.clone()));
         bun_sema_driver::use_a_pool_of_their_own("Bun Lint");
         let pool = Pool::new(options.threads);
@@ -914,8 +934,15 @@ impl Run<'_> {
             );
         }
         if options.rules {
-            let as_json = matches!(format, Format::Json | Format::OxlintJson);
-            format::oxlint::write_rules(&mut self.out.stdout, linter.registry(), as_json);
+            let (out, registry) = (&mut self.out.stdout, linter.registry());
+            let colors = options.color.unwrap_or(environment.stdout.colors);
+            match format {
+                Format::Json | Format::OxlintJson => explain::write_rules_as_json(out, registry),
+                _ if environment.stdout.is_tty => {
+                    explain::write_rules_by_plugin(out, registry, colors)
+                }
+                _ => explain::write_rules(out, registry),
+            }
             return self.out;
         }
         if let Some(loaded) = self.modules {
@@ -923,12 +950,7 @@ impl Run<'_> {
                 as_json: matches!(format, Format::Json | Format::OxlintJson),
                 colors: options.color.unwrap_or(environment.stdout.colors),
             };
-            let of_the_run = (
-                &loader,
-                options,
-                &modules as &dyn bun_lint::modules::Modules,
-            );
-            return match doctor::lint(of_the_run, &pool, &js_plugins, loaded, how) {
+            return match doctor::lint((&loader, options), &pool, &js_plugins, loaded, how) {
                 Ok(report) => {
                     self.out.stdout = report;
                     self.out
@@ -1035,7 +1057,7 @@ impl Run<'_> {
         let mut phases = Phases::default();
         let linted = match options.stdin {
             true => match fs::read_stdin() {
-                Ok(text) => self.lint_text(&loader, &context, text),
+                Ok(text) => self.lint_text(&loader, &context, text, true),
                 Err(error) => Err(Fatal(
                     [&b"Cannot read standard input: "[..], &fs::describe(&error)].concat(),
                 )),
@@ -1122,12 +1144,17 @@ impl Run<'_> {
                 1 => b" rule enabled in a comment",
                 _ => b" rules enabled in comments",
             };
+            // Without a configuration file there is no package that could have them.
+            let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
             loader.cannot_do(&[
                 in_comments.len().to_string().as_bytes(),
                 noun,
                 b" did not run: ",
                 &in_comments.join(&b", "[..]),
-                b"\n  Enable at least one rule from the same plugin in your config.",
+                match is_native {
+                    true => &b""[..],
+                    false => b"\n  Enable at least one rule from the same plugin in your config.",
+                },
             ]);
         }
         let mut unread: Vec<Vec<u8>> = std::mem::take(&mut *unread.lock());
@@ -1187,31 +1214,8 @@ impl Run<'_> {
 
         // The rules that are about several files look at those that they have something to say about.
         let started = Instant::now();
-        let again: FxHashSet<Vec<u8>> = modules
-            .complete(&|count, work| pool.for_each(count, 1, work))
-            .into_iter()
-            .collect();
-        if !again.is_empty() {
-            let mut at: Vec<usize> = (0..results.len())
-                .filter(|&at| again.contains(&paths::from_native(&results[at].path)))
-                .collect();
-            at.reverse();
-            let mut picked: Vec<Guarded<Option<FileResult>>> = at
-                .into_iter()
-                .map(|at| Guarded::new(Some(results.swap_remove(at))))
-                .collect();
-            let mut failure = Guarded::new(None);
-            pool.for_each(picked.len(), 1, &|index| {
-                if let Some(result) = picked[index].lock().as_mut()
-                    && let Err(error) = context.lint_again(result)
-                {
-                    failure.lock().get_or_insert(error);
-                }
-            });
-            if let Some(Fatal(error)) = failure.get_mut().take() {
-                return self.fail(&error);
-            }
-            results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
+        if let Err(Fatal(error)) = lint_again(&context, &pool, &mut results) {
+            return self.fail(&error);
         }
         phases.linting += started.elapsed().as_secs_f64();
         if let Some(thrown) = results.iter().find_map(|it| it.thrown.as_ref()) {
@@ -1251,7 +1255,7 @@ impl Run<'_> {
             if let Some(only) = &only {
                 let mut refused: Vec<Vec<u8>> = refused.into_iter().map(portable).collect();
                 if !refused.is_empty() {
-                    not_staged.push(only.refusal_to_write(&mut refused));
+                    not_staged.push(only.refusal_to_write(&mut refused, "fixed"));
                 }
                 not_staged.extend(only.stage(written.get_mut()).err().map(|it| it.0));
             }
@@ -1352,7 +1356,9 @@ impl Run<'_> {
         };
         let output = if has_no_files {
             format::summary::without_files(format, &meta, options.error_on_unmatched_pattern)
-        } else if options.silent && !is_oxlint {
+        } else if (options.silent && !is_oxlint)
+            || (only.is_some() && files == 0 && format.is_for_people())
+        {
             Vec::new()
         } else {
             format::format(format, &results, &meta)
@@ -1402,7 +1408,7 @@ impl Run<'_> {
         }
         if let Some(only) = (only.as_ref()).filter(|_| files == 0 && !options.silent) {
             let _ = writeln!(self.out.stderr, "{}", only.nothing_left("lint"));
-        } else if !is_oxlint && !options.stdin && !options.silent {
+        } else if !is_oxlint && !options.stdin && !options.silent && not_staged.is_empty() {
             format::summary::write(
                 &mut self.out.stderr,
                 environment.stderr.colors,
@@ -1664,6 +1670,39 @@ struct Phases {
     formatting: f64,
 }
 
+/// Lints those of `results` again that the rules about several files have something to say about, now that all files are linted.
+pub(crate) fn lint_again(
+    context: &Context,
+    pool: &Pool,
+    results: &mut Vec<FileResult>,
+) -> Result<(), Fatal> {
+    let again: FxHashSet<Vec<u8>> = (context.modules)
+        .complete(&|count, work| pool.for_each(count, 1, work))
+        .into_iter()
+        .collect();
+    if again.is_empty() {
+        return Ok(());
+    }
+    let mut at: Vec<usize> = (0..results.len())
+        .filter(|&at| again.contains(&paths::from_native(&results[at].path)))
+        .collect();
+    at.reverse();
+    let mut picked: Vec<Guarded<Option<FileResult>>> = at
+        .into_iter()
+        .map(|at| Guarded::new(Some(results.swap_remove(at))))
+        .collect();
+    let mut failure = Guarded::new(None);
+    pool.for_each(picked.len(), 1, &|index| {
+        if let Some(result) = picked[index].lock().as_mut()
+            && let Err(error) = context.lint_again(result)
+        {
+            failure.lock().get_or_insert(error);
+        }
+    });
+    results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
+    failure.get_mut().take().map_or(Ok(()), Err)
+}
+
 fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
     loader.warn(&[
         b"Circular fixes detected while fixing ",
@@ -1675,15 +1714,7 @@ fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
 /// Does what `bun lint` does. `options.help` and `options.cwd` are for the caller to see to.
 /// What there is to say about a command line that cannot be read, which is `message`.
 pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome {
-    let run = Run {
-        options: &Options::default(),
-        environment,
-        out: Outcome::default(),
-        began: Instant::now(),
-        is_for_oxlint: None,
-        modules: None,
-    };
-    let mut out = run.refuse(message);
+    let mut out = Run::new(&Options::default(), environment).refuse(message);
     pretty!(
         &mut out.stderr,
         environment.stderr.colors,

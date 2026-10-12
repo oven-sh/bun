@@ -32,7 +32,8 @@ mod call {
 /// The first byte of what a call returns, after those of [`wire::result`].
 const NEEDS_PROCESSOR: u8 = b'3';
 
-const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+const OUT_OF_STEP: &[u8] =
+    b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 

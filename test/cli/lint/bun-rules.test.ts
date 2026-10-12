@@ -2260,14 +2260,13 @@ describe.concurrent("the plugin bun", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--rules lists them, without a category and without a page", async () => {
+  test("--rules lists them, without a category", async () => {
     const { stdout } = await lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]);
     const listed = (JSON.parse(stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun");
     // `bun/format` is tested with `prettier/prettier`: prettier-rule.test.ts.
     expect(listed.map(it => it.value)).toEqual([...Object.keys(rules), "format"].toSorted());
-    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
-      "[null,false,null]",
-    ]);
+    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
+    expect(listed.map(it => it.docs_url)).toEqual(listed.map(it => `https://bun.com/docs/lint/rules/bun/${it.value}`));
   });
 
   test("options that a rule does not have are refused", async () => {
@@ -2291,7 +2290,7 @@ describe.concurrent("the plugin bun", () => {
     const options = { patterns: [{ pattern: "(" }] };
     const files = { "eslint.config.mjs": flat({ "bun/no-restricted-text": ["error", options] }), "a.js": eager };
     const { stderr, exitCode } = await lint(files, ["a.js"]);
-    expect(stderr).toContain(`Invalid regular expression "(": `);
+    expect(stderr).toContain(`Invalid pattern "(": Invalid regular expression: `);
     expect(exitCode).toBe(2);
   });
 
@@ -2875,7 +2874,7 @@ var a = b;
     expect(JSON.parse(oxlint.stdout).plugins).toEqual([]);
   });
 
-  test("--rules lists them, without a category and without a page", async () => {
+  test("--rules lists them, without a category", async () => {
     const [json, lines, alone] = await Promise.all([
       lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]),
       lint({}, ["--rules"]),
@@ -2885,9 +2884,10 @@ var a = b;
     expect(alone.stdout).toBe(json.stdout);
     const listed = (JSON.parse(json.stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun:test");
     expect(listed.map(it => it.value)).toEqual(Object.keys(twins));
-    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
-      "[null,false,null]",
-    ]);
+    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
+    expect(listed.map(it => it.docs_url)).toEqual(
+      listed.map(it => `https://bun.com/docs/lint/rules/bun-test/${it.value}`),
+    );
     expect(lines.stdout.split("\n").filter(it => it.startsWith("bun:test/"))).toEqual(
       Object.keys(twins).map(it => `bun:test/${it}`),
     );

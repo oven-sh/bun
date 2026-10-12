@@ -402,7 +402,7 @@ describe.concurrent("bun format", () => {
       for (const result of [inRepository, inNone]) {
         expect(result.files).toEqual({ "outside/c/d.js": ugly });
         expect(result.stderr).toContain(
-          '[error] Unable to write file "c/d.js":\n[error] A link leads out of the repository.',
+          '[error] Unable to write file "c/d.js":\n[error] it is a symlink to a file outside the repository',
         );
         expect(result.exitCode).toBe(2);
       }
@@ -486,7 +486,8 @@ describe.concurrent("bun format", () => {
   });
 
   test("--check writes nothing and exits with 1", async () => {
-    const result = await format({ "a.js": ugly, "b.js": formatted, "c.js": ugly }, ["--check"], { reads: ["a.js"] });
+    const files = { ".prettierrc": "{}\n", "a.js": ugly, "b.js": formatted, "c.js": ugly };
+    const result = await format(files, ["--check"], { reads: ["a.js"] });
     expect(result.files).toEqual({ "a.js": ugly });
     expect(result.stdout).toMatchInlineSnapshot(`"Checking formatting..."`);
     expect(result.stderr).toMatchInlineSnapshot(`
@@ -498,7 +499,7 @@ describe.concurrent("bun format", () => {
   });
 
   test("--check exits with 0 if everything is formatted", async () => {
-    const result = await format({ "a.js": formatted }, ["--check"]);
+    const result = await format({ ".prettierrc": "{}\n", "a.js": formatted }, ["--check"]);
     expect(result.stdout).toMatchInlineSnapshot(`
       "Checking formatting...
       All matched files use Prettier code style!"
@@ -1358,7 +1359,7 @@ exports.format = async (text, options) => {
           { reads: ["a.svelte", "c.svelte"] },
         );
         expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.svelte": "<p   >waits</p>\n" });
-        expect(result.stderr).toContain("[error] c.svelte: A promise is not settled, and nothing is left to wait for.");
+        expect(result.stderr).toContain("[error] c.svelte: A promise never settled, and nothing is left to wait for.");
         expect(result.exitCode).toBe(2);
       },
       timeout,
@@ -4139,8 +4140,8 @@ describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
     const result = await bytesAfter(files);
     expect(result.files).toEqual(files);
     expect(result.errors.sort()).toEqual([
-      "[error] a.html: SyntaxError: What follows this NUL would be lost (2:5)",
-      "[error] a.vue: SyntaxError: What follows this NUL would be lost (2:5)",
+      "[error] a.html: SyntaxError: Unexpected NUL character (2:5)",
+      "[error] a.vue: SyntaxError: Unexpected NUL character (2:5)",
     ]);
     expect(result.exitCode).toBe(2);
   });
@@ -4899,12 +4900,8 @@ describe("bun format on Windows, macOS and Linux", () => {
       const results = await Promise.all([format(listed, ["-l"]), format(checked, ["--check"]), format(written, [])]);
       expect(results.map(it => it.stdout)).toEqual([
         "a.js\nsrc/deep/b.ts\n",
-        "Checking formatting...\nError occurred when checking code style in the above file.\n",
         "a.js\nsrc/deep/b.ts\n",
-      ]);
-      expect(results[1].stderr.split("\n").filter(line => line.startsWith("[warn] "))).toEqual([
-        "[warn] a.js",
-        "[warn] src/deep/b.ts",
+        "a.js\nsrc/deep/b.ts\n",
       ]);
       for (const { stderr } of results) {
         expect(stderr).toContain("[error] src/broken.js: SyntaxError: ");
@@ -5558,7 +5555,7 @@ describe.concurrent("[format] in bunfig.toml", () => {
       run({ ...files, "bunfig.toml": "[format]\nthreads = 0\n" }, ["a.js", "b.js"]),
     ]);
     expect(byKey).toEqual(byFlag);
-    expect(zero.stderr).toContain(`--threads takes a number above zero, not "0".`);
+    expect(zero.stderr).toContain(`--threads takes a number above zero, not "0"`);
     expect(zero.exitCode).toBe(2);
   });
 
@@ -5617,9 +5614,7 @@ describe.concurrent("[format] in bunfig.toml", () => {
   ])("%s is refused, and nothing is written", async (line, flag) => {
     const key = line.split(" ")[0];
     const result = await run({ "bunfig.toml": `[format]\n${line}\n`, "a.js": ugly }, ["a.js"]);
-    expect(result.stderr).toContain(
-      `"${key}" cannot be set in bunfig.toml, it says what one run does. Pass ${flag} on the command line`,
-    );
+    expect(result.stderr).toContain(`"${key}" cannot be set in bunfig.toml. Pass ${flag} on the command line instead.`);
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.exitCode).toBe(2);
   });

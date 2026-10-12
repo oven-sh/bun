@@ -278,8 +278,8 @@ impl<'e> Files<'e> {
         }
     }
 
-    /// Why `files`, which are absolute and [partly staged](Files::is_partly_staged), are as they were.
-    pub(crate) fn refusal_to_write(&self, files: &mut [Vec<u8>]) -> Vec<u8> {
+    /// Why `files`, which are absolute and [partly staged](Files::is_partly_staged), are as they were. `done`: what they are not.
+    pub(crate) fn refusal_to_write(&self, files: &mut [Vec<u8>], done: &str) -> Vec<u8> {
         files.sort_unstable();
         let shown = files
             .iter()
@@ -292,7 +292,8 @@ impl<'e> Files<'e> {
                 &shown.collect::<Vec<_>>().concat()[..],
                 b" has",
                 said,
-                b"it was not written",
+                b"it was not ",
+                done.as_bytes(),
                 way_out,
             ]
             .concat(),
@@ -301,7 +302,8 @@ impl<'e> Files<'e> {
                     count.to_string().as_bytes(),
                     b" files have",
                     said,
-                    b"they were not written",
+                    b"they were not ",
+                    done.as_bytes(),
                 ]
                 .concat();
                 for name in shown {

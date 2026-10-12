@@ -578,8 +578,34 @@ pub struct State<'a> {
     starts: Vec<usize>,
 }
 
+/// What decides whether `hook` is called in `func`.
+fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
+    let file = hook.file();
+    let mut inner = Node::Expr(hook);
+    for outer in inner.ancestors().take_while(|it| *it != Node::Func(func)) {
+        let decides = match outer {
+            Node::Case(_) => true,
+            Node::Stmt(it) => it.as_if().is_some_and(|(test, ..)| Node::Expr(test) != inner),
+            Node::Expr(it) => match it.kind() {
+                ExprKind::Cond { test, .. } => Node::Expr(test) != inner,
+                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, right, .. } => Node::Expr(right) == inner,
+                _ => false,
+            },
+            _ => false,
+        };
+        if decides {
+            let line = file.line_of(outer.span().start);
+            return Some(format!("Whether it is called depends on the condition on line {line}."));
+        }
+        inner = outer;
+    }
+    let early = func.returns().filter(|it| it.span().end <= hook.span().start).min_by_key(|it| it.span().start)?;
+    let line = file.line_of(early.span().start);
+    Some(format!("The return on line {line} can end the render before it is called."))
+}
+
 impl Rule for RulesOfHooks {
-    const META: Meta = Meta::plugin(Plugin::ReactHooks, "rules-of-hooks", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::ReactHooks, "rules-of-hooks", Kind::Problem).recommended().hints();
     const ON: On = On::new().finish();
     type State<'a> = State<'a>;
 
@@ -894,7 +920,10 @@ impl RulesOfHooks {
                     true => " Did you accidentally call a React Hook after an early return?",
                     false => "",
                 };
-                report(message).data("hint", hint).data("function", function_name.map_or(&b""[..], |it| cx.slice(it.span())));
+                report(message)
+                    .data("hint", hint)
+                    .data("function", function_name.map_or(&b""[..], |it| cx.slice(it.span())))
+                    .hint_with(|| why_conditional(hook, func?).filter(|_| message.text == CONDITIONAL.text));
             }
         }
     }

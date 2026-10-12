@@ -223,14 +223,12 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
 /// What tinyglobby finds for `pattern` below `root`, sorted: it has them in the order in which it reads the directories.
 /// A link to a directory is not followed.
 fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
-    let options = bun_glob::Options {
-        dot: false,
-        ..bun_glob::Options::MICROMATCH_DOT
-    };
     let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-    let pattern = bun_glob::Pattern::new(pattern, options);
+    // `dot: false`: no `*` takes a name that starts with a dot.
+    let names_hidden = pattern.starts_with(b".") || strings::contains(pattern, b"/.");
+    let pattern = bun_glob::Pattern::with_extglob(pattern);
     let ignored: Vec<bun_glob::Pattern> = (ignored.iter())
-        .map(|it| bun_glob::Pattern::new(it, options))
+        .map(|it| bun_glob::Pattern::with_extglob(it))
         .collect();
     let is_ignored = |relative: &[u8]| ignored.iter().any(|it| it.matches(relative));
     let mut found = Vec::new();
@@ -241,7 +239,8 @@ fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>
         let Some(listing) = crate::fs::list(&crate::paths::to_native(path)) else {
             continue;
         };
-        for entry in listing.entries {
+        let entries = listing.entries.into_iter();
+        for entry in entries.filter(|it| names_hidden || !it.name.starts_with(b".")) {
             let relative = match directory.is_empty() {
                 true => entry.name,
                 false => [&directory[..], b"/", &entry.name].concat(),
@@ -611,7 +610,7 @@ fn type_error(diagnostic: &Diagnostic) -> LintMessage {
 fn too_large_for_flow_analysis() -> LintMessage {
     LintMessage {
         severity: Severity::Warn,
-        message: b"This file is too large for control flow analysis. What rules that need types say about it may be wrong or incomplete."
+        message: b"This file is too large for control flow analysis. Reports from rules that need type information may be wrong or incomplete."
             .to_vec(),
         line: 1,
         column: 1,

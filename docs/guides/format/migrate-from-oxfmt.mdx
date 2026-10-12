@@ -6,6 +6,24 @@ mode: center
 
 `bun format` reads your `.oxfmtrc.json` and prints what oxfmt 0.72 prints. In most projects you only change the command.
 
+Start with `--doctor`. It shows what Bun will do with your config, and it doesn't format or write anything.
+
+```sh terminal icon="terminal"
+bun format --doctor
+```
+
+```txt
+Using .oxfmtrc.json (oxfmt config)
+
+    3 files are formatted natively
+
+You can remove: oxfmt
+```
+
+---
+
+Change the scripts.
+
 ```json package.json icon="file-json"
 {
   "scripts": {
@@ -19,7 +37,7 @@ mode: center
 
 Flags and arguments stay the same. Change CI and Git hooks too.
 
-Edit the script first. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get oxfmt.
+Don't skip this. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get oxfmt.
 
 ---
 
@@ -34,27 +52,10 @@ $ bun format --check
 Checking formatting...
 
 All matched files use the correct format.
-Finished in 3ms on 3 files using 8 threads.
+Finished in 4ms on 3 files using 64 threads.
 ```
 
 If you're on a version of oxfmt before 0.72, a few files change once, like when you upgrade oxfmt.
-
----
-
-Run `--doctor` to see what Bun does with your config. It doesn't format or write anything.
-
-```sh terminal icon="terminal"
-bun format --doctor
-```
-
-```txt
-$ bun format --doctor
-Using .oxfmtrc.json (oxfmt config)
-
-    3 files are formatted natively
-
-You can remove: oxfmt
-```
 
 ---
 

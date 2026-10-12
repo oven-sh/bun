@@ -421,15 +421,18 @@ impl Registry {
         if let Some(plugin) = Plugin::spelled(prefix).find(|it| it.has_no_rules()) {
             return Missing::OfPluginWithoutRules(plugin);
         }
-        let most = id.len().max(3) / 3;
-        let all = self.rules.iter().map(|it| it.meta);
-        let names = all.flat_map(|meta| {
-            let prefixes = meta.plugin.spellings().iter();
-            prefixes.map(|it| (written(it, meta.name), meta.name.as_bytes() == name))
-        });
-        let close = names.filter_map(|(other, has_same_name)| {
-            let distance = strings::edit_distance(id.iter().copied(), &other);
-            (has_same_name || distance <= most).then_some((distance, other))
+        // The name has to be close. The plugin too, unless the name is right or no plugin is written.
+        let distance = |a: &[u8], b: &str| strings::edit_distance(a.iter().copied(), b.as_bytes());
+        let is_close = |distance: usize, written: &[u8]| distance <= written.len().max(3) / 3;
+        let close = self.rules.iter().flat_map(|it| {
+            let other = it.meta.name;
+            let of_name = Some(distance(name, other)).filter(|it| is_close(*it, name));
+            let prefixes = it.meta.plugin.spellings().iter();
+            prefixes.filter_map(move |it| {
+                let (of_name, of_prefix) = (of_name?, distance(prefix, it));
+                (of_name == 0 || prefix.is_empty() || is_close(of_prefix, prefix))
+                    .then(|| (of_name + of_prefix, written(it, other)))
+            })
         });
         Missing::Unknown(close.min_by_key(|it| it.0).map(|it| it.1))
     }

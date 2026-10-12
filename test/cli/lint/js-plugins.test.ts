@@ -635,7 +635,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         );
         expect(await notes({ ...calledN, "n.js": plugin }, { rules: { ...rules, ...more } })).toEqual([
           `note: 2 "n" rules ran in JavaScript from ./n.js, but bun lint has them built in (version 18.4.1)`,
-          `  To use the built-in rules, rename them to "node/.." and add "node" to "plugins". Keep ./n.js for the other 1 rule. Reports may differ.`,
+          `  To use the built-in rules, rename them to "node/.." and add "node" to "plugins". Keep ./n.js for the other rule. Reports may differ.`,
         ]);
       },
       timeout,
@@ -1831,7 +1831,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         },
         ["a.js"],
       );
-      expect(stdout + stderr).toContain("./plugin.mjs\n  A promise is not settled, and nothing is left to wait for.");
+      expect(stdout + stderr).toContain("./plugin.mjs\n  A promise never settled, and nothing is left to wait for.");
       expect(exitCode).toBe(1);
     },
     timeout,

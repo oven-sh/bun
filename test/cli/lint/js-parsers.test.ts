@@ -316,7 +316,7 @@ describe.concurrent("bun lint with processors", () => {
       expect(result.exitCode).toBe(1);
       // What the processor gives back without a name is for the language.
       const whole = await lint(files, ["b.txt"]);
-      expect(whole.stderr).toContain(`b.txt returns text in the language "fenced/text".`);
+      expect(whole.stderr).toContain(`b.txt returned code in the language "fenced/text", but`);
       expect(whole.exitCode).toBe(2);
     },
     timeout,

@@ -22,7 +22,7 @@ bun format
 ```txt
 src/index.ts
 src/server.ts
-Formatted 2 files, 2 unchanged [8.16ms]
+Formatted 2 files, 2 unchanged [3.47ms]
 ```
 
 `bun format` rewrites the files in the current directory that need it and prints their names. It skips `node_modules` and anything in your `.gitignore`.
@@ -41,6 +41,12 @@ Embedded code is formatted too: `<script>` and `<style>` in HTML and Vue, code b
 
 ```bash terminal icon="terminal"
 bun format --check
+```
+
+```txt
+src/index.ts
+src/server.ts
+2 files need formatting. Run bun format to fix them.
 ```
 
 The exit code is `1` if a file needs formatting and `0` if none do.
@@ -72,6 +78,15 @@ To create the section, run `bun format --init`.
 
 See [`bunfig.toml`](/runtime/bunfig#formatter) for all of them. Each one is also a flag, like `--print-width 100` or `--no-semi`.
 
+A typo is an error, not a silent no-op:
+
+```txt
+2 | printWdith = 100
+    ^
+error: unknown key "printWdith" in [format]. Did you mean "printWidth"?
+    at /app/bunfig.toml:2:1
+```
+
 ### Different options for some files
 
 ```toml bunfig.toml icon="settings"
@@ -86,7 +101,7 @@ options = { printWidth = 120 }
 
 ## Ignore files
 
-`bun format` also skips what `.prettierignore` lists.
+To skip more than `.gitignore` does, list the files in `bunfig.toml`. A `.prettierignore` file works too.
 
 ```toml bunfig.toml icon="settings"
 [format]
@@ -163,7 +178,7 @@ stylesheet = "./src/app.css"
 functions = ["clsx", "cn"]
 ```
 
-## More formatting
+## package.json, JSDoc, and TOML
 
 All off by default.
 
@@ -205,6 +220,8 @@ bun format --stdin-filepath src/index.ts < src/index.ts
 bun format --staged
 ```
 
+A file with both staged and unstaged changes isn't written, because staging it again would commit the rest. Bun names the file and exits with code `2`.
+
 `--changed` formats the files that differ from your default branch. Pass a ref to compare with something else.
 
 ```bash terminal icon="terminal"
@@ -238,7 +255,7 @@ Already have a `.prettierrc` or an `.oxfmtrc.json`? `bun format` reads it and pr
 
 If `package.json` has a `format` script, `bun format` runs that script. Inside the script, `bun format` is the formatter.
 
-Svelte and Astro aren't built in. Bun sends those files to your installed Prettier and its plugin. To see which files those are, and which packages you can uninstall:
+Svelte and Astro aren't built in. If your `.prettierrc` lists their plugin, Bun sends those files to your installed Prettier. To see which files those are, and which packages you can uninstall:
 
 ```bash terminal icon="terminal"
 bun format --doctor

@@ -67,6 +67,7 @@ pub use resolved::{
     severity_of,
 };
 use resolved::{Prepared, Slot};
+pub use schema::{OptionMistake, Step, mistake_in_options};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, refusal_of_oxfmt,
     refusal_of_prettier, refused_by_prettier_with,
@@ -1208,7 +1209,11 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         if found.is_none() {
             // All rules of a plugin that is loaded are known.
             let is_known_to_be_missing = lacks_it || js.is_some() && !config.skips_unknown_rules;
-            if is_about_layout || !is_known_to_be_missing && self.config.is_foreign(id) {
+            // Where every rule is here, no package has one that a comment could turn on.
+            let is_of_a_package = !is_known_to_be_missing
+                && self.config.is_foreign(id)
+                && !(config.has_every_rule && is_turned_on);
+            if is_about_layout || is_of_a_package {
                 if is_turned_on && !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
                 }

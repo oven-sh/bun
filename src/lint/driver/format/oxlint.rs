@@ -1,15 +1,13 @@
-//! What the formats of oxlint share, and what its `--rules` prints.
+//! What the formats of oxlint share.
 
-use crate::print_config::{object, text, write_indented};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, Registry, RuleId, parse_rule_id};
+use bun_lint::linter::{LintMessage, RuleId, parse_rule_id};
 use bun_lint::options::Json;
-use bun_lint::rule::{Fixable, Plugin};
+use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
 use bun_sema::util::FxHashMap;
 use std::cell::OnceCell;
-use std::io::Write;
 
 /// What oxlint says about a run.
 pub(crate) struct Run {
@@ -79,7 +77,7 @@ pub(super) fn is_error(message: &LintMessage) -> bool {
 }
 
 /// Finds the offsets of the lines and columns that ESLint counts.
-pub(super) struct Offsets<'t> {
+pub(crate) struct Offsets<'t> {
     text: &'t [u8],
     /// Where each line starts.
     pub(super) lines: LineStarts,
@@ -111,7 +109,7 @@ fn sizes(first: u8) -> Sizes {
 
 impl<'t> Offsets<'t> {
     /// `lines`: where the lines start, if that is known.
-    pub(super) fn new(text: &'t [u8], lines: Option<&[u32]>) -> Offsets<'t> {
+    pub(crate) fn new(text: &'t [u8], lines: Option<&[u32]>) -> Offsets<'t> {
         Offsets {
             text,
             lines: match lines {
@@ -163,7 +161,7 @@ impl<'t> Offsets<'t> {
 
     /// The offset of a line from 1 and a column from 1 in UTF-16 code units, and the column from 1
     /// in bytes.
-    pub(super) fn at(&self, line: u32, column: u32) -> (usize, usize) {
+    pub(crate) fn at(&self, line: u32, column: u32) -> (usize, usize) {
         let start = match line {
             0 | 1 => self.start,
             line => (self.lines.start_of(line)).map_or(self.text.len(), |it| it as usize),
@@ -230,55 +228,4 @@ pub(crate) fn page_of(of: Plugin, name: &[u8]) -> Option<Vec<u8>> {
         b".html",
     ];
     (!matches!(of, Plugin::Bun | Plugin::BunTest)).then(|| page.concat())
-}
-
-/// `--rules`. `as_json`: with `-f json`.
-pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool) {
-    let mut all: Vec<_> = registry
-        .all()
-        .iter()
-        .map(|it| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta))
-        .collect();
-    // A rule of the React Compiler is there as `react-hooks/..` too: the one of oxlint's own plugin is listed.
-    bun_lint::utils::sort::sort_by_key(&mut all, |it| {
-        (it.0, it.1.name, it.1.plugin.prefix().as_bytes() != it.0)
-    });
-    all.dedup_by_key(|it| (it.0, it.1.name));
-    if !as_json {
-        for (scope, meta) in all {
-            out.extend_from_slice(scope);
-            let _ = writeln!(out, "/{}", meta.name);
-        }
-        return;
-    }
-    let rules = all.into_iter().map(|(scope, meta)| {
-        let category = bun_lint::linter::oxlint_category(meta.plugin, meta.name);
-        let fix: &[u8] = match (meta.fixable != Fixable::No, meta.has_suggestions) {
-            (true, true) => b"fixable_safe_fix_or_suggestion",
-            (true, false) => b"fixable_fix",
-            (false, true) => b"fixable_suggestion",
-            (false, false) => b"none",
-        };
-        let url = page_of(meta.plugin, meta.name.as_bytes());
-        object(vec![
-            (b"scope", text(scope)),
-            (b"value", text(meta.name.as_bytes())),
-            (
-                b"category",
-                category.map_or(Json::Null, |it| text(it.as_bytes())),
-            ),
-            (b"type_aware", Json::Bool(meta.requires_types)),
-            (b"fix", text(fix)),
-            (
-                b"default",
-                Json::Bool(
-                    category == Some("correctness")
-                        && matches!(scope, b"eslint" | b"typescript" | b"oxc" | b"unicorn"),
-                ),
-            ),
-            (b"docs_url", url.map_or(Json::Null, |it| text(&it))),
-        ])
-    });
-    write_indented(out, &Json::Array(rules.collect()), 0);
-    out.push(b'\n');
 }

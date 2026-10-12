@@ -1054,6 +1054,7 @@ dependencies = [
  "bun_lint_react",
  "bun_lint_typescript",
  "bun_lint_unicorn",
+ "bun_md",
  "bun_paths",
  "bun_sema",
  "bun_sema_driver",
@@ -1061,6 +1062,7 @@ dependencies = [
  "bun_semver",
  "bun_sys",
  "bun_threading",
+ "bun_zstd",
 ]
 
 [[package]]

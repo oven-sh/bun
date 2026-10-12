@@ -498,7 +498,7 @@ threads = 4 # --threads 4
 
 ## Formatter
 
-The `[format]` section configures [`bun format`](/runtime/format). `bun format --init` adds it to your `bunfig.toml`.
+The `[format]` section configures [`bun format`](/runtime/format). Run `bun format --init` to add it.
 
 ```toml title="bunfig.toml" icon="settings"
 [format]
@@ -509,41 +509,41 @@ ignorePatterns = ["vendor/", "*.gen.ts"]
 
 - Every key is also a flag: `printWidth` is `--print-width`, and `semi = false` is `--no-semi`. A flag overrides its key.
 - `[format]` overrides `.editorconfig`, `.prettierrc`, and `.oxfmtrc.json`.
-- An unknown key or a bad value is an error, and `bun format` exits with code `2`.
+- A typo doesn't go unnoticed. An unknown key or a bad value is an error, and `bun format` exits with code `2`.
 
 ### Formatting options
 
-They mean what they mean in [Prettier](https://prettier.io/docs/options).
+Same names, defaults, and meaning as [Prettier's options](https://prettier.io/docs/options).
 
-| Key                            | Default       | What it does                                                       |
-| ------------------------------ | ------------- | ------------------------------------------------------------------ |
-| `printWidth`                   | `80`          | Wrap lines at this column                                          |
-| `tabWidth`                     | `2`           | Spaces per level of indentation                                    |
-| `useTabs`                      | `false`       | Indent with tabs                                                   |
-| `semi`                         | `true`        | Print semicolons                                                   |
-| `singleQuote`                  | `false`       | Use single quotes                                                  |
-| `jsxSingleQuote`               | `false`       | Use single quotes in JSX                                           |
-| `quoteProps`                   | `"as-needed"` | Quote object keys: `"as-needed"`, `"consistent"`, or `"preserve"`  |
-| `trailingComma`                | `"all"`       | `"all"`, `"es5"`, or `"none"`                                      |
-| `bracketSpacing`               | `true`        | `{ a }` or `{a}`                                                   |
-| `bracketSameLine`              | `false`       | Put the `>` of a multi-line element at the end of the last line    |
-| `arrowParens`                  | `"always"`    | `(x) => x` or, with `"avoid"`, `x => x`                            |
-| `objectWrap`                   | `"preserve"`  | `"collapse"` puts an object on one line whenever it fits           |
-| `singleAttributePerLine`       | `false`       | One attribute per line in HTML, Vue, and JSX                       |
-| `proseWrap`                    | `"preserve"`  | Wrap Markdown text: `"always"`, `"never"`, or `"preserve"`         |
-| `endOfLine`                    | `"lf"`        | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`                              |
-| `htmlWhitespaceSensitivity`    | `"css"`       | How white space in HTML counts: `"css"`, `"strict"`, or `"ignore"` |
-| `vueIndentScriptAndStyle`      | `false`       | Indent the code in `<script>` and `<style>` of Vue files           |
-| `embeddedLanguageFormatting`   | `"auto"`      | `"off"` leaves code inside other code alone                        |
-| `requirePragma`                | `false`       | Only format files that start with a `@format` comment              |
-| `checkIgnorePragma`            | `false`       | Skip files that start with a `@noformat` comment                   |
-| `insertPragma`                 | `false`       | Add a `@format` comment to the files that are formatted            |
-| `experimentalTernaries`        | `false`       | Prettier's new style for nested ternaries                          |
-| `experimentalOperatorPosition` | `"end"`       | `"start"` puts a binary operator at the start of the next line     |
+| Key                            | Default       | What it does                                                          |
+| ------------------------------ | ------------- | --------------------------------------------------------------------- |
+| `printWidth`                   | `80`          | Wrap lines at this column                                             |
+| `tabWidth`                     | `2`           | Spaces per indentation level                                          |
+| `useTabs`                      | `false`       | Indent with tabs                                                      |
+| `semi`                         | `true`        | Print semicolons                                                      |
+| `singleQuote`                  | `false`       | Use single quotes                                                     |
+| `jsxSingleQuote`               | `false`       | Use single quotes in JSX                                              |
+| `quoteProps`                   | `"as-needed"` | Quote object keys: `"as-needed"`, `"consistent"`, or `"preserve"`     |
+| `trailingComma`                | `"all"`       | `"all"`, `"es5"`, or `"none"`                                         |
+| `bracketSpacing`               | `true`        | `{ a }` or `{a}`                                                      |
+| `bracketSameLine`              | `false`       | Put the `>` of a multi-line element at the end of the last line       |
+| `arrowParens`                  | `"always"`    | `(x) => x` or, with `"avoid"`, `x => x`                               |
+| `objectWrap`                   | `"preserve"`  | `"collapse"` puts an object on one line whenever it fits              |
+| `singleAttributePerLine`       | `false`       | One attribute per line in HTML, Vue, and JSX                          |
+| `proseWrap`                    | `"preserve"`  | Wrap Markdown text: `"always"`, `"never"`, or `"preserve"`            |
+| `endOfLine`                    | `"lf"`        | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`                                 |
+| `htmlWhitespaceSensitivity`    | `"css"`       | How whitespace in HTML is treated: `"css"`, `"strict"`, or `"ignore"` |
+| `vueIndentScriptAndStyle`      | `false`       | Indent the code in `<script>` and `<style>` of Vue files              |
+| `embeddedLanguageFormatting`   | `"auto"`      | `"off"` leaves embedded code alone, like CSS in a template literal    |
+| `requirePragma`                | `false`       | Only format files that start with a `@format` comment                 |
+| `checkIgnorePragma`            | `false`       | Skip files that start with a `@noformat` comment                      |
+| `insertPragma`                 | `false`       | Add a `@format` comment to the files that are formatted               |
+| `experimentalTernaries`        | `false`       | Prettier's new style for nested ternaries                             |
+| `experimentalOperatorPosition` | `"end"`       | `"start"` puts a binary operator at the start of the next line        |
 
 ### Sorting and comments
 
-All of these are off by default. Set one to `true`, or write a table to change how it works.
+All off by default. Set one to `true`, or use a table to pass options.
 
 | Key               | What it does                                                                  |
 | ----------------- | ----------------------------------------------------------------------------- |
@@ -552,7 +552,7 @@ All of these are off by default. Set one to `true`, or write a table to change h
 | `sortPackageJson` | Sort the keys of `package.json`. `{ sortScripts = true }` sorts `scripts` too |
 | `jsdoc`           | Format JSDoc comments                                                         |
 
-`insertFinalNewline = false` leaves out the line break at the end of a file.
+`insertFinalNewline = false` leaves out the newline at the end of a file.
 
 ### `format.sortImports`
 
@@ -563,19 +563,19 @@ internalPattern = ["~/", "@/", "#"]
 newlinesBetween = true
 ```
 
-These are the defaults. An array inside `groups` makes one group out of several.
+These are the defaults. A nested array in `groups` merges several groups into one.
 
 | Key                  | Default | What it does                                                                  |
 | -------------------- | ------- | ----------------------------------------------------------------------------- |
 | `groups`             | above   | The order of the groups. `type-external` or `value-builtin` narrow a group    |
 | `customGroups`       | `[]`    | Your own groups: `{ groupName = "ui", elementNamePattern = ["@acme/ui/**"] }` |
 | `internalPattern`    | above   | What counts as `internal`                                                     |
-| `newlinesBetween`    | `true`  | An empty line between groups                                                  |
+| `newlinesBetween`    | `true`  | A blank line between groups                                                   |
 | `order`              | `"asc"` | `"asc"` or `"desc"`                                                           |
 | `ignoreCase`         | `true`  | `a` and `A` sort together                                                     |
-| `sortSideEffects`    | `false` | Also move imports without names, like `import "./setup"`                      |
-| `partitionByComment` | `false` | A comment on its own line starts a new block that is sorted on its own        |
-| `partitionByNewline` | `false` | An empty line does. Needs `newlinesBetween = false`                           |
+| `sortSideEffects`    | `false` | Also move side-effect imports, like `import "./setup"`                        |
+| `partitionByComment` | `false` | Sort the imports before and after a comment line separately                   |
+| `partitionByNewline` | `false` | The same for a blank line. Needs `newlinesBetween = false`                    |
 
 ### `format.sortTailwindcss`
 
@@ -593,12 +593,12 @@ functions = ["clsx", "cn", "cva"]
 | `config`             | Tailwind 3: the path of `tailwind.config.js`               |
 | `functions`          | Sort the strings passed to these functions                 |
 | `attributes`         | Sort these attributes too, besides `class` and `className` |
-| `preserveWhitespace` | Keep the white space between classes                       |
-| `preserveDuplicates` | Keep a class that is there twice                           |
+| `preserveWhitespace` | Keep the whitespace between classes                        |
+| `preserveDuplicates` | Keep duplicate classes                                     |
 
 ### `format.overrides`
 
-Other options for some files. A later entry wins over an earlier one, and a flag wins over all of them.
+Different options for some files. Later entries win over earlier ones, and a flag wins over all of them.
 
 ```toml title="bunfig.toml" icon="settings"
 [[format.overrides]]
@@ -607,7 +607,7 @@ excludeFiles = ["scripts/vendor/**"]
 options = { printWidth = 120, sortImports = false }
 ```
 
-- `files` and `excludeFiles` take a pattern or an array of patterns, relative to the working directory. A pattern without a slash matches the file name in any directory.
+- `files` and `excludeFiles` take a glob or an array of globs, relative to `bunfig.toml`. In `files`, a glob without a slash matches the file name in any directory.
 - `options` takes the formatting options, the keys under [Sorting and comments](#sorting-and-comments), and `parser`.
 
 ### Files
@@ -618,9 +618,9 @@ options = { printWidth = 120, sortImports = false }
 | `ignorePath`              | array of paths                                      | Read ignore patterns from these files. Default: `.gitignore`, `.prettierignore` |
 | `toml`                    | boolean                                             | Format TOML files too, like `bunfig.toml`                                       |
 | `withNodeModules`         | boolean                                             | Format files in `node_modules` too                                              |
-| `ignoreUnknown`           | boolean                                             | Say nothing about a file in a language Bun does not format                      |
+| `ignoreUnknown`           | boolean                                             | Don't complain about a file in a language Bun doesn't format                    |
 | `errorOnUnmatchedPattern` | boolean                                             | `false`: an argument that matches no file is not an error                       |
-| `editorconfig`            | boolean                                             | `false`: do not read `.editorconfig`                                            |
+| `editorconfig`            | boolean                                             | `false`: don't read `.editorconfig`                                             |
 | `logLevel`                | `"silent"`, `"error"`, `"warn"`, `"log"`, `"debug"` | How much to print                                                               |
 | `threads`                 | number                                              | Default: one per CPU core                                                       |
 
@@ -628,11 +628,11 @@ These only matter with a [Prettier](/guides/format/migrate-from-prettier) or [ox
 
 | Key                   | Value                                                | What it does                                                            |
 | --------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
-| `config`              | path, or `false`                                     | Use this config file. `false`: do not look for one                      |
+| `config`              | path, or `false`                                     | Use this config file. `false`: don't look for one                       |
 | `configPrecedence`    | `"cli-override"`, `"file-override"`, `"prefer-file"` | `"prefer-file"`: `[format]` only applies to files without a config file |
-| `disableNestedConfig` | boolean                                              | Use the config file of the working directory for every file             |
+| `disableNestedConfig` | boolean                                              | Use the config file in the working directory for every file             |
 | `flavor`              | `"prettier"`, `"oxfmt"`                              | Without a config file, format like this tool                            |
-| `allowUnsupported`    | boolean                                              | Only warn about files that need a plugin Bun does not have              |
+| `allowUnsupported`    | boolean                                              | Only warn about files that need a plugin Bun doesn't have               |
 
 ## Package manager
 

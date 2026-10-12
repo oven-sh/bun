@@ -326,7 +326,7 @@ pub(crate) fn write_atomically(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(
         && paths::inside(cwd, &path).is_some()
         && !repository(cwd).is_some_and(|it| paths::inside(&it, &portable).is_some())
     {
-        return Err(b"A link leads out of the repository.".to_vec());
+        return Err(b"it is a symlink to a file outside the repository".to_vec());
     }
     write_through(&real, text).map_err(|error| describe(&error))
 }

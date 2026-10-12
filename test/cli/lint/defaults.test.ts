@@ -1,0 +1,383 @@
+// What `bun lint` does in a project that has no configuration of ESLint or oxlint.
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
+
+const env = {
+  ...bunEnv,
+  AGENT: "0",
+  CLAUDECODE: undefined,
+  REPL_ID: undefined,
+  GITHUB_ACTIONS: undefined,
+  NO_COLOR: "1",
+};
+
+type Result = { filePath: string; messages: { line: number; column: number; severity: number; ruleId: string }[] };
+
+/** `reports`: `a.js:1:1 error no-debugger` for each problem. */
+async function lint(files: Record<string, string>, args: string[], stdin?: string) {
+  using dir = tempDir("bun-lint-defaults", files);
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "-f", "json", ...args],
+    env,
+    cwd: String(dir),
+    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const json = JSON.parse(stdout || "null");
+  const nameOf = (path: string) => normalizeBunSnapshot(path, String(dir)).slice("<dir>/".length);
+  const reports = (Array.isArray(json) ? (json as Result[]) : []).flatMap(({ filePath, messages }) =>
+    messages.map(
+      it => `${nameOf(filePath)}:${it.line}:${it.column} ${it.severity === 2 ? "error" : "warning"} ${it.ruleId}`,
+    ),
+  );
+  return { json, reports, stderr, exitCode };
+}
+
+describe.concurrent("severities", () => {
+  const files = {
+    "a.js": "debugger;\nif (Bun) {\n}\nlet unused;\n",
+    "b.ts": "export let a: any = 1;\nexport const b = 1 as unknown as Number;\n",
+  };
+
+  test("a default rule about a problem is an error, one about code that does nothing and every other one a warning", async () => {
+    const { reports, exitCode } = await lint(files, []);
+    expect(reports).toEqual([
+      "a.js:1:1 error no-debugger",
+      "a.js:2:10 warning no-empty",
+      "a.js:4:5 warning no-unused-vars",
+      "b.ts:1:12 warning prefer-const",
+      "b.ts:1:15 warning @typescript-eslint/no-explicit-any",
+      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("with --type-aware too", async () => {
+    const { reports, exitCode } = await lint(
+      {
+        "tsconfig.json": "{}",
+        "a.ts": "export async function f() {\n  return 1;\n}\nf();\nawait 1;\n",
+      },
+      ["--type-aware"],
+    );
+    expect(reports).toEqual([
+      "a.ts:1:8 warning @typescript-eslint/require-await",
+      "a.ts:4:1 error @typescript-eslint/no-floating-promises",
+      "a.ts:5:1 warning @typescript-eslint/await-thenable",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("warnings do not fail the run, --max-warnings does, --quiet hides them", async () => {
+    const warned = { "a.js": files["a.js"].replace("debugger;", "") };
+    const [plain, limited, quiet] = await Promise.all([
+      lint(warned, []),
+      lint(warned, ["--max-warnings", "0"]),
+      lint(files, ["--quiet"]),
+    ]);
+    expect(plain.reports).toEqual(["a.js:2:10 warning no-empty", "a.js:4:5 warning no-unused-vars"]);
+    expect(limited.reports).toEqual(plain.reports);
+    expect(limited.stderr).toContain("Found too many warnings (maximum: 0).");
+    expect(quiet.reports).toEqual([
+      "a.js:1:1 error no-debugger",
+      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+    ]);
+    expect([plain.exitCode, limited.exitCode, quiet.exitCode]).toEqual([0, 1, 1]);
+  });
+
+  test("what bunfig.toml and --rule set stays as it is set", async () => {
+    const bunfig = `[lint.rules]\n"no-empty" = "error"\n"no-debugger" = "warn"\n"no-var" = "error"\n`;
+    const [byFile, byFlag] = await Promise.all([
+      lint({ ...files, "bunfig.toml": bunfig, "c.js": "var c = 1;\nexport { c };\n" }, []),
+      lint(files, ["--rule", "prefer-const: error", "--rule", "no-debugger: off"]),
+    ]);
+    expect(byFile.reports).toEqual([
+      "a.js:1:1 warning no-debugger",
+      "a.js:2:10 error no-empty",
+      "a.js:4:5 warning no-unused-vars",
+      "b.ts:1:12 warning prefer-const",
+      "b.ts:1:15 warning @typescript-eslint/no-explicit-any",
+      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+      "c.js:1:1 error no-var",
+    ]);
+    expect(byFlag.reports).toEqual([
+      "a.js:2:10 warning no-empty",
+      "a.js:4:5 warning no-unused-vars",
+      "b.ts:1:12 error prefer-const",
+      "b.ts:1:15 warning @typescript-eslint/no-explicit-any",
+      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+    ]);
+  });
+
+  test("the same configurations are all errors in an eslint.config.js", async () => {
+    const config = `export default [
+      { files: ["**/*.{js,ts}"], extends: ["eslint:recommended"], languageOptions: { globals: { Bun: "readonly" } } },
+      { files: ["**/*.ts"], extends: ["typescript-eslint/recommended"] },
+    ];\n`;
+    const { reports } = await lint({ ...files, "eslint.config.js": config }, ["a.js", "b.ts"]);
+    expect(reports).toEqual([
+      "a.js:1:1 error no-debugger",
+      "a.js:2:10 error no-empty",
+      "a.js:4:5 error no-unused-vars",
+      "b.ts:1:12 error prefer-const",
+      "b.ts:1:15 error @typescript-eslint/no-explicit-any",
+      "b.ts:2:34 error @typescript-eslint/no-wrapper-object-types",
+    ]);
+  });
+
+  test("bun:test/no-disabled-tests is a warning, the other rules for tests are errors", async () => {
+    const code = `import { expect, test } from "bun:test";\ntest.skip("a", () => {});\ntest.only("b", () => {\n  expect(1);\n});\n`;
+    const { reports } = await lint({ "a.test.ts": code }, []);
+    expect(reports).toEqual([
+      "a.test.ts:2:1 warning bun:test/no-disabled-tests",
+      "a.test.ts:3:6 error bun:test/no-focused-tests",
+      "a.test.ts:4:3 error bun:test/valid-expect",
+    ]);
+  });
+
+  test("--print-config", async () => {
+    const { json } = await lint(files, ["--print-config", "b.ts"]);
+    const { rules } = json;
+    expect({
+      "no-debugger": rules["no-debugger"],
+      "no-empty": rules["no-empty"],
+      "prefer-const": rules["prefer-const"],
+      "@typescript-eslint/no-explicit-any": rules["@typescript-eslint/no-explicit-any"],
+      "@typescript-eslint/no-unused-vars": rules["@typescript-eslint/no-unused-vars"],
+      "no-unused-vars": rules["no-unused-vars"],
+    }).toEqual({
+      "no-debugger": [2],
+      "no-empty": [1],
+      "prefer-const": [1],
+      "@typescript-eslint/no-explicit-any": [1],
+      "@typescript-eslint/no-unused-vars": [1],
+      "no-unused-vars": [0],
+    });
+  });
+});
+
+describe.concurrent("declaration files", () => {
+  const code = `declare var a: any;
+declare const b: Number;
+declare const d: {};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const c: any;
+`;
+
+  test.each(["types.d.ts", "types.d.mts", "types.d.cts", "types.d.css.ts"])(
+    "%s: the default rules that are errors run, those that are warnings do not",
+    async name => {
+      const { reports, exitCode } = await lint({ [name]: code }, []);
+      expect(reports).toEqual([`${name}:2:18 error @typescript-eslint/no-wrapper-object-types`]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("other files that are called alike have the warnings", async () => {
+    const { reports } = await lint({ "d.ts": "export const a: any = 1;\n", "a.d.js": "let a;\n" }, []);
+    expect(reports).toEqual([
+      "a.d.js:1:5 warning no-unused-vars",
+      "d.ts:1:17 warning @typescript-eslint/no-explicit-any",
+    ]);
+  });
+
+  test("what bunfig.toml and --rule set is for them too", async () => {
+    const bunfig = `[lint.rules]\n"@typescript-eslint/no-explicit-any" = "warn"\n"no-var" = "error"\n`;
+    const expected = [
+      "types.d.ts:1:1 error no-var",
+      "types.d.ts:1:16 warning @typescript-eslint/no-explicit-any",
+      "types.d.ts:2:18 error @typescript-eslint/no-wrapper-object-types",
+    ];
+    const [byFile, byFlag] = await Promise.all([
+      lint({ "types.d.ts": code, "bunfig.toml": bunfig }, []),
+      lint({ "types.d.ts": code }, ["--rule", "@typescript-eslint/no-explicit-any: warn", "--rule", "no-var: error"]),
+    ]);
+    expect(byFile.reports).toEqual(expected);
+    expect(byFlag.reports).toEqual(expected);
+  });
+
+  test("with an eslint.config.js they are files like any other", async () => {
+    const config = `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/recommended"] }];\n`;
+    const { reports } = await lint({ "types.d.ts": code, "eslint.config.js": config }, ["types.d.ts"]);
+    expect(reports).toEqual([
+      "types.d.ts:1:1 error no-var",
+      "types.d.ts:1:16 error @typescript-eslint/no-explicit-any",
+      "types.d.ts:2:18 error @typescript-eslint/no-wrapper-object-types",
+      "types.d.ts:3:18 error @typescript-eslint/no-empty-object-type",
+    ]);
+  });
+});
+
+describe.concurrent("React", () => {
+  const component = `import { useEffect, useState } from "react";
+export function App({ items, on }) {
+  if (on) {
+    useState(0);
+  }
+  useEffect(() => {
+    console.log(items);
+  }, []);
+  return (
+    <ul>
+      {items.map(it => (
+        <li>{it}</li>
+      ))}
+    </ul>
+  );
+}
+`;
+  const hook = `import { useEffect } from "react";
+export function useThing(a, on) {
+  if (on) {
+    useEffect(() => {
+      console.log(a);
+    }, []);
+  }
+}
+`;
+  const found = (name: string) => [
+    `${name}:4:5 error react-hooks/rules-of-hooks`,
+    `${name}:8:6 warning react-hooks/exhaustive-deps`,
+    `${name}:12:9 error react/jsx-key`,
+  ];
+  const dependingOn = (field: string, name = "react") =>
+    JSON.stringify({ name: "app", [field]: { [name]: "^19.0.0" } });
+
+  test.each(["dependencies", "devDependencies", "peerDependencies"])(
+    "a file with JSX beside a package.json with react in %s",
+    async field => {
+      const files = { "package.json": dependingOn(field), "src/App.jsx": component, "src/App.tsx": component };
+      const { reports, exitCode } = await lint(files, []);
+      expect(reports).toEqual([...found("src/App.jsx"), ...found("src/App.tsx")]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("JSX in a .js file counts, a file without JSX does not", async () => {
+    const files = { "package.json": dependingOn("dependencies"), "App.js": component, "useThing.js": hook };
+    const { reports } = await lint(files, []);
+    expect(reports).toEqual(found("App.js"));
+  });
+
+  test.each([
+    ["no package.json", {}],
+    ["a package.json without react", { "package.json": dependingOn("dependencies", "preact") }],
+    ["react in optionalDependencies", { "package.json": dependingOn("optionalDependencies") }],
+  ])("%s: nothing", async (_, more) => {
+    const { reports, exitCode } = await lint({ ...more, "App.jsx": component }, []);
+    expect(reports).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the closest package.json decides", async () => {
+    const files = {
+      "package.json": dependingOn("dependencies"),
+      "App.jsx": component,
+      "deep/er/App.jsx": component,
+      "mail/package.json": dependingOn("dependencies", "preact"),
+      "mail/src/App.jsx": component,
+      "mail/web/package.json": dependingOn("peerDependencies"),
+      "mail/web/App.jsx": component,
+    };
+    const { reports } = await lint(files, []);
+    expect(reports).toEqual([...found("App.jsx"), ...found("deep/er/App.jsx"), ...found("mail/web/App.jsx")]);
+  });
+
+  test("a file that is named, and standard input", async () => {
+    const files = { "package.json": dependingOn("dependencies"), "src/App.jsx": component };
+    const [named, piped] = await Promise.all([
+      lint(files, ["src/App.jsx"]),
+      lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
+    ]);
+    expect(named.reports).toEqual(found("src/App.jsx"));
+    expect(piped.reports).toEqual(found("src/Other.jsx"));
+  });
+
+  test("with --type-aware", async () => {
+    const files = {
+      "package.json": dependingOn("dependencies"),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve", noImplicitAny: false } }),
+      "App.tsx": component,
+      "useThing.ts": hook,
+    };
+    const { reports } = await lint(files, ["--type-aware"]);
+    expect(reports.filter(it => it.includes("react"))).toEqual(found("App.tsx"));
+  });
+
+  test("what is set for them stays as it is set, also for a file without JSX", async () => {
+    const bunfig = `[lint.rules]\n"react-hooks/rules-of-hooks" = "warn"\n"react-hooks/exhaustive-deps" = "error"\n"react/jsx-key" = "off"\n`;
+    const files = { "bunfig.toml": bunfig, "App.jsx": component, "useThing.js": hook };
+    const expected = [
+      "App.jsx:4:5 warning react-hooks/rules-of-hooks",
+      "App.jsx:8:6 error react-hooks/exhaustive-deps",
+      "useThing.js:4:5 warning react-hooks/rules-of-hooks",
+      "useThing.js:6:8 error react-hooks/exhaustive-deps",
+    ];
+    const [withReact, without] = await Promise.all([
+      lint({ ...files, "package.json": dependingOn("dependencies") }, []),
+      lint(files, []),
+    ]);
+    expect(withReact.reports).toEqual(expected);
+    expect(without.reports).toEqual(expected);
+  });
+
+  test("a comment that names one in a file without JSX is not called unused", async () => {
+    const commented = hook.replace(
+      "    }, []);",
+      "      // eslint-disable-next-line react-hooks/exhaustive-deps\n    }, []);",
+    );
+    const files = { "package.json": dependingOn("dependencies"), "useThing.js": commented };
+    const { reports, exitCode } = await lint(files, []);
+    expect(reports).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("comments disable them", async () => {
+    const files = {
+      "package.json": dependingOn("dependencies"),
+      "App.jsx": component
+        .replace("    useState(0);", "    // eslint-disable-next-line react-hooks/rules-of-hooks\n    useState(0);")
+        .replace("  }, []);", "    // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, []);")
+        .replace("        <li>", "        // eslint-disable-next-line react/jsx-key\n        <li>"),
+    };
+    const { reports, exitCode } = await lint(files, []);
+    expect(reports).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--print-config has them where package.json has react", async () => {
+    const files = {
+      "package.json": dependingOn("dependencies"),
+      "mail/package.json": dependingOn("dependencies", "preact"),
+    };
+    const [withReact, without] = await Promise.all([
+      lint(files, ["--print-config", "App.jsx"]),
+      lint(files, ["--print-config", "mail/App.jsx"]),
+    ]);
+    const ofReact = (printed: { rules: object }) =>
+      Object.entries(printed.rules).filter(([name]) => name.startsWith("react"));
+    expect(ofReact(withReact.json)).toEqual([
+      ["react-hooks/rules-of-hooks", [2]],
+      ["react-hooks/exhaustive-deps", [1]],
+      ["react/jsx-key", [2]],
+    ]);
+    expect(ofReact(without.json)).toEqual([]);
+  });
+
+  test("not with a configuration of ESLint or oxlint", async () => {
+    const files = { "package.json": dependingOn("dependencies"), "App.jsx": component };
+    const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
+    const [eslint, oxlint] = await Promise.all([
+      lint({ ...files, "eslint.config.js": ofEslint }, ["App.jsx"]),
+      lint({ ...files, ".oxlintrc.json": "{}" }, ["App.jsx"]),
+    ]);
+    expect(eslint.json).toEqual([expect.objectContaining({ messages: [] })]);
+    expect(oxlint.json.diagnostics).toEqual([]);
+    expect([eslint.exitCode, oxlint.exitCode]).toEqual([0, 0]);
+  });
+});

@@ -175,20 +175,20 @@ fn boolean(config: &Json, name: &str, default: bool) -> Result<bool, Vec<u8>> {
     match config.get(name.as_bytes()) {
         None | Some(Json::Null) => Ok(default),
         Some(Json::Bool(value)) => Ok(*value),
-        Some(_) => Err(invalid(&format!("`{name}` has to be a boolean"))),
+        Some(_) => Err(invalid(&format!("`{name}` must be a boolean"))),
     }
 }
 
 fn strings(value: &Json, name: &str) -> Result<Vec<Vec<u8>>, Vec<u8>> {
     let items = value
         .as_array()
-        .ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))?;
+        .ok_or_else(|| invalid(&format!("`{name}` must be an array of strings")))?;
     items
         .iter()
         .map(|item| {
             item.as_str()
                 .map(<[u8]>::to_vec)
-                .ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))
+                .ok_or_else(|| invalid(&format!("`{name}` must be an array of strings")))
         })
         .collect()
 }
@@ -203,7 +203,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         Some(Json::Bool(false)) => return Ok(None),
         Some(Json::Bool(true)) => Json::Object(Vec::new()),
         Some(config @ Json::Object(_)) => config,
-        _ => return Err(invalid("it has to be a boolean or an object")),
+        _ => return Err(invalid("it must be a boolean or an object")),
     };
     let present = |name: &str| {
         config
@@ -233,7 +233,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         Some(value) => {
             let items = value
                 .as_array()
-                .ok_or_else(|| invalid("`groups` has to be an array"))?;
+                .ok_or_else(|| invalid("`groups` must be an array"))?;
             let is_marker = |item: &Json| matches!(item, Json::Object(_));
             if items.first().is_some_and(is_marker) {
                 return Err(invalid(
@@ -261,7 +261,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
                         let marker = item.get(b"newlinesBetween").and_then(Json::as_bool);
                         pending_override = Some(marker.ok_or_else(|| {
                             invalid(
-                                "a marker in `groups` has to be `{ \"newlinesBetween\": boolean }`",
+                                "a marker in `groups` must be `{ \"newlinesBetween\": boolean }`",
                             )
                         })?);
                         continue;
@@ -288,7 +288,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         .map(|value| {
             value
                 .as_array()
-                .ok_or_else(|| invalid("`customGroups` has to be an array"))
+                .ok_or_else(|| invalid("`customGroups` must be an array"))
         })
         .transpose()?
         .unwrap_or_default()
@@ -413,7 +413,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         is_descending: match present("order").map(|value| value.as_str()) {
             None | Some(Some(b"asc")) => false,
             Some(Some(b"desc")) => true,
-            Some(_) => return Err(invalid("`order` has to be \"asc\" or \"desc\"")),
+            Some(_) => return Err(invalid("`order` must be \"asc\" or \"desc\"")),
         },
         ignore_case: boolean(&config, "ignoreCase", true)?,
         newlines_between,

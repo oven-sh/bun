@@ -497,6 +497,34 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       ]);
       expect({ checkStdout, checkStderr, checkExited }).toMatchObject({ checkStdout: "", checkExited: 0 });
 
+      // `bun lint` has nothing to report, not even a warning, and `bun format` nothing to change.
+      await using lint = Bun.spawn({
+        cmd: [bunExe(), "lint", "-f", "json"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [lintStdout, lintStderr, lintExited] = await Promise.all([
+        lint.stdout.text(),
+        lint.stderr.text(),
+        lint.exited,
+      ]);
+      const problems = JSON.parse(lintStdout).flatMap((file: { messages: unknown[] }) => file.messages);
+      expect({ problems, lintStderr, lintExited }).toMatchObject({ problems: [], lintExited: 0 });
+
+      await using format = Bun.spawn({
+        cmd: [bunExe(), "format", "--check"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [formatStdout, formatStderr, formatExited] = await Promise.all([
+        format.stdout.text(),
+        format.stderr.text(),
+        format.exited,
+      ]);
+      expect({ formatStdout, formatStderr, formatExited }).toMatchObject({ formatExited: 0 });
+
       // The blank template has no `build` script; the react templates do.
       // --bun for the same reason: the script is `bun run build.ts`.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
@@ -516,6 +544,32 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       }
     },
     180_000,
+  );
+
+  test.skipIf(isWindows)(
+    "the CLAUDE.md is as `bun format` leaves it",
+    async () => {
+      await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
+      fs.chmodSync(path.join(temp, "bin/claude"), 0o755);
+      await using init = Bun.spawn({
+        cmd: [bunExe(), "init", "-y", "app"],
+        cwd: temp,
+        stdio: ["ignore", "ignore", "inherit"],
+        env: { ...bunEnv, PATH: `${path.join(temp, "bin")}:${bunEnv.PATH}`, CURSOR_AGENT_RULE_DISABLED: "1" },
+      });
+      expect(await init.exited).toBe(0);
+      expect(fs.readFileSync(path.join(temp, "app/CLAUDE.md"), "utf8")).toStartWith("Default to using Bun");
+
+      await using format = Bun.spawn({
+        cmd: [bunExe(), "format", "--check", "CLAUDE.md"],
+        cwd: path.join(temp, "app"),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    },
+    30_000,
   );
 
   test("nested `bun install` output is inherited", async () => {

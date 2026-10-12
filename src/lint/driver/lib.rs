@@ -19,6 +19,7 @@ mod doctor;
 mod embedded;
 mod eslintrc;
 mod evaluate;
+mod explain;
 pub mod fmt;
 pub mod for_tests;
 mod format;

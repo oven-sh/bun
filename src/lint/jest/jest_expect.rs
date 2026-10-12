@@ -197,7 +197,10 @@ pub(crate) mod valid_expect {
                 true => ASYNC_MUST_BE_AWAITED,
                 false => PROMISES_WITH_ASYNC_ASSERTIONS_MUST_BE_AWAITED,
             };
-            let report = ctx.report(final_node, message);
+            let mut report = ctx.report(final_node, message);
+            if !self.always_await {
+                report = report.hint("Add await, or return the promise.");
+            }
             let Some((function_scope_node, func)) = AstKind::Expr(node)
                 .ancestors()
                 .find_map(|it| it.as_function().map(|func| (it, func)))

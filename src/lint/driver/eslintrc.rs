@@ -149,7 +149,7 @@ fn error_of(found: &Json) -> Option<&[u8]> {
 }
 
 /// The script has said nothing about what it was asked for.
-const NOT_LOADED: &[u8] = b"It was not loaded.";
+const NOT_LOADED: &[u8] = b"The file could not be loaded.";
 
 /// `loadConfigFile`: what the file at `path` says. `None`: a `package.json` without `eslintConfig`, a program that exports
 /// nothing.
@@ -167,7 +167,7 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
         };
     }
     let text = fs::read(path).map_err(|error| cannot_read(path, &fs::describe(&error)))?;
-    let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"It is not valid JSON."));
+    let json = || json::parse(&text).ok_or_else(|| cannot_read(path, b"Invalid JSON."));
     // `yaml.load(text) || {}`
     let yaml = || match json::parse_as(Notation::Yaml, &text) {
         Ok(Json::Null) => Ok(Json::Object(Vec::new())),

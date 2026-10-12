@@ -223,7 +223,7 @@ const _: () = assert!(
     "A flag of `bun format` has no description, so `--help --all` leaves it out."
 );
 
-pub const PARAMS: &[Param] = clap::concat_params!(
+pub(crate) const PARAMS: &[Param] = clap::concat_params!(
     OPTIONS,
     FILES,
     OUTPUT,
@@ -464,7 +464,7 @@ impl Options {
             b"doctor" => self.doctor = is_on,
             b"format" if text == b"json" => self.as_json = true,
             b"format" => {
-                return error(&[b"Option format: '", text, b"' is not json."]);
+                return error(&[b"--format takes json, not \"", text, b"\""]);
             }
             b"flavor" => {
                 self.is_like_oxfmt = match text {
@@ -480,7 +480,7 @@ impl Options {
                 };
             }
             b"migrate" | b"lsp" => {
-                return error(&[b"bun format does not support --", name, b"."]);
+                return error(&[b"bun format does not support --", name]);
             }
             b"editorconfig" => self.editorconfig = is_on,
             b"config-precedence" => {
@@ -530,7 +530,7 @@ impl Options {
             b"help-all" => (self.help, self.all) = (is_on, is_on),
             b"threads" => match bun_core::fmt::parse_decimal::<usize>(text) {
                 Some(count) if count > 0 => self.threads = count,
-                _ => return error(&[b"--threads takes a number above zero, not \"", text, b"\"."]),
+                _ => return error(&[b"--threads takes a number above zero, not \"", text, b"\""]),
             },
             b"timing" => self.timing = is_on,
             b"cwd" => self.cwd = owned(),

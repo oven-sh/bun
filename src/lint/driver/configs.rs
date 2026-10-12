@@ -22,8 +22,9 @@ use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::language::InferGlobals;
 use bun_lint::linter::{
-    Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, ResolvedConfig, formatting_rules,
-    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
+    Config, FileConfig, InJavaScript, LegacyFile, LegacyOptions, Registry, ResolvedConfig,
+    formatting_rules, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
+    plugin_of_oxlint,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::{Plugin, minor_of};
@@ -138,6 +139,21 @@ const BUILT_IN: &[u8] = br#"[
         "linterOptions": { "reportUnusedDisableDirectives": "off" }
     }
 ]"#;
+
+/// [`BUILT_IN`]. `with_types`: with the rules that need types.
+fn built_in_json(with_types: bool) -> Json {
+    let preset: &[u8] = match with_types {
+        true => b"recommended-type-checked",
+        false => b"recommended",
+    };
+    let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
+    bun_lint::json::parse(&text).unwrap_or(Json::Null)
+}
+
+/// [`BUILT_IN`] alone: what is on where nobody has configured anything.
+pub(crate) fn defaults(registry: &Registry) -> Option<Config> {
+    Config::without_a_file(registry, b"/", &built_in_json(false)).ok()
+}
 
 /// The files whose `lint` and `fmt` are the configurations of oxlint and oxfmt in a project of Vite+, by priority.
 pub(crate) const NAMES_OF_VITE: [&[u8]; 6] = [
@@ -597,7 +613,10 @@ impl<'l> Loader<'l> {
                 line.extend_from_slice(&[b" (version ", ours.as_bytes(), b")"].concat());
             }
             line.extend_from_slice(&[b"\n  To use the built-in", rules, b", "].concat());
-            let other_rules: &[u8] = if others == 1 { b" rule." } else { b" rules." };
+            let for_the_others = match others {
+                1 => " for the other rule.".to_owned(),
+                _ => format!(" for the other {others} rules."),
+            };
             line.extend_from_slice(&match others {
                 0 => [
                     b"remove ",
@@ -616,9 +635,7 @@ impl<'l> Loader<'l> {
                     native,
                     b"\" to \"plugins\". Keep ",
                     &specifier[..],
-                    b" for the other ",
-                    others.to_string().as_bytes(),
-                    other_rules,
+                    for_the_others.as_bytes(),
                 ]
                 .concat(),
             });
@@ -962,13 +979,8 @@ impl<'l> Loader<'l> {
         }
         self.check_flags(Flavor::BuiltIn, None)?;
         native::check_rules(self.linter.registry(), self.options)?;
-        let preset: &[u8] = match self.options.type_aware {
-            Some(true) => b"recommended-type-checked",
-            _ => b"recommended",
-        };
-        let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
         // Every file is in it, on whatever drive.
-        let mut objects = vec![bun_lint::json::parse(&text).unwrap_or(Json::Null)];
+        let mut objects = vec![built_in_json(self.options.type_aware == Some(true))];
         objects.extend(native::categories(self.linter.registry(), self.options));
         let mut config = self.flat(b"/", Json::Array(objects), false)?;
         // Without a word: where the run has types, which then cost nothing more.

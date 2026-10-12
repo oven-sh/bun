@@ -816,8 +816,12 @@ struct Run<'r> {
     environment: &'r Environment<'r>,
     out: Outcome,
     began: Instant,
+    /// What is formatted in place of standard input.
+    text: Option<Vec<u8>>,
     /// `--doctor`
     modules: Option<&'r Modules>,
+    /// [`Configs::is_native`], once that is known: the words are Bun's.
+    is_native: bool,
 }
 
 /// What the file at `path`, which has `scope`, is to the tool that the run stands in for.
@@ -900,6 +904,43 @@ impl Run<'_> {
         self.log(text.as_bytes());
     }
 
+    /// What `--check` says at the end of a run in which so many files were not formatted, were, and could not be.
+    fn sum_up_check(&mut self, [different, unchanged, failed]: [usize; 3]) {
+        let (colors, level) = (self.colors(), self.options.log_level);
+        let out = &mut self.out.stderr;
+        let files = |n: usize| if n == 1 { "file" } else { "files" };
+        if different > 0 && level >= LogLevel::Warn {
+            let (needs, them) = if different == 1 {
+                ("needs", "it")
+            } else {
+                ("need", "them")
+            };
+            pretty!(
+                out,
+                colors,
+                "<b>{} {} {} formatting.<r><d> Run <r><cyan>bun format<r><d> to fix {}.<r>\n",
+                different,
+                files(different),
+                needs,
+                them
+            );
+        }
+        if failed > 0 && level >= LogLevel::Error {
+            let _ = writeln!(out, "Could not check {failed} {}.", files(failed));
+        }
+        // Why there is none, or not all, has been said.
+        if different + failed > 0 || self.out.exit_code != 0 || level < LogLevel::Log {
+            return;
+        }
+        match unchanged {
+            0 => {}
+            1 => out.extend_from_slice(b"1 file is formatted.\n"),
+            all => {
+                let _ = writeln!(out, "All {all} files are formatted.");
+            }
+        }
+    }
+
     /// Prettier's `logger.warn`
     fn warn(&mut self, text: &[u8]) {
         if self.options.log_level >= LogLevel::Warn {
@@ -965,7 +1006,7 @@ impl Run<'_> {
 
     /// Prettier's `formatStdin`
     fn format_stdin(mut self, configs: &Configs, ignored: &Ignored, name: &[u8]) -> Outcome {
-        let text = match fs::read_stdin() {
+        let text = match self.text.take().map_or_else(fs::read_stdin, Ok) {
             Ok(text) => text,
             Err(error) => {
                 return self
@@ -1152,7 +1193,7 @@ impl Run<'_> {
             only.as_ref()
                 .is_some_and(|it| it.is_partly_staged(&target.path))
         };
-        if options.check {
+        if options.check && !self.is_native {
             self.log(b"Checking formatting...");
             if is_oxfmt {
                 self.log(b"");
@@ -1487,15 +1528,15 @@ impl Run<'_> {
                         (true, true) => self.log_with_time(&shown, took),
                         // oxfmt does not name the files that it writes.
                         (true, false) if !options.list_different => {}
-                        (false, true) => self.warn(&shown),
-                        (_, false) => self.log(&shown),
+                        (false, true) if !self.is_native => self.warn(&shown),
+                        _ => self.log(&shown),
                     }
                 }
             }
         }
         if let Some(only) = &only {
             if !partly_staged.is_empty() {
-                self.error(&only.refusal_to_write(&mut partly_staged));
+                self.error(&only.refusal_to_write(&mut partly_staged, "formatted"));
             }
             if let Err(Fatal(error)) = only.stage(&written) {
                 self.error(&error);
@@ -1513,6 +1554,10 @@ impl Run<'_> {
         };
         if is_oxfmt {
             self.sum_up_as_oxfmt([different, unchanged, failed], pool.threads());
+        } else if self.is_native {
+            if options.check && only_looks {
+                self.sum_up_check([different, unchanged, failed]);
+            }
         } else if options.check {
             if failed > 0 {
                 self.log(
@@ -1539,7 +1584,10 @@ impl Run<'_> {
         if only_looks && different > 0 && self.out.exit_code == 0 {
             self.out.exit_code = 1;
         }
-        let sums_up = !is_oxfmt && !options.check && !options.list_different;
+        let sums_up = match self.is_native {
+            true => !only_looks,
+            false => !is_oxfmt && !options.check && !options.list_different,
+        };
         if options.log_level >= LogLevel::Log && sums_up {
             let colors = self.colors();
             let took = bun_core::output::Elapsed {
@@ -1704,6 +1752,7 @@ impl Run<'_> {
             return self.fail(&only.refusal_of_stdin("--stdin-filepath"));
         }
         let configs = Configs::new(options, environment);
+        self.is_native = configs.is_native();
         // Both say it before they look at the files, the patterns or the configuration.
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         if let Some(refusal) = options.refusal_of_modes(is_oxfmt) {
@@ -1757,13 +1806,23 @@ impl Run<'_> {
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
     match options.doctor {
         true => watching(environment, |environment, modules| {
-            run_in(options, environment, Some(modules))
+            run_in(options, environment, Some(modules), None)
         }),
-        false => run_in(options, environment, None),
+        false => run_in(options, environment, None, None),
     }
 }
 
-fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules>) -> Outcome {
+/// The same for `text` in place of standard input. `options.stdin_filepath` says which file it is.
+pub fn format_text(options: &Options, environment: &Environment, text: Vec<u8>) -> Outcome {
+    run_in(options, environment, None, Some(text))
+}
+
+fn run_in(
+    options: &Options,
+    environment: &Environment,
+    modules: Option<&Modules>,
+    text: Option<Vec<u8>>,
+) -> Outcome {
     let as_oxfmt = options
         .as_oxfmt_reads_it()
         .filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
@@ -1773,7 +1832,9 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
         environment,
         out: Outcome::default(),
         began: Instant::now(),
+        text,
         modules,
+        is_native: false,
     };
     run.execute()
 }

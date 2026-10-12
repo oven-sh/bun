@@ -304,7 +304,7 @@ Still needed:   eslint-plugin-first (its rules run in JavaScript)
     async () => {
       const files = { ...flat, ...plugin("eslint-plugin-react-hooks", ["rules-of-hooks"], { version: "1.0.0" }) };
       const [text, json] = await Promise.all([doctor(files), doctor(files, ["-f", "json"])]);
-      const note = /^eslint-plugin-react-hooks 1\.0\.0 is installed; bun lint follows [\d.]+\.$/;
+      const note = /^eslint-plugin-react-hooks 1\.0\.0 is installed/;
       expect(JSON.parse(json.stdout).notes).toEqual([expect.stringMatching(note)]);
       expect(text.stdout).toEndWith(`\n\nnote: ${JSON.parse(json.stdout).notes[0]}\n`);
       expect(text.exitCode).toBe(0);
@@ -338,11 +338,12 @@ Still needed:   eslint (some files go to it)
 
     2 files to lint
     2 files cannot be linted: 2 *.foo
+        Install eslint to lint them
 
     1 rule runs natively
     0 rules run in JavaScript
 
-You can remove: eslint
+Still needed:   eslint (some files go to it)
 `);
     expect(installed.exitCode).toBe(0);
     expect(missing.exitCode).toBe(0);

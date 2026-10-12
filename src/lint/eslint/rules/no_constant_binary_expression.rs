@@ -3,6 +3,7 @@ use bun_lint::utils::ast_utils::{
     Constants, is_constant, is_constant_in, is_ecmascript_global, is_global_reference, is_literal,
     is_reference_to_global_variable,
 };
+use bun_lint::utils::eslint_utils::get_static_value;
 use smallvec::SmallVec;
 
 /// Disallow expressions where the operation doesn't affect the value.
@@ -385,6 +386,22 @@ fn may_be_static_literal(e: Expr<'_>) -> bool {
     }
 }
 
+/// `left`: the left side of `op`, which is `&&`, `||` or `??` and always goes the same way.
+fn why_short_circuit(op: BinOp, left: Expr) -> &'static str {
+    let value = get_static_value(left, Some(Node::Expr(left).scope()));
+    let is_object = matches!(left.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Fn | ExprTag::Class | ExprTag::New);
+    let value = value.map(|it| (it.is_truthy(), it.is_nullish())).or_else(|| is_object.then_some((true, false)));
+    match (op, value) {
+        (BinOp::Or, Some((true, _))) => "The left side is always truthy, so the right side is never used.",
+        (BinOp::Or, Some((false, _))) => "The left side is always falsy, so the result is always the right side.",
+        (BinOp::And, Some((true, _))) => "The left side is always truthy, so the result is always the right side.",
+        (BinOp::And, Some((false, _))) => "The left side is always falsy, so the right side is never used.",
+        (BinOp::Nullish, Some((_, true))) => "The left side is always null or undefined, so the result is always the right side.",
+        (BinOp::Nullish, _) => "The left side is never null or undefined, so the right side is never used.",
+        _ => "The left side is always truthy or always falsy. Are parentheses missing?",
+    }
+}
+
 const SAME_RESULT: &str = "The result is always the same. Are parentheses missing?";
 
 impl NoConstantBinaryExpression {
@@ -397,14 +414,14 @@ impl NoConstantBinaryExpression {
                 cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                     .data("property", "truthiness")
                     .data("operator", bin_op_text(op))
-                    .hint("The left side is always truthy or always falsy. Are parentheses missing?");
+                    .hint(why_short_circuit(op, left));
             }
             BinOp::Nullish => {
                 if has_constant_nullishness(left, false) {
                     cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "nullishness")
                         .data("operator", bin_op_text(op))
-                        .hint("The left side is never null or undefined, or always is. Are parentheses missing?");
+                        .hint(why_short_circuit(op, left));
                 }
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {

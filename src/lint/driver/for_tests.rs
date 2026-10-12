@@ -7,6 +7,7 @@ use crate::cli::Options;
 use crate::embedded::Framework;
 use crate::lint::Context;
 use crate::paths::{self, Style};
+use crate::rules::registry;
 use crate::run::{Environment, Pool, Timing};
 use crate::typed::{self, Typed};
 use bun_lint::context::Severity;
@@ -135,17 +136,6 @@ impl Host for Tester<'_> {
     fn for_each(&self, threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         Pool::new(threads).for_each(count, 1, work);
     }
-}
-
-fn registry() -> Registry {
-    Registry::new(&[
-        bun_lint_eslint::RULES,
-        bun_lint_typescript::RULES,
-        bun_lint_plugins::RULES,
-        bun_lint_unicorn::RULES,
-        bun_lint_react::RULES,
-        bun_lint_jest::RULES,
-    ])
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {

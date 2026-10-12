@@ -2,7 +2,7 @@
 //! With a configuration file of oxfmt: its `ScopedWalker`.
 
 use super::cli::Options;
-use super::config::{Configs, Flavor, Scope, glob_of_oxc};
+use super::config::{Configs, Flavor, Scope, glob_of_oxc, glob_of_prettier};
 use crate::gitignore::{self, Chain, OfGit};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
@@ -690,9 +690,8 @@ pub(crate) fn expand(
                 entries.push((Entry::Directory(path), pattern, &written[..]))
             }
             None => match pattern.strip_prefix(b"!") {
-                Some(negative) => ignored.negative.push(bun_glob::Pattern::new(
+                Some(negative) => ignored.negative.push(glob_of_prettier(
                     negative.strip_prefix(b"./").unwrap_or(negative),
-                    bun_glob::Options::FAST_GLOB_DOT,
                 )),
                 None => entries.push((Entry::Pattern, pattern, &written[..])),
             },
@@ -740,7 +739,7 @@ pub(crate) fn expand(
             Entry::Pattern => {
                 // `removeLeadingDotSegment` of `fast-glob`
                 let pattern = input.strip_prefix(b"./").unwrap_or(&input);
-                let glob = bun_glob::Pattern::new(pattern, bun_glob::Options::FAST_GLOB_DOT);
+                let glob = glob_of_prettier(pattern);
                 let parent = bun_glob::scan::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {

@@ -3317,7 +3317,7 @@ describe.concurrent("whose configuration files count", () => {
 
   test("--flavor takes two values", async () => {
     const { stderr, exitCode } = await lint(both, ["--flavor=biome", "."]);
-    expect(stderr).toContain("Option flavor: 'biome' not one of eslint or oxlint.");
+    expect(stderr).toContain('--flavor must be eslint or oxlint, not "biome"');
     expect(exitCode).toBe(1);
   });
 
@@ -3623,11 +3623,11 @@ describe.concurrent("the command line of oxlint", () => {
 
   test.each([
     [["--nonsense"], "Invalid option '--nonsense'"],
-    [["--threads=x"], '--threads takes a number, not "x".'],
+    [["--threads=x"], '--threads takes a number, not "x"'],
     [["--max-warnings=x"], "Invalid value for option 'max-warnings'"],
     [["--debug=nonsense"], "couldn't parse `nonsense`: 'nonsense' is not a known debug option"],
     [["--debug=files,timings"], "debug option 'files' cannot be combined with other debug options"],
-    [["-f", "nonsense"], 'There is no formatter "nonsense".'],
+    [["-f", "nonsense"], 'Unknown format "nonsense"\n  Available formats: stylish, '],
     [["-c", "nowhere.json"], "nowhere.json"],
     [["--tsconfig", "nowhere.json"], 'nowhere.json" does not exist, Please provide a valid tsconfig file.'],
     [
@@ -3901,6 +3901,16 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect(stderr).toContain("warn: 2 rules in your .eslintrc config are not supported: require-jsdoc, valid-jsdoc");
     expect(exitCode).toBe(1);
     expect((await lint({ ...files, "a.js": "let x = 1;\nx;\n" }, ["--allow-unsupported", "."])).exitCode).toBe(0);
+  });
+
+  test("a rule that only a comment turns on, of a plugin that is built in only in part", async () => {
+    const files = { "a.js": "/* eslint promise/not-there: error, jest/nope: error */\nexport {};\n" };
+    const { problems, stderr, exitCode } = await lint(files);
+    expect(problems).toEqual([]);
+    expect(stderr).toContain(
+      "error: 2 rules enabled in comments did not run: jest/nope, promise/not-there\n  Everything else was linted.",
+    );
+    expect(exitCode).toBe(2);
   });
 
   test("files in a language that is not read here", async () => {
@@ -4851,7 +4861,7 @@ describe.concurrent("a search that leaves the project of an eslint.config.js", (
     ["..", { links: { "linked": "theirs" } }, "linked"],
   ])("a file without a configuration file ends the run: %s %j", async (argument, more, file) => {
     const { ran, files, stderr, exitCode } = await run("mine", [argument], more);
-    expect(stderr).toContain(`Could not find config file. <dir>/w/${file} has no eslint.config.* `);
+    expect(stderr).toContain(`Could not find config file.\n  No eslint.config.* was found next to <dir>/w/${file} or`);
     expect(ran.filter(it => !it.startsWith("mine"))).toEqual([]);
     expect({ files, exitCode }).toEqual({ files: [], exitCode: 2 });
   });

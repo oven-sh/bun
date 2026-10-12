@@ -53,11 +53,10 @@ impl Format {
     /// Says that none is called `name`.
     pub(crate) fn is_missing(name: &[u8]) -> Vec<u8> {
         [
-            b"There is no formatter \"",
+            b"Unknown format \"",
             name,
-            b"\". Those that exist: ",
+            b"\"\n  Available formats: ",
             Format::NAMES.as_bytes(),
-            b".",
         ]
         .concat()
     }

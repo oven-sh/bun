@@ -180,14 +180,17 @@ impl NoIrregularWhitespace {
         }
         for (&place, kind) in found.iter().zip(kinds_of_tokens_around(cx.file(), &found)) {
             if !self.is_skipped(cx.file(), place.start, kind) {
-                cx.report(place, NO_IRREGULAR_WHITESPACE);
+                cx.report(place, NO_IRREGULAR_WHITESPACE).hint_with(|| {
+                    let character = strings::wtf8_first_codepoint(cx.slice(place))?;
+                    Some(format!("It is the character U+{character:04X}. Replace it with a plain space or a line break."))
+                });
             }
         }
     }
 }
 
 impl Rule for NoIrregularWhitespace {
-    const META: Meta = Meta::eslint("no-irregular-whitespace", Kind::Problem).recommended().reports_at_the_end();
+    const META: Meta = Meta::eslint("no-irregular-whitespace", Kind::Problem).recommended().reports_at_the_end().hints();
     const ON: On = On::new().finish();
     no_state!();
 

@@ -439,9 +439,10 @@ impl<'a> Report<'a> {
     }
 
     /// Bun's own sentence under a message of ESLint that does not tell what is wrong and what to do. It is shown where
-    /// [`Report::help`] is, in its place, and not with a configuration of oxlint. The rule has [`Meta::hints`].
+    /// [`Report::help`] is, in its place, and not with a configuration of oxlint. The rule has [`Meta::hints`]. Empty: none.
     pub fn hint(mut self, text: &'static str) -> Self {
         if self.reads_hints
+            && !text.is_empty()
             && let Some(details) = self.details()
         {
             details.help = Cow::Borrowed(text);

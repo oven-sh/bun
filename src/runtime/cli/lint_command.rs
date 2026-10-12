@@ -145,14 +145,14 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     argv.push(Box::from(&b"-e"[..]));
     argv.push(Box::from(PROGRAM_IS_ON_STDIN));
     let parts = script.source.iter().map(|it| it.as_bytes());
-    let input = std::iter::once(script.head).chain(parts);
+    let input: Vec<&[u8]> = std::iter::once(script.head).chain(parts).collect();
     let adapt = |variables: &mut bun_dotenv::Map| {
         Script::NOT_INHERITED
             .iter()
             .for_each(|name| variables.remove(name));
         true
     };
-    match run_to_end(argv, script.cwd, adapt, input)? {
+    match run_to_end(argv, script.cwd, &adapt, &input)? {
         result if result.is_ok() => Ok(result.stdout),
         result => Err(result.stderr),
     }
@@ -174,8 +174,7 @@ fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
             .iter()
             .all(|(name, value)| variables.put(name, value).is_ok())
     };
-    let input = std::iter::once(command.input);
-    match run_to_end(argv, command.cwd, adapt, input) {
+    match run_to_end(argv, command.cwd, &adapt, &[command.input]) {
         Ok(result) => Ok(git::Finished {
             is_ok: result.is_ok(),
             stdout: result.stdout,
@@ -187,11 +186,11 @@ fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
 
 /// Runs `argv` in `cwd` to its end, with `input` on its standard input, and with the environment of this process once `adapt`
 /// has changed it, which returns whether it could. `Err`: why it has not run.
-fn run_to_end<'i>(
+fn run_to_end(
     argv: Vec<Box<[u8]>>,
     cwd: &[u8],
-    adapt: impl FnOnce(&mut bun_dotenv::Map) -> bool,
-    mut input: impl Iterator<Item = &'i [u8]> + Send,
+    adapt: &dyn Fn(&mut bun_dotenv::Map) -> bool,
+    input: &[&[u8]],
 ) -> Result<crate::api::bun::process::sync::Result, Vec<u8>> {
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let mut variables = bun_dotenv::Loader::init();
@@ -229,7 +228,7 @@ fn run_to_end<'i>(
     };
     // It is written while what the program prints is read, so neither waits for the other.
     let spawned = std::thread::scope(|scope| {
-        scope.spawn(move || input.try_for_each(|it| written.write_all(it)));
+        scope.spawn(move || input.iter().try_for_each(|it| written.write_all(it)));
         let spawned = spawn(&options);
         // Who still writes is told that nobody reads any more.
         drop(read);

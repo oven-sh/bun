@@ -773,6 +773,7 @@ _bun_lint_completion() {
         '--no-config-lookup[Do not look for a config file]' \
         '--rule[Set a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
         '--rules[List the built-in rules]' \
+        '--explain[Print the documentation of a rule]:explain' \
         '--init[Add a \[lint\] section to bunfig.toml]' \
         '--global[Define global variables\: --global a,b\:true]:global' \
         '--no-inline-config[Ignore eslint-disable and other config comments]' \

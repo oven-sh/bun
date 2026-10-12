@@ -26,7 +26,8 @@ mod call {
 const NEEDS_CONFIGURATION: u8 = b'4';
 pub(super) const NOT_INSTALLED: u8 = b'5';
 
-pub(super) const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+pub(super) const OUT_OF_STEP: &[u8] =
+    b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 

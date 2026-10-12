@@ -46,7 +46,7 @@ error: Invalid `typeof` comparison value.  valid-typeof
 
 note: Did you mean `"string"`?
 
-Linted 1 file [18.39ms]
+Linted 1 file [6.46ms]
 error: script "lint" exited with code 1
 ```
 
@@ -60,6 +60,21 @@ Run `--doctor` to see what Bun does with your config. It doesn't lint or write a
 bun lint --doctor
 ```
 
+```txt
+Using .oxlintrc.json (oxlint config)
+
+    1 file to lint
+
+  116 rules run natively
+    0 rules run in JavaScript
+   25 rules do not run
+       25 need types, use --type-aware: @typescript-eslint/await-thenable, @typescript-eslint/consistent-return, @typescript-eslint/no-array-delete, ..
+
+You can remove: oxlint
+```
+
+oxlint also skips type-aware rules unless you pass `--type-aware`, so you lose nothing here.
+
 ---
 
 Uninstall oxlint.
@@ -70,7 +85,20 @@ bun remove oxlint oxlint-tsgolint
 
 `import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
 
-If the project has no config file, run `oxlint --init` first. Without one, Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. After that you get [Bun's defaults](/runtime/lint#default-rules).
+No config file? Then Bun only uses oxlint's defaults while `package.json` depends on `oxlint`. To keep them, run this before you uninstall. It writes `flavor = "oxlint"` to `bunfig.toml`. Without it you get [Bun's defaults](/runtime/lint#default-rules).
+
+```sh terminal icon="terminal"
+bun lint --init --flavor=oxlint
+```
+
+---
+
+You can drop lint-staged. `--staged` lints only the staged files, and with `--fix` it stages the fixed files again.
+
+```sh .husky/pre-commit icon="terminal"
+npx lint-staged # [!code --]
+bun lint --staged --fix # [!code ++]
+```
 
 ---
 
@@ -119,7 +147,7 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Patterns in rule options are JavaScript regular expressions.** oxlint uses Rust's `regex` crate.
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
-- **`--init` adds `[lint]` to `bunfig.toml`.** With an oxlint config in place it does nothing.
+- **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
 - **`--lsp` starts [Bun's language server](/runtime/lint#editors)**, not oxlint's.
 
 ---

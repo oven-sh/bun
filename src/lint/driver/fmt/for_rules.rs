@@ -199,7 +199,7 @@ impl<'e> ForRules<'e> {
 
     fn format(&self, request: &Request) -> Result<Formatted, Reason> {
         let is_prettier = request.like == Like::InstalledPrettier;
-        if is_prettier {
+        if is_prettier && request.follows_packages {
             let module = request.package_module;
             let mut packages = self.packages.lock();
             let known = packages

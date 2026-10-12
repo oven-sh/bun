@@ -76,7 +76,7 @@ impl NoExplicitAny {
             return;
         }
         let parent = ty.parent();
-        let report = cx.report(ty, UNEXPECTED_ANY);
+        let report = cx.report(ty, UNEXPECTED_ANY).hint("unknown is the safe choice where the type is not known.");
         // oxlint suggests nothing, and knows no `PropertyKey`.
         if cx.language().is_oxlint {
             if self.fixes_to_unknown {
@@ -108,7 +108,8 @@ impl Rule for NoExplicitAny {
     const META: Meta = Meta::typescript("no-explicit-any", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().types(&[TypeTag::Keyword]);
     no_state!();
 

@@ -6,6 +6,26 @@ mode: center
 
 `bun format` reads your `.prettierrc` and prints what Prettier 3 prints. In most projects you only change the command.
 
+Start with `--doctor`. It shows what Bun will do with your config, and it doesn't format or write anything.
+
+```sh terminal icon="terminal"
+bun format --doctor
+```
+
+```txt
+Using .prettierrc (Prettier config)
+
+    4 files are formatted natively
+
+Built-in plugins: @ianvs/prettier-plugin-sort-imports
+
+You can remove: @ianvs/prettier-plugin-sort-imports, prettier
+```
+
+---
+
+Change the scripts.
+
 ```json package.json icon="file-json"
 {
   "scripts": {
@@ -19,7 +39,7 @@ mode: center
 
 `bun format` writes by default and formats the current directory, so `--write .` goes away. Other flags and arguments stay the same. Change CI and Git hooks too.
 
-Edit the script first. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get Prettier.
+Don't skip this. If `package.json` has a `format` script, `bun format` runs that script, so you'd still get Prettier.
 
 ---
 
@@ -33,25 +53,6 @@ bun format --check
 $ bun format --check
 Checking formatting...
 All matched files use Prettier code style!
-```
-
----
-
-Run `--doctor` to see what Bun does with your config. It doesn't format or write anything.
-
-```sh terminal icon="terminal"
-bun format --doctor
-```
-
-```txt
-$ bun format --doctor
-Using .prettierrc (Prettier config)
-
-    4 files are formatted natively
-
-Built-in plugins: @ianvs/prettier-plugin-sort-imports
-
-You can remove: @ianvs/prettier-plugin-sort-imports, prettier
 ```
 
 ---
@@ -97,6 +98,8 @@ If you use `prettier-plugin-tailwindcss`, take it out of `.prettierrc` and turn 
 [format.sortTailwindcss]
 functions = ["clsx"]
 ```
+
+The order of the classes is the same. A few edge cases differ, like a class string inside a nested function call, so expect a small diff the first time.
 
 ---
 

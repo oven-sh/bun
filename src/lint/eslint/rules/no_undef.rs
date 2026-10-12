@@ -1,3 +1,4 @@
+use bun_lint::linter::globals::config_globals_in_order;
 use bun_lint::prelude::*;
 use bun_lint::source::ByName;
 
@@ -16,8 +17,38 @@ fn has_typeof_operator(reference: Reference) -> bool {
     )
 }
 
+/// What `bun test` defines in a test file.
+const OF_BUN_TEST: [&str; 12] = [
+    "afterAll",
+    "afterEach",
+    "beforeAll",
+    "beforeEach",
+    "describe",
+    "expect",
+    "it",
+    "jest",
+    "mock",
+    "spyOn",
+    "test",
+    "vi",
+];
+
+fn hint(reference: Reference) -> String {
+    let (name, language) = (reference.name(), reference.node().file().language());
+    if name.is_any(&OF_BUN_TEST) {
+        return "With bun test, import it from \"bun:test\".".to_owned();
+    }
+    let globals = config_globals_in_order(language);
+    let globals = globals.iter().filter(|it| it.1 != Global::Off).map(|it| &*it.0);
+    let declared = reference.scope().chain().flat_map(Scope::symbols).map(|it| it.name().bytes());
+    match text::spelling_suggestion(name.bytes(), declared.chain(globals)) {
+        Some(close) => format!("Did you mean \"{}\"?", bstr::BStr::new(close)),
+        None => "If it is a global variable, declare it in [lint.globals] in bunfig.toml.".to_owned(),
+    }
+}
+
 impl Rule for NoUndef {
-    const META: Meta = Meta::eslint("no-undef", Kind::Problem).recommended().reports_at_the_end();
+    const META: Meta = Meta::eslint("no-undef", Kind::Problem).recommended().reports_at_the_end().hints();
     const ON: On = On::new().finish();
     no_state!();
 
@@ -61,7 +92,7 @@ impl Rule for NoUndef {
             if file.is_declared_by_types(name.bytes()) {
                 continue;
             }
-            cx.report(reference, UNDEF).data("name", reference.name());
+            cx.report(reference, UNDEF).data("name", reference.name()).hint_with(|| Some(hint(reference)));
         }
     }
 }

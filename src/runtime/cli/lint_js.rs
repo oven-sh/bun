@@ -249,7 +249,7 @@ impl Vm for ThreadVm {
                     vm.as_mut().unhandled_error_counter = 0;
                     if !vm.is_event_loop_alive() {
                         return Err(
-                            b"A promise is not settled, and nothing is left to wait for.".to_vec(),
+                            b"A promise never settled, and nothing is left to wait for.".to_vec()
                         );
                     }
                     vm.as_mut().auto_tick();

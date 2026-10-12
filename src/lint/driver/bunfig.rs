@@ -3,6 +3,9 @@
 //! same `Options::set`, and the command line is laid over it. So what a key takes is what its flag takes: the kind of
 //! value is read from the table of flags, and a value is refused by what refuses it after the flag.
 //!
+//! More than a flag can say: the tables of `[lint]`, and in `[format]` the options of what a flag turns on ([`FEATURES`])
+//! and `overrides`.
+//!
 //! Bun's reader of bunfig.toml finds and parses the file. What it calls with the file is here.
 
 use crate::args::{Param, UsageError, error};
@@ -158,9 +161,9 @@ impl Table {
                 &[
                     b"\"",
                     key,
-                    b"\" cannot be set in bunfig.toml, it says what one run does. Pass --",
+                    b"\" cannot be set in bunfig.toml. Pass --",
                     flag,
-                    b" on the command line",
+                    b" on the command line instead.",
                 ],
             );
         }
@@ -693,6 +696,7 @@ const LINT: Table = Table {
         b"print-config",
         b"doctor",
         b"rules",
+        b"explain",
         b"list-files",
         b"env-info",
         b"stats",
@@ -762,18 +766,24 @@ const _: () = assert!(
 );
 
 /// `off`, `warn` or `error`, or the number for it.
-fn severity_of(table: &[u8], value: &Expr) -> Result<Severity, Refusal> {
+fn severity_of(value: &Expr) -> Result<Severity, Refusal> {
     let text = match bun_lint::json::from_parsed(value) {
         Some(Json::String(text)) => text,
         Some(Json::Number(number)) => number_to_string(number),
         _ => return expected("string", value),
     };
-    crate::cli::severity(table, &text).map_err(at(value))
+    crate::cli::severity(b"", &text).or_else(|_| {
+        let expected: &[u8] = b"expected \"off\", \"warn\" or \"error\" but received \"";
+        refuse(value.loc, &[expected, &text, b"\""])
+    })
 }
 
 fn json_of(value: &Expr) -> Result<Json, Refusal> {
     let json = bun_lint::json::from_parsed(value);
-    json.map_or_else(|| refuse(value.loc, &[b"it is nested too deep"]), Ok)
+    json.map_or_else(
+        || refuse(value.loc, &[b"this value is nested too deeply"]),
+        Ok,
+    )
 }
 
 /// What `[lint]` of `file` says, and `[format]`, which is for the rule that holds a file against what `bun format` prints.
@@ -849,7 +859,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     if !is_known {
                         return refuse(name.at, &[b"unknown category \"", &name.name, b"\""]);
                     }
-                    let flag: &[u8] = match severity_of(b"categories", value)? {
+                    let flag: &[u8] = match severity_of(value)? {
                         Severity::Off => b"allow",
                         Severity::Warn => b"warn",
                         Severity::Error => b"deny",
@@ -864,7 +874,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                         Data::EArray(items) => items.slice().first().unwrap_or(setting),
                         _ => setting,
                     };
-                    severity_of(b"rules", first)?;
+                    severity_of(first)?;
                     options.add_rules(vec![(rule.name, json_of(setting)?)]);
                 }
             }

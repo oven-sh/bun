@@ -10,7 +10,7 @@ use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
-use bun_glob::{Options, Pattern};
+use bun_glob::Pattern;
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::config::{Dotfiles, Seen};
 use bun_lint::linter::{FileConfig, ResolvedConfig};
@@ -67,7 +67,6 @@ impl Target {
 enum Matcher {
     /// `**`
     Everything,
-    /// `new Minimatch(pattern, { dot: true })`
     Pattern(Pattern),
 }
 
@@ -75,7 +74,7 @@ impl Matcher {
     fn new(relative: &[u8]) -> Matcher {
         match relative {
             b"**" => Matcher::Everything,
-            relative => Matcher::Pattern(Pattern::new(relative, Options::MINIMATCH_DOT)),
+            relative => Matcher::Pattern(Pattern::with_extglob(relative)),
         }
     }
 
@@ -191,8 +190,8 @@ fn thrown_by_eslint_8(error: &bun_sys::Error, path: &[u8]) -> Option<Fatal> {
 /// ESLint's `assertConfigurationExists`, for the file at `path`.
 fn config_file_missing(path: &[u8]) -> Fatal {
     let path = paths::to_native(path.to_vec());
-    let rest: &[u8] = b" has no eslint.config.* in its directory or above it.";
-    Fatal([b"Could not find config file. ", &path[..], rest].concat())
+    let start: &[u8] = b"Could not find config file.\n  No eslint.config.* was found next to ";
+    Fatal([start, &path[..], b" or in a parent directory."].concat())
 }
 
 fn all_files_ignored(pattern: &[u8]) -> Fatal {

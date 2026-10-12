@@ -8,6 +8,7 @@
 //! is made from the options as they are written, and knows its defaults itself.
 
 mod data;
+mod plain;
 mod validate;
 
 use crate::js_plugin;
@@ -15,8 +16,10 @@ use crate::linter::message::{RuleId, write_json};
 use crate::options::Json;
 use crate::rule::Meta;
 use bun_core::strings;
-use validate::Validator;
+pub use plain::OptionMistake;
+pub use validate::Step;
 pub(super) use validate::is_equal;
+use validate::{SchemaError, Validator};
 
 /// The strings of an entry of [`data::NAMES`].
 fn names(mut list: &[u8]) -> Json {
@@ -128,7 +131,29 @@ pub(crate) fn with_defaults(meta: &'static Meta, options: &[Json]) -> Vec<Json> 
 /// Validates `options`, which are what follows the severity, as ESLint's `validateRulesConfig` does.
 /// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`.
 pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<u8>> {
+    // A rule of oxlint has no schema, and passes over what it does not know.
+    if meta.follows_oxlint {
+        return Ok(());
+    }
     validate_by_id(&RuleId::Known(meta).to_vec(), options)
+}
+
+/// What is wrong with `options`, which follow the severity, in words of our own. `rule`: what the user calls the rule.
+pub fn mistake_in_options(
+    meta: &'static Meta,
+    rule: &[u8],
+    options: &[Json],
+) -> Option<OptionMistake> {
+    let id = RuleId::Known(meta).to_vec();
+    let needs_some = || data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id);
+    if meta.follows_oxlint || options.is_empty() && !needs_some() {
+        return None;
+    }
+    let found = find(&id);
+    let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
+    let defaults = parts.get(1).and_then(Json::as_array).unwrap_or_default();
+    let errors = errors_of(parts.first(), defaults, options).err()?;
+    Some(plain::explain(rule, &errors))
 }
 
 /// What stands in `json` for something that a configuration file has and JSON has not, other than a regular expression: what
@@ -220,6 +245,41 @@ fn validate_with(
     defaults: &[Json],
     options: &[Json],
 ) -> Result<Vec<Json>, Vec<u8>> {
+    let errors = match errors_of(schema, defaults, options) {
+        Ok(options) => return Ok(options),
+        Err(errors) => errors,
+    };
+    let mut message = Vec::new();
+    for error in &errors {
+        message.extend_from_slice(b"\tValue ");
+        write_json(&mut message, &error.data);
+        message.push(b' ');
+        message.extend_from_slice(&error.message);
+        message.extend_from_slice(b".\n");
+        if let Some((property, expected)) = &error.additional_property {
+            message.extend_from_slice(b"\t\tUnexpected property \"");
+            message.extend_from_slice(property);
+            message.extend_from_slice(b"\". Expected properties: ");
+            for (i, name) in expected.iter().enumerate() {
+                if i > 0 {
+                    message.extend_from_slice(b", ");
+                }
+                message.push(b'"');
+                message.extend_from_slice(name);
+                message.push(b'"');
+            }
+            message.extend_from_slice(b".\n");
+        }
+    }
+    Err(message)
+}
+
+/// The same. `Err`: the errors of Ajv.
+fn errors_of(
+    schema: Option<&Json>,
+    defaults: &[Json],
+    options: &[Json],
+) -> Result<Vec<Json>, Vec<SchemaError>> {
     let options = deep_merge_arrays(defaults, options);
     if options.is_empty() && !matches!(schema, Some(Json::Object(_))) {
         return Ok(options);
@@ -243,6 +303,7 @@ fn validate_with(
     let mut validator = Validator {
         root: &schema,
         errors: Vec::new(),
+        at: Vec::new(),
     };
     let mut options = Json::Array(options);
     if validator.validate(&schema, &mut options) {
@@ -251,27 +312,5 @@ fn validate_with(
             _ => Vec::new(),
         });
     }
-    let mut message = Vec::new();
-    for error in &validator.errors {
-        message.extend_from_slice(b"\tValue ");
-        write_json(&mut message, &error.data);
-        message.push(b' ');
-        message.extend_from_slice(&error.message);
-        message.extend_from_slice(b".\n");
-        if let Some((property, expected)) = &error.additional_property {
-            message.extend_from_slice(b"\t\tUnexpected property \"");
-            message.extend_from_slice(property);
-            message.extend_from_slice(b"\". Expected properties: ");
-            for (i, name) in expected.iter().enumerate() {
-                if i > 0 {
-                    message.extend_from_slice(b", ");
-                }
-                message.push(b'"');
-                message.extend_from_slice(name);
-                message.push(b'"');
-            }
-            message.extend_from_slice(b".\n");
-        }
-    }
-    Err(message)
+    Err(validator.errors)
 }

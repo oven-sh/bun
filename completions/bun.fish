@@ -224,6 +224,7 @@ complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Set a rule: --rule 'eqeqeq: [error, smart]'"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "rules" -d "List the built-in rules"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "explain" -r -d "Print the documentation of a rule"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "init" -d "Add a [lint] section to bunfig.toml"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "global" -r -d "Define global variables: --global a,b:true"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-inline-config" -d "Ignore eslint-disable and other config comments"

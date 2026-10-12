@@ -1048,6 +1048,7 @@ impl NoUnusedVars {
             .data("varName", name)
             .data("action", if is_assigned { "assigned a value" } else { "defined" })
             .data("additional", self.unused_message_data(kind))
+            .hint(hint(def))
             .suggest_with(REMOVE_VAR, &[("varName", name.bytes())], |fixer| {
                 handle_fixes(fixer, variable, def, at)
             });
@@ -1081,10 +1082,28 @@ impl NoUnusedVars {
     }
 }
 
+/// For a variable that is unused. `def`: its first definition.
+pub fn hint(def: Declaration) -> &'static str {
+    match def {
+        // What is thrown there should have it as its cause.
+        Declaration::Var(pat) if def.is_catch_parameter() && matches!(pat.parent(), Node::VarDecl(_)) => {
+            let throws = matches!(pat.parent().parent(), Node::Stmt(it)
+                if matches!(it.kind(), StmtKind::Try { handler: Some(handler), .. }
+                    if handler.as_block().is_some_and(|body| body.iter().any(|it| it.tag() == StmtTag::Throw))));
+            if throws { "" } else { "A catch needs no parameter. Remove it and its parentheses." }
+        }
+        Declaration::Var(pat) | Declaration::Param(pat) if has_rest_sibling(Node::Pat(pat)) => {
+            "To leave a property out this way, turn on the option ignoreRestSiblings."
+        }
+        _ => "",
+    }
+}
+
 impl Rule for NoUnusedVars {
     const META: Meta =
         Meta::eslint("no-unused-vars", Kind::Problem).has_suggestions().recommended()
-        .reports_at_the_end();
+        .reports_at_the_end()
+        .hints();
     const ON: On = On::new().finish();
     no_state!();
 

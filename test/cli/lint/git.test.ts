@@ -84,8 +84,10 @@ async function selected(root: string, cwd: string, args: string[], more?: Env) {
 
 const commands = ["lint", "format"] as const;
 // What `--fix` and `bun format` change, and what they make of it.
-const [before, after] = ["export var a   = 1;\n", { lint: "export let a   = 1;\n", format: "export var a = 1;\n" }];
-const writing = { lint: ["lint", "--fix", "--rule", "no-var: error"], format: ["format"] };
+const before = "let a   = 1;\nexport { a };\n";
+const after = { lint: "const a   = 1;\nexport { a };\n", format: "let a = 1;\nexport { a };\n" };
+const done = { lint: "fixed", format: "formatted" };
+const writing = { lint: ["lint", "--fix", "--rule", "prefer-const: error"], format: ["format"] };
 const tidy = "export const a = 1;\n";
 
 describe.concurrent.each(commands)("bun %s", command => {
@@ -337,7 +339,9 @@ describe.concurrent.each(commands)("bun %s", command => {
     write(root, "tidy.js", tidy);
 
     const one = await bun(root, [...writing[command], "--staged"]);
-    expect(one.stderr).toContain("partly.js has both staged and unstaged changes, so it was not written");
+    expect(one.stderr).toContain(`partly.js has both staged and unstaged changes, so it was not ${done[command]}`);
+    // Nothing says that all is well.
+    expect(one.stderr).not.toContain("No problems");
     expect(one.stderr).toContain(
       "Stage the rest with git add, or put it away with git stash --keep-index. Then run this again.",
     );
@@ -352,13 +356,13 @@ describe.concurrent.each(commands)("bun %s", command => {
     write(root, "sub/partly.js", more);
     const two = await bun(join(root, "sub"), [...writing[command], "--staged", ".."]);
     expect(two.stderr).toMatch(
-      /2 files have both staged and unstaged changes, so they were not written\n.*  \.\.\/partly\.js\n.*  partly\.js\n/,
+      /2 files have both staged and unstaged changes, so they were not \w+\n.*  \.\.\/partly\.js\n.*  partly\.js\n/,
     );
     expect(two.exitCode).toBe(2);
     expect(read(root, "sub/partly.js")).toBe(more);
 
     // A run that writes nothing has nothing to refuse.
-    const looking = command === "lint" ? ["lint", "--rule", "no-var: error"] : ["format", "--check"];
+    const looking = command === "lint" ? ["lint", "--rule", "prefer-const: error"] : ["format", "--check"];
     const three = await bun(root, [...looking, "--staged"]);
     expect(three.stderr).not.toContain("unstaged");
     expect(three.exitCode).toBe(1);
@@ -409,3 +413,20 @@ test.concurrent("bun lint --staged prints what its format prints for no file", a
   const { stdout, stderr, exitCode } = await bun(repo.root, ["lint", "--staged", "-f", "json"]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "No staged files to lint\n", exitCode: 0 });
 });
+
+test.concurrent(
+  "bun lint with a configuration of oxlint says the same, where it says it for every configuration",
+  async () => {
+    using repo = await repository({ ".oxlintrc.json": "{}", "a.js": before });
+    expect(await bun(repo.root, ["lint", "--staged"])).toEqual({
+      stdout: "",
+      stderr: "No staged files to lint\n",
+      exitCode: 0,
+    });
+    expect(await bun(repo.root, ["lint", "--changed=nothing"])).toEqual({
+      stdout: "",
+      stderr: 'error: "nothing" is not a branch, a tag or a commit of this repository\n',
+      exitCode: 2,
+    });
+  },
+);

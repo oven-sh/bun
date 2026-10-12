@@ -227,7 +227,7 @@ describe.concurrent("the name of a rule leads to its page", () => {
   const files = { "a.js": "debugger;\n" };
   const configs = { none: {}, eslint, oxlint };
   // The last line has the time that the run took.
-  const lines = (text: string) => text.split("\n").filter(line => !line.includes("Linted 1 file"));
+  const lines = (text: string) => text.split("\n").filter(line => !line.includes("Linted "));
 
   test.skipIf(!hasTerminal).each([
     ["none", "pretty", "no-debugger"],

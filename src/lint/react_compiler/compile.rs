@@ -265,7 +265,7 @@ fn too_deep() -> Finding {
     Finding {
         category: ErrorCategory::Todo,
         reason: "Support functions of this size".to_owned(),
-        description: Some("What is in it is nested too deeply".to_owned()),
+        description: Some("The function body is nested too deeply".to_owned()),
         details: Vec::new(),
         suggestions: Vec::new(),
         is_error_detail: true,

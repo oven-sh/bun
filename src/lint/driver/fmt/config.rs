@@ -188,6 +188,35 @@ pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
     bun_glob::Pattern::of_oxc_glob_set(pattern)
 }
 
+/// A pattern that Prettier hands to micromatch or to fast-glob, in Bun's syntax: `(a|b)` is `@(a|b)`, and `a/**` matches `a` too.
+pub(crate) fn glob_of_prettier(pattern: &[u8]) -> bun_glob::Pattern {
+    let (written, is_deep) = match pattern.strip_suffix(b"/**") {
+        Some(before) if !before.is_empty() => (before, true),
+        _ => (pattern, false),
+    };
+    let mut glob = Vec::with_capacity(pattern.len() + 4);
+    let mut at = 0;
+    while let Some(&byte) = written.get(at) {
+        let len = match byte {
+            b'\\' => 2,
+            b'[' => strings::index_of_char_pos(written, b']', at + 2).map_or(1, |it| it + 1 - at),
+            _ => 1,
+        };
+        if byte == b'('
+            && !matches!(glob.last(), Some(b'?' | b'*' | b'+' | b'@' | b'!'))
+            && strings::contains_char(&written[at..], b')')
+        {
+            glob.push(b'@');
+        }
+        glob.extend_from_slice(&written[at..(at + len).min(written.len())]);
+        at += len;
+    }
+    if is_deep {
+        glob.extend_from_slice(b"{,/**}");
+    }
+    bun_glob::Pattern::with_extglob(&glob)
+}
+
 fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
     patterns_of(strings_of(json).into_iter(), is_oxfmt)
 }
@@ -197,8 +226,7 @@ fn patterns_of<'t>(all: impl Iterator<Item = &'t [u8]>, is_oxfmt: bool) -> Vec<P
         glob: if is_oxfmt {
             glob_of_oxc(text)
         } else {
-            // `micromatch.isMatch(path, pattern, { dot: true })`
-            bun_glob::Pattern::new(text, bun_glob::Options::MICROMATCH_DOT)
+            glob_of_prettier(text)
         },
         text: text.into(),
         has_slash: strings::contains_char(text, b'/'),
@@ -418,10 +446,9 @@ impl Override {
         [false, true].into_iter().any(|with_slashes| {
             // With patterns without slashes, what is excluded is matched against the name too,
             // whatever it looks like: micromatch's `basename`.
-            // What is the path, letter for letter, matches before `basename` is looked at.
-            let matches = |it: &Pattern| match with_slashes {
-                true => it.glob.matches(relative),
-                false => it.glob.matches(name) || *it.text == *relative,
+            // What is the path, letter for letter, matches whatever it means, and before `basename` is looked at.
+            let matches = |it: &Pattern| {
+                it.glob.matches(if with_slashes { relative } else { name }) || *it.text == *relative
             };
             self.files
                 .iter()
@@ -1139,6 +1166,14 @@ impl<'c> Configs<'c> {
             own.is_ok_and(|it| it.config.is_none())
         };
         *self.lacks_file.get_or_init(has_none)
+    }
+
+    /// Whether the run stands in for no other tool: no configuration of Prettier or oxfmt applies where it starts, and no flag asks.
+    pub(crate) fn is_native(&self) -> bool {
+        self.flavor == Flavor::Prettier
+            && self.options.is_like_oxfmt.is_none()
+            && self.named.is_none()
+            && (!self.options.config_lookup || self.lacks_file())
     }
 
     /// Says that `directory` is an argument, or that a file in it is one.

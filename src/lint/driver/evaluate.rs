@@ -76,7 +76,7 @@ fn run(
     path: &[u8],
     argument: &[u8],
 ) -> Result<Json, Vec<u8>> {
-    const SILENT: &[u8] = b"It could not be evaluated.";
+    const SILENT: &[u8] = b"It exited before it exported a config.";
     let text = |it: &[u8]| Json::String(it.to_vec());
     let command_line = environment.command_line.iter().map(|it| text(it));
     // See evaluate-start.js.
@@ -94,6 +94,7 @@ fn run(
         source,
         // As for the tools: `process.cwd()` is where the command runs, not where the file is.
         cwd: &environment.cwd,
+        path,
     };
     let printed = (environment.run_script)(&script).map_err(|why| match why.trim_ascii_end() {
         // It has left without a word: `process.exit(1)`.

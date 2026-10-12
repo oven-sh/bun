@@ -447,7 +447,7 @@ fn kind_of(flavor: Flavor) -> (&'static [u8], &'static str) {
 
 /// `bun lint --doctor`: the report.
 pub(crate) fn lint(
-    (loader, options, _): (&Loader, &Options, &dyn bun_lint::modules::Modules),
+    (loader, options): (&Loader, &Options),
     pool: &Pool,
     js_plugins: &Host,
     modules: &Modules,
@@ -465,6 +465,8 @@ pub(crate) fn lint(
     let (mut by_eslint, mut not_linted) = (Kinds::default(), Kinds::default());
     let mut all_loaded: Vec<&Arc<Loaded>> = vec![&own];
     let mut seen = FxHashSet::default();
+    // Files are not linted that the package `eslint` would lint.
+    let mut lacks_eslint = false;
     for target in &targets {
         let Status::Matched(config) = &target.status else {
             continue;
@@ -474,7 +476,11 @@ pub(crate) fn lint(
                 files += 1;
                 by_eslint.add(&target.path);
             }
-            Route::Unsupported => not_linted.add(&target.path),
+            Route::Unsupported => {
+                not_linted.add(&target.path);
+                lacks_eslint |= target.loaded.flavor == Flavor::Eslint
+                    && config.route_as_it_is(&target.path) == Route::Eslint;
+            }
             Route::Native | Route::Processor => {
                 files += 1;
                 if seen.insert(Arc::as_ptr(config)) {
@@ -538,9 +544,9 @@ pub(crate) fn lint(
             let is_named = || sources.iter().any(|it| it.1 == name);
             if javascript.iter().any(|it| it.0 == name) {
                 Some(Need::Rules)
-            } else if name == b"eslint" && by_eslint.count() > 0 {
+            } else if name == b"eslint" && (by_eslint.count() > 0 || lacks_eslint) {
                 Some(Need::Files)
-            } else if let Some(file) = &file {
+            } else if let Some(file) = file.as_ref().or_else(|| nested.first()) {
                 (loaded.iter().any(|it| it == name) || is_named())
                     .then(|| Need::Configuration(file.clone()))
             } else {
@@ -641,6 +647,13 @@ pub(crate) fn lint(
         let what = noun(not_linted.count(), "file", "files");
         let what = format!("{what} cannot be linted: {}", not_linted.shown());
         write_count(&mut out, colors, not_linted.count(), &what);
+        if lacks_eslint {
+            pretty!(
+                &mut out,
+                colors,
+                "        <d>Install eslint to lint them<r>\n"
+            );
+        }
     }
     out.push(b'\n');
     let native = rules.native.len();

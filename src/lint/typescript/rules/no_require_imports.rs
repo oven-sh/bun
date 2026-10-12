@@ -36,7 +36,7 @@ impl NoRequireImports {
         if self.is_import_path_allowed(path) || Node::Expr(e).scope().resolve("require").is_some() {
             return;
         }
-        cx.report(e, NO_REQUIRE_IMPORTS);
+        cx.report(e, NO_REQUIRE_IMPORTS).hint("Use an import declaration, or await import() to load it later.");
     }
 
     fn check_import_equals<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -47,13 +47,13 @@ impl NoRequireImports {
         {
             // oxlint points at the declaration.
             let place = if cx.language().is_oxlint { statement.span_without_export() } else { reference };
-            cx.report(place, NO_REQUIRE_IMPORTS);
+            cx.report(place, NO_REQUIRE_IMPORTS).hint("Use an import declaration.");
         }
     }
 }
 
 impl Rule for NoRequireImports {
-    const META: Meta = Meta::typescript("no-require-imports", Kind::Problem).recommended();
+    const META: Meta = Meta::typescript("no-require-imports", Kind::Problem).recommended().hints();
     const ON: On = On::new()
         .function_calls(&["require"])
         .stmts(&[StmtTag::ImportEquals]);

@@ -10,7 +10,8 @@ use bun_lint::utils::ts_scope::{
 };
 use bun_lint::utils::ts_utils::is_definition_file;
 use bun_lint_eslint::rules::no_unused_vars::{
-    Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars, is_first_parameter_named,
+    Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars, hint,
+    is_first_parameter_named,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -1382,6 +1383,9 @@ impl NoUnusedVars {
             .data("varName", name)
             .data("action", action)
             .data("additional", additional);
+        if message.id == UNUSED_VAR.id {
+            report = report.hint(unused_var.defs().next().map_or("", hint));
+        }
         if is_oxlint {
             report = report
                 .data("text", self.oxlint_text(unused_var, message))
@@ -1693,7 +1697,8 @@ impl Rule for NoUnusedVars {
         .has_suggestions()
         .recommended()
         .extends_base_rule("no-unused-vars")
-        .reports_at_the_end();
+        .reports_at_the_end()
+        .hints();
     const ON: On = On::new()
         .stmts(&[StmtTag::Module])
         .finish()

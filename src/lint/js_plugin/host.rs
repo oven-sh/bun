@@ -197,7 +197,8 @@ fn report_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Report> {
     })
 }
 
-const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+const OUT_OF_STEP: &[u8] =
+    b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 impl<'e> Host<'e> {
     /// `cwd`: ESLint's `context.cwd`.

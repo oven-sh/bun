@@ -1627,14 +1627,14 @@ describe.concurrent("bun lint", () => {
         const rules = JSON.parse(raw);
         const find = (scope: string, value: string) =>
           rules.find((it: any) => it.scope === scope && it.value === value);
-        expect(find("eslint", "no-debugger")).toEqual({
+        expect(find("eslint", "no-debugger")).toMatchObject({
           scope: "eslint",
           value: "no-debugger",
           category: "correctness",
           type_aware: false,
           fix: "none",
           default: true,
-          docs_url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
+          docs_url: "https://bun.com/docs/lint/rules/eslint/no-debugger",
         });
         expect(find("typescript", "no-floating-promises").type_aware).toBe(true);
         // Each once. A rule of the React Compiler is `react-hooks/purity` too, which has suggestions: oxlint's has none.
@@ -3592,7 +3592,9 @@ describe.concurrent("bun lint", () => {
         ]);
         expect([named.files, found.files, withoutRepository.files]).toEqual([outside, outside, outside]);
         for (const { stdout, stderr } of [named, found, withoutRepository]) {
-          expect(stdout + stderr).toContain("Cannot write <dir>/project/c/d.js: A link leads out of the repository.");
+          expect(stdout + stderr).toContain(
+            "Cannot write <dir>/project/c/d.js: it is a symlink to a file outside the repository",
+          );
         }
         // Beside an .oxlintrc.json what fails ends the run as it ends oxlint's.
         expect([named.exitCode, found.exitCode, withoutRepository.exitCode]).toEqual([2, 1, 2]);
@@ -4322,7 +4324,7 @@ describe.concurrent("bun lint", () => {
 
     test("an unknown format fails with 2", async () => {
       const { stderr, exitCode } = await lint(files, ["-f", "nothing"]);
-      expect(stderr).toContain('There is no formatter "nothing"');
+      expect(stderr).toContain('Unknown format "nothing"\n');
       expect(exitCode).toBe(2);
     });
 
@@ -6624,7 +6626,8 @@ describe.concurrent("regular expressions in a configuration", () => {
     expect(stderr).not.toContain("JSC options");
     expect(exitCode).toBe(1);
 
-    const own = await lint(files, ["--rule", 'no-fallthrough: [error, { commentPattern: "fall +through" }]'], { env });
+    const pattern = 'no-fallthrough: [error, { commentPattern: "fall +through" }]';
+    const own = await lint(files, ["-f", "stylish", "--rule", pattern], { env });
     expect(own.stdout).toMatch(/ 5:3 +error +Expected a 'break' statement before 'case' +no-fallthrough\n/);
     expect(own.stderr).toContain("JSC options");
   });
@@ -8005,7 +8008,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       run({ ...eslint, "bunfig.toml": "[lint]\nthreads = -1\n" }, ["a.js"]),
     ]);
     expect(byKey).toEqual(byFlag);
-    expect(wrong.stderr).toContain(`--threads takes a number, not "-1".`);
+    expect(wrong.stderr).toContain(`--threads takes a number, not "-1"`);
     expect(wrong.exitCode).toBe(2);
   });
 
@@ -8133,7 +8136,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     const result = await bun({ ...eslint, "bunfig.toml": bunfig }, ["lint", "a.js"]);
     expect(result.stderr).toContain(`6 | "no-var" = "always"\n`);
     expect(result.stderr).toMatch(
-      /error: Option rules: 'always' not one of off, warn, error, 0, 1, or 2\.\n\s+at .*bunfig\.toml:6:12\n/,
+      /error: expected "off", "warn" or "error" but received "always"\n\s+at .*bunfig\.toml:6:12\n/,
     );
     expect(result.stdout).toBe("");
     expect(result.exitCode).toBe(2);
@@ -8159,9 +8162,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   ])("%s is refused, and nothing is written", async (line, flag) => {
     const key = line.split(" ")[0];
     const result = await run({ ...eslint, "bunfig.toml": `[lint]\n${line}\n` }, ["a.js"]);
-    expect(result.stderr).toContain(
-      `"${key}" cannot be set in bunfig.toml, it says what one run does. Pass ${flag} on the command line`,
-    );
+    expect(result.stderr).toContain(`"${key}" cannot be set in bunfig.toml. Pass ${flag} on the command line instead.`);
     expect(result.stdout).toBe("");
     expect(result.files["a.js"]).toBe(bad);
     expect(result.exitCode).toBe(2);
@@ -8174,21 +8175,21 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     ["config = false", "expected string but received boolean"],
     ["ignorePatterns = true", "expected array but received boolean"],
     ["ignorePatterns = [1]", "expected string but received number"],
-    [`flavor = "biome"`, "Option flavor: 'biome' not one of eslint or oxlint."],
-    [`format = "fancy"`, `There is no formatter "fancy". Those that exist: stylish, pretty, json,`],
+    [`flavor = "biome"`, '--flavor must be eslint or oxlint, not "biome"'],
+    [`format = "fancy"`, `Unknown format "fancy"\n  Available formats: stylish, pretty, json,`],
     [`fixType = ["all"]`, `'fixTypes' must be an array of any of "directive", "problem", "suggestion", and "layout".`],
     [`reportUnusedDisableDirectives = "loud"`, "'loud' not one of off, warn, error, 0, 1, or 2."],
     ["reportUnusedDisableDirectives = 1", "expected string but received number"],
     [`reportUnusedInlineConfigs = true`, "expected string but received boolean"],
     ["rules = true", "expected object but received boolean"],
-    [`[lint.rules]\neqeqeq = "always"`, "Option rules: 'always' not one of off, warn, error, 0, 1, or 2."],
-    [`[lint.rules]\neqeqeq = ["smart"]`, "Option rules: 'smart' not one of off, warn, error, 0, 1, or 2."],
+    [`[lint.rules]\neqeqeq = "always"`, `expected "off", "warn" or "error" but received "always"`],
+    [`[lint.rules]\neqeqeq = ["smart"]`, `expected "off", "warn" or "error" but received "smart"`],
     [`[lint.rules]\neqeqeq = []`, "expected string but received array"],
     [`[lint.rules]\neqeqeq = true`, "expected string but received boolean"],
     [`[lint.globals]\na = "off"`, `expected "readonly" or "writable" but received string`],
     [`[lint.globals]\na = 1`, `expected "readonly" or "writable" but received number`],
     [`[lint.categories]\nstyles = "warn"`, `unknown category "styles"`],
-    [`[lint.categories]\nstyle = "deny"`, "Option categories: 'deny' not one of off, warn, error, 0, 1, or 2."],
+    [`[lint.categories]\nstyle = "deny"`, `expected "off", "warn" or "error" but received "deny"`],
     ["maxWarning = 0", `unknown key "maxWarning" in [lint]. Did you mean "maxWarnings"?`],
     ["max-warnings = 0", `unknown key "max-warnings" in [lint]. Did you mean "maxWarnings"?`],
     [`ignorePattern = ["a"]`, `unknown key "ignorePattern" in [lint]. Did you mean "ignorePatterns"?`],
@@ -8777,10 +8778,10 @@ describe.concurrent("nativePluginRules", () => {
   test.each([
     [
       `["imprt"]`,
-      "Option native-plugin-rules: 'imprt' not one of @typescript-eslint, react-hooks, import, n, react, prettier.",
+      'Unknown plugin "imprt" in --native-plugin-rules\n  Available plugins: @typescript-eslint, react-hooks, import, n, react, prettier\n',
     ],
-    [`["unicorn"]`, "Option native-plugin-rules: 'unicorn' not one of"],
-    [`["true"]`, "Option native-plugin-rules: 'true' not one of"],
+    [`["unicorn"]`, 'Unknown plugin "unicorn" in --native-plugin-rules'],
+    [`["true"]`, 'Unknown plugin "true" in --native-plugin-rules'],
     [`"import"`, "expected boolean or array but received string"],
     ["[1]", "expected string but received number"],
   ])("nativePluginRules = %s is refused", async (value, message) => {

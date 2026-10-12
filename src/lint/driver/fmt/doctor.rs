@@ -244,6 +244,8 @@ pub(super) fn report(
         let what = noun(files.left_for_plugins, "file is", "files are");
         let what = format!("{what} skipped because a plugin is not supported");
         write_count(&mut out, colors, files.left_for_plugins, &what);
+        let hint = "Use --allow-unsupported to format them without it";
+        pretty!(&mut out, colors, "        <d>{}<r>\n", hint);
     }
     let rows: [(&str, &[Vec<u8>]); 5] = [
         ("Built-in plugins:", &plugins.built_in),
@@ -268,7 +270,7 @@ pub(super) fn report(
         );
     }
     packages.write(&mut out, colors);
-    if kind == b"none" {
+    if file.is_none() && !is_oxfmt {
         out.extend_from_slice(
             b"\nRun bun format --init to add a [format] section to bunfig.toml\n",
         );

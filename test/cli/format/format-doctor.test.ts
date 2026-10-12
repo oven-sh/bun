@@ -124,17 +124,29 @@ You can remove: @trivago/prettier-plugin-sort-imports, prettier
   });
 
   test("a plugin that is not supported, and one that is not installed", async () => {
-    const { stdout, exitCode } = await doctor(
-      {
-        ...installed("prettier"),
-        "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "prettier-plugin-astro"),
-        ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-astro"] }),
-        "styled/.prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"] }),
-        "styled/a.js": ugly,
-        "b.astro": "<p>b</p>\n",
-      },
-      ["-f", "json"],
-    );
+    const project = {
+      ...installed("prettier"),
+      "package.json": dependencies("prettier", "prettier-plugin-tailwindcss", "prettier-plugin-astro"),
+      ".prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-astro"] }),
+      "styled/.prettierrc.json": JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"] }),
+      "styled/a.js": ugly,
+      "b.astro": "<p>b</p>\n",
+    };
+    const [text, { stdout, exitCode }] = await Promise.all([doctor(project), doctor(project, ["-f", "json"])]);
+    expect(text.stdout).toStartWith(`Using .prettierrc.json (Prettier config)
+Also styled/.prettierrc.json
+
+    2 files are formatted natively
+    1 file cannot be formatted: 1 *.astro
+    2 files are skipped because a plugin is not supported
+        Use --allow-unsupported to format them without it
+
+Plugins that use your installed Prettier: prettier-plugin-astro
+Plugins that are not supported: prettier-plugin-tailwindcss
+Not installed: prettier-plugin-astro
+
+Still needed:   prettier, prettier-plugin-astro (some files go to them)
+`);
     const { config, files, plugins, packages } = JSON.parse(stdout);
     expect(config.nested).toEqual(["styled/.prettierrc.json"]);
     expect(files).toEqual({ formatted: 2, by_prettier: {}, not_formatted: { "*.astro": 1 }, left_for_plugins: 2 });
@@ -213,7 +225,7 @@ Run bun format --init to add a [format] section to bunfig.toml
 
   test("-f takes json only", async () => {
     const { stderr, exitCode } = await doctor({ "a.js": ugly }, ["-f", "yaml"]);
-    expect(stderr).toContain("Option format: 'yaml' is not json.");
+    expect(stderr).toContain(`--format takes json, not "yaml"`);
     expect(exitCode).not.toBe(0);
   });
 

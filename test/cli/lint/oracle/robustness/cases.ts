@@ -386,7 +386,7 @@ export const cases: Case[] = [
     const three = "await b;\nx = b as number;\np;\n";
     const conditions = (n: number, name = "x") => rep(`if (a) { ${name} = 1; }\n`, n);
     const warning =
-      /This file is too large for control flow analysis\. What rules that need types say about it may be wrong or incomplete\./;
+      /This file is too large for control flow analysis\. Reports from rules that need type information may be wrong or incomplete\./;
     const [awaited, asserted, floating] = ["await-thenable", "no-unnecessary-type-assertion", "no-floating-promises"];
     const common = {
       file: "a.ts",

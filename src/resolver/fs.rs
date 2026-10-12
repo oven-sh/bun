@@ -352,8 +352,7 @@ pub mod dir_entry {
     }
 }
 
-/// Per-entry hook of a directory read, called with `entries_mutex` held: per dirent when the
-/// listing comes from disk, sorted by lowercased name when it comes from the cache.
+/// Called under `entries_mutex` for each entry a read returns, from disk or (sorted) from the cache.
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
     fn next(&self, entry: &mut Entry, fd: Fd);

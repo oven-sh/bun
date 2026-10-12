@@ -44,8 +44,12 @@ public:
 
     // `module.id` Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_id;
-    // Initialized eagerly; can be overridden.
+
+private:
+    // Initialized eagerly; overridden through setFilename(), which keeps m_filenamePathLength in step.
     mutable JSC::WriteBarrier<Unknown> m_filename;
+
+public:
     // Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_dirname;
     // Initialized lazily; can be overridden.
@@ -81,6 +85,14 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+
+private:
+    // Where `<path>` ends in m_filename, when that is the loader's key `<path>?<query>` and the
+    // query holds a path separator. 0: m_filename is read whole. Fills padding, see the static_assert.
+    uint32_t m_filenamePathLength { 0 };
+    JSValue loadedPath(JSC::VM&);
+
+public:
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -130,6 +142,18 @@ public:
     }
     void setExportsObject(JSC::JSValue exportsObject);
     JSValue filename() { return m_filename.get(); }
+    void setFilename(JSC::VM& vm, JSValue filename)
+    {
+        m_filename.set(vm, this, filename);
+        m_filenamePathLength = 0;
+    }
+    // filename() without the `?query` of the loader's key. A directory is taken from this, never
+    // from filename(): a `/` in the query is not a path separator.
+    JSValue filenamePath(JSC::VM& vm) { return m_filenamePathLength ? loadedPath(vm) : m_filename.get(); }
+    // Same for a `filename` that JS read from the module: only the module's own filename() is a key.
+    JSValue filenamePath(JSC::VM& vm, JSValue filename) { return m_filenamePathLength && filename == m_filename.get() ? loadedPath(vm) : filename; }
+    // The loader read this module from `path`.
+    void setLoadedPath(JSC::VM&, const WTF::String& path);
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 

@@ -309,7 +309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             if (
                 // fast path: it's a real CommonJS module object.
                 auto* cjs = dynamicDowncast<Bun::JSCommonJSModule>(fromValue)) {
-                fromValue = cjs->filename();
+                fromValue = cjs->filenamePath(vm);
             } else if (fromValue.isObject()) {
                 // slow path: userland code did something weird. Try filename first, then id
                 auto* obj = fromValue.getObject();
@@ -476,6 +476,8 @@ PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent
 
     JSValue filename = parent->get(global, builtinNames.filenamePublicName());
     RETURN_IF_EXCEPTION(scope, value);
+    if (auto* module = dynamicDowncast<Bun::JSCommonJSModule>(parent))
+        filename = module->filenamePath(vm, filename);
     if (filename.isString()) {
         value.filename = filename.toString(global);
     }
@@ -545,15 +547,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue dirname;
     if (parent.filename) {
-        JSString* filename = parent.filename;
-        auto filenameValue = filename->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        unsigned pathLength = moduleKeyPathLength(filenameValue);
-        if (pathLength != filenameValue->length()) {
-            filename = JSC::jsSubstring(globalObject, filename, 0, pathLength);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        EncodedJSValue encodedFilename = JSValue::encode(filename);
+        EncodedJSValue encodedFilename = JSValue::encode(parent.filename);
 #if OS(WINDOWS)
         dirname = JSValue::decode(
             Bun__Path__dirname(globalObject, true, &encodedFilename, 1));

@@ -25,11 +25,10 @@ impl Rule for NoAbusiveEslintDisable {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         for comment in cx.file().comments() {
-            let comment_span = match comment.kind() {
-                TokenKind::Line => comment.span().shrink(2, 0),
-                TokenKind::Block => comment.span().shrink(2, 2),
-                _ => continue,
-            };
+            if comment.kind() == TokenKind::Shebang {
+                continue;
+            }
+            let comment_span = comment.comment_value_span();
             let text = cx.slice(comment_span);
             // The `*` of `/**`, or a word.
             if text.first().is_some_and(|it| it.is_ascii_graphic() && !matches!(it, b'e' | b'o')) {

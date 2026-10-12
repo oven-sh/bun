@@ -1511,6 +1511,15 @@ impl<'a> Module<'a> {
         at
     }
 
+    /// The `A` of `namespace A.B.C { .. }`, which is the node. Itself, if it is that.
+    pub fn outermost(self) -> Module<'a> {
+        let outer = match self.file.is_nested_namespace(self.raw().stmt) {
+            true => self.stmt().parent().as_stmt().and_then(Stmt::as_module),
+            false => None,
+        };
+        outer.unwrap_or(self)
+    }
+
     /// The `B` of `namespace A.B`.
     pub fn nested(self) -> Option<Module<'a>> {
         let only = self.body().first().filter(|_| self.body().len() == 1)?;

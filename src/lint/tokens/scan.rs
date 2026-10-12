@@ -15,7 +15,7 @@
 
 use super::{RawToken, TokenKind, skip_trivia, skip_trivia_back};
 use crate::ast::File;
-use crate::language::Parser;
+use crate::language::{Parser, SourceType};
 use bun_core::{lexer, strings};
 use bun_sema::atom::known;
 use bun_sema::hir::{
@@ -628,7 +628,7 @@ struct Scanner<'a> {
 }
 
 /// The tokens and the comments of `file`.
-pub(super) fn scan(file: &File) -> (Vec<RawToken>, Vec<RawToken>) {
+pub(super) fn scan<'a>(file: &'a File<'a>) -> (Vec<RawToken>, Vec<RawToken>) {
     let dialect = Dialect::of(file);
     let capacity = file.text().len() / 5 + 1;
     let scanner = Scanner::run(file, dialect, Marks::new(file, dialect), capacity);
@@ -636,7 +636,7 @@ pub(super) fn scan(file: &File) -> (Vec<RawToken>, Vec<RawToken>) {
 }
 
 /// The comments of `file`. `None`: they cannot be told without the tokens.
-pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
+pub(super) fn comments<'a>(file: &'a File<'a>) -> Option<Vec<RawToken>> {
     let text = file.text();
     if has_html_comments(file)
         && (strings::contains(text, b"<!--") || strings::contains(text, b"-->"))
@@ -677,8 +677,12 @@ pub(super) fn is_espree(file: &File) -> bool {
     Dialect::of(file) != Dialect::TypeScript
 }
 
-fn has_html_comments(file: &File) -> bool {
-    Dialect::of(file) != Dialect::TypeScript && !file.is_module()
+fn has_html_comments<'a>(file: &'a File<'a>) -> bool {
+    match file.language().is_oxlint {
+        // oxc has them in TypeScript too.
+        true => crate::utils::oxlint::source_type(file) != SourceType::Module,
+        false => Dialect::of(file) != Dialect::TypeScript && !file.is_module(),
+    }
 }
 
 impl Dialect {
@@ -693,7 +697,7 @@ impl Dialect {
 }
 
 impl<'a> Scanner<'a> {
-    fn run(file: &File<'a>, dialect: Dialect, marks: Marks, capacity: usize) -> Self {
+    fn run(file: &'a File<'a>, dialect: Dialect, marks: Marks, capacity: usize) -> Self {
         let text = file.text();
         let mut scanner = Scanner {
             text,

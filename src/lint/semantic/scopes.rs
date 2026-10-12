@@ -959,8 +959,13 @@ impl<'f, 'a> Collector<'f, 'a> {
     }
 
     fn module(&mut self, it: Option<&'a hir::Module>) {
+        let Some(it) = it else {
+            return;
+        };
         // `namespace A.B.C { }` is one declaration, which the HIR stores as three.
-        if let Some(it) = it.filter(|it| !is_after_dot(self.file, it)) {
+        if self.file.language().nests_dotted_namespaces {
+            self.declaration(ScopeKind::TsModule, it.stmt, it.name_pos);
+        } else if !is_after_dot(self.file, it) {
             self.declaration(ScopeKind::TsModule, it.stmt, last_name_pos(self.file, it));
         }
     }

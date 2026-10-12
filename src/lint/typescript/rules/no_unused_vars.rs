@@ -319,7 +319,10 @@ fn oxlint_leaves_alone(variable: Variable) -> bool {
         Node::Stmt(it) => matches!(it.kind(), StmtKind::Module(it) if matches!(it.name(), ModuleName::Global)),
         _ => false,
     };
-    is_left_alone || variable.scope().chain().any(is_global)
+    // A name of `namespace A.B { }`, which typescript-eslint has no definition for.
+    let is_dotted = matches!(variable.symbol().declarations().next(), Some(Declaration::Module(it))
+        if it.nested().is_some() || it.outermost() != it);
+    is_left_alone || is_dotted || variable.scope().chain().any(is_global)
 }
 
 /// For oxlint a property with a default value has siblings too: `const { a = 1, ...rest } = b`.

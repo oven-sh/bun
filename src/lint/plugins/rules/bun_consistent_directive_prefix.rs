@@ -32,8 +32,7 @@ impl Rule for ConsistentDirectivePrefix {
             let value = comment.comment_value();
             let text = value.trim_ascii_start();
             if text.strip_prefix(found.as_bytes()).is_some_and(is_directive) {
-                // After the `//` or the `/*`.
-                let start = comment.start() + 2 + (value.len() - text.len()) as u32;
+                let start = comment.comment_value_span().start + (value.len() - text.len()) as u32;
                 let span = Span::new(start, start + found.len() as u32);
                 let report = cx.report(span, OTHER_PREFIX).data("expected", expected).data("found", found);
                 report.fix(|fixer| fixer.replace(span, expected));

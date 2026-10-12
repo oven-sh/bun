@@ -432,7 +432,7 @@ impl Checker {
                     Declaration::Var(_) => definition.parent(),
                     Declaration::Class(class) => Some(class.owner()),
                     Declaration::Enum(it) => Some(Node::Stmt(it.stmt())),
-                    Declaration::Module(it) => Some(Node::Stmt(it.stmt())),
+                    Declaration::Module(it) => Some(Node::Stmt(it.outermost().stmt())),
                     _ => None,
                 };
                 matches!(declaration, Some(Node::Stmt(it)) if it.flags().contains(Flags::AMBIENT))

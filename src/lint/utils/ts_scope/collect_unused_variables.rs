@@ -163,11 +163,7 @@ fn class_scope_range(class: Class) -> Span {
 
 /// The `A` or the `B` of `namespace A.B {}`, which declare nothing in scope-manager.
 fn is_part_of_qualified_name(module: Module) -> bool {
-    module.nested().is_some()
-        || matches!(
-            module.stmt().parent().as_stmt().map(Stmt::kind),
-            Some(StmtKind::Module(outer)) if outer.nested() == Some(module)
-        )
+    module.nested().is_some() || module.outermost() != module
 }
 
 /// Whether scope-manager has a definition for `declaration` in the scope around it.

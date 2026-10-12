@@ -150,8 +150,8 @@ pub enum TokenKind {
     RegularExpression,
     String,
     Template,
-    /// `// ..`. For espree, in a file that is not a module, also `<!-- ..` and, at the start of a
-    /// line, `--> ..`.
+    /// `// ..`. For espree and for oxc, in a file that is not a module, also `<!-- ..` and, at the
+    /// start of a line, `--> ..`.
     Line,
     /// `/* .. */`
     Block,
@@ -226,14 +226,18 @@ impl<'a> Token<'a> {
 
     /// ESLint's `comment.value`: the text of a comment without its delimiters.
     pub fn comment_value(self) -> &'a [u8] {
-        let span = match self.raw.kind {
+        self.file.slice(self.comment_value_span())
+    }
+
+    /// Where [`Token::comment_value`] is: oxc's `Comment::content_span`.
+    pub fn comment_value_span(self) -> Span {
+        match self.raw.kind {
             TokenKind::Block => self.span().shrink(2, 2),
             TokenKind::Line if self.text().starts_with(b"<!--") => self.span().shrink(4, 0),
             TokenKind::Line if self.text().starts_with(b"-->") => self.span().shrink(3, 0),
             TokenKind::Line | TokenKind::Shebang => self.span().shrink(2, 0),
             _ => self.span(),
-        };
-        self.file.slice(span)
+        }
     }
 
     /// ESLint's `token.value`, except for what espree decodes: as it is written, but a comment
@@ -451,7 +455,7 @@ fn is_whitespace(text: &[u8]) -> bool {
 }
 
 impl<'a> File<'a> {
-    fn raw_tokens(&self) -> &[RawToken] {
+    fn raw_tokens(&'a self) -> &'a [RawToken] {
         let store = self.lazy.tokens.get_or_init(TokenStore::default);
         store.tokens.get_or_init(|| {
             let (tokens, comments) = scan::scan(self);
@@ -461,7 +465,7 @@ impl<'a> File<'a> {
         })
     }
 
-    fn raw_comments(&self) -> &[RawToken] {
+    fn raw_comments(&'a self) -> &'a [RawToken] {
         let store = self.lazy.tokens.get_or_init(TokenStore::default);
         if let Some(comments) = store.comments.get() {
             return comments;

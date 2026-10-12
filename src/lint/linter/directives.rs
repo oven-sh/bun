@@ -88,7 +88,7 @@ pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
             TokenKind::Block => (comment.span(), false),
             _ => continue,
         };
-        let value = file.slice(span.shrink(2, if is_line { 0 } else { 2 }));
+        let value = comment.comment_value();
         if !may_start_with_label(value) {
             continue;
         }

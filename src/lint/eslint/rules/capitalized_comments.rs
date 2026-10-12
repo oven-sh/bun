@@ -183,8 +183,11 @@ impl CapitalizedComments {
             true => UNEXPECTED_LOWERCASE_COMMENT,
             false => UNEXPECTED_UPPERCASE_COMMENT,
         };
-        // The 2 is the `//` or the `/*`.
-        let start = comment.start() + 2 + at as u32;
+        // The 2 is the `//` or the `/*`, for ESLint of a `<!--` too.
+        let start = match cx.language().is_oxlint {
+            true => comment.comment_value_span().start + at as u32,
+            false => comment.start() + 2 + at as u32,
+        };
         cx.report(comment, message)
             .fix(|fixer| fixer.replace(Span::new(start, start + letter.len() as u32), expected()));
     }

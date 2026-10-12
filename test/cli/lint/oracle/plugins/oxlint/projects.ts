@@ -499,6 +499,111 @@ const whichFilesATsconfigIsFor: Project[] = [
   },
 ];
 
+// The code of a package exports `code`, its types export `types`: the name that is missed tells which of them is read. Of a
+// CommonJS file nothing is known.
+const textInPackage = (path: string) =>
+  /\.d\.[cm]?ts$/.test(path)
+    ? "export declare const types: number;\nexport declare const foo: number;\ndeclare const d: { foo: number };\nexport default d;\n"
+    : path.includes("cjs")
+      ? "module.exports = { foo: 1 };\n"
+      : path.includes("named")
+        ? "export const code = 1;\n"
+        : "export const code = 1;\nexport const foo = 1;\nexport default { foo };\n";
+/** By the name of the package: its package.json, its files, and what is imported of it if that is not its entry. */
+const packages: Record<string, [manifest: object | undefined, files: string[], subpath?: string]> = {
+  "main": [{ main: "index.js" }, ["index.js"]],
+  "main-commonjs": [{ main: "cjs.js", types: "cjs.d.ts" }, ["cjs.js", "cjs.d.ts"]],
+  "main-without-default": [{ main: "named.js" }, ["named.js"]],
+  "main-is-typescript": [{ main: "index.js" }, ["index.ts"]],
+  "main-directory": [{ main: "dist", typings: "typings.d.ts" }, ["dist/index.js", "typings.d.ts"]],
+  "module": [{ main: "cjs.js", module: "esm.js", types: "t.d.ts" }, ["cjs.js", "esm.js", "t.d.ts"]],
+  "no-manifest": [undefined, ["index.js", "index.d.ts"]],
+  "types-beside": [{ main: "index.js", types: "index.d.ts" }, ["index.js", "index.d.ts"]],
+  "types-elsewhere": [{ main: "dist/index.js", types: "types/index.d.ts" }, ["dist/index.js", "types/index.d.ts"]],
+  "types-only": [{ types: "index.d.ts" }, ["index.d.ts"]],
+  "types-versions": [
+    { main: "index.js", types: "index.d.ts", typesVersions: { "*": { "*": ["ts/*"] } } },
+    ["index.js", "index.d.ts", "ts/index.d.ts"],
+  ],
+  "exports-string": [{ types: "t.d.ts", exports: "./esm.js" }, ["t.d.ts", "esm.js"]],
+  "exports-is-typescript": [{ exports: "./esm.js" }, ["esm.ts"]],
+  "exports-null": [{ main: "index.js", exports: null }, ["index.js"]],
+  "exports-conditions": [
+    { exports: { ".": { types: "./t/index.d.ts", import: "./esm/index.mjs", require: "./cjs/index.cjs" } } },
+    ["t/index.d.ts", "esm/index.mjs", "cjs/index.cjs"],
+  ],
+  "exports-nested": [
+    {
+      exports: {
+        import: { types: "./esm/index.d.mts", default: "./esm/index.mjs" },
+        require: { types: "./cjs/index.d.cts", default: "./cjs/index.cjs" },
+      },
+    },
+    ["esm/index.d.mts", "esm/index.mjs", "cjs/index.d.cts", "cjs/index.cjs"],
+  ],
+  "exports-default": [
+    { exports: { types: "./index.d.ts", require: "./cjs.js", default: "./esm.js" } },
+    ["index.d.ts", "cjs.js", "esm.js"],
+  ],
+  "exports-module": [
+    { exports: { types: "./i.d.ts", node: "./cjs.js", module: "./m.js", default: "./cjs.js" } },
+    ["i.d.ts", "m.js", "cjs.js"],
+  ],
+  "exports-types-only": [{ exports: { types: "./index.d.ts" } }, ["index.d.ts", "index.js"]],
+  "exports-versioned-types": [{ exports: { "types@>=1": "./v.d.ts", default: "./index.js" } }, ["v.d.ts", "index.js"]],
+  "@scope/main": [{ main: "index.js" }, ["index.js"]],
+  "sub-file": [{}, ["sub.js", "sub.d.ts"], "sub"],
+  "sub-is-typescript": [{}, ["sub.ts"], "sub.js"],
+  "sub-directory": [{}, ["sub/package.json", "sub/cjs.js", "sub/esm.js", "sub/t.d.ts"], "sub"],
+  "sub-types-only": [{}, ["sub.d.ts"], "sub"],
+  "sub-types-versions": [{ typesVersions: { "*": { "*": ["ts/*"] } } }, ["sub.js", "ts/sub.d.ts"], "sub"],
+  "sub-exports": [
+    { exports: { "./sub": { types: "./t/sub.d.ts", import: "./esm/sub.js", require: "./cjs/sub.js" } } },
+    ["t/sub.d.ts", "esm/sub.js", "cjs/sub.js"],
+    "sub",
+  ],
+  "sub-pattern": [{ exports: { "./*": { types: "./t/*.d.ts", default: "./esm/*.js" } } }, ["t/sub.d.ts", "esm/sub.js"], "sub"],
+  "sub-not-exported": [{ exports: { ".": "./index.js" } }, ["index.js", "sub.js"], "sub"],
+  "nothing-but-at-types": [undefined, []],
+};
+const codeOfPackages = [false, true].map((withAtTypes): Project => {
+  const files: Record<string, string> = {};
+  for (const [name, [manifest, paths, subpath]] of Object.entries(packages)) {
+    if (manifest) files[`node_modules/${name}/package.json`] = JSON.stringify(manifest);
+    for (const path of paths) {
+      files[`node_modules/${name}/${path}`] = path.endsWith(".json")
+        ? '{"main": "cjs.js", "module": "esm.js", "types": "t.d.ts"}'
+        : textInPackage(path);
+    }
+    if (withAtTypes) {
+      const declarations = `${subpath?.replace(".js", "") ?? "index"}.d.ts`;
+      files[`node_modules/@types/${name.replace("@", "").replace("/", "__")}/${declarations}`] = textInPackage(declarations);
+    }
+    const specifier = JSON.stringify(subpath ? `${name}/${subpath}` : name);
+    const text = lines(
+      `import foo, { code as c, types as t } from ${specifier};`,
+      `import * as all from ${specifier};`,
+      `export * from ${specifier};`,
+      `export const code = [foo.foo, c, t, all.none];`,
+    );
+    // import/named is not for TypeScript.
+    for (const extension of ["js", "ts"]) files[`${name.replace("@scope/", "scoped-")}.${extension}`] = text;
+  }
+  return {
+    name: `import/code-of-packages${withAtTypes ? "-with-at-types" : ""}`,
+    about: "AsRequire::as_import: what is read of a package is its code, as Node.js finds it, whatever types there are for it",
+    config: rules(["import"], {
+      "import/default": "warn",
+      "import/export": "warn",
+      "import/named": "warn",
+      "import/namespace": "warn",
+      "import/no-named-as-default": "warn",
+      "import/no-named-as-default-member": "warn",
+    }),
+    files,
+  };
+});
+
 export const projects: Project[] = [
   {
     name: "no-cycle/place",
@@ -658,7 +763,7 @@ export const projects: Project[] = [
   },
   {
     name: "named/module-before-main",
-    about: "Graph::entry_by_module_field, and the condition `module`: of a CommonJS file nothing is known, so nothing is missed in it",
+    about: "AsRequire::as_import, and the condition `module`: of a CommonJS file nothing is known, so nothing is missed in it",
     config: rules(["import"], { "import/named": "warn" }),
     files: {
       "node_modules/a/package.json": "{\"module\": \"esm.js\"}",
@@ -11228,6 +11333,7 @@ export const projects: Project[] = [
     },
   },
   ...whichFilesATsconfigIsFor,
+  ...codeOfPackages,
   {
     name: "types/an-alias-is-a-deferred-reference",
     about: "is_unsafe_assignment: is_looked_into",

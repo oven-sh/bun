@@ -121,7 +121,7 @@ impl BanTsComment {
             };
             // oxlint points at what is in the comment.
             let place = match cx.language().is_oxlint {
-                true => Span::new(comment.start() + 2, comment.start() + 2 + comment.comment_value().len() as u32),
+                true => comment.comment_value_span(),
                 false => comment.span(),
             };
             match option {

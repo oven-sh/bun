@@ -143,11 +143,12 @@ impl Rule for NoShadowRestrictedNames {
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match stmt.tag() {
             StmtTag::Module => {
-                if let StmtKind::Module(module) = stmt.kind()
-                    && let ModuleName::Ident(name) = module.name()
-                    && Self::is_restricted(name.name(), cx)
-                {
-                    Self::report_once(name.span(), name.name(), cx);
+                for module in std::iter::successors(stmt.as_module(), |it| it.nested()) {
+                    if let ModuleName::Ident(name) = module.name()
+                        && Self::is_restricted(name.name(), cx)
+                    {
+                        Self::report_once(name.span(), name.name(), cx);
+                    }
                 }
             }
             StmtTag::Import => {

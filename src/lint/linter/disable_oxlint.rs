@@ -170,8 +170,12 @@ fn removal_from_list(text: &[u8], comment: Span, name: Span, prefix: Prefix) -> 
 
 /// What is in `comment`, without its delimiters.
 fn content_of(text: &[u8], comment: Span) -> Span {
-    let is_line = text.get(comment.start as usize + 1) == Some(&b'/');
-    comment.shrink(2, if is_line { 0 } else { 2 })
+    match text.get(comment.start as usize..).unwrap_or_default() {
+        [b'/', b'*', ..] => comment.shrink(2, 2),
+        [b'<', ..] => comment.shrink(4, 0),
+        [b'-', ..] => comment.shrink(3, 0),
+        _ => comment.shrink(2, 0),
+    }
 }
 
 /// `DisableDirectivesBuilder::build_impl`. Also returns the comments that enable what is not disabled: the prefix, the name, and

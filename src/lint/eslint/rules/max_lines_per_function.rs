@@ -50,7 +50,7 @@ pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32,
                     strings::is_all_js_whitespace(file.slice(Span::new(comment.end(), file.line_span(last).end)));
                 (last + u32::from(is_last)).saturating_sub(first + u32::from(!is_first))
             }
-            _ => u32::from(is_first),
+            _ => u32::from(is_first && comment.text().starts_with(b"//")),
         };
         (comment.start(), count)
     });

@@ -1118,6 +1118,8 @@ impl Config {
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
+        config.language.nests_dotted_namespaces =
+            self.prefers_typescript_rules && self.js_plugins.is_empty();
         config.language.eslint_8 = eslint_8;
         config.language.eslint_major = self.eslint_major;
         config.language.without_modules = self.without_modules;

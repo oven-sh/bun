@@ -294,7 +294,9 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             match m.name {
                 // `namespace A.B { }` declares nothing that a name can refer to.
                 hir::ModuleName::Ident(name)
-                    if !scopes::is_after_dot(file, m) && scopes::after_dot(file, m).is_none() =>
+                    if file.language().nests_dotted_namespaces
+                        || !scopes::is_after_dot(file, m)
+                            && scopes::after_dot(file, m).is_none() =>
                 {
                     (name, m.name_pos)
                 }

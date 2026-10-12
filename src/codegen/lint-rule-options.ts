@@ -15,7 +15,7 @@ export type Schema = { [key: string]: any };
 // Fits an 80-column terminal, next to the frame that `bun lint --explain` draws around code.
 export const WIDTH = 78;
 
-const isObject = (value: unknown): value is Record<string, any> =>
+export const isObject = (value: unknown): value is Record<string, any> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const isEmpty = (value: Json) => value === "" || (typeof value === "object" && !Object.keys(value!).length);
 const same = (a: unknown, b: unknown) => Bun.deepEquals(a, b, true);
@@ -70,7 +70,7 @@ export function documentedIn(body: string): Documented {
         .slice(1)
         .split(/(?<!\\)\|/)
         .map(cell => cell.trim().replaceAll("\\|", "|"));
-      const name = /^`([^`"]+)`$/.exec(cells[0])?.[1];
+      const name = /^`([^`]+)`$/.exec(cells[0])?.[1];
       if (hasDefaults && name) found.options.set(name, json(/(?:^|, otherwise )(`[^`]+`)$/.exec(cells[1])?.[1]));
       const choice = json(/^`[^`]+`/.exec(cells[0])?.[0]);
       if (!hasDefaults && choice !== undefined) found.choices.push(choice);
@@ -104,7 +104,8 @@ export function inferredSchema(documented: Documented, examples: { options: unkn
     const properties = names.map(name => {
       const value = documented.options.get(name);
       const lists = [value, ...values.map(it => (it as Record<string, Json>)[name])].filter(it => it !== undefined);
-      if (lists.every(Array.isArray)) return [name, { type: "array", items: { type: typeOfAll(lists.flat()) } }];
+      if (lists.length && lists.every(Array.isArray))
+        return [name, { type: "array", items: { type: typeOfAll(lists.flat()) } }];
       return [name, { type: value === undefined ? undefined : typeOf(value) }];
     });
     return { type: "object", properties: Object.fromEntries(properties) };
@@ -241,6 +242,8 @@ class Writer {
     readonly root: Schema,
     readonly defaults: Json[],
     readonly documented: Documented,
+    /** Options to comment out even though they have a default. */
+    readonly unset: string[],
   ) {}
 
   /** One line for each property of an object. `others` are alternatives to `schema`. Their properties are commented out. */
@@ -258,7 +261,12 @@ class Writer {
       if (hasNull(set) || (set !== undefined && !accepts(property, set, root))) set = undefined;
       const nested = alternatives(property, root).filter(it => it.properties);
       if (set === undefined) lines.push({ text: placeholder(`${indent}# ${before}`, [property], root) });
-      else if (isObject(set) && nested.length === 1) {
+      else if (this.unset.includes(path + name)) {
+        const [first, ...rest] = entry(before, set, indent);
+        lines.push(
+          ...off([{ text: first, hints: hintsFor(property, set, root) }, ...rest.map(text => ({ text }))], indent),
+        );
+      } else if (isObject(set) && nested.length === 1) {
         const inner = this.properties(nested[0], set, `${path}${name}.`, `${indent}  `);
         value[name] = inner.value;
         const [line] = entry(before, inner.value, indent);
@@ -340,7 +348,7 @@ export type Snippet = {
   lines: string[];
   /** The options that `lines` set. */
   options: Json[];
-  /** Some options are commented out, because they have no default. */
+  /** Some options are commented out. */
   hasUnset: boolean;
   /** The rule is a config error without options, so these aren't defaults. */
   isRequired: boolean;
@@ -353,30 +361,38 @@ export function optionsSnippet(
   schema: Schema | Schema[],
   defaults: Json[],
   documented: Documented,
+  unset: string[] = [],
 ): Snippet | null {
   const root: Schema = Array.isArray(schema) ? { type: "array", items: schema } : schema;
   const isRequired = !accepts(root, [], root);
   const start = `${JSON.stringify(id)} = [`;
   // One shape for each way to write the options, like `["always", { .. }]` and `["never"]`. Show the longest that works.
   const shapes = alternatives(root, root).filter(it => Array.isArray(it.items));
-  let best: { lines: Line[]; options: Json[] } | undefined;
-  for (const shape of shapes) {
-    const writer = new Writer(root, defaults, documented);
-    const lines: Line[] = [];
-    for (let i = 0; i < shape.items.length; i++) {
-      const plain = shapes.flatMap(it =>
-        alternatives(it.items[i] ?? { properties: {} }, root).filter(it => !it.properties),
-      );
-      const option = writer.option(alternatives(shape.items[i], root), i, i < (shape.minItems ?? 0), plain);
-      lines.push(...(option ?? []));
-      if (writer.value.length > i) continue;
-      // Nothing can follow an option that's commented out, so the rest wouldn't show up at all.
-      if (option && i < shape.items.length - 1) lines.length = 0;
-      break;
+  const longest = (unset: string[]) => {
+    let best: { lines: Line[]; options: Json[] } | undefined;
+    for (const shape of shapes) {
+      const writer = new Writer(root, defaults, documented, unset);
+      const lines: Line[] = [];
+      for (let i = 0; i < shape.items.length; i++) {
+        const plain = shapes.flatMap(it =>
+          alternatives(it.items[i] ?? { properties: {} }, root).filter(it => !it.properties),
+        );
+        const option = writer.option(alternatives(shape.items[i], root), i, i < (shape.minItems ?? 0), plain);
+        lines.push(...(option ?? []));
+        if (writer.value.length > i) continue;
+        // Nothing can follow an option that's commented out, so the rest wouldn't show up at all.
+        if (option && i < shape.items.length - 1) lines.length = 0;
+        break;
+      }
+      if (lines.length > (best?.lines.length ?? 0) && accepts(root, writer.value, root))
+        best = { lines, options: writer.value };
     }
-    if (lines.length > (best?.lines.length ?? 0) && accepts(root, writer.value, root))
-      best = { lines, options: writer.value };
-  }
+    return best;
+  };
+  let best = longest(unset);
+  // Some options exclude each other, like a new name and the old one. If all the defaults together are invalid, leave out
+  // the option that the page lists last, or else the one before it, and so on.
+  for (const name of [...documented.options.keys()].reverse()) best ??= longest([...unset, name]);
   if (!best) {
     // A list of any length with a default, like `"consistent-this" = ["error", "that"]`.
     if (!defaults.length || !defaults.every(it => it !== null && typeof it !== "object")) return null;

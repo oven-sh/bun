@@ -51,6 +51,18 @@ pub(super) mod ask {
     pub(crate) const CODE_PATHS: u32 = 11;
 }
 
+/// Appends `list` to `lists`, its length first, and returns its offset. The empty list is at offset 0, so `lists` has to start
+/// with a 0.
+pub(crate) fn push_list(lists: &mut Vec<u32>, list: &[u32]) -> u32 {
+    if list.is_empty() {
+        return 0;
+    }
+    let at = lists.len() as u32;
+    lists.push(list.len() as u32);
+    lists.extend_from_slice(list);
+    at
+}
+
 pub(super) fn words(out: &mut Vec<u8>, words: &[u32]) {
     out.reserve(words.len() * 4);
     for word in words {

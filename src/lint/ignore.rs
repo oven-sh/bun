@@ -8,6 +8,7 @@ use bun_collections::StringHashMap;
 use bun_core::strings;
 use bun_glob::{Candidate, Pattern};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::sync::{LazyLock, OnceLock};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -35,6 +36,8 @@ struct Rule {
     pattern: Option<Pattern>,
     /// For the npm flavor, the line without its `!` and the package's regex for it, compiled on first use.
     of_package: Option<(Box<[u8]>, OnceLock<Option<Regex>>)>,
+    /// The line also matches the ignore file's own directory, whose relative path is empty. `*/` does.
+    matches_empty_path: bool,
     /// `pattern` can't reproduce the package's behavior, so always use the regex.
     is_only_of_package: bool,
     is_negated: bool,
@@ -47,32 +50,23 @@ struct Line {
     pattern: Vec<u8>,
     /// Index in `pattern` where the line's own text starts. It's 3 if a `**/` was added because the line matches in any directory.
     written_at: usize,
+    /// The line only matches relative to the ignore file's directory.
+    is_anchored: bool,
     is_negated: bool,
     is_for_directories: bool,
 }
 
-/// Trims trailing whitespace but keeps a space that is escaped with `\`.
-fn before_blanks(line: &[u8]) -> &[u8] {
-    let end = line.trim_ascii_end().len();
-    let backslashes = line[..end].iter().rev().take_while(|it| **it == b'\\');
-    &line[..end + usize::from(end < line.len() && backslashes.count() % 2 == 1)]
-}
-
-/// Returns `Ok(None)` for a comment or a blank line. With braces, returns `Err` for a line the crate rejects: an unbalanced
-/// group, a trailing `\` or a reversed range like `z-a`.
-fn read(line: &[u8], options: IgnoreOptions) -> Result<Option<Line>, ()> {
-    let mut written = before_blanks(line);
+/// Parses a line for git and the npm package. Only called for lines that [`is_read_the_same`] accepts.
+/// Returns `None` for a comment or a blank line.
+fn read_plain(line: &[u8], ignores_case: bool) -> Option<Line> {
+    let mut written = line.trim_ascii_end();
     if written.starts_with(b"#") {
-        return Ok(None);
+        return None;
     }
     let is_negated = written.starts_with(b"!");
     written = &written[usize::from(is_negated)..];
     let is_for_directories = written.len() > 1 && written.ends_with(b"/");
     written = &written[..written.len() - usize::from(is_for_directories)];
-    // The crate also drops a `\` that escapes the trailing `/`.
-    if is_for_directories && options.has_braces {
-        written = written.strip_suffix(b"\\").unwrap_or(written);
-    }
     // A `/` anchors the line to the ignore file's directory. A leading `**/` undoes that.
     let mut is_anchored = strings::contains_char(written, b'/');
     written = written.strip_prefix(b"/").unwrap_or(written);
@@ -80,46 +74,115 @@ fn read(line: &[u8], options: IgnoreOptions) -> Result<Option<Line>, ()> {
         (written, is_anchored) = (rest, false);
     }
     if written.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut pattern = Vec::with_capacity(written.len() + 4);
     if !is_anchored {
         pattern.extend_from_slice(b"**/");
     }
     let written_at = pattern.len();
-    let (mut at, mut depth) = (0, 0_usize);
+    for (at, &byte) in written.iter().enumerate() {
+        match byte {
+            b'{' | b'}' | b'(' => pattern.extend_from_slice(&[b'\\', byte]),
+            b'!' if at == 0 && is_anchored => pattern.extend_from_slice(b"\\!"),
+            _ => pattern.push(byte),
+        }
+    }
+    if ignores_case {
+        pattern.make_ascii_lowercase();
+    }
+    Some(Line {
+        pattern,
+        written_at,
+        is_anchored,
+        is_negated,
+        is_for_directories,
+    })
+}
+
+/// globset matches bytes, so `?` is one byte of a multi-byte character, while Bun matches code points.
+/// Giving every non-ASCII byte its own code point, in the pattern and in the path, makes the two agree.
+fn one_code_point_per_byte(text: &[u8]) -> Cow<'_, [u8]> {
+    if text.is_ascii() {
+        return Cow::Borrowed(text);
+    }
+    let mut spread = Vec::with_capacity(text.len() * 2);
+    for &byte in text {
+        match byte.is_ascii() {
+            true => spread.push(byte),
+            false => spread.extend_from_slice(&[0xC0 | byte >> 6, 0x80 | byte & 0x3F]),
+        }
+    }
+    Cow::Owned(spread)
+}
+
+/// Parses a line like `GitignoreBuilder::add_line` of the `ignore` crate 0.4 and converts its globset pattern.
+/// Returns `Ok(None)` for a comment or a blank line and `Err` for a line the crate rejects: an unbalanced group, a trailing `\`
+/// or a reversed range like `z-a`.
+fn read_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> {
+    if line.starts_with(b"#") {
+        return Ok(None);
+    }
+    let mut written = match line.ends_with(b"\\ ") {
+        true => line,
+        false => strings::trim_unicode_whitespace_end(line),
+    };
+    if written.is_empty() {
+        return Ok(None);
+    }
+    let (mut is_negated, mut is_anchored) = (false, false);
+    if written.starts_with(b"\\!") || written.starts_with(b"\\#") {
+        written = &written[1..];
+    } else {
+        if let Some(rest) = written.strip_prefix(b"!") {
+            (written, is_negated) = (rest, true);
+        }
+        if let Some(rest) = written.strip_prefix(b"/") {
+            (written, is_anchored) = (rest, true);
+        }
+    }
+    let mut is_for_directories = false;
+    if let Some(rest) = written.strip_suffix(b"/") {
+        is_for_directories = true;
+        // A `\` that escapes the trailing `/` goes with it.
+        written = rest.strip_suffix(b"\\").unwrap_or(rest);
+    }
+    is_anchored |= strings::contains_char(written, b'/');
+    while let Some(rest) = written.strip_prefix(b"**/") {
+        (written, is_anchored) = (rest, false);
+    }
+    // Nothing is left of a line like `!` or `**/`. It matches everything.
+    if written.is_empty() && !is_anchored {
+        written = b"**";
+    }
+    let mut pattern = Vec::with_capacity(written.len() + 8);
+    if !is_anchored && written != b"**" {
+        pattern.extend_from_slice(b"**/");
+    }
+    let written_at = pattern.len();
+    let (mut at, mut depth, mut has_unclosed_class) = (0, 0_usize, false);
     while let Some(&byte) = written.get(at) {
-        let mut end = at + 1;
+        at += 1;
         match byte {
             b'\\' => {
-                end += 1;
-                match written.get(at + 1) {
-                    // Bun reads `\n` and friends as control characters. Here an escaped letter is just the letter.
-                    Some(escaped) if escaped.is_ascii_alphanumeric() => pattern.push(*escaped),
-                    Some(_) => pattern.extend_from_slice(&written[at..end]),
-                    None if options.has_braces => return Err(()),
-                    None => return Ok(None),
+                let escaped = *written.get(at).ok_or(())?;
+                at += 1;
+                // Bun reads `\n` and friends as control characters. Here an escaped letter is just the letter.
+                if !escaped.is_ascii_alphanumeric() {
+                    pattern.push(b'\\');
+                }
+                pattern.push(escaped);
+            }
+            b'[' if !has_unclosed_class => {
+                match crate::glob::from_globset_class(written, at - 1, true, &mut pattern)? {
+                    Some(end) => at = end,
+                    None => {
+                        has_unclosed_class = true;
+                        pattern.extend_from_slice(b"\\[");
+                    }
                 }
             }
-            b'[' => match bun_glob::matcher::class_end(written, at) {
-                Some(close) if options.has_braces && has_reversed_range(&written[at..close]) => {
-                    return Err(());
-                }
-                Some(close) => {
-                    // A class never matches `/`.
-                    let inside = at + 1 + usize::from(matches!(written[at + 1], b'!' | b'^'));
-                    pattern.extend_from_slice(&written[at..inside]);
-                    if inside > at + 1 {
-                        pattern.push(b'/');
-                    }
-                    pattern.extend_from_slice(&written[inside..close]);
-                    end = close;
-                }
-                // An unclosed `[` is literal for the crate. For the package the line matches nothing.
-                None if options.has_braces => pattern.extend_from_slice(b"\\["),
-                None => return Ok(None),
-            },
-            b'{' | b'}' if !options.has_braces => pattern.extend_from_slice(&[b'\\', byte]),
+            b'[' | b'(' => pattern.extend_from_slice(&[b'\\', byte]),
             b'{' => {
                 depth += 1;
                 pattern.push(byte);
@@ -128,20 +191,28 @@ fn read(line: &[u8], options: IgnoreOptions) -> Result<Option<Line>, ()> {
                 depth = depth.checked_sub(1).ok_or(())?;
                 pattern.push(byte);
             }
-            b'!' if at == 0 && is_anchored => pattern.extend_from_slice(b"\\!"),
+            // `{1..3}` is not a sequence.
+            b'.' if written.get(at) == Some(&b'.') => pattern.extend_from_slice(b"\\."),
+            b'!' if at == 1 => pattern.extend_from_slice(b"\\!"),
             _ => pattern.push(byte),
         }
-        at = end;
     }
     if depth > 0 {
         return Err(());
     }
-    if options.ignores_case {
+    let pattern = crate::glob::without_empty_alternatives(&pattern);
+    let mut pattern = one_code_point_per_byte(&pattern).into_owned();
+    // `a/**` matches everything inside `a` but not `a` itself.
+    if pattern.ends_with(b"/**") {
+        pattern.extend_from_slice(b"/*");
+    }
+    if ignores_case {
         pattern.make_ascii_lowercase();
     }
     Ok(Some(Line {
         pattern,
         written_at,
+        is_anchored,
         is_negated,
         is_for_directories,
     }))
@@ -247,8 +318,8 @@ fn regex_of_package(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
     Regex::from_bytes(&source, if ignores_case { b"i" } else { b"" }).ok()
 }
 
-/// Returns true if [`read`] and the package agree on `line` (without its `!`). That holds for ASCII lines without `\` whose
-/// classes only contain letters and digits.
+/// Returns true if [`read_plain`] and the package agree on `line` (without its `!`). That holds for ASCII lines without `\` or
+/// trailing whitespace whose classes only contain letters and digits.
 fn is_read_the_same(line: &[u8]) -> bool {
     let mut rest = line;
     while let Some(open) = strings::index_of_char_usize(rest, b'[') {
@@ -267,14 +338,10 @@ fn is_read_the_same(line: &[u8]) -> bool {
         }
         rest = &rest[open + len + 2..];
     }
-    line.is_ascii() && !strings::contains_char(line, b'\\')
-}
-
-/// Returns true for a class with a reversed range like `[z-a]`.
-fn has_reversed_range(class: &[u8]) -> bool {
-    let inside = &class[1..class.len() - 1];
-    (1..inside.len().saturating_sub(1))
-        .any(|at| inside[at] == b'-' && inside[at - 1] > inside[at + 1])
+    // The package looks for a `/` before it trims, so `a/ ` is anchored and `a/` isn't.
+    line.is_ascii()
+        && !strings::contains_char(line, b'\\')
+        && line.trim_ascii_end().len() == line.len()
 }
 
 /// Indexes into `IgnoreRules::rules`, in ascending order.
@@ -358,6 +425,7 @@ impl IgnoreRules {
                 self.rules.push(Rule {
                     pattern: None,
                     of_package: Some((body.into(), OnceLock::new())),
+                    matches_empty_path: false,
                     is_only_of_package: true,
                     is_negated: line.starts_with(b"!"),
                     is_for_directories: false,
@@ -365,13 +433,17 @@ impl IgnoreRules {
             }
             return;
         }
-        let read = match read(line, self.options) {
+        let read = match self.options.has_braces {
+            true => read_for_crate(line, self.options.ignores_case),
+            false => Ok(read_plain(line, self.options.ignores_case)),
+        };
+        let read = match read {
             Ok(Some(read)) => read,
             Ok(None) => return,
             Err(()) => return self.refused.push(line.into()),
         };
         let at = self.rules.len() as u32;
-        let (written, is_anchored) = (&read.pattern[read.written_at..], read.written_at == 0);
+        let (written, is_anchored) = (&read.pattern[read.written_at..], read.is_anchored);
         let first_len = strings::index_of_char_usize(written, b'/');
         // For these three shapes an index hit is already a match.
         let found_by_key = match written {
@@ -401,14 +473,17 @@ impl IgnoreRules {
             Some((places, key)) => {
                 bun_core::handle_oom(places.get_or_put_value(key, Vec::new())).push(at);
             }
-            None if is_anchored && first_len.is_none() => self.at_top.push(at),
+            // `**` can still reach into directories.
+            None if is_anchored && first_len.is_none() && !strings::contains(written, b"**") => {
+                self.at_top.push(at)
+            }
             None => self.others.push(at),
         }
         self.has_exceptions |= read.is_negated;
         self.rules.push(Rule {
             // `may_keep_inside` needs the pattern of every `!` line.
-            pattern: (!is_found_by_key || read.is_negated)
-                .then(|| Pattern::new(&bun_glob::pattern::of_fast_glob(&read.pattern))),
+            pattern: (!is_found_by_key || read.is_negated).then(|| Pattern::new(&read.pattern)),
+            matches_empty_path: bun_glob::matcher::match_on::<false>(written, b"").matches(),
             of_package: of_package.map(|it| (it.into(), OnceLock::new())),
             is_only_of_package: false,
             is_negated: read.is_negated,
@@ -505,8 +580,17 @@ impl IgnoreRules {
         if has_empty_name {
             return (self.rules.iter().rev()).find(|it| self.package_says(it, &text));
         }
+        if path.is_empty() {
+            let applies =
+                |it: &&Rule| it.matches_empty_path && (is_directory || !it.is_for_directories);
+            return self.rules.iter().rev().find(applies);
+        }
+        let path = &match self.options.has_braces {
+            true => one_code_point_per_byte(path),
+            false => Cow::Borrowed(path),
+        };
         let mut folded: SmallVec<[u8; 256]> = SmallVec::new();
-        let path = match self.options.ignores_case {
+        let path: &[u8] = match self.options.ignores_case {
             true => {
                 folded.extend_from_slice(path);
                 folded.make_ascii_lowercase();
@@ -597,7 +681,10 @@ impl IgnoreRules {
     /// Returns false only if no `!` line can match anything inside `directory`.
     pub fn may_keep_inside(&self, directory: &[u8]) -> bool {
         let mut folded: SmallVec<[u8; 256]> = SmallVec::new();
-        folded.extend_from_slice(directory);
+        match self.options.has_braces {
+            true => folded.extend_from_slice(&one_code_point_per_byte(directory)),
+            false => folded.extend_from_slice(directory),
+        }
         if self.options.ignores_case {
             folded.make_ascii_lowercase();
         }

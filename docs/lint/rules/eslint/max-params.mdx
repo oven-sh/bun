@@ -25,11 +25,16 @@ Off by default. To turn it on:
 "max-params" = "error" # or "warn"
 ```
 
-Every option, set to its default:
+Every option, set to its default. The ones that are commented out are unset by default.
 
 ```toml bunfig.toml
 [lint.rules]
-"max-params" = ["error", 3]
+"max-params" = ["error", {
+  max = 3,
+  countThis = "except-void", # "never", "except-void" or "always"
+  # countVoidThis = false,
+  # maximum = <number>,
+}]
 ```
 
 {/* End of the generated section. */}

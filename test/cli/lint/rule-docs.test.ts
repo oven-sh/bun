@@ -12,6 +12,7 @@ import {
   pageOf,
   pagesRoot,
   readPage,
+  readRules,
   writtenPart,
   type Example,
   type Rule,
@@ -29,15 +30,9 @@ let rules: Rule[] = [];
 const byPage = new Map<string, Rule>();
 beforeAll(async () => {
   using dir = tempDir("bun-lint-rule-docs", { "package.json": "{}" });
-  rules = JSON.parse((await lint(String(dir), ["--rules", "-f", "json"])).stdout);
+  rules = readRules((await lint(String(dir), ["--rules", "-f", "json"])).stdout);
   for (const rule of rules) byPage.set(pageOf(rule), rule);
 });
-
-/** Without an ESLint config, a core rule and its typescript-eslint version act as one rule, so either ID can report. */
-const twinOf = (rule: Rule) =>
-  rules.find(
-    it => it.value === rule.value && [it.scope, rule.scope].sort().join() === "eslint,typescript" && it !== rule,
-  )?.id;
 
 /** `compilerOptions` for the examples of rules that need types. */
 const typed = {
@@ -197,7 +192,7 @@ describe("docs/lint/rules", () => {
         const rule = byPage.get(it.page)!;
         const where = `${it.page}: line ${it.line}${it.options.length ? ` with ${JSON.stringify(it.options)}` : ""}`;
         const messages = byFile.get(join(directoryOf(it), it.filename));
-        const ids = [rule.id, ...rule.aliases, twinOf(rule)];
+        const ids = [rule.id, ...rule.aliases, rule.twin?.id];
         const own = messages?.filter(message => ids.includes(message.ruleId!)) ?? [];
         // Invalid options are reported under the rule's own ID, so don't count that as a real report.
         const fatal =

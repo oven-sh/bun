@@ -29,7 +29,7 @@ Off by default. This rule needs types, so turning it on makes `bun lint` type ch
 "@typescript-eslint/restrict-template-expressions" = "error" # or "warn"
 ```
 
-Every option, set to its default. The ones that are commented out have no default.
+Every option, set to its default:
 
 ```toml bunfig.toml
 [lint.rules]
@@ -41,7 +41,7 @@ Every option, set to its default. The ones that are commented out have no defaul
   allowNullish = true,
   allowNumber = true,
   allowRegExp = true,
-  # allow = <list of strings or objects>,
+  allow = [{ name = ["Error", "URL", "URLSearchParams"], from = "lib" }],
 }]
 ```
 

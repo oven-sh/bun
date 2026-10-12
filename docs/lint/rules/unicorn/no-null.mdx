@@ -33,6 +33,7 @@ Every option, set to its default:
 [lint.rules]
 "unicorn/no-null" = ["error", {
   checkStrictEquality = false,
+  checkArguments = true,
 }]
 ```
 
@@ -63,12 +64,18 @@ if (document.querySelector("dialog") === null) {
 | Option | Default | What it does |
 | --- | --- | --- |
 | `checkStrictEquality` | `false` | Also report `x === null` and `x !== null`. |
+| `checkArguments` | `true` | Report `null` that's passed to a function or a constructor. |
 
 {/* bad {"options": [{"checkStrictEquality": true}]} */}
 ```js
 if (selected === null) {
   selected = first();
 }
+```
+
+{/* good {"options": [{"checkArguments": false}]} */}
+```js
+save(user, null);
 ```
 
 ## When not to use it

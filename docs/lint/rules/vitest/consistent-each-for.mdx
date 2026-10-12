@@ -27,15 +27,15 @@ Off by default. To turn it on:
 "vitest/consistent-each-for" = "error" # or "warn"
 ```
 
-Every option, set to its default. The ones that are commented out have no default.
+Every option, set to its default. The ones that are commented out are unset by default.
 
 ```toml bunfig.toml
 [lint.rules]
 "vitest/consistent-each-for" = ["error", {
   # test = <value>,
-  # it = <list>,
-  # describe = <list>,
-  # suite = <list>,
+  # it = <value>,
+  # describe = <value>,
+  # suite = <value>,
 }]
 ```
 

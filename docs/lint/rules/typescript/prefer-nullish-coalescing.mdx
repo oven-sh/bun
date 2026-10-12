@@ -31,7 +31,7 @@ Off by default. This rule needs types, so turning it on makes `bun lint` type ch
 "@typescript-eslint/prefer-nullish-coalescing" = "error" # or "warn"
 ```
 
-Every option, set to its default. The ones that are commented out have no default.
+Every option, set to its default:
 
 ```toml bunfig.toml
 [lint.rules]
@@ -42,10 +42,10 @@ Every option, set to its default. The ones that are commented out have no defaul
   ignoreMixedLogicalExpressions = false,
   ignoreBooleanCoercion = false,
   ignorePrimitives = {
-    # bigint = <true or false>,
-    # boolean = <true or false>,
-    # number = <true or false>,
-    # string = <true or false>,
+    bigint = false,
+    boolean = false,
+    number = false,
+    string = false,
   },
   allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing = false,
 }]

@@ -90,7 +90,7 @@ describe.concurrent("--rules -f json", () => {
       on_by_default: false,
       modes: ["native", "eslint", "oxlint"],
       schema: [expect.objectContaining({ type: "object", additionalProperties: false })],
-      default_options: [],
+      default_options: [expect.objectContaining({ ignoreVoid: true, ignoreIIFE: false })],
     });
   });
 
@@ -111,6 +111,7 @@ describe.concurrent("--rules -f json", () => {
       default_options: [{}],
     });
     expect(options("eqeqeq").default_options).toEqual(["always"]);
+    expect(options("@typescript-eslint/array-type").default_options).toEqual([{ default: "array" }]);
     // No options.
     expect(options("no-debugger")).toEqual({ schema: null, default_options: null });
     // Rules ported from oxlint take options but have no schema.

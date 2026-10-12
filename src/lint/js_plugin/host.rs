@@ -601,7 +601,7 @@ impl<'e> Host<'e> {
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {
                 if let Some(numbered) = &nodes {
-                    scopes::write(file, &offsets, &numbered.nodes, out);
+                    scopes::write(file, &offsets, numbered, &settings.globals, out);
                 }
             }
             ask::CODE_PATHS => {

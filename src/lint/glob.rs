@@ -181,6 +181,12 @@ impl Minimatch {
         };
         hit != self.is_negated
     }
+
+    /// `match(directory, true)`, minimatch's partial match. ESLint only enters a directory if this returns true.
+    pub fn may_match_inside(&self, directory: &[u8]) -> bool {
+        let pattern = self.pattern.as_ref();
+        pattern.is_some_and(|it| it.may_match_inside(directory) != self.is_negated)
+    }
 }
 
 /// Converts `1..3` from inside braces the way picomatch does. It builds the regex class `[1-3]` from the sorted parts.
@@ -293,6 +299,106 @@ pub fn from_picomatch(pattern: &[u8], how: Picomatch) -> Vec<u8> {
     common(&grouped, false, &mut out);
     if is_deep {
         out.extend_from_slice(b"{,/**}");
+    }
+    out
+}
+
+/// Appends `c` to a class, escaped if it means something there.
+fn push_class_member(pattern: &mut Vec<u8>, c: &[u8]) {
+    if matches!(c, b"\\" | b"]" | b"[" | b"-" | b"^" | b"!") {
+        pattern.push(b'\\');
+    }
+    pattern.extend_from_slice(c);
+}
+
+/// globset's `parse_class` for the class that starts at `open`. It has no escapes, and a `]` or `-` right after the `[` is a member.
+/// Appends the class to `pattern` and returns the index after the `]`. `Ok(None)` means the class isn't closed, `Err` means
+/// it has a reversed range like `z-a`.
+pub fn from_globset_class(
+    written: &[u8],
+    open: usize,
+    has_literal_separator: bool,
+    pattern: &mut Vec<u8>,
+) -> Result<Option<usize>, ()> {
+    let mut class = vec![b'['];
+    let mut at = open + 1;
+    if matches!(written.get(at), Some(b'!' | b'^')) {
+        class.push(b'!');
+        // With `literal_separator`, a class never matches `/`.
+        if has_literal_separator {
+            class.push(b'/');
+        }
+        at += 1;
+    }
+    let (mut is_first, mut is_in_range) = (true, false);
+    let mut last: &[u8] = b"";
+    loop {
+        let Some(&byte) = written.get(at) else {
+            return Ok(None);
+        };
+        let len = usize::from(strings::wtf8_byte_sequence_length(byte)).min(written.len() - at);
+        let c = &written[at..at + len];
+        at += len;
+        match c {
+            b"]" if !is_first => break,
+            b"-" if !is_first && !is_in_range => is_in_range = true,
+            _ if is_in_range => {
+                if c < last {
+                    return Err(());
+                }
+                class.push(b'-');
+                push_class_member(&mut class, c);
+                is_in_range = false;
+            }
+            _ => {
+                push_class_member(&mut class, c);
+                last = c;
+            }
+        }
+        is_first = false;
+    }
+    if is_in_range {
+        class.extend_from_slice(b"\\-");
+    }
+    class.push(b']');
+    pattern.extend_from_slice(&class);
+    Ok(Some(at))
+}
+
+/// globset drops empty alternatives, so `{a,}` is `a`. Removes them from a converted pattern.
+pub fn without_empty_alternatives(pattern: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pattern.len());
+    let (mut at, mut depth) = (0, 0_usize);
+    // Length of `out` right after the latest `{` or `,` of a group.
+    let mut alternative_start = usize::MAX;
+    while let Some(&byte) = pattern.get(at) {
+        let len = match byte {
+            b'\\' => 2,
+            b'[' => class_end(pattern, at).map_or(1, |end| end - at),
+            _ => 1,
+        };
+        match byte {
+            b'{' => {
+                depth += 1;
+                out.push(byte);
+                alternative_start = out.len();
+            }
+            b',' if depth > 0 => {
+                if alternative_start != out.len() {
+                    out.push(byte);
+                }
+                alternative_start = out.len();
+            }
+            b'}' if depth > 0 => {
+                depth -= 1;
+                if alternative_start == out.len() && out.ends_with(b",") {
+                    out.pop();
+                }
+                out.push(byte);
+            }
+            _ => out.extend_from_slice(&pattern[at..(at + len).min(pattern.len())]),
+        }
+        at += len;
     }
     out
 }

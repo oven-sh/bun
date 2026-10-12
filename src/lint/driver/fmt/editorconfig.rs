@@ -124,21 +124,29 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
 
 /// `Glob::new(written)` of globset: `*` and `?` take a `/` too. `None`: it is refused, and the section is for no file.
 fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
-    if bun_glob::pattern::unclosed(written).is_some() {
-        return None;
-    }
     let mut glob = Vec::with_capacity(written.len() + ANYTHING.len());
     if written.starts_with(b"!") {
         glob.push(b'\\');
     }
-    let (mut at, mut depth) = (0, 0_usize);
+    // The whole pattern is `**`, which matches everything.
+    if written == b"**/" {
+        return Some(Pattern::new(b"**"));
+    }
+    let (mut at, mut depth, mut escaped) = (0, 0_usize, usize::MAX);
     while let Some(&byte) = written.get(at) {
         match byte {
             b'*' => {
                 let stars = Stars::at(written, at);
                 let end = stars.end;
+                // `{` and `,` only start an alternative inside a group.
+                let is_after_literal = at > 0
+                    && matches!(written[at - 1], b'{' | b',')
+                    && (depth == 0 || escaped == at - 1);
                 glob.extend_from_slice(
-                    match (stars.starts_name, end - at == 2 && stars.ends_name) {
+                    match (
+                        stars.starts_name && !is_after_literal,
+                        end - at == 2 && stars.ends_name,
+                    ) {
                         (true, true) => b"**",
                         (true, false) => b"**/*",
                         (false, _) => ANYTHING,
@@ -149,14 +157,13 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
             }
             b'?' => glob.extend_from_slice(b"{?,/}"),
             b'\\' => {
-                glob.extend_from_slice(&written[at..at + 2]);
+                glob.extend_from_slice(written.get(at..at + 2)?);
                 at += 1;
+                escaped = at;
             }
             b'[' => {
-                let after = at + 1 + usize::from(matches!(written.get(at + 1), Some(b'!' | b'^')));
-                let close = strings::index_of_char_pos(written, b']', after + 1)?;
-                glob.extend_from_slice(&written[at..=close]);
-                at = close;
+                at = bun_lint::glob::from_globset_class(written, at, false, &mut glob).ok()??;
+                continue;
             }
             b'{' => {
                 depth += 1;
@@ -170,6 +177,10 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
         }
         at += 1;
     }
+    if depth > 0 {
+        return None;
+    }
+    let glob = bun_lint::glob::without_empty_alternatives(&glob);
     Some(Pattern::new(&bun_glob::pattern::of_fast_glob(&glob)))
 }
 

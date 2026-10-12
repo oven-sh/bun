@@ -27,7 +27,7 @@ Off by default. To turn it on:
 "@typescript-eslint/no-shadow" = "error" # or "warn"
 ```
 
-Every option, set to its default:
+Every option, set to its default. The ones that are commented out are unset by default.
 
 ```toml bunfig.toml
 [lint.rules]
@@ -35,7 +35,7 @@ Every option, set to its default:
   allow = [], # list of strings
   builtinGlobals = false,
   # "all", "functions", "functions-and-types", "never" or "types"
-  hoist = "functions-and-types",
+  # hoist = "functions-and-types",
   ignoreOnInitialization = false,
   ignoreTypeValueShadow = true,
   ignoreFunctionTypeParameterNameValueShadow = true,

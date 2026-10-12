@@ -1,7 +1,7 @@
 //! The options that a rule accepts: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
 //! ESLint validates the options of every rule that is enabled, and refuses a configuration with
-//! options that the schema of the rule does not allow. The schemas are data here (117 KB for 340 rules,
+//! options that the schema of the rule does not allow. The schemas are data here (126 KB for 360 rules,
 //! of which that of a rule is parsed when options for it are validated), not part of the rules.
 //!
 //! The default options are merged into the options for validating and for comparing only. A rule
@@ -73,7 +73,8 @@ fn put_names(json: &mut Json) {
     }
 }
 
-/// `[meta.schema]` or `[meta.schema, meta.defaultOptions]`. `None` if the rule takes no options.
+/// An entry of [`data::SCHEMAS`]: `[meta.schema]`, then `meta.defaultOptions` if the rule has them. `None` if the rule takes
+/// no options.
 fn find(id: &[u8]) -> Option<Json> {
     let at = data::SCHEMAS
         .binary_search_by(|it| it.0.as_bytes().cmp(id))
@@ -128,8 +129,8 @@ pub(crate) fn with_defaults(meta: &'static Meta, options: &[Json]) -> Vec<Json> 
     }
 }
 
-/// A rule's `meta.schema`, and `options` merged over its `meta.defaultOptions`. `None` if the rule takes no options. Also
-/// `None` for rules ported from oxlint, which have no schema.
+/// A rule's `meta.schema`, and `options` merged over its default options. `None` if the rule takes no options. Also `None`
+/// for rules ported from oxlint, which have no schema.
 pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Json, Vec<Json>)> {
     if meta.follows_oxlint {
         return None;
@@ -138,7 +139,8 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
     let [schema, defaults @ ..] = found.as_array()? else {
         return None;
     };
-    let defaults = defaults.first().and_then(Json::as_array);
+    // The defaults that a typescript-eslint rule merges itself come last. See `data::SCHEMAS`.
+    let defaults = defaults.last().and_then(Json::as_array);
     let merged = deep_merge_arrays(defaults.unwrap_or_default(), options);
     Some((schema.clone(), merged))
 }

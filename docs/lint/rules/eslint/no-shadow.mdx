@@ -25,7 +25,7 @@ Off by default. To turn it on:
 "no-shadow" = "error" # or "warn"
 ```
 
-Every option, set to its default:
+Every option, set to its default. The ones that are commented out are unset by default.
 
 ```toml bunfig.toml
 [lint.rules]
@@ -33,7 +33,7 @@ Every option, set to its default:
   allow = [], # list of strings
   builtinGlobals = false,
   # "all", "functions", "never", "types" or "functions-and-types"
-  hoist = "functions",
+  # hoist = "functions",
   ignoreOnInitialization = false,
   ignoreTypeValueShadow = true,
   ignoreFunctionTypeParameterNameValueShadow = true,

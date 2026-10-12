@@ -28,7 +28,7 @@ mod rules;
 mod schema;
 mod scopes;
 mod tokens;
-mod wire;
+pub(crate) mod wire;
 
 pub use engine::{Demand, Engine, HEAVY, Serve, Vm};
 pub use eslint::{Configuration, Linted, Refusal, Text};

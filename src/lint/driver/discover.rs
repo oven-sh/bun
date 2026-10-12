@@ -10,7 +10,7 @@ use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
-use bun_glob::Pattern;
+use bun_lint::glob::{Minimatch, MinimatchOptions};
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::config::{Dotfiles, Seen};
 use bun_lint::linter::{FileConfig, ResolvedConfig};
@@ -67,17 +67,23 @@ impl Target {
 enum Matcher {
     /// `**`
     Everything,
-    Pattern(Pattern),
+    Pattern(Minimatch),
 }
 
 impl Matcher {
     fn new(relative: &[u8]) -> Matcher {
         match relative {
             b"**" => Matcher::Everything,
-            relative => Matcher::Pattern(Pattern::with_dots(
-                &bun_lint::glob::from_minimatch(relative),
-                bun_glob::Dots::SkipTraversal,
-            )),
+            relative => {
+                let dot = true;
+                Matcher::Pattern(Minimatch::with(
+                    relative,
+                    MinimatchOptions {
+                        dot,
+                        ..MinimatchOptions::default()
+                    },
+                ))
+            }
         }
     }
 

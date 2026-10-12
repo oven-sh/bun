@@ -1,5 +1,6 @@
 //! What is known here of a plugin, and what a configuration makes of its rules.
 
+use super::scopes::ConfiguredGlobals;
 use crate::language::{Global, LanguageOptions, SourceType};
 use crate::linter::globals::config_globals_in_order;
 use crate::linter::write_json;
@@ -147,6 +148,8 @@ pub struct FileSettings {
     pub(super) id: u32,
     /// `{ settings, languageOptions, globals, libs, freezes, isLegacy, parser }`
     pub(super) json: Box<[u8]>,
+    /// ESLint's `configGlobals`, in the order of the keys of `globals` in `json`.
+    pub(super) globals: ConfiguredGlobals,
     /// JSON: `[{ config, index }, ..]`, the objects of a configuration file that the settings are merged of, if there is
     /// something in them that JSON cannot say, like a function. A realm takes them from there.
     pub(super) sources: Option<Box<[u8]>>,
@@ -225,9 +228,13 @@ impl FileSettings {
                 Global::Off => b"off",
             }
         };
-        let all_globals = config_globals_in_order(language).into_iter();
-        let all_globals = all_globals
-            .map(|(name, setting)| (name.into_owned(), string(setting_name(setting))))
+        let globals = config_globals_in_order(language)
+            .into_iter()
+            .map(|(name, setting)| (name.into_owned().into(), setting));
+        let globals = ConfiguredGlobals::new(globals.collect());
+        let all_globals = globals
+            .iter()
+            .map(|(name, setting)| (name.to_vec(), string(setting_name(*setting))))
             .collect();
         // 1: a type, 2: a value.
         let libs = language.lib_variables().map(|(name, is_type, is_value)| {
@@ -253,6 +260,7 @@ impl FileSettings {
         Arc::new(FileSettings {
             id,
             json: json.into(),
+            globals,
             sources,
         })
     }

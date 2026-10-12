@@ -11,6 +11,7 @@ import { dirname, join, relative, sep } from "node:path";
 import {
   documentedIn,
   inferredSchema,
+  isObject,
   optionsSnippet,
   WIDTH,
   type Json,
@@ -37,7 +38,22 @@ export type Rule = {
   /** JSON schema of the options. `null` if the rule takes none, or if it was ported from oxlint, which has no schemas. */
   schema: Schema | Schema[] | null;
   default_options: Json[] | null;
+  /**
+   * Without an ESLint config, a core rule and its typescript-eslint version act as one rule. Setting either name sets
+   * both, and each runs in its own kind of file. Filled in by `readRules`.
+   */
+  twin?: Rule;
 };
+
+/** Parses the output of `bun lint --rules -f json`. */
+export function readRules(json: string) {
+  const rules: Rule[] = JSON.parse(json);
+  for (const rule of rules)
+    rule.twin = rules.find(
+      it => it.value === rule.value && [it.scope, rule.scope].sort().join() === "eslint,typescript" && it !== rule,
+    );
+  return rules;
+}
 
 /** Page name for a rule, e.g. `typescript/no-explicit-any`. Taken from its docs URL. */
 export const pageOf = (rule: Rule) =>
@@ -115,7 +131,13 @@ export function configFor(rule: Rule, written: string): Config | null {
   const documented = documentedIn(written);
   const schema = rule.schema ?? inferredSchema(documented, examplesOf(pageOf(rule), written, 1).examples);
   const severity = rule.on_by_default || "error";
-  const snippet = schema && optionsSnippet(rule.id, severity, schema, rule.default_options ?? [], documented);
+  // Where the twin's default differs, no value is the default in every file.
+  const unset = (rule.default_options ?? []).flatMap((options, i) => {
+    const other = rule.twin?.default_options?.[i];
+    if (!isObject(options) || !isObject(other)) return [];
+    return Object.keys(options).filter(key => key in other && !Bun.deepEquals(options[key], other[key]));
+  });
+  const snippet = schema && optionsSnippet(rule.id, severity, schema, rule.default_options ?? [], documented, unset);
   if (snippet?.isRequired) return { toggle: snippet.lines, needsOptions: true };
   const toggle = `${JSON.stringify(rule.id)} = "${rule.on_by_default ? "off" : "error"}"`;
   const hint = ` # or "${severity === "error" ? "warn" : "error"}"`;
@@ -137,7 +159,7 @@ function configSection(rule: Rule, { toggle, needsOptions, defaults }: Config) {
   else parts.push("Off by default. To turn it on:");
   parts.push(block(toggle));
   if (defaults?.hasUnset)
-    parts.push("Every option, set to its default. The ones that are commented out have no default.");
+    parts.push("Every option, set to its default. The ones that are commented out are unset by default.");
   else if (defaults) parts.push("Every option, set to its default:");
   if (defaults) parts.push(block(defaults.lines));
   return parts.join("\n\n");
@@ -316,7 +338,7 @@ if (import.meta.main) {
       env: { ...process.env, npm_lifecycle_event: "lint" },
       cwd: pagesRoot,
     }).stdout.toString();
-  const rules: Rule[] = JSON.parse(flag("rules") ? readFileSync(flag("rules")!, "utf8") : list());
+  const rules = readRules(flag("rules") ? readFileSync(flag("rules")!, "utf8") : list());
   let changed = 0;
   const put = (path: string, text: string) => {
     if (existsSync(path) && readFileSync(path, "utf8") === text) return;

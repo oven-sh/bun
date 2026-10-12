@@ -329,3 +329,66 @@ test.concurrent.each([
   expect(stderr).toContain("No files matching the pattern");
   expect(exitCode).toBe(2);
 });
+
+const ignorable = [
+  "a.js",
+  "b.js",
+  "build/a.js",
+  "build/sub/c.js",
+  "src/b.js",
+  "src/build/d.js",
+  "a,b.js",
+  "[a].js",
+  "{a}.js",
+  "1.js",
+  "2.js",
+  "a b.js",
+];
+
+// The expected files come from oxlint 1.87.
+test.concurrent.each([
+  ["build/", "build/a.js | build/sub/c.js | src/build/d.js"],
+  ["build\\/", "build/a.js | build/sub/c.js | src/build/d.js"],
+  ["/build", "build/a.js | build/sub/c.js"],
+  ["build", "build/a.js | build/sub/c.js | src/build/d.js"],
+  ["**/build", "build/a.js | build/sub/c.js | src/build/d.js"],
+  ["src/**", "src/b.js | src/build/d.js"],
+  ["src/*/", "src/build/d.js"],
+  ["**/sub/**", "build/sub/c.js"],
+  ["/**", ignorable.join(" | ")],
+  ["{a,b}.js", "a.js | b.js | build/a.js | src/b.js"],
+  // An empty alternative is dropped.
+  ["{a,}.js", "a.js | build/a.js"],
+  ["{a\\,b,1}.js", "a,b.js | 1.js"],
+  ["a\\,b.js", "a,b.js"],
+  ["\\{a\\}.js", "{a}.js"],
+  // No sequences and no extglob
+  ["{1..2}.js", ""],
+  ["@(a|b).js", ""],
+  ["[a-b].js", "a.js | b.js | build/a.js | src/b.js"],
+  ["[!a].js", "b.js | build/sub/c.js | src/b.js | src/build/d.js | 1.js | 2.js"],
+  ["\\[a\\].js", "[a].js"],
+  // `\` doesn't escape inside a class, so the class ends at the first `]`.
+  ["[\\]a].js", ""],
+  ["a\\ b.js", "a b.js"],
+  ["a b.js  ", "a b.js"],
+  ["!a.js", ""],
+])("the oxlint ignorePatterns entry %j ignores the same files as oxlint", async (line, ignored) => {
+  using dir = tempDir("bun-lint-glob", {
+    ...Object.fromEntries(ignorable.map(file => [file, "debugger;\n"])),
+    ".oxlintrc.json": JSON.stringify({ rules: { "no-debugger": "error" }, ignorePatterns: [line] }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "-f", "json", "."],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // There's no JSON if every file is ignored.
+  const diagnostics: { filename: string }[] = stdout.startsWith("{") ? JSON.parse(stdout).diagnostics : [];
+  const linted = diagnostics.map(it => it.filename.replaceAll("\\", "/"));
+  expect(ignorable.filter(file => !linted.includes(file)).join(" | ")).toBe(ignored);
+  expect(exitCode).toBe(1);
+});

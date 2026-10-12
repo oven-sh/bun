@@ -31,6 +31,7 @@ use super::state::{ChoiceKind, Cx, LoopKind, State};
 use super::{Event, Store};
 use crate::ast::{File, Node};
 use crate::estree::{Field, NodeType, VNode, Value};
+use crate::js_plugin::wire::push_list;
 use bun_sema::atom::Atom;
 
 /// The ESTree of a file. Nodes are numbered in traversal order and `Program` is 0.
@@ -576,17 +577,6 @@ impl<'a> Walker<'_, '_, 'a> {
             self.leave(last);
         }
     }
-}
-
-/// Appends `list` to `lists` and returns its offset.
-fn push_list(lists: &mut Vec<u32>, list: &[u32]) -> u32 {
-    if list.is_empty() {
-        return 0;
-    }
-    let at = lists.len() as u32;
-    lists.push(list.len() as u32);
-    lists.extend_from_slice(list);
-    at
 }
 
 /// Analyzes the whole file and returns the message described at the top of this file.

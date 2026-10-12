@@ -17,6 +17,7 @@
 pub mod ast;
 pub mod code_path;
 pub mod context;
+pub mod docs;
 pub(crate) mod estree;
 pub mod fix;
 pub mod formats;

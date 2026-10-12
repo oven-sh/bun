@@ -9217,19 +9217,6 @@
       "tsconfig.json": "[{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] }, \"include\": [\"**\", \"a.ts\"] }]\n"
     }
   },
-  "37-C17a": {
-    "files": {
-      "a.ts": "const sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] }, \"extends\": \"./tsconfig.json\" }\n"
-    }
-  },
-  "37-C17b": {
-    "files": {
-      "a.ts": "const sentinel: number = \"\";\n",
-      "b.json": "{ \"extends\": \"./TSCONFIG.json\" }\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"strict\": 1 }, \"extends\": \"./B.json\" }\n"
-    }
-  },
   "37-C18a": {
     "files": {
       "a.ts": "const sentinel: number = \"\";\n",

@@ -865,6 +865,44 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     expect(exitCode).toBe(1);
   });
 
+  // `tsc` 7 prints `{0}` for the files. TypeScript 6 lists them.
+  test("TS18000 lists the configuration files that extend each other in a circle", async () => {
+    const options = `"compilerOptions": { "noEmit": true, "types": [], "lib": ["es5"] }`;
+    const source = { "a.ts": `const sentinel: number = "";\n` };
+    const bad = `a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    const circularity = `error TS18000: Circularity detected while resolving configuration: `;
+    using itself = tempDir("bun-check", { ...source, "tsconfig.json": `{ ${options}, "extends": "./tsconfig.json" }` });
+    using three = tempDir("bun-check", {
+      ...source,
+      "tsconfig.json": `{ ${options}, "extends": "./one.json" }`,
+      // `two.json` is extended twice, and the circle is reported once.
+      "one.json": `{ "extends": ["./two.json", "./sub/../three"] }`,
+      "two.json": `{ "extends": "./three.json" }`,
+      "three.json": `{ "extends": "./one.json" }`,
+      "sub/keep.txt": "",
+    });
+    const results = await Promise.all([check(itself), check(three)]);
+    expect(results.map(it => it.stdout.split("\n"))).toEqual([
+      [circularity + `<dir>/tsconfig.json -> <dir>/tsconfig.json`, bad],
+      [
+        circularity + `<dir>/tsconfig.json -> <dir>/one.json -> <dir>/two.json -> <dir>/three.json -> <dir>/one.json`,
+        bad,
+      ],
+    ]);
+    if (foldsCase) {
+      using cased = tempDir("bun-check", {
+        ...source,
+        "tsconfig.json": `{ ${options}, "extends": "./B.json" }`,
+        "b.json": `{ "extends": "./TSCONFIG.json" }`,
+      });
+      const { stdout } = await check(cased);
+      expect(stdout.split("\n")).toEqual([
+        circularity + `<dir>/tsconfig.json -> <dir>/B.json -> <dir>/TSCONFIG.json`,
+        bad,
+      ]);
+    }
+  });
+
   // It is parsed once for all of them. What `tsc -b` reports.
   describe("projects of a build that extend one configuration file", () => {
     const common = `"strict": true, "composite": true, "emitDeclarationOnly": true, "types": [], "lib": ["es5"]`;
@@ -943,8 +981,10 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
             `function unused() {}\nexport function f(x) { return x; }\n` + bad,
           ),
         },
+        // The files as TypeScript 6 lists them. `tsc` 7 prints `{0}` in their place.
         [0, 1, 2, 3].flatMap(i => [
-          `error TS18000: Circularity detected while resolving configuration: {0}`,
+          `error TS18000: Circularity detected while resolving configuration: <dir>/p${i}/tsconfig.json -> ` +
+            (i % 2 ? `<dir>/b.json -> <dir>/a.json -> <dir>/b.json` : `<dir>/a.json -> <dir>/b.json -> <dir>/a.json`),
           `p${i}/a.ts(1,10): error TS6133: 'unused' is declared but its value is never read.`,
           isBad(i, 3),
         ]),

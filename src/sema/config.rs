@@ -203,7 +203,12 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 /// one extends, by its path. The projects of a build often extend one file, and `paths` in it can
 /// have thousands of entries.
 #[derive(Default)]
-pub struct ExtendedConfigCache(RefCell<FxHashMap<Vec<u8>, Rc<ExtendedConfigCacheEntry>>>);
+pub struct ExtendedConfigCache {
+    kept: RefCell<FxHashMap<Vec<u8>, Rc<ExtendedConfigCacheEntry>>>,
+    /// Those that met a cycle, which holds for one `load_overriding` only: what is made of the
+    /// files of a cycle depends on where it was entered.
+    in_cycle: RefCell<FxHashMap<Vec<u8>, Rc<ExtendedConfigCacheEntry>>>,
+}
 
 struct ExtendedConfigCacheEntry {
     extended_config: Option<Raw>,
@@ -324,7 +329,7 @@ pub fn merge_compiler_options(
     }
 }
 
-/// `parseConfig`, and `ParseExtendedConfig` before it. `stack`: `resolutionStack`. The syntax trees
+/// `parseConfig`, and `ParseExtendedConfig` before it. `stack`: `resolutionStack`, as file names. The syntax trees
 /// of the files are left in `session`.
 fn parse_config(
     host: &dyn Host,
@@ -363,8 +368,11 @@ fn parse_config(
     }
     let is_case_sensitive = host.is_case_sensitive();
     let resolved_path = to_path(path, is_case_sensitive).into_owned();
-    if stack.contains(&resolved_path) {
-        errors.push(ConfigError::new(18000, &[]));
+    if is_on_stack(stack, &resolved_path, is_case_sensitive) {
+        // typescript-go passes no argument, and prints `{0}`. TypeScript 6 prints the files.
+        let files = stack.iter().map(|it| &it[..]).chain([path]);
+        let files: Vec<_> = files.map(displayed_path).collect();
+        errors.push(ConfigError::new(18000, &[&files.join(&b" -> "[..])]));
         return None;
     }
     // `convertConfigFileToObject`
@@ -503,7 +511,7 @@ fn parse_config(
     let Some(extended_config_path) = extended_config_path else {
         return Some(own);
     };
-    stack.push(resolved_path);
+    stack.push(path.to_vec());
     let mut inherited = Raw::default();
     for extended_path in &extended_config_path {
         let cache = extended_config_cache;
@@ -575,6 +583,11 @@ fn parse_config(
     Some(own)
 }
 
+/// Whether `resolved_path`, a `tspath.Path`, is the path of one of the file names in `stack`.
+fn is_on_stack(stack: &[Vec<u8>], resolved_path: &[u8], is_case_sensitive: bool) -> bool {
+    (stack.iter()).any(|it| *to_path(it, is_case_sensitive) == *resolved_path)
+}
+
 /// `getExtendedConfig`
 fn get_extended_config(
     host: &dyn Host,
@@ -587,31 +600,28 @@ fn get_extended_config(
     let name = extended_config_file_name;
     let path = to_path(name, host.is_case_sensitive()).into_owned();
     // A cycle is for `parse_config` to report, by `stack`.
-    if stack.contains(&path) {
+    if is_on_stack(stack, &path, host.is_case_sensitive()) {
         return parse_config(host, session, name, stack, extended_config_cache, errors);
     }
-    let known = extended_config_cache.0.borrow().get(&path).cloned();
+    let cache = extended_config_cache;
+    let known = cache.kept.borrow().get(&path).cloned();
+    let known = known.or_else(|| cache.in_cycle.borrow().get(&path).cloned());
     let entry = known.unwrap_or_else(|| {
         let mut errors = Vec::new();
-        let extended_config = parse_config(
-            host,
-            session,
-            name,
-            stack,
-            extended_config_cache,
-            &mut errors,
-        );
-        // What is made of the files of a cycle depends on where it was entered. typescript-go keeps
-        // it, so there the options of a project depend on which project was loaded first.
+        let extended_config = parse_config(host, session, name, stack, cache, &mut errors);
+        // typescript-go keeps these for the whole build, so there the options of a project depend
+        // on which project was loaded first.
         let is_in_cycle = errors.iter().any(|error| error.code == 18000);
         let entry = Rc::new(ExtendedConfigCacheEntry {
             extended_config,
             errors,
         });
-        if !is_in_cycle {
-            let mut cache = extended_config_cache.0.borrow_mut();
-            cache.insert(path, Rc::clone(&entry));
-        }
+        let kept = if is_in_cycle {
+            &cache.in_cycle
+        } else {
+            &cache.kept
+        };
+        kept.borrow_mut().insert(path, Rc::clone(&entry));
         entry
     });
     errors.extend(entry.errors.iter().cloned());
@@ -716,6 +726,7 @@ pub fn load_overriding(
 ) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
     let cache = extended_config_cache;
+    cache.in_cycle.borrow_mut().clear();
     let raw = parse_config(host, session, path, &mut Vec::new(), cache, &mut errors);
     let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
         return Err(errors);

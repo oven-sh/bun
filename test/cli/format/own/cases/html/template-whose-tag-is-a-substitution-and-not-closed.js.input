@@ -1,0 +1,7 @@
+a = html`<${t}   >`;
+b = html`<${t}   ${a}>x`;
+c = html`<a-${t}   b>`;
+d = html`<${t}   ${a}><b>x</b>`;
+e = open ? html`<${t}   ${a}>` : html`<${t}   ${a}>${k}</${t}>`;
+f = html`<${t}   ${a} />`;
+g = html`<div   ${a}>`;

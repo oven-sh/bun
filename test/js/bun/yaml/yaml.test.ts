@@ -1705,6 +1705,38 @@ folded: >
           expect(YAML.parse("{? !!str :b}\n")).toEqual({ ":b": null });
         });
 
+        test(":-prefixed plain scalar at the start of a flow-map entry", () => {
+          // [126] ns-plain-first: `:` followed by ns-plain-safe starts a plain
+          // scalar. Only after a JSON-like key is an adjacent `:` an indicator.
+          expect(YAML.parse("{:a b}\n")).toEqual({ ":a b": null });
+          expect(YAML.parse("{a: 1, :b c}\n")).toEqual({ a: 1, ":b c": null });
+          expect(YAML.parse("{a, :b}\n")).toEqual({ a: null, ":b": null });
+          expect(YAML.parse("[{:a}]\n")).toEqual([{ ":a": null }]);
+        });
+
+        test("the end of a flow collection at the indentation of its parent", () => {
+          // Less than s-flow-line-prefix(n) asks for. It was read behind a
+          // scalar (`a: [\n  x\n]`) and refused behind `[`, `{` and `,`.
+          // eemeli/yaml (with a warning) and js-yaml read all of them.
+          expect(YAML.parse("a: [\n]\n")).toEqual({ a: [] });
+          expect(YAML.parse("a: {\n}\nb: 1\n")).toEqual({ a: {}, b: 1 });
+          expect(YAML.parse("a: [\n  x,\n  y,\n]\n")).toEqual({ a: ["x", "y"] });
+          expect(YAML.parse("a:\n  b: {\n    c: 1,\n  }\n")).toEqual({ a: { b: { c: 1 } } });
+          expect(YAML.parse("- [\n]\n")).toEqual([[]]);
+          // What is in it still has to be indented.
+          expect(() => YAML.parse("a: [\nx]\n")).toThrow("Unexpected token");
+        });
+
+        test("e-node key below a value that is an alias or a flow collection", () => {
+          // [192] ns-l-block-map-implicit-entry: the key can be e-node. It was
+          // read below a scalar (`a: x\n: y`).
+          expect(YAML.parse("a: [x]\n: y\n")).toEqual({ a: ["x"], null: "y" });
+          expect(YAML.parse("a: {x: 1}\n: y\n")).toEqual({ a: { x: 1 }, null: "y" });
+          expect(YAML.parse("a: &b c\nd: *b\n: y\n")).toEqual({ a: "c", d: "c", null: "y" });
+          // As a key, they are still on one line.
+          expect(() => YAML.parse("a: 1\n[x]\n: y\n")).toThrow("Multiline implicit key");
+        });
+
         test("flow-map value is ns-flow-node, not a pair", () => {
           // [147] c-ns-flow-map-separate-value — value is ns-flow-node only.
           expect(() => YAML.parse("{a: b: c}\n")).toThrow("Unexpected token");

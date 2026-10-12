@@ -2210,6 +2210,7 @@ fn save_lockfile_only(
         packages_len_before_install,
         log_level,
     )?;
+    super::package_json_write_back::flush(manager)?;
 
     if manager.subcommand == Subcommand::Dedupe {
         if manager.options.do_.summary() {

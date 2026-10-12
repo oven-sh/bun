@@ -334,8 +334,14 @@ describe.concurrent("require() of a module whose plugin callback returns a promi
     try {
       lines = JSON.parse(stdout.trim().split("\n").at(-1)!);
     } catch {}
-    // `bun test` reports on stderr, so it only counts when the run failed.
-    return { lines, stderr: mode === "bun" || exitCode !== 0 ? stderr : "", exitCode };
+    // `bun test` reports on stderr: the lines of a run that passed are left out, anything else is kept.
+    const report =
+      /^(scenario\.test\.cjs:|\(pass\) scenario \[.+\]| 1 pass| 0 fail|Ran 1 test across 1 file\. \[.+\])?$/;
+    const unexpected = stderr
+      .split(/\r?\n/)
+      .filter(line => mode === "bun" || !report.test(line))
+      .join("\n");
+    return { lines, stderr: unexpected, exitCode };
   }
 
   describe.each(["bun", "bun test"] as const)("%s", mode => {

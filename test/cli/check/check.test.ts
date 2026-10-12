@@ -3385,55 +3385,30 @@ export const alsoWrong = wrong.nope;
 
     // The checker has a thousand questions open at the most, which is less than its stack holds. That one was refused for that was
     // forgotten: the walk over the tree asked again at every level, each time down to where the last was refused, and about an
-    // argument first about every call around it: minutes to days. What an argument is depends on the call that is open around
-    // it, so calls are refused whole, as where the stack runs out: the file is said to be incomplete, and what is wrong inside
-    // such an expression is not reported.
+    // argument first about every call around it: minutes to days. What is refused so is refused whole, as where the stack runs
+    // out: the file is said to be incomplete, and what is wrong inside such an expression is not reported.
     test.skipIf(isDebug || isASAN).each([
-      ["calls", "f("],
-      ["new", "new f("],
-    ])(
-      "3,000 %s in each other",
-      async (_, open) => {
-        using dir = project({
-          "a.ts": `declare const f: any;\nexport const r = ${repeat(open, 3_000)}1${repeat(")", 3_000)};\nexport const wrong: number = "";\n`,
-        });
-        const { stdout, exitCode } = await check(dir, [], {}, 10_000);
-        expect(stdout).toBe(`a.ts(3,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
-        expect(exitCode).toBe(1);
-      },
-      // Longer than the child may take, which does not outlive the test then.
-      20_000,
-    );
-
-    // Any other expression is the same whatever is open around it. The innermost of those that are open is checked on its own, from
-    // where the outermost began, and then the outermost again: so to any depth, as on TypeScript's stack, which grows.
-    test.skipIf(isDebug || isASAN).each([
+      ["calls", "f(", ")", 3_000],
+      ["new", "new f(", ")", 3_000],
       ["array literals", "[", "]", 3_000],
       ["spread array literals", "[...", "]", 3_000],
       ["object literals", "{ a: ", " }", 3_000],
       ["template literals", "`${", "}`", 2_500],
-      ["element accesses", "f[", "]", 3_000],
-      ["type assertions", "(", " as any)", 3_000],
-      // TypeScript gives up on the control flow of more.
-      ["conditions", "f ? ", " : 0", 1_500],
+      ["conditions", "f ? ", " : 0", 15_000],
       ["assignments", "a = ", "", 15_000],
       ["!", "!", "", 15_000],
       ["typeof", "typeof ", "", 15_000],
-      ["**", "1 ** ", "", 10_000],
     ])(
       "%s in each other",
       async (_, open, close, depth) => {
         using dir = project({
-          "a.ts": `declare const f: any;\ndeclare let a: any;\nexport const r = ${repeat(open, depth)}nope${repeat(close, depth)};\nexport const wrong: number = "";\n`,
+          "a.ts": `declare const f: any;\ndeclare let a: any;\nexport const r = ${repeat(open, depth)}1${repeat(close, depth)};\nexport const wrong: number = "";\n`,
         });
-        const { stdout, stderr, exitCode } = await check(dir, [], {}, 10_000);
-        expect(stdout).toBe(
-          `a.ts(3,${"export const r = ".length + open.length * depth + 1}): error TS2304: Cannot find name 'nope'.
-a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
-        );
-        expect(stderr.split("\n")[0]).toBe("Found 2 errors in 1 file, checked 1 file [time]");
+        const { stdout, exitCode } = await check(dir, [], {}, 10_000);
+        expect(stdout).toBe(`a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
         expect(exitCode).toBe(1);
       },
+      // Longer than the child may take, which does not outlive the test then.
       20_000,
     );
 

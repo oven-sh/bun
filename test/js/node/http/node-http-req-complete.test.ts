@@ -401,35 +401,42 @@ for (const expectation of ["100-continue", "something-else"]) {
   });
 }
 
-// The head of /a needs two reads. The read that completes it also brings the
-// chunked body of /a and all of /b. The parser must leave that body at its last
-// chunk and read /b as a request.
-test("a request pipelined behind a chunked request whose head took two reads is answered", async () => {
-  const server = http.createServer((req, res) => {
-    let body = "";
-    req.on("data", chunk => (body += chunk));
-    req.on("end", () => res.end(`${req.url}:${body};`));
-  });
-  await withServer(server, async port => {
-    const { promise: failed, reject } = Promise.withResolvers<never>();
-    const head = "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
-    const socket = send(port, head.slice(0, 20), reject);
-    let response = "";
-    socket.on("data", chunk => (response += chunk));
-    // One round trip on another connection: the server has read the partial head by then.
-    const barrier = connect(port, "127.0.0.1");
-    barrier.resume();
-    barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-    await once(barrier, "close");
-    socket.write(
-      head.slice(20) +
-        "5\r\nhello\r\n0\r\n\r\n" +
-        "POST /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nworld",
-    );
-    await Promise.race([once(socket, "close"), failed]);
-    assert.deepStrictEqual(response.match(/\/[ab]:\w*;/g), ["/a:hello;", "/b:world;"]);
-  });
-});
+// The parser must leave the chunked body of /a at its last chunk and read /b as a request.
+// One row for each place where it decodes a chunked body.
+{
+  const head = "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+  for (const [delivery, writes] of [
+    ["in the read of its head", [head + "5\r\nhello\r\n0\r\n\r\n"]],
+    ["whose last chunk came in a later read", [head + "5\r\nhello\r\n", "0\r\n\r\n"]],
+    ["whose head took two reads", [head.slice(0, 20), head.slice(20) + "5\r\nhello\r\n0\r\n\r\n"]],
+  ] as [string, string[]][]) {
+    test(`a request pipelined behind a chunked request ${delivery} is answered`, async () => {
+      const server = http.createServer((req, res) => {
+        let body = "";
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => res.end(`${req.url}:${body};`));
+      });
+      await withServer(server, async port => {
+        const { promise: failed, reject } = Promise.withResolvers<never>();
+        const next = "POST /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nworld";
+        const [first, ...rest] = [...writes.slice(0, -1), writes.at(-1) + next];
+        const socket = send(port, first, reject);
+        let response = "";
+        socket.on("data", chunk => (response += chunk));
+        for (const write of rest) {
+          // One round trip on another connection: the server has read the earlier write by then.
+          const barrier = connect(port, "127.0.0.1");
+          barrier.resume();
+          barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+          await once(barrier, "close");
+          socket.write(write);
+        }
+        await Promise.race([once(socket, "close"), failed]);
+        assert.deepStrictEqual(response.match(/\/[ab]:\w*;/g), ["/a:hello;", "/b:world;"]);
+      });
+    });
+  }
+}
 
 // close() and closeIdleConnections() take a connection whose parser is between
 // messages and whose response has ended:
@@ -496,12 +503,12 @@ describe("a sweep behind the last byte of a request body", () => {
   ];
 
   // One keep-alive connection. "closed": the sweep took it. "answered": it served one more request.
-  // `behind` bytes of that request come in the write that ends the body, the rest behind the sweep.
+  // The write that ends the body also brings `tail` and `behind` bytes of that request. The rest comes behind the sweep.
   async function connectionAfterSweep(
     method: Method,
     arrange: Arrange,
     writes: string[],
-    { secure = false, behind = 0 } = {},
+    { secure = false, behind = 0, tail = "" } = {},
   ) {
     const swept = Promise.withResolvers<void>();
     const closeCallback = Promise.withResolvers<void>();
@@ -547,7 +554,7 @@ describe("a sweep behind the last byte of a request body", () => {
           barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
           await once(barrier, "close");
         }
-        socket.write(index === writes.length - 1 ? write + second.slice(0, behind) : write);
+        socket.write(index === writes.length - 1 ? write + tail + second.slice(0, behind) : write);
       }
       await swept.promise;
       await Promise.race([stored.promise, outcome.promise]);
@@ -565,7 +572,8 @@ describe("a sweep behind the last byte of a request body", () => {
     }
   }
 
-  const sweepWith = async (methods: Method[], ...cell: [Arrange, string[], { secure?: boolean; behind?: number }?]) =>
+  type Cell = [Arrange, string[], { secure?: boolean; behind?: number; tail?: string }?];
+  const sweepWith = async (methods: Method[], ...cell: Cell) =>
     Object.fromEntries(
       await Promise.all(methods.map(async method => [method, await connectionAfterSweep(method, ...cell)])),
     );
@@ -580,14 +588,43 @@ describe("a sweep behind the last byte of a request body", () => {
   }
 
   // The server reads each write before the client sends the next one.
-  for (const [delivery, writes] of [
+  const deliveries: [name: string, writes: string[]][] = [
     ["the last chunk in a later read", [chunked + "\r\n5\r\nhello\r\n", "0\r\n\r\n"]],
     ["the head in two reads", [chunked.slice(0, 20), chunked.slice(20) + "\r\n5\r\nhello\r\n0\r\n\r\n"]],
     ["trailer fields behind the last chunk", [chunked + "Trailer: X-Sum\r\n\r\n5\r\nhello\r\n0\r\nX-Sum: 1\r\n\r\n"]],
     ["an empty body", [chunked + "\r\n0\r\n\r\n"]],
-  ] as [string, string[]][]) {
+  ];
+  for (const [delivery, writes] of deliveries) {
     test(`chunked, ${delivery}: a sweep from the response's 'finish' listener takes the connection`, async () => {
       assert.deepStrictEqual(await sweepWith(bothMethods, inFinish, writes), each(bothMethods, "closed"));
+    });
+  }
+
+  // An empty line in front of a request line begins no request (RFC 9112, section 2.2), so the
+  // connection is idle with one behind its last chunk. One row for each chunk loop of the parser.
+  for (const [delivery, writes] of [
+    ["one read", [framings[0][1]]],
+    deliveries[0],
+    deliveries[1],
+  ] as typeof deliveries) {
+    for (const [place, arrange] of [places[0], places[2]]) {
+      test(`chunked, ${delivery}: a sweep from ${place} takes a connection with an empty line behind the last chunk`, async () => {
+        assert.deepStrictEqual(
+          await sweepWith(bothMethods, arrange, writes, { tail: "\r\n" }),
+          each(bothMethods, "closed"),
+        );
+      });
+    }
+  }
+
+  // The read that ends the body also holds the next request. Node.js has dispatched that request by
+  // then, and the sweep destroys the connection with its response unsent. Bun has not parsed it yet.
+  for (const [framing, request] of framings) {
+    test(`${framing}: a sweep from the request's 'end' listener takes a connection whose read holds the next request`, async () => {
+      assert.deepStrictEqual(
+        await sweepWith(bothMethods, inEnd, [request], { behind: second.length }),
+        each(bothMethods, "closed"),
+      );
     });
   }
 

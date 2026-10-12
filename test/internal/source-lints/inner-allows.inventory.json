@@ -211,7 +211,6 @@
     "clippy::unwrap_or_default",
     "clippy::useless_conversion",
     "clippy::useless_format",
-    "dead_code",
     "unreachable_pub"
   ],
   "src/react_compiler/inference/mod.rs": [

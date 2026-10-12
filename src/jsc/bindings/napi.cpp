@@ -1143,26 +1143,18 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, js_object);
     NAPI_CHECK_ARG(env, finalize_cb);
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = JSC::getVM(globalObject);
-
     JSC::JSValue objectValue = toJS(js_object);
     JSC::JSObject* object = objectValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, object, napi_invalid_arg);
 
+    auto* ref = new NapiRef(*env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
+    ref->boundCleanup = &env->addFinalizer(wrap_cleanup, native_object, ref);
+    ref->nativeObject = native_object;
     if (result) {
-        // If they're expecting a Ref, use the ref.
-        auto* ref = new NapiRef(*env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
-        // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
-        ref->setValueInitial(object, true);
-        ref->nativeObject = native_object;
+        ref->weakValueRef.set(objectValue, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), ref);
         *result = toNapi(ref);
     } else {
-        // Otherwise, it's cheaper to just call .addFinalizer.
-        vm.heap.addFinalizer(object, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
-            NAPI_LOG("finalizer %p", finalize_hint);
-            env->doFinalizer(finalize_cb, native_object, finalize_hint);
-        });
+        ref->weakValueRef.set(objectValue, Napi::NapiRefSelfDeletingWeakHandleOwner::weakValueHandleOwner(), ref);
     }
 
     NAPI_RETURN_SUCCESS(env);

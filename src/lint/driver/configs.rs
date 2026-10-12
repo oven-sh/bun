@@ -307,6 +307,8 @@ pub(crate) struct Loader<'l> {
     named: Guarded<Vec<Vec<u8>>>,
     /// [`Loader::refused`]
     refused: OnceLock<Vec<u8>>,
+    /// [`Loader::mistake`]
+    mistake: OnceLock<Vec<u8>>,
     /// `options.typeAware` of the configuration of the working directory, if that is one of oxlint.
     wants_types: OnceLock<Option<bool>>,
     /// The project is one of Vite+ without a configuration file of a linter: [`NAMES_OF_VITE`] are the files that count.
@@ -323,7 +325,7 @@ fn strings_of(items: &[Vec<u8>]) -> Json {
     Json::Array(items.iter().cloned().map(Json::String).collect())
 }
 
-fn severity_name(severity: Severity) -> Json {
+pub(crate) fn severity_name(severity: Severity) -> Json {
     Json::String(match severity {
         Severity::Off => b"off".to_vec(),
         Severity::Warn => b"warn".to_vec(),
@@ -521,6 +523,7 @@ impl<'l> Loader<'l> {
             lacks_file: OnceLock::new(),
             named: Default::default(),
             refused: OnceLock::new(),
+            mistake: OnceLock::new(),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
             searched_from: Default::default(),
@@ -704,6 +707,9 @@ impl<'l> Loader<'l> {
             first.push((&b"languageOptions"[..], object(language_options)));
         }
         first.push((b"rules", Json::Object(self.rules_of_the_command_line())));
+        if !options.settings.is_empty() {
+            first.push((b"settings", Json::Object(options.settings.clone())));
+        }
         let mut linter_options = Vec::new();
         if options.report_unused_disable_directives {
             linter_options.push((
@@ -874,6 +880,9 @@ impl<'l> Loader<'l> {
                     Json::Object(options.parser_options.clone()),
                 ));
             }
+            if !options.settings.is_empty() {
+                last.push((b"settings", Json::Object(options.settings.clone())));
+            }
             if last.len() > 1 {
                 put(b"overrides", vec![object(last)]);
             }
@@ -978,7 +987,11 @@ impl<'l> Loader<'l> {
             }));
         }
         self.check_flags(Flavor::BuiltIn, None)?;
-        native::check_rules(self.linter.registry(), self.options)?;
+        if let Err(mistake) = native::check_rules(self.linter.registry(), self.options) {
+            let colors = self.environment.stderr.colors;
+            let _ = self.mistake.set(mistake.print(self.cwd(), colors));
+            return Err(Fatal(mistake.message));
+        }
         // Every file is in it, on whatever drive.
         let mut objects = vec![built_in_json(self.options.type_aware == Some(true))];
         objects.extend(native::categories(self.linter.registry(), self.options));
@@ -1101,7 +1114,8 @@ impl<'l> Loader<'l> {
                         json
                     },
                     true,
-                )?
+                )
+                .map_err(|Fatal(why)| Fatal(self.name_place(Some(path), &why)))?
             }
             Flavor::Oxlint => self.rc(path, json)?,
         };
@@ -1340,6 +1354,26 @@ impl<'l> Loader<'l> {
         Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
     }
 
+    /// `why`, the words of ESLint about a configuration, below the name of what the mistake is written in. `file`: the
+    /// configuration file.
+    pub(crate) fn name_place(&self, file: Option<&[u8]>, why: &[u8]) -> Vec<u8> {
+        let is_about =
+            |id: &[u8]| strings::contains(why, &[b"Key \"rules\": Key \"", id, b"\""].concat());
+        let rule = self.options.rule.iter().position(|it| is_about(&it.0));
+        let place = match (rule, file) {
+            (Some(at), _) if at < self.options.rules_of_bunfig.len() => b"bunfig.toml".to_vec(),
+            (Some(_), _) => b"--rule".to_vec(),
+            (None, Some(file)) => paths::relative(self.cwd(), file),
+            (None, None) => return why.to_vec(),
+        };
+        [b"Invalid config in ", &place[..], b"\n", why].concat()
+    }
+
+    /// What is wrong with `[lint.rules]` of bunfig.toml or with `--rule`, where no configuration file counts: as it is printed.
+    pub(crate) fn mistake(&self) -> Option<&[u8]> {
+        self.mistake.get().map(Vec::as_slice)
+    }
+
     /// What [`Loader::check_flags`] has failed with. Neither tool has an exit code for it.
     pub(crate) fn refused(&self) -> Option<&[u8]> {
         self.refused.get().map(Vec::as_slice)
@@ -1492,6 +1526,9 @@ impl<'l> Loader<'l> {
         if !options.plugin.is_empty() {
             entries.push((b"plugins", strings_of(&options.plugin)));
         }
+        if !options.settings.is_empty() {
+            entries.push((b"settings", Json::Object(options.settings.clone())));
+        }
         let rules = self.rules_of_the_command_line();
         if !rules.is_empty() {
             entries.push((b"rules", Json::Object(rules)));
@@ -1581,7 +1618,7 @@ impl<'l> Loader<'l> {
             &mut load,
             &mut load_plugin,
         )
-        .map_err(|error| Fatal(error.message))?;
+        .map_err(|error| Fatal(self.name_place(file.as_deref(), &error.message)))?;
         for note in config.notes() {
             self.warn(&[note]);
         }

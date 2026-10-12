@@ -310,7 +310,7 @@ const ONLY_OF_ESLINT: [&[u8]; 36] = [
 ];
 
 /// The other way round, beside `--import-plugin` and the like.
-const ONLY_OF_OXLINT: [&[u8]; 11] = [
+const ONLY_OF_OXLINT: [&[u8]; 10] = [
     b"allow",
     b"warn",
     b"deny",
@@ -321,7 +321,6 @@ const ONLY_OF_OXLINT: [&[u8]; 11] = [
     b"fix-dangerously",
     b"type-check",
     b"rules",
-    b"lsp",
 ];
 
 /// Those of [`ONLY_OF_ESLINT`] that nothing can be done about with a configuration of oxlint.
@@ -419,10 +418,12 @@ pub struct Options {
     pub global: Vec<Vec<u8>>,
     pub parser: Option<Vec<u8>>,
     pub parser_options: Vec<(Vec<u8>, Json)>,
+    /// `[lint.settings]` of bunfig.toml: ESLint's and oxlint's `settings`. No flag sets them.
+    pub settings: Vec<(Vec<u8>, Json)>,
     pub plugin: Vec<Vec<u8>>,
     pub rule: Vec<(Vec<u8>, Json)>,
-    /// How many of them, the first, are in `[lint.rules]` of bunfig.toml.
-    pub rules_of_bunfig: usize,
+    /// For the first of them, which are in `[lint.rules]` of bunfig.toml: where.
+    pub rules_of_bunfig: Vec<crate::bunfig::RuleOfBunfig>,
     pub fix: bool,
     pub fix_dry_run: bool,
     pub fix_type: Option<Vec<FixType>>,
@@ -469,6 +470,8 @@ pub struct Options {
     pub fix_safely: bool,
     /// oxlint's `--rules`: lists the rules, and lints nothing.
     pub rules: bool,
+    /// Serve an editor: [`crate::lsp`].
+    pub lsp: bool,
     /// Prints the page about this rule, and lints nothing.
     pub explain: Option<Vec<u8>>,
     /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
@@ -529,9 +532,10 @@ impl Default for Options {
             global: Vec::new(),
             parser: None,
             parser_options: Vec::new(),
+            settings: Vec::new(),
             plugin: Vec::new(),
             rule: Vec::new(),
-            rules_of_bunfig: 0,
+            rules_of_bunfig: Vec::new(),
             fix: false,
             fix_dry_run: false,
             fix_type: None,
@@ -569,6 +573,7 @@ impl Default for Options {
             fix_dangerously: false,
             fix_safely: false,
             rules: false,
+            lsp: false,
             explain: None,
             plugins: Vec::new(),
             type_aware: None,
@@ -813,6 +818,7 @@ impl Options {
             // Type errors are what `bun check` reports.
             b"type-check" => self.type_check = is_on,
             b"rules" => self.rules = is_on,
+            b"lsp" => self.lsp = is_on,
             b"explain" => self.explain = owned(),
             _ if is_on && name.ends_with(b"-plugin") => {
                 let plugin = &name[..name.len() - b"-plugin".len()];
@@ -852,7 +858,6 @@ impl Options {
     pub(crate) fn forget_whose_flags_it_has(&mut self) {
         self.of_one_tool.clear();
         self.has_type_aware_flag = false;
-        self.rules_of_bunfig = self.rule.len();
     }
 
     /// Whether the command line has a flag that `tool` has and the other tool has not.

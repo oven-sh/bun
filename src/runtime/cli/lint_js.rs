@@ -659,11 +659,28 @@ pub(crate) struct Engines {
 impl Engines {
     /// Ends every engine. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
+        self.say_to_all(|| Turn::End);
+    }
+
+    /// The same, and their VMs are freed: the process goes on.
+    pub(crate) fn free_all(&self) {
+        self.say_to_all(|| Turn::Free);
+    }
+
+    fn say_to_all(&self, last: fn() -> Turn) {
         for Known { desk, is_freed, .. } in core::mem::take(&mut self.state.lock().all) {
             if !is_freed {
-                desk.say(Turn::End);
+                desk.say(last());
             }
             desk.hear(|turn| matches!(turn, Turn::Returned(_)));
+        }
+    }
+
+    /// Engines of their own, which share with these what a process does once.
+    pub(crate) fn others(&self) -> Engines {
+        Engines {
+            start: Arc::clone(&self.start),
+            ..Engines::default()
         }
     }
 

@@ -713,7 +713,7 @@ pub(crate) fn token_at(glob: &[u8], at: usize, has_extglob: bool) -> (Token, usi
 }
 
 /// Where the class that starts at `open` ends.
-fn class_end(glob: &[u8], open: usize) -> Option<usize> {
+pub(crate) fn class_end(glob: &[u8], open: usize) -> Option<usize> {
     let mut at = open + 1;
     at += usize::from(matches!(glob.get(at), Some(b'^' | b'!')));
     let character = |at: usize| {

@@ -175,7 +175,7 @@ import index from ".";
     [`sortImports = { newlinesBetween = "no" }`, "expected boolean but received string"],
     [`sortImports = { groups = "builtin" }`, "expected array but received string"],
     ["sortImports = { internalPattern = [1] }", "expected string but received number"],
-    [`sortImports = { order = "up" }`, 'Invalid `sortImports` configuration: `order` has to be "asc" or "desc"'],
+    [`sortImports = { order = "up" }`, 'Invalid `sortImports` configuration: `order` must be "asc" or "desc"'],
     [
       `sortImports = { groups = ["packages"] }`,
       "Invalid `sortImports` configuration: unknown group name `packages` in `groups`",

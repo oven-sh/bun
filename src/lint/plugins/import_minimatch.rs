@@ -45,7 +45,7 @@ impl Glob {
             false => Cow::Borrowed(&written[bangs..]),
         };
         let read = || match asked.noext {
-            true => Pattern::new(&text, bun_glob::Options::BUN),
+            true => Pattern::new(&text),
             false => Pattern::with_extglob(&text),
         };
         Glob {

@@ -15,6 +15,7 @@ use bun_ast::{Expr, Loc};
 use bun_clap::Values;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::linter::Step;
 use bun_lint::linter::config::glob_refusal;
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
@@ -682,7 +683,7 @@ const LINT: Table = Table {
         (b"categories", b"warn"),
         (b"categories", b"deny"),
     ],
-    without_flag: &[],
+    without_flag: &[b"settings"],
     actions: &[
         b"fix",
         b"fix-dry-run",
@@ -765,17 +766,81 @@ const _: () = assert!(
      bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
 );
 
-/// `off`, `warn` or `error`, or the number for it.
-fn severity_of(value: &Expr) -> Result<Severity, Refusal> {
-    let text = match bun_lint::json::from_parsed(value) {
-        Some(Json::String(text)) => text,
-        Some(Json::Number(number)) => number_to_string(number),
-        _ => return expected("string", value),
-    };
-    crate::cli::severity(b"", &text).or_else(|_| {
-        let expected: &[u8] = b"expected \"off\", \"warn\" or \"error\" but received \"";
-        refuse(value.loc, &[expected, &text, b"\""])
-    })
+/// `off`, `warn` or `error`, or the number for it. `of`: the rule or the category.
+fn severity_of(of: &[u8], value: &Expr) -> Result<Severity, Refusal> {
+    let written = json_of(value)?;
+    let severity = bun_lint::linter::severity_of(&written);
+    severity.map_or_else(
+        || refuse(value.loc, &[&crate::native::invalid_severity(of, &written)]),
+        Ok,
+    )
+}
+
+/// Where a value is written in bunfig.toml, and the values in it.
+#[derive(Clone, Debug, Default)]
+pub struct Place {
+    pub at: usize,
+    pub items: Vec<Place>,
+    /// Each key, where it is written, and its value.
+    pub entries: Vec<(Vec<u8>, usize, Place)>,
+}
+
+impl Place {
+    fn of(value: &Expr) -> Place {
+        let mut place = Place {
+            at: value.loc.start.max(0) as usize,
+            ..Place::default()
+        };
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            return place;
+        }
+        match &value.data {
+            Data::EArray(items) => place.items = items.slice().iter().map(Place::of).collect(),
+            Data::EObject(_) => {
+                let entries = entries(value).unwrap_or_default().into_iter();
+                let entries = entries
+                    .map(|(key, value)| (key.name, key.at.start.max(0) as usize, Place::of(value)));
+                place.entries = entries.collect();
+            }
+            _ => {}
+        }
+        place
+    }
+
+    /// Where the value is that `path` leads to, or else the last on the way. `is_about_key`: where its key is.
+    pub(crate) fn find(&self, path: &[Step], is_about_key: bool) -> usize {
+        let (mut place, mut at) = (self, self.at);
+        for (depth, step) in path.iter().enumerate() {
+            let next = match step {
+                Step::Index(index) => place.items.get(*index).map(|it| (it.at, it)),
+                Step::Key(key) => {
+                    let mut entries = place.entries.iter();
+                    entries.find(|it| it.0 == *key).map(|it| (it.1, &it.2))
+                }
+            };
+            let Some((key_at, next)) = next else {
+                break;
+            };
+            let is_last = depth + 1 == path.len();
+            (place, at) = (
+                next,
+                if is_last && is_about_key {
+                    key_at
+                } else {
+                    next.at
+                },
+            );
+        }
+        at
+    }
+}
+
+/// An entry of `[lint.rules]`.
+#[derive(Clone, Debug)]
+pub struct RuleOfBunfig {
+    pub key_at: usize,
+    pub setting: Json,
+    pub place: Place,
 }
 
 fn json_of(value: &Expr) -> Result<Json, Refusal> {
@@ -859,7 +924,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     if !is_known {
                         return refuse(name.at, &[b"unknown category \"", &name.name, b"\""]);
                     }
-                    let flag: &[u8] = match severity_of(value)? {
+                    let flag: &[u8] = match severity_of(&name.name, value)? {
                         Severity::Off => b"allow",
                         Severity::Warn => b"warn",
                         Severity::Error => b"deny",
@@ -874,8 +939,19 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                         Data::EArray(items) => items.slice().first().unwrap_or(setting),
                         _ => setting,
                     };
-                    severity_of(first)?;
-                    options.add_rules(vec![(rule.name, json_of(setting)?)]);
+                    severity_of(&rule.name, first)?;
+                    let written = json_of(setting)?;
+                    options.rules_of_bunfig.push(RuleOfBunfig {
+                        key_at: rule.at.start.max(0) as usize,
+                        setting: written.clone(),
+                        place: Place::of(setting),
+                    });
+                    options.add_rules(vec![(rule.name, written)]);
+                }
+            }
+            b"settings" => {
+                for (name, value) in entries(value)? {
+                    options.settings.push((name.name, json_of(value)?));
                 }
             }
             b"parserOptions" => {

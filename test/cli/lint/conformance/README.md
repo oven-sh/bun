@@ -37,7 +37,7 @@ rule's suite comes into the bundle when the rule here passes all of it. Some of 
 
 | directory                | cases | what                                                                                                                 |
 | ------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------- |
-| `more/reviews`           | 68308 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
+| `more/reviews`           | 68297 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
 | `more/oxlint-tsgolint`   | 8728  | the tests that oxlint and tsgolint have for their ports of the rules. What those expect is not used                  |
 | `more/typescript-parser` | 19782 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                                        |
 

@@ -75,7 +75,7 @@ use crate::options::Json;
 use crate::paths;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
-use bun_glob::{Candidate, How};
+use bun_glob::Candidate;
 use cache::Cache;
 pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
 pub use flat::{ConfigError, LoadLocatedPlugin};
@@ -147,13 +147,12 @@ impl Pattern {
 
     /// `flip_negate`: a `!` at the start of the pattern is left out of the answer. Only ESLint asks for that.
     fn matches(&self, path: &Candidate, flip_negate: bool) -> bool {
-        let as_it_is = || self.matcher.matches_candidate(path, How::default());
-        let hit = match path.path().strip_suffix(b"/") {
+        let hit = match path.without_slash() {
             Some(directory) => {
-                self.asks_without_slash && self.matcher.matches(directory)
-                    || self.asks_with_slash && as_it_is()
+                self.asks_without_slash && self.matcher.matches_candidate(&directory)
+                    || self.asks_with_slash && self.matcher.matches_candidate(path)
             }
-            None => as_it_is(),
+            None => self.matcher.matches_candidate(path),
         };
         !self.is_comment && hit != (self.is_inverted && !flip_negate)
     }

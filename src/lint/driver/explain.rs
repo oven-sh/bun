@@ -298,7 +298,7 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
             .concat());
         }
     }
-    .ok_or_else(|| native::unknown_rule(registry, name, None))
+    .ok_or_else(|| native::unknown_rule(registry, name))
 }
 
 /// `--explain <rule>`: the page about the rule that `name` is a name of. `Err`: what to say instead.

@@ -7,7 +7,7 @@
 
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax, Verdict};
+use bun_glob::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 use bun_sema::util::FxHashSet;
 use std::sync::Arc;
 
@@ -39,14 +39,14 @@ pub(crate) type Chain = Option<Arc<Ignores>>;
 
 /// As oxlint and oxfmt read the lines, with the crate `ignore`: `{a,b}` is `a` or `b`.
 const OF_OXC: IgnoreOptions = IgnoreOptions {
-    syntax: IgnoreSyntax::Globset,
+    has_braces: true,
     ignores_case: false,
 };
 
 /// As Prettier reads them, with the package `ignore`: the braces are taken as they are, and
 /// `readme.md` is `README.md` too.
 const OF_PRETTIER: IgnoreOptions = IgnoreOptions {
-    syntax: IgnoreSyntax::Npm705,
+    has_braces: false,
     ignores_case: true,
 };
 
@@ -89,7 +89,7 @@ pub(crate) fn with_lines<'l>(
 /// The first of `lines` that oxlint and oxfmt do not take.
 pub(crate) fn refused_line<'l>(lines: impl IntoIterator<Item = &'l [u8]>) -> Option<Box<[u8]>> {
     let rules = IgnoreRules::from_lines(lines, OF_OXC);
-    rules.refused().first().map(|it| it.line.clone())
+    rules.refused().first().cloned()
 }
 
 /// `chain` and `file`, whose lines are relative to `directory`.

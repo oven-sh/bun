@@ -1,5 +1,5 @@
 use bun_core::strings;
-pub use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax};
+pub use bun_glob::ignore::{IgnoreOptions, IgnoreRules};
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -230,9 +230,9 @@ impl Globs {
     }
 }
 
-/// `ignore({ allowRelativePaths: true, ignoreCase }).add(group)` of the version of the package that `syntax` names.
-pub fn ignore_rules(group: &[&str], ignores_case: bool, syntax: IgnoreSyntax) -> IgnoreRules {
-    IgnoreRules::from_lines(group.iter().map(|it| it.as_bytes()), IgnoreOptions { syntax, ignores_case })
+/// `ignore({ allowRelativePaths: true, ignoreCase }).add(group)`
+pub fn ignore_rules(group: &[&str], ignores_case: bool) -> IgnoreRules {
+    IgnoreRules::from_lines(group.iter().map(|it| it.as_bytes()), IgnoreOptions { has_braces: false, ignores_case })
 }
 
 /// Which modules a restriction is about.
@@ -675,7 +675,7 @@ impl Restrictions {
         if patterns.first().is_some_and(|it| it.as_str().is_some()) {
             let strings = patterns.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok());
             let group: Vec<&str> = strings.collect();
-            let ignore = Box::new(ignore_rules(&group, true, IgnoreSyntax::Npm5));
+            let ignore = Box::new(ignore_rules(&group, true));
             let matcher = Matcher::Group(ignore, Globs::of_strings(&group));
             all.push(Restriction::new(matcher, Object::default()));
             return Restrictions { all };
@@ -691,7 +691,7 @@ impl Restrictions {
                 }
                 None => object.has("group").then(|| {
                     let group = object.strings("group");
-                    let ignore = Box::new(ignore_rules(&group, !is_case_sensitive, IgnoreSyntax::Npm5));
+                    let ignore = Box::new(ignore_rules(&group, !is_case_sensitive));
                     Matcher::Group(ignore, Globs::of_group(&group, !is_case_sensitive))
                 }),
             };

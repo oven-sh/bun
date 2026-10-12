@@ -82,16 +82,21 @@ bar();
   ```
 - **Every example is run.** Each `js` / `jsx` / `ts` / `tsx` block needs a marker on the line before it:
 
-  | Marker                                   | Meaning                                            |
-  | ---------------------------------------- | -------------------------------------------------- |
-  | `{/* bad */}`                            | The rule reports this code                         |
-  | `{/* good */}`                           | The rule reports nothing here, and the code parses |
-  | `{/* bad {"options": ["smart"]} */}`     | With these options                                 |
-  | `{/* bad {"count": 2} */}`               | Exactly two reports                                |
-  | `{/* good {"filename": "a.test.ts"} */}` | The file has this name                             |
-  | `{/* file "other.js" */}`                | Another file next to the next example              |
-  | `{/* skip */}`                           | Not run. For a fragment that cannot stand alone    |
+  | Marker                                                          | Meaning                                                                                                |
+  | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+  | `{/* bad */}`                                                   | The rule reports this code                                                                             |
+  | `{/* good */}`                                                  | The rule reports nothing here, and the code parses                                                     |
+  | `{/* bad {"options": ["smart"]} */}`                            | With these options                                                                                     |
+  | `{/* bad {"count": 2} */}`                                      | Exactly two reports                                                                                    |
+  | `{/* good {"filename": "a.test.ts"} */}`                        | The file has this name                                                                                 |
+  | `{/* file "other.js" */}`                                       | Another file next to the next example                                                                  |
+  | `{/* bad {"root": true} */}`                                    | The example is its own project and working directory. For options that are paths, like `src/client/**` |
+  | `{/* bad {"root": true, "packages": {"prettier": "3.9.9"}} */}` | These packages are installed next to it                                                                |
+  | `{/* bad {"config": "oxlint", "settings": {..}} */}`            | Run next to an `.oxlintrc.json`. For a rule that only reports there                                    |
+  | `{/* skip */}`                                                  | Not run. For a fragment that cannot stand alone                                                        |
+  | `{/* never reports */}`                                         | On its own line: the rule reports nothing, so the page needs no `bad` example. Say why in the text     |
 
+- Prettier skips `docs/lint/rules` (`.prettierignore`): it would reformat the examples, and many rules are about exactly that.
 - Say the problem, not "This rule enforces ..". Use normal programmer English. Be succinct. Small realistic examples (`user`, `items`, `save()`, not `foo`). The good example shows how to fix the bad one.
 - Every claim is shown by an example or read in the source. Do not write what you remember about the rule from another linter, and do not copy another tool's docs.
 - An options table (`Option | Default | What it does`) plus an example for each option that is not obvious.

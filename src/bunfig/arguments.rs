@@ -162,8 +162,17 @@ fn load_config_path_for_tool(
 fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crate::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
+    let is_of_tool = matches!(cmd, CommandTag::LintCommand | CommandTag::FormatCommand);
     if log.has_any() {
+        // These two name files as they name the files that they report about.
+        let locations = log.msgs.iter_mut().filter(|_| is_of_tool);
+        for location in locations.filter_map(|it| it.data.location.as_mut()) {
+            location.file = bun_paths::basename(&location.file[..]).to_vec().into();
+        }
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        if is_of_tool {
+            Global::exit(exit_code_of_failure(cmd));
+        }
         Output::print_error("\n");
     }
     Output::err(err, "failed to load bunfig", ());

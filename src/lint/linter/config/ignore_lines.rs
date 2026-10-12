@@ -1,7 +1,7 @@
 //! `ignorePatterns` of an `.oxlintrc.json` and of the configuration files of ESLint 8: lines in the format of a `.gitignore`.
 //! What a line matches is said by [`bun_glob::ignore`]. Here is who asks what.
 
-use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax, Verdict};
+use bun_glob::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 
 pub(super) struct IgnoreLines {
     rules: IgnoreRules,
@@ -13,7 +13,7 @@ impl IgnoreLines {
     /// `GitignoreBuilder::add_line` for each. oxlint says nothing about a line that is refused: it is left out.
     pub(super) fn of_oxlint(lines: &[&[u8]]) -> IgnoreLines {
         let options = IgnoreOptions {
-            syntax: IgnoreSyntax::Globset,
+            has_braces: true,
             ignores_case: false,
         };
         IgnoreLines {
@@ -25,7 +25,7 @@ impl IgnoreLines {
     /// `ignore({ allowRelativePaths: true }).add(lines)`: `IgnorePattern.createIgnore` of `@eslint/eslintrc`.
     pub(super) fn of_eslint_8(lines: &[&[u8]]) -> IgnoreLines {
         let options = IgnoreOptions {
-            syntax: IgnoreSyntax::Npm5,
+            has_braces: false,
             ignores_case: true,
         };
         IgnoreLines {

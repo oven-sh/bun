@@ -2294,6 +2294,148 @@ describe.concurrent("the plugin bun", () => {
     expect(exitCode).toBe(2);
   });
 
+  test("what each rule says", async () => {
+    const files = {
+      "bunfig.toml": `[lint.rules]
+"bun/no-eager-dynamic-import" = "error"
+"bun/no-eager-native-addon" = "error"
+"bun/no-env-at-module-scope" = "error"
+"bun/no-literal-temp-dir" = "error"
+"bun/no-negative-repeat-count" = "error"
+"bun/no-redundant-catch-type" = "error"
+"bun/no-useless-spread-fallback" = "error"
+"bun/no-array-just-to-count" = "error"
+"bun/prefer-builtin-sleep" = "error"
+"bun/react-prefer-updater-function" = "error"
+"bun/no-console-window-flash" = "error"
+"bun/no-unportable-commands" = "error"
+"bun/no-cwd-dependent-path" = "error"
+"bun/prefer-lazy-schema" = "error"
+"bun/no-side-effects-on-import" = "error"
+"bun/no-unseeded-random-in-property-test" = "error"
+"bun/react-no-namespace-hooks" = "error"
+"bun/react-no-latest-value-ref" = "error"
+"bun/jsx-no-forbidden-nesting" = "error"
+"bun/consistent-directive-prefix" = "error"
+"bun/no-restricted-text" = ["error", { patterns = [{ pattern = "foo" }] }]
+"bun/prefer-timeout-signal" = "error"
+"bun/prefer-url-for-sibling-files" = "error"
+"bun/react-no-local-render-helpers" = "error"
+"bun/prefer-local-module" = ["error", { modules = [{ package = "axios", use = "@/http" }] }]
+"bun/no-unbounded-requests" = "error"
+"bun/no-unhandled-emitter-errors" = "error"
+"bun/no-cast-to-brand" = ["error", { branded = [{ module = "src/ids", type = "UserId", mint = ["toUserId"], mintedIn = ["src/session.ts"] }] }]
+`,
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "jsx": "preserve" } }\n`,
+      "a.tsx": `import { exec, spawn } from "node:child_process";
+import fs from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+import fc from "fast-check";
+import React, { useRef, useEffect, useState } from "react";
+import axios from "axios";
+const a1 = import("a");
+const addon = require("./addon.node");
+const port = process.env.PORT;
+const env = { ...process.env };
+const t = "/tmp/a.txt";
+const r = " ".repeat(width - text.length);
+try {} catch (error: unknown) {}
+const s = { ...(b ? { c: 1 } : {}) };
+const n = b.split(",").length;
+await new Promise(done => setTimeout(done, 250));
+spawn("npm", ["install"]);
+spawn("ls", ["-l"]);
+exec("a && b");
+exec("ps -ef");
+fs.readFileSync("a.txt");
+const A = z.string();
+start();
+a.b = 1;
+fc.property(fc.integer(), a => fc.sample(fc.integer(), 1));
+fc.property(fc.integer(), a => a > Math.random());
+React.useState(0);
+function C({ count }) {
+  const saved = useRef(count);
+  saved.current = count;
+  useEffect(() => {
+    saved.current = count;
+  });
+  const [rows, setRows] = useState([]);
+  setRows([...rows, 1]);
+}
+const x = <a><a /></a>;
+// oxlint-disable-next-line no-debugger
+debugger;
+const f = "a foo b";
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 2000);
+await fetch(address, { signal: controller.signal });
+const j = join(import.meta.dirname, "a.txt");
+function Table({ rows }) {
+  const renderCell = row => <tr key={row.id} />;
+  return <table>{rows.map(renderCell)}</table>;
+}
+axios.get("/a");
+axios.get("/a", { timeout: 0 });
+const ps = "ps -ef";
+`,
+      "src/ids.ts": `export type UserId = string & { brand: 1 };
+export const toUserId = (a: string) => a as UserId;
+`,
+      "src/views/page.ts": `import type { UserId } from "../ids";
+import { toUserId } from "../ids";
+const a = text as UserId;
+const b = toUserId(text);
+`,
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "json"]);
+    const messages = (JSON.parse(stdout) as { messages: { ruleId: string | null; message: string }[] }[])
+      .flatMap(it => it.messages)
+      .filter(it => it.ruleId?.startsWith("bun/"));
+    expect([...new Set(messages.map(it => `${it.ruleId}: ${it.message}`))].sort()).toEqual([
+      "bun/consistent-directive-prefix: Use `eslint` instead of `oxlint`.",
+      "bun/jsx-no-forbidden-nesting: `<a>` cannot be inside `<a>`.",
+      "bun/no-array-just-to-count: `split()` builds an array only to read its length. Count the separators instead.",
+      "bun/no-cast-to-brand: This cast creates a `UserId` from an unchecked value. Only `src/ids` should create one.",
+      "bun/no-cast-to-brand: `toUserId` turns any value into a `UserId`, and this file is not allowed to import it.",
+      "bun/no-console-window-flash: On Windows, this process briefly opens a console window. Set `windowsHide: true`.",
+      'bun/no-cwd-dependent-path: "a.txt" is relative to the working directory of the process. Resolve it from `import.meta.dirname`.',
+      "bun/no-eager-dynamic-import: This `import()` runs as soon as the module is imported. Call it where it is needed, or use an `import` statement.",
+      "bun/no-eager-native-addon: The native addon `./addon.node` loads as soon as the module is imported. Load it inside the function that needs it.",
+      "bun/no-env-at-module-scope: The environment is read as soon as the module is imported. Read it inside the function that needs it.",
+      "bun/no-env-at-module-scope: `process.env.PORT` is read as soon as the module is imported. Read it inside the function that needs it.",
+      "bun/no-literal-temp-dir: `/tmp` is not the temporary directory on every system. Use `os.tmpdir()`.",
+      "bun/no-negative-repeat-count: `repeat()` throws a `RangeError` if this count is negative. Give it a lower bound.",
+      "bun/no-redundant-catch-type: With `strict` or `useUnknownInCatchVariables`, a `catch` variable is already `unknown`. Remove the annotation.",
+      "bun/no-restricted-text: `foo` matches the restricted pattern `foo`.",
+      "bun/no-side-effects-on-import: This changes an object as soon as the module is imported. Move it into an exported function.",
+      "bun/no-side-effects-on-import: This runs as soon as the module is imported. Move it into an exported function.",
+      "bun/no-unbounded-requests: This axios request has no time limit. Set `timeout` or pass a `signal`.",
+      "bun/no-unbounded-requests: `timeout: 0` means no time limit.",
+      "bun/no-unhandled-emitter-errors: `spawn()` emits `error` when it fails, which crashes the process if nothing listens. Add an `error` listener.",
+      "bun/no-unportable-commands: On Windows, `npm` is the script `npm.cmd`, which cannot run without a shell.",
+      "bun/no-unportable-commands: `&&` is shell syntax, and the shell differs between systems.",
+      "bun/no-unportable-commands: `ls` does not exist on Windows.",
+      "bun/no-unportable-commands: `ps` does not exist on Windows.",
+      "bun/no-unportable-commands: `ps` options differ between systems, and `ps` does not exist on Windows.",
+      "bun/no-unseeded-random-in-property-test: `Math.random()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+      "bun/no-unseeded-random-in-property-test: `sample()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+      "bun/no-useless-spread-fallback: This empty object is not needed. Spreading `false`, `null` or `undefined` into an object does nothing.",
+      "bun/prefer-builtin-sleep: This promise only waits. Use `Bun.sleep(ms)` or `setTimeout(ms)` from `node:timers/promises`.",
+      "bun/prefer-lazy-schema: This schema is built as soon as the module is imported. Build it when it is first used.",
+      "bun/prefer-local-module: Import from `@/http` instead of `axios`.",
+      "bun/prefer-timeout-signal: Only a timer aborts this controller. Use `AbortSignal.timeout(ms)` instead.",
+      'bun/prefer-url-for-sibling-files: Bundlers cannot follow this path. Use `new URL("./file", import.meta.url)`.',
+      "bun/react-no-latest-value-ref: This effect only copies a value into `saved.current`. Use `useEffectEvent()` to read the latest values without a ref.",
+      "bun/react-no-latest-value-ref: `saved.current` is set during render. React may render more than once, or throw the result away.",
+      "bun/react-no-local-render-helpers: `renderCell` is created again on every render, and React does not see it as a component. Move it out and make it a component.",
+      'bun/react-no-namespace-hooks: Import `useState` by name from "react".',
+      "bun/react-prefer-updater-function: `rows` may be out of date when `setRows` is called. Pass a function: `setRows(previous => ..)`.",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   test("bun/prefer-local-module leaves the files in exemptFiles alone", async () => {
     const options = { modules: [{ package: "axios", use: "@/http" }], exemptFiles: ["src/http.js"] };
     const code = `import axios from "axios";\n`;

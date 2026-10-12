@@ -307,6 +307,35 @@ pub(crate) fn run_and_exit(
     Global::exit(u32::from(outcome.exit_code));
 }
 
+/// `bun lint --lsp`. `args`: what follows `lint`.
+fn serve_editor(args: &[&[u8]], environment: &Environment) -> Outcome {
+    use bun_lint_driver::js_plugin::Engine;
+    // What else prints in this process, like `console.log` in a plugin, does not get between the messages.
+    #[cfg(unix)]
+    let to_client = bun_sys::dup(bun_sys::Fd::stdout())
+        .and_then(|own| bun_sys::dup2(bun_sys::Fd::stderr(), bun_sys::Fd::stdout()).map(|_| own))
+        .map_or_else(|_| File::stdout(), File::from_fd);
+    #[cfg(not(unix))]
+    let to_client = File::stdout();
+    let from_client = File::stdin();
+    let engines = super::lint_js::Engines::default();
+    bun_lint_driver::lsp::serve(
+        args,
+        environment,
+        &bun_lint_driver::lsp::Process {
+            read: &|buffer| from_client.read(buffer).unwrap_or(0),
+            write: &|message| _ = to_client.write_all(message),
+            with_engine: &|then: &mut dyn FnMut(&dyn Engine)| {
+                let own = engines.others();
+                then(&own);
+                own.free_all();
+            },
+            exit: &|code| Global::exit(u32::from(code)),
+        },
+    );
+    Outcome::default()
+}
+
 impl LintCommand {
     /// `args`: what follows `lint`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
@@ -339,6 +368,11 @@ impl LintCommand {
         if options.help {
             crate::cli::command::tag_print_help(Tag::LintCommand, options.all);
             Global::exit(0);
+        }
+        if options.lsp {
+            run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
+                serve_editor(&args, environment)
+            })
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
             let defaults = defaults_of_bunfig(ctx, Tag::LintCommand, b"lint", bunfig::lint);

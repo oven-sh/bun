@@ -1,7 +1,7 @@
 //! `bun lint`: ESLint's `cli.execute`.
 
 use crate::cli::{Options, Tool};
-use crate::configs::{self, Flavor, Loader};
+use crate::configs::{self, Flavor, Loaded, Loader};
 use crate::discover::{self, Status, Target};
 use crate::doctor::{self, Modules};
 use crate::format::{self, Format};
@@ -140,6 +140,15 @@ fn is_agent_for_oxlint() -> bool {
             || has(b"PATH", b".pi\\agent")
             || has(b"EDITOR", b"devin")
             || has(b"TERM_PROGRAM", b"kiro"))
+}
+
+/// What is said about `error`, which is what is wrong with the configuration of a file that has `loaded`. What stands in for
+/// oxlint says it on standard output, in its words.
+fn invalid_config(loader: &Loader, loaded: &Loaded, error: &[u8]) -> Vec<u8> {
+    match loaded.flavor {
+        Flavor::Eslint | Flavor::EslintRc => loader.name_place(loaded.file.as_deref(), error),
+        Flavor::Oxlint | Flavor::BuiltIn => error.to_vec(),
+    }
 }
 
 /// Why nothing can be linted: the message. ESLint throws, and exits with 2.
@@ -477,7 +486,7 @@ impl Run<'_> {
         let route = loaded.routes(config, &path);
         // ESLint says itself what is wrong with a configuration for what it lints.
         if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
-            return Err(Fatal(error.clone()));
+            return Err(Fatal(invalid_config(loader, &loaded, error)));
         }
         let shown = if path.ends_with(b"__placeholder__.js") {
             b"<text>".to_vec()
@@ -608,7 +617,10 @@ impl Run<'_> {
         }
         // ESLint finds out when it comes to the file.
         let invalid = targets.iter().find_map(|target| match &target.status {
-            Status::Matched(config) if target.route() != Route::Eslint => config.error.clone(),
+            Status::Matched(config) if target.route() != Route::Eslint => {
+                let error = config.error.as_ref()?;
+                Some(invalid_config(loader, &target.loaded, error))
+            }
             _ => None,
         });
         if let Some(error) = invalid {
@@ -921,6 +933,11 @@ impl Run<'_> {
         if let Some(refusal) = loader.refused() {
             return self.refuse_flag(refusal);
         }
+        if let Some(mistake) = loader.mistake() {
+            self.out.stderr.extend_from_slice(mistake);
+            self.out.exit_code = 2;
+            return self.out;
+        }
         let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
         let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,
@@ -1195,6 +1212,11 @@ impl Run<'_> {
         }
         if let Some(refusal) = loader.refused() {
             return self.refuse_flag(refusal);
+        }
+        if let Some(mistake) = loader.mistake() {
+            self.out.stderr.extend_from_slice(mistake);
+            self.out.exit_code = 2;
+            return self.out;
         }
         let Linted {
             mut results,

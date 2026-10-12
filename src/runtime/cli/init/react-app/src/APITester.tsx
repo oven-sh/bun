@@ -28,12 +28,23 @@ export function APITester() {
           <option value="GET">GET</option>
           <option value="PUT">PUT</option>
         </select>
-        <input type="text" name="endpoint" defaultValue="/api/hello" className="url-input" placeholder="/api/hello" />
+        <input
+          type="text"
+          name="endpoint"
+          defaultValue="/api/hello"
+          className="url-input"
+          placeholder="/api/hello"
+        />
         <button type="submit" className="send-button">
           Send
         </button>
       </form>
-      <textarea ref={responseInputRef} readOnly placeholder="Response will appear here..." className="response-area" />
+      <textarea
+        ref={responseInputRef}
+        readOnly
+        placeholder="Response will appear here..."
+        className="response-area"
+      />
     </div>
   );
 }

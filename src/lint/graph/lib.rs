@@ -19,7 +19,7 @@
 #![forbid(unsafe_code)]
 
 use bun_core::strings;
-use bun_glob::{BunGlobWalker, Options as GlobOptions, Pattern};
+use bun_glob::{BunGlobWalker, Pattern};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
@@ -226,7 +226,7 @@ impl Scope {
             if !strings::contains_any(last, b".*?") {
                 path.extend_from_slice(b"/**/*");
             }
-            (Pattern::new(&path, GlobOptions::BUN), path.ends_with(b"*"))
+            (Pattern::new(&path), path.ends_with(b"*"))
         };
         let patterns = |written: &[Vec<u8>]| written.iter().map(pattern).collect::<Vec<_>>();
         let written = &project.written;

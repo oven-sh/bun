@@ -426,17 +426,6 @@
     "src/format/verify/comments.rs": {
       "lines": 1
     },
-    "src/glob/braces.rs": {
-      "parse_integer": 1
-    },
-    "src/glob/read_picomatch.rs": {
-      "count": 1,
-      "escape_regex": 1,
-      "trim": 1
-    },
-    "src/glob/unit.rs": {
-      "code_point_at": 1
-    },
     "src/install/PackageManager/patchPackage.rs": {
       "string_hash": 1
     },

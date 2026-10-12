@@ -7,7 +7,7 @@
 
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_glob::{Candidate, How, Pattern};
+use bun_glob::{Candidate, Pattern};
 use bun_lint::options::Json;
 
 /// What a property is set to.
@@ -188,7 +188,7 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
         }
         at += 1;
     }
-    Some(Pattern::new(&glob, bun_glob::Options::BUN))
+    Some(Pattern::new(&glob))
 }
 
 /// A number of JSON.
@@ -426,7 +426,7 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
     for file in files.filter(|it| paths::inside(&it.directory, path).is_some()) {
         let is_for_it = |it: &&Section| {
             let glob = it.glob.as_ref();
-            glob.is_some_and(|it| it.matches_candidate(&candidate, How::default()))
+            glob.is_some_and(|it| it.matches_candidate(&candidate))
         };
         for section in file.sections.iter().filter(is_for_it) {
             for (key, value) in &section.properties {

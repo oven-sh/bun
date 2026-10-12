@@ -18,14 +18,18 @@ pub(crate) enum Runs {
 }
 
 /// Whether `bun <command>` runs something of the project, as it did before `command` was one. The help is always the command's,
-/// and so is `--doctor`, which none of the tools has that such a script runs.
+/// and so are `--doctor`, which none of the tools has that such a script runs, and `--lsp`, with which an editor starts it.
 #[cold]
 #[inline(never)]
 pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
     let args = bun_core::argv().into_iter();
     let mut of_command = (args.skip_while(|arg| *arg != command)).take_while(|arg| *arg != b"--");
-    !of_command.any(|arg| matches!(arg, b"--help" | b"-h" | b"--help-all" | b"--doctor"))
-        && runs(command) != Runs::Command
+    !of_command.any(|arg| {
+        matches!(
+            arg,
+            b"--help" | b"-h" | b"--help-all" | b"--doctor" | b"--lsp"
+        )
+    }) && runs(command) != Runs::Command
 }
 
 /// Whatever the arguments of `command` are.

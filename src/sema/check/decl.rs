@@ -4815,13 +4815,30 @@ impl<'p, 's> Checker<'p, 's> {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 is_union,
+                ref type_params,
                 ..
             } if of.len() > 1 => self.resolve_return_type(sig, |c| {
                 let returns: Vec<TypeId> = of.iter().map(|&member| c.sig_return(member)).collect();
-                if is_union {
+                let combined = if is_union {
                     c.union_reduced(&returns)
                 } else {
                     c.intersection(&returns)
+                };
+                // `sig.mapper`, the `paramMapper` of `combineUnionOrIntersectionMemberSignatures`:
+                // the type parameters of each later signature become those of the first. Applied
+                // after the union is reduced, so `Promise<A> | PromiseLike<B>` stays two types.
+                let mut pairs = Vec::new();
+                for &member in of.iter() {
+                    let own = c.sig_type_params(member);
+                    if !own.is_empty() && !type_params.is_empty() && own[..] != type_params[..] {
+                        pairs.extend(own.iter().copied().zip(type_params.iter().copied()));
+                    }
+                }
+                if pairs.is_empty() {
+                    combined
+                } else {
+                    let mapper = c.types().mapper(pairs);
+                    c.instantiate(combined, mapper)
                 }
             }),
             // `getOptionalCallSignature`: the clone has no `resolvedReturnType`.

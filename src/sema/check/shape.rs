@@ -8564,6 +8564,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> SigId {
         let (left_type_params, right_type_params) =
             (self.sig_type_params(left), self.sig_type_params(right));
+        // `composite.signatures` has `right` as it is: `sig_return` applies `paramMapper`.
+        let composite_member = right;
         let right = if !left_type_params.is_empty()
             && !right_type_params.is_empty()
             && left_type_params != right_type_params
@@ -8605,7 +8607,7 @@ impl<'p, 's> Checker<'p, 's> {
             } if members.len() > 1 => members.to_vec(),
             _ => vec![left],
         };
-        of.push(right);
+        of.push(composite_member);
         self.types().intern_sig(SigData::Synth {
             type_params: self.list(&type_params),
             params: self.list(&params),

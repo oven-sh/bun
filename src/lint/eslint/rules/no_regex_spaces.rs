@@ -1,7 +1,8 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::NodeType};
-use bun_lint::utils::char_source::Written;
+use bun_lint_oxlint::ast_util::get_inner_expression;
+use bun_lint_oxlint::regex_pattern::Pattern;
 
 /// Disallow multiple spaces in regular expressions.
 pub struct NoRegexSpaces;
@@ -65,19 +66,7 @@ fn check_regex<'a>(
             continue;
         }
         // TODO(api): the key `{length` is for `context::interpolate`, which takes the first `{{`.
-        // oxlint points at the spaces, where they are written.
-        let place = match node_to_report.kind() {
-            _ if !cx.language().is_oxlint => node_to_report.span(),
-            _ if pattern == raw => Span::new(raw_start + index as u32, raw_start + (index + length) as u32),
-            ExprKind::Call(call) | ExprKind::New(call) => {
-                let start = regex::utf16_index(pattern, index) as u32;
-                (call.args().first().and_then(Written::new))
-                    .and_then(|it| it.span(start, start + length as u32))
-                    .unwrap_or_else(|| node_to_report.span())
-            }
-            _ => node_to_report.span(),
-        };
-        cx.report(place, MULTIPLE_SPACES)
+        cx.report(node_to_report, MULTIPLE_SPACES)
             .data("length", length)
             .data("{length", format!("{{{length}"))
             .fix(|fixer| {
@@ -135,6 +124,53 @@ fn check_function<'a>(_: &NoRegexSpaces, e: Expr<'a>, cx: &mut Cx<'a, NoRegexSpa
     check_regex(e, pattern.bytes(), raw, raw_span.start, flags, cx);
 }
 
+/// oxlint takes for a space whatever stands for one, and counts the bytes that they are written with. It passes over what is
+/// repeated, does not ask what `RegExp` is, and reads the pattern of a call without its flags. It points at the spaces.
+fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoRegexSpaces>) {
+    let pattern = match e.kind() {
+        ExprKind::Regex(literal) if has_double_space(literal.pattern()) => Pattern::of_literal(e),
+        ExprKind::Call(call) | ExprKind::New(call) if get_inner_expression(call.callee()).is_ident("RegExp") => {
+            let args = call.args();
+            let may_be_flags = |it: Expr| match it.tag() {
+                ExprTag::String | ExprTag::Template => !it.is_parenthesized(),
+                tag => tag == ExprTag::Spread,
+            };
+            (args.first())
+                .filter(|it| !it.is_parenthesized() && args.get(1).is_none_or(may_be_flags))
+                .filter(|it| it.as_string().is_some_and(|value| has_double_space(value.bytes())))
+                .and_then(|it| Pattern::read(it, regex::Mode::default()))
+        }
+        _ => None,
+    };
+    let Some(pattern) = pattern else {
+        return;
+    };
+    let Ok(ast) = regex::parse_pattern(pattern.text(), pattern.mode, regex::Options::default()) else {
+        return;
+    };
+    let is_passed_over = |it: regex::Node| matches!(it.ty(), NodeType::Quantifier | NodeType::CharacterClass);
+    let mut found: Option<Span> = None;
+    for node in ast.root().descendants() {
+        if node.character() != Some(u32::from(b' ')) || node.ancestors().any(is_passed_over) {
+            continue;
+        }
+        let place = pattern.span(node.start(), node.end());
+        match &mut found {
+            Some(spaces) if spaces.end == place.start => spaces.end = place.end,
+            Some(spaces) if spaces.end - spaces.start == 1 => *spaces = place,
+            Some(_) => {}
+            None => found = Some(place),
+        }
+    }
+    let Some((spaces, length)) = found.map(|it| (it, it.end - it.start)).filter(|it| it.1 > 1) else {
+        return;
+    };
+    cx.report(spaces, MULTIPLE_SPACES)
+        .data("length", length)
+        .data("{length", format!("{{{length}"))
+        .fix(|fixer| fixer.replace(spaces, format!(" {{{length}}}")));
+}
+
 impl Rule for NoRegexSpaces {
     const META: Meta = Meta::eslint("no-regex-spaces", Kind::Suggestion)
         .fixable(Fixable::Code)
@@ -155,6 +191,9 @@ impl Rule for NoRegexSpaces {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            return check_as_oxlint(e, cx);
+        }
         match e.tag() {
             ExprTag::Regex => check_literal(self, e, cx),
             ExprTag::Call | ExprTag::New => check_function(self, e, cx),

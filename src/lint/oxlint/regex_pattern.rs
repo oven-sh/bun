@@ -19,15 +19,16 @@ pub struct Pattern<'a> {
 }
 
 impl<'a> Pattern<'a> {
-    /// Of a regular expression literal.
-    fn of_literal(literal: Expr<'a>, pattern: &'a [u8], mode: Mode) -> Pattern<'a> {
-        let start = literal.span().start + 1;
-        Pattern {
+    /// Of a regular expression literal, with its flags.
+    pub fn of_literal(literal: Expr<'a>) -> Option<Pattern<'a>> {
+        let regex = literal.as_regex()?;
+        let (start, pattern) = (literal.span().start + 1, regex.pattern());
+        Some(Pattern {
             text: Cow::Borrowed(pattern),
-            mode,
+            mode: Mode::of_flags(regex.flags()),
             span: Span::new(start, start + pattern.len() as u32),
             units: None,
-        }
+        })
     }
 
     /// `Reader::initialize` for a string literal or a template without substitutions. It is not what JavaScript reads:
@@ -43,10 +44,10 @@ impl<'a> Pattern<'a> {
             _ => return None,
         };
         let mut units: Vec<CharInfo> = Vec::with_capacity(cooked.len());
-        let mut end = 1;
+        let mut read = 1;
         for unit in cooked {
-            push_line_continuations(&mut units, raw, end, unit.start);
-            end = unit.end;
+            push_line_continuations(&mut units, raw, read, unit.start);
+            read = unit.end;
             match raw.get(unit.start as usize..unit.end as usize) {
                 Some(&[b'\\', letter @ (b'b' | b'f' | b'n' | b'r' | b't' | b'v')]) => {
                     units.push(CharInfo {
@@ -70,7 +71,7 @@ impl<'a> Pattern<'a> {
                 _ => units.push(unit),
             }
         }
-        push_line_continuations(&mut units, raw, end, raw.len() as u32 - 1);
+        push_line_continuations(&mut units, raw, read, raw.len() as u32 - 1);
         let mut text = Vec::with_capacity(units.len());
         let mut before: Option<CharInfo> = None;
         for unit in &units {
@@ -116,8 +117,9 @@ impl<'a> Pattern<'a> {
 }
 
 /// What is between two characters of a string or a template is line continuations.
-fn push_line_continuations(units: &mut Vec<CharInfo>, raw: &[u8], mut start: u32, end: u32) {
-    while start < end {
+fn push_line_continuations(units: &mut Vec<CharInfo>, raw: &[u8], from: u32, to: u32) {
+    let mut start = from;
+    while start < to {
         let (code_unit, len) = match raw.get(start as usize + 1..).unwrap_or_default() {
             [b'\r', b'\n', ..] => (0x0A, 3),
             [b'\r', ..] => (0x0D, 2),
@@ -149,7 +151,7 @@ fn mode_of_flags(flags: &[u8]) -> Option<Mode> {
 /// or without `new`. Whether it is valid is for the caller to find out.
 pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
     match e.kind() {
-        ExprKind::Regex(literal) => {
+        ExprKind::Regex(_) => {
             // What `RegExp` is called with is looked at with the call, whose flags count.
             let mut outer = e.parent();
             while let Node::Expr(it) = outer
@@ -159,11 +161,7 @@ pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
             }
             match outer {
                 Node::Expr(it) if is_call_of_regexp(it) => None,
-                _ => Some(Pattern::of_literal(
-                    e,
-                    literal.pattern(),
-                    Mode::of_flags(literal.flags()),
-                )),
+                _ => Pattern::of_literal(e),
             }
         }
         ExprKind::Call(call) | ExprKind::New(call) if is_regexp_callee(call.callee()) => {
@@ -189,19 +187,19 @@ fn run_on_arguments<'a>(args: List<'a, Expr<'a>>) -> Option<Pattern<'a>> {
         },
         None => None,
     };
-    if let ExprKind::Regex(literal) = get_inner_expression(first).kind() {
+    if let Some(mut pattern) = Pattern::of_literal(get_inner_expression(first)) {
         // One that is in anything is read as a string, which it is not.
         if first.tag() != ExprTag::Regex || first.is_parenthesized() {
             return None;
         }
-        let own = Mode::of_flags(literal.flags());
-        let mode = match flags.map(|it| (Mode::of_flags(it.text()), it.text())) {
-            Some((new, text)) if (new.unicode, new.unicode_sets) != (own.unicode, own.unicode_sets) => {
-                mode_of_flags(text.get(1..text.len() - 1)?)?
-            }
-            _ => own,
-        };
-        return Some(Pattern::of_literal(first, literal.pattern(), mode));
+        let own = pattern.mode;
+        if let Some(text) = flags.map(Expr::text)
+            && let new = Mode::of_flags(text)
+            && (new.unicode, new.unicode_sets) != (own.unicode, own.unicode_sets)
+        {
+            pattern.mode = mode_of_flags(text.get(1..text.len() - 1)?)?;
+        }
+        return Some(pattern);
     }
     let mode = match flags {
         Some(flags) => mode_of_flags(Pattern::read(flags, Mode::default())?.text())?,

@@ -1249,7 +1249,7 @@ impl<'s, 'h> Validator<'s, 'h> {
 
         let after = self.index;
         if self.consume_quantifier(true)? {
-            return self.raise_nothing_to_repeat(after);
+            return Err(self.nothing_to_repeat(after));
         }
         if self.eat(b'{') {
             return self.raise_where_oxc_stops("Lone quantifier brackets", after);
@@ -1261,7 +1261,7 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     /// From `start` to here is a quantifier, with or without the `?` of a lazy one.
     #[cold]
-    fn raise_nothing_to_repeat<T>(&mut self, start: usize) -> Consumed<T> {
+    fn nothing_to_repeat(&mut self, start: usize) -> Raised {
         let is = |i: usize, byte: u8| i < self.end && self.source.get(i) == Some(&byte);
         let here = self.index;
         // Where it ends without the `?`, and with it.
@@ -1275,7 +1275,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             false if self.unicode_mode() => Oxc::new(said::LONE_QUANTIFIER, start, end),
             false => Oxc::new(said::INVALID_BRACED_QUANTIFIER, start, end),
         };
-        self.raise_with("Nothing to repeat", Some(oxc))
+        let raised = self.raised_at("Nothing to repeat", here, None);
+        self.with_oxc(raised, Some(oxc))
     }
 
     fn consume_alternative(&mut self, i: u32) -> Consumed<()> {
@@ -1598,7 +1599,7 @@ impl<'s, 'h> Validator<'s, 'h> {
     fn consume_invalid_braced_quantifier(&mut self) -> Consumed {
         let start = self.index;
         if self.eat_braced_quantifier(true)? {
-            return self.raise_nothing_to_repeat(start);
+            return Err(self.nothing_to_repeat(start));
         }
         Ok(false)
     }

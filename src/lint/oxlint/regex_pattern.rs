@@ -5,7 +5,7 @@ use crate::ast_util::get_inner_expression;
 use crate::regex_flags::is_regexp_callee;
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::regex::{self, Mode};
+use bun_lint::regex::Mode;
 use bun_lint::utils::char_source::{CharInfo, parse_string_literal, parse_template_token};
 use std::borrow::Cow;
 
@@ -14,8 +14,9 @@ pub struct Pattern<'a> {
     pub mode: Mode,
     /// Where it is written: between the slashes, or with the quotes.
     span: Span,
-    /// Of a string or a template: where each UTF-16 code unit of `text` is written, from the start of `span`.
-    units: Option<Vec<CharInfo>>,
+    /// Of a string or a template: where each UTF-16 code unit of `text` is written, from the start of `span`, and where it
+    /// starts in `text`.
+    units: Option<(Vec<CharInfo>, Vec<u32>)>,
 }
 
 impl<'a> Pattern<'a> {
@@ -73,12 +74,19 @@ impl<'a> Pattern<'a> {
         }
         push_line_continuations(&mut units, raw, read, raw.len() as u32 - 1);
         let mut text = Vec::with_capacity(units.len());
+        let mut offsets: Vec<u32> = Vec::with_capacity(units.len());
         let mut before: Option<CharInfo> = None;
         for unit in &units {
-            // The halves of a character that is written as one.
-            match before.is_some_and(|it| it.start == unit.start) {
-                true => strings::push_codepoint_wtf8_joined(&mut text, u32::from(unit.code_unit)),
-                false => strings::push_codepoint_wtf8(&mut text, u32::from(unit.code_unit)),
+            // The halves of a character that is written as one, which is four bytes.
+            match (before.filter(|it| it.start == unit.start), offsets.last()) {
+                (Some(_), Some(&lead)) => {
+                    offsets.push(lead + 2);
+                    strings::push_codepoint_wtf8_joined(&mut text, u32::from(unit.code_unit));
+                }
+                _ => {
+                    offsets.push(text.len() as u32);
+                    strings::push_codepoint_wtf8(&mut text, u32::from(unit.code_unit));
+                }
             }
             before = Some(*unit);
         }
@@ -86,7 +94,7 @@ impl<'a> Pattern<'a> {
             text: Cow::Owned(text),
             mode,
             span: literal.span(),
-            units: Some(units),
+            units: Some((units, offsets)),
         })
     }
 
@@ -97,10 +105,10 @@ impl<'a> Pattern<'a> {
 
     /// Where in the file the bytes of the text from `start` to `end` are written, as oxc counts.
     pub fn span(&self, start: u32, end: u32) -> Span {
-        let Some(units) = &self.units else {
+        let Some((units, offsets)) = &self.units else {
             return Span::new(self.span.start + start, self.span.start + end);
         };
-        let [first, after] = [start, end].map(|it| regex::utf16_index(&self.text, it as usize));
+        let [first, after] = [start, end].map(|offset| offsets.partition_point(|it| *it < offset));
         let unit = |index: usize| units.get(index);
         let start = match (unit(first), first.checked_sub(1).and_then(unit)) {
             // The second half of a character.

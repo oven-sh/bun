@@ -4,573 +4,117 @@ import { itBundled } from "../../expectBundled";
 // https://github.com/web-platform-tests/wpt/blob/master/css/css-color/parsing/relative-color-out-of-gamut.html
 //
 // The WPT asserts that a relative rgb()/hsl()/hwb() color whose origin is outside the sRGB
-// gamut computes to the unclamped out-of-gamut color (browsers clip it when painting), so the
-// bundler must not resolve these: gamut mapping the origin gives a different color (the
-// display-p3 green below used to come out as #00f942, browsers paint it as #00ff00). The
-// declaration is left for the browser. What the bundler does do is its usual handling of a
-// wide-gamut color literal inside a value it does not resolve: under the default browser
-// targets the origin gets an sRGB fallback plus an `@supports` tier with the color as written.
+// gamut computes to the unclamped out-of-gamut color (browsers clip it when painting), so
+// the bundler must not resolve these: gamut mapping the origin gives a different color
+// (`rgb(from lab(100 104.3 -50.9) r g b)` would become `#fff`; browsers compute
+// `color(srgb 1.5935 .587758 1.40555)` and paint it clipped, #ff96ff). The declaration is
+// left for the browser. What the bundler does do is its usual handling of a wide-gamut color
+// literal inside a value it does not resolve: under the default browser targets the origin
+// is downleveled into an sRGB fallback plus `@supports` tiers, with the losslessly converted
+// origin in the widest tier. Every browser with relative color syntax supports that tier.
 //
-// The lab()/lch()/oklab()/oklch() origins below are written with a number lightness, which
-// does not parse yet (#16727), so those declarations are emitted as written for that reason.
-let i = 0;
-const testname = () => `test-${i++}`;
-describe("relative_color_out_of_gamut", () => {
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-h1 {
-  color: rgb(from color(display-p3 0 1 0) r g b / alpha);
-}
-      `,
-    },
-    outfile: "out.css",
+// Until the lab family accepted a number lightness, the 24 lab()/lch()/oklab()/oklch() cases
+// were emitted as written only because their origin did not parse at all; now every origin
+// parses and all 27 cases take the same path.
+const origins: { origin: string; alpha?: string; srgb: string; p3: string; lab?: string }[] = [
+  { origin: "color(display-p3 0 1 0)", alpha: " / alpha", srgb: "#00f942", p3: "color(display-p3 0 1 0)" },
+  {
+    origin: "lab(100 104.3 -50.9)",
+    srgb: "#fff",
+    p3: "color(display-p3 1.47874 .658561 1.37055)",
+    lab: "lab(100% 104.3 -50.9)",
+  },
+  {
+    origin: "lab(0 104.3 -50.9)",
+    srgb: "#2a0022",
+    p3: "color(display-p3 .306769 -.199656 .283743)",
+    lab: "lab(0% 104.3 -50.9)",
+  },
+  {
+    origin: "lch(100 116 334)",
+    srgb: "#fff",
+    p3: "color(display-p3 1.47862 .658765 1.3702)",
+    lab: "lab(100% 104.26 -50.851)",
+  },
+  {
+    origin: "lch(0 116 334)",
+    srgb: "#2a0022",
+    p3: "color(display-p3 .306711 -.199586 .283484)",
+    lab: "lab(0% 104.26 -50.851)",
+  },
+  {
+    origin: "oklab(1 0.365 -0.16)",
+    srgb: "#fff",
+    p3: "color(display-p3 1.46907 .484456 1.34749)",
+    lab: "lab(94.0295% 119.52 -57.5484)",
+  },
+  {
+    origin: "oklab(0 0.365 -0.16)",
+    srgb: "#000",
+    p3: "color(display-p3 .0601419 -.041443 .0865066)",
+    lab: "lab(-.452515% 13.4914 -12.4407)",
+  },
+  {
+    origin: "oklch(1 0.399 336.3)",
+    srgb: "#fff",
+    p3: "color(display-p3 1.46933 .483415 1.34835)",
+    lab: "lab(94.0205% 119.644 -57.6823)",
+  },
+  {
+    origin: "oklch(0 0.399 336.3)",
+    srgb: "#000",
+    p3: "color(display-p3 .0602585 -.0416396 .0869713)",
+    lab: "lab(-.455916% 13.5528 -12.5395)",
+  },
+];
 
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+const functions: [name: string, channels: string][] = [
+  ["rgb", "r g b"],
+  ["hsl", "h s l"],
+  ["hwb", "h w b"],
+];
+
+describe("relative_color_out_of_gamut", () => {
+  for (const [fn, channels] of functions) {
+    for (const { origin, alpha = "", srgb, p3, lab } of origins) {
+      const input = `${fn}(from ${origin} ${channels}${alpha})`;
+      const relative = (from: string) => `${fn}(from ${from} ${channels}${alpha})`;
+
+      itBundled(input, {
+        files: {
+          "/a.css": /* css */ `
+h1 {
+  color: ${input};
+}
+          `,
+        },
+        outfile: "out.css",
+
+        onAfterBundle(api) {
+          api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-  color: rgb(from #00f942 r g b / alpha);
+  color: ${relative(srgb)};
 }
 
 @supports (color: color(display-p3 0 0 0)) {
   h1 {
-    color: rgb(from color(display-p3 0 1 0) r g b / alpha);
+    color: ${relative(p3)};
   }
 }
-`);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
+${
+  lab === undefined
+    ? ""
+    : `
+@supports (color: lab(0% 0 0)) {
   h1 {
-    color: rgb(from lab(100 104.3 -50.9) r g b);
+    color: ${relative(lab)};
   }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from lab(100 104.3 -50.9) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: rgb(from lab(0 104.3 -50.9) r g b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from lab(0 104.3 -50.9) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: rgb(from lch(100 116 334) r g b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from lch(100 116 334) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: rgb(from lch(0 116 334) r g b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from lch(0 116 334) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: rgb(from oklab(1 0.365 -0.16) r g b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from oklab(1 .365 -.16) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: rgb(from oklab(0 0.365 -0.16) r g b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from oklab(0 .365 -.16) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: rgb(from oklch(1 0.399 336.3) r g b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from oklch(1 .399 336.3) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: rgb(from oklch(0 0.399 336.3) r g b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: rgb(from oklch(0 .399 336.3) r g b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from color(display-p3 0 1 0) h s l / alpha);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-    color: hsl(from #00f942 h s l / alpha);
-  }
-
-  @supports (color: color(display-p3 0 0 0)) {
-    h1 {
-      color: hsl(from color(display-p3 0 1 0) h s l / alpha);
+}
+`
+}`);
+        },
+      });
     }
   }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from lab(100 104.3 -50.9) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from lab(100 104.3 -50.9) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from lab(0 104.3 -50.9) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from lab(0 104.3 -50.9) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from lch(100 116 334) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from lch(100 116 334) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from lch(0 116 334) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from lch(0 116 334) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from oklab(1 0.365 -0.16) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from oklab(1 .365 -.16) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from oklab(0 0.365 -0.16) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from oklab(0 .365 -.16) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from oklch(1 0.399 336.3) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from oklch(1 .399 336.3) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hsl(from oklch(0 0.399 336.3) h s l);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hsl(from oklch(0 .399 336.3) h s l);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from color(display-p3 0 1 0) h w b / alpha);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-    color: hwb(from #00f942 h w b / alpha);
-  }
-
-  @supports (color: color(display-p3 0 0 0)) {
-    h1 {
-      color: hwb(from color(display-p3 0 1 0) h w b / alpha);
-    }
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from lab(100 104.3 -50.9) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from lab(100 104.3 -50.9) h w b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from lab(0 104.3 -50.9) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from lab(0 104.3 -50.9) h w b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from lch(100 116 334) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from lch(100 116 334) h w b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from lch(0 116 334) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from lch(0 116 334) h w b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from oklab(1 0.365 -0.16) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from oklab(1 .365 -.16) h w b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from oklab(0 0.365 -0.16) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from oklab(0 .365 -.16) h w b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from oklch(1 0.399 336.3) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from oklch(1 .399 336.3) h w b);
-  }
-  `);
-    },
-  });
-
-  itBundled(testname(), {
-    files: {
-      "/a.css": /* css */ `
-  h1 {
-    color: hwb(from oklch(0 0.399 336.3) h w b);
-  }
-        `,
-    },
-    outfile: "/out.css",
-
-    onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* a.css */
-  h1 {
-      color: hwb(from oklch(0 .399 336.3) h w b);
-  }
-  `);
-    },
-  });
 });

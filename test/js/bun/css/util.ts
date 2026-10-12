@@ -53,6 +53,13 @@ export function minify_test(source: string, expected: string) {
   });
 }
 
+/** Like `minify_test`, with browser targets, so that fallbacks are in the output. */
+export function minify_test_with_targets(source: string, expected: string, targets: Browsers) {
+  test(source, () => {
+    expect(minifyTest(source, expected, targets)).toEqual(expected);
+  });
+}
+
 export function prefix_test(source: string, expected: string, targets: Browsers, skip?: boolean) {
   const testf = skip ? test.skip : test;
   testf(source, () => {

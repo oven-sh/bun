@@ -3,13 +3,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
   indoc,
   minify_error_test_with_options,
   minify_test,
+  minify_test_with_targets,
   minifyTestWithOptions as minify_test_with_options,
   ParserFlags,
   ParserOptions,
@@ -184,6 +185,9 @@ describe("css tests", () => {
     minify_test(`a { width: max(NaN * 1px, 2px) }`, `a{width:max(0px,2px)}`);
     minify_test(`a { width: calc(NaN * 1%) }`, `a{width:0%}`);
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
+    // A calc() that adds a number to a percentage has no type. It is left for the browser to reject.
+    minify_test(`a { opacity: calc(50% + 0.1) }`, `a{opacity:calc(50% + .1)}`);
+    minify_test(`a { color: lab(50% calc(10% + 1) 0) }`, `a{color:lab(50% calc(10% + 1)0)}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
   });
@@ -7759,10 +7763,83 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
-  // rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers keep the
-  // out-of-gamut channels and clip them when painting (w3c/csswg-drafts#8444), so resolving
-  // these by gamut mapping the origin, as before (#fff and #00f942 below), painted a
-  // different color than the unbundled stylesheet. They are left for the browser.
+  // Every channel of the lab family is `<percentage> | <number> | none`. A value with a number
+  // lightness or a percentage a, b or chroma has the same fallbacks as its other spelling.
+  // https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+  describe("lab-family colors written as numbers or percentages", () => {
+    minify_test(".foo { color: lab(50 40 -50) }", ".foo{color:lab(50% 40 -50)}");
+    minify_test(".foo { color: lch(50 60 120) }", ".foo{color:lch(50% 60 120)}");
+    minify_test(".foo { color: oklab(0.5 0.1 -0.1) }", ".foo{color:oklab(50% .1 -.1)}");
+    minify_test(".foo { color: oklch(0.5 0.1 120) }", ".foo{color:oklch(50% .1 120)}");
+    minify_test(".foo { color: lab(50% 32% -40%) }", ".foo{color:lab(50% 40 -50)}");
+    minify_test(".foo { color: lch(50% 40% 120) }", ".foo{color:lch(50% 60 120)}");
+    minify_test(".foo { color: oklab(50% 25% -25%) }", ".foo{color:oklab(50% .1 -.1)}");
+    minify_test(".foo { color: oklch(50% 25% 120) }", ".foo{color:oklch(50% .1 120)}");
+    minify_test(".foo { color: var(--x, oklch(0.5 0.1 120)) }", ".foo{color:var(--x,oklch(50% .1 120))}");
+
+    // Both spellings get the same fallbacks for targets without oklch().
+    for (const lightness of ["0.5", "50%"]) {
+      prefix_test(
+        `.foo { color: oklch(${lightness} 0.1 120) }`,
+        indoc`
+          .foo {
+            color: #5c6b21;
+            color: lab(42.8512% -14.3178 37.8447);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+    }
+
+    describe("relative colors", () => {
+      minify_test(".foo { color: lab(from lab(50 20 30) l a b) }", ".foo{color:lab(50% 20 30)}");
+      minify_test(".foo { color: oklch(from red 0.5 c h) }", ".foo{color:oklch(50% .257683 29.2339)}");
+      minify_test(".foo { color: rgb(from oklch(0.5 0.1 120) r g b) }", ".foo{color:#5c6b21}");
+      minify_test(
+        ".foo { color: color(from lab(100 104.3 -50.9) srgb r g b) }",
+        ".foo{color:color(srgb 1.5935 .587758 1.40555)}",
+      );
+      // An out-of-gamut origin is left alone like its percentage spelling; it is a parsed
+      // color now, which is why it comes back out serialized.
+      minify_test(
+        ".foo { color: rgb(from lab(100 104.3 -50.9) r g b) }",
+        ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b)}",
+      );
+      minify_test(
+        ".foo { color: hwb(from oklch(1 0.399 336.3) h w b) }",
+        ".foo{color:hwb(from oklch(100% .399 336.3) h w b)}",
+      );
+      // `calc(l - 0.1)` adds a number to a percentage-typed keyword. It is not resolved, and it is
+      // not `none`. The origin gets the fallback tiers of a color inside any value that is not resolved.
+      prefix_test(
+        ".foo { color: oklch(from oklch(0.5 0.1 40) calc(l - 0.1) c h) }",
+        indoc`
+          .foo {
+            color: oklch(from #924d35 calc(l - .1) c h);
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .foo {
+              color: oklch(from lab(41.2466% 28.0071 27.8824) calc(l - .1) c h);
+            }
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      minify_test(
+        ".foo { color: oklch(from oklch(50% 0.1 40) calc(l - 0.1) c h) }",
+        ".foo{color:oklch(from oklch(50% .1 40) calc(l - .1)c h)}",
+      );
+    });
+  });
+
+  // rgb(), hsl() and hwb() hold sRGB. A browser computes a relative color whose origin is outside
+  // sRGB unclamped (w3c/csswg-drafts#8444). A gamut-mapped origin paints another color (#fff and
+  // #00f942 for the first two), so the color is left for the browser.
   describe("relative colors with an origin outside the sRGB gamut", () => {
     minify_test(
       ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
@@ -7800,7 +7877,7 @@ describe("css tests", () => {
       },
     );
 
-    // In-gamut origins resolve as before, and the unbounded functions resolve any origin.
+    // An origin inside sRGB resolves, and the unbounded functions resolve any origin.
     minify_test(".foo { color: rgb(from lab(50% 40 -50) r g b) }", ".foo{color:#965dcd}");
     minify_test(".foo { color: hsl(from color(display-p3 0.4 0.4 0.4) h s l) }", ".foo{color:#666}");
     minify_test(
@@ -7814,6 +7891,166 @@ describe("css tests", () => {
       ".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b / var(--a)) }",
       ".foo{color:rgb(255 0 0/var(--a))}",
     );
+  });
+
+  describe("hsl() and hwb() number channels", () => {
+    // In the modern syntax the saturation/lightness and whiteness/blackness are
+    // <percentage> | <number> | none, and the number is the percentage without
+    // its sign; only the legacy comma syntax is limited to percentages.
+    // https://www.w3.org/TR/css-color-4/#the-hsl-notation
+    // https://www.w3.org/TR/css-color-4/#the-hwb-notation
+    // Every output below is what the percentage spelling already produced.
+    minify_test(".foo { color: hsl(120 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50 40%) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50% 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120deg 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsla(120 50 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 50 40 / 0.5) }", ".foo{color:#33993380}");
+    minify_test(".foo { color: hsla(120 50 40 / 50%) }", ".foo{color:#33993380}");
+    minify_test(".foo { color: hsl(120 none 40) }", ".foo{color:#666}");
+    minify_test(".foo { color: hsl(120 50 none) }", ".foo{color:#000}");
+    minify_test(".foo { color: hsl(120 150 40) }", ".foo{color:#0c0}");
+    minify_test(".foo { color: hsl(120 -50 40) }", ".foo{color:#666}");
+    minify_test(".foo { color: hsl(120 50 140) }", ".foo{color:#fff}");
+    minify_test(".foo { color: hsl(120.5 50.5 40.5) }", ".foo{color:#339b34}");
+    minify_test(".foo { color: hsl(120 .5 40) }", ".foo{color:#656765}");
+    minify_test(".foo { color: hsl(120 calc(25 * 2) 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hsl(120 calc(25% * 2) 40) }", ".foo{color:#393}");
+    minify_test(".foo { color: hwb(120 20 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20 30%) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20% 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120deg 20 30) }", ".foo{color:#33b333}");
+    minify_test(".foo { color: hwb(120 20 30 / 0.5) }", ".foo{color:#33b33380}");
+    minify_test(".foo { color: hwb(120 none 30) }", ".foo{color:#00b300}");
+    minify_test(".foo { color: hwb(120 20 none) }", ".foo{color:#3f3}");
+    minify_test(".foo { color: hwb(120 60 60) }", ".foo{color:gray}");
+    minify_test(".foo { color: hwb(120 -20 30) }", ".foo{color:#00b300}");
+    minify_test(".foo { color: hwb(120 20 130) }", ".foo{color:#2a2a2a}");
+    minify_test(".foo { color: hwb(120 calc(10 * 2) 30) }", ".foo{color:#33b333}");
+
+    // Relative color syntax is the modern syntax; the origin of a relative
+    // color, the operands of color-mix() and colors nested in other values go
+    // through the same parser.
+    minify_test(".foo { color: hsl(from red h 50 l) }", ".foo{color:#bf4040}");
+    minify_test(".foo { color: hwb(from red h 20 b) }", ".foo{color:#f33}");
+    minify_test(".foo { color: rgb(from hsl(120 50 40) r g b) }", ".foo{color:#393}");
+    minify_test(".foo { color: color-mix(in hsl, hsl(120 50 40), hwb(120 20 30)) }", ".foo{color:#33a633}");
+    minify_test(
+      ".foo { background: linear-gradient(hsl(120 50 40), hwb(120 20 30)) }",
+      ".foo{background:linear-gradient(#393,#33b333)}",
+    );
+    // Colors inside token lists (custom properties, var() fallbacks).
+    minify_test(".foo { --c: hsl(120 50 40) }", ".foo{--c:#393}");
+    minify_test(".foo { --c: hwb(120 20 30) }", ".foo{--c:#33b333}");
+    minify_test(".foo { color: var(--c, hsl(120 50 40)) }", ".foo{color:var(--c,#393)}");
+    // An hsl() whose alpha cannot be resolved keeps its channels, which are
+    // always written as percentages.
+    minify_test(".foo { color: hsl(120 50 40 / var(--a)) }", ".foo{color:hsl(120 50% 40%/var(--a))}");
+    minify_test(".foo { color: hsl(120 50 40% / var(--a)) }", ".foo{color:hsl(120 50% 40%/var(--a))}");
+
+    // Downleveling for targets without the space separated syntax works from
+    // the parsed color, so it is the same as for the percentage spelling.
+    prefix_test(
+      `.foo {
+        color: hsl(120 50 40 / 0.5);
+        border-color: hsl(120 50 40 / var(--a));
+        background: hwb(120 20 30 / 0.5);
+      }`,
+      indoc`
+        .foo {
+          color: rgba(51, 153, 51, .5);
+          border-color: hsla(120, 50%, 40%, var(--a));
+          background: rgba(51, 179, 51, .5);
+        }
+      `,
+      { chrome: Some(60 << 16) },
+    );
+
+    // The legacy comma syntax takes only percentages, and hwb() has no legacy
+    // syntax, so these are left for the browser to reject.
+    minify_test(".foo { color: hsl(120, 50, 40) }", ".foo{color:hsl(120,50,40)}");
+    minify_test(".foo { color: hsl(120, 50%, 40) }", ".foo{color:hsl(120,50%,40)}");
+    minify_test(".foo { color: hsl(120, 50, 40%) }", ".foo{color:hsl(120,50,40%)}");
+    minify_test(".foo { color: hsla(120, 50, 40, 0.5) }", ".foo{color:hsla(120,50,40,.5)}");
+    minify_test(".foo { color: hwb(120, 20, 30) }", ".foo{color:hwb(120,20,30)}");
+    minify_test(".foo { color: hsl(120 50, 40) }", ".foo{color:hsl(120 50,40)}");
+    minify_test(".foo { color: hsl(120 50 40 60) }", ".foo{color:hsl(120 50 40 60)}");
+    minify_test(".foo { --c: hsl(120, 50, 40) }", ".foo{--c:hsl(120,50,40)}");
+    // The legacy rgb() percentage form shares the percentage parser.
+    minify_test(".foo { color: rgb(10%, 20, 30) }", ".foo{color:rgb(10%,20,30)}");
+    minify_test(".foo { color: hsl(120, 50%, 40%) }", ".foo{color:#393}");
+    minify_test(".foo { color: rgb(10%, 20%, 30%) }", ".foo{color:#1a334d}");
+  });
+
+  // A `color` or `text-shadow` that does not parse replaces the declaration before it. While
+  // these spellings did not parse, that deleted a hand-written fallback:
+  // `.x{color:red;color:oklch(0.5 0.1 40)}` came out as `.x{color:oklch(.5 .1 40)}`.
+  describe("a fallback written before a color with number channels", () => {
+    // The browser targets `bun build` uses when the target is a browser.
+    const targets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+
+    // Not every target has the lab family, so the fallback stays in front of it.
+    for (const [written, printed] of [
+      ["oklch(0.5 0.1 40)", "oklch(50% .1 40)"],
+      ["oklab(0.5 0.1 0.1)", "oklab(50% .1 .1)"],
+      ["lab(50 20 30)", "lab(50% 20 30)"],
+      ["lch(50 30 40)", "lch(50% 30 40)"],
+      ["lab(50% 50% 50%)", "lab(50% 62.5 62.5)"],
+    ]) {
+      minify_test_with_targets(`.x{color:red;color:${written}}`, `.x{color:red;color:${printed}}`, targets);
+    }
+    minify_test_with_targets(
+      ".x{text-shadow:1px 1px red;text-shadow:1px 1px oklch(0.5 0.1 40)}",
+      ".x{text-shadow:1px 1px red;text-shadow:1px 1px oklch(50% .1 40)}",
+      targets,
+    );
+    minify_test_with_targets(
+      ".x{color:red;margin:0;color:oklch(0.5 0.1 40)}",
+      ".x{color:red;color:oklch(50% .1 40);margin:0}",
+      targets,
+    );
+
+    // hsl() and hwb() fold to an sRGB color that every target reads, so it replaces the fallback.
+    minify_test_with_targets(".x{color:red;color:hsl(120 50 50)}", ".x{color:#40bf40}", targets);
+    minify_test_with_targets(".x{color:red;color:hwb(120 10 10)}", ".x{color:#1ae61a}", targets);
+
+    // With no fallback in the same list, the color gets the generated ones.
+    const tiers = "color:#924d35;color:color(display-p3 .538188 .317174 .228429);color:lab(41.2466% 28.0071 27.8824)";
+    minify_test_with_targets(".x{color:oklch(0.5 0.1 40)}", `.x{${tiers}}`, targets);
+    minify_test_with_targets(
+      ".x{color:red!important;color:oklch(0.5 0.1 40)}",
+      `.x{${tiers};color:red!important}`,
+      targets,
+    );
+    // The later rule is no longer taken for a duplicate that replaces the first one.
+    minify_test_with_targets(
+      ".x{color:red}.y{top:0}.x{color:oklch(0.5 0.1 40)}",
+      `.x{color:red}.y{top:0}.x{${tiers}}`,
+      targets,
+    );
+
+    // `@property` needs a typed color: this was a build error.
+    minify_test_with_targets(
+      '@property --c{syntax:"<color>";inherits:false;initial-value:oklch(0.5 0.1 40)}',
+      '@property --c{syntax:"<color>";inherits:false;initial-value:oklch(50% .1 40)}',
+      targets,
+    );
+
+    test("bun build keeps the fallback", async () => {
+      using dir = tempDir("css-color-fallback", {
+        "a.css": ".x{color:red;color:oklch(0.5 0.1 40)}",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--minify", "a.css"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(".x{color:red;color:oklch(50% .1 40)}");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("edge cases", () => {

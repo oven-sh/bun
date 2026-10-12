@@ -4571,9 +4571,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     return JSValue::encode(slotValue);
 }
 
-// One `base[name]` step of a property path. Empty means "not found": `name` is absent, or `base` is a
-// null or undefined link, where ToObject throws and Jest's getPath stops. Callers check the receiver
-// before the walk (#3345).
+// Like Jest's getPath, a path that continues past null or undefined is "not found", not a TypeError.
 static JSValue getPathStep(VM& vm, JSGlobalObject* globalObject, JSValue base, PropertyName name)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

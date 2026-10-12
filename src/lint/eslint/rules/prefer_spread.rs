@@ -42,7 +42,10 @@ impl Rule for PreferSpread {
         // Whether `.apply()` leaves `this` as it is in a plain call.
         let is_valid_this_arg = match ast_utils::member_object(applied) {
             Some(expected_this) => ast_utils::equal_tokens(cx.file(), expected_this, this_arg),
-            None => ast_utils::is_null_or_undefined(this_arg),
+            // For oxlint only a name is called without a `this`.
+            None => {
+                ast_utils::is_null_or_undefined(this_arg) && (!cx.language().is_oxlint || applied.tag() == ExprTag::Ident)
+            }
         };
         if is_valid_this_arg {
             cx.report(e, PREFER_SPREAD);

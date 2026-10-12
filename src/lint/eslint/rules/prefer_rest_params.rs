@@ -71,6 +71,16 @@ impl PreferRestParams {
         if is_normal_member_access(e) {
             return;
         }
+        // oxlint: every one that the file does not declare, anywhere in a function that is no arrow function, in a default
+        // value of a parameter too.
+        if cx.language().is_oxlint {
+            let is_function = |it: Node| matches!(it, Node::Func(func) if !func.is_arrow() && func.kind() != FnKind::StaticBlock);
+            let symbol = e.reference().and_then(Reference::symbol);
+            if symbol.is_none_or(Symbol::is_implicit_arguments) && Node::Expr(e).ancestors().any(is_function) {
+                cx.report(e, PREFER_REST_PARAMS);
+            }
+            return;
+        }
         let Some(symbol) = e.reference().and_then(Reference::symbol) else {
             return;
         };

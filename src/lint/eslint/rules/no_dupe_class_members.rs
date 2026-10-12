@@ -31,6 +31,15 @@ fn key_span(member: Member<'_>) -> Option<Span> {
     }
 }
 
+/// oxlint compares a member with the last before it that has the name, whatever that one is.
+fn oxlint_redeclares(member: Member<'_>, before: Member<'_>) -> bool {
+    let is_private = |it: Member<'_>| it.key().is_some_and(Key::is_private);
+    let is_accessor = |it: Member<'_>| matches!(it.kind(), MemberKind::Getter | MemberKind::Setter);
+    member.is_static() == before.is_static()
+        && is_private(member) == is_private(before)
+        && (member.kind() == before.kind() || !(is_accessor(member) && is_accessor(before)))
+}
+
 /// `ignores_computed`: whether a member with a name in brackets is left out.
 pub fn check<'a, R: Rule>(
     class: Class<'a>,
@@ -60,8 +69,8 @@ pub fn check<'a, R: Rule>(
     seen.reserve(members.len());
     let is_oxlint = cx.language().is_oxlint;
     for member in members {
-        // Neither a `MethodDefinition` nor a `PropertyDefinition`, or an overload.
-        if member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
+        // Neither a `MethodDefinition` nor a `PropertyDefinition`, which oxlint does not ask, or an overload.
+        if !is_oxlint && member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
             || member.func().is_some_and(|func| !func.has_body())
         {
             continue;
@@ -80,7 +89,11 @@ pub fn check<'a, R: Rule>(
                 if ignores_computed && key.is_computed() {
                     continue;
                 }
-                let Some(name) = ast_utils::get_static_key_name(key) else {
+                let name = match is_oxlint {
+                    true => utils::oxlint::property_key_name(key).map(Cow::Borrowed),
+                    false => ast_utils::get_static_key_name(key),
+                };
+                let Some(name) = name else {
                     continue;
                 };
                 name
@@ -94,12 +107,16 @@ pub fn check<'a, R: Rule>(
         };
         let shift = if member.is_static() { STATIC } else { 0 };
         let (state, last) = seen.entry(name.clone()).or_insert((0, None));
-        let is_duplicate = *state & (conflicting << shift) != 0;
+        let is_defined = *state & (conflicting << shift) != 0;
         *state |= own << shift;
         if !has_key {
             continue;
         }
         let before = if is_oxlint { last.replace(member) } else { None };
+        let is_duplicate = match is_oxlint {
+            true => before.is_some_and(|before| oxlint_redeclares(member, before)),
+            false => is_defined,
+        };
         if is_duplicate && let Some(key) = key_span(member) {
             // oxlint points at the member before.
             let place = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };

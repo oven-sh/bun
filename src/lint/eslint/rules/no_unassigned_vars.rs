@@ -51,8 +51,11 @@ impl Rule for NoUnassignedVars {
         let Some(symbol) = decl.pat().symbol() else {
             return;
         };
-        if !symbol.has_writes() && symbol.has_reads() {
-            let is_oxlint = cx.language().is_oxlint;
+        let is_oxlint = cx.language().is_oxlint;
+        // For oxc a declaration that gives a value writes nothing: `var a; var a = 1;`.
+        let has_writes = symbol.has_writes()
+            && (!is_oxlint || symbol.references().any(|it| it.is_write() && it.expr().is_some()));
+        if !has_writes && symbol.has_reads() {
             // For oxc the `a` of the type `typeof a` is not read, nor is `React` by JSX.
             let is_read = |it: Reference| {
                 it.is_read() && !it.is_jsx_pragma() && !it.expr().is_some_and(Expr::is_in_type_query)

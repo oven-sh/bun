@@ -51,6 +51,36 @@ impl<'a> Ctx<'a, '_> {
             }
         };
     }
+
+    /// The same for a text that takes work to make. The suggestion says what the report says.
+    pub(crate) fn risky_fix_with(
+        &self,
+        report: Report<'a>,
+        message: Message,
+        fix: impl FnOnce(Fixer<'a>) -> Fix,
+    ) {
+        match self.runner {
+            Runner::Jest | Runner::Vitest => report.fix(fix),
+            Runner::Bun => report.suggest(message, fix),
+        };
+    }
+
+    /// Whether a fix may write the name `name`. In a file that imports from `bun:test` nothing else is declared than what it
+    /// imports: `bun test` declares `it` and the like only where nothing is imported from there.
+    pub(crate) fn can_write(&self, name: &[u8]) -> bool {
+        self.runner != Runner::Bun
+            || (std::str::from_utf8(name).ok())
+                .is_some_and(|it| self.file.top_level_scope().get(it).is_some())
+    }
+
+    /// Whether a fix may change a title. A snapshot in a file of its own is found by the titles.
+    pub(crate) fn can_change_titles(&self) -> bool {
+        self.runner != Runner::Bun
+            || !mentions_any(
+                self.file,
+                &const { mention_bits(["toMatchSnapshot", "toThrowErrorMatchingSnapshot"]) },
+            )
+    }
 }
 
 /// `RUNNER` of a rule of `jest`, of `vitest`, of `bun:test`.
@@ -1319,26 +1349,66 @@ fn is_valid_bun_call(name: &[u8], members: &[KnownMemberExpressionProperty]) -> 
     }
 }
 
-/// The callback and the options among the arguments of `test(..)`, `describe(..)` and their like.
+/// What the arguments of `test(..)`, `describe(..)` and their like are. No rule of `bun:test` takes one by its place.
 #[derive(Copy, Clone)]
 pub(crate) struct Arguments<'a> {
+    pub(crate) title: Option<Expr<'a>>,
     pub(crate) callback: Option<Expr<'a>>,
+    /// An object, or the timeout.
     pub(crate) options: Option<Expr<'a>>,
 }
 
+/// Whether an argument is a function, as far as that can be told from what is written. `None`: a name, a call, ..
+fn is_function(argument: Expr) -> Option<bool> {
+    match argument.tag() {
+        ExprTag::Fn => Some(true),
+        ExprTag::String
+        | ExprTag::Template
+        | ExprTag::Number
+        | ExprTag::BigInt
+        | ExprTag::True
+        | ExprTag::False
+        | ExprTag::Null
+        | ExprTag::Regex
+        | ExprTag::Object
+        | ExprTag::Array => Some(false),
+        _ => None,
+    }
+}
+
 impl<'a> Arguments<'a> {
-    /// For Jest and Vitest the callback is the second, as the rules of oxlint take it. `bun test` goes by which is a function:
-    /// `(title, callback, options)`, `(title, options, callback)`, `(callback, options)`, `(title, callback)`, `(title)`, `(callback)`.
+    /// For Jest and Vitest the title is the first and the callback the second, as the rules of oxlint take them. `bun test` goes by
+    /// which is a function: `(title, callback, options)`, `(title, options, callback)`, `(callback, options)`, `(title, callback)`,
+    /// `(title)`, `(callback)`. Where only names are written, what is no function decides, then the usual order. A name alone
+    /// counts as the callback.
     pub(crate) fn of(arguments: List<'a, Expr<'a>>, runner: Runner) -> Self {
-        let is_function = |it: Option<Expr>| it.is_some_and(|it| it.tag() == ExprTag::Fn);
         let [a, b, c] = [arguments.first(), arguments.get(1), arguments.get(2)];
-        let (callback, options) = match runner {
-            Runner::Jest | Runner::Vitest => (b, None),
-            Runner::Bun if is_function(c) && !is_function(b) => (c, b),
-            Runner::Bun if is_function(a) && !is_function(b) => (a, b),
-            Runner::Bun => (b, c),
+        let is = |it: Option<Expr>| it.and_then(is_function);
+        let (title, callback, options) = match (runner, is(a), is(b), is(c)) {
+            (Runner::Jest | Runner::Vitest, ..) => (a, b, None),
+            _ if c.is_some() => match (is(b), is(c)) {
+                (Some(false), _) | (None, Some(true)) => (a, c, b),
+                _ => (a, b, c),
+            },
+            // `test(callback, 1000)`, `test(() => {}, timeout)`
+            (_, Some(true) | None, Some(false), _) | (_, Some(true), None, _) if b.is_some() => {
+                (None, a, b)
+            }
+            _ if b.is_some() => (a, b, None),
+            (_, Some(false), ..) => (a, None, None),
+            _ => (None, a, None),
         };
-        Arguments { callback, options }
+        Arguments {
+            title,
+            callback,
+            options,
+        }
+    }
+
+    /// Whether the callback can be a function.
+    pub(crate) fn can_have_callback(&self) -> bool {
+        self.callback
+            .is_some_and(|it| is_function(it) != Some(false))
     }
 }
 

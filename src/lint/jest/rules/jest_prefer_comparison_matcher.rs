@@ -6,8 +6,7 @@ use bun_lint::prelude::*;
 pub struct PreferComparisonMatcher<const RUNNER: u8 = { jest::JEST }>;
 
 impl<const RUNNER: u8> Rule for PreferComparisonMatcher<RUNNER> {
-    const META: Meta =
-        jest::meta(RUNNER, "prefer-comparison-matcher", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = jest::meta_with_risky_fix(RUNNER, "prefer-comparison-matcher", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

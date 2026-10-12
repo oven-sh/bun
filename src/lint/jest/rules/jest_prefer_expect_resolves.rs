@@ -6,8 +6,7 @@ use bun_lint::prelude::*;
 pub struct PreferExpectResolves<const RUNNER: u8 = { jest::JEST }>;
 
 impl<const RUNNER: u8> Rule for PreferExpectResolves<RUNNER> {
-    const META: Meta =
-        jest::meta(RUNNER, "prefer-expect-resolves", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = jest::meta_with_risky_fix(RUNNER, "prefer-expect-resolves", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

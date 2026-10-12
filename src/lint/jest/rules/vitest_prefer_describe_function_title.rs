@@ -1,5 +1,5 @@
 use bun_lint_oxlint::import::import_entries;
-use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
+use crate::jest::{self, Arguments, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
 use bun_lint::prelude::*;
 use rustc_hash::FxHashMap;
 use std::cell::OnceCell;
@@ -12,7 +12,7 @@ const PREFER_DESCRIBE_FUNCTION_TITLE: Message =
     Message::new("", "Title description can not have the same content as a imported function name.");
 
 impl<const RUNNER: u8> Rule for PreferDescribeFunctionTitle<RUNNER> {
-    const META: Meta = jest::meta(RUNNER, "prefer-describe-function-title", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = jest::meta_with_risky_fix(RUNNER, "prefer-describe-function-title", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -49,7 +49,7 @@ fn run<'a>(
     let Some(arguments) = possible_jest_node.node.as_call().map(Call::args).filter(|it| it.len() >= 2) else {
         return;
     };
-    let Some(title_arg) = arguments.first().filter(|it| !it.is_parenthesized() && !it.is_chain_root()) else {
+    let Some(title_arg) = Arguments::of(arguments, ctx.runner).title.filter(|it| !it.is_parenthesized() && !it.is_chain_root()) else {
         return;
     };
     // The name of what is tested, and how it is written.
@@ -75,6 +75,7 @@ fn run<'a>(
     }
     let report = ctx.report(title_arg, PREFER_DESCRIBE_FUNCTION_TITLE);
     if is_value {
-        report.fix(|fixer| fixer.replace(title_arg, variable));
+        // What is imported need not be a function or a class, and `describe` takes nothing else but a text or a number.
+        ctx.risky_fix_with(report, PREFER_DESCRIBE_FUNCTION_TITLE, |fixer| fixer.replace(title_arg, variable));
     }
 }

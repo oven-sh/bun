@@ -99,11 +99,12 @@ pub(crate) mod no_disabled_tests {
         let JestFnKind::General(kind) = kind else {
             return;
         };
-        // With Bun a function is enough, and what a name stands for is not known.
-        let is_title = |it: Expr| matches!(it.tag(), ExprTag::String | ExprTag::Template);
+        let has_no_function = match ctx.runner {
+            Runner::Bun => (Arguments::of(call_expr.args(), ctx.runner).callback).is_none(),
+            Runner::Jest | Runner::Vitest => call_expr.args().len() < 2,
+        };
         if kind == JestGeneralFnKind::Test
-            && call_expr.args().len() < 2
-            && (ctx.runner != Runner::Bun || call_expr.args().first().is_none_or(is_title))
+            && has_no_function
             && members
                 .iter()
                 .all(|member| member.is_name_unequal("todo") && member.is_name_unequal("todoIf"))
@@ -168,17 +169,8 @@ pub(crate) mod valid_describe_callback {
             return;
         }
         let as_function = |arg: Expr<'a>| arg.as_fn().filter(|_| !arg.is_parenthesized());
-        let Some(second) = Arguments::of(arguments, ctx.runner).callback else {
-            // `describe(callback)`
-            let is_title = |it: Expr| {
-                matches!(
-                    it.tag(),
-                    ExprTag::String | ExprTag::Template | ExprTag::Number
-                )
-            };
-            if is_for_bun && !arguments.first().is_none_or(is_title) {
-                return;
-            }
+        let told_apart = Arguments::of(arguments, ctx.runner);
+        let Some(second) = told_apart.callback else {
             ctx.report(
                 arguments
                     .first()
@@ -199,20 +191,7 @@ pub(crate) mod valid_describe_callback {
         };
         let Some(func) = as_function(callback) else {
             // What a name stands for is not known.
-            let is_no_function = matches!(
-                callback.tag(),
-                ExprTag::String
-                    | ExprTag::Template
-                    | ExprTag::Number
-                    | ExprTag::BigInt
-                    | ExprTag::True
-                    | ExprTag::False
-                    | ExprTag::Null
-                    | ExprTag::Regex
-                    | ExprTag::Object
-                    | ExprTag::Array
-            );
-            if !is_for_bun || is_no_function {
+            if !is_for_bun || !told_apart.can_have_callback() {
                 ctx.report(callback.outer_span(), SECOND_ARGUMENT_MUST_BE_FUNCTION);
             }
             return;
@@ -354,7 +333,7 @@ pub(crate) mod valid_title {
             let Some(arg) = possible_jest_fn_node
                 .node
                 .as_call()
-                .and_then(|it| it.args().first())
+                .and_then(|it| Arguments::of(it.args(), ctx.runner).title)
             else {
                 return;
             };
@@ -382,13 +361,6 @@ pub(crate) mod valid_title {
                 .first()
                 .is_some_and(|member| member.is_name_equal("extend"))
                 || self.allow_arguments && arg.tag() == ExprTag::Ident && !arg.is_parenthesized()
-                // `test(() => {})`, `test(callback)`
-                || ctx.runner == Runner::Bun
-                    && (arg.tag() == ExprTag::Fn
-                        || possible_jest_fn_node.node.as_call().is_some_and(|it| {
-                            it.args().len() == 1
-                                && !matches!(arg.tag(), ExprTag::String | ExprTag::Template)
-                        }))
             {
                 return;
             }
@@ -449,7 +421,7 @@ pub(crate) mod valid_title {
             let raw_text = ctx.file.slice(inner_span);
             if !self.ignore_spaces && strings::trim_unicode_whitespace(title).len() != title.len() {
                 let report = ctx.report(span, ACCIDENTAL_SPACE);
-                if can_trim_raw_title(title, raw_text) {
+                if can_trim_raw_title(title, raw_text) && ctx.can_change_titles() {
                     report.fix(|fixer| {
                         fixer.replace(inner_span, strings::trim_unicode_whitespace(raw_text))
                     });
@@ -466,6 +438,7 @@ pub(crate) mod valid_title {
                 if let Some(unprefixed_raw) = without_prefix(raw_text)
                     && let Some(unprefixed_cooked) = without_prefix(title)
                     && can_trim_raw_title(unprefixed_cooked, unprefixed_raw)
+                    && ctx.can_change_titles()
                 {
                     report.fix(|fixer| {
                         fixer.replace(inner_span, strings::trim_unicode_whitespace(unprefixed_raw))
@@ -626,6 +599,15 @@ pub(crate) mod consistent_test_it {
                                         " within describe"
                                     },
                                 );
+                            let prefix = match jest_fn_call.name.first() {
+                                Some(b'x') => "x",
+                                _ => "",
+                            };
+                            if ctx.runner == Runner::Bun
+                                && !ctx.can_write([prefix, preferred].concat().as_bytes())
+                            {
+                                continue;
+                            }
                             report.fix(|fixer| {
                                 let prefix = match jest_fn_call.name.first() {
                                     _ if ident.is_ident("fit") => {
@@ -829,17 +811,18 @@ pub(crate) mod no_identical_title {
         parent: u32,
     }
 
-    /// The first argument of a call, and what it says.
-    fn title_of(node: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
-        let argument = (node.as_call()?.args().first()).filter(|it| !it.is_parenthesized())?;
+    /// The title of a call, and what it says.
+    fn title_of(node: Expr<'_>, runner: Runner) -> Option<(Expr<'_>, Name<'_>)> {
+        let title = Arguments::of(node.as_call()?.args(), runner).title;
+        let argument = title.filter(|it| !it.is_parenthesized())?;
         Some((argument, static_string(argument)?))
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         // The titles of more than one call. Most files have none.
         let (mut titles, mut repeated) = (FxHashSet::default(), FxHashSet::default());
-        for (_, title) in
-            iter_possible_jest_call_node(ctx.file, ctx.runner).filter_map(|it| title_of(it.node))
+        for (_, title) in iter_possible_jest_call_node(ctx.file, ctx.runner)
+            .filter_map(|it| title_of(it.node, ctx.runner))
         {
             if !titles.insert(title) {
                 repeated.insert(title);
@@ -853,7 +836,8 @@ pub(crate) mod no_identical_title {
             FxHashMap::default();
         for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let node = possible_jest_node.node;
-            let Some((argument, title)) = title_of(node).filter(|it| repeated.contains(&it.1))
+            let Some((argument, title)) =
+                title_of(node, ctx.runner).filter(|it| repeated.contains(&it.1))
             else {
                 continue;
             };
@@ -965,9 +949,12 @@ pub(crate) mod no_test_prefixes {
             preferred_node_name.push(b'.');
             preferred_node_name.extend_from_slice(member_name);
         }
-        (ctx.report(span, NO_TEST_PREFIXES)
-            .data("preferred_node_name", preferred_node_name.clone()))
-        .fix(|fixer| fixer.replace(span, preferred_node_name));
+        let report = ctx
+            .report(span, NO_TEST_PREFIXES)
+            .data("preferred_node_name", preferred_node_name.clone());
+        if ctx.can_write(name.get(1..).unwrap_or_default()) {
+            report.fix(|fixer| fixer.replace(span, preferred_node_name));
+        }
     }
 
     /// The name as it is where it is from, and the names of the members.
@@ -1227,7 +1214,7 @@ pub(crate) mod prefer_lowercase_title {
             let node = possible_jest_node.node;
             let Some(arg) = node
                 .as_call()
-                .and_then(|it| it.args().first())
+                .and_then(|it| Arguments::of(it.args(), ctx.runner).title)
                 .filter(|it| !it.is_parenthesized())
             else {
                 return;
@@ -1270,6 +1257,9 @@ pub(crate) mod prefer_lowercase_title {
                 let report = ctx
                     .report(arg, PREFER_LOWERCASE_TITLE)
                     .data("title", debug(literal));
+                if !ctx.can_change_titles() {
+                    return;
+                }
                 report.fix(|fixer| {
                     let len = if self.lowercase_first_character_only {
                         1
@@ -1296,7 +1286,8 @@ pub(crate) mod prefer_todo {
             return;
         };
         let (callee, arguments) = (call_expr.callee(), call_expr.args());
-        let Some(title) = arguments.first() else {
+        let told_apart = Arguments::of(arguments, ctx.runner);
+        let Some(title) = told_apart.title else {
             return;
         };
         let is_filtered = match callee.as_ident() {
@@ -1318,7 +1309,7 @@ pub(crate) mod prefer_todo {
         if is_filtered
             || !matches!(title.tag(), ExprTag::String | ExprTag::Template)
             || title.is_parenthesized()
-            || !arguments.get(1).is_none_or(is_empty_function)
+            || !told_apart.callback.is_none_or(is_empty_function)
             || !is_type_of_jest_fn_call(
                 ctx.file,
                 possible_jest_node,
@@ -1338,7 +1329,7 @@ pub(crate) mod prefer_todo {
             report = report.help("Replace with `test.todo` or `it.todo`.");
         }
         // Neither `test.if(a)(..)` nor the options are taken away.
-        if ctx.runner == Runner::Bun && (!is_renamed || arguments.len() > 2) {
+        if ctx.runner == Runner::Bun && (!is_renamed || told_apart.options.is_some()) {
             return;
         }
         report.fix(|fixer| {

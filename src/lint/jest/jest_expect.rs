@@ -1535,12 +1535,14 @@ pub(crate) mod prefer_expect_assertions {
     }
 
     /// The last argument that is a function.
-    fn find_test_callback(call_expr: Call<'_>) -> Option<(Expr<'_>, Func<'_>)> {
-        call_expr
-            .args()
-            .iter()
-            .rev()
-            .find_map(|it| Some((it, it.as_fn().filter(|_| !it.is_parenthesized())?)))
+    fn find_test_callback(call_expr: Call<'_>, runner: Runner) -> Option<(Expr<'_>, Func<'_>)> {
+        fn as_function(it: Expr<'_>) -> Option<(Expr<'_>, Func<'_>)> {
+            Some((it, it.as_fn().filter(|_| !it.is_parenthesized())?))
+        }
+        match runner {
+            Runner::Bun => (Arguments::of(call_expr.args(), runner).callback).and_then(as_function),
+            Runner::Jest | Runner::Vitest => call_expr.args().iter().rev().find_map(as_function),
+        }
     }
 
     /// `ctx.expect` for the parameter `ctx`, `e` for `{ expect: e }`.
@@ -1683,9 +1685,9 @@ pub(crate) mod prefer_expect_assertions {
             is_for_vitest: bool,
             ctx: &Ctx<'a, '_>,
         ) {
-            let Some((callback, func)) = find_test_callback(call_expr)
-                .filter(|it| call_expr.args().len() >= 2 && it.1.has_body())
-            else {
+            let Some((callback, func)) = find_test_callback(call_expr, ctx.runner).filter(|it| {
+                (ctx.runner == Runner::Bun || call_expr.args().len() >= 2) && it.1.has_body()
+            }) else {
                 return;
             };
             let parameter_prefix = |parameters: &[Param<'a>], index: usize| {
@@ -1802,7 +1804,7 @@ pub(crate) mod prefer_expect_assertions {
         covered_describe_ids: &mut Vec<Option<Node<'a>>>,
         ctx: &Ctx<'a, '_>,
     ) {
-        let Some((_, func)) = find_test_callback(call_expr) else {
+        let Some((_, func)) = find_test_callback(call_expr, ctx.runner) else {
             return;
         };
         let expected_name = [file_expect_prefix, b".hasAssertions".as_slice()].concat();

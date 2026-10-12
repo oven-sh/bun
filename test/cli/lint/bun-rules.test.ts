@@ -1613,6 +1613,9 @@ const testRules: Record<string, Case[]> = {
     `test(function () {});`,
     `test(() => {}, 1000);`,
     `test(callback);`,
+    `test(callback, 1000);`,
+    `test(callback, { timeout: 1000 });`,
+    `test.each([1])(callback, 1000);`,
     // What depends on a condition is not disabled.
     `test.skipIf(a)("b", () => {});`,
     `test.if(a)("b", () => {});`,
@@ -1649,6 +1652,12 @@ const testRules: Record<string, Case[]> = {
     `describe("a", () => tests());`,
     `describe("a", callback);`,
     `describe(callback);`,
+    // What is no function is no callback, so the name before or after it is.
+    `describe(callback, 1000);`,
+    `describe(callback, { timeout: 1000 });`,
+    `describe("a", { timeout: 1000 }, callback);`,
+    `describe("a", callback, 1000);`,
+    `describe("a", callback, options);`,
     `describe(() => {});`,
     `describe(() => {}, 1000);`,
     `describe("a", () => {}, 1000);`,
@@ -1704,12 +1713,15 @@ const testRules: Record<string, Case[]> = {
   "valid-title": [
     `test(«""», () => {});`,
     `describe(«""», () => {});`,
+    { code: `test(«" a"», () => {});`, output: `test("a", () => {});` },
+    `test(«" a"», () => {\n  expect(1).toMatchSnapshot();\n});`,
     `test(«a», () => {});`,
     { code: `describe(«add», () => {});`, options: [{ ignoreTypeOfDescribeName: false }] },
 
     `test("a", () => {});`,
     `test(() => {});`,
     `test(callback);`,
+    `test(callback, 1000);`,
     `describe(() => {});`,
     `describe(add, () => {});`,
     `describe(Adder, () => {});`,
@@ -1736,6 +1748,8 @@ const testRules: Record<string, Case[]> = {
     `test(«done» => {});`,
     `test("a", «done» => {}, 1000);`,
     `test("a", { retry: 1 }, «done» => {});`,
+    `test(«done» => {}, 1000);`,
+    `beforeAll(«done» => {}, 1000);`,
     `test("a", () => {});`,
     `test.each([1])("a", b => {});`,
     `test.each([1]).if(c)("a", b => {});`,
@@ -1759,13 +1773,30 @@ const testRules: Record<string, Case[]> = {
     { code: `«test»("a", () => {});`, output: `test.todo("a");` },
     // No fix takes away the options, or the whole test.
     `«test»("a", () => {}, 1000);`,
+    `«test»("a", { retry: 1 }, () => {});`,
+    `«test»("a", 1000, () => {});`,
     `«test.if(a)»("b", () => {});`,
     `«test.each([1])»("a", () => {});`,
     `test(() => {});`,
-    `test("a", { retry: 1 }, () => {});`,
+    `test("a", { retry: 1 }, () => {\n  b();\n});`,
     `test.todoIf(a)("b");`,
     `test.todo("a");`,
   ].map(inBunTest),
+
+  "prefer-expect-assertions": [
+    `«test("a", () => {\n  expect(1).toBe(1);\n})»;`,
+    `«test(() => {\n  expect(1).toBe(1);\n})»;`,
+    `«test("a", { retry: 1 }, () => {\n  expect(1).toBe(1);\n})»;`,
+    `test(() => {\n  expect.hasAssertions();\n});`,
+  ]
+    .map(code => ({
+      code,
+      suggestions: ["hasAssertions();", "assertions();"].map(it =>
+        code.replace(/[«»]/g, "").replace("{\n", `{expect.${it}\n`),
+      ),
+    }))
+    .map(it => (it.code.includes("«") ? it : it.code))
+    .map(inBunTest),
 
   "no-identical-title": [
     `test("a", () => {});\ntest(«"a"», () => {});`,
@@ -1776,12 +1807,29 @@ const testRules: Record<string, Case[]> = {
     `test.each([1])("a", () => {});\ntest.each([2])("a", () => {});`,
   ].map(inBunTest),
 
+  // A fix writes a name only if the file imports it: nothing else is declared in a file that imports from "bun:test".
+  "consistent-test-it": [
+    inBunTest({ code: `«it»("a", () => {});`, output: `test("a", () => {});` }),
+    inBunTest({ code: `«xit»("a", () => {});`, output: `xtest("a", () => {});` }),
+    inBunTest({
+      code: `describe("a", () => {\n  «test»("b", () => {});\n});`,
+      output: `describe("a", () => {\n  it("b", () => {});\n});`,
+    }),
+    `import { it } from "bun:test";\n«it»("a", () => {});`,
+    `import { test, xit } from "bun:test";\n«xit»("a", () => {});`,
+    `import { describe, test } from "bun:test";\ndescribe("a", () => {\n  «test»("b", () => {});\n});`,
+  ],
+
   "no-test-prefixes": [
-    { code: `«xtest»("a", () => {});`, output: `test.skip("a", () => {});` },
-    { code: `«xit.each»([1])("a", () => {});`, output: `it.skip.each([1])("a", () => {});` },
-    { code: `«xdescribe»("a", () => {});`, output: `describe.skip("a", () => {});` },
-    `fit("a", () => {});`,
-  ].map(inBunTest),
+    ...[
+      { code: `«xtest»("a", () => {});`, output: `test.skip("a", () => {});` },
+      { code: `«xit.each»([1])("a", () => {});`, output: `it.skip.each([1])("a", () => {});` },
+      { code: `«xdescribe»("a", () => {});`, output: `describe.skip("a", () => {});` },
+      `fit("a", () => {});`,
+    ].map(inBunTest),
+    `import { xtest } from "bun:test";\n«xtest»("a", () => {});`,
+    `import { xdescribe } from "bun:test";\n«xdescribe»("a", () => {});`,
+  ],
 
   "no-export": [
     { code: `export const «a» = 1;\ntest("a", () => {});`, file: "a.test.ts" },
@@ -1789,6 +1837,11 @@ const testRules: Record<string, Case[]> = {
     // `bun test` does not run it: others import what it has.
     { code: `export const a = 1;\ntest("a", () => {});`, file: "helpers.ts" },
     { code: `export const a = 1;`, file: "a.test.ts" },
+    // Who imports a type does not run the tests.
+    { code: `export type A = number;\nexport interface B {}\ntest("a", () => {});`, file: "a.test.ts" },
+    { code: `type A = number;\nexport type { A };\nexport {};\ntest("a", () => {});`, file: "a.test.ts" },
+    { code: `type A = number;\nconst b = 1;\nexport { type A, «b» };\ntest("a", () => {});`, file: "a.test.ts" },
+    { code: `export «default» 1;\ntest("a", () => {});`, file: "a.test.ts" },
   ].map(inBunTest),
 
   "no-restricted-jest-methods": [`jest.«spyOn»(a, "b");`, `vi.«spyOn»(a, "b");`, `jest.fn();`, `spyOn(a, "b");`]
@@ -1840,18 +1893,41 @@ const testRules: Record<string, Case[]> = {
   ].map(inBunTest),
 
   "prefer-expect-resolves": [
-    { code: inTest(`expect(«await a», "why").toBe(1);`), output: inTest(`await expect(a, "why").resolves.toBe(1);`) },
+    {
+      code: inTest(`expect(«await a», "why").toBe(1);`),
+      suggestions: [inTest(`await expect(a, "why").resolves.toBe(1);`)],
+    },
   ].map(inBunTest),
 
   "prefer-to-contain": [
-    { code: inTest(`expect(a.includes(1), "why").«toBe»(true);`), output: inTest(`expect(a, "why").toContain(1);`) },
+    {
+      code: inTest(`expect(a.includes(1), "why").«toBe»(true);`),
+      suggestions: [inTest(`expect(a, "why").toContain(1);`)],
+    },
   ].map(inBunTest),
 
   "prefer-comparison-matcher": [
-    { code: inTest(`expect(a < 1, "why").«toBe»(true);`), output: inTest(`expect(a, "why").toBeLessThan(1);`) },
+    { code: inTest(`expect(a < 1, "why").«toBe»(true);`), suggestions: [inTest(`expect(a, "why").toBeLessThan(1);`)] },
   ].map(inBunTest),
 
-  // oxlint applies these. A test that passes can fail afterwards.
+  // A snapshot in a file of its own is found by the titles.
+  "prefer-lowercase-title": [
+    { code: `test(«"A"», () => {});`, output: `test("a", () => {});` },
+    `test(«"A"», () => {\n  expect(1).toMatchSnapshot();\n});`,
+    {
+      code: `test(«"A"», () => {\n  expect(1).toMatchInlineSnapshot();\n});`,
+      output: `test("a", () => {\n  expect(1).toMatchInlineSnapshot();\n});`,
+    },
+  ].map(inBunTest),
+
+  "prefer-describe-function-title": [
+    {
+      code: `import { add } from "./add";\ndescribe(«"add"», () => {});`,
+      suggestions: [`import { add } from "./add";\ndescribe(add, () => {});`],
+    },
+  ].map(inBunTest),
+
+  // oxlint applies these, and the fixes above of what is awaited, included and compared. A test that passes can fail afterwards.
   "prefer-called-with": [
     { code: inTest(`expect(a).«toHaveBeenCalled»();`), suggestions: [inTest(`expect(a).toHaveBeenCalledWith();`)] },
   ].map(inBunTest),
@@ -1896,6 +1972,7 @@ const testRules: Record<string, Case[]> = {
     `test("a", () => {}, 1000);`,
     `test(() => {}, 1000);`,
     `test(() => {}, { timeout: 1000 });`,
+    `test("a", 1000, () => {});`,
     `test("a", () => {}, { timeout: 1000 });`,
     `test("a", { timeout: 1000 }, () => {});`,
     `setDefaultTimeout(1000);\ntest("a", () => {});`,
@@ -2958,6 +3035,17 @@ test(function named() {
 test("a name for the callback", callback);
 test("a name for the callback and a timeout", callback, 1000);
 test(callback);
+test(callback, 1000);
+test(callback, { timeout: 1000 });
+test.each([1])(callback, 1000);
+const limit = 1000;
+test(() => {
+  expect(1).toBe(1);
+}, limit);
+test("a name for the timeout", callback, limit);
+test("a name for the timeout before the callback", limit, () => {
+  expect(1).toBe(1);
+});
 test(\`a template\`, callback);
 test("done", done => {
   done();
@@ -3043,6 +3131,11 @@ describe(1, () => {
   test("a number as the title", callback);
 });
 describe("a name for the callback", tests);
+describe(tests);
+describe(tests, 1000);
+describe(tests, { timeout: 1000 });
+describe("a name for the callback and a timeout", tests, 1000);
+describe("options before a name for the callback", { timeout: 1000 }, tests);
 describe.if(yes)("if", tests);
 describe.skipIf(no)("skipIf", tests);
 describe.todoIf(no)("todoIf", tests);
@@ -3077,6 +3170,13 @@ test("onTestFinished", () => {
   onTestFinished(() => {});
   expect(1).toBe(1);
 });
+
+// Who imports a type does not run the tests.
+export type Callback = typeof callback;
+export interface Options {
+  timeout: number;
+}
+export {};
 `,
   "expect.test.ts": `import { expect, expectTypeOf, test } from "bun:test";
 
@@ -3327,11 +3427,243 @@ test("lengths, members and comparisons with a message", () => {
   expect(0, "falsy").toBeFalsy();
 });
 `,
+  "promises.test.ts": `import { describe, expect, test } from "bun:test";
+
+const one = () => Promise.resolve(1);
+
+test("awaited", async () => {
+  await one().then(it => {
+    expect(it).toBe(1);
+  });
+});
+test("returned", () => {
+  return one().then(it => {
+    expect(it).toBe(1);
+  });
+});
+test("returned by an arrow function", () =>
+  one().then(it => {
+    expect(it).toBe(1);
+  }));
+test("kept and awaited", async () => {
+  const later = one().then(it => {
+    expect(it).toBe(1);
+  });
+  await later;
+});
+test("kept and returned", () => {
+  const later = one().then(it => {
+    expect(it).toBe(1);
+  });
+  return later;
+});
+test("in a list", async () => {
+  const all = [];
+  all.push(
+    one().then(it => {
+      expect(it).toBe(1);
+    }),
+  );
+  await Promise.all(all);
+  await Promise.all([one().then(it => expect(it).toBe(1)), one().then(it => expect(it).toBe(1))]);
+});
+test("with done", done => {
+  one().then(it => {
+    expect(it).toBe(1);
+    done();
+  });
+});
+test("with options before the callback", { timeout: 1000 }, async () => {
+  await one().then(it => {
+    expect(it).toBe(1);
+  });
+});
+test("catch and finally", async () => {
+  await Promise.reject(new Error("a"))
+    .catch(error => {
+      expect(error.message).toBe("a");
+    })
+    .finally(() => {
+      expect(1).toBe(1);
+    });
+});
+test("resolves with a chain", async () => {
+  await expect(one().then(it => it + 1)).resolves.toBe(2);
+});
+describe.each([1]).skipIf(false)("each.skipIf %d", n => {
+  test("a", () => {
+    expect(n).toBe(1);
+  });
+});
+describe("a function expression", function () {
+  test("a", () => {
+    expect(1).toBe(1);
+  });
+});
+`,
+  "rest.test.ts": `import { expect, jest, mock, setDefaultTimeout, test, vi } from "bun:test";
+
+setDefaultTimeout(5000);
+jest.setTimeout(5000);
+
+mock.module("./made-up-module", () => ({ one: 1 }));
+vi.mock("./another-made-up-module", () => ({ two: 2 }));
+
+test("mocked modules", async () => {
+  const { one } = await import("./made-up-module");
+  const { two } = await import("./another-made-up-module");
+  expect(one + two).toBe(3);
+});
+
+test("matchers that Jest has too", () => {
+  expect(0.1 + 0.2).toBeCloseTo(0.3);
+  expect(0.1 + 0.2).toBeCloseTo(0.3, 5);
+  expect({ a: 1 }).toStrictEqual({ a: 1 });
+  expect([1, 2]).toContain(1);
+  expect("abc").toContain("b");
+  expect([{ a: 1 }]).toContainEqual({ a: 1 });
+  expect({ a: { b: 1 } }).toHaveProperty("a.b");
+  expect({ a: { b: 1 } }).toHaveProperty("a.b", 1);
+  expect({ a: { b: 1 } }).toHaveProperty(["a", "b"], 1);
+  expect(1).toBeDefined();
+  expect(new Date()).toBeInstanceOf(Date);
+  expect(undefined).toBeUndefined();
+  expect(null).toBeNull();
+  expect(NaN).toBeNaN();
+  expect(2).toBeGreaterThan(1);
+  expect(2).toBeGreaterThanOrEqual(2);
+  expect(1).toBeLessThan(2);
+  expect(1n).toBeLessThanOrEqual(1n);
+  expect("abc").toMatch(/b/);
+  expect("abc").toMatch("b");
+  expect({ a: 1, b: 2 }).toMatchObject({ a: 1 });
+  expect([1]).toHaveLength(1);
+  expect(1).toBeTruthy();
+  expect(0).toBeFalsy();
+  expect(0.3).toEqual(expect.not.closeTo(0.5));
+  expect({ a: Promise.resolve("1") }).toEqual({ a: expect.not.resolvesTo.stringContaining("2") });
+  expect({ a: Promise.reject("1") }).toEqual({ a: expect.not.rejectsTo.stringContaining("2") });
+});
+
+test("what a mock has", async () => {
+  const a = mock((n: number) => n);
+  a.mockName("a");
+  expect(a.getMockName()).toBe("a");
+  expect(a.getMockImplementation()).toBeFunction();
+  a.mockImplementationOnce(() => 2);
+  expect(a(1)).toBe(2);
+  a.mockReturnValueOnce(3);
+  expect(a(1)).toBe(3);
+  expect(a(1)).toBe(1);
+  a.withImplementation(
+    () => 4,
+    () => {
+      expect(a(1)).toBe(4);
+    },
+  );
+  a.mockClear();
+  expect(a).not.toHaveBeenCalled();
+  a.mockReset();
+  a.mockRestore();
+  const b = mock(async () => 1);
+  b.mockResolvedValueOnce(2);
+  expect(await b()).toBe(2);
+  b.mockRejectedValueOnce(new Error("c"));
+  await expect(b()).rejects.toThrow("c");
+  b.mockRejectedValue(new Error("d"));
+  await expect(b()).rejects.toThrow("d");
+  const c = { d: mock().mockReturnThis() };
+  expect(c.d()).toBe(c);
+});
+
+test("what jest and vi have", () => {
+  for (const it of [jest, vi]) {
+    it.useFakeTimers();
+    expect(it.isFakeTimers()).toBe(true);
+    const ran = it.fn();
+    setTimeout(ran, 10);
+    setTimeout(ran, 20);
+    setTimeout(ran, 30);
+    setTimeout(ran, 40);
+    expect(it.getTimerCount()).toBe(4);
+    it.advanceTimersByTime(10);
+    it.advanceTimersToNextTimer();
+    it.runOnlyPendingTimers();
+    it.runAllTimers();
+    expect(ran).toHaveBeenCalledTimes(4);
+    setTimeout(ran, 50);
+    it.clearAllTimers();
+    it.useRealTimers();
+    it.resetAllMocks();
+    it.clearAllMocks();
+    it.restoreAllMocks();
+  }
+  jest.useFakeTimers({ now: 0 });
+  jest.setSystemTime(1000);
+  expect(jest.now()).toBe(1000);
+  expect(Date.now()).toBe(1000);
+  jest.useRealTimers();
+});
+`,
+  "snapshots.test.ts": `import { describe, expect, test } from "bun:test";
+
+// The snapshots are in a file of their own, where they are found by these titles.
+describe("Upper case", () => {
+  test("Upper case too", () => {
+    expect(1).toMatchSnapshot();
+  });
+  test(" spaces around ", () => {
+    expect({ a: 1, b: "c" }).toMatchSnapshot({ a: expect.any(Number) });
+  });
+  test("test with its own name first", () => {
+    expect(1).toMatchSnapshot("a hint");
+    expect({ a: 1 }).toMatchSnapshot({ a: expect.any(Number) }, "another hint");
+  });
+  test("errors", () => {
+    expect(() => {
+      throw new Error("a");
+    }).toThrowErrorMatchingSnapshot();
+    expect(() => {
+      throw new Error("b");
+    }).toThrowErrorMatchingSnapshot("a hint");
+  });
+});
+`,
+  "__snapshots__/snapshots.test.ts.snap": `// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[\`Upper case Upper case too 1\`] = \`1\`;
+
+exports[\`Upper case  spaces around  1\`] = \`
+{
+  "a": Any<Number>,
+  "b": "c",
+}
+\`;
+
+exports[\`Upper case test with its own name first: a hint 1\`] = \`1\`;
+
+exports[\`Upper case test with its own name first: another hint 1\`] = \`
+{
+  "a": Any<Number>,
+}
+\`;
+
+exports[\`Upper case errors 1\`] = \`"a"\`;
+
+exports[\`Upper case errors: a hint 1\`] = \`"b"\`;
+`,
 };
 
 describe("code that bun test passes", () => {
+  // With `CI` a snapshot that is not found is a failure, and is not written.
   async function run(cwd: string, ...cmd: string[]) {
-    await using proc = spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      env: { ...bunEnv, CI: "1" },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
@@ -3357,7 +3689,7 @@ describe("code that bun test passes", () => {
     expect(after.exitCode).toBe(0);
     for (const [name, text] of Object.entries(valid)) {
       const fixed = await Bun.file(`${dir}/${name}`).text();
-      expect(fixed).not.toBe(text);
+      if (name === "shapes.test.ts") expect(fixed).not.toBe(text);
       // The messages of `expect`, the titles, the timeouts and the options.
       const kept = (text: string) =>
         (text.match(/"[^"\n]*"|\b1000\b|\{ (timeout|retry|repeats)[^}]*\}/g) ?? []).toSorted();

@@ -483,7 +483,9 @@ pub(crate) mod prefer_expect_resolves {
             && let Some(await_expr) = call_expr.args().first().filter(|it| !it.is_parenthesized())
             && let ExprKind::Await(argument) = await_expr.kind()
         {
-            ctx.report(await_expr, EXPECT_RESOLVES).fix(|fixer| {
+            // What is awaited need not be a promise, and `.resolves` takes nothing else.
+            let report = ctx.report(await_expr, EXPECT_RESOLVES);
+            ctx.risky_fix_with(report, EXPECT_RESOLVES, |fixer| {
                 let (local, argument) = (jest_expect_fn_call.local, outer_text(argument));
                 let (_, rest) = jest_expect_fn_call.around_first_argument(ctx.runner);
                 fixer.replace(
@@ -756,7 +758,9 @@ pub(crate) mod prefer_to_contain {
             && let Some(argument) = first_expression(includes_call_expr.args())
             && let Some(object) = mem_expr.object()
         {
-            ctx.report(matcher.span, USE_TO_CONTAIN).fix(|fixer| {
+            // Not all that has `includes` can be given to `toContain`.
+            let report = ctx.report(matcher.span, USE_TO_CONTAIN);
+            ctx.risky_fix_with(report, USE_TO_CONTAIN, |fixer| {
                 let negation = if boolean_value == has_not_modifier(&jest_expect_fn_call) {
                     ".not"
                 } else {
@@ -887,14 +891,16 @@ pub(crate) mod prefer_comparison_matcher {
             _ => return,
         };
         let call_expr = possible_jest_node.node;
-        ctx.report(comparison.matcher_span, USE_TO_BE_COMPARISON)
-            .data("preferred_method", prefer_matcher_name)
-            .fix(|fixer| {
-                fixer.replace(
-                    call_expr,
-                    comparison.build_code(call_expr, false, prefer_matcher_name),
-                )
-            });
+        // Strings and dates can be compared too, and the matchers take numbers only.
+        let report = ctx
+            .report(comparison.matcher_span, USE_TO_BE_COMPARISON)
+            .data("preferred_method", prefer_matcher_name);
+        ctx.risky_fix_with(report, USE_TO_BE_COMPARISON, |fixer| {
+            fixer.replace(
+                call_expr,
+                comparison.build_code(call_expr, false, prefer_matcher_name),
+            )
+        });
     }
 }
 

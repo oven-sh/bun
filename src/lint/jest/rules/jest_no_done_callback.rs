@@ -48,10 +48,10 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
             if call_expr.callee().tag() != ExprTag::TaggedTemplate {
                 return;
             }
-            arguments.get(1)
+            Arguments::of(arguments, ctx.runner).callback
         }
-        JestFnKind::General(JestGeneralFnKind::Hook) => arguments.first(),
-        JestFnKind::General(JestGeneralFnKind::Test) => Arguments::of(arguments, ctx.runner).callback,
+        JestFnKind::General(JestGeneralFnKind::Hook) if ctx.runner != Runner::Bun => arguments.first(),
+        JestFnKind::General(JestGeneralFnKind::Hook | JestGeneralFnKind::Test) => Arguments::of(arguments, ctx.runner).callback,
         _ => return,
     };
     if let Some(arg) = callback.filter(|it| !it.is_parenthesized())

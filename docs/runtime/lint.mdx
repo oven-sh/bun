@@ -783,10 +783,10 @@ A file that it cannot check gets one report, which says why: the configuration n
 
 The rules that start with `bun:test/` are about the tests that [`bun test`](/test) runs. They are the rules that [oxlint has for Jest and Vitest](https://oxc.rs/docs/guide/usage/linter/rules.html), with the same names and options. They know what `bun:test` has, such as `test.if`, `test.skipIf`, `test.todoIf`, `test.failing`, and `test.serial`.
 
-A rule looks at a file only if the file imports from `"bun:test"`: with `import`, or with `require` or `await import` at the top level. In such a file, these count as Bun's:
+A rule looks at a file only if the file imports from `"bun:test"`: with `import`, or with `require` or `await import` at the top level. A test file that uses `test` and `expect` without importing them gets none of these rules. In a file with the import, these count as Bun's:
 
 - What the file imports from `"bun:test"`, under any name.
-- `test`, `it`, `describe`, `expect`, `expectTypeOf`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `jest`, `vi`, `xit`, `xtest`, and `xdescribe`, if the file does not declare them. `bun test` declares them.
+- `test`, `it`, `describe`, `expect`, `expectTypeOf`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `jest`, `vi`, `xit`, `xtest`, and `xdescribe`, if the file does not declare them. They are mistakes there: `bun test` declares these names only in a file that imports nothing from `"bun:test"`.
 
 A name that the file imports from `"vitest"`, `"@jest/globals"`, or another module is not Bun's. Most `jest/` and `vitest/` rules of oxlint pass over what a file imports from `"bun:test"`.
 
@@ -826,7 +826,10 @@ Where Bun differs from Jest and Vitest, so do the rules:
 - `.not`, `.resolves`, and `.rejects` come in any order. `expect.resolvesTo` and `expect.rejectsTo` are modifiers too.
 - `test` and `describe` need no title, and take options or a timeout before or after the callback.
 - The callback of `describe` can be `async` and can return something. The title can be a function, a class, or a number.
-- `prefer-called-with` and `prefer-strict-boolean-matchers` suggest their change. `--fix` does not apply it, because a passing test can fail afterwards.
+- `prefer-called-with`, `prefer-comparison-matcher`, `prefer-describe-function-title`, `prefer-expect-resolves`, `prefer-strict-boolean-matchers`, and `prefer-to-contain` suggest their change. `--fix` does not apply it, because a passing test can fail afterwards.
+- No fix changes a title in a file with `toMatchSnapshot()`, because `bun test` finds a snapshot by the titles.
+- `no-export` allows the export of a type.
+- The fixes of `consistent-test-it` and `no-test-prefixes` write `it`, `test`, or `describe` only if the file imports that name.
 - `test.if(a)("b", ..)` and `test.if(!a)("b", ..)` are not identical titles.
 - `expect-expect` counts `expect` and `expectTypeOf`.
 - `require-test-timeout` knows `setDefaultTimeout()` and `jest.setTimeout()`.

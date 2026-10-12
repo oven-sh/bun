@@ -2824,6 +2824,146 @@ export default <>hi</>
         });
       });
     });
+
+    describe("constructor", () => {
+      // [name, options, warning]
+      const configWarnings = [
+        [
+          "importsNotUsedAsValues",
+          { tsconfig: { compilerOptions: { importsNotUsedAsValues: "bogus" } } },
+          'Invalid value "bogus" for "importsNotUsedAsValues"',
+        ],
+        [
+          "moduleSuffixes",
+          { tsconfig: { compilerOptions: { moduleSuffixes: [".ios", ""] } } },
+          "moduleSuffixes is not supported yet",
+        ],
+        [
+          "jsxFactory",
+          { tsconfig: { compilerOptions: { jsxFactory: "1abc" } } },
+          'Invalid JSX member expression: "1abc"',
+        ],
+        [
+          "jsxFragmentFactory",
+          { tsconfig: { compilerOptions: { jsxFragmentFactory: "foo-bar" } } },
+          'Invalid JSX member expression: "foo-bar"',
+        ],
+        [
+          "paths without baseUrl",
+          { tsconfig: { compilerOptions: { paths: { "a/*": ["b/*"] } } } },
+          'Non-relative path "b/*" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)',
+        ],
+        [
+          "paths pattern with two stars",
+          { tsconfig: { compilerOptions: { baseUrl: ".", paths: { "a/*/*": ["./b/*"] } } } },
+          'Invalid pattern "a/*/*", must have at most one "*" character',
+        ],
+        [
+          "paths substitution with two stars",
+          { tsconfig: { compilerOptions: { baseUrl: ".", paths: { "a/*": ["./b/*/*"] } } } },
+          'Invalid pattern "./b/*/*", must have at most one "*" character',
+        ],
+        [
+          "paths value that is not an array",
+          { tsconfig: { compilerOptions: { baseUrl: ".", paths: { "a/*": "./b/*" } } } },
+          'Substitutions for pattern "a/*" should be an array',
+        ],
+        [
+          "duplicate tsconfig key",
+          { tsconfig: '{"compilerOptions":{"jsx":"react","jsx":"react"}}' },
+          'Duplicate key "jsx" in object literal',
+        ],
+        [
+          "macro key that is not a package",
+          { macro: { "./rel": { x: "y" } } },
+          '"./rel" is not a package path. "macros" remaps package paths to macros. Skipping.',
+        ],
+        ["duplicate macro key", { macro: '{"a":{"b":"c"},"a":{"b":"c"}}' }, 'Duplicate key "a" in object literal'],
+        [
+          "macro value that is not an object",
+          { macro: { react: "nope" } },
+          'Invalid macro remapping in "react": expected object where the keys are import names and the value is a string path to replace',
+        ],
+      ];
+      const code = "export const a = 1;";
+      const output = "export const a = 1;\n";
+      const defineError = ["error", 'Expected "}" but found end of file'];
+
+      // In a child process, to read its stderr: the constructor writes nothing.
+      it.concurrent.each(["default", "warn", "error"])(
+        "constructs with each warning-only option at logLevel %s",
+        async level => {
+          const fixture = `
+            const configs = ${JSON.stringify(configWarnings.map(([, config]) => config))};
+            const level = ${JSON.stringify(optionsAt(level, {}))};
+            const out = configs.map(config =>
+              new Bun.Transpiler({ loader: "tsx", ...config, ...level }).transformSync(${JSON.stringify(code)}),
+            );
+            console.log(JSON.stringify(out));
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", fixture],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+            stdout: JSON.stringify(configWarnings.map(() => output)),
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+      );
+
+      // Proves that each option above does log its warning.
+      it.each(configWarnings)("%s: the warning is thrown beside a define error", async (_, config, warning) => {
+        const e = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" } }));
+        expect(e).toBeInstanceOf(AggregateError);
+        expect(e.message).toBe("Failed to load define");
+        expect(messagesOf(e)).toEqual([["warn", warning], defineError]);
+
+        const atError = await thrownBy(() => new Bun.Transpiler({ ...config, define: { a: "{" }, logLevel: "error" }));
+        expect(atError).not.toBeInstanceOf(AggregateError);
+        expect(messagesOf(atError)).toEqual([defineError]);
+      });
+
+      // The four tsconfig warnings fill the buffer of the transpiler's log. The
+      // twelve define errors that follow make it grow.
+      it("define errors after a warning-only tsconfig do not corrupt the log", async () => {
+        const fixture = `
+          const tsconfig = {
+            compilerOptions: {
+              importsNotUsedAsValues: "bogus",
+              jsxFactory: "1abc",
+              jsxFragmentFactory: "foo-bar",
+              moduleSuffixes: [".ios"],
+            },
+          };
+          const define = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + "x", "1"]));
+          for (let i = 0; i < 20; i++) {
+            const t = new Bun.Transpiler({ tsconfig, define });
+            if (i % 10 === 0) t.transformSync("export const a = 1;");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+          Bun.gc(true);
+          console.log("constructed");
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: "constructed\n",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+    });
   });
 
   it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {

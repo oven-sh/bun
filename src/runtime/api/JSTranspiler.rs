@@ -960,12 +960,11 @@ impl JSTranspiler {
 
         config.from_js(global, config_arg, arena_ref)?;
 
-        if (config.log.warnings + config.log.errors) > 0 {
-            return Err(global.throw_value(
-                config
-                    .log
-                    .to_js(global, format_args!("Failed to create transpiler"))?,
-            ));
+        if let Some(value) = config
+            .log
+            .errors_to_js(global, format_args!("Failed to create transpiler"))?
+        {
+            return Err(global.throw_value(value));
         }
 
         // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
@@ -978,11 +977,11 @@ impl JSTranspiler {
         ) {
             Ok(t) => t,
             Err(err) => {
-                let log = &mut config.log;
-                if (log.warnings + log.errors) > 0 {
-                    return Err(global.throw_value(
-                        log.to_js(global, format_args!("Failed to create transpiler"))?,
-                    ));
+                if let Some(value) = config
+                    .log
+                    .errors_to_js(global, format_args!("Failed to create transpiler"))?
+                {
+                    return Err(global.throw_value(value));
                 }
                 return Err(global.throw_error(err, "Error creating transpiler"));
             }
@@ -1014,11 +1013,11 @@ impl JSTranspiler {
         transpiler.configure_linker_with_auto_jsx(false);
         transpiler.options.env.behavior = options::EnvBehavior::disable;
         if let Err(err) = transpiler.configure_defines() {
-            let log = &mut config.log;
-            if (log.warnings + log.errors) > 0 {
-                return Err(
-                    global.throw_value(log.to_js(global, format_args!("Failed to load define"))?)
-                );
+            if let Some(value) = config
+                .log
+                .errors_to_js(global, format_args!("Failed to load define"))?
+            {
+                return Err(global.throw_value(value));
             }
             return Err(global.throw_error(err, "Failed to load define"));
         }

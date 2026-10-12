@@ -40,13 +40,10 @@ impl Which {
         ]
     }
 
-    fn of(answer: &Json) -> Option<Which> {
-        let path = |key: &[u8]| answer.get(key).and_then(Json::as_str).map(<[u8]>::to_vec);
-        Some(Which {
-            root: path(b"root")?,
-            config: path(b"config"),
-            stylesheet: path(b"stylesheet"),
-        })
+    /// Whether JavaScript, where a path is a string, can name the files.
+    fn is_utf8(&self) -> bool {
+        let mut paths = (self.config.iter().chain(&self.stylesheet)).chain([&self.root]);
+        paths.all(|it| strings::is_valid_utf8(it))
     }
 }
 
@@ -191,18 +188,20 @@ impl Orders for OfGroup {
 }
 
 impl Known {
-    /// Takes in what the script has answered. Returns what it says about each Tailwind that cannot be asked, if there are
-    /// classes that it has to be asked about.
-    fn take_in(&mut self, answer: &Json) -> Vec<Vec<u8>> {
+    /// Takes in what the script has answered about `asked`, in that order. Returns what it says about each Tailwind that
+    /// cannot be asked, if there are classes that it has to be asked about.
+    fn take_in(&mut self, asked: Vec<Which>, answer: &Json) -> Vec<Vec<u8>> {
         let mut failures = Vec::new();
-        for answer in (answer.get(b"groups").and_then(Json::as_array)).unwrap_or_default() {
-            let Some(which) = Which::of(answer) else {
-                continue;
-            };
+        let answers = (answer.get(b"groups").and_then(Json::as_array)).unwrap_or_default();
+        for (which, answer) in asked.into_iter().zip(answers) {
             if let Some(error) = answer.get(b"error").and_then(Json::as_str) {
                 // It is not asked again, unless there are files for it.
                 let group = self.groups.remove(&which);
                 if group.is_some_and(|it| !it.missing.is_empty()) {
+                    let error: &[u8] = match which.is_utf8() {
+                        true => error,
+                        false => b"It cannot be loaded from a path that is not UTF-8.",
+                    };
                     let loaded = which.config.or(which.stylesheet).unwrap_or(which.root);
                     failures.push([&loaded[..], b": ", error].concat());
                 }
@@ -310,6 +309,7 @@ impl Classes {
             return without_package.map_or(Ok(()), Err);
         }
         // The ranks are among all classes that are asked about, so those that are known are asked about again.
+        let asked: Vec<Which> = known.groups.keys().cloned().collect();
         let groups = known.groups.iter().map(|(which, group)| {
             let mut classes: Vec<&[u8]> = (group.known.keys())
                 .chain(&group.missing)
@@ -330,7 +330,7 @@ impl Classes {
         let answer = evaluate_input(environment, SCRIPT, &environment.cwd, &text)
             .map_err(|why| fail(&why))?;
         let failures: Vec<Vec<u8>> = (without_package.into_iter())
-            .chain(known.take_in(&answer).iter().map(|it| fail(it)))
+            .chain(known.take_in(asked, &answer).iter().map(|it| fail(it)))
             .collect();
         match failures.is_empty() {
             true => Ok(()),

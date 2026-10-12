@@ -4,8 +4,8 @@
 //
 // The order comes from the package `tailwindcss` of the project. Here that is a stand-in, which knows what is in order.json.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
 import cases from "./cases.json";
@@ -274,6 +274,32 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     const piped = await formatIn(String(dir), [], ["--stdin-filepath", "d.jsx"], '<a className="p-4 odd flex" />;\n');
     expect(piped).toMatchObject({ stdout: "", stderr: `[error] d.jsx: ${unknown}\n`, exitCode: 2 });
   });
+
+  // There oxfmt 0.72 sorts in the order of the Tailwind CSS that it brings along, whatever that of the project says.
+  test.skipIf(!isLinux)(
+    "a Tailwind CSS in a directory whose name is not UTF-8 cannot be asked, and that is said",
+    async () => {
+      using dir = tempDir("bun-format-tailwind", {
+        ...version4,
+        ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+        "a.jsx": input,
+      });
+      const inside = (name: string) =>
+        Buffer.concat([Buffer.from(join(String(dir), "caf")), Buffer.from([0xe9]), Buffer.from(name)]);
+      mkdirSync(inside("/node_modules/tailwindcss"), { recursive: true });
+      for (const [name, text] of Object.entries({ ...version4, "b.jsx": `${input}b  ;\n` }))
+        writeFileSync(inside(`/${name}`), text);
+      const result = await formatIn(String(dir), ["a.jsx"]);
+      expect(result.stderr.split("\n").filter(line => line.startsWith("[error]"))).toEqual([
+        `[error] caf\uFFFD/b.jsx: ${unknown} It is left as it is.`,
+        `[error] sortTailwindcss: ${String(dir)}/caf\uFFFD/node_modules/tailwindcss: It cannot be loaded from a path that is not UTF-8.`,
+        "[error] Left as it is: 1 file.",
+      ]);
+      expect(result.files).toEqual([sorted]);
+      expect(readFileSync(inside("/b.jsx"), "utf8")).toBe(`${input}b  ;\n`);
+      expect(result.exitCode).toBe(2);
+    },
+  );
 
   // An editor in a repository whose root has no packages.
   test("a text from stdin, for a file of a project below the working directory", async () => {

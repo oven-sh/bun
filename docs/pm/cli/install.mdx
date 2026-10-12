@@ -725,12 +725,12 @@ The lockfile is not migrated when it has:
 
 - a dependency with no lockfile entry (`yarn.lock` is older than `package.json`), unless a workspace's version satisfies its range and `enableTransparentWorkspaces` is on; or a workspace that the `package.json` `workspaces` globs do not match
 - a registry for Yarn (`npmRegistryServer` or `npmScopes` in a `.yarnrc.yml` of the project, a parent folder or the home folder, or `YARN_NPM_REGISTRY_SERVER`) that is not the registry Bun is configured with for that package, or that is written with an environment variable (`${VAR}`). Configure the registry in `bunfig.toml` or `.npmrc` and run the migration again. Yarn fetches the `@jsr` scope from `npm.jsr.io` by default, so that scope needs the same configuration
-- a package whose integrity the registry manifest does not give, for example an `__archiveUrl` on another host
+- a package whose integrity the registry manifest does not give, for example an `__archiveUrl` on another host. The migration reads the integrity of every package from the registry Bun is configured with, so it needs that registry
 - a patch that `patchedDependencies` cannot express: several patch files for one package, a patch on a `file:` / `portal:` / `link:` folder, or a patch file outside the project
 - a `file:`, `portal:` or `link:` path that a registry, git or tarball package declares
 - an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
 - a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else; Bun links the workspace under that name
-- a name in both `dependencies` and `devDependencies` when the version Yarn installed for the `devDependencies` range is not in the `dependencies` range, which is the one Bun reads
+- a name in several dependency groups with different ranges, when the version Yarn installed is not in each of them: Yarn installs one range for the name (`devDependencies` first, then `optionalDependencies`, then `dependencies`) and Bun reads each group
 - a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
 
 The edits to `package.json` files (rewritten ranges, `patchedDependencies`, catalogs, `packageExtensions`) are written just before `bun.lock`, by the same commands that write them for a [pnpm migration](#pnpm-migration). Every other command migrates in memory and leaves the files untouched.

@@ -1398,7 +1398,48 @@ catalogs:
             `resolution: "what-bin@npm:1.0.0::__archiveUrl=${encodeURIComponent(`http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz`)}"`,
           ],
         }),
-      error: () => `error: could not get the integrity of "what-bin@1.0.0" from the registry`,
+      error: () =>
+        `error: yarn.lock fetches "what-bin@1.0.0" from http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz, which is not under the registry bun is configured with (${testRegistry.registryUrl()}); the integrity of a package comes from that registry`,
+    },
+    {
+      name: "an __archiveUrl on the registry .yarnrc.yml names, which is not bun's",
+      manifest: { dependencies: { "what-bin": "1.0.0" } },
+      files: () => ({ ".yarnrc.yml": `npmRegistryServer: "http://127.0.0.1:${testRegistry.port}/"\n` }),
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  what-bin: "npm:1.0.0"`]),
+          "what-bin@npm:1.0.0": [
+            `resolution: "what-bin@npm:1.0.0::__archiveUrl=${encodeURIComponent(`http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz`)}"`,
+          ],
+        }),
+      error: () => `error: yarn fetches "what-bin" from http://127.0.0.1:${testRegistry.port}/ and bun is configured`,
+    },
+    {
+      name: "several packages with two patch files each, all named in one run",
+      manifest: {
+        dependencies: {
+          "no-deps": "patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch",
+          "a-dep": "patch:a-dep@npm%3A1.0.1#~/a.patch&~/b.patch&~/c.patch",
+        },
+      },
+      files: () => ({ "a.patch": "", "b.patch": "", "c.patch": "" }),
+      lock: () =>
+        yarnLock({
+          "a-dep@npm:1.0.1": [`resolution: "a-dep@npm:1.0.1"`],
+          "a-dep@patch:a-dep@npm%3A1.0.1#~/a.patch&~/b.patch&~/c.patch": [
+            `resolution: "a-dep@patch:a-dep@npm%3A1.0.1#~/a.patch&~/b.patch&~/c.patch::version=1.0.1&hash=1a2b3c"`,
+          ],
+          "berry-reject@workspace:.": rootEntry([
+            `  a-dep: "patch:a-dep@npm%3A1.0.1#~/a.patch&~/b.patch&~/c.patch"`,
+            `  no-deps: "patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch"`,
+          ]),
+          "no-deps@npm:1.0.0": [`resolution: "no-deps@npm:1.0.0"`],
+          "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch": [
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch::version=1.0.0&hash=7a6b5c"`,
+          ],
+        }),
+      error: () =>
+        `error: yarn.lock patches 2 packages with several files each ("a-dep@1.0.1" with 3, "no-deps@1.0.0" with 2); bun applies one patch per package — merge the files of each into one`,
     },
     {
       name: "a yarn.lock that is not YAML",
@@ -1538,7 +1579,7 @@ catalogs:
       manifest: { dependencies: { "no-deps": "^2.0.0" }, devDependencies: { "no-deps": "^1.0.0" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
       error: () =>
-        `error: "no-deps" is in dependencies ("^2.0.0") and devDependencies ("^1.0.0") of "berry-reject"; yarn installs the devDependencies range and bun the dependencies one, which what yarn.lock pins does not match`,
+        `error: "no-deps" is in several dependency groups of "berry-reject"; yarn installs the range "^1.0.0" for all of them, and "^2.0.0" does not accept what yarn.lock pins for it`,
     },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {
@@ -1598,6 +1639,26 @@ catalogs:
   const cleanProject = () => ({
     "package.json": JSON.stringify({ name: "berry-reject", dependencies: { "no-deps": "^1.0.0" } }),
     "yarn.lock": yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+  });
+
+  test.concurrent("a range with a password is not printed", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-reject",
+          dependencies: { direct: "http://carol:s3cret@localhost:1/direct-1.0.0.tgz" },
+        }),
+        "yarn.lock": yarnLock({ "berry-reject@workspace:.": [`resolution: "berry-reject@workspace:."`] }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain(
+      `error: yarn.lock has no entry for "direct@http://carol:******@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
+    );
+    expect(stderr).not.toContain("s3cret");
+    expect(exitCode).toBe(1);
   });
 
   test.concurrent("a registry URL with a password is not printed", async () => {
@@ -2178,13 +2239,13 @@ catalogs:
   });
 
   test.concurrent("the packageExtensions yarn ships, and optional peers from packageExtensions", async () => {
-    const project = (lockExtra: Record<string, string[]>) => ({
+    const project = (lockExtra: Record<string, string[]>, rcExtra = "") => ({
       "package.json": JSON.stringify({
         name: "berry-builtin",
         dependencies: { "@babel/parser": "^7.0.0", "peer-deps-fixed": "^1.0.0" },
       }),
       // peer-deps-fixed has the peer no-deps@^1.0.0; with this yarn does not ask for it
-      ".yarnrc.yml": `packageExtensions:\n  peer-deps-fixed@*:\n    peerDependenciesMeta:\n      no-deps:\n        optional: true\n`,
+      ".yarnrc.yml": `packageExtensions:\n  peer-deps-fixed@*:\n    peerDependenciesMeta:\n      no-deps:\n        optional: true\n${rcExtra}`,
       "yarn.lock": yarnLock({
         "@babel/parser@npm:^7.0.0": [`version: 7.23.0`, `resolution: "@babel/parser@npm:7.23.0"`],
         "berry-builtin@workspace:.": [
@@ -2207,7 +2268,11 @@ catalogs:
     // yarn.lock, the edge to it is not
     const { packageDir: dir } = await testRegistry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
-      files: project({ "@babel/types@npm:^7.8.3": [`version: 7.8.3`, `resolution: "@babel/types@npm:7.8.3"`] }),
+      // yarn registers its own list first, so the same name from .yarnrc.yml (another range) adds nothing
+      files: project(
+        { "@babel/types@npm:^7.8.3": [`version: 7.8.3`, `resolution: "@babel/types@npm:7.8.3"`] },
+        `  "@babel/parser@*":\n    dependencies:\n      "@babel/types": ^7.9.0\n`,
+      ),
     });
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
@@ -2236,6 +2301,237 @@ catalogs:
     expect(older.stderr).toContain("migrated lockfile from yarn.lock");
     expect(lockedVersions(await bunLockOf(olderDir))).toEqual(["@babel/parser@7.23.0", "peer-deps-fixed@1.0.0"]);
     expect(older.exitCode).toBe(0);
+  });
+
+  test.concurrent("a resolution keyed on an npm: alias, and on a range after npm:", async () => {
+    const patch = await Bun.file(
+      join(import.meta.dir, "yarn-berry", "patch", ".yarn", "patches", "no-deps-npm-1.0.1-aa11bb22cc.patch"),
+    ).text();
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-alias-rule",
+          workspaces: ["packages/*"],
+          resolutions: {
+            // the key is the alias descriptor a workspace declares
+            "pkg-alias@npm:no-deps@^1.0.0": "patch:no-deps@npm:1.0.1#~/.yarn/patches/p.patch",
+            "a-dep@npm:>=1.0.1": "1.0.3",
+          },
+        }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          dependencies: {
+            "pkg-alias": "npm:no-deps@^1.0.0",
+            // one patch: range under the name of the package it patches and under another name
+            "no-deps": "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch",
+            "other-alias": "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch",
+            "a-dep": ">=1.0.1",
+          },
+        }),
+        ".yarn/patches/p.patch": patch,
+        "yarn.lock": yarnLock({
+          "a-dep@npm:1.0.3": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+          "a@workspace:packages/a": [
+            `resolution: "a@workspace:packages/a"`,
+            `dependencies:`,
+            `  a-dep: "npm:>=1.0.1"`,
+            `  no-deps: "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch"`,
+            `  other-alias: "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch"`,
+            `  pkg-alias: "npm:no-deps@^1.0.0"`,
+          ],
+          "berry-alias-rule@workspace:.": [`resolution: "berry-alias-rule@workspace:."`],
+          "no-deps@npm:1.0.1": [`version: 1.0.1`, `resolution: "no-deps@npm:1.0.1"`],
+          "no-deps@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch, other-alias@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch, pkg-alias@patch:no-deps@npm:1.0.1#~/.yarn/patches/p.patch":
+            [
+              `version: 1.0.1`,
+              `resolution: "no-deps@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/p.patch::version=1.0.1&hash=abc123"`,
+            ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(stderr).not.toContain("Missing version range");
+    expect(exitCode).toBe(0);
+
+    // under the alias, the range that replaces `patch:` names the package it patches
+    expect((await Bun.file(join(dir, "package.json")).json()).resolutions).toEqual({
+      "pkg-alias@npm:no-deps@^1.0.0": "npm:no-deps@1.0.1",
+      "a-dep@npm:>=1.0.1": "1.0.3",
+    });
+    expect((await Bun.file(join(dir, "packages", "a", "package.json")).json()).dependencies).toEqual({
+      "pkg-alias": "npm:no-deps@^1.0.0",
+      "no-deps": "1.0.1",
+      "other-alias": "npm:no-deps@1.0.1",
+      "a-dep": ">=1.0.1",
+    });
+    const bunLock = await bunLockOf(dir);
+    expect(bunLock).toContain(`"patchedDependencies": {\n    "no-deps@1.0.1": ".yarn/patches/p.patch",\n  },`);
+    expect(bunLock).toContain(`"overrides": {\n    "a-dep@>=1.0.1": {\n      ".": "1.0.3",\n    },\n  },`);
+    expect(lockedVersions(bunLock)).toEqual([
+      "a-dep@1.0.3",
+      "a@workspace:packages/a",
+      "no-deps@1.0.1",
+      "no-deps@1.0.1",
+      "no-deps@1.0.1",
+    ]);
+    for (const alias of ["pkg-alias", "other-alias", "no-deps"]) {
+      expect(await Bun.file(join(dir, "node_modules", alias, "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+      expect(await Bun.file(join(dir, "node_modules", alias, "patched-too.txt")).text()).toBe("hello world\n");
+    }
+    await expectFrozenInstall(dir);
+  });
+
+  test.concurrent("catalog: in the dependencies a packageExtension adds", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-ext-catalog", dependencies: { "no-deps": "^1.0.0" } }),
+        ".yarnrc.yml": `catalog:\n  a-dep: ^1.0.1\npackageExtensions:\n  no-deps@^1.0.0:\n    dependencies:\n      a-dep: "catalog:"\n`,
+        "yarn.lock": yarnLock({
+          "a-dep@npm:^1.0.1": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+          "berry-ext-catalog@workspace:.": [
+            `resolution: "berry-ext-catalog@workspace:."`,
+            `dependencies:`,
+            `  no-deps: "npm:^1.0.0"`,
+          ],
+          "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    const bunLock = await bunLockOf(dir);
+    // the catalog's range, not `catalog:`: a package of the registry has no catalog
+    expect(bunLock).toContain(
+      `"no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "dependencies": { "a-dep": "^1.0.1" } }`,
+    );
+    expect(lockedVersions(bunLock)).toEqual(["a-dep@1.0.3", "no-deps@1.0.0"]);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+    // the copy in package.json has the range too: `catalog:` there is ignored, and the next install would drop the edge
+    expect((await Bun.file(join(dir, "package.json")).json()).packageExtensions).toEqual({
+      "no-deps@^1.0.0": { dependencies: { "a-dep": "^1.0.1" } },
+    });
+    const again = await run(dir, "install");
+    expect(again.stderr).not.toContain("warn:");
+    expect(again.stderr).not.toContain("error:");
+    expect(await bunLockOf(dir)).toBe(bunLock);
+    expect(again.exitCode).toBe(0);
+  });
+
+  test.concurrent("a workspace keeps a name in every dependency group that lists it", async () => {
+    const files = {
+      "package.json": JSON.stringify({ name: "berry-groups", workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { "a-dep": "^1.0.1" },
+        devDependencies: { "no-deps": "^1.0.0" },
+        // the same range as the group above, and another range than `dependencies`
+        optionalDependencies: { "no-deps": "^1.0.0", "a-dep": "~1.0.2" },
+      }),
+    };
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...files,
+        // yarn installs one range for a name: devDependencies', else optionalDependencies'
+        "yarn.lock": yarnLock({
+          "a-dep@npm:~1.0.2": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+          "a@workspace:packages/a": [
+            `resolution: "a@workspace:packages/a"`,
+            `dependencies:`,
+            `  a-dep: "npm:~1.0.2"`,
+            `  no-deps: "npm:^1.0.0"`,
+            `dependenciesMeta:`,
+            `  a-dep:`,
+            `    optional: true`,
+          ],
+          "berry-groups@workspace:.": [`resolution: "berry-groups@workspace:."`],
+          "no-deps@npm:^1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    const bunLock = await bunLockOf(dir);
+    expect(bunLock).toContain(`    "packages/a": {
+      "name": "a",
+      "version": "1.0.0",
+      "dependencies": {
+        "a-dep": "^1.0.1",
+      },
+      "devDependencies": {
+        "no-deps": "^1.0.0",
+      },
+      "optionalDependencies": {
+        "a-dep": "~1.0.2",
+        "no-deps": "^1.0.0",
+      },
+    },`);
+    expect(lockedVersions(bunLock)).toEqual(["a-dep@1.0.3", "a@workspace:packages/a", "no-deps@1.0.0"]);
+
+    // the same groups as bun writes for these package.json files with no yarn.lock
+    const { packageDir: freshDir } = await testRegistry.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+    expect((await run(freshDir, "install", "--lockfile-only")).exitCode).toBe(0);
+    const workspaces = (lock: string) => lock.slice(lock.indexOf(`  "workspaces": {`), lock.indexOf(`  "packages": {`));
+    expect(workspaces(bunLock)).toBe(workspaces(await bunLockOf(freshDir)));
+
+    // and the next install has nothing to add
+    await expectFrozenInstall(dir);
+    const again = await run(dir, "install");
+    expect(again.stderr).not.toContain("Saved lockfile");
+    expect(await bunLockOf(dir)).toBe(bunLock);
+  });
+
+  test.concurrent("a workspace folder with % and two hex digits in its name", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-percent", workspaces: ["packages/*"] }),
+        "packages/50%ab/package.json": JSON.stringify({
+          name: "ws",
+          version: "1.0.0",
+          dependencies: { local: "file:./local" },
+        }),
+        "packages/50%ab/local/package.json": JSON.stringify({ name: "local", version: "1.0.0" }),
+        // yarn encodes the owner of a relative folder once: `%` is `%25`
+        "yarn.lock": yarnLock({
+          "berry-percent@workspace:.": [`resolution: "berry-percent@workspace:."`],
+          "local@file:./local::locator=ws%40workspace%3Apackages%2F50%25ab": [
+            `resolution: "local@file:./local#./local::hash=abc123&locator=ws%40workspace%3Apackages%2F50%25ab"`,
+          ],
+          "ws@workspace:packages/50%ab": [
+            `resolution: "ws@workspace:packages/50%ab"`,
+            `dependencies:`,
+            `  local: "file:./local"`,
+          ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual([
+      "local@file:packages/50%ab/local",
+      "ws@workspace:packages/50%ab",
+    ]);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
   });
 
   test.concurrent("a berry lockfile that holds the yarn v1 marker below its first lines", async () => {

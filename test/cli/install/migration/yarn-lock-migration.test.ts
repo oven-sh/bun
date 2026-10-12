@@ -3087,6 +3087,35 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
   expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "b@^1.0.0"; bun resolves it');
   expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "c@^1.0.0"; bun resolves it');
 
+  // a range can be a tarball URL with credentials
+  const token = "npm_" + Buffer.alloc(36, "A").toString();
+  using url = project({ a: "^1.0.0", direct: `http://carol:s3cret@localhost:1/direct-1.0.0.tgz?token=${token}` }, [
+    "a",
+  ]);
+  const masked = await migrate(String(url));
+  expect(masked.stderr).toContain(
+    'warn: yarn.lock has no entry for "direct@http://carol:******@localhost:1/direct-1.0.0.tgz?token=***"',
+  );
+  expect(masked.stderr).not.toContain("s3cret");
+  expect(masked.stderr).not.toContain(token);
+
+  // a workspace is not a yarn.lock entry
+  using workspaces = tempDir("yarn-v1-no-entry-workspaces", {
+    "package.json": JSON.stringify({ name: "no-entry", private: true, workspaces: ["packages/*"] }),
+    "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "packages/c/package.json": JSON.stringify({
+      name: "c",
+      version: "1.0.0",
+      dependencies: { a: "^1.0.0", b: "^1.0.0" },
+    }),
+    "yarn.lock": lock(["a"]),
+    "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+  });
+  const linked = await migrate(String(workspaces));
+  expect(linked.stderr).not.toContain("has no entry");
+  expect(linked.stderr).toContain("migrated lockfile from yarn.lock");
+  expect(linked.exitCode).toBe(0);
+
   // a peer is not a yarn.lock entry
   using complete = project({ a: "^1.0.0" }, ["a"]);
   const none = await migrate(String(complete));

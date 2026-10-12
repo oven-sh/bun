@@ -14,6 +14,7 @@ This rule needs type information. Run `bun lint --type-aware`.
 Reported:
 
 {/* bad */}
+
 ```ts
 async function save(data: string): Promise<void> {}
 
@@ -25,6 +26,7 @@ function onClick() {
 Not reported:
 
 {/* good */}
+
 ```ts
 async function save(data: string): Promise<void> {}
 
@@ -39,15 +41,16 @@ function onBlur() {
 
 ## Options
 
-| Option | Default | What it does |
-| --- | --- | --- |
-| `ignoreVoid` | `true` | Allow `void promise` as a way to say "ignored on purpose". |
-| `ignoreIIFE` | `false` | Allow an async function that is called where it is written: `(async () => { ... })()`. |
-| `checkThenables` | `false` | Also report objects that only have a `then` method. |
-| `allowForKnownSafePromises` | `[]` | Promise types that never need handling. |
-| `allowForKnownSafeCalls` | `[]` | Functions that return promises you never need to handle. |
+| Option                      | Default | What it does                                                                           |
+| --------------------------- | ------- | -------------------------------------------------------------------------------------- |
+| `ignoreVoid`                | `true`  | Allow `void promise` as a way to say "ignored on purpose".                             |
+| `ignoreIIFE`                | `false` | Allow an async function that is called where it is written: `(async () => { ... })()`. |
+| `checkThenables`            | `false` | Also report objects that only have a `then` method.                                    |
+| `allowForKnownSafePromises` | `[]`    | Promise types that never need handling.                                                |
+| `allowForKnownSafeCalls`    | `[]`    | Functions that return promises you never need to handle.                               |
 
 {/* bad {"options": [{"ignoreVoid": false}]} */}
+
 ```ts
 async function save(data: string): Promise<void> {}
 

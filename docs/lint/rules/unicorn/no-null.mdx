@@ -12,6 +12,7 @@ Strict comparisons such as `x === null` are allowed by default, because code oft
 Reported:
 
 {/* bad */}
+
 ```js
 let selected = null;
 ```
@@ -19,6 +20,7 @@ let selected = null;
 Not reported:
 
 {/* good */}
+
 ```js
 let selected;
 
@@ -29,11 +31,12 @@ if (document.querySelector("dialog") === null) {
 
 ## Options
 
-| Option | Default | What it does |
-| --- | --- | --- |
+| Option                | Default | What it does                               |
+| --------------------- | ------- | ------------------------------------------ |
 | `checkStrictEquality` | `false` | Also report `x === null` and `x !== null`. |
 
 {/* bad {"options": [{"checkStrictEquality": true}]} */}
+
 ```js
 if (selected === null) {
   selected = first();

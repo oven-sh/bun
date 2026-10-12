@@ -12,6 +12,7 @@ A `var` belongs to the whole function, not to the block it is written in, and it
 Reported:
 
 {/* bad */}
+
 ```js
 for (var i = 0; i < 3; i++) {
   setTimeout(() => console.log(i)); // 3, 3, 3
@@ -21,6 +22,7 @@ for (var i = 0; i < 3; i++) {
 Not reported:
 
 {/* good */}
+
 ```js
 for (let i = 0; i < 3; i++) {
   setTimeout(() => console.log(i)); // 0, 1, 2

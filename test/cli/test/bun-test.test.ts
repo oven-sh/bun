@@ -1987,7 +1987,7 @@ describe.concurrent("test file discovery (scanner)", () => {
     "pkg/app/deeper/deeper.test.ts": ranTest("deeper"),
   };
   const everyTest = ["RAN app", "RAN deeper", "RAN lib", "RAN pkg", "RAN sibling", "RAN top"];
-  async function discover(cwd: string, args: readonly string[]) {
+  async function discover(cwd: string, args: readonly string[], { inRunOrder = false } = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", ...args],
       env: bunEnv,
@@ -1996,12 +1996,10 @@ describe.concurrent("test file discovery (scanner)", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // With --parallel the stdout of a worker arrives on stderr.
+    const ran = `${stdout}\n${stderr}`.split(/\r?\n/).filter(line => line.startsWith("RAN "));
     return {
-      // With --parallel the stdout of a worker arrives on stderr.
-      ran: `${stdout}\n${stderr}`
-        .split(/\r?\n/)
-        .filter(line => line.startsWith("RAN "))
-        .sort(),
+      ran: inRunOrder ? ran : ran.sort(),
       summary: stderr.match(/^Ran \d+ tests? across \d+ files?\./m)?.[0] ?? stderr,
       exitCode,
     };
@@ -2072,6 +2070,21 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(await discover(join(root, cwd), args(root))).toEqual({
       ran,
       summary: `Ran ${ran.length} tests across ${ran.length} files.`,
+      exitCode: 0,
+    });
+  });
+
+  // `pkg` is on the path to the cwd, so its listing comes from the resolver's cache.
+  test("a directory the resolver already listed is scanned in name order", async () => {
+    const names = ["B", "a", "D", "c", "F", "e", "H", "g"];
+    using dir = tempDir("scanner-cached-order", {
+      ...Object.fromEntries(names.map(name => [`pkg/${name}.test.ts`, ranTest(name)])),
+      "pkg/app/notes.txt": "",
+    });
+
+    expect(await discover(join(String(dir), "pkg", "app"), ["../../"], { inRunOrder: true })).toEqual({
+      ran: ["RAN a", "RAN B", "RAN c", "RAN D", "RAN e", "RAN F", "RAN g", "RAN H"],
+      summary: "Ran 8 tests across 8 files.",
       exitCode: 0,
     });
   });

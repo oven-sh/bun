@@ -1256,9 +1256,9 @@ pub mod fs {
                         cached => {
                             if !I::IS_VOID {
                                 if let EntriesOption::Entries(entries) = &*cached {
-                                    // Sorted: hash order is not stable, and #26851 needs a deterministic order.
+                                    // Sorted, because hash order is not stable (#26851).
                                     for entry in entries.sorted_entries() {
-                                        // SAFETY: `entry` is a slot in the process-lifetime `EntryStore`.
+                                        // SAFETY: a live slot of the process-lifetime `EntryStore`.
                                         iterator.next(unsafe { &mut *entry }, entries.fd);
                                     }
                                 }

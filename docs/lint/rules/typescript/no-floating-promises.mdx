@@ -1,0 +1,55 @@
+---
+title: "@typescript-eslint/no-floating-promises"
+description: "Require promises to be awaited, returned, or handled"
+---
+
+A promise that nobody awaits runs on its own. If it rejects, the error is not caught by the `try` around the call, and the code after it runs before the work is done.
+
+A promise counts as handled if it is awaited, returned, given a `.catch()` or a second argument to `.then()`, or marked as ignored on purpose with `void`.
+
+This rule needs type information. Run `bun lint --type-aware`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+```ts
+async function save(data: string): Promise<void> {}
+
+function onClick() {
+  save("draft");
+}
+```
+
+Not reported:
+
+{/* good */}
+```ts
+async function save(data: string): Promise<void> {}
+
+async function onClick() {
+  await save("draft");
+}
+
+function onBlur() {
+  void save("draft");
+}
+```
+
+## Options
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `ignoreVoid` | `true` | Allow `void promise` as a way to say "ignored on purpose". |
+| `ignoreIIFE` | `false` | Allow an async function that is called where it is written: `(async () => { ... })()`. |
+| `checkThenables` | `false` | Also report objects that only have a `then` method. |
+| `allowForKnownSafePromises` | `[]` | Promise types that never need handling. |
+| `allowForKnownSafeCalls` | `[]` | Functions that return promises you never need to handle. |
+
+{/* bad {"options": [{"ignoreVoid": false}]} */}
+```ts
+async function save(data: string): Promise<void> {}
+
+void save("draft");
+```

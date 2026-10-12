@@ -1,0 +1,28 @@
+---
+title: "no-var"
+description: "Require `let` or `const` instead of `var`"
+---
+
+A `var` belongs to the whole function, not to the block it is written in, and it can be read before the line that declares it. `let` and `const` are scoped to their block and cannot be used before they are declared, which turns a class of silent bugs into errors.
+
+`--fix` rewrites `var` to `let` where that cannot change what the code does.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+```js
+for (var i = 0; i < 3; i++) {
+  setTimeout(() => console.log(i)); // 3, 3, 3
+}
+```
+
+Not reported:
+
+{/* good */}
+```js
+for (let i = 0; i < 3; i++) {
+  setTimeout(() => console.log(i)); // 0, 1, 2
+}
+```

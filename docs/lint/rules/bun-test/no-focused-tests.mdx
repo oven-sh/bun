@@ -1,0 +1,32 @@
+---
+title: "bun:test/no-focused-tests"
+description: "Disallow `test.only` and `describe.only`"
+---
+
+`.only` makes `bun test` run that test and skip every other one in the file. It is useful while debugging. Committed by accident, it hides failures in the tests that no longer run.
+
+This rule is on by default in files that import from `"bun:test"`.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+```ts
+import { expect, test } from "bun:test";
+
+test.only("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+```
+
+Not reported:
+
+{/* good */}
+```ts
+import { expect, test } from "bun:test";
+
+test("adds", () => {
+  expect(1 + 1).toBe(2);
+});
+```

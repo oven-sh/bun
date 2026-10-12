@@ -1,0 +1,45 @@
+---
+title: "unicorn/no-null"
+description: "Disallow the `null` literal in favor of `undefined`"
+---
+
+JavaScript has two values for "nothing". Using only `undefined` means one check instead of two, and default parameters and destructuring defaults apply to `undefined` but not to `null`.
+
+Strict comparisons such as `x === null` are allowed by default, because code often has to test what an API returned.
+
+## Examples
+
+Reported:
+
+{/* bad */}
+```js
+let selected = null;
+```
+
+Not reported:
+
+{/* good */}
+```js
+let selected;
+
+if (document.querySelector("dialog") === null) {
+  selected = undefined;
+}
+```
+
+## Options
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `checkStrictEquality` | `false` | Also report `x === null` and `x !== null`. |
+
+{/* bad {"options": [{"checkStrictEquality": true}]} */}
+```js
+if (selected === null) {
+  selected = first();
+}
+```
+
+## When not to use it
+
+Many APIs return or expect `null`: the DOM, JSON, databases. If your code talks to them a lot, this rule gets in the way.

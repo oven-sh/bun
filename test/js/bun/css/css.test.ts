@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7908,6 +7909,27 @@ describe("css tests", () => {
           safari: 14 << 16,
         },
       );
+    });
+
+    // An unparsed declaration whose color is wider than sRGB (`color: var(--c, lab(50% 20 30))`) is
+    // printed in sRGB, and its P3 and LAB forms follow the style rule as `@supports` rules.
+    describe("@supports color fallbacks and later declarations", () => {
+      const targets = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
+      const minified = (source: string) => cssInternals.minifyTest(source, "", targets);
+
+      // lab(50% 20 30) is #a16945 in sRGB.
+      const brown = { p3: "color(display-p3 .598686 .422118 .293048)", lab: "lab(50% 20 30)" };
+      /** The two `@supports` rules of the declaration `declare` prints for a color. */
+      const copies = (declare: (color: string) => string, selector = ".x", color = brown) =>
+        `@supports (color:color(display-p3 0 0 0)){${selector}{${declare(color.p3)}}}` +
+        `@supports (color:lab(0% 0 0)){${selector}{${declare(color.lab)}}}`;
+      const colorCopies = copies(c => `color:var(--c,${c})`);
+
+      test("a selector merge keeps the selector of the copies", () => {
+        expect(minified(".y{color:var(--c,#a16945)}.x{color:var(--c,lab(50% 20 30))}")).toBe(
+          `.y,.x{color:var(--c,#a16945)}${colorCopies}`,
+        );
+      });
     });
 
     // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)

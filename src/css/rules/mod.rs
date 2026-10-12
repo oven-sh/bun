@@ -716,6 +716,9 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         None
     };
 
+    // Built before the merge below, which can move this rule's selectors into the previous rule.
+    let supps = context.handler_context.get_supports_rules::<R>(sty);
+
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
     let mut sty_compat: Option<bool> = None;
@@ -770,8 +773,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         flush_pending_style_merge(rules, style_rules, merge_state, context);
     }
 
-    // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
-    let supps = context.handler_context.get_supports_rules::<R>(sty);
+    // Create additional rules for logical properties and incompatible selectors.
     let logical = context.handler_context.get_additional_rules::<R>(sty);
 
     struct IncompatibleRuleEntry<R> {

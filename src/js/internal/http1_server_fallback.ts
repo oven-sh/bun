@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, kHttp1FallbackHandle, kPendingCallbacks } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 
@@ -219,6 +219,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   const handle = {
+    [kHttp1FallbackHandle]: true,
     // NodeHTTPResponseFlags.socket_closed, like the native getter: end() and write() stop at it.
     get flags() {
       return this.aborted || socket.destroyed ? 1 : 0;

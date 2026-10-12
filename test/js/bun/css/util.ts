@@ -60,15 +60,17 @@ const standaloneNumber = /(?<![\w#.-])-?(?:\d+\.?\d*|\.\d+)(?![\w.])/g;
  * Returns `received` with each number that is close to the number at the same place in `expected`
  * replaced by that number. A converted color goes through the math library of the platform, so
  * its last digit is not the same on every platform (`lab(94.0295% ...)` on Linux is
- * `lab(94.0296% ...)` on Windows).
+ * `lab(94.0296% ...)` on Windows). The printer writes six significant digits. Close is a
+ * difference of 1.5e-4 at most, or of 1.5 units of the sixth digit when that is more.
  */
 export function snapNumbers(received: string, expected: string): string {
   const wanted = expected.match(standaloneNumber) ?? [];
   let index = 0;
   return received.replace(standaloneNumber, found => {
     const want = wanted[index++];
-    const close = want !== undefined && Math.abs(+found - +want) <= 1e-4 * Math.max(1, Math.abs(+want));
-    return close ? want : found;
+    if (want === undefined) return found;
+    const sixthDigit = 10 ** (Math.floor(Math.log10(Math.abs(+want))) - 5);
+    return Math.abs(+found - +want) <= 1.5 * Math.max(1e-4, sixthDigit) ? want : found;
   });
 }
 

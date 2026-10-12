@@ -1228,6 +1228,49 @@ describe("Transactions", () => {
     expect(accounts[1].balance).toBe(600);
   });
 
+  describe("savepoint name", () => {
+    const noSavepoint = {
+      s0: "no such savepoint: s0",
+      s0_audit: "no such savepoint: s0_audit",
+      s0_a_b_c: "no such savepoint: s0_a_b_c",
+    };
+    // SQLite accepts ROLLBACK TO SAVEPOINT only for an open savepoint, so inside
+    // the callback the answers tell which name the SAVEPOINT statement carried.
+    async function probe(sp: Bun.SavepointSQL) {
+      const answers: Record<string, string> = {};
+      for (const name in noSavepoint) {
+        answers[name] = await sp.unsafe(`ROLLBACK TO SAVEPOINT ${name}`).then(
+          () => "open",
+          (err: Error) => err.message,
+        );
+      }
+      return answers;
+    }
+    const cases: [string, string, (tx: Bun.TransactionSQL, fn: typeof probe) => Promise<unknown>][] = [
+      ['savepoint("audit", fn)', "s0_audit", (tx, fn) => tx.savepoint("audit", fn)],
+      ["savepoint(fn)", "s0", (tx, fn) => tx.savepoint(fn)],
+      // @ts-expect-error not in the types. Older code uses it: savepoint(name, fn) used to drop the name.
+      ['savepoint(fn, "audit")', "s0_audit", (tx, fn) => tx.savepoint(fn, "audit")],
+      ['savepoint("a-b c", fn)', "s0_a_b_c", (tx, fn) => tx.savepoint("a-b c", fn)],
+      // @ts-expect-error not in the types
+      ['savepoint(fn, "a-b c")', "s0_a_b_c", (tx, fn) => tx.savepoint(fn, "a-b c")],
+      // @ts-expect-error not in the types. The second function is the callback, and a function is not a name.
+      ["savepoint(fn, fn)", "s0", (tx, fn) => tx.savepoint(() => expect.unreachable(), fn)],
+    ];
+
+    test.each(cases)("%s sends SAVEPOINT %s", async (_, name, call) => {
+      expect(await sql.begin(tx => call(tx, probe))).toEqual({ ...noSavepoint, [name]: "open" });
+    });
+
+    test('savepoint("audit") without a function rejects', async () => {
+      // @ts-expect-error no callback
+      await expect(sql.begin(tx => tx.savepoint("audit"))).rejects.toMatchObject({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'fn' must be a function. Received 'audit'",
+      });
+    });
+  });
+
   // SQLite doesn't support read-only transactions via BEGIN syntax
   // It only supports DEFERRED (default), IMMEDIATE, and EXCLUSIVE
   test("read-only transactions throw appropriate error", async () => {

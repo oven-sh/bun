@@ -855,9 +855,11 @@ const SQL = function SQL(
         }
 
         if ($isCallable(name)) {
+          // savepoint(name, fn), the order of the types and of the postgres package
           savepoint_callback = name as unknown as TransactionCallback;
-          name = "";
-        } else if (name) {
+          name = $isCallable(fn) ? "" : (fn as unknown as string);
+        }
+        if (name) {
           name = String(name).replace(/[^a-zA-Z0-9_]/g, "_");
         }
         if (!$isCallable(savepoint_callback)) {

@@ -81,6 +81,10 @@ declare module "bun" {
   interface TransactionSQL extends SQL {
     /**
      * Creates a savepoint within the current transaction
+     *
+     * @param name A label for the savepoint. Bun appends it to the savepoint
+     * name that it generates, for example `SAVEPOINT s0_audit` for `"audit"`.
+     * Each character that is not an ASCII letter, a digit or `_` becomes `_`.
      */
     savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<T>;
     savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<T>;

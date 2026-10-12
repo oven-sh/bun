@@ -14,7 +14,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 
 /// A fallback declaration staged for an `@supports` rule.
-pub(crate) struct StagedCopy {
+struct StagedCopy {
     property: css::Property,
     /// Address of the declaration in the block's source list that staged this. Compared, never read through.
     source: usize,

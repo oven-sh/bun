@@ -181,12 +181,17 @@ private:
             return {};
         uint32_t length = m_tree.lists[at];
         MarkedArgumentBuffer items;
+        items.ensureCapacity(length);
         for (uint32_t i = 1; i <= length; ++i) {
             uint32_t id = m_tree.lists[at + i];
             JSValue item = id ? node(id) : jsNull();
             if (!item)
                 return {};
             items.append(item);
+        }
+        if (items.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(m_globalObject, scope);
+            return {};
         }
         JSArray* result = constructArray(m_globalObject, static_cast<ArrayAllocationProfile*>(nullptr), items);
         RETURN_IF_EXCEPTION(scope, {});

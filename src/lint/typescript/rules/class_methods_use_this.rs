@@ -53,7 +53,7 @@ impl Rule for ClassMethodsUseThis {
                 _ => None,
             };
             let head = || ts_utils::get_function_head_loc(func);
-            let place = key.map_or_else(head, |it| it.inner_span(cx.file()));
+            let place = key.map_or_else(head, |it| utils::oxlint::property_key_span(it, cx.file()));
             let name = match (cx.language().is_oxlint, key.and_then(utils::oxlint::property_key_name)) {
                 (false, _) => eslint_utils::get_function_name_with_kind(func, false),
                 (true, Some(name)) => [&b" `"[..], name, b"`"].concat(),

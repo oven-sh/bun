@@ -59,8 +59,13 @@ fn is_iife(func: Func) -> bool {
 fn oxlint_ancestor_has_return_type<'a>(func: Func<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     let answer = known.find(Node::Func(func), |_, ancestor| match ancestor {
         Node::Func(outer) if outer.return_type().is_some() => Some(true),
-        Node::VarDecl(declaration) => Some(declaration.ty().is_some()),
-        Node::Member(member) if member.kind() == MemberKind::Property => Some(member.ty().is_some()),
+        // The parameter of a `catch` is no declarator, an `accessor` no property.
+        Node::VarDecl(declaration) if !matches!(declaration.parent(), Node::Stmt(it) if it.tag() == StmtTag::Try) => {
+            Some(declaration.ty().is_some())
+        }
+        Node::Member(member) if member.kind() == MemberKind::Property && !member.flags().contains(Flags::ACCESSOR) => {
+            Some(member.ty().is_some())
+        }
         Node::Stmt(statement) => match statement.kind() {
             StmtKind::Expr(e) if !e.as_fn().is_some_and(Func::is_arrow) => Some(false),
             _ => None,
@@ -102,12 +107,14 @@ fn oxlint_hides_const_assertion(func: Func) -> bool {
     true
 }
 
-/// The member of a class that `func` is, or is the value of.
+/// The method that `func` is, or the property of a class that it is the value of. An `accessor` is none.
 fn member_of(func: Func<'_>) -> Option<Member<'_>> {
     match func.owner() {
         Node::Member(member) => Some(member),
         Node::Expr(e) => match e.parent() {
-            Node::Member(member) if member.init() == Some(e) => Some(member),
+            Node::Member(member) if member.init() == Some(e) && !member.flags().contains(Flags::ACCESSOR) => {
+                Some(member)
+            }
             _ => None,
         },
         _ => None,

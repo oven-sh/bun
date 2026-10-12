@@ -143,6 +143,9 @@ impl Checker {
         if e.is_jsx_tag_name() && !is_oxlint {
             return None;
         }
+        // For oxlint a declaration without a body is a function as well.
+        let is_function =
+            |func: Func<'a>| func.has_body() || is_oxlint && !matches!(func.owner(), Node::Member(it) if it.is_signature());
         let owner = state.owners_of_this.find(Node::Expr(e), |child, ancestor| match ancestor {
             Node::Func(func) => match func.kind() {
                 FnKind::StaticBlock => Some(None),
@@ -153,12 +156,18 @@ impl Checker {
                 | FnKind::Getter
                 | FnKind::Setter
                 | FnKind::Constructor
-                    if func.has_body() =>
+                    if is_function(func) =>
                 {
                     Some(is_child_of_member(func).then_some(func))
                 }
                 _ => None,
             },
+            // Of a field oxlint looks at the key alone, and not at that of one with `accessor`.
+            Node::Member(member) if is_oxlint && member.kind() == MemberKind::Property && !member.is_signature() => {
+                let is_key = !member.flags().contains(Flags::ACCESSOR)
+                    && matches!((member.key().map(Key::kind), child), (Some(KeyKind::Computed(key)), Node::Expr(e)) if key == e);
+                (!is_key).then_some(None)
+            }
             // What follows the key of a field is an implicit function.
             Node::Member(member)
                 if member.kind() == MemberKind::Property
@@ -175,7 +184,11 @@ impl Checker {
             _ => None,
         });
         // oxlint looks at the body alone.
-        owner.flatten().filter(|func| !(is_oxlint && func.params_span().is_some_and(|it| it.contains(e.span()))))
+        let body_start = |func: Func<'a>| match func.arrow_span() {
+            Some(arrow) => Some(arrow.end),
+            None => func.body_span().map(|it| it.start),
+        };
+        owner.flatten().filter(|&func| !is_oxlint || body_start(func).is_some_and(|start| start <= e.span().start))
     }
 
     /// Notes the functions of the members of `class` that have to use `this`, and the others.

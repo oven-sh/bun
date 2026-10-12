@@ -1,6 +1,8 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex;
+use bun_lint::utils::char_source::parse_string_literal;
+use bun_lint_oxlint::ast_util::get_inner_expression;
 use smallvec::SmallVec;
 
 /// Disallow invalid regular expression strings in `RegExp` constructors.
@@ -10,6 +12,9 @@ pub struct NoInvalidRegexp {
 }
 
 const REGEX_MESSAGE: Message = Message::new("regexMessage", "{{message}}.");
+/// What oxlint says instead.
+const INVALID: Message = Message::new("regexMessage", "Invalid regular expression: {{message}}");
+const VALID_FLAGS_NOTE: &str = "Valid flags are: d (indices), g (global), i (ignore case), m (multiline),\n             s (dot all), u (unicode), v (unicode sets), y (sticky)";
 
 const VALID_FLAGS: &[u8] = b"dgimsuvy";
 
@@ -87,6 +92,109 @@ impl NoInvalidRegexp {
     }
 }
 
+/// A string literal that is an argument as it is: for oxlint one in parentheses is none.
+fn string_literal(argument: Expr<'_>) -> Option<Expr<'_>> {
+    (argument.tag() == ExprTag::String && !argument.is_parenthesized()).then_some(argument)
+}
+
+/// Where the string literal `literal` has what is from `start` to `end` in its value, as oxc counts: what is between two
+/// characters belongs to the second.
+fn written(literal: Expr<'_>, value: &[u8], (start, end): (u32, u32)) -> Span {
+    let units = parse_string_literal(literal.text());
+    let span = literal.span();
+    let [first, after] = [start, end].map(|it| regex::utf16_index(value, it as usize));
+    let unit = |index: usize| units.get(index);
+    let start = match (unit(first), first.checked_sub(1).and_then(unit)) {
+        // The second half of a character.
+        (Some(it), Some(before)) if before.start == it.start => span.start + it.end,
+        (Some(it), _) => span.start + it.start,
+        (None, _) => span.end - 1,
+    };
+    let end = match after.checked_sub(1).and_then(unit) {
+        _ if after == first => start,
+        Some(last) if after < units.len() => span.start + last.end,
+        _ => span.end - 1,
+    };
+    Span::new(start, end)
+}
+
+impl NoInvalidRegexp {
+    /// oxlint does not ask what `RegExp` is, reads the flags as they are written, and looks at the pattern only if it knows
+    /// the flags. It points at the flag, or at what its parser points at.
+    fn check_as_oxlint<'a>(&self, e: Expr<'a>, cx: &Cx<'a, Self>) {
+        let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
+            return;
+        };
+        if !get_inner_expression(call.callee()).is_ident("RegExp") {
+            return;
+        }
+        let args = call.args();
+        let (pattern, flags) = match (args.first(), args.get(1)) {
+            (Some(pattern), Some(flags)) => (string_literal(pattern), string_literal(flags)),
+            (Some(pattern), None) => (string_literal(pattern), None),
+            _ => return,
+        };
+        if args.get(1).is_some() && flags.is_none() {
+            return;
+        }
+        let mut mode = regex::Mode::default();
+        if let Some(flags) = flags {
+            let text = strings::trim(strings::trim(flags.text(), b"'"), b"\"");
+            let ends = strings::wtf8_codepoints(text).map(|it| it.0).skip(1).chain([text.len()]);
+            let mut seen: SmallVec<[&[u8]; 8]> = SmallVec::new();
+            let mut start = 0;
+            for end in ends.filter(|_| !text.is_empty()) {
+                let flag = &text[start..end];
+                let place = Span::empty(flags.span().start + 1 + start as u32);
+                start = end;
+                let shown = bstr::BStr::new(flag);
+                if flag == b"u" && mode.unicode_sets || flag == b"v" && mode.unicode {
+                    let (new, old) = if flag == b"u" { ('u', 'v') } else { ('v', 'u') };
+                    cx.report(place, INVALID)
+                        .data("message", "`u` and `v` flags should be used alone")
+                        .help("Specify only one of 'u' or 'v' flags")
+                        .first_label(format!("the '{new}' flag cannot be used when the '{old}' flag is specified"));
+                    return;
+                }
+                mode.unicode |= flag == b"u";
+                mode.unicode_sets |= flag == b"v";
+                if seen.contains(&flag) {
+                    cx.report(place, INVALID)
+                        .data("message", "Duplicated flag")
+                        .help_with(|| {
+                            format!("Remove the duplicated '{shown}' flag from the regular expression flags")
+                        })
+                        .first_label(format!("flag '{shown}' already specified"));
+                    return;
+                }
+                seen.push(flag);
+                if !strings::contains(VALID_FLAGS, flag) && !strings::contains(&self.allowed_flags, flag) {
+                    cx.report(place, INVALID)
+                        .data("message", "Unknown flag")
+                        .note(VALID_FLAGS_NOTE)
+                        .first_label(format!("flag '{shown}' is not a valid regular expression flag"));
+                    return;
+                }
+            }
+        }
+        let Some((pattern, value)) = pattern.and_then(|it| Some((it, it.as_string()?.bytes()))) else {
+            return;
+        };
+        let Err(regex::SyntaxError { oxc: Some(found), .. }) =
+            regex::validate_pattern(value, mode, regex::Options::default(), &mut regex::Ignore)
+        else {
+            return;
+        };
+        let report = cx
+            .report(written(pattern, value, (found.start, found.end)), INVALID)
+            .data("message", found.message.into_owned())
+            .help(found.help);
+        if let Some(also) = found.also {
+            report.label(written(pattern, value, also), "");
+        }
+    }
+}
+
 impl Rule for NoInvalidRegexp {
     const META: Meta = Meta::eslint("no-invalid-regexp", Kind::Problem).recommended();
     const ON: On = On::new().function_calls(&["RegExp"]).exprs(&[ExprTag::New]);
@@ -103,6 +211,9 @@ impl Rule for NoInvalidRegexp {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.check(e, cx);
+        match cx.language().is_oxlint {
+            true => self.check_as_oxlint(e, cx),
+            false => self.check(e, cx),
+        }
     }
 }

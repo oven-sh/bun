@@ -1,10 +1,13 @@
 //! `RegExpValidator` of `@eslint-community/regexpp`: the grammar of regular expressions, the syntax
 //! errors with regexpp's messages, and a [`Handler`] that is told what is found.
+//!
+//! A [`SyntaxError`] also has what `oxc_regular_expression` says about the pattern, for oxlint's `no-invalid-regexp`.
 
 use super::ast::{EscapeSet, Flags, INFINITY, ModifierFlags, Reference};
 use super::{unicode, wtf8};
 use bun_core::strings;
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 
 /// The options of `RegExpValidator` and `RegExpParser`.
 #[derive(Copy, Clone, Debug)]
@@ -61,7 +64,151 @@ pub struct SyntaxError {
     pub offset: u32,
     /// regexpp's `index`: the same as an index in the UTF-16 form of the source.
     pub index: u32,
+    /// `None` if `oxc_regular_expression` accepts what is refused here.
+    pub oxc: Option<Oxc>,
     reason: u32,
+}
+
+/// A diagnostic of `oxc_regular_expression`, as oxlint 1.87 has it.
+#[derive(Clone, Debug)]
+pub struct Oxc {
+    /// Without `Invalid regular expression: `.
+    pub message: Cow<'static, str>,
+    pub help: Cow<'static, str>,
+    /// What it marks, as byte offsets in the source.
+    pub start: u32,
+    pub end: u32,
+    /// What it marks besides.
+    pub also: Option<(u32, u32)>,
+}
+
+/// The message and the help of an [`Oxc`].
+type Said = (&'static str, &'static str);
+
+impl Oxc {
+    fn new(said: Said, start: usize, end: usize) -> Oxc {
+        Oxc {
+            message: Cow::Borrowed(said.0),
+            help: Cow::Borrowed(said.1),
+            start: start as u32,
+            end: end as u32,
+            also: None,
+        }
+    }
+}
+
+mod said {
+    use super::Said;
+
+    const CLOSE_IT: &str = "Add the missing closing delimiter";
+    const NOTHING_TO_REPEAT: &str =
+        "Quantifiers must follow an expression. To match literally, escape it with `\\`";
+    const OUT_OF_ORDER: &str = "In a character range `[a-z]`, the first character must have a smaller code point than the second";
+    const ESCAPE_IT: &str = "Escape this character with `\\` or remove it";
+    const PROPERTY: &str = "Check the property name spelling or use a valid Unicode property";
+
+    pub(super) const DUPLICATED_NAMES: Said = (
+        "Duplicated capturing group names",
+        "Duplicate names must be in different alternatives",
+    );
+    pub(super) const INCOMPLETE: Said = (
+        "Could not parse the entire pattern",
+        "Check for unbalanced brackets or invalid escape sequences",
+    );
+    pub(super) const LONE_QUANTIFIER: Said = (
+        "Lone quantifier found, expected with `Atom`",
+        NOTHING_TO_REPEAT,
+    );
+    pub(super) const INVALID_BRACED_QUANTIFIER: Said =
+        ("Invalid braced quantifier", NOTHING_TO_REPEAT);
+    pub(super) const CAPTURING_GROUP: Said = ("Unterminated capturing group", CLOSE_IT);
+    pub(super) const IGNORE_GROUP: Said = ("Unterminated ignore group", CLOSE_IT);
+    pub(super) const LOOKAROUND: Said = ("Unterminated lookaround assertion", CLOSE_IT);
+    pub(super) const CLASS: Said = ("Unterminated character class", CLOSE_IT);
+    pub(super) const NESTED_CLASS: Said = ("Unterminated nested class", CLOSE_IT);
+    pub(super) const STRING_DISJUNCTION: Said =
+        ("Unterminated class string disjunction", CLOSE_IT);
+    pub(super) const PROPERTY_ESCAPE: Said = ("Unterminated unicode property escape", CLOSE_IT);
+    pub(super) const GROUP_NAME: Said = ("Unterminated capturing group name", CLOSE_IT);
+    pub(super) const EXTENDED_ATOM_ESCAPE: Said = (
+        "Invalid extended atom escape",
+        "Use a valid escape sequence or remove the backslash",
+    );
+    pub(super) const INDEXED_REFERENCE: &str = "Invalid indexed reference";
+    pub(super) const EMPTY_GROUP_SPECIFIER: Said = (
+        "Group specifier is empty",
+        "Provide a name for the capturing group: `(?<name>...)`",
+    );
+    pub(super) const NAMED_REFERENCE: &str = "Invalid named reference";
+    pub(super) const NEGATED_PROPERTY_OF_STRINGS: &str = "Negated character classes cannot contain properties that match string related unicode properties";
+    pub(super) const NEGATED_CLASS_WITH_STRINGS: Said = (
+        "Invalid character class with strings unicode property",
+        "Properties that match string related unicode properties require the `v` flag",
+    );
+    pub(super) const NEGATED_NESTED_CLASS_WITH_STRINGS: Said = (
+        "Invalid class operands inside of character class contents",
+        "Negated character classes cannot contain string related unicode properties",
+    );
+    pub(super) const ATOM_RANGE_OUT_OF_ORDER: Said =
+        ("Character class atom range out of order", OUT_OF_ORDER);
+    pub(super) const SET_RANGE_OUT_OF_ORDER: Said =
+        ("Character class set range out of order", OUT_OF_ORDER);
+    pub(super) const RANGE_TO_DASH: Said = (
+        "Character class range out of order",
+        "If you meant to use set subtraction `--`, enable the `v` flag",
+    );
+    pub(super) const RANGE_OF_SETS: Said = (
+        "Character class range with invalid atom",
+        "Character class ranges must use single characters, not character classes or escape sequences like `\\d`",
+    );
+    pub(super) const CLASS_ATOM: Said = (
+        "Invalid class atom",
+        "This character or escape sequence is not valid inside a character class",
+    );
+    pub(super) const EMPTY_CLASS_SET_EXPRESSION: Said = (
+        "Expected nonempty class set expression",
+        "Add characters or properties to the class set expression",
+    );
+    pub(super) const THIRD_AMPERSAND: Said = (
+        "Unexpected `&` inside of class intersection",
+        "A third `&` is not allowed after `&&`. Did you mean `[a&&[b]]`?",
+    );
+    pub(super) const IN_INTERSECTION: Said = (
+        "Unexpected character inside of class intersection",
+        ESCAPE_IT,
+    );
+    pub(super) const IN_SUBTRACTION: Said = (
+        "Unexpected character inside of class subtraction",
+        ESCAPE_IT,
+    );
+    pub(super) const BRACED_OUT_OF_ORDER: Said = (
+        "Numbers out of order in braced quantifier",
+        "In `{n,m}`, the minimum `n` must be less than or equal to the maximum `m`",
+    );
+    pub(super) const PROPERTY_NAME: Said = ("Invalid unicode property name", PROPERTY);
+    pub(super) const PROPERTY_NAME_OR_VALUE: Said =
+        ("Invalid unicode property name and/or value", PROPERTY);
+    pub(super) const PROPERTY_OF_STRINGS: &str = "Enable `UnicodeSetsMode` to use this property";
+    pub(super) const UNICODE_ESCAPE: Said = (
+        "Invalid unicode escape sequence",
+        "Use `\\uXXXX` or `\\u{XXXXX}` format for unicode escapes",
+    );
+    pub(super) const SURROGATE_PAIR: Said = (
+        "Invalid surrogate pair",
+        "A high surrogate (0xD800-0xDBFF) must be followed by a low surrogate (0xDC00-0xDFFF)",
+    );
+    pub(super) const DUPLICATED_MODIFIER: Said =
+        ("Duplicated modifier", "Each modifier can only appear once");
+    pub(super) const MODIFIER_ON_AND_OFF: Said = (
+        "Invalid modifiers",
+        "A modifier cannot be both enabled and disabled",
+    );
+    pub(super) const EMPTY_MODIFIERS: Said = (
+        "Empty modifiers",
+        "Use `(?:...)` for non-capturing groups or add modifiers",
+    );
+    pub(super) const UNKNOWN_MODIFIERS: Said =
+        ("Unknown modifiers", "Valid modifiers are: i, m, s");
 }
 
 impl SyntaxError {
@@ -78,6 +225,7 @@ impl SyntaxError {
             message,
             offset: 0,
             index: 0,
+            oxc: None,
             reason: start,
         }
     }
@@ -220,6 +368,16 @@ struct Disjunction {
 struct GroupName {
     start: u32,
     len: u32,
+    /// Where it is written.
+    written: (u32, u32),
+}
+
+/// The name in a `\k<name>`, and where the whole of that is written.
+#[derive(Copy, Clone)]
+struct BackreferenceName {
+    start: u32,
+    len: u32,
+    written: (u32, u32),
 }
 
 /// With more names than this, they are looked up in a map.
@@ -229,6 +387,17 @@ const FEW_NAMES: usize = 16;
 #[derive(Copy, Clone, Default)]
 struct SetResult {
     may_contain_strings: bool,
+    /// What oxc says if something follows the contents of a class that are made with `&&` or `--`.
+    after_operation: Option<Said>,
+}
+
+impl SetResult {
+    fn new(may_contain_strings: bool) -> SetResult {
+        SetResult {
+            may_contain_strings,
+            after_operation: None,
+        }
+    }
 }
 
 struct PropertyResult {
@@ -254,6 +423,7 @@ struct Validator<'s, 'h> {
     error: Option<SyntaxError>,
 
     // The reader.
+    start: usize,
     end: usize,
     index: usize,
     cp: i32,
@@ -274,7 +444,11 @@ struct Validator<'s, 'h> {
     group_names: Vec<GroupName>,
     /// The last group of each name, as an index into `group_names`, if there are more than `FEW_NAMES` groups.
     last_group_of_name: FxHashMap<Box<[u8]>, u32>,
-    backreference_names: Vec<(u32, u32)>,
+    backreference_names: Vec<BackreferenceName>,
+}
+
+fn is_class(unterminated: Said) -> bool {
+    [said::CLASS.0, said::NESTED_CLASS.0].contains(&unterminated.0)
 }
 
 fn is_syntax_character(cp: i32) -> bool {
@@ -441,6 +615,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             options,
             handler,
             error: None,
+            start: 0,
             end: 0,
             index: 0,
             cp: EOF,
@@ -578,6 +753,7 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     fn reset(&mut self, start: usize, end: usize) {
+        self.start = start;
         self.end = end.min(self.source.len());
         self.rewind(start);
     }
@@ -650,8 +826,113 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     // == errors ==
 
+    /// oxc finds nothing that matches here either.
     fn raise<T>(&mut self, message: &str) -> Consumed<T> {
-        self.raise_at(message, self.index, None)
+        self.raise_where_oxc_stops(message, self.index)
+    }
+
+    /// oxc finds nothing that matches at `at`.
+    fn raise_where_oxc_stops<T>(&mut self, message: &str, at: usize) -> Consumed<T> {
+        let oxc = self.oxc_stops(at);
+        self.raise_with(message, oxc)
+    }
+
+    /// oxc says `said` about what is from `start` to here.
+    fn raise_as<T>(&mut self, message: &str, said: Said, start: usize) -> Consumed<T> {
+        self.raise_with(message, Some(Oxc::new(said, start, self.index)))
+    }
+
+    fn raise_with<T>(&mut self, message: &str, oxc: Option<Oxc>) -> Consumed<T> {
+        let raised = self.raised_at(message, self.index, None);
+        Err(self.with_oxc(raised, oxc))
+    }
+
+    fn with_oxc(&mut self, raised: Raised, oxc: Option<Oxc>) -> Raised {
+        if let Some(error) = &mut self.error {
+            error.oxc = oxc;
+        }
+        raised
+    }
+
+    /// What oxc says if nothing matches at `at`: that what is open there is not closed. Up to there the pattern is valid.
+    #[cold]
+    fn oxc_stops(&self, at: usize) -> Option<Oxc> {
+        let open = self.open_at(at);
+        let innermost = open.last().copied();
+        let is_in_class = innermost.is_some_and(|it| is_class(it.0));
+        // Without the flags only a backslash that ends the pattern is no escape.
+        if !self.unicode_mode() && at < self.end && self.source.get(at) == Some(&b'\\') {
+            let said = match is_in_class {
+                true => said::CLASS_ATOM,
+                false => said::EXTENDED_ATOM_ESCAPE,
+            };
+            return Some(Oxc::new(said, at, at + 1));
+        }
+        match innermost {
+            Some((said, start)) => Some(Oxc::new(said, start, at)),
+            None if at >= self.end => None,
+            None => Some(Oxc::new(said::INCOMPLETE, at, at)),
+        }
+    }
+
+    /// What oxc says about `\x` without two digits, with a flag. `backslash` is where it starts.
+    #[cold]
+    fn oxc_has_no_escape(&self, backslash: usize) -> Option<Oxc> {
+        match self.open_at(backslash).last() {
+            Some(&(said, _)) if is_class(said) && !self.unicode_sets_mode() => {
+                Some(Oxc::new(said::CLASS_ATOM, backslash, backslash + 1))
+            }
+            Some(&(said, start)) if is_class(said) => {
+                let negated = usize::from(self.source.get(start + 1) == Some(&b'^'));
+                match backslash == start + 1 + negated {
+                    true => Some(Oxc::new(
+                        said::EMPTY_CLASS_SET_EXPRESSION,
+                        backslash,
+                        backslash,
+                    )),
+                    false => self.oxc_stops(backslash),
+                }
+            }
+            // It has read the backslash.
+            _ => self.oxc_stops(backslash + 1),
+        }
+    }
+
+    /// The groups and the classes that `at` is in, outermost first: what oxc says if one is not closed, and where it starts.
+    fn open_at(&self, at: usize) -> Vec<(Said, usize)> {
+        let mut open: Vec<(Said, usize)> = Vec::new();
+        let mut i = self.start;
+        while i < at {
+            let is_in_class = open.last().is_some_and(|it| is_class(it.0));
+            let rest = self.source.get(i + 1..self.end).unwrap_or_default();
+            match self.source.get(i) {
+                Some(b'\\') => i += 1,
+                Some(b'[') if !is_in_class => open.push((said::CLASS, i)),
+                Some(b'[') if self.unicode_sets_mode() => open.push((said::NESTED_CLASS, i)),
+                Some(b']') if is_in_class => {
+                    open.pop();
+                }
+                Some(b'(') if !is_in_class => {
+                    let is_lookaround = [&b"?="[..], b"?!", b"?<=", b"?<!"]
+                        .iter()
+                        .any(|it| rest.starts_with(it));
+                    let said = match is_lookaround {
+                        true => said::LOOKAROUND,
+                        false if rest.starts_with(b"?") && !rest.starts_with(b"?<") => {
+                            said::IGNORE_GROUP
+                        }
+                        false => said::CAPTURING_GROUP,
+                    };
+                    open.push((said, i));
+                }
+                Some(b')') if !is_in_class => {
+                    open.pop();
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        open
     }
 
     fn raise_at<T>(
@@ -695,6 +976,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             message,
             offset: index as u32,
             index: (wtf8::utf16_index(self.source, index) + past) as u32,
+            oxc: None,
             reason: start,
         });
         Raised
@@ -766,9 +1048,13 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.group_names.iter().rposition(is_it).map(|it| it as u32)
     }
 
-    fn add_group_name(&mut self) {
+    fn add_group_name(&mut self, written: (u32, u32)) {
         let (start, len) = self.intern_last_str();
-        self.group_names.push(GroupName { start, len });
+        self.group_names.push(GroupName {
+            start,
+            len,
+            written,
+        });
         let count = self.group_names.len();
         let newly_mapped = match count {
             _ if count <= FEW_NAMES => return,
@@ -792,16 +1078,34 @@ impl<'s, 'h> Validator<'s, 'h> {
     /// cannot, none can: it was accepted, so those before it are in other alternatives than it is, of disjunctions that are
     /// still being parsed.
     fn has_in_scope(&self, name: &[u8]) -> bool {
-        self.last_group_called(name).is_some_and(|group| {
-            // What each has before its current alternative is before the next one starts.
-            let inner = self
-                .disjunctions
-                .partition_point(|it| it.groups_before <= group);
-            let around = inner
-                .checked_sub(1)
-                .and_then(|it| self.disjunctions.get(it));
-            !around.is_some_and(|it| group < it.groups_before_alternative)
-        })
+        self.last_group_called(name)
+            .is_some_and(|group| self.is_in_scope(group))
+    }
+
+    /// Whether the group can take part in a match together with what is being parsed.
+    fn is_in_scope(&self, group: u32) -> bool {
+        // What each has before its current alternative is before the next one starts.
+        let inner = self
+            .disjunctions
+            .partition_point(|it| it.groups_before <= group);
+        let around = inner
+            .checked_sub(1)
+            .and_then(|it| self.disjunctions.get(it));
+        !around.is_some_and(|it| group < it.groups_before_alternative)
+    }
+
+    /// oxc marks the first group of the name `last_str_value` that is in the way, and the one that is written at `written`.
+    #[cold]
+    fn oxc_has_duplicate(&self, written: (u32, u32)) -> Oxc {
+        let is_in_the_way = |(i, group): &(usize, &GroupName)| {
+            self.name(group.start, group.len) == self.last_str_value && self.is_in_scope(*i as u32)
+        };
+        let first = self.group_names.iter().enumerate().find(is_in_the_way);
+        let (start, end) = first.map_or(written, |it| it.1.written);
+        Oxc {
+            also: Some(written),
+            ..Oxc::new(said::DUPLICATED_NAMES, start as usize, end as usize)
+        }
     }
 
     fn intern_last_str(&mut self) -> (u32, u32) {
@@ -862,13 +1166,42 @@ impl<'s, 'h> Validator<'s, 'h> {
             return self.raise_unexpected_character();
         }
         for i in 0..self.backreference_names.len() {
-            let (name_start, len) = self.backreference_names[i];
-            if !self.has_in_pattern(self.name(name_start, len)) {
-                return self.raise("Invalid named capture referenced");
+            let name = self.backreference_names[i];
+            if !self.has_in_pattern(self.name(name.start, name.len)) {
+                let oxc = self.oxc_knows_no_group(name.written);
+                return self.raise_with("Invalid named capture referenced", Some(oxc));
             }
         }
         self.handler.on_pattern_leave(start, self.pos());
         Ok(())
+    }
+
+    /// `written` is where a `\k<name>` is.
+    #[cold]
+    fn oxc_knows_no_group(&self, written: (u32, u32)) -> Oxc {
+        let mut names: Vec<&[u8]> = Vec::new();
+        for group in &self.group_names {
+            let name = self.name(group.start, group.len);
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        let help = match names.is_empty() {
+            true => Cow::Borrowed("There are no named capturing groups defined in this pattern"),
+            false => {
+                let mut help = String::from("Valid group names are: ");
+                wtf8::push_lossy(&mut help, &names.join(&b", "[..]));
+                Cow::Owned(help)
+            }
+        };
+        Oxc {
+            help,
+            ..Oxc::new(
+                (said::NAMED_REFERENCE, ""),
+                written.0 as usize,
+                written.1 as usize,
+            )
+        }
     }
 
     fn count_capturing_parens(&mut self) -> i32 {
@@ -914,15 +1247,35 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
         }
 
+        let after = self.index;
         if self.consume_quantifier(true)? {
-            return self.raise("Nothing to repeat");
+            return self.raise_nothing_to_repeat(after);
         }
         if self.eat(b'{') {
-            return self.raise("Lone quantifier brackets");
+            return self.raise_where_oxc_stops("Lone quantifier brackets", after);
         }
         self.handler.on_disjunction_leave(start, self.pos());
         self.leave_disjunction();
         Ok(())
+    }
+
+    /// From `start` to here is a quantifier, with or without the `?` of a lazy one.
+    #[cold]
+    fn raise_nothing_to_repeat<T>(&mut self, start: usize) -> Consumed<T> {
+        let is = |i: usize, byte: u8| i < self.end && self.source.get(i) == Some(&byte);
+        let here = self.index;
+        // Where it ends without the `?`, and with it.
+        let (eager_end, end) = match is(start, b'{') {
+            true if is(here - 1, b'?') => (here - 1, here),
+            true => (here, here + usize::from(is(here, b'?'))),
+            false => (here, here),
+        };
+        let oxc = match is(start, b'{') && self.last_range.1 < self.last_range.0 {
+            true => Oxc::new(said::BRACED_OUT_OF_ORDER, start, eager_end),
+            false if self.unicode_mode() => Oxc::new(said::LONE_QUANTIFIER, start, end),
+            false => Oxc::new(said::INVALID_BRACED_QUANTIFIER, start, end),
+        };
+        self.raise_with("Nothing to repeat", Some(oxc))
     }
 
     fn consume_alternative(&mut self, i: u32) -> Consumed<()> {
@@ -1039,14 +1392,18 @@ impl<'s, 'h> Validator<'s, 'h> {
                 }
                 if self.eat(b'}') {
                     if !no_error && max < min {
-                        return self.raise("numbers out of order in {} quantifier");
+                        return self.raise_as(
+                            "numbers out of order in {} quantifier",
+                            said::BRACED_OUT_OF_ORDER,
+                            start,
+                        );
                     }
                     self.last_range = (min, max);
                     return Ok(true);
                 }
             }
             if !no_error && self.strict() {
-                return self.raise("Incomplete quantifier");
+                return self.raise_where_oxc_stops("Incomplete quantifier", start);
             }
             self.rewind(start);
         }
@@ -1086,12 +1443,16 @@ impl<'s, 'h> Validator<'s, 'h> {
         let start = self.index;
         if self.eat2(b'(', b'?') {
             self.handler.on_group_enter(start as u32);
-            if self.ecma_version() >= 2025 {
-                self.consume_modifiers()?;
+            if self.ecma_version() >= 2025
+                && let Err(raised) = self.consume_modifiers()
+            {
+                let oxc = self.oxc_refuses_modifiers(start + 2);
+                return Err(self.with_oxc(raised, Some(oxc)));
             }
             if !self.eat(b':') {
                 self.rewind(start + 1);
-                return self.raise("Invalid group");
+                let oxc = self.oxc_refuses_modifiers(start + 2);
+                return self.raise_with("Invalid group", Some(oxc));
             }
             self.consume_disjunction()?;
             if !self.eat(b')') {
@@ -1101,6 +1462,36 @@ impl<'s, 'h> Validator<'s, 'h> {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// What oxc says about the modifiers that start at `start`, which are refused here.
+    #[cold]
+    fn oxc_refuses_modifiers(&self, start: usize) -> Oxc {
+        // Those that are turned on, and those that are turned off.
+        let mut seen = [[false; 3]; 2];
+        let (mut side, mut has_duplicate, mut i) = (0, false, start);
+        loop {
+            let modifier = match self.source.get(i).filter(|_| i < self.end) {
+                Some(b':') => break,
+                Some(b'-') if side == 0 => {
+                    side = 1;
+                    i += 1;
+                    continue;
+                }
+                Some(b'i') => 0,
+                Some(b'm') => 1,
+                Some(b's') => 2,
+                _ => return Oxc::new(said::UNKNOWN_MODIFIERS, start, i),
+            };
+            has_duplicate |= std::mem::replace(&mut seen[side][modifier], true);
+            i += 1;
+        }
+        let said = match seen == [[false; 3]; 2] {
+            _ if has_duplicate => said::DUPLICATED_MODIFIER,
+            true => said::EMPTY_MODIFIERS,
+            false => said::MODIFIER_ON_AND_OFF,
+        };
+        Oxc::new(said, start, i)
     }
 
     fn consume_modifiers(&mut self) -> Consumed {
@@ -1205,8 +1596,9 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     fn consume_invalid_braced_quantifier(&mut self) -> Consumed {
+        let start = self.index;
         if self.eat_braced_quantifier(true)? {
-            return self.raise("Nothing to repeat");
+            return self.raise_nothing_to_repeat(start);
         }
         Ok(false)
     }
@@ -1242,11 +1634,13 @@ impl<'s, 'h> Validator<'s, 'h> {
         let start = self.index;
         if self.eat(b'?') {
             if self.eat_group_name()? {
+                let written = (start as u32 + 2, self.pos() - 1);
                 if !self.has_in_scope(&self.last_str_value) {
-                    self.add_group_name();
+                    self.add_group_name(written);
                     return Ok(true);
                 }
-                return self.raise("Duplicate capture group name");
+                let oxc = self.oxc_has_duplicate(written);
+                return self.raise_with("Duplicate capture group name", Some(oxc));
             }
             self.rewind(start);
         }
@@ -1262,9 +1656,47 @@ impl<'s, 'h> Validator<'s, 'h> {
             return Ok(true);
         }
         if self.strict() {
-            return self.raise("Invalid escape");
+            let oxc = self.oxc_has_no_atom_escape();
+            return self.raise_with("Invalid escape", oxc);
         }
         Ok(false)
+    }
+
+    /// After a backslash, with a flag.
+    #[cold]
+    fn oxc_has_no_atom_escape(&self) -> Option<Oxc> {
+        // It has `\A`, `\z` and `\Z`.
+        if matches!(u8::try_from(self.cp), Ok(b'A' | b'z' | b'Z')) {
+            return None;
+        }
+        // A reference can start with zeros.
+        let digits = self.source.get(self.index..self.end).unwrap_or_default();
+        let digits = digits
+            .get(..digits.iter().take_while(|it| it.is_ascii_digit()).count())
+            .unwrap_or_default();
+        let number = digits.iter().fold(0i32, |number, digit| {
+            number
+                .saturating_mul(10)
+                .saturating_add(i32::from(digit - b'0'))
+        });
+        match number {
+            0 => self.oxc_stops(self.index),
+            _ if number <= self.num_capturing_parens => None,
+            _ => Some(self.oxc_has_no_such_group(self.index - 1, self.index + digits.len())),
+        }
+    }
+
+    #[cold]
+    fn oxc_has_no_such_group(&self, start: usize, end: usize) -> Oxc {
+        let help = match self.num_capturing_parens {
+            0 => Cow::Borrowed("There are no capturing groups defined in this pattern"),
+            1 => Cow::Borrowed("This pattern only has 1 capturing group"),
+            count => Cow::Owned(format!("This pattern only has {count} capturing groups")),
+        };
+        Oxc {
+            help,
+            ..Oxc::new((said::INDEXED_REFERENCE, ""), start, end)
+        }
     }
 
     fn consume_backreference(&mut self) -> Consumed {
@@ -1280,7 +1712,8 @@ impl<'s, 'h> Validator<'s, 'h> {
                 return Ok(true);
             }
             if self.strict() {
-                return self.raise("Invalid escape");
+                let oxc = self.oxc_has_no_such_group(start - 1, self.index);
+                return self.raise_with("Invalid escape", Some(oxc));
             }
             self.rewind(start);
         }
@@ -1320,7 +1753,19 @@ impl<'s, 'h> Validator<'s, 'h> {
                 && self.eat(b'}')
             {
                 if negate && result.strings {
-                    return self.raise("Invalid property name");
+                    let (from, to) = result.key.unwrap_or_default();
+                    let mut message = String::from("Property name `");
+                    wtf8::push_lossy(&mut message, self.source.get(from..to).unwrap_or_default());
+                    message.push_str("` is not allowed here");
+                    let oxc = Oxc {
+                        message: Cow::Owned(message),
+                        ..Oxc::new(
+                            ("", said::NEGATED_PROPERTY_OF_STRINGS),
+                            start as usize - 1,
+                            self.index,
+                        )
+                    };
+                    return self.raise_with("Invalid property name", Some(oxc));
                 }
                 let source = self.source;
                 let slice = |(from, to): (usize, usize)| source.get(from..to).unwrap_or_default();
@@ -1332,11 +1777,13 @@ impl<'s, 'h> Validator<'s, 'h> {
                     negate,
                     result.strings,
                 );
-                return Ok(Some(SetResult {
-                    may_contain_strings: result.strings,
-                }));
+                return Ok(Some(SetResult::new(result.strings)));
             }
-            return self.raise("Invalid property name");
+            return self.raise_as(
+                "Invalid property name",
+                said::PROPERTY_ESCAPE,
+                start as usize - 1,
+            );
         }
         Ok(None)
     }
@@ -1362,8 +1809,12 @@ impl<'s, 'h> Validator<'s, 'h> {
         let start = self.pos();
         if self.eat(b'k') {
             if self.eat_group_name()? {
-                let name = self.intern_last_str();
-                self.backreference_names.push(name);
+                let (name_start, len) = self.intern_last_str();
+                self.backreference_names.push(BackreferenceName {
+                    start: name_start,
+                    len,
+                    written: (start - 1, self.pos()),
+                });
                 self.handler.on_backreference(
                     start - 1,
                     self.index as u32,
@@ -1371,7 +1822,11 @@ impl<'s, 'h> Validator<'s, 'h> {
                 );
                 return Ok(true);
             }
-            return self.raise("Invalid named reference");
+            return self.raise_as(
+                "Invalid named reference",
+                said::EMPTY_GROUP_SPECIFIER,
+                start as usize - 1,
+            );
         }
         Ok(false)
     }
@@ -1384,19 +1839,31 @@ impl<'s, 'h> Validator<'s, 'h> {
                 .on_character_class_enter(start, negate, self.unicode_sets_mode());
             let result = self.consume_class_contents()?;
             if !self.eat(b']') {
-                if self.cp == EOF {
-                    return self.raise("Unterminated character class");
-                }
-                return self.raise("Invalid character in character class");
+                let message = match self.cp {
+                    EOF => "Unterminated character class",
+                    _ => "Invalid character in character class",
+                };
+                return self.raise_unclosed_class(message, result);
             }
             if negate && result.may_contain_strings {
-                return self.raise("Negated character class may contain strings");
+                return self.raise_as(
+                    "Negated character class may contain strings",
+                    said::NEGATED_CLASS_WITH_STRINGS,
+                    start as usize,
+                );
             }
             self.handler
                 .on_character_class_leave(start, self.pos(), negate);
             return Ok(Some(result));
         }
         Ok(None)
+    }
+
+    fn raise_unclosed_class<T>(&mut self, message: &str, contents: SetResult) -> Consumed<T> {
+        match contents.after_operation {
+            Some(said) => self.raise_as(message, said, self.index),
+            None => self.raise(message),
+        }
     }
 
     fn consume_class_contents(&mut self) -> Consumed<SetResult> {
@@ -1414,6 +1881,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             let min = self.last_int_value;
 
+            let dash = self.index;
             if !self.eat(b'-') {
                 continue;
             }
@@ -1427,12 +1895,20 @@ impl<'s, 'h> Validator<'s, 'h> {
 
             if min == -1 || max == -1 {
                 if strict {
-                    return self.raise("Invalid character class");
+                    return self.raise_as(
+                        "Invalid character class",
+                        said::RANGE_OF_SETS,
+                        range_start as usize,
+                    );
                 }
                 continue;
             }
             if min > max {
-                return self.raise("Range out of order in character class");
+                let said = match max == i32::from(b'-') {
+                    true => said::RANGE_TO_DASH,
+                    false => said::ATOM_RANGE_OUT_OF_ORDER,
+                };
+                return self.raise_as("Range out of order in character class", said, dash);
             }
             self.handler
                 .on_character_class_range(range_start, self.pos(), min as u32, max as u32);
@@ -1463,7 +1939,9 @@ impl<'s, 'h> Validator<'s, 'h> {
                 return Ok(true);
             }
             if self.strict() {
-                return self.raise("Invalid escape");
+                // For oxc a backslash before a `c` stands for itself with the flags too.
+                let oxc = (!self.is(b'c')).then(|| Oxc::new(said::CLASS_ATOM, start, start + 1));
+                return self.raise_with("Invalid escape", oxc);
             }
             self.rewind(start);
         }
@@ -1514,15 +1992,23 @@ impl<'s, 'h> Validator<'s, 'h> {
             may_contain_strings = result.may_contain_strings;
         } else {
             let cp = self.cp;
+            let empty = Some(Oxc::new(
+                said::EMPTY_CLASS_SET_EXPRESSION,
+                self.index,
+                self.index,
+            ));
             if self.is(b'\\') {
                 self.advance();
-                return self.raise("Invalid escape");
+                return self.raise_with("Invalid escape", empty);
             }
             if cp == self.next_code_point() && is_class_set_reserved_double_punctuator_character(cp)
             {
-                return self.raise("Invalid set operation in character class");
+                return self.raise_with("Invalid set operation in character class", empty);
             }
-            return self.raise("Invalid character in character class");
+            if cp == EOF {
+                return self.raise("Invalid character in character class");
+            }
+            return self.raise_with("Invalid character in character class", empty);
         }
 
         if self.eat2(b'&', b'&') {
@@ -1538,9 +2024,14 @@ impl<'s, 'h> Validator<'s, 'h> {
                 }
                 return Ok(SetResult {
                     may_contain_strings,
+                    after_operation: Some(said::IN_INTERSECTION),
                 });
             }
-            return self.raise("Invalid character in character class");
+            let oxc = match self.is(b'&') {
+                true => Oxc::new(said::THIRD_AMPERSAND, self.index, self.index + 1),
+                false => Oxc::new(said::IN_INTERSECTION, self.index, self.index),
+            };
+            return self.raise_with("Invalid character in character class", Some(oxc));
         }
         if self.eat2(b'-', b'-') {
             while self.consume_class_set_operand()?.is_some() {
@@ -1550,13 +2041,16 @@ impl<'s, 'h> Validator<'s, 'h> {
                 }
                 return Ok(SetResult {
                     may_contain_strings,
+                    after_operation: Some(said::IN_SUBTRACTION),
                 });
             }
-            return self.raise("Invalid character in character class");
+            return self.raise_as(
+                "Invalid character in character class",
+                said::IN_SUBTRACTION,
+                self.index,
+            );
         }
-        self.consume_class_union_right(SetResult {
-            may_contain_strings,
-        })
+        self.consume_class_union_right(SetResult::new(may_contain_strings))
     }
 
     fn consume_class_union_right(&mut self, left: SetResult) -> Consumed<SetResult> {
@@ -1575,9 +2069,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             break;
         }
-        Ok(SetResult {
-            may_contain_strings,
-        })
+        Ok(SetResult::new(may_contain_strings))
     }
 
     fn consume_class_set_range_from_operator(&mut self, start: u32) -> Consumed {
@@ -1590,7 +2082,11 @@ impl<'s, 'h> Validator<'s, 'h> {
                     return self.raise("Invalid character class");
                 }
                 if min > max {
-                    return self.raise("Range out of order in character class");
+                    return self.raise_as(
+                        "Range out of order in character class",
+                        said::SET_RANGE_OUT_OF_ORDER,
+                        start as usize,
+                    );
                 }
                 self.handler
                     .on_character_class_range(start, self.pos(), min as u32, max as u32);
@@ -1623,10 +2119,14 @@ impl<'s, 'h> Validator<'s, 'h> {
                 .on_character_class_enter(start as u32, negate, true);
             let result = self.consume_class_contents()?;
             if !self.eat(b']') {
-                return self.raise("Unterminated character class");
+                return self.raise_unclosed_class("Unterminated character class", result);
             }
             if negate && result.may_contain_strings {
-                return self.raise("Negated character class may contain strings");
+                return self.raise_as(
+                    "Negated character class may contain strings",
+                    said::NEGATED_NESTED_CLASS_WITH_STRINGS,
+                    start,
+                );
             }
             self.handler
                 .on_character_class_leave(start as u32, self.pos(), negate);
@@ -1661,11 +2161,13 @@ impl<'s, 'h> Validator<'s, 'h> {
             if self.eat(b'}') {
                 self.handler
                     .on_class_string_disjunction_leave(start, self.pos());
-                return Ok(Some(SetResult {
-                    may_contain_strings,
-                }));
+                return Ok(Some(SetResult::new(may_contain_strings)));
             }
-            return self.raise("Unterminated class string disjunction");
+            return self.raise_as(
+                "Unterminated class string disjunction",
+                said::STRING_DISJUNCTION,
+                start as usize,
+            );
         }
         Ok(None)
     }
@@ -1679,9 +2181,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         }
         self.handler
             .on_string_alternative_leave(start, self.pos(), i);
-        Ok(SetResult {
-            may_contain_strings: count != 1,
-        })
+        Ok(SetResult::new(count != 1))
     }
 
     fn consume_class_set_character(&mut self) -> Consumed {
@@ -1719,13 +2219,36 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     fn eat_group_name(&mut self) -> Consumed {
+        let start = self.index;
         if self.eat(b'<') {
             if self.eat_regexp_identifier_name()? && self.eat(b'>') {
                 return Ok(true);
             }
-            return self.raise("Invalid capture group name");
+            let oxc = self.oxc_refuses_group_name(start);
+            return self.raise_with("Invalid capture group name", Some(oxc));
         }
         Ok(false)
+    }
+
+    /// `start` is where the `<` is. Here is what is no part of a name, or not the `>`.
+    #[cold]
+    fn oxc_refuses_group_name(&mut self, start: usize) -> Oxc {
+        let here = self.index;
+        if self.is(b'\\') {
+            // An escape that is one is of a character that no name has.
+            self.advance();
+            let is_escape = matches!(self.eat_regexp_unicode_escape_sequence(true), Ok(true));
+            let end = if is_escape { self.index } else { here + 1 };
+            self.rewind(here);
+            return Oxc::new(said::UNICODE_ESCAPE, here, end);
+        }
+        if !self.unicode_mode()
+            && is_lead_surrogate(self.cp)
+            && is_trail_surrogate(self.next_code_point())
+        {
+            return Oxc::new(said::SURROGATE_PAIR, here, here + 4);
+        }
+        Oxc::new(said::GROUP_NAME, start, here)
     }
 
     fn eat_regexp_identifier_name(&mut self) -> Consumed {
@@ -1827,7 +2350,10 @@ impl<'s, 'h> Validator<'s, 'h> {
                 return Ok(true);
             }
             if self.strict() || u_flag {
-                return self.raise("Invalid unicode escape");
+                // Without a flag this is in a name, and oxc has not read the `u`.
+                let read = usize::from(self.unicode_mode());
+                let oxc = Oxc::new(said::UNICODE_ESCAPE, start - 1 + read, start + read);
+                return self.raise_with("Invalid unicode escape", Some(oxc));
             }
             self.rewind(start);
         }
@@ -1930,7 +2456,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                         strings: false,
                     }));
                 }
-                return self.raise("Invalid property name");
+                return self.raise_as("Invalid property name", said::PROPERTY_NAME, value_start);
             }
         }
         self.rewind(start);
@@ -1961,7 +2487,20 @@ impl<'s, 'h> Validator<'s, 'h> {
                     strings: true,
                 }));
             }
-            return self.raise("Invalid property name");
+            let oxc = if self.cp == EOF {
+                Oxc::new(said::PROPERTY_ESCAPE, start - 3, self.index)
+            } else if unicode::is_valid_lone_unicode_property_of_string(version, name_or_value) {
+                let mut message = String::from("Invalid unicode property `");
+                wtf8::push_lossy(&mut message, name_or_value);
+                message.push('`');
+                Oxc {
+                    message: Cow::Owned(message),
+                    ..Oxc::new(("", said::PROPERTY_OF_STRINGS), start, self.index)
+                }
+            } else {
+                Oxc::new(said::PROPERTY_NAME_OR_VALUE, start, self.index)
+            };
+            return self.raise_with("Invalid property name", Some(oxc));
         }
         Ok(None)
     }
@@ -1982,7 +2521,8 @@ impl<'s, 'h> Validator<'s, 'h> {
                 return Ok(true);
             }
             if self.strict() {
-                return self.raise("Invalid escape");
+                let oxc = self.oxc_has_no_escape(start - 1);
+                return self.raise_with("Invalid escape", oxc);
             }
             self.rewind(start);
         }

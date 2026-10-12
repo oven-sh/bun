@@ -71,7 +71,8 @@ mod wtf8;
 pub use ast::{Ast, Flags, Node};
 pub use parser::{parse_flags, parse_literal, parse_pattern};
 pub use validator::{
-    Handler, Ignore, Mode, Options, SyntaxError, validate_flags, validate_literal, validate_pattern,
+    Handler, Ignore, Mode, Options, Oxc, SyntaxError, validate_flags, validate_literal,
+    validate_pattern,
 };
 pub use wtf8::utf16_index;
 

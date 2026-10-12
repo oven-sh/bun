@@ -274,6 +274,14 @@ pub fn property_key_name(key: Key<'_>) -> Option<&[u8]> {
     }
 }
 
+/// The span of a `PropertyKey`: without the brackets, with the parentheses in them.
+pub fn property_key_span<'a>(key: Key<'a>, file: &File<'a>) -> Span {
+    match key.kind() {
+        KeyKind::Computed(e) => e.outer_span(),
+        _ => key.inner_span(file),
+    }
+}
+
 /// [`property_key_name`] of the key of a member of a class, which a constructor has for oxlint.
 pub fn member_key_name(member: Member<'_>) -> Option<&[u8]> {
     match member.key() {

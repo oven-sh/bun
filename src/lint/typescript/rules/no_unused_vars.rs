@@ -184,10 +184,15 @@ fn oxlint_is_what_a_walk_finds<'a>(named: &Named<'a>, mut others: Named<'a>, com
 }
 
 /// The variables that typescript-eslint takes for used and oxlint may not: what a logical assignment changes, as in
-/// `a ||= 1;`, and what is named where a value is discarded, as in `(a, 0)`. Most files have none.
+/// `a ||= 1;`, what is named where a value is discarded, as in `(a, 0)`, and what is changed in the middle of an expression, as
+/// in `b && a++` and `for (;; a = a + 1);`. Most files have none.
 ///
-/// `commas`: the comma operators.
-fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, commas: &[Expr<'a>]) -> Vec<Symbol<'a>> {
+/// `commas`: the comma operators. `updates`: the `++` and `--`.
+fn oxlint_may_be_unused_after_all<'a>(
+    file: &'a File<'a>,
+    commas: &[Expr<'a>],
+    updates: &[Expr<'a>],
+) -> Vec<Symbol<'a>> {
     let changed_by_logical_assignments = || {
         let mut named = Named::default();
         for e in file.exprs_of_kind(ExprTag::Assign) {
@@ -205,6 +210,23 @@ fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, commas: &[Expr<'a>]) -
         identifiers.filter_map(Reference::symbol).for_each(|it| named.add(it));
     }
     debug_assert!(oxlint_is_what_a_walk_finds(&named, changed_by_logical_assignments(), commas));
+    let is_statement = |e: Expr| matches!(e.parent(), Node::Stmt(it) if it.tag() == StmtTag::Expr);
+    // Nothing but `++`, `+=` and the like reads it.
+    let only_changed = |target: Expr<'a>| {
+        let symbol = target.reference().and_then(Reference::symbol);
+        symbol.filter(|it| it.references().all(Reference::is_write))
+    };
+    for e in updates.iter().filter(|it| !is_statement(**it)) {
+        e.operand().and_then(only_changed).into_iter().for_each(|it| named.add(it));
+    }
+    for e in file.exprs_of_kind(ExprTag::Assign).filter(|it| !is_statement(*it)) {
+        match (e.assign_op(), e.as_assign()) {
+            (Some(Some(BinOp::And | BinOp::Or | BinOp::Nullish)), _) => {}
+            (Some(Some(_)), Some((_, target, _))) => only_changed(target).into_iter().for_each(|it| named.add(it)),
+            (Some(None), Some((_, target, _))) => named.enter(Node::Expr(target)),
+            _ => {}
+        }
+    }
     named.all
 }
 
@@ -761,12 +783,16 @@ fn oxlint_pronoun_for_symbol(variable: Variable) -> (&'static str, &'static str)
     first.min().and_then(|it| PRONOUNS.get(it)).copied().unwrap_or(("Variable", "variables"))
 }
 
+const UPDATES: [UnOp; 4] = [UnOp::PreInc, UnOp::PreDec, UnOp::PostInc, UnOp::PostDec];
+
 pub struct State<'a> {
     is_definition_file: bool,
     /// That a node is in a `declare namespace`.
     declared: AncestorMemo<'a, ()>,
     /// For oxlint: the comma operators.
     commas: Vec<Expr<'a>>,
+    /// For oxlint: the `++` and `--`.
+    updates: Vec<Expr<'a>>,
 }
 
 // ───────────────────────────── ambient declarations ─────────────────────────────
@@ -1587,7 +1613,7 @@ impl NoUnusedVars {
         let used_variables = analysis.used_variables();
         // What is unused for oxlint only.
         let candidates = match file.language().is_oxlint {
-            true => oxlint_may_be_unused_after_all(file, &cx.state.commas),
+            true => oxlint_may_be_unused_after_all(file, &cx.state.commas, &cx.state.updates),
             false => Vec::new(),
         };
         let walks = RefCell::default();
@@ -1671,7 +1697,8 @@ impl Rule for NoUnusedVars {
     const ON: On = On::new()
         .stmts(&[StmtTag::Module])
         .finish()
-        .binaries(&[BinOp::Comma]);
+        .binaries(&[BinOp::Comma])
+        .unaries(&UPDATES);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -1689,7 +1716,7 @@ impl Rule for NoUnusedVars {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().stmts(&[StmtTag::Module]).finish();
         if file.language().is_oxlint {
-            on = on.binaries(&[BinOp::Comma]);
+            on = on.binaries(&[BinOp::Comma]).unaries(&UPDATES);
         }
         on
     }
@@ -1703,12 +1730,18 @@ impl Rule for NoUnusedVars {
             is_definition_file,
             declared: AncestorMemo::default(),
             commas: Vec::new(),
+            updates: Vec::new(),
         })
     }
 
     #[inline]
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         cx.state.commas.push(e);
+    }
+
+    #[inline]
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.updates.push(e);
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {

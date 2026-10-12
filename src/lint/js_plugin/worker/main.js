@@ -289,6 +289,8 @@ let fileSettings = null;
 const allSettings = new Map();
 // By id: a rule with its options. `own`: what its contexts have of their own.
 const configured = new Map();
+// `context.report` is the one in src/jsc/bindings/LintReport.cpp.
+const usesNativeReport = process.env.BUN_LINT_NATIVE_REPORT === "1";
 
 const isNonArrayObject = value => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -453,7 +455,8 @@ function configure(id, position) {
   // A function is a rule without `meta`, as for ESLint until version 8.
   const rule = typeof found === "function" ? { create: found } : found;
   // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
-  const entry = { rule, ruleId, own: null, position: 0, once: null };
+  // `reporter`: what `native.reporter` has made.
+  const entry = { rule, ruleId, own: null, position: 0, once: null, reporter: null };
   const meta = rule.meta;
   entry.own = {
     id: ruleId,
@@ -463,6 +466,7 @@ function configure(id, position) {
       report(entry.position, meta, args);
     },
   };
+  if (usesNativeReport) entry.own.report = (entry.reporter = native.reporter(meta)).report;
   configured.set(id, entry);
   return entry;
 }
@@ -883,6 +887,7 @@ function traverse() {
 // ───────────── a file ─────────────
 
 function reset() {
+  native.endFile();
   text = "";
   lineStarts = lines = inlineConfigNodes = disableDirectives = parserServices = null;
   sourceCode = new SourceCode();
@@ -930,9 +935,11 @@ function lint() {
       ? filename
       : nativePath(decode(buffer, pathStart, pathStart + physicalLength), nodePath);
   text = decode(buffer, pathStart + pathLength, length);
+  native.beginFile(text, flags);
   for (let position = 0; position < count; position++) {
     const entry = entries[position];
     entry.position = position;
+    if (entry.reporter !== null) entry.reporter.position = position;
     currentRule = entry;
     // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
     // under one of them.
@@ -1053,7 +1060,8 @@ function respond(kind) {
     if (missing === NEEDS_SETTINGS) return `${NEEDS_SETTINGS}[]`;
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
     const used = usedVariables();
-    return reports.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([reports, used]);
+    const all = usesNativeReport ? (native.takeReports() ?? []) : reports;
+    return all.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([all, used]);
   } catch (error) {
     const line = currentNode === null ? null : currentNode.loc.start.line;
     return FAILED + JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]);

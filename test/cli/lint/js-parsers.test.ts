@@ -617,6 +617,122 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
+  describe("config objects from bunfig.toml and the command line work with ESLint 9.0", () => {
+    // A stand-in for ESLint 9.0, which rejects keys it doesn't know. `basePath` in config objects came in 9.30.
+    const strictEslint = {
+      "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "9.0.0", main: "index.js" }),
+      "node_modules/eslint/lib/config/flat-config-array.js": `
+        const path = require("node:path");
+        const known = ["name", "files", "ignores", "settings", "linterOptions", "languageOptions", "processor", "plugins", "rules"];
+        exports.FlatConfigArray = class {
+          #configs = [];
+          constructor(configs, { basePath }) {
+            this.basePath = basePath;
+            this.push(...configs);
+          }
+          push(...configs) {
+            this.#configs.push(...configs);
+          }
+          normalize() {
+            const unknown = this.#configs.flatMap(Object.keys).find(key => !known.includes(key));
+            if (unknown !== undefined) throw new Error(\`Unexpected key "\${unknown}" found.\`);
+          }
+          getConfig(file) {
+            const relative = path.relative(this.basePath, file).replaceAll("\\\\", "/");
+            // Like in ESLint, a negated pattern on its own ignores nothing.
+            const matches = it => (typeof it === "function" ? it(file) : !it.startsWith("!") && new Bun.Glob(it).match(relative));
+            const applies = it => (it.files?.some(matches) ?? true) && !(it.rules && it.ignores?.some(matches));
+            return { rules: Object.assign({}, ...this.#configs.filter(applies).map(it => it.rules)) };
+          }
+        };`,
+      "node_modules/eslint/index.js": `
+        exports.Linter = class {
+          verify(text, configs, { filename }) {
+            const isOn = configs.getConfig(filename).rules["no-console"] !== "off";
+            return isOn ? [{ ruleId: "no-console", severity: 2, message: "from the installed ESLint", line: 1, column: 1 }] : [];
+          }
+          getSuppressedMessages() {
+            return [];
+          }
+        };`,
+    };
+    // The parser is an inline object, so the .vue files need the whole config file plus what Bun adds to it.
+    const config = `
+      const parser = { meta: { name: "vue-eslint-parser" }, parseForESLint() {} };
+      export default [{ rules: { "no-console": "error" } }, { files: ["**/*.vue"], languageOptions: { parser } }];`;
+    // Bun lints the .js files itself and sends the .vue files to the installed ESLint.
+    const tree = Object.fromEntries(
+      ["b", "b.test", "vendor/d.test", "deep/c.test"].flatMap(name => [
+        [`tree/${name}.js`, "console.log(1);\n"],
+        [`tree/${name}.vue`, "<template />\n"],
+      ]),
+    );
+    const bunfig = (prefix: string) => `
+[lint]
+ignorePatterns = ["${prefix}deep/"]
+[[lint.overrides]]
+files = ["*.test.*"]
+excludeFiles = ["${prefix}vendor/**"]
+rules = { "no-console" = "off" }
+`;
+    /** The files below tree/ that have a problem. */
+    async function reported(files: Record<string, string>, args: string[]) {
+      const { raw, stderr, exitCode } = await lint({ ...strictEslint, ...tree, ...files }, ["-f", "json", ...args]);
+      expect({ stderr: stderr.replace(/^Linted .*$/m, ""), exitCode }).toEqual({ stderr: "", exitCode: 1 });
+      const results: { filePath: string; messages: unknown[] }[] = JSON.parse(raw);
+      const names = results.filter(it => it.messages.length > 0).map(it => it.filePath.replaceAll("\\", "/"));
+      return names.map(it => it.slice(it.indexOf("/tree/") + "/tree/".length)).sort();
+    }
+    const expected = ["b.js", "b.vue", "vendor/d.test.js", "vendor/d.test.vue"];
+
+    test(
+      "from the config file's directory",
+      async () => {
+        const files = { "tree/eslint.config.mjs": config, "tree/bunfig.toml": bunfig("") };
+        expect(await reported(files, ["--cwd", "tree", "."])).toEqual(expected);
+      },
+      timeout,
+    );
+
+    test(
+      "from a subdirectory",
+      async () => {
+        const files = { "eslint.config.mjs": config, "tree/bunfig.toml": bunfig("") };
+        expect(await reported(files, ["--cwd", "tree", "."])).toEqual(expected);
+      },
+      timeout,
+    );
+
+    test(
+      "from a directory above the config file",
+      async () => {
+        const files = { "tree/eslint.config.mjs": config, "bunfig.toml": bunfig("tree/") };
+        expect(await reported(files, ["tree"])).toEqual(expected);
+      },
+      timeout,
+    );
+
+    test(
+      "with --ignore-pattern and --rule from a subdirectory",
+      async () => {
+        const files = { "eslint.config.mjs": config, "tree/bunfig.toml": bunfig("") };
+        const args = ["--cwd", "tree", "--ignore-pattern", "vendor/", "--rule", "no-console: error", "."];
+        expect(await reported(files, args)).toEqual(["b.js", "b.test.js", "b.test.vue", "b.vue"]);
+      },
+      timeout,
+    );
+
+    test(
+      "a negated excludeFiles pattern excludes the same files on both sides",
+      async () => {
+        const negated = `[[lint.overrides]]\nfiles = "**/*"\nexcludeFiles = "!**/*.test.*"\nrules = { "no-console" = "off" }\n`;
+        const files = { "eslint.config.mjs": config, "tree/bunfig.toml": negated };
+        expect(await reported(files, ["--cwd", "tree", "."])).toEqual(["b.js", "b.vue"]);
+      },
+      timeout,
+    );
+  });
+
   test(
     "files for which the parser is asked for types all go to one engine",
     async () => {

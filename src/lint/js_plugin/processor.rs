@@ -10,7 +10,8 @@ use super::wire::{self, result};
 use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
 use crate::linter::{
-    LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets, write_json,
+    LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
+    write_json,
 };
 use crate::options::Json;
 use crate::span::Span;
@@ -169,6 +170,10 @@ fn message_of(json: &Json, offsets: &Utf16OffsetTable, find_rule: &FindRule) -> 
             .filter_map(|it| suggestion_of(it, offsets))
             .collect(),
         suppressions: list(b"suppressions").iter().map(suppression_of).collect(),
+        not_numbers: NotNumbers {
+            line: matches!(json.get(b"line"), Some(Json::Null)),
+            column: matches!(json.get(b"column"), Some(Json::Null)),
+        },
         ..LintMessage::default()
     }
 }
@@ -227,7 +232,7 @@ impl Host<'_> {
         processor: &Processor,
         path: &[u8],
         text: &[u8],
-        lint: &mut dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>>,
+        lint: &mut (dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>> + Send),
     ) -> Result<Json, Vec<u8>> {
         let mut outcome = Err(OUT_OF_STEP.to_vec());
         // Both calls are for the same realm: a processor remembers the blocks of a file.
@@ -279,7 +284,7 @@ impl Host<'_> {
         processor: &Processor,
         path: &[u8],
         text: &[u8],
-        lint: &mut dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>>,
+        lint: &mut (dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>> + Send),
     ) -> Result<Json, Vec<u8>> {
         let Json::Array(mut parts) =
             self.call_processor(vm, call::PREPROCESS, processor, path, text)?

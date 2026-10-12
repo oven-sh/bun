@@ -13,16 +13,65 @@ pub trait Vm {
     fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>>;
 }
 
+/// What [`Engine::work_off`] gives the threads that have a realm. Each call does one file, so a thread can serve
+/// [`Engine::with_vm`] calls from other threads in between.
+pub trait Work: Sync {
+    /// Whether a [`HEAVY`] file hasn't been taken yet.
+    fn has_heavy(&self) -> bool;
+
+    /// Lints one of the [`HEAVY`] files. Only the thread with the first realm calls it. Returns `false` once none is left.
+    fn heavy(&self) -> bool;
+
+    /// Lints one of the other files. `realm` is the number of the calling thread's realm. Returns `false` once none is left.
+    fn light(&self, realm: usize) -> bool;
+
+    /// Whether one of the other files that needs a realm hasn't been taken yet.
+    fn needs_realms(&self) -> bool;
+}
+
 /// Has the realms.
 pub trait Engine: Sync {
-    /// Calls `then` with a realm, which nothing else uses meanwhile. `then` can ask for one itself, and is not kept waiting.
-    /// `size`: that of the file which the realm is for, 0 if it is for none. `Err`: there is none, and `then` was not called.
-    fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
+    /// Whether a realm belongs to a thread that lints. If so, files that need one go through [`Engine::work_off`].
+    fn lints(&self) -> bool {
+        false
+    }
+
+    /// Whether [`Engine::with_vm_here`] works on the calling thread.
+    fn is_here(&self) -> bool {
+        true
+    }
+
+    /// Calls `then` on the calling thread with a realm, which nothing else uses meanwhile. `then` can ask for one itself, and
+    /// isn't kept waiting. `size`: that of the file which the realm is for, 0 if it is for none. `Err`: there is none, and
+    /// `then` was not called.
+    fn with_vm_here(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
+
+    /// The same, on whichever thread has a realm. The calling thread waits if that's another one.
+    fn with_vm(
+        &self,
+        size: usize,
+        then: &mut (dyn FnMut(&mut dyn Vm) + Send),
+    ) -> Result<(), Vec<u8>> {
+        self.with_vm_here(size, then)
+    }
+
+    /// Has every thread with a realm work on `work` until nothing is left, and starts as many of them as the files are worth.
+    /// Calls `meanwhile` on the calling thread, and returns when both are done. `Err`: no such thread could be started, so
+    /// only `meanwhile` has run.
+    fn work_off(&self, _work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        meanwhile();
+        Ok(())
+    }
+
+    /// How many threads are busy with [`Engine::work_off`].
+    fn busy(&self) -> usize {
+        0
+    }
 
     /// Calls `then`. Whatever asks for a realm meanwhile, on this thread, has the same one: that for [`HEAVY`] files. `Err`: as of
-    /// [`Engine::with_vm`].
+    /// [`Engine::with_vm_here`].
     fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
-        self.with_vm(0, &mut |_| then())
+        self.with_vm_here(0, &mut |_| then())
     }
 
     /// Says how many files are going to need a realm, how large they are together, and how many realms there can be at most.

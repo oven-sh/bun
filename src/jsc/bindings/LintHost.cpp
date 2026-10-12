@@ -34,6 +34,9 @@ void LintHost::finishCreation(VM& vm, JSGlobalObject* globalObject)
     JSObject* objectPrototype = globalObject->objectPrototype();
     m_positionStructure.set(vm, this, createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "line"_s, "column"_s })));
     m_locStructure.set(vm, this, createShape(vm, globalObject, objectPrototype, std::to_array<ASCIILiteral>({ "start"_s, "end"_s })));
+    report.finishCreation(vm, globalObject, this);
+    sourceCode.finishCreation(vm, globalObject, this);
+    tokens.finishCreation(vm, globalObject, this);
     endFile(vm);
 }
 
@@ -46,6 +49,10 @@ void LintHost::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_positionStructure);
     visitor.append(thisObject->m_locStructure);
     visitor.append(thisObject->m_text);
+    thisObject->report.visit(visitor);
+    thisObject->sourceCode.visit(visitor);
+    Locker locker { thisObject->cellLock() };
+    thisObject->tokens.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(LintHost);
@@ -72,12 +79,18 @@ void LintHost::beginFile(VM& vm, JSString* text, uint32_t flags)
     m_text.set(vm, this, text);
     m_textString = text->tryGetValue();
     m_flags = flags;
+    m_isLinting = true;
     m_lineStarts.clear();
+    Locker locker { cellLock() };
+    tokens.reset();
 }
 
 void LintHost::endFile(VM& vm)
 {
     beginFile(vm, jsEmptyString(vm), 0);
+    m_isLinting = false;
+    report.endFile();
+    sourceCode.endFile();
 }
 
 const Vector<uint32_t>& LintHost::lineStarts()
@@ -104,17 +117,23 @@ const Vector<uint32_t>& LintHost::lineStarts()
     return m_lineStarts;
 }
 
-JSObject* LintHost::createPosition(VM& vm, uint32_t index)
+LintHost::Position LintHost::positionOf(double index)
 {
     auto& starts = lineStarts();
-    size_t line = std::upper_bound(starts.begin(), starts.end(), index) - starts.begin();
+    size_t line = std::upper_bound(starts.begin(), starts.end(), index, [](double index, uint32_t start) { return index < start; }) - starts.begin();
+    return { static_cast<uint32_t>(line), line ? index - starts[line - 1] : PNaN };
+}
+
+JSObject* LintHost::createPosition(VM& vm, double index)
+{
+    auto [line, column] = positionOf(index);
     JSFinalObject* position = JSFinalObject::create(vm, m_positionStructure.get());
-    position->putDirectOffset(vm, 0, jsNumber(static_cast<uint32_t>(line)));
-    position->putDirectOffset(vm, 1, jsNumber(index - starts[line - 1]));
+    position->putDirectOffset(vm, 0, jsNumber(line));
+    position->putDirectOffset(vm, 1, jsNumber(column));
     return position;
 }
 
-JSObject* LintHost::createLoc(VM& vm, uint32_t start, uint32_t end)
+JSObject* LintHost::createLoc(VM& vm, double start, double end)
 {
     JSFinalObject* loc = JSFinalObject::create(vm, m_locStructure.get());
     loc->putDirectOffset(vm, 0, createPosition(vm, start));
@@ -129,11 +148,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintBeginFile, (JSGlobalObject * globalObject, CallFr
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue text = callFrame->argument(0);
     JSValue flags = callFrame->argument(1);
-    if (!text.isString() || !flags.isUInt32())
+    // Not isUInt32(): once the caller is JIT-compiled, a value read from a Uint32Array can arrive boxed as a double.
+    if (!text.isString() || !flags.isNumber())
         return throwVMTypeError(globalObject, scope, "Expected a text and flags"_s);
     asString(text)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    LintHost::from(globalObject)->beginFile(vm, asString(text), flags.asUInt32());
+    LintHost::from(globalObject)->beginFile(vm, asString(text), JSC::toUInt32(flags.asNumber()));
     return JSValue::encode(jsUndefined());
 }
 
@@ -149,6 +169,9 @@ void addLintHostFunctions(JSGlobalObject* globalObject, JSObject* native)
     VM& vm = globalObject->vm();
     native->putDirect(vm, Identifier::fromString(vm, "beginFile"_s), JSFunction::create(vm, globalObject, 2, "beginFile"_s, jsLintBeginFile, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "endFile"_s), JSFunction::create(vm, globalObject, 0, "endFile"_s, jsLintEndFile, ImplementationVisibility::Public));
+    addLintReportFunctions(globalObject, native);
+    addLintSourceCodeFunctions(globalObject, native);
+    addLintTokenFunctions(globalObject, native);
 }
 
 JSObject* createLintHost(VM& vm, JSGlobalObject* globalObject)

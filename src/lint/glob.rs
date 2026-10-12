@@ -184,8 +184,9 @@ impl Minimatch {
 
     /// `match(directory, true)`, minimatch's partial match. ESLint only enters a directory if this returns true.
     pub fn may_match_inside(&self, directory: &[u8]) -> bool {
-        let pattern = self.pattern.as_ref();
-        pattern.is_some_and(|it| it.may_match_inside(directory) != self.is_negated)
+        // A partial match is a match of the directory itself or of something inside it.
+        let is_hit = |it: &Pattern| it.matches(directory) || it.may_match_inside(directory);
+        (self.pattern.as_ref()).is_some_and(|it| is_hit(it) != self.is_negated)
     }
 }
 

@@ -15,7 +15,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
-use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
+use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
@@ -170,6 +170,65 @@ enum Needs {
     /// What makes an engine grow: a file of [`HEAVY`] bytes, or ESLint's own `Linter` with a parser that makes a TypeScript
     /// program: gigabytes.
     Heavy,
+}
+
+/// The files of a run that are linted without types, for threads that have a VM.
+struct Files<'f> {
+    heavy: &'f [&'f Target],
+    /// They need a VM. The largest come first.
+    with_engine: &'f [&'f Target],
+    plain: &'f [&'f Target],
+    next_heavy: AtomicUsize,
+    /// How many of `with_engine` are taken, and how many of those from the start and from the end.
+    taken: &'f AtomicUsize,
+    ends: [&'f AtomicUsize; 2],
+    next_plain: &'f AtomicUsize,
+    lint: &'f (dyn Fn(&Target) + Sync),
+}
+
+impl Files<'_> {
+    fn lint_plain(&self) -> bool {
+        let next = (self.plain).get(self.next_plain.fetch_add(1, Ordering::Relaxed));
+        next.map(|target| (self.lint)(target)).is_some()
+    }
+
+    /// On the calling thread.
+    fn lint_the_rest(&self) {
+        while self.heavy() {}
+        while self.light(0) {}
+    }
+}
+
+impl Work for Files<'_> {
+    fn has_heavy(&self) -> bool {
+        self.next_heavy.load(Ordering::Relaxed) < self.heavy.len()
+    }
+
+    fn heavy(&self) -> bool {
+        let next = (self.heavy).get(self.next_heavy.fetch_add(1, Ordering::Relaxed));
+        next.map(|target| (self.lint)(target)).is_some()
+    }
+
+    fn light(&self, realm: usize) -> bool {
+        if self.taken.fetch_add(1, Ordering::Relaxed) >= self.with_engine.len() {
+            return self.lint_plain();
+        }
+        // A VM keeps the memory that its largest file took. So few of them start with the largest files and the others with
+        // the smallest, until they meet.
+        let [first, last] = self.ends;
+        let at = match realm % 4 {
+            0 => Some(first.fetch_add(1, Ordering::Relaxed)),
+            _ => (self.with_engine.len() - 1).checked_sub(last.fetch_add(1, Ordering::Relaxed)),
+        };
+        if let Some(target) = at.and_then(|at| self.with_engine.get(at)) {
+            (self.lint)(target);
+        }
+        true
+    }
+
+    fn needs_realms(&self) -> bool {
+        self.taken.load(Ordering::Relaxed) < self.with_engine.len()
+    }
 }
 
 fn needs(target: &Target) -> Needs {
@@ -786,7 +845,44 @@ impl Run<'_> {
                 failure.lock().get_or_insert(error);
             }
         };
-        pool.for_each(pool.threads(), 1, &|worker| {
+        if context.js_plugins.lints() {
+            let files = Files {
+                heavy,
+                with_engine,
+                plain,
+                next_heavy: AtomicUsize::new(0),
+                taken: &taken,
+                ends: [&first, &last],
+                next_plain: &next_plain,
+                lint: &lint,
+            };
+            let mut lint_plain = || {
+                pool.for_each(pool.threads(), 1, &|worker| {
+                    if worker + 1 == pool.threads()
+                        && let Some(inferred) = context.inferred
+                    {
+                        inferred.begin();
+                    }
+                    // A thread with a VM that's busy counts as one of `--threads`. It goes on with these files once it's free.
+                    while worker + context.js_plugins.busy() < pool.threads() && files.lint_plain()
+                    {
+                    }
+                });
+            };
+            let needs_vm = !heavy.is_empty() || !with_engine.is_empty();
+            match needs_vm {
+                true if (context.js_plugins)
+                    .work_off(&files, &mut lint_plain)
+                    .is_ok() => {}
+                true => files.lint_the_rest(),
+                false => lint_plain(),
+            }
+        }
+        let threads = match context.js_plugins.lints() {
+            true => 0,
+            false => pool.threads(),
+        };
+        pool.for_each(threads, 1, &|worker| {
             if worker + 1 == pool.threads()
                 && let Some(inferred) = context.inferred
             {

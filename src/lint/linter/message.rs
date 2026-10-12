@@ -191,6 +191,7 @@ pub struct LintMessage {
     /// shown: [`Report::comments_apply_at`](crate::context::Report::comments_apply_at). Only oxlint has such messages, and only
     /// with a configuration of oxlint it counts.
     pub comments_apply_at: Option<((u32, u32), (u32, u32))>,
+    pub not_numbers: NotNumbers,
     pub details: Option<Box<Details>>,
     /// [`Diagnostic::constant_help`](crate::context::Diagnostic::constant_help)
     pub constant_help: Option<Help>,
@@ -220,6 +221,14 @@ impl LintMessage {
     }
 }
 
+/// Whether a rule written in JavaScript gave something other than a number for `line` or `column`. ESLint keeps such a report.
+/// The field is 0 then, which is what ESLint's `stylish` prints, and `null` in JSON.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NotNumbers {
+    pub line: bool,
+    pub column: bool,
+}
+
 /// [`Details`](crate::context::Details) of a report, with lines and columns as the message has them.
 #[derive(Clone, Debug, Default)]
 pub struct Details {
@@ -247,6 +256,7 @@ impl Default for LintMessage {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
         }
@@ -298,6 +308,7 @@ impl<'a> Locator<'a> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
         }
@@ -460,6 +471,23 @@ fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
     out.push(b'}');
 }
 
+/// `,"data":{..}`, if the rule gave any.
+fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
+    if !suggestion.has_data {
+        return;
+    }
+    out.extend_from_slice(b",\"data\":{");
+    for (i, (name, value)) in suggestion.data.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        json_stringify(name.as_bytes(), out);
+        out.push(b':');
+        json_stringify(value, out);
+    }
+    out.push(b'}');
+}
+
 impl LintMessage {
     /// Sorts by line and column. Those at the same place keep their order. Most lists are in order already.
     pub fn sort(messages: &mut [LintMessage]) {
@@ -488,7 +516,15 @@ impl LintMessage {
         out.extend_from_slice(b",\"message\":");
         json_stringify(&self.message, out);
         if !self.is_fatal || self.line != 0 {
-            let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
+            for (key, number, is_null) in [
+                ("line", self.line, self.not_numbers.line),
+                ("column", self.column, self.not_numbers.column),
+            ] {
+                let _ = match is_null {
+                    true => write!(out, ",\"{key}\":null"),
+                    false => write!(out, ",\"{key}\":{number}"),
+                };
+            }
         }
         if let Some(id) = self.message_id.as_deref().filter(|it| !it.is_empty()) {
             out.extend_from_slice(b",\"messageId\":");
@@ -517,6 +553,7 @@ impl LintMessage {
                 if suggestion.message_id.is_empty() {
                     out.extend_from_slice(b"{\"desc\":");
                     json_stringify(&suggestion.message, out);
+                    write_data(out, suggestion);
                     out.extend_from_slice(b",\"fix\":");
                     write_fix(out, &suggestion.fix, offsets);
                     out.push(b'}');
@@ -524,20 +561,7 @@ impl LintMessage {
                 }
                 out.extend_from_slice(b"{\"messageId\":");
                 json_stringify(suggestion.message_id.as_bytes(), out);
-                if suggestion.has_data {
-                    out.extend_from_slice(b",\"data\":{");
-                }
-                for (i, (name, value)) in suggestion.data.iter().enumerate() {
-                    if i > 0 {
-                        out.push(b',');
-                    }
-                    json_stringify(name.as_bytes(), out);
-                    out.push(b':');
-                    json_stringify(value, out);
-                }
-                if suggestion.has_data {
-                    out.push(b'}');
-                }
+                write_data(out, suggestion);
                 out.extend_from_slice(b",\"fix\":");
                 write_fix(out, &suggestion.fix, offsets);
                 out.extend_from_slice(b",\"desc\":");

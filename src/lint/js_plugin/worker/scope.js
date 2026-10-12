@@ -87,7 +87,7 @@ function lazy(prototype, name, compute) {
 class Definition {
   constructor(index) {
     const { definitions } = scopeData;
-    const at = 6 * index;
+    const at = 7 * index;
     const nodeAt = id => (id === NO_INDEX ? null : nodes[id]);
     const type = definitionTypes[definitions[at]];
     const flags = definitions[at + 5];
@@ -164,13 +164,13 @@ class TypeScriptVariable extends Variable {
 }
 for (const hidden of ["index", "flags"]) Object.defineProperty(Variable.prototype, hidden, { writable: true });
 lazy(Variable.prototype, "defs", function () {
-  return listAt(scopeData.variables[5 * this.index + 3], newDefinition);
+  return listAt(scopeData.variables[8 * this.index + 3], newDefinition);
 });
 lazy(Variable.prototype, "identifiers", function () {
   return this.defs.map(it => it.name).filter(it => it.type !== "Literal");
 });
 lazy(Variable.prototype, "references", function () {
-  return listAt(scopeData.variables[5 * this.index + 4], referenceAt);
+  return listAt(scopeData.variables[8 * this.index + 4], referenceAt);
 });
 
 class Reference {
@@ -267,7 +267,7 @@ function variableAt(index) {
   const existing = scopeData.variableObjects[index];
   if (existing !== undefined) return existing;
   const { variables, scopes, declaredCount } = scopeData;
-  const at = 5 * index;
+  const at = 8 * index;
   const scope = scopes[variables[at + 1]];
   const variable = newVariable(nameOf(variables[at]), scope, index, variables[at + 2]);
   scopeData.variableObjects[index] = variable;
@@ -355,12 +355,12 @@ lazy(Scope.prototype, "set", function () {
 // with what ESLint's `addDeclaredGlobals` sets on them.
 function mentionedGlobals() {
   if (scopeData.mentionedGlobals !== null) return scopeData.mentionedGlobals;
-  const { scopeWords, globalSettings } = scopeData;
+  const { scopeWords, variables } = scopeData;
   scopeData.mentionedGlobals = listAt(scopeWords[6], variableAt);
   const commentAt = start => sourceCode.getTokenByRangeStart(start, { includeComments: true });
-  for (let at = 0; at < globalSettings.length; at += 3) {
-    const variable = variableAt(globalSettings[at]);
-    const bits = globalSettings[at + 1];
+  for (const variable of scopeData.mentionedGlobals) {
+    const bits = variables[8 * variable.index + 6];
+    if (!(bits & 32)) continue;
     // Only a library of TypeScript defines it.
     if (!(bits & 8)) {
       variable.writeable = false;
@@ -369,7 +369,8 @@ function mentionedGlobals() {
     }
     variable.eslintImplicitGlobalSetting = ["readonly", "writable", "off", undefined][bits & 3];
     variable.eslintExplicitGlobal = (bits & 16) !== 0;
-    variable.eslintExplicitGlobalComments = bits & 16 ? listAt(globalSettings[at + 2], commentAt) : undefined;
+    variable.eslintExplicitGlobalComments =
+      bits & 16 ? listAt(variables[8 * variable.index + 7], commentAt) : undefined;
     variable.writeable = (bits & 4) !== 0;
   }
   return scopeData.mentionedGlobals;
@@ -555,18 +556,9 @@ function scopeManager() {
   program();
   ask(SCOPES);
   const buffer = buffers[SCOPES];
-  const [
-    scopeCount,
-    declaredCount,
-    variableCount,
-    definitionCount,
-    referenceCount,
-    settingCount,
-    implicitCount,
-    listLength,
-    listed,
-  ] = new Uint32Array(buffer, 0, 9);
-  let at = 36;
+  const [scopeCount, declaredCount, variableCount, definitionCount, referenceCount, implicitCount, listLength, listed] =
+    new Uint32Array(buffer, 0, 8);
+  let at = 44;
   const words = length => {
     const part = new Uint32Array(buffer, at, length);
     at += 4 * length;
@@ -579,10 +571,9 @@ function scopeManager() {
     scopes,
     scopeWords,
     declaredCount,
-    variables: words(5 * variableCount),
-    definitions: words(6 * definitionCount),
+    variables: words(8 * variableCount),
+    definitions: words(7 * definitionCount),
     references: words(5 * referenceCount),
-    globalSettings: words(3 * settingCount),
     implicitGlobals: words(implicitCount),
     lists: words(listLength),
     variableObjects: new Array(variableCount),

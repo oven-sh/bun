@@ -1,7 +1,7 @@
 //! ESLint's `apply-disable-directives.js`: which messages the `eslint-disable` comments of a file
 //! suppress, and which of these comments do nothing.
 
-use super::message::{LintMessage, RuleId, Suppression};
+use super::message::{LintMessage, NotNumbers, RuleId, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
 use crate::fix::Fix;
@@ -245,6 +245,7 @@ impl Input<'_, '_> {
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
         }

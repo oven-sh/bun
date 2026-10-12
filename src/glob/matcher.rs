@@ -352,7 +352,7 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                                 || glob.get(state.glob_index as usize + 1) == Some(&b'('))
                                 && let Some(matched) = Group::try_at::<WINDOWS>(
                                     glob,
-                                    state.glob_index,
+                                    (state.glob_index, glob_start),
                                     path,
                                     state.path_index,
                                     Inside {
@@ -383,7 +383,7 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                             // `{**,a}/b`: the `/` that makes this a globstar comes after the group.
                             if IN_GROUP
                                 && is_globstar
-                                && is_name_start(glob, glob_start, state.glob_index)
+                                && inside.starts_segment_at(glob, glob_start, state.glob_index)
                                 && let (slash, outer) = inside.outside(state.glob_index + 2)
                                 && slash > state.glob_index + 2
                                 && glob.get(slash as usize) == Some(&b'/')
@@ -462,6 +462,11 @@ fn glob_match_impl<const WINDOWS: bool, const STRICT: bool, const IN_GROUP: bool
                                 // `{a,b/**}`: the pattern ends right after the group.
                                 let is_end_invalid = (state.glob_index as usize) < glob.len()
                                     && !(IN_GROUP
+                                        && inside.starts_segment_at(
+                                            glob,
+                                            glob_start,
+                                            state.glob_index - 2,
+                                        )
                                         && inside.outside(state.glob_index).0 as usize
                                             == glob.len());
 
@@ -788,6 +793,8 @@ struct Group<'g> {
     first: u32,
     /// Index of the closing `}` or `)`.
     close: u32,
+    /// A path segment of the pattern starts with the group. It doesn't in `a{b,c}`.
+    starts_segment: bool,
     /// The group that contains this one.
     outer: Inside<'g>,
 }
@@ -808,6 +815,15 @@ impl<'g> Inside<'g> {
         end: u32::MAX,
         is_idle: false,
     };
+
+    /// Returns true if a path segment of the pattern starts at `index`. The start of an alternative only counts if the
+    /// group itself starts a segment. `glob_start` is where the current part of the pattern starts.
+    fn starts_segment_at(self, glob: &[u8], glob_start: u32, index: u32) -> bool {
+        match self.group {
+            Some(group) if index == glob_start => group.starts_segment,
+            _ => is_name_start(glob, glob_start, index),
+        }
+    }
 
     /// Leaves every group whose current alternative ends at `index`. Returns the index after them and the outer context.
     fn outside(mut self, mut index: u32) -> (u32, Inside<'g>) {
@@ -939,18 +955,19 @@ fn enter<const WINDOWS: bool>(
 }
 
 impl<'g> Group<'g> {
-    /// Matches the group that starts at `index` and the rest of the pattern. Returns `None` if no group starts there.
+    /// Matches the group that starts at `at.0` and the rest of the pattern. Returns `None` if no group starts there.
+    /// `at.1` is where the current part of the pattern starts.
     #[cold]
     #[inline(never)]
     fn try_at<const WINDOWS: bool>(
         glob: &[u8],
-        index: u32,
+        at: (u32, u32),
         path: &[u8],
         path_index: u32,
         outer: Inside<'g>,
         groups: &mut Groups<'_>,
     ) -> Option<bool> {
-        let group = Group::at(glob, index, outer, groups)?;
+        let group = Group::at(glob, at, outer, groups)?;
         Some(group.matches::<WINDOWS>(glob, path, path_index, outer.is_idle, groups))
     }
 
@@ -966,7 +983,7 @@ impl<'g> Group<'g> {
         by_segment: bool,
         groups: &mut Groups<'_>,
     ) -> u32 {
-        let Some(group) = Group::at(glob, index, Inside::NO_GROUP, groups) else {
+        let Some(group) = Group::at(glob, (index, index), Inside::NO_GROUP, groups) else {
             return path_index;
         };
         if !matches!(group.kind, b'{' | b'@' | b'+') {
@@ -999,7 +1016,7 @@ impl<'g> Group<'g> {
     /// Returns the group that starts at `index`.
     fn at(
         glob: &[u8],
-        index: u32,
+        (index, glob_start): (u32, u32),
         outer: Inside<'g>,
         groups: &mut Groups<'_>,
     ) -> Option<Group<'g>> {
@@ -1023,6 +1040,7 @@ impl<'g> Group<'g> {
             },
             first,
             close: it.close,
+            starts_segment: outer.starts_segment_at(glob, glob_start, index),
             outer,
         })
     }

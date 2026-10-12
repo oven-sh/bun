@@ -1,6 +1,6 @@
 //! What the linter talks to: loads plugins, and runs their rules on a file.
 
-use super::engine::{Engine, Vm};
+use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
 use super::{ast, schema, scopes, tokens};
@@ -28,10 +28,10 @@ pub struct Report {
     pub rule: u32,
     pub message: Vec<u8>,
     pub message_id: Option<Box<str>>,
-    /// From 1.
-    pub line: u32,
-    /// From 1, in UTF-16 code units.
-    pub column: u32,
+    /// From 1. `None`: the rule gave something that isn't a number.
+    pub line: Option<u32>,
+    /// From 1, in UTF-16 code units. `None`: as for `line`.
+    pub column: Option<u32>,
     /// `endLine` and `endColumn`.
     pub end: Option<(u32, u32)>,
     pub fix: Option<Fix>,
@@ -69,6 +69,10 @@ impl From<Vec<u8>> for Failure {
         }
     }
 }
+
+/// Parses the text of a file once more, on the thread that calls it, and hands over the result. It isn't called back if the text
+/// can't be parsed.
+pub type ParseAgain<'p> = dyn Fn(&mut dyn for<'f> FnMut(&'f File<'f>)) + Sync + 'p;
 
 /// The JavaScript that a run has loaded, in all realms together.
 #[derive(Clone, Default, Debug)]
@@ -190,12 +194,21 @@ fn report_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Report> {
         rule: number(parts.first())?,
         message: parts.get(1)?.as_str()?.to_vec(),
         message_id: text_of(parts.get(2)),
-        line: number(parts.get(3))?,
-        column: number(parts.get(4))?,
+        line: number(parts.get(3)),
+        column: number(parts.get(4)),
         end: number(parts.get(5)).zip(number(parts.get(6))),
         fix: fix_of(parts.get(7), offsets),
         suggestions: suggestions.iter().filter_map(suggested).collect(),
     })
+}
+
+/// What [`Host::run_on_block`] is given besides the file.
+#[derive(Copy, Clone)]
+struct How<'h> {
+    settings: &'h FileSettings,
+    enabled: &'h [&'h Configured],
+    wants_fixes: bool,
+    physical_path_len: Option<usize>,
 }
 
 const OUT_OF_STEP: &[u8] =
@@ -286,6 +299,21 @@ impl<'e> Host<'e> {
     /// [`Engine::most_realms`]
     pub fn most_realms(&self) -> usize {
         self.engine.most_realms()
+    }
+
+    /// [`Engine::lints`]
+    pub fn lints(&self) -> bool {
+        self.engine.lints()
+    }
+
+    /// [`Engine::work_off`]
+    pub fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        self.engine.work_off(work, meanwhile)
+    }
+
+    /// [`Engine::busy`]
+    pub fn busy(&self) -> usize {
+        self.engine.busy()
     }
 
     /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
@@ -497,9 +525,9 @@ impl<'e> Host<'e> {
         positions
     }
 
-    /// The same. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if not all of it.
-    /// `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is part of what a
-    /// rule does.
+    /// Runs the rules `enabled` on `file`. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if
+    /// not all of it. `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is
+    /// part of what a rule does. `parse_again`: for a thread that has no realm. A thread that has one parses the text itself.
     pub fn run_on_block<'a>(
         &self,
         file: &'a File<'a>,
@@ -507,23 +535,41 @@ impl<'e> Host<'e> {
         enabled: &[&Configured],
         wants_fixes: bool,
         physical_path_len: Option<usize>,
+        parse_again: Option<&ParseAgain>,
     ) -> Result<Vec<Report>, Failure> {
+        let how = How {
+            settings,
+            enabled,
+            wants_fixes,
+            physical_path_len,
+        };
+        let size = file.text().len();
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        self.engine.with_vm(file.text().len(), &mut |vm| {
-            outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
-        })?;
-        outcome
+        if self.engine.is_here() {
+            (self.engine).with_vm_here(size, &mut |vm| outcome = self.run_in(vm, file, &how))?;
+        } else if let Some(parse_again) = parse_again {
+            self.engine.with_vm(size, &mut |vm| {
+                parse_again(&mut |file| outcome = self.run_in(vm, file, &how));
+            })?;
+        }
+        let (reports, used) = outcome?;
+        scopes::mark_used(file, used.into_iter());
+        Ok(reports)
     }
 
+    /// Returns the reports, and the indices of the variables that rules have marked as used.
     fn run_in<'a>(
         &self,
         vm: &mut dyn Vm,
         file: &'a File<'a>,
-        settings: &FileSettings,
-        enabled: &[&Configured],
-        wants_fixes: bool,
-        physical_path_len: Option<usize>,
-    ) -> Result<Vec<Report>, Failure> {
+        how: &How,
+    ) -> Result<(Vec<Report>, Vec<u32>), Failure> {
+        let How {
+            settings,
+            enabled,
+            wants_fixes,
+            physical_path_len,
+        } = *how;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
         let has_mark = text.starts_with(b"\xEF\xBB\xBF");
@@ -623,7 +669,7 @@ impl<'e> Host<'e> {
                 return Err(OUT_OF_STEP.to_vec().into());
             };
             if kind == result::DONE && content.is_empty() {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), Vec::new()));
             }
             let Some(Json::Array(parts)) = crate::json::parse(content) else {
                 return Err(OUT_OF_STEP.to_vec().into());
@@ -631,11 +677,9 @@ impl<'e> Host<'e> {
             match kind {
                 result::DONE => {
                     let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
-                    scopes::mark_used(file, part(1).iter().filter_map(|it| number(Some(it))));
-                    return Ok(part(0)
-                        .iter()
-                        .filter_map(|it| report_of(it, &offsets))
-                        .collect());
+                    let reports = part(0).iter().filter_map(|it| report_of(it, &offsets));
+                    let used = part(1).iter().filter_map(|it| number(Some(it)));
+                    return Ok((reports.collect(), used.collect()));
                 }
                 result::FAILED => {
                     return Err(Failure {

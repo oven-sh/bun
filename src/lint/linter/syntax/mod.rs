@@ -13,7 +13,7 @@ mod order;
 mod oxc;
 mod typescript_estree;
 
-use super::message::LintMessage;
+use super::message::{LintMessage, NotNumbers};
 use crate::ast::{File, Stmt};
 use crate::context::Severity;
 use crate::language::{Parser, SourceType};
@@ -151,6 +151,7 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         suggestions: Vec::new(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        not_numbers: NotNumbers::default(),
         details: None,
         constant_help: None,
     })

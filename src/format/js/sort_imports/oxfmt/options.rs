@@ -141,8 +141,7 @@ pub(crate) struct Options {
 
 /// `fast_glob::glob_match`: `bun_glob` is a port of the same `glob-match`.
 fn glob_match(pattern: &[u8], source: &[u8]) -> bool {
-    bun_glob::matcher::match_on::<false>(&bun_glob::pattern::of_fast_glob(pattern), source)
-        .matches()
+    bun_glob::pattern::fast_glob_match(pattern, source)
 }
 
 impl Options {

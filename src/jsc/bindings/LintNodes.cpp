@@ -7,6 +7,7 @@
 
 #include "root.h"
 
+#include "LintHost.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -346,6 +347,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame*
         JSObject* node = asObject(nodes->getIndexQuickly(id));
         node->putDirectOffset(vm, node->structure()->maxOffset(), nodes->getIndexQuickly(tree.parents[id]));
     }
+    LintHost* host = LintHost::from(globalObject);
+    host->sourceCode.setTree(vm, host, buffer, nodes, tree.starts, tree.ends, tree.parents);
     return JSValue::encode(nodes);
 }
 
@@ -526,7 +529,10 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCodePaths, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(result);
 }
 
-// `{ shape, nodes, codePaths }` for the program in src/lint/js_plugin/worker.
+// LintScopes.cpp
+void addLintScopeFunctions(JSGlobalObject*, JSObject* native);
+
+// `{ shape, nodes, codePaths, .. }` for the program in src/lint/js_plugin/worker.
 extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -534,6 +540,8 @@ extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
     object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 4, "shape"_s, jsLintShape, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "nodes"_s), JSFunction::create(vm, globalObject, 6, "nodes"_s, jsLintNodes, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "codePaths"_s), JSFunction::create(vm, globalObject, 3, "codePaths"_s, jsLintCodePaths, ImplementationVisibility::Public));
+    addLintHostFunctions(globalObject, object);
+    addLintScopeFunctions(globalObject, object);
     return JSValue::encode(object);
 }
 

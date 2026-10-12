@@ -7,21 +7,22 @@
 //! # The message
 //!
 //! [`HEADER`] words, then the parts in this order. A list is stored as its offset into the last part,
-//! where its length comes before its items. Offset 0 is the empty list. [`NONE`] stands for `null`.
+//! where its length comes before its items. Offset 0 is the empty list. [`NONE`] stands for `null`. A map is a list of pairs,
+//! a node and a list.
 //!
 //! | Part | Words |
 //! | --- | --- |
-//! | header | counts of scopes, declared variables, all variables, definitions, references, global settings and implicit globals, the length of the lists, the list `scopeManager.scopes` |
+//! | header | counts of scopes, declared variables, all variables, definitions, references and implicit globals, the length of the lists, the list `scopeManager.scopes`, then two maps, from a block to its scopes and from a node to the variables it declares |
 //! | scopes | 9 each: [`ScopeKind`] with bit 8 for strict, block, upper scope, variable scope, last scope inside it, then the lists `childScopes`, `variables`, `references`, `through` |
-//! | variables | 5 each: name, scope, flags, then the lists `defs` and `references` |
-//! | definitions | 6 each: [`DeclarationKind`], name, node, parent, index, flags |
+//! | variables | 8 each: name, scope, flags, the lists `defs`, `references` and `identifiers`, what ESLint sets on a global with the shape above bit 8, the list of where the `/* global */` comments start |
+//! | definitions | 7 each: [`DeclarationKind`], name, node, parent, index, flags, `kind` |
 //! | references | 5 each: identifier, flags, written expression, resolved variable, scope |
-//! | global settings | 3 each: variable, bits, list of where the `/* global */` comments start |
 //! | implicit globals | 1 each: a list of pairs, identifier and assigning node |
 //! | lists | |
 //!
 //! Declared variables come first, scope by scope, in the order [`mark_used`] counts them. After them
-//! come the second variable of each class declaration and the globals that the file doesn't declare.
+//! come the second variable of each class declaration and the globals that the file doesn't declare. In a map the implicit
+//! globals are numbered after all variables.
 //!
 //! A name is a number with a tag in its low 2 bits. See [`Name`].
 
@@ -35,7 +36,7 @@ use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-const HEADER: usize = 9;
+const HEADER: usize = 11;
 const NONE: u32 = u32::MAX;
 
 /// In the flags of a variable.
@@ -49,6 +50,8 @@ const IS_WRITABLE: u32 = 1 << 5;
 const IS_IN_LIB: u32 = 1 << 6;
 /// Something other than a TypeScript library defines it.
 const IS_CONFIGURED: u32 = 1 << 7;
+/// `variable.stack` of `eslint-scope`.
+const IS_STACK: u32 = 1 << 8;
 
 /// In the flags of a reference, above its [`ReferenceFlags`]. It refers to a global variable that the
 /// file doesn't declare.
@@ -67,6 +70,16 @@ const IS_WRITEABLE: u32 = 1 << 2;
 /// The configuration or a comment names the variable, so it also has `eslintExplicitGlobal`.
 const IS_NAMED: u32 = 1 << 3;
 const IS_EXPLICIT: u32 = 1 << 4;
+/// ESLint has set something on the variable.
+const HAS_SETTING: u32 = 1 << 5;
+
+/// The shape of a variable says which properties it has besides those of every variable. The four that ESLint sets on a global.
+const SHAPE_GLOBAL: u32 = 1 << 0;
+/// It's an `ImplicitLibVariable` of typescript-eslint.
+const SHAPE_LIB: u32 = 1 << 1;
+/// `eslintUsed`, which every variable of typescript-eslint has.
+const SHAPE_USED: u32 = 1 << 2;
+const SHAPE_EXPORTED: u32 = 1 << 3;
 
 /// The first of the ESTree nodes made of `base` that `is_it` accepts.
 fn find<'a>(
@@ -196,6 +209,10 @@ struct VariableRecord<'t> {
     /// Its definitions are `first_definition..end_definition`, without those whose name isn't in the tree.
     first_definition: u32,
     end_definition: u32,
+    /// What ESLint sets on it, if it's a global.
+    settings: u32,
+    /// A list of where the `/* global */` comments that name it start.
+    comments: u32,
 }
 
 struct DefinitionRecord {
@@ -205,6 +222,8 @@ struct DefinitionRecord {
     parent: u32,
     index: u32,
     flags: u32,
+    /// `kind` of the `VariableDeclaration`, from 1 in the order `var`, `let`, `const`, `using`, `await using`. 0 for `null`.
+    declaration_kind: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -337,6 +356,14 @@ impl<'t, 'a> Tree<'t, 'a> {
         let is_parameter = is(DeclarationKind::Parameter);
         if is_espree && is(DeclarationKind::Variable) {
             definition.index = self.index_in(parent, Field::Declarations, node);
+            definition.declaration_kind = match self.field(parent, Field::Kind) {
+                Value::Str(b"var") => 1,
+                Value::Str(b"let") => 2,
+                Value::Str(b"const") => 3,
+                Value::Str(b"using") => 4,
+                Value::Str(b"await using") => 5,
+                _ => 0,
+            };
         }
         if is_parameter {
             if is_espree {
@@ -705,6 +732,7 @@ impl<'t, 'a> Builder<'t, 'a> {
                             parent: NONE,
                             index: NONE,
                             flags: 0,
+                            declaration_kind: 0,
                         });
                     }
                 }
@@ -719,6 +747,8 @@ impl<'t, 'a> Builder<'t, 'a> {
                     flags,
                     first_definition,
                     end_definition: self.definitions.len() as u32,
+                    settings: 0,
+                    comments: 0,
                 });
             }
         }
@@ -839,6 +869,7 @@ impl<'t, 'a> Builder<'t, 'a> {
                     parent: NONE,
                     index: NONE,
                     flags: 0,
+                    declaration_kind: 0,
                 });
                 self.inner_class_names
                     .insert(scope, self.variables.len() as u32);
@@ -849,6 +880,8 @@ impl<'t, 'a> Builder<'t, 'a> {
                     flags: IS_TYPE | IS_VALUE,
                     first_definition,
                     end_definition: first_definition + 1,
+                    settings: 0,
+                    comments: 0,
                 });
                 outer.entry(variable).or_default().push(scope);
             }
@@ -1015,7 +1048,7 @@ impl<'t, 'a> Builder<'t, 'a> {
         offsets: &Utf16OffsetTable,
         configured: &'t ConfiguredGlobals,
         variables: &mut Vec<u32>,
-    ) -> Vec<GlobalSetting> {
+    ) {
         // The variable of each name so far. Configured names are found by their index, so that a file only hashes the names
         // that it mentions.
         let mut named = GlobalNames {
@@ -1055,6 +1088,8 @@ impl<'t, 'a> Builder<'t, 'a> {
                     flags,
                     first_definition: end_definition,
                     end_definition,
+                    settings: 0,
+                    comments: 0,
                 });
             }
             *slot
@@ -1125,7 +1160,11 @@ impl<'t, 'a> Builder<'t, 'a> {
                 reference.variable = named.get(reference.name).unwrap_or(NONE);
             }
         }
-        settings
+        for it in settings {
+            let variable = &mut self.variables[it.variable as usize];
+            variable.settings = it.bits | HAS_SETTING;
+            variable.comments = it.comments;
+        }
     }
 
     /// typescript-eslint's `variable.isTypeVariable` or `isValueVariable` of a variable without definitions.
@@ -1223,6 +1262,97 @@ impl<'t, 'a> Builder<'t, 'a> {
     }
 }
 
+impl Builder<'_, '_> {
+    /// `variable.stack`: every reference that `eslint-scope` itself has resolved comes from the function that declares the
+    /// variable. ESLint resolves the references to the globals that it adds, and leaves `stack` alone.
+    fn set_stack(&mut self) {
+        for variable in &mut self.variables {
+            variable.flags |= IS_STACK;
+        }
+        let function_of = |scope: u32| self.scopes[scope as usize].variable_scope;
+        for reference in self
+            .references
+            .iter()
+            .filter(|it| it.flags & TO_GLOBAL == 0)
+        {
+            if let Some(variable) = self.variables.get_mut(reference.variable as usize)
+                && function_of(reference.from) != function_of(variable.scope)
+            {
+                variable.flags &= !IS_STACK;
+            }
+        }
+    }
+
+    fn shape_of(&self, variable: &VariableRecord) -> u32 {
+        let has = |flag: u32| variable.flags & flag != 0;
+        let is_lib = !self.is_espree && has(IS_IN_LIB);
+        (u32::from(variable.settings & HAS_SETTING != 0 && !is_lib) * SHAPE_GLOBAL)
+            | (u32::from(is_lib) * SHAPE_LIB)
+            | (u32::from(self.is_espree && has(IS_USED)) * SHAPE_USED)
+            | (u32::from(has(IS_EXPORTED)) * SHAPE_EXPORTED)
+    }
+
+    /// Makes a map of `keys`, which are nodes, and the values at the same indices. The nodes are in the order in which they
+    /// come first.
+    fn map_of(&mut self, keys: &[u32], values: &[u32]) -> u32 {
+        let mut lists_by_node = group(keys, values, self.tree.types.len(), &mut self.lists);
+        let mut pairs = Vec::new();
+        for &node in keys.iter().filter(|&&it| it != NONE) {
+            let list = std::mem::take(&mut lists_by_node[node as usize]);
+            if list != 0 {
+                pairs.extend_from_slice(&[node, list]);
+            }
+        }
+        push_list(&mut self.lists, &pairs)
+    }
+
+    /// From the block of a scope to the scopes that have it, in the order of `listed`.
+    fn node_to_scope(&mut self, listed: &[u32]) -> u32 {
+        let blocks: Vec<u32> = (listed.iter())
+            .map(|&it| self.scopes[it as usize].block)
+            .collect();
+        self.map_of(&blocks, listed)
+    }
+
+    /// From the `node` and the `parent` of a definition to the variables that have such a definition.
+    fn declared_variables(&mut self, listed: &[u32], variables: &[u32], implicit: &[u32]) -> u32 {
+        let (mut keys, mut values) = (Vec::new(), Vec::new());
+        // The last variable that was added for each node. All definitions of a variable come one after the other.
+        let mut last = vec![NONE; self.tree.types.len()];
+        let mut add = |node: u32, variable: u32| {
+            if let Some(last) = last.get_mut(node as usize)
+                && std::mem::replace(last, variable) != variable
+            {
+                keys.push(node);
+                values.push(variable);
+            }
+        };
+        for &scope in listed {
+            let at = variables[scope as usize] as usize;
+            for &variable in &self.lists[at + 1..][..self.lists[at] as usize] {
+                for definition in self.definitions_of(&self.variables[variable as usize]) {
+                    let definition = &self.definitions[definition as usize];
+                    add(definition.node, variable);
+                    add(definition.parent, variable);
+                }
+            }
+            if scope != 0 {
+                continue;
+            }
+            for (&pairs, variable) in implicit.iter().zip(self.variables.len() as u32..) {
+                let at = pairs as usize;
+                let pairs = self.lists[at + 1..][..self.lists[at] as usize]
+                    .as_chunks::<2>()
+                    .0;
+                for &[_, node] in pairs {
+                    add(node, variable);
+                }
+            }
+        }
+        self.map_of(&keys, &values)
+    }
+}
+
 /// Appends the message. `configured`: ESLint's `configGlobals`, in the order of its keys.
 pub(super) fn write<'t, 'a>(
     file: &'a File<'a>,
@@ -1256,7 +1386,8 @@ pub(super) fn write<'t, 'a>(
         .get(1)
         .map_or(builder.declared, |it| it.first_variable);
     let mut global_variables: Vec<u32> = (0..end_of_global).collect();
-    let settings = builder.add_globals(file, offsets, configured, &mut global_variables);
+    builder.add_globals(file, offsets, configured, &mut global_variables);
+    builder.set_stack();
 
     let uppers: Vec<u32> = (listed.iter())
         .map(|&it| builder.scopes[it as usize].upper.unwrap_or(NONE))
@@ -1269,23 +1400,29 @@ pub(super) fn write<'t, 'a>(
     let references_by_variable = builder.references_by_variable();
     let through = builder.through();
     let implicit = builder.implicit_globals(through.first().copied().unwrap_or(0));
+
+    // The list that is being put together.
+    let mut list = global_variables;
+    let variables_by_scope: Vec<u32> = (0..scope_count as u32)
+        .map(|scope| {
+            if scope != 0 {
+                builder.variables_of(scope, &mut list);
+            }
+            push_list(&mut builder.lists, &list)
+        })
+        .collect();
+    let node_to_scope = builder.node_to_scope(&listed);
+    let declared_variables = builder.declared_variables(&listed, &variables_by_scope, &implicit);
     let listed = push_list(&mut builder.lists, &listed);
 
     let mut words = Vec::with_capacity(
         9 * scope_count
-            + 5 * (builder.variables.len() + builder.references.len())
-            + 6 * builder.definitions.len()
-            + 3 * settings.len()
+            + 8 * builder.variables.len()
+            + 7 * builder.definitions.len()
+            + 5 * builder.references.len()
             + implicit.len(),
     );
-    // The list that is being put together.
-    let mut list = global_variables;
-    for (scope, index) in builder.scopes.iter().zip(0..) {
-        if index != 0 {
-            builder.variables_of(index, &mut list);
-        }
-        let variables = push_list(&mut builder.lists, &list);
-        let at = index as usize;
+    for (scope, at) in builder.scopes.iter().zip(0..) {
         words.extend_from_slice(&[
             scope.kind,
             scope.block,
@@ -1293,7 +1430,7 @@ pub(super) fn write<'t, 'a>(
             scope.variable_scope,
             scope.last,
             child_scopes[at],
-            variables,
+            variables_by_scope[at],
             references_by_scope[at],
             through[at],
         ]);
@@ -1302,22 +1439,36 @@ pub(super) fn write<'t, 'a>(
         list.clear();
         list.extend(builder.definitions_of(variable));
         let definitions = push_list(&mut builder.lists, &list);
+        // A name in quotes is no identifier.
+        list.retain_mut(|it| {
+            *it = builder.definitions[*it as usize].name;
+            !builder.tree.is(*it, NodeType::Literal)
+        });
+        let identifiers = push_list(&mut builder.lists, &list);
         words.extend_from_slice(&[
             variable.name.word(),
             variable.scope,
             variable.flags,
             definitions,
             references,
+            identifiers,
+            variable.settings | builder.shape_of(variable) << 8,
+            variable.comments,
         ]);
     }
     for it in &builder.definitions {
-        words.extend_from_slice(&[it.kind, it.name, it.node, it.parent, it.index, it.flags]);
+        words.extend_from_slice(&[
+            it.kind,
+            it.name,
+            it.node,
+            it.parent,
+            it.index,
+            it.flags,
+            it.declaration_kind,
+        ]);
     }
     for it in &builder.references {
         words.extend_from_slice(&[it.identifier, it.flags, it.written, it.variable, it.from]);
-    }
-    for it in &settings {
-        words.extend_from_slice(&[it.variable, it.bits, it.comments]);
     }
     words.extend_from_slice(&implicit);
 
@@ -1327,10 +1478,12 @@ pub(super) fn write<'t, 'a>(
         builder.variables.len() as u32,
         builder.definitions.len() as u32,
         builder.references.len() as u32,
-        settings.len() as u32,
         implicit.len() as u32,
         builder.lists.len() as u32,
         listed,
+        node_to_scope,
+        declared_variables,
+        0,
     ];
     wire::words(out, &header);
     wire::words(out, &words);

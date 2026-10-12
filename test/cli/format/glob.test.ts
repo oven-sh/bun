@@ -175,3 +175,21 @@ test.concurrent.each([
   expect(stdout).toBe(`if (a) {\n${indent}b(1);\n}\n`);
   expect(exitCode).toBe(0);
 });
+
+// The expected files come from Prettier 3.9. Its `ignore` package looks for a `/` before it trims the line, so `a/ ` is anchored.
+test.concurrent.each([
+  ["a/", "z.js"],
+  ["a/ ", "sub/a/y.js z.js"],
+  ["a ", "z.js"],
+])("the .prettierignore line %j ignores the same files as Prettier", async (line, expected) => {
+  const files = {
+    "a/x.js": ugly,
+    "sub/a/y.js": ugly,
+    "z.js": ugly,
+    ".prettierrc.json": "{}\n",
+    ".prettierignore": `${line}\n`,
+  };
+  const { stdout, exitCode } = await format(files, ["-l", "."]);
+  expect(stdout.trim().split("\n").sort().join(" ")).toBe(expected);
+  expect(exitCode).toBe(1);
+});

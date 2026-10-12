@@ -132,16 +132,14 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
     if written == b"**/" {
         return Some(Pattern::new(b"**"));
     }
-    let (mut at, mut depth, mut escaped) = (0, 0_usize, usize::MAX);
+    let (mut at, mut depth) = (0, 0_usize);
     while let Some(&byte) = written.get(at) {
         match byte {
             b'*' => {
                 let stars = Stars::at(written, at);
                 let end = stars.end;
-                // `{` and `,` only start an alternative inside a group.
-                let is_after_literal = at > 0
-                    && matches!(written[at - 1], b'{' | b',')
-                    && (depth == 0 || escaped == at - 1);
+                // Only a `/` or the start of the pattern starts a segment here. An alternative can be glued to a name.
+                let is_after_literal = at > 0 && matches!(written[at - 1], b'{' | b',');
                 glob.extend_from_slice(
                     match (
                         stars.starts_name && !is_after_literal,
@@ -159,7 +157,6 @@ fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
             b'\\' => {
                 glob.extend_from_slice(written.get(at..at + 2)?);
                 at += 1;
-                escaped = at;
             }
             b'[' => {
                 at = bun_lint::glob::from_globset_class(written, at, false, &mut glob).ok()??;

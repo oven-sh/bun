@@ -14,6 +14,13 @@ pub const PROGRAM: &[(&str, &str)] = &[
     ("ast.js", include_str!("worker/ast.js")),
     ("tokens.js", include_str!("worker/tokens.js")),
     ("scope.js", include_str!("worker/scope.js")),
+    ("", "const scopeCells = (() => {\n"),
+    ("scope_cells.js", include_str!("worker/scope_cells.js")),
+    (
+        "",
+        "return { scopeManager, resetScopes, usedVariables };\n})();\n\
+         if (process.env.BUN_LINT_SCOPE_CELLS === \"1\") ({ scopeManager, resetScopes, usedVariables } = scopeCells);\n",
+    ),
     ("source_code.js", include_str!("worker/source_code.js")),
     ("report.js", include_str!("worker/report.js")),
     ("processor.js", include_str!("worker/processor.js")),

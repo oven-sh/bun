@@ -14,7 +14,7 @@ use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
 use bun_lint::formats::{Formats, Reason};
-use bun_lint::js_plugin::{Host, Route};
+use bun_lint::js_plugin::{Host, ParseAgain, Route};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, ResolvedConfig, RuleId, Suggestion, apply_fixes,
@@ -424,13 +424,15 @@ impl Context<'_, '_> {
         Ok(())
     }
 
-    fn verify_as(
+    /// Parses `text` as the file at `path`, on the calling thread, and calls `then` with the file. `None`: it's nested too deeply.
+    fn parse(
         &self,
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
         as_what: &How,
-    ) -> LintResult {
+        then: &mut dyn for<'f> FnMut(Option<&'f File<'f>>),
+    ) {
         let started = self.timing.now();
         let session = self.memory;
         let arena = session.arena();
@@ -452,24 +454,14 @@ impl Context<'_, '_> {
                 };
                 let mut recycled = Recycled::of_this_thread();
                 let bound = bind_for_lint_in(&hir, bind_options, atoms, &mut recycled);
-                let parsed = self.timing.add(&self.timing.parse, started);
+                self.timing.add(&self.timing.parse, started);
                 if hir.mentioned.is_empty() {
                     self.timing.count(&self.timing.without_filter);
                 }
                 if hir.ran_out_of_stack || bound.ran_out_of_stack {
-                    return LintResult {
-                        messages: vec![too_deep()],
-                        ..LintResult::default()
-                    };
+                    return then(None);
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
-                // Whoever says what the file on the disk is sees to what is not read here.
-                if as_what.physical_path_len.is_some() && may_be_misread(&file) {
-                    return LintResult {
-                        is_unread: true,
-                        ..LintResult::default()
-                    };
-                }
                 file.set_modules(self.modules);
                 // Under the name of a component the formatter would print one of its scripts as a component.
                 if as_what.script.is_none() {
@@ -479,46 +471,114 @@ impl Context<'_, '_> {
                     file.set_inferred_globals(inferred);
                 }
                 file.set_later_script(as_what.is_later_script);
-                let options = self.lint_options();
-                // The parts of a file that is linted in parts are not put together a second time.
-                let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
-                let waits_for_demand = self.help_on_demand && is_whole && !as_what.with_help;
-                let options = LintOptions {
-                    again: as_what.again,
-                    wants_fixes: match as_what.fixes {
-                        Fixes::IfRead => options.wants_fixes,
-                        Fixes::ForProcessor => true,
-                        Fixes::Disabled => false,
-                    },
-                    disables_fixes: as_what.fixes == Fixes::Disabled,
-                    // A processor is given the messages.
-                    wants_texts_of_fixes: options.wants_texts_of_fixes
-                        || as_what.physical_path_len.is_some(),
-                    wants_help: options.wants_help && !waits_for_demand,
-                    wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
-                    wants_places: options.wants_places || as_what.physical_path_len.is_some(),
-                    // Its rules have no such thing.
-                    js_plugins: options.js_plugins.filter(|_| !as_what.with_help),
-                    physical_path_len: as_what.physical_path_len,
-                    rule_filter: match as_what.without_rules {
-                        true => Some(&no_rule),
-                        false => as_what.script.map(|it| it.1).or(options.rule_filter),
-                    },
-                    ..options
-                };
-                let mut result = self.linter.lint(&file, config, &options);
-                if config.language.is_oxlint {
-                    unused_directives_as_oxlint(&mut result, as_what.script.is_some());
-                }
-                self.promote_suggestions(&mut result);
-                // What is fixed is another text in the end.
-                if self.keeps_text && is_whole && !self.fixes() {
-                    result.line_starts = file.known_line_starts().map(<[u32]>::to_vec);
-                }
-                self.timing.add(&self.timing.rules, parsed);
-                result
+                then(Some(&file));
             },
-        )
+        );
+    }
+
+    /// [`ParseAgain`] for the file at `path`.
+    pub(crate) fn parse_again(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        then: &mut dyn for<'f> FnMut(&'f File<'f>),
+    ) {
+        self.parse_again_as(path, text, config, &How::default(), then);
+    }
+
+    fn parse_again_as(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        as_what: &How,
+        then: &mut dyn for<'f> FnMut(&'f File<'f>),
+    ) {
+        self.parse(path, text, config, as_what, &mut |file| {
+            if let Some(file) = file {
+                then(file);
+            }
+        });
+    }
+
+    fn verify_as(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        as_what: &How,
+    ) -> LintResult {
+        let parse_again = |then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
+            self.parse_again_as(path, text, config, as_what, then);
+        };
+        let mut result = LintResult::default();
+        self.parse(path, text, config, as_what, &mut |file| {
+            result = match file {
+                Some(file) => self.verify_parsed(file, config, as_what, &parse_again),
+                None => LintResult {
+                    messages: vec![too_deep()],
+                    ..LintResult::default()
+                },
+            };
+        });
+        result
+    }
+
+    fn verify_parsed<'f>(
+        &self,
+        file: &'f File<'f>,
+        config: &ResolvedConfig,
+        as_what: &How,
+        parse_again: &ParseAgain,
+    ) -> LintResult {
+        let parsed = self.timing.now();
+        // Whoever says what the file on the disk is sees to what is not read here.
+        if as_what.physical_path_len.is_some() && may_be_misread(file) {
+            return LintResult {
+                is_unread: true,
+                ..LintResult::default()
+            };
+        }
+        let options = self.lint_options();
+        // The parts of a file that is linted in parts are not put together a second time.
+        let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
+        let waits_for_demand = self.help_on_demand && is_whole && !as_what.with_help;
+        let options = LintOptions {
+            again: as_what.again,
+            wants_fixes: match as_what.fixes {
+                Fixes::IfRead => options.wants_fixes,
+                Fixes::ForProcessor => true,
+                Fixes::Disabled => false,
+            },
+            disables_fixes: as_what.fixes == Fixes::Disabled,
+            // A processor is given the messages.
+            wants_texts_of_fixes: options.wants_texts_of_fixes
+                || as_what.physical_path_len.is_some(),
+            wants_help: options.wants_help && !waits_for_demand,
+            wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
+            wants_places: options.wants_places || as_what.physical_path_len.is_some(),
+            // Its rules have no such thing.
+            js_plugins: options.js_plugins.filter(|_| !as_what.with_help),
+            parse_again: Some(parse_again),
+            physical_path_len: as_what.physical_path_len,
+            rule_filter: match as_what.without_rules {
+                true => Some(&no_rule),
+                false => as_what.script.map(|it| it.1).or(options.rule_filter),
+            },
+            ..options
+        };
+        let mut result = self.linter.lint(file, config, &options);
+        if config.language.is_oxlint {
+            unused_directives_as_oxlint(&mut result, as_what.script.is_some());
+        }
+        self.promote_suggestions(&mut result);
+        // What is fixed is another text in the end.
+        if self.keeps_text && is_whole && !self.fixes() {
+            result.line_starts = file.known_line_starts().map(<[u32]>::to_vec);
+        }
+        self.timing.add(&self.timing.rules, parsed);
+        result
     }
 
     /// ESLint's `verifyText`. `path`: what is printed. `path_to_verify`: what the file is linted as.

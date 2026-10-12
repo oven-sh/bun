@@ -75,16 +75,45 @@ function longPluginName(name) {
   return normalized.startsWith("eslint-plugin-") ? normalized : `eslint-plugin-${normalized}`;
 }
 
-// An object that the command line adds to the configuration. Its plugins and its parser are names.
-async function reviveOverride(object) {
+// Builds one matcher function from the globs of a `[[lint.overrides]]` entry, which are relative to `base`. ESLint calls it with
+// an absolute path. It uses Bun's globs, so these files match the same overrides as the files Bun lints itself.
+function bunfigMatcher(patterns, base) {
+  // A pattern without a slash matches the file name in any directory.
+  const glob = it => (it.startsWith("./") ? it.slice(2) : it.includes("/") ? it : `**/${it}`);
+  const globs = patterns.map(it => new Bun.Glob(glob(it)));
+  return file => {
+    const relative = nodePath.relative(base, file).replaceAll("\\", "/");
+    const isInside = relative !== ".." && !relative.startsWith("../") && !nodePath.isAbsolute(relative);
+    return isInside && globs.some(it => it.match(relative));
+  };
+}
+
+// Rewrites an ESLint ignore pattern that is relative to the directory `from` so that it's relative to `to`.
+function movedPattern(pattern, from, to) {
+  const bang = pattern.startsWith("!") ? "!" : "";
+  const rest = pattern.slice(bang.length).replace(/^\.\//u, "");
+  const down = nodePath.relative(to, from).replaceAll("\\", "/");
+  // A pattern that starts with a slash never matches, whatever it's relative to.
+  if (down === "" || rest.startsWith("/")) return pattern;
+  if (!down.startsWith("..")) return `${bang}${down}/${rest}`;
+  // `to` is below `from`. A pattern that doesn't lead into `to` keeps its `../`, so it matches nothing there.
+  const up = `${nodePath.relative(from, to).replaceAll("\\", "/")}/`;
+  if (rest.startsWith("**/")) return pattern;
+  return rest.startsWith(up) ? bang + rest.slice(up.length) : `${bang}${down}/${rest}`;
+}
+
+// Prepares a config object that the command line or bunfig.toml adds. Its plugins and parser arrive as names. Its `basePath` says
+// what its patterns are relative to, if that isn't `arrayBase`, the base path of the config array. ESLint only knows `basePath`
+// in config objects since 9.30 and rejects unknown keys, so the key is never passed on.
+async function reviveOverride(object, arrayBase) {
   const resolve = createRequire(nodePath.join(cwd, "noop.js")).resolve;
   const importFrom = async name => load(pathToFileURL(resolve(name)).href);
-  const { $globsOfBun: isOfBunfig, ...revived } = object;
+  const { $globsOfBun: isOfBunfig, basePath = arrayBase, ...revived } = object;
   if (isOfBunfig) {
-    // A pattern without a slash is for a name in any directory.
-    const glob = it => (it.startsWith("./") ? it.slice(2) : it.includes("/") ? it : `**/${it}`);
-    revived.files = object.files.map(glob);
-    if (object.ignores !== undefined) revived.ignores = object.ignores.map(glob);
+    revived.files = [bunfigMatcher(object.files, basePath)];
+    if (object.ignores !== undefined) revived.ignores = [bunfigMatcher(object.ignores, basePath)];
+  } else if (object.ignores !== undefined) {
+    revived.ignores = object.ignores.map(it => movedPattern(it, basePath, arrayBase));
   }
   if (object.plugins !== undefined) {
     revived.plugins = {};
@@ -116,7 +145,9 @@ async function wholeConfiguration({ FlatConfigArray }, { file, basePath, ignores
     if (Array.isArray(exported)) configs.push(...exported);
     else if (exported !== undefined) configs.push(exported);
   }
-  for (const object of added) configs.push(await reviveOverride(object));
+  // The `Linter` turns a plain array into a config array whose base path is its `cwd`.
+  const arrayBase = FlatConfigArray === null ? cwd : basePath;
+  for (const object of added) configs.push(await reviveOverride(object, arrayBase));
   await configs.normalize?.();
   if (configs.getConfig === undefined) return configs;
   return Object.assign([], { getConfig: name => withoutProcessor(configs.getConfig(name)) });

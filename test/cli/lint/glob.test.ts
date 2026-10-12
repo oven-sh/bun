@@ -392,3 +392,46 @@ test.concurrent.each([
   expect(ignorable.filter(file => !linted.includes(file)).join(" | ")).toBe(ignored);
   expect(exitCode).toBe(1);
 });
+
+// The expected results come from ESLint 10.12. minimatch reads a leading `#` as a comment and a leading `!` as a negation.
+test.concurrent.each(["#*", "!*"])("the command line pattern %s matches no files, like in ESLint", async pattern => {
+  using dir = tempDir("bun-lint-glob", {
+    "a.js": "debugger;\n",
+    "#a.js": "debugger;\n",
+    "sub/b.js": "debugger;\n",
+    "eslint.config.mjs": 'export default [{ rules: { "no-debugger": "error" } }];\n',
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "--", pattern],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain(`No files matching the pattern "${pattern}" were found.`);
+  expect(exitCode).toBe(2);
+});
+
+// The expected results come from oxlint 1.87, whose glob matcher never matches a pattern with an unclosed `{` or `[`.
+test.concurrent.each(["{a,", "a{,", "*{a,", "[*", "{*", "a\\"])(
+  "the oxlint no-restricted-imports pattern %j restricts nothing",
+  async pattern => {
+    using dir = tempDir("bun-lint-glob", {
+      "x.js": ["a", "aa", "{a}", "[a]", "{a,", "a{,"].map(source => `import "${source}";\n`).join(""),
+      ".oxlintrc.json": JSON.stringify({ rules: { "no-restricted-imports": ["error", { patterns: [pattern] }] } }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "json", "x.js"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const diagnostics: { code: string }[] = JSON.parse(stdout).diagnostics;
+    expect(diagnostics.filter(it => it.code.includes("no-restricted-imports"))).toEqual([]);
+    expect(exitCode).toBe(0);
+  },
+);

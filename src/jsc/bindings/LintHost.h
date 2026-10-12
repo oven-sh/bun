@@ -2,6 +2,9 @@
 
 #include "root.h"
 
+#include "LintReport.h"
+#include "LintSourceCode.h"
+#include "LintTokens.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSString.h>
 #include <wtf/Vector.h>
@@ -42,6 +45,7 @@ public:
     void beginFile(JSC::VM&, JSC::JSString* text, uint32_t flags);
     // Between files the text is empty.
     void endFile(JSC::VM&);
+    bool isLinting() const { return m_isLinting; }
 
     JSC::JSString* text() const { return m_text.get(); }
     const WTF::String& textString() const { return m_textString; }
@@ -52,10 +56,21 @@ public:
 
     // The index where each line starts. The first is 0.
     const WTF::Vector<uint32_t>& lineStarts();
-    // `{ line, column }`. An `index` past the end of the text counts as part of the last line.
-    JSC::JSObject* createPosition(JSC::VM&, uint32_t index);
+    // Where `index` is. Nobody has to check it first. One past the end of the text counts as part of the last line, NaN too, and
+    // a negative one is in line 0.
+    struct Position {
+        uint32_t line;
+        double column;
+    };
+    Position positionOf(double index);
+    // `{ line, column }`
+    JSC::JSObject* createPosition(JSC::VM&, double index);
     // `{ start: { line, column }, end: { line, column } }`
-    JSC::JSObject* createLoc(JSC::VM&, uint32_t start, uint32_t end);
+    JSC::JSObject* createLoc(JSC::VM&, double start, double end);
+
+    LintReportState report;
+    LintSourceCodeState sourceCode;
+    LintTokenState tokens;
 
 private:
     LintHost(JSC::VM& vm, JSC::Structure* structure)
@@ -71,9 +86,19 @@ private:
     JSC::WriteBarrier<JSC::JSString> m_text;
     WTF::String m_textString;
     uint32_t m_flags { 0 };
+    bool m_isLinting { false };
     // Empty until it's asked for.
     WTF::Vector<uint32_t> m_lineStarts;
 };
+
+struct LintSpan {
+    const uint8_t* ptr;
+    size_t len;
+};
+
+// src/runtime/cli/lint_js.rs. Asks Rust about the file that's being linted. `kind` is one of `ask` in src/lint/js_plugin/wire.rs.
+// The answer is overwritten by the next one. It's `{ nullptr, 0 }` if no file is being linted.
+extern "C" LintSpan Bun__Lint__ask(JSC::JSGlobalObject*, uint32_t kind, const uint8_t* details, size_t detailsLength);
 
 // For the lazy `m_lintHost` of ZigGlobalObject.
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);

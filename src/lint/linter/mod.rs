@@ -53,8 +53,8 @@ pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
 pub use message::{
-    Details, LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
-    write_json, write_json_indented,
+    Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
+    Utf16Offsets, write_json, write_json_indented,
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
@@ -116,6 +116,8 @@ pub struct LintOptions<'o> {
     pub rule_filter: Option<&'o (dyn Fn(&RuleId, Severity) -> bool + Sync)>,
     /// Runs the rules of JavaScript plugins. `None`: they are skipped.
     pub js_plugins: Option<&'o js_plugin::Host<'o>>,
+    /// For [`Host::run_on_block`](js_plugin::Host::run_on_block).
+    pub parse_again: Option<&'o js_plugin::ParseAgain<'o>>,
     /// The file is linted again, for the rules that are about several files only.
     pub again: Option<Again<'o>>,
     /// How much of the path of the file is ESLint's `physicalFilename`, if not all of it: it is a block that a processor has
@@ -149,6 +151,7 @@ impl Default for LintOptions<'_> {
             wants_suppressions: true,
             rule_filter: None,
             js_plugins: None,
+            parse_again: None,
             again: None,
             physical_path_len: None,
             respects_eslint_comments: true,
@@ -723,6 +726,7 @@ impl<S: RuleSet> Linter<S> {
                     &enabled,
                     !options.disables_fixes,
                     options.physical_path_len,
+                    options.parse_again,
                 ) {
                     Ok(reports) => {
                         problems.reserve(reports.len());
@@ -900,6 +904,7 @@ impl<S: RuleSet> Linter<S> {
                         &enabled,
                         !options.disables_fixes,
                         options.physical_path_len,
+                        options.parse_again,
                     )
                 }
                 // Nothing here runs JavaScript.
@@ -1076,6 +1081,7 @@ fn to_message(
         suppressions: Vec::new(),
         comments_apply_at: (details.as_deref().and_then(|it| it.comments_apply_at))
             .map(|it| (position(it.start), position(it.end))),
+        not_numbers: NotNumbers::default(),
         details: details.map(|it| {
             let place = |(span, text): (Span, Cow<'static, str>)| {
                 (position(span.start), position(span.end), text)
@@ -1099,8 +1105,8 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         severity: rule.severity,
         message: report.message,
         message_id: Some(id.map_or(Cow::Borrowed(""), |id| Cow::Owned(id.into()))),
-        line: report.line,
-        column: report.column,
+        line: report.line.unwrap_or(0),
+        column: report.column.unwrap_or(0),
         end: report.end,
         is_fatal: false,
         fix: report.fix.filter(|_| wants_fixes),
@@ -1109,6 +1115,10 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
             .collect(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        not_numbers: NotNumbers {
+            line: report.line.is_none(),
+            column: report.column.is_none(),
+        },
         details: None,
         constant_help: None,
     }
@@ -1153,6 +1163,7 @@ fn js_failure(
         suggestions: Vec::new(),
         suppressions: Vec::new(),
         comments_apply_at: None,
+        not_numbers: NotNumbers::default(),
         details: None,
         constant_help: None,
     })

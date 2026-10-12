@@ -34,6 +34,9 @@ class Token {
 }
 Object.defineProperty(Token.prototype, "loc", Object.getOwnPropertyDescriptor(Node.prototype, "loc"));
 
+// Everything below this line is also in src/jsc/bindings/LintTokens.cpp, which this turns on.
+const usesNativeTokens = process.env.BUN_LINT_NATIVE_TOKENS === "1";
+
 // `{ count, starts, ends, kinds, objects }` for the tokens and for the comments. `null`: not asked for yet.
 let tokenList = null;
 let commentList = null;
@@ -123,18 +126,21 @@ function allOf(list, from = 0, to = list.count) {
 
 // `ast.tokens`
 function tokens() {
+  if (usesNativeTokens) return native.tokens();
   const list = tokenList ?? loadTokens();
   return (list.all ??= allOf(list));
 }
 
 // `ast.comments`
 function comments() {
+  if (usesNativeTokens) return native.comments();
   const list = commentList ?? loadComments();
   return (list.all ??= allOf(list));
 }
 
 // ESLint's `sourceCode.tokensAndComments`
 function tokensAndComments() {
+  if (usesNativeTokens) return native.tokensAndComments();
   const list = tokenList ?? loadTokens();
   return (list.withComments ??= someTokens(true, -1, -1, { includeComments: true }));
 }
@@ -262,7 +268,7 @@ function adjacentComments(next) {
   return found;
 }
 
-class TokenStore {
+const scriptedTokenStore = class TokenStore {
   getTokenByRangeStart(offset, options) {
     const token = cursor(true, offset, -1, Boolean(options && options.includeComments))();
     return token !== null && token.range[0] === offset ? token : null;
@@ -350,4 +356,6 @@ class TokenStore {
   isSpaceBetweenTokens(first, second) {
     return this.isSpaceBetween(first, second, true);
   }
-}
+};
+
+const TokenStore = usesNativeTokens ? native.tokenStore(Token.prototype) : scriptedTokenStore;

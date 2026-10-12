@@ -307,6 +307,12 @@ impl Pattern {
     }
 }
 
+/// `glob_match` of the `fast-glob` crate. A pattern with an unclosed `[` or `{` or a trailing `\` never matches there.
+pub fn fast_glob_match(pattern: &[u8], text: &[u8]) -> bool {
+    unclosed(pattern).is_none()
+        && matcher::match_on::<false>(&of_fast_glob(pattern), text).matches()
+}
+
 /// Converts a pattern for the `fast-glob` crate, which oxlint and oxfmt use. It has no `@(a|b)` groups and no `{1..3}` sequences.
 pub fn of_fast_glob(written: &[u8]) -> Cow<'_, [u8]> {
     if strings::index_of_char_usize(written, b'(').is_none() && !strings::contains(written, b"..") {

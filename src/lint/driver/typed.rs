@@ -17,13 +17,14 @@ use crate::lint::Context;
 use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
+use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::glob::Picomatch;
 use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
-    Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
-    is_parse_error,
+    Details, LintMessage, LintOptions, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId,
+    apply_fixes, is_parse_error,
 };
 use bun_sema::json::Json;
 use bun_sema::program::{FileId, Files};
@@ -374,6 +375,14 @@ fn check_and_lint_in(
             Some(context.formatter),
             Some(&of_file),
             |file| {
+                let text = file.text();
+                let parse_again = |then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
+                    context.parse_again(path, text, config, then);
+                };
+                let options = LintOptions {
+                    parse_again: Some(&parse_again),
+                    ..options
+                };
                 let mut result = context.linter.lint(file, config, &options);
                 if file.is_too_large_for_flow_analysis() {
                     result.messages.insert(0, too_large_for_flow_analysis());

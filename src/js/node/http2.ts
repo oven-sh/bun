@@ -2247,7 +2247,10 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  setImmediate(rstNextTick.bind(session, this.id, code));
+  const id = this.id;
+  // A request that request() refused gets 'ready' and no id. The peer never saw it.
+  if (typeof id !== "number") return;
+  setImmediate(rstNextTick.bind(session, id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();

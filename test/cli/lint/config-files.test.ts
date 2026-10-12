@@ -3832,6 +3832,30 @@ describe.concurrent("the deprecated rules about layout", () => {
     ]);
   });
 
+  // What ESLint 10.12 prints with eslint-plugin-react 7.37.5, eslint-plugin-import 2.32.0 and eslint-plugin-react-hooks 7.1.1.
+  test("usedDeprecatedRules has the built-in rules of plugins too", async () => {
+    const plugin = (name: string) => `{ meta: { name: "eslint-plugin-${name}" }, rules: {} }`;
+    const { raw } = await lint(
+      {
+        "eslint.config.mjs": `export default [{
+          plugins: { react: ${plugin("react")}, "react-hooks": ${plugin("react-hooks")}, import: ${plugin("import")} },
+          rules: {
+            "react/jsx-sort-default-props": 2, "import/imports-first": 1, "import/first": 2,
+            "react-hooks/component-hook-factories": 2, "react/jsx-space-before-closing": 2,
+          },
+        }];`,
+        "a.js": "a;\n",
+      },
+      ["a.js"],
+    );
+    expect(JSON.parse(raw).results[0].usedDeprecatedRules).toEqual([
+      { ruleId: "react/jsx-sort-default-props", replacedBy: ["sort-default-props"] },
+      { ruleId: "import/imports-first", replacedBy: [] },
+      { ruleId: "react-hooks/component-hook-factories", replacedBy: [] },
+      { ruleId: "react/jsx-space-before-closing", replacedBy: ["jsx-tag-spacing"] },
+    ]);
+  });
+
   // What ESLint 10.12 and 8.57.1 print, the latter with the severities as they are written.
   test.each([
     [

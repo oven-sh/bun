@@ -246,6 +246,12 @@ impl Registry {
     pub fn new(lists: &[&'static [RuleEntry]]) -> Registry {
         let mut rules: Vec<_> = lists.iter().flat_map(|list| list.iter()).collect();
         crate::utils::sort::sort_by_key(&mut rules, |it| (it.meta.plugin as u8, it.meta.name));
+        // `usedDeprecatedRules` has what the table says.
+        debug_assert!(
+            (rules.iter().map(|it| it.meta))
+                .filter(|it| it.is_deprecated && !it.follows_oxlint)
+                .all(|it| deprecated_rule(&super::RuleId::Known(it).to_vec()).is_some())
+        );
         Registry {
             rules,
             native_plugins: NativePlugins::All,

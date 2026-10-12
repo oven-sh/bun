@@ -165,6 +165,8 @@ pub(crate) struct Expansion {
     inner: Vec<u8>,
     /// It ends with a `/`, and so does what matches, but for the empty path.
     ends_with_slash: bool,
+    /// `**/name`
+    is_for_name: bool,
 }
 
 impl Expansion {
@@ -195,6 +197,7 @@ impl Expansion {
             head: literals.join(&b'/'),
             tail: tail.to_vec(),
             ends_with_slash: matches!(&parts[..], [_, .., Part::Literal(last)] if last.is_empty()),
+            is_for_name: matches!(&parts[..], [Part::GlobStar, name] if !is_globstar(name)),
             globstars: parts
                 .iter()
                 .position(is_globstar)
@@ -228,30 +231,26 @@ impl Expansion {
             && (self.inner.is_empty() || strings::contains(path, &self.inner))
     }
 
-    /// `**/name`: the part for the name.
+    /// Whether `path`, whose names are separated by one slash each, matches. `name`: its last name, with the `/` behind it, if no
+    /// name of it starts with a `.`.
     #[inline]
-    fn for_name(&self) -> Option<&Part> {
-        match &self.parts[..] {
-            [Part::GlobStar, Part::GlobStar] => None,
-            [Part::GlobStar, name] => Some(name),
-            _ => None,
-        }
-    }
-
-    /// Whether `path`, whose names are separated by one slash each, matches.
-    #[inline]
-    fn matches_text(&self, path: &Candidate<'_>, text: &[u8], dot: bool) -> bool {
+    fn matches_text(
+        &self,
+        path: &Candidate<'_>,
+        text: &[u8],
+        name: Option<&[u8]>,
+        dot: bool,
+    ) -> bool {
         // No `**` stops at a name of such a path, so only the last name counts.
-        let hit = match self.for_name().filter(|_| path.is_plain) {
-            Some(part) => {
-                let name = &text[path.name_at..];
+        let hit = match (name, &self.parts[..]) {
+            (Some(name), [_, part]) if self.is_for_name => {
                 self.can_match(name)
                     && match name.strip_suffix(b"/") {
                         Some(name) => part.test(b"", dot) || part.test(name, dot),
                         None => part.test(name, dot),
                     }
             }
-            None => self.can_match(text) && self.matches_names(path, false, dot),
+            _ => self.can_match(text) && self.matches_names(path, false, dot),
         };
         debug_assert_eq!(hit, self.matches_names(path, false, dot));
         hit
@@ -520,7 +519,10 @@ pub(crate) fn matches_base(
 #[inline]
 pub(crate) fn matches(set: &[Expansion], path: &Candidate<'_>, partial: bool, dot: bool) -> bool {
     match path.text.filter(|_| !partial) {
-        Some(text) => set.iter().any(|it| it.matches_text(path, text, dot)),
+        Some(text) => {
+            let name = path.is_plain.then(|| &text[path.name_at..]);
+            set.iter().any(|it| it.matches_text(path, text, name, dot))
+        }
         None => set.iter().any(|it| it.matches_names(path, partial, dot)),
     }
 }

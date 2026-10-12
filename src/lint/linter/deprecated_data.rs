@@ -3,7 +3,7 @@
 /// The name of a rule that is deprecated, and what follows `ruleId` in ESLint's `DeprecatedRuleInfo` as JSON.
 pub type Deprecated = (&'static str, &'static str);
 
-/// Those that are here, sorted by name.
+/// Those of ESLint and of the plugins that are built in, in whole or in part, sorted by name.
 pub(super) const DEPRECATED: &[Deprecated] = &[
     (
         "@typescript-eslint/no-empty-interface",
@@ -56,6 +56,15 @@ pub(super) const DEPRECATED: &[Deprecated] = &[
     (
         "id-blacklist",
         r#""replacedBy":["id-denylist"],"info":{"message":"The rule was renamed.","url":"https://eslint.org/blog/2020/07/eslint-v7.5.0-released/#deprecating-id-blacklist","deprecatedSince":"7.5.0","availableUntil":"11.0.0","replacedBy":[{"rule":{"name":"id-denylist","url":"https://eslint.org/docs/rules/id-denylist"}}]}"#,
+    ),
+    ("import/imports-first", r#""replacedBy":[]"#),
+    (
+        "n/no-hide-core-modules",
+        r#""replacedBy":[],"info":{"deprecatedSince":"4.2.0","message":"This rule was based on an invalid assumption.","url":"https://github.com/mysticatea/eslint-plugin-node/issues/69"}"#,
+    ),
+    (
+        "n/shebang",
+        r#""replacedBy":["n/hashbang"],"info":{"deprecatedSince":"17.0.0","message":"This rule was deprecated in eslint-plugin-n v17.0.0. Please use 'n/hashbang'","url":"https://github.com/eslint-community/eslint-plugin-n/issues/196","replacedBy":[{"rule":{"name":"n/hashbang","url":"https://github.com/eslint-community/eslint-plugin-n/blob/HEAD/docs/rules/hashbang.md"}}]}"#,
     ),
     (
         "no-buffer-constructor",
@@ -116,6 +125,11 @@ pub(super) const DEPRECATED: &[Deprecated] = &[
     (
         "prefer-reflect",
         r#""replacedBy":[],"info":{"message":"The original intention of this rule was misguided.","deprecatedSince":"3.9.0","availableUntil":null,"replacedBy":[]}"#,
+    ),
+    ("react-hooks/component-hook-factories", r#""replacedBy":[]"#),
+    (
+        "react/jsx-sort-default-props",
+        r#""replacedBy":["sort-default-props"]"#,
     ),
 ];
 

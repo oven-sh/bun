@@ -276,6 +276,9 @@ struct Heads {
 
 type Bits = SmallVec<[u64; 4]>;
 
+/// Where objects are in [`Config::objects`].
+type Indices = SmallVec<[u32; 16]>;
+
 fn has_bit(bits: &Bits, index: usize) -> bool {
     bits[index / 64] & (1 << (index % 64)) != 0
 }
@@ -413,6 +416,8 @@ pub struct Within<'c> {
     name_at: usize,
     /// [`Config::relative`] of the entry that was asked about last.
     relative: Vec<u8>,
+    /// The objects that were merged last, and what they make.
+    merged: Option<(Indices, Arc<ResolvedConfig>)>,
 }
 
 /// An entry of the directory of a [`Within`].
@@ -500,16 +505,30 @@ impl Within<'_> {
     ) -> FileConfig {
         let config = self.config;
         let must_match = !(is_selected && config.is_legacy);
-        let Some((parts, entry)) = self.see(path, false) else {
-            return match config.is_file_ignored_in(path, dotfiles) {
-                true => FileConfig::Ignored,
-                false => config.get_if(registry, path, must_match),
+        let matching = {
+            let Some((parts, entry)) = self.see(path, false) else {
+                return match config.is_file_ignored_in(path, dotfiles) {
+                    true => FileConfig::Ignored,
+                    false => config.get_if(registry, path, must_match),
+                };
             };
+            if config.is_ignored_globally_as(&parts, Some(&entry), dotfiles) {
+                return FileConfig::Ignored;
+            }
+            config.matching(path, &parts, Some(&entry), must_match)
         };
-        match config.is_ignored_globally_as(&parts, Some(&entry), dotfiles) {
-            true => FileConfig::Ignored,
-            false => config.get_as(registry, path, &parts, Some(&entry), must_match),
-        }
+        let Some(matching) = matching else {
+            return FileConfig::Unconfigured;
+        };
+        // Most files of a directory have the same.
+        let merged = match self.merged.take().filter(|it| it.0 == matching) {
+            Some(merged) => merged,
+            None => {
+                let resolved = config.resolved(registry, &matching);
+                (matching, resolved)
+            }
+        };
+        FileConfig::Matched(Arc::clone(&self.merged.insert(merged).1))
     }
 }
 
@@ -733,6 +752,7 @@ impl Config {
             before_name: seen.before_name.as_deref().map(Candidate::new),
             name_at: directory.len() + usize::from(!directory.ends_with(b"/")),
             relative: seen.before_name.clone().unwrap_or_default(),
+            merged: None,
         }
     }
 
@@ -800,19 +820,27 @@ impl Config {
     /// `must_match`: a file that no `files` is for has no configuration.
     fn get_if(&self, registry: &Registry, file: &[u8], must_match: bool) -> FileConfig {
         let relative = self.relative(file);
-        self.get_as(registry, file, &Candidate::new(&relative), None, must_match)
+        match self.matching(file, &Candidate::new(&relative), None, must_match) {
+            Some(matching) => FileConfig::Matched(self.resolved(registry, &matching)),
+            None => FileConfig::Unconfigured,
+        }
     }
 
-    /// The same. `parts`: [`Config::relative`] of `file`.
-    fn get_as(
+    /// What the objects at `indices` make.
+    fn resolved(&self, registry: &Registry, indices: &[u32]) -> Arc<ResolvedConfig> {
+        self.cache
+            .resolved(indices, || self.merge(registry, indices))
+    }
+
+    /// The objects that are for `file`. `parts`: [`Config::relative`] of it. `None`: it has no configuration.
+    fn matching(
         &self,
-        registry: &Registry,
         file: &[u8],
         parts: &Candidate,
         entry: Option<&Entry>,
         must_match: bool,
-    ) -> FileConfig {
-        let mut matching: SmallVec<[u32; 16]> = SmallVec::new();
+    ) -> Option<Indices> {
+        let mut matching = Indices::new();
         let mut is_matched = false;
         let listed = self.heads.of(parts.path());
         for (index, object) in self.objects.iter().enumerate() {
@@ -864,13 +892,7 @@ impl Config {
             }
             is_matched |= is_linted;
         }
-        if !is_matched && must_match {
-            return FileConfig::Unconfigured;
-        }
-        FileConfig::Matched(
-            self.cache
-                .resolved(&matching, || self.merge(registry, &matching)),
-        )
+        (is_matched || !must_match).then_some(matching)
     }
 
     /// [`ConfiguredRule::reported_as`]. `written_for`: the plugin that the configuration names the rule with.

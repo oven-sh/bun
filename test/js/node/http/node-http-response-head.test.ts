@@ -1,6 +1,8 @@
 /**
- * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * The tests in this file run in both Bun and Node.js: `bun test` runs them
+ * here, and the last test runs this same file under Node.js. For that, the
+ * file uses node:test and node:assert, and is not a part of node-http.test.ts.
+ * The tests under "only in Bun" are the exception.
  *
  * Node renders the whole head of a response inside res.writeHead(), and an
  * implicit head inside the first write() or end(). Nothing that changes after
@@ -150,6 +152,38 @@ function text(current: string) {
     toString() {
       return this.current;
     },
+  };
+}
+
+// A header value that is its count of toString() calls. Node calls it once to check the value and once to render it.
+function renders() {
+  return {
+    calls: 0,
+    toString() {
+      return String(++this.calls);
+    },
+  };
+}
+
+// A response class that calls writeHead() in its constructor, and then changes what that call read.
+// On a stream, Bun gives the response its handle in the options of the constructor. A class that does not pass them
+// to super(), and a response that waits, get the handle when the constructor returns: Bun renders the header values
+// then, so only the class that passes the options changes a value in its constructor.
+const subclasses: [string, boolean][] = [
+  ["that passes its options to super()", true],
+  ["that calls super(req)", false],
+];
+function earlyHead(passesOptions: boolean) {
+  return class EarlyHead extends http.ServerResponse {
+    cookies = ["a=1", "b=2"];
+    constructor(req: http.IncomingMessage, options?: object) {
+      // @ts-expect-error The server gives the constructor a second argument.
+      super(req, passesOptions ? options : undefined);
+      this.writeHead(201, "Made", { "Set-Cookie": this.cookies });
+      if (passesOptions) this.cookies.push("late=1");
+      this.statusCode = 500;
+      this.statusMessage = "Changed";
+    }
   };
 }
 
@@ -663,7 +697,7 @@ describe("what does not change", () => {
 async function secondResponse(
   connect: Connect,
   respond: (res: http.ServerResponse) => void,
-  { second = GET("/second"), options = {} as http.ServerOptions } = {},
+  { second = GET("/second"), options = {} as http.ServerOptions, until = undefined as string | undefined } = {},
 ) {
   let first: http.ServerResponse;
   let thrown: unknown;
@@ -681,7 +715,7 @@ async function secondResponse(
     first.end("one");
   });
   try {
-    const raw = await (await connect(server))(GET("/first", false) + second);
+    const raw = await (await connect(server))(GET("/first", false) + second, until);
     if (thrown) throw thrown;
     const at = raw.indexOf("HTTP/1.1 ", 1);
     assert.ok(at !== -1, `no second response in ${JSON.stringify(raw)}`);
@@ -830,7 +864,7 @@ for (const [transport, connect] of transports) {
           value.toString = () => {
             throw Object.assign(new Error("broken toString()"), { code: "BROKEN" });
           };
-          seen.toString = codeOf(() => void res.end("a"));
+          seen["toString()"] = codeOf(() => void res.end("a"));
           res.removeHeader("X-Test");
           res.end("b");
         },
@@ -841,7 +875,7 @@ for (const [transport, connect] of transports) {
       assert.deepStrictEqual(seen, {
         statusMessage: "ERR_INVALID_CHAR",
         "statusMessage = 'a\\nb'": "b",
-        toString: "BROKEN",
+        "toString()": "BROKEN",
         "a header value whose toString() throws": "b",
       });
     });
@@ -904,6 +938,27 @@ for (const [transport, connect] of transports) {
       });
     });
 
+    test("writeHead() in the constructor of a ServerResponse subclass: the status that changes after it is not sent", async () => {
+      const EarlyHead = earlyHead(false);
+      const raw = await secondResponse(
+        connect,
+        res => {
+          (res as InstanceType<typeof EarlyHead>).cookies.push("later=1");
+          res.statusMessage = "Late";
+          res.end("two");
+        },
+        // The head is older than the request's "Connection: close" for Node, which keeps the connection open.
+        {
+          options: { ServerResponse: EarlyHead as unknown as typeof http.ServerResponse },
+          until: "two\r\n0\r\n\r\n",
+        },
+      );
+      assert.deepStrictEqual(
+        { status: statusLine(raw), cookies: headerValues(raw, "set-cookie") },
+        { status: "HTTP/1.1 201 Made", cookies: ["a=1", "b=2"] },
+      );
+    });
+
     test("write('') sends the head, so end(body) is chunked", async () => {
       const raw = await secondResponse(connect, res => {
         res.write("");
@@ -925,19 +980,31 @@ describe("res.strictContentLength of a response that waits behind another one on
   const connect = transports[0][1];
 
   // Node checks a write() before it stores the head, so the write that stores it is counted and not checked.
-  test("the write() that sends the head is not checked", async () => {
-    const seen: Record<string, unknown> = {};
-    const raw = await secondResponse(connect, res => {
-      res.strictContentLength = true;
-      res.setHeader("Content-Length", 2);
-      // The option stays on until this write left the queue. end() would check the three bytes against the two.
-      seen.write = res.write("abc", () => {
-        res.strictContentLength = false;
-        res.end();
+  // Packages like on-headers replace res.writeHead: the server calls that function inside the write().
+  for (const replaced of [false, true]) {
+    const name = `the write() that sends the head is not checked${replaced ? ", also with a replaced res.writeHead" : ""}`;
+    test(name, async () => {
+      const seen: Record<string, unknown> = {};
+      const raw = await secondResponse(connect, res => {
+        if (replaced) {
+          const writeHead = res.writeHead;
+          res.writeHead = function (this: http.ServerResponse, ...args: Parameters<typeof writeHead>) {
+            seen.writeHead = true;
+            return writeHead.apply(this, args);
+          } as typeof writeHead;
+        }
+        res.strictContentLength = true;
+        res.setHeader("Content-Length", 2);
+        // The option stays on until this write left the queue. end() would check the three bytes against the two.
+        seen.write = res.write("abc", () => {
+          res.strictContentLength = false;
+          res.end();
+        });
       });
+      const expected = replaced ? { writeHead: true, write: true } : { write: true };
+      assert.deepStrictEqual({ seen, body: body(raw) }, { seen: expected, body: "abc" });
     });
-    assert.deepStrictEqual({ seen, body: body(raw) }, { seen: { write: true }, body: "abc" });
-  });
+  }
 
   test("a write() that comes after the queued one is checked", async () => {
     const seen: Record<string, unknown> = {};
@@ -1191,28 +1258,11 @@ describe("every kind of connection", () => {
       }
     });
 
-    // With no options, Bun gives the response of a stream its handle after the constructor: the head is fixed then.
-    const subclasses: [string, boolean][] = [
-      ["that passes its options to super(), and changes the response in the constructor", true],
-      ["that calls super(req)", false],
-    ];
     for (const [how, passesOptions] of subclasses) {
       test(`${transport}: writeHead() in the constructor of a ServerResponse subclass ${how}`, async () => {
-        class EarlyHead extends http.ServerResponse {
-          cookies = ["a=1", "b=2"];
-          constructor(req: http.IncomingMessage, options?: object) {
-            // @ts-expect-error Node passes the options of the server as a second argument.
-            super(req, passesOptions ? options : undefined);
-            this.writeHead(201, "Made", { "Set-Cookie": this.cookies });
-            if (passesOptions) {
-              this.cookies.push("late=1");
-              this.statusCode = 500;
-            }
-          }
-        }
+        const EarlyHead = earlyHead(passesOptions);
         const server = http.createServer({ ServerResponse: EarlyHead }, (req, res) => {
-          (res as EarlyHead).cookies.push("later=1");
-          res.statusCode = 500;
+          (res as InstanceType<typeof EarlyHead>).cookies.push("later=1");
           res.statusMessage = "Late";
           res.end("ok");
         });
@@ -1306,7 +1356,7 @@ describe("three responses that are open at once", () => {
   });
 });
 
-// Only in Bun: when Node.js runs this file it must not spawn itself again.
+// Only in Bun: when Node.js runs this file it must not spawn itself again, and it cannot load "harness".
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExe } = await import("harness");
   const node = nodeExe();
@@ -1336,6 +1386,36 @@ if (typeof Bun !== "undefined") {
       );
       assert.deepStrictEqual(sent, { row: "1\r\nx\r\n1\r\ny\r\n0\r\n\r\n" });
     });
+
+    // Node sends this status line as it is.
+    for (const [transport, connect] of transports) {
+      test(`${transport}: an end() that the handle refuses leaves the head of writeHead() for the next end()`, async () => {
+        const seen: unknown[] = [];
+        const value = renders();
+        const server = http.createServer((req, res) => {
+          let calls = 0;
+          // Valid when writeHead() checks it, and not valid in the head that writeHead() renders.
+          res.statusMessage = { toString: () => (++calls === 1 ? "Fine" : "not\nvalid") } as unknown as string;
+          res.writeHead(200, { "X-Renders": value as unknown as string });
+          seen.push(codeOf(() => void res.end("a")));
+          res.statusCode = 500;
+          res.statusMessage = "Late";
+          seen.push(codeOf(() => void res.end("b")));
+          res.destroy();
+        });
+        try {
+          const raw = await (await connect(server))(GET("/"));
+          // No end() renders the head again: the two calls of toString() are the ones of writeHead().
+          assert.deepStrictEqual(
+            { seen, renders: value.calls, raw },
+            { seen: ["ERR_INVALID_CHAR", "ERR_INVALID_CHAR"], renders: 2, raw: "" },
+          );
+        } finally {
+          server.closeAllConnections();
+          if (server.listening) server.close();
+        }
+      });
+    }
 
     // Node has no setter for headersSent.
     test("res.headersSent = false after writeHead(): the next head is made from the response as it is then", async () => {

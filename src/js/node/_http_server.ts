@@ -2701,8 +2701,14 @@ function writeHeldHead(res, handle, flat, andEnd, chunk, encoding, strict) {
       ? handle.writeHeadAndEnd(statusCode, statusMessage, flat, chunk, encoding, strict, autoHeaders, keepAliveSecs)
       : handle.writeHead(statusCode, statusMessage, flat, autoHeaders, keepAliveSecs);
   } catch (e) {
-    releaseRenderedHeaders(flat);
-    if (andEnd && !threwBeforeHead(e)) res[headerStateSymbol] = NodeHTTPHeaderState.sent;
+    if (threwBeforeHead(e) && res[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+      // The handle wrote nothing: the head stays fixed for the next call. flushHeaders() set `sent` before this.
+      flat.push(statusCode, statusMessage, autoHeaders, keepAliveSecs);
+      res[kHeldHead] = flat;
+    } else {
+      releaseRenderedHeaders(flat);
+      if (andEnd) res[headerStateSymbol] = NodeHTTPHeaderState.sent;
+    }
     throw e;
   }
   releaseRenderedHeaders(flat);
@@ -3153,34 +3159,37 @@ function accountQueuedHeaderBytes(res, queued, endLength) {
     return;
   }
   const tail = heldHead.length - kHeldHeadTailLength;
-  // Status line "HTTP/1.1 NNN <message>\r\n", and the "\r\n" that ends the head.
-  let bytes = 17 + String(heldHead[tail + 1] || STATUS_CODES[heldHead[tail]] || "unknown").length;
+  // The status line with its message, and the empty line that ends the head.
+  let bytes =
+    "HTTP/1.1 200 \r\n\r\n".length + String(heldHead[tail + 1] || STATUS_CODES[heldHead[tail]] || "unknown").length;
   // A NUL-named pair is not a header line: it tells the handle that the response has no body or no framing.
   let handleFramesBody = true;
   for (let i = 0; i < tail; i += 2) {
     const name = heldHead[i];
     if (name === "\u0000") handleFramesBody = false;
-    else bytes += name.length + 4 + heldHead[i + 1].length;
+    else bytes += name.length + ": \r\n".length + heldHead[i + 1].length;
   }
   // The lines the handle writes for the auto-header bits: kAutoHeader* in src/jsc/bindings/NodeHTTP.cpp.
   const autoHeaders = heldHead[tail + 2];
-  if (autoHeaders & AUTO_HEADER_DATE) bytes += 37;
+  if (autoHeaders & AUTO_HEADER_DATE) bytes += "Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n".length;
   if (autoHeaders & AUTO_HEADER_CONN_KEEP_ALIVE) {
-    bytes += 24;
-    if (autoHeaders & AUTO_HEADER_KEEP_ALIVE_TIMEOUT) bytes += 22 + String(heldHead[tail + 3]).length;
+    bytes += "Connection: keep-alive\r\n".length;
+    if (autoHeaders & AUTO_HEADER_KEEP_ALIVE_TIMEOUT) {
+      bytes += "Keep-Alive: timeout=\r\n".length + String(heldHead[tail + 3]).length;
+    }
   } else if (autoHeaders & AUTO_HEADER_CONN_CLOSE) {
-    bytes += 19;
+    bytes += "Connection: close\r\n".length;
   }
   if (autoHeaders & AUTO_HEADER_TRANSFER_ENCODING_CHUNKED) {
-    bytes += 28;
+    bytes += "Transfer-Encoding: chunked\r\n".length;
   } else if (
     endLength !== undefined &&
     handleFramesBody &&
     !res.hasHeader("content-length") &&
     !res.hasHeader("transfer-encoding")
   ) {
-    // end() fixed the head with no framing header: the handle writes "Content-Length: <n>\r\n".
-    bytes += 18 + String(endLength).length;
+    // end() fixed the head with no framing header: the handle writes the length of the body.
+    bytes += "Content-Length: \r\n".length + String(endLength).length;
   }
   queued.headerBytes = bytes;
   queued.bytes += bytes;
@@ -3196,20 +3205,22 @@ function fixQueuedImplicitHead(res, frozenChunked) {
 }
 
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
+  // This write fixes the head, through a replaced res.writeHead or below: Node does not check it against Content-Length.
+  const fixesHead = res[headerStateSymbol] === NodeHTTPHeaderState.none;
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
-  const fixedHead = res[headerStateSymbol] === NodeHTTPHeaderState.none;
-  if (fixedHead) updateHasBody(res, res.statusCode);
+  const implicitHead = res[headerStateSymbol] === NodeHTTPHeaderState.none;
+  if (implicitHead) updateHasBody(res, res.statusCode);
   if (chunk && !res._hasBody && res[kRejectNonStandardBodyWrites]) throwBodyNotAllowed(res, chunk);
   // For HTTP/1.0 the handle picks the framing at the replay, as before.
-  if (fixedHead) fixQueuedImplicitHead(res, !queued.isAncient);
+  if (implicitHead) fixQueuedImplicitHead(res, !queued.isAncient);
   accountQueuedHeaderBytes(res, queued, undefined);
   if (!res._hasBody) {
     // Node's write_(): a response that cannot have a body discards the write, calls back and returns true.
-    queued.ops.push(["write", undefined, encoding, undefined, fixedHead]);
+    queued.ops.push(["write", undefined, encoding, undefined, fixesHead]);
     if (typeof callback === "function") process.nextTick(callback);
     return true;
   }
-  queued.ops.push(["write", chunk, encoding, callback, fixedHead]);
+  queued.ops.push(["write", chunk, encoding, callback, fixesHead]);
   if (chunk) {
     const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     queued.bytes += bytes;
@@ -4356,10 +4367,19 @@ http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
-// A ServerResponse subclass can call writeHead() in its constructor, before the fallback attaches the handle.
+// A ServerResponse subclass can call writeHead() in its constructor, before the fallback attaches the handle. That call
+// stored the head as text, like Node.js: "HTTP/1.1 201 Created\r\n" and the header lines.
+const RE_STORED_STATUS_LINE = /^HTTP\/1\.1 (\d{3}) ([^\r]*)\r\n/;
 http1ServerPipeline.fixHeadForLateHandle = function (res) {
-  if (res[headerStateSymbol] === NodeHTTPHeaderState.assigned && res[kHeldHead] === undefined)
-    fixResponseHead(res, true);
+  if (res[headerStateSymbol] !== NodeHTTPHeaderState.assigned || res[kHeldHead] !== undefined) return;
+  fixResponseHead(res, true);
+  // The status line stays the one of writeHead(). The header lines are rendered now, when the constructor returned.
+  const heldHead = res[kHeldHead];
+  const stored = RE_STORED_STATUS_LINE.exec(res._header);
+  if (heldHead === undefined || stored === null) return;
+  const tail = heldHead.length - kHeldHeadTailLength;
+  heldHead[tail] = +stored[1];
+  heldHead[tail + 1] = stored[2];
 };
 
 export default {

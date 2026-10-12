@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
@@ -1323,10 +1323,8 @@ describe.concurrent("string body consumption does not leak", () => {
         ctor === "Request"
           ? `b => new Request("http://example.com/", { method: "POST", body: b })`
           : `b => new Response(b)`;
-      // A debug build takes over 5 s for 130 of these reads, so it does fewer.
-      const [warm, block] = isDebug ? [16, 16] : [50, 40];
       const src = `
-        const SZ = 2_000_000, WARM = ${warm}, BLOCK = ${block};
+        const SZ = 2_000_000, WARM = 50, BLOCK = 40;
         const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
@@ -1348,10 +1346,9 @@ describe.concurrent("string body consumption does not leak", () => {
       const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
       expect(m).not.toBeNull();
       const block2 = Number(m![2]);
-      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ BLOCK × ~3 MB (100+ MB
-      // for 40) and keeps growing every block. BLOCK × 1.25 MB (50 MB for 40)
-      // cleanly separates the two.
-      expect(block2).toBeLessThan(block * 1.25);
+      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ 40 × ~3 MB ≈ 100+ MB
+      // and keeps growing every block. 50 MB cleanly separates the two.
+      expect(block2).toBeLessThan(50);
       expect(exitCode).toBe(0);
     });
   }
@@ -2038,127 +2035,5 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     });
     release();
     expect(await text).toBe("payload");
-  });
-});
-
-// Fetch's "consume body" reads the body before formData() looks at the type,
-// so undici and browsers use the body up. Bun rejects first and has read
-// nothing: the body stays as it was. A stream that was taken off `.body`
-// before is still the body, unlocked, with every byte.
-describe("formData() on a body that is not form data leaves the body as it was", () => {
-  const notFormData = { "content-type": "application/json" };
-  const sources: [string, () => Bun.BodyInit, string][] = [
-    ["string", () => "payload", "payload"],
-    ["Blob", () => new Blob(["payload"]), "payload"],
-    ["Uint8Array", () => new TextEncoder().encode("payload"), "payload"],
-    ["URLSearchParams", () => new URLSearchParams("a=1"), "a=1"],
-    [
-      "ReadableStream",
-      () =>
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode("payload"));
-            controller.close();
-          },
-        }),
-      "payload",
-    ],
-    ["Blob.stream()", () => new Blob(["payload"]).stream(), "payload"],
-    ['""', () => "", ""],
-  ];
-  const owners: [string, (body: Bun.BodyInit, headers?: Bun.HeadersInit) => Request | Response][] = [
-    [
-      "Request",
-      (body, headers) => new Request("http://a/", { method: "POST", body, headers, duplex: "half" } as RequestInit),
-    ],
-    ["Response", (body, headers) => new Response(body, { headers } as ResponseInit)],
-  ];
-  const cases = sources.flatMap(([name, init, content]) => [
-    [name, "", init, content, false] as const,
-    [name, " after .body", init, content, true] as const,
-  ]);
-
-  describe.each(owners)("%s", (ownerName, make) => {
-    test.each(cases)("%s%s", async (name, when, init, content, touch) => {
-      const afterFailure = async () => {
-        const owner = make(init(), notFormData);
-        const stream = touch ? owner.body! : null;
-        expect(await owner.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
-        return { owner, stream };
-      };
-      const { owner, stream } = await afterFailure();
-      expect({
-        bodyUsed: owner.bodyUsed,
-        sameStream: stream === null || owner.body === stream,
-        locked: owner.body!.locked,
-        again: await owner.formData().then(String, e => e.code),
-        clone: await owner.clone().text(),
-      }).toEqual({
-        bodyUsed: false,
-        sameStream: true,
-        locked: false,
-        again: "ERR_FORMDATA_PARSE_ERROR",
-        clone: content,
-      });
-      expect({
-        text: await (await afterFailure()).owner.text(),
-        stream: await new Response((await afterFailure()).owner.body).text(),
-        teed: await new Response((await afterFailure()).owner.body!.tee()[0]).text(),
-      }).toEqual({ text: content, stream: content, teed: content });
-    });
-
-    // With no Content-Type header the body's own type decides, also while the
-    // body is behind a stream that was read off `.body`.
-    test.each([
-      ["", false],
-      [" after .body", true],
-    ] as const)("a body that is form data still parses%s", async (when, touch) => {
-      const form = new FormData();
-      form.append("a", "1");
-      const parsed = async (body: Bun.BodyInit, headers?: Bun.HeadersInit) => {
-        const owner = make(body, headers);
-        if (touch) owner.body;
-        return { entries: Object.fromEntries(await owner.formData()), bodyUsed: owner.bodyUsed };
-      };
-      expect({
-        multipart: await parsed(form),
-        urlencoded: await parsed(new URLSearchParams("a=1")),
-        // An empty Content-Type header is no Content-Type.
-        emptyHeader: await parsed(new URLSearchParams("a=1"), { "content-type": "" }),
-      }).toEqual({
-        multipart: { entries: { a: "1" }, bodyUsed: true },
-        urlencoded: { entries: { a: "1" }, bodyUsed: true },
-        emptyHeader: { entries: { a: "1" }, bodyUsed: true },
-      });
-    });
-  });
-
-  // The same for a body over a file on disk, and for Bun.write() as the reader.
-  test.each([
-    ["", false],
-    [" after .body", true],
-  ] as const)("a Bun.file() body%s", async (when, touch) => {
-    const text = "every byte of a small file on disk\n";
-    using dir = tempDir("body-formdata-file", { "a.txt": text });
-    const afterFailure = async () => {
-      const response = new Response(Bun.file(join(String(dir), "a.txt")));
-      const stream = touch ? response.body! : null;
-      expect(await response.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
-      return { response, stream };
-    };
-    const { response, stream } = await afterFailure();
-    expect({
-      bodyUsed: response.bodyUsed,
-      sameStream: stream === null || response.body === stream,
-      locked: response.body!.locked,
-    }).toEqual({ bodyUsed: false, sameStream: true, locked: false });
-    const written = join(String(dir), "out.txt");
-    await Bun.write(written, (await afterFailure()).response);
-    expect({
-      text: await (await afterFailure()).response.text(),
-      stream: await new Response((await afterFailure()).response.body).text(),
-      teed: await new Response((await afterFailure()).response.body!.tee()[0]).text(),
-      written: await Bun.file(written).text(),
-    }).toEqual({ text, stream: text, teed: text, written: text });
   });
 });

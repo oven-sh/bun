@@ -1318,6 +1318,16 @@
   "a.js:2:34+1 eslint(accessor-pairs)",
   "a.js:3:12+3 eslint(accessor-pairs)"
  ],
+ "no-accessor-recursion/private-names": [
+  "a.js:10:28+12 unicorn(no-accessor-recursion)",
+  "a.js:12:25+10 unicorn(no-accessor-recursion)",
+  "a.js:13:23+6 unicorn(no-accessor-recursion)",
+  "a.js:15:40+10 unicorn(no-accessor-recursion)",
+  "a.js:1:29+6 unicorn(no-accessor-recursion)",
+  "a.js:3:31+10 unicorn(no-accessor-recursion)",
+  "a.js:6:29+7 unicorn(no-accessor-recursion)",
+  "a.js:9:30+18 unicorn(no-accessor-recursion)"
+ ],
  "max-params/what-counts": [
   "a.ts:2:11+29 eslint(max-params)",
   "a.ts:3:30+18 eslint(max-params)",

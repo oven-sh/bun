@@ -30,7 +30,14 @@ describe("web worker", () => {
     });
 
     test("a preload that does not resolve throws the message of the resolver", () => {
-      expect(() => new Worker(import.meta.url, { preload: ["./this-preload-does-not-exist.js"] })).toThrow(
+      let thrown: unknown;
+      try {
+        new Worker(import.meta.url, { preload: ["./this-preload-does-not-exist.js"] });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(TypeError);
+      expect((thrown as TypeError).message).toBe(
         'BuildMessage: ModuleNotFound resolving "./this-preload-does-not-exist.js" (entry point)',
       );
     });

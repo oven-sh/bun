@@ -312,12 +312,10 @@ impl WebWorker {
             unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
-        let temp_log = &mut *restore;
-        // `set_log` after the log is inside the guard: the resolver logs to
-        // this address, and a move after `set_log` would leave it on a dead slot.
+        // The log is inside the guard already, so `set_log` gets its final address.
         // SAFETY: `parent` is the calling thread's live VM; the guard restores
         // `prev_log` before the temp log drops.
-        unsafe { (*parent).transpiler.set_log(&raw mut *temp_log) };
+        unsafe { (*parent).transpiler.set_log(&raw mut *restore) };
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -334,9 +332,9 @@ impl WebWorker {
             }
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
-            if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
-            } {
+            if let Some(preload) =
+                unsafe { resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message) }
+            {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
 
@@ -813,19 +811,14 @@ impl WebWorker {
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
         let mut resolve_error = BunString::EMPTY;
-        let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
-            resolve_entry_point_specifier(
-                vm_ptr,
-                &self.unresolved_specifier,
-                &mut resolve_error,
-                vm_log,
-            )
+            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &mut resolve_error)
         } {
             Some(p) => p,
             None => {
                 vm.as_mut().exit_handler.exit_code = 1;
+                let vm_log = vm.log_mut().unwrap();
                 if vm_log.errors == 0 && !resolve_error.is_empty() {
                     let err = resolve_error.to_utf8();
                     // `Log::add_error` takes `impl IntoText`; pass an owned
@@ -1241,16 +1234,18 @@ fn on_unhandled_rejection(
 /// standalone module graph, or the resolver's arena; the caller must NOT
 /// free it.
 ///
+/// A failure is logged through `transpiler.log` and `error_message` is built
+/// from that pointer, so the caller holds no reference to that log.
+///
 /// # Safety
 /// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because callers hold other borrows into the VM (its
-/// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
-/// the single expression.
+/// pointer (not `&mut`) because callers hold other borrows into the VM across
+/// the call; per-use `(*parent)` derefs keep any autoref scoped to the single
+/// expression.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
     error_message: &mut BunString,
-    log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
@@ -1296,6 +1291,9 @@ unsafe fn resolve_entry_point_specifier<'s>(
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);
+            // SAFETY: `transpiler.log` is never null. It is the log the resolver
+            // just wrote to, and no other reference to it is live (fn contract).
+            let log = unsafe { &*(*parent).transpiler.log };
             let out: jsc::JsResult<BunString> = (|| {
                 let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
                 out.to_bun_string(global)

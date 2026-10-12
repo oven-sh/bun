@@ -356,7 +356,6 @@ function connectionListenerHTTP1(server, socket, options) {
     continueExpression,
     MAX_HEADER_PAIRS,
   } = require("node:_http_common");
-  const { ConnResetException } = require("internal/shared");
   const { kHandle: kHttp1ResponseHandle, kHeaderSource, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
@@ -367,6 +366,7 @@ function connectionListenerHTTP1(server, socket, options) {
     maybePauseFallbackReads,
     resumeFallbackReadsOnDrain,
     finishDrainedResponse,
+    abortIncoming,
     kMustCloseConnection,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
@@ -695,13 +695,7 @@ function connectionListenerHTTP1(server, socket, options) {
     // in-flight response's own 'close' comes from onServerResponseClose,
     // installed by assignSocket.
     const inflightReq = inflight?.req;
-    if (inflightReq && !inflightReq.destroyed) {
-      if (inflightReq.listenerCount("error") > 0) {
-        inflightReq.destroy(new ConnResetException("aborted"));
-      } else {
-        inflightReq.destroy();
-      }
-    }
+    abortIncoming(inflightReq);
     abortQueuedPipelinedResponses(socket);
     try {
       parser.close();

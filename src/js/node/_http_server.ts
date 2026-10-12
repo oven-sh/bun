@@ -476,6 +476,15 @@ function completeWithoutBody(req) {
   }
 }
 
+// Node's abortIncoming, with no check for an 'error' listener: onError() of IncomingMessage emits to a listener only.
+function abortIncoming(req) {
+  if (!req || req.destroyed) return;
+  // Node runs this from 'close' of the socket. Here the socket can still be open, and it must not get this error.
+  const socket = req.socket;
+  if (socket && !socket.destroyed) socket.destroy();
+  req.destroy(new ConnResetException("aborted"));
+}
+
 // Like Node.js's setupConnectionsTracking: each 'listening' event replaces
 // the connections-checking interval timer (used by the headers/request
 // timeout machinery) and destroys the previous one.
@@ -1938,11 +1947,7 @@ function getNodeHTTPServerSocket() {
       if (req && !req.destroyed && !req[kHandle]?.upgraded) {
         // At this point the socket is already destroyed; let's avoid UAF
         req[kHandle] = undefined;
-        if (req.listenerCount("error") > 0) {
-          req.destroy(new ConnResetException("aborted"));
-        } else {
-          req.destroy();
-        }
+        abortIncoming(req);
       }
 
       // Pipelined responses (and their requests) that were still queued behind
@@ -2912,11 +2917,7 @@ function abortQueuedPipelinedResponses(socket, error = $ERR_STREAM_DESTROYED("wr
       failQueuedPipelinedWriteCallbacks(queuedRes[kPipelinedQueuedState], error);
       if (queuedReq && !queuedReq.destroyed) {
         queuedReq[kHandle] = undefined;
-        if (queuedReq.listenerCount("error") > 0) {
-          queuedReq.destroy(new ConnResetException("aborted"));
-        } else {
-          queuedReq.destroy();
-        }
+        abortIncoming(queuedReq);
       }
       if (!queuedRes.destroyed) {
         queuedRes.destroy();
@@ -4349,6 +4350,7 @@ http1ServerPipeline.lastPipelinedResponse = lastPipelinedResponse;
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
+http1ServerPipeline.abortIncoming = abortIncoming;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
 export default {

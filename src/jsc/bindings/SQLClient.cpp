@@ -509,6 +509,13 @@ extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, ui
 }
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
 
+// For ColumnIdentifier::init in bun_sql, which cannot see JSC. UINT32_MAX: not an array index.
+static_assert(MAX_ARRAY_INDEX < std::numeric_limits<uint32_t>::max());
+extern "C" uint32_t JSC__parseIndex(const Latin1Character* name, size_t length)
+{
+    return parseIndex(std::span<const Latin1Character> { name, length }).value_or(std::numeric_limits<uint32_t>::max());
+}
+
 // PostgreSQL time formatting helpers - following WebKit's pattern
 extern "C" size_t Postgres__formatTime(int64_t microseconds, char* buffer, size_t bufferSize)
 {

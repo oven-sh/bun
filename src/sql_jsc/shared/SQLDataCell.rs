@@ -258,7 +258,7 @@ impl SQLDataCell {
 
     /// Tags the cell with the column it was decoded for, in the encoding
     /// SQLClient.cpp's `DataCell` reads: `is_indexed_column` is 0 for a named
-    /// column, 1 for an all-digits name (the object key is that number, not the
+    /// column, 1 for an array-index name (the object key is that number, not the
     /// ordinal `position`, so indexed cells can land out of order) and 2 for a
     /// duplicate, which object-mode results skip.
     #[inline]

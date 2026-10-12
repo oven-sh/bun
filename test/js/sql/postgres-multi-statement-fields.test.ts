@@ -35,6 +35,52 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(result).toEqual([[{ x: "1" }], [{ y: "2" }], [{ a: "3", b: "4", c: "5" }]]);
   });
 
+  // "01" is not an array index, so it is a different key from "1" in each
+  // result set, including the one that selects both.
+  test("zero-padded column names keep their spelling in every result set", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+
+    const result = await sql`select 1 as "01"; select 2 as "1"; select 3 as "01", 4 as "1"`.simple();
+    expect(result).toEqual([[{ "01": 1 }], [{ "1": 2 }], [{ "01": 3, "1": 4 }]]);
+  });
+
+  // JSC stores a key as an array index only when it is a canonical integer
+  // below 2^32 - 1 ("0", "7", "4294967294"). Every other all-digit name is a
+  // string key, so each column below keeps its own name, over the simple and
+  // the prepared protocol.
+  const wide = (...overrides: [index: number, name: string][]) => {
+    const names = Array.from({ length: 80 }, (_, i) => `c${i}`);
+    for (const [index, name] of overrides) names[index] = name;
+    return names;
+  };
+
+  test.each([
+    ["zero-padded names beside canonical ones", ["id", "01", "02", "10", "007", "7", "0", "00"]],
+    ["month names 01 to 12", Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"))],
+    [
+      "names at the edges of the array-index range",
+      ["0", "00", "0000000001", "00000000001", "4294967294", "4294967295", "x"],
+    ],
+    ["a repeated zero-padded name", ["01", "01", "1"]],
+    // Past JSFinalObject::maxInlineCapacity (62) columns the names are put on each row one by one.
+    ["a zero-padded name beside its canonical spelling in a wide result", wide([40, "007"], [41, "7"])],
+    ["only zero-padded names in a wide result", Array.from({ length: 72 }, (_, i) => String(i + 1).padStart(3, "0"))],
+  ])("%s: every column keeps its own name", async (_, names) => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+    const select = "select " + names.map((name, i) => `'v${i}' as "${name}"`).join(", ");
+    // Computed keys in column order: array-index keys come first, the others keep that order.
+    const expected = Object.fromEntries(names.map((name, i) => [name, `v${i}`]));
+
+    for (const rows of [await sql.unsafe(select), await sql.unsafe(select + " where 1 = $1", [1])]) {
+      expect(rows).toEqual([expected]);
+      expect(Object.keys(rows[0])).toEqual(Object.keys(expected));
+      // Read through each key too: a key stored as the wrong kind is listed but not found.
+      expect(names.map(name => rows[0][name])).toEqual(names.map(name => expected[name]));
+    }
+  });
+
   // NoticeResponse ('N') can arrive between result sets — RAISE NOTICE inside a
   // DO block makes a real server emit one mid-stream. The protocol reader must
   // consume exactly the message body so the following RowDescription stays

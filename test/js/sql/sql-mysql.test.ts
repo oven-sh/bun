@@ -457,6 +457,36 @@ if (isDockerEnabled()) {
           Bun.inspect(result);
         });
 
+        // "01" is not an array index: it is a different key from "1", and
+        // neither may replace the other on the row object.
+        test("Handles zero-padded numeric column names", async () => {
+          const query = () =>
+            sql`select 'row1' as "id", 'jan' as "01", 'feb' as "02", 'oct' as "10", 'bond' as "007", 'seven' as "7", 'zero' as "0", 'dz' as "00"`;
+          const row = {
+            id: "row1",
+            "01": "jan",
+            "02": "feb",
+            "10": "oct",
+            "007": "bond",
+            "7": "seven",
+            "0": "zero",
+            "00": "dz",
+          };
+          const cells = ["row1", "jan", "feb", "oct", "bond", "seven", "zero", "dz"];
+
+          for (const result of [await query(), await query().simple()]) {
+            expect(result).toEqual([row]);
+            // Array-index keys first, then the other names in column order.
+            expect(Object.keys(result[0])).toEqual(["0", "7", "10", "id", "01", "02", "007", "00"]);
+            // Sanity check: ensure iterating through the properties doesn't crash.
+            Bun.inspect(result);
+          }
+          expect(await query().values()).toEqual([cells]);
+          expect((await query().raw()).map(raw => raw.map(cell => Buffer.from(cell).toString()))).toEqual([cells]);
+
+          expect(await sql`select 1 as "01", 2 as "1"`).toEqual([{ "01": 1, "1": 2 }]);
+        });
+
         // Last one wins.
         test("Handles duplicate numeric column names", async () => {
           const result = await sql`select 1 as "1", 2 as "1", 3 as "1"`;

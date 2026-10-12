@@ -666,6 +666,23 @@ rules = { "no-var" = "error" }
       ]);
     });
 
+    test("patterns have Bun.Glob's syntax, including extglobs and brace ranges", async () => {
+      const names = ["a/x.js", "ab/x.js", "c/x.js", "f1.js", "f3.js", "f4.js"];
+      const files = { ...configs[name], ...Object.fromEntries(names.map(it => [it, log])) };
+      const override = (patterns: string) =>
+        `[lint.rules]\n"no-console" = "error"\n[[lint.overrides]]\n${patterns}\nrules = { "no-console" = "off" }\n`;
+      const globs = `["+(a|b)/**", "f{1..3}.js"]`;
+      const reported = async (patterns: string) =>
+        (await problems({ ...files, "bunfig.toml": override(patterns) })).map(it => it.split(" ")[0]);
+      expect(await reported(`files = ${globs}`)).toEqual(["c/x.js", "f4.js"]);
+      expect(await reported(`files = "**/*.js"\nexcludeFiles = ${globs}`)).toEqual([
+        "a/x.js",
+        "ab/x.js",
+        "f1.js",
+        "f3.js",
+      ]);
+    });
+
     test("globals, which --global wins over", async () => {
       const files = {
         ...configs[name],
@@ -684,6 +701,18 @@ globals = { mine = "off" }
       expect(await problems(files, ["a.js", "a.test.js"])).toEqual(["a.test.js no-undef error"]);
       expect(await problems(files, ["--global", "mine", "a.js", "a.test.js"])).toEqual([]);
     });
+  });
+
+  // oxlint has no extglobs and no ranges. `{1..3}` is a group with the one alternative `1..3`. Checked against oxlint 1.87.
+  test("overrides in an .oxlintrc.json keep oxlint's glob syntax", async () => {
+    const overrides = [{ files: ["f{1..3}.js", "@(a|b)/**"], rules: { "no-console": "off" } }];
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ ...JSON.parse(oxlintrc), rules: { "no-console": "error" }, overrides }),
+      "f1.js": log,
+      "f1..3.js": log,
+      "a/x.js": log,
+    };
+    expect(await problems(files)).toEqual(["a/x.js no-console error", "f1.js no-console error"]);
   });
 
   test("the patterns are from the directory of bunfig.toml, wherever the config file is", async () => {

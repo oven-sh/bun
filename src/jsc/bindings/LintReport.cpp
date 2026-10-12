@@ -39,7 +39,7 @@ void throwError(JSGlobalObject* globalObject, ThrowScope& scope, const String& m
 }
 
 // `${JSON.stringify(value, null, 2)}`
-String stringify(JSGlobalObject* globalObject, JSValue value)
+__attribute__((minsize)) String stringify(JSGlobalObject* globalObject, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     String json = JSONStringify(globalObject, value, 2);
@@ -294,7 +294,7 @@ Fix cloneFix(JSGlobalObject* globalObject, const LintReportState& names, JSValue
 }
 
 // `Array.from(iterable)`
-void collect(JSGlobalObject* globalObject, JSObject* iterable, MarkedArgumentBuffer& items)
+__attribute__((minsize)) void collect(JSGlobalObject* globalObject, JSObject* iterable, MarkedArgumentBuffer& items)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -321,7 +321,7 @@ void collect(JSGlobalObject* globalObject, JSObject* iterable, MarkedArgumentBuf
 }
 
 // ESLint's `mergeFixes`
-Fix mergeFixes(JSGlobalObject* globalObject, LintHost* host, JSObject* iterable)
+__attribute__((minsize)) Fix mergeFixes(JSGlobalObject* globalObject, LintHost* host, JSObject* iterable)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -364,7 +364,7 @@ Fix mergeFixes(JSGlobalObject* globalObject, LintHost* host, JSObject* iterable)
 
     // `fixes.sort((a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1])`, with the sort that JavaScript has.
     Vector<Edit, 8> workingSet(count);
-    std::span<Edit> sorted = arrayStableSort<MergeStrategy::Galloping>(vm, edits.mutableSpan(), workingSet.mutableSpan(), [](const Edit& left, const Edit& right) {
+    std::span<Edit> sorted = arrayStableSort<MergeStrategy::Simple>(vm, edits.mutableSpan(), workingSet.mutableSpan(), [](const Edit& left, const Edit& right) {
         double byStart = left.start - right.start;
         return (byStart && !std::isnan(byStart) ? byStart : left.end - right.end) < 0;
     });
@@ -524,7 +524,7 @@ JSValue messageOf(JSGlobalObject* globalObject, Descriptor& descriptor, JSValue 
 constexpr unsigned suggestionObject = 0, suggestionMessageId = 1, suggestionText = 2, suggestionFix = 3, suggestionFields = 4;
 
 // The part of ESLint's `validateSuggestions` that's about one suggestion.
-void validateSuggestion(JSGlobalObject* globalObject, const LintReportState& names, JSValue suggestion, JSValue messages, MarkedArgumentBuffer& kept)
+__attribute__((minsize)) void validateSuggestion(JSGlobalObject* globalObject, const LintReportState& names, JSValue suggestion, JSValue messages, MarkedArgumentBuffer& kept)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue messageId = suggestion.get(globalObject, names.messageId);
@@ -579,7 +579,7 @@ void validateSuggestion(JSGlobalObject* globalObject, const LintReportState& nam
 }
 
 // `JSON.stringify(data)`, which is what ESLint's `json` formatter makes of it. Null if that throws or there's nothing to say.
-String stringifyData(JSGlobalObject* globalObject, JSValue data)
+__attribute__((minsize)) String stringifyData(JSGlobalObject* globalObject, JSValue data)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     String json = JSONStringify(globalObject, data, 0);
@@ -596,7 +596,7 @@ struct Mapped {
     unsigned withFix { 0 };
     unsigned written { 0 };
 };
-NEVER_INLINE Mapped mapSuggestions(JSGlobalObject* globalObject, LintHost* host, JSValue suggest, JSValue messages, Writer& writer, const Invocable<void()> auto& beforeFixes)
+__attribute__((minsize)) NEVER_INLINE Mapped mapSuggestions(JSGlobalObject* globalObject, LintHost* host, JSValue suggest, JSValue messages, Writer& writer, const Invocable<void()> auto& beforeFixes)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintReportState& state = host->report;
@@ -1033,7 +1033,7 @@ JSC_DEFINE_HOST_FUNCTION(callRuleFixer, (JSGlobalObject * globalObject, CallFram
 }
 
 // `constructor({ sourceCode })`. There's only one `sourceCode` here.
-JSC_DEFINE_HOST_FUNCTION(constructRuleFixer, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructRuleFixer, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1056,7 +1056,7 @@ JSC_DEFINE_HOST_FUNCTION(constructRuleFixer, (JSGlobalObject * globalObject, Cal
 namespace {
 
 // `class RuleFixer`
-void createFixerClass(JSGlobalObject* globalObject, LintReportState& state, LintHost* host)
+__attribute__((minsize)) void createFixerClass(JSGlobalObject* globalObject, LintReportState& state, LintHost* host)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1115,7 +1115,7 @@ JSObject* createFixer(JSGlobalObject* globalObject, LintReportState& state, Lint
 
 // `reporter(meta)` returns `{ position, meta, report }` for a rule. `report` is its `context.report`. The program sets
 // `position`, the index of the rule among those that run on the file.
-JSC_DEFINE_HOST_FUNCTION(jsLintReporter, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintReporter, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1148,7 +1148,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSendReports, (JSGlobalObject * globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
-void LintReportState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintHost* host)
+__attribute__((minsize)) void LintReportState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintHost* host)
 {
     auto set = [&](Identifier& name, ASCIILiteral text) { name = Identifier::fromString(vm, text); };
     constexpr std::array<ASCIILiteral, fieldCount> fields { "node"_s, "loc"_s, "messageId"_s, "message"_s, "suggest"_s, "fix"_s, "data"_s };

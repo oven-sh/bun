@@ -774,17 +774,17 @@ impl Rc<'_, '_> {
                 true => Vec::new(),
                 false => [&certain[..], plugins.as_deref().unwrap_or_default()].concat(),
             };
-            // `$basePath`, which an override of bunfig.toml has: its directory.
+            // Overrides from bunfig.toml are marked with `$globsOfBun`. `$basePath` is bunfig.toml's directory.
             let base_path = item.get(b"$basePath").and_then(Json::as_str);
+            let pattern = match item.get(b"$globsOfBun") {
+                Some(_) => Pattern::of_bunfig,
+                None => Pattern::of_oxlint,
+            };
             let object = ConfigObject {
                 base_path: base_path.map(<[u8]>::to_vec),
-                files: Some(
-                    (files.iter())
-                        .map(|it| vec![Pattern::of_oxlint(it)])
-                        .collect(),
-                ),
+                files: Some(files.iter().map(|it| vec![pattern(it)]).collect()),
                 ignores: (!excluded.is_empty())
-                    .then(|| excluded.iter().map(|it| Pattern::of_oxlint(it)).collect()),
+                    .then(|| excluded.iter().map(|it| pattern(it)).collect()),
                 language_options: self.language_options(item),
                 settings: (item.get(b"settings").cloned()).and_then(ConfigObject::settings_of),
                 rules: self.rules(item, &certain)?,

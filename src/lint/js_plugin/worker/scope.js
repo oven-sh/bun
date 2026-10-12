@@ -194,7 +194,7 @@ const eslintScopeLayout = once(() => {
         impliedStrict: parserOptions.ecmaFeatures?.impliedStrict,
         sourceType,
         ecmaVersion,
-        childVisitorKeys: visitorKeys[1],
+        childVisitorKeys: native.visitorKeys(true),
         fallback: node =>
           Object.keys(node).filter(key => key !== "parent" && key !== "leadingComments" && key !== "trailingComments"),
         ignoreEval: true,
@@ -475,18 +475,17 @@ function addLibVariables() {
 function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
   program();
-  const buffer = readsInPlace ? undefined : (ask(SCOPES), buffers[SCOPES]);
   const layout = fileDialect === 1 ? eslintScopeLayout() : typescriptLayout();
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
-  const made = native.scopes(layout.forNative, buffer, nodes, names, scopeStrings, text, fileDialect === 0);
-  const [listed, scopes, variables, nodeToScope, declaredVariables, , , referenceFlags, explicitGlobals] = made;
+  const made = native.scopes(layout.forNative, names, scopeStrings, fileDialect === 0);
+  const [listed, globalScope, variableCount, nodeToScope, declaredVariables, referenceFlags, explicitGlobals] = made;
   scopeData = {
     manager: new layout.ScopeManager(listed, nodeToScope, declaredVariables),
-    variableCount: variables.length,
+    variableCount,
     referenceFlags,
     libVariables: new Map(),
-    mentionedGlobals: scopes[0].variables,
+    mentionedGlobals: globalScope.variables,
     hasAllLibVariables: fileDialect === 1,
   };
   native.setScopeManager(scopeData.manager);
@@ -496,7 +495,7 @@ function scopeManager() {
     explicitGlobals[i].eslintExplicitGlobalComments = explicitGlobals[i + 1].map(commentAt);
   }
   if (fileDialect === 0) {
-    Object.defineProperty(scopes[0], "variables", {
+    Object.defineProperty(globalScope, "variables", {
       get() {
         addLibVariables();
         return this.variables;

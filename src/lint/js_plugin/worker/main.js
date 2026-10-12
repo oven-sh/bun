@@ -22,11 +22,9 @@
 
 // ------------- the program -------------
 //
-// It is the body of a function of `require`, `load`, which is `import()`, and of what it asks the other side with:
-// - `request(kind, details, buffer)` asks for something, writes the answer into `buffer` and returns its length. If that
-//   is more than fits, nothing is written.
-// - `again(buffer)` then writes it into a larger one.
-// - `decode(buffer, start, end)` is the text that these bytes of `buffer` are in UTF-8.
+// It is the body of a function of `require`, of `load`, which is `import()`, and of `native`: the functions of
+// src/jsc/bindings/Lint*.cpp. With `native.askText(kind, details, start, end)` and `native.askWords(kind, details, count)` it asks the
+// other side for something and reads the answer where it is.
 //
 // It returns `handle`, which the other side calls. See `wire.rs` for what is said. All of it is synchronous but for loading
 // a plugin.
@@ -66,24 +64,7 @@ const START = 1;
 const SETTINGS = 2;
 const CONFIGURED = 3;
 const SELECTORS = 4;
-const TOKENS = 7;
-const COMMENTS = 8;
-const SCOPES = 9;
 const LOADED = 10;
-const CODE_PATHS = 11;
-
-// By what was asked for: the last answer, which the next one overwrites.
-const buffers = [];
-// Native code reads what it needs where the other side has it, without a copy in one of `buffers`.
-const readsInPlace = process.env.BUN_LINT_IN_PLACE !== "0";
-
-// Asks for something. The answer is in `buffers[kind]`. Returns its length.
-function ask(kind, details = "") {
-  const buffer = (buffers[kind] ??= new ArrayBuffer(1 << 16));
-  const length = request(kind, details, buffer);
-  if (length > buffer.byteLength) again((buffers[kind] = new ArrayBuffer(2 ** Math.ceil(Math.log2(length)))));
-  return length;
-}
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
@@ -91,22 +72,16 @@ const revive = (_, value) =>
 
 // The first `count` words of the message that is being handled.
 function messageWords(count) {
-  if (readsInPlace) return native.askWords(MESSAGE, "", count);
-  ask(MESSAGE);
-  return new Uint32Array(buffers[MESSAGE], 0, count);
+  return native.askWords(MESSAGE, "", count);
 }
 
 // The text that the bytes from `start` to `end` of it are in UTF-8. Without `end`: to where it ends.
 function messageText(start, end) {
-  if (readsInPlace) return native.askText(MESSAGE, "", start, end);
-  const length = ask(MESSAGE);
-  return decode(buffers[MESSAGE], start, end ?? length);
+  return native.askText(MESSAGE, "", start, end);
 }
 
 function askForJson(kind, details) {
-  // `ask` can replace the buffer.
-  const length = readsInPlace ? 0 : ask(kind, details);
-  const json = readsInPlace ? native.askText(kind, details) : decode(buffers[kind], 0, length);
+  const json = native.askText(kind, details);
   return json.includes('"$regexp"') || json.includes('"$number"') ? JSON.parse(json, revive) : JSON.parse(json);
 }
 
@@ -328,7 +303,6 @@ const SourceCode = native.sourceCode(native.TokenStore, [
   program,
   scopeManager,
   () => fileSettings.languageOptions.parserOptions,
-  visitorKeys,
 ]);
 let sourceCode = new SourceCode();
 let filename = "";
@@ -538,7 +512,7 @@ function describeKey(key) {
   if (known !== undefined) return known;
   const isExit = key.endsWith(":exit");
   const name = isExit ? key.slice(0, -5) : key;
-  const type = usesLayouts ? native.typeId(name) : typeIds.get(name);
+  const type = native.typeId(name);
   const event = codePathEventNames.indexOf(key);
   if (type !== undefined) known = { kind: isExit ? 1 : 0, number: type, error: null };
   else if (event !== -1) known = { kind: 3, number: event, error: null };
@@ -599,9 +573,7 @@ function listen(keys, wantsTree) {
     listenWords[1 + 2 * i] = keys[i].kind;
     listenWords[2 + 2 * i] = keys[i].number;
   }
-  const [calls, made] = usesLayouts
-    ? native.listen(undefined, undefined, undefined, listenWords, length)
-    : native.listen(shapes[fileDialect], leftOutBits[fileDialect], knownStrings, listenWords, length);
+  const [calls, made] = native.listen(listenWords, length);
   if (made !== undefined) {
     nodes = made;
     native.defineTokenLists(nodes[0]);
@@ -747,10 +719,9 @@ const legacyCodePathShapes = [native.shape(legacyPrototype, codePathKeys, "", 1)
 // complete graph from the first event on. Returns `emitAt(at, calls)`, which calls the listeners `calls` for the event that starts at
 // `at` in the events, which have four words each: see `code_path/estree.rs`. The events have to come in order.
 function openCodePaths() {
-  const buffer = readsInPlace ? undefined : (ask(CODE_PATHS), buffers[CODE_PATHS]);
   const isLegacy = fileSettings.isLegacy === true;
   const shapesOfPaths = isLegacy ? legacyCodePathShapes : codePathShapes;
-  const [paths, segments, events] = native.codePaths(shapesOfPaths, codePathOrigins, buffer);
+  const [paths, segments, events] = native.codePaths(shapesOfPaths, codePathOrigins);
   if (isLegacy) for (const path of paths) path.internal.currentSegments = [];
   // `internal` of the code paths that have started and not ended, to keep `currentSegments` up to date.
   const open = [];
@@ -918,20 +889,15 @@ function reportLoading() {
     bytes += statSync(file, { throwIfNoEntry: false })?.size ?? 0;
   }
   const modules = countedModules.size - before;
-  if (modules > 0 || loadingTime > 0) {
-    const details = JSON.stringify([modules, bytes, loadingTime]);
-    if (readsInPlace) native.askText(LOADED, details);
-    else ask(LOADED, details);
-  }
+  if (modules > 0 || loadingTime > 0) native.askText(LOADED, JSON.stringify([modules, bytes, loadingTime]));
   loadingTime = 0;
 }
 
 function start() {
-  const { cwd: directory, measures, types, strings } = askForJson(START, usesLayouts ? "lean" : "");
+  const { cwd: directory, measures } = askForJson(START);
   cwd = directory;
   measuresLoading = measures;
-  if (usesLayouts) defineNodes();
-  else defineTypes(types, strings);
+  defineNodes();
   hasStarted = true;
 }
 

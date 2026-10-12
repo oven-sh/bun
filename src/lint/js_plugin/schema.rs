@@ -21,55 +21,15 @@ pub const PROGRAM: &[(&str, &str)] = &[
     ("main.js", include_str!("worker/main.js")),
 ];
 
-/// `{ cwd, measures, strings, types }`. `measures`: whether the program is to say what it loads. `types`: for each [`NodeType`] `[name, [[field, flags], ..]]`, where the
-/// flags are 1 for a visitor key, 2 for what only typescript-estree has, 4 for what only espree has,
-/// 8 for what is not enumerable.
-/// `with_types`: the last two are there.
-pub(super) fn write_start(cwd: &[u8], measures: bool, with_types: bool, out: &mut Vec<u8>) {
+/// `{ cwd, measures }`. `measures`: whether the program is to say what it loads.
+pub(super) fn write_start(cwd: &[u8], measures: bool, out: &mut Vec<u8>) {
     out.extend_from_slice(b"{\"cwd\":");
     json_stringify(cwd, out);
     out.extend_from_slice(if measures {
-        b",\"measures\":true"
+        b",\"measures\":true}"
     } else {
-        b",\"measures\":false"
+        b",\"measures\":false}"
     });
-    if !with_types {
-        out.push(b'}');
-        return;
-    }
-    out.extend_from_slice(b",\"strings\":[");
-    for (i, string) in STRINGS.iter().enumerate() {
-        if i > 0 {
-            out.push(b',');
-        }
-        json_stringify(string.as_bytes(), out);
-    }
-    out.extend_from_slice(b"],\"types\":[");
-    for (i, node_type) in NodeType::ALL.iter().enumerate() {
-        if i > 0 {
-            out.push(b',');
-        }
-        out.extend_from_slice(b"[\"");
-        out.extend_from_slice(node_type.name().as_bytes());
-        out.extend_from_slice(b"\",[");
-        for (i, entry) in node_type.fields().iter().enumerate() {
-            let flags = u8::from(entry.is_child)
-                | u8::from(entry.is_typescript_only) << 1
-                | u8::from(entry.is_espree_only) << 2
-                | u8::from(entry.is_hidden) << 3;
-            if i > 0 {
-                out.push(b',');
-            }
-            out.extend_from_slice(b"[\"");
-            out.extend_from_slice(entry.field.name().as_bytes());
-            out.extend_from_slice(b"\",");
-            out.extend_from_slice(if flags >= 10 { b"1" } else { b"" });
-            out.push(b'0' + flags % 10);
-            out.push(b']');
-        }
-        out.extend_from_slice(b"]]");
-    }
-    out.extend_from_slice(b"]}");
 }
 
 /// What is in a property of a node, if it isn't a field: the number of a field is below these.

@@ -118,14 +118,13 @@ struct LintTree {
 
 class LintNodeMaker {
 public:
-    LintNodeMaker(JSGlobalObject* globalObject, const LintTree& tree, JSArray* nodes, JSString* text, JSArray* knownStrings)
+    LintNodeMaker(JSGlobalObject* globalObject, const LintTree& tree, JSArray* nodes, JSString* text)
         : m_globalObject(globalObject)
         , m_vm(globalObject->vm())
         , m_tree(tree)
         , m_nodes(nodes)
         , m_text(text)
         , m_textLength(text->length())
-        , m_knownStrings(knownStrings)
         , m_host(LintHost::from(globalObject))
         , m_pattern(Identifier::fromString(m_vm, "pattern"_s))
         , m_flags(Identifier::fromString(m_vm, "flags"_s))
@@ -166,7 +165,7 @@ public:
             return from < 0x80000000 ? slice(from, to) : sliceOfExtra(from - 0x80000000, to);
         }
         case 4:
-            return m_knownStrings ? m_knownStrings->tryGetIndexQuickly(number) : JSValue(m_host->nodes.knownString(m_vm, m_host, number));
+            return m_host->nodes.knownString(m_vm, m_host, number);
         case 5:
             return jsNumber(number);
         case 6: {
@@ -287,138 +286,12 @@ private:
     JSArray* m_nodes;
     JSString* m_text;
     uint32_t m_textLength;
-    // Null: those of the host.
-    JSArray* m_knownStrings;
     LintHost* m_host;
     JSString* m_extraText { nullptr };
     Identifier m_pattern, m_flags, m_cooked, m_raw;
 };
 
 } // namespace
-
-// The nodes of the tree in `bytes`, by their number. Null: an exception was thrown.
-// `shapes`: by the number of a type what `shape` has made, or a list of these if fields of the type can be left out: by
-// which of them are there, the first being the lowest bit. `leftOut`: by the number of a type, a bit for each such field.
-// Rust keeps `bytes` until the file is done.
-static JSArray* makeLintNodes(JSGlobalObject* globalObject, JSArray* shapes, JSUint32Array* leftOut, std::span<const uint8_t> bytes, JSString* text, JSArray* knownStrings)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto outOfStep = [&]() -> JSArray* {
-        throwTypeError(globalObject, scope, "The tree is not as expected"_s);
-        return nullptr;
-    };
-
-    LintTree tree;
-    if (!tree.read(bytes))
-        return outOfStep();
-    uint32_t count = tree.count;
-
-    // By type: the structures, by which fields are there, and how many fields there are at most.
-    struct Shape {
-        Vector<JSObject*, 1> objects;
-        uint32_t leftOut { 0 };
-        uint32_t fields { 0 };
-    };
-    unsigned typeCount = std::min<unsigned>(shapes->length(), 256);
-    Vector<Shape, 256> byType(typeCount);
-    for (unsigned type = 0; type < typeCount; ++type) {
-        JSValue shape = shapes->getIndex(globalObject, type);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        Shape& entry = byType[type];
-        entry.leftOut = type < leftOut->length() ? leftOut->typedVector()[type] : 0;
-        if (JSArray* several = dynamicDowncast<JSArray>(shape)) {
-            for (unsigned i = 0; i < several->length(); ++i) {
-                JSObject* object = several->getIndex(globalObject, i).getObject();
-                RETURN_IF_EXCEPTION(scope, nullptr);
-                if (!object)
-                    return outOfStep();
-                entry.objects.append(object);
-            }
-        } else if (JSObject* object = shape.getObject())
-            entry.objects.append(object);
-        if (entry.objects.isEmpty())
-            continue;
-        if (entry.objects.size() != 1u << std::popcount(entry.leftOut))
-            return outOfStep();
-        // `type` before them, `start`, `end`, `range` and `parent` behind.
-        entry.fields = entry.objects.last()->structure()->maxOffset() + 1 - 5;
-    }
-
-    // Where the words of each node start.
-    Vector<uint32_t> offsets(count);
-    uint64_t at = 0;
-    for (uint32_t id = 0; id < count; ++id) {
-        uint8_t type = tree.types[id];
-        if (type >= typeCount || byType[type].objects.isEmpty())
-            return outOfStep();
-        offsets[id] = static_cast<uint32_t>(at);
-        at += byType[type].fields;
-    }
-    if (at > tree.fields.size())
-        return outOfStep();
-
-    JSArray* nodes = tryCreateFilledLintArray(vm, globalObject, count);
-    if (!nodes) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    Structure* rangeStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32);
-    LintNodeMaker maker(globalObject, tree, nodes, text, knownStrings);
-
-    // What is in a node has a higher number.
-    for (uint32_t id = count; id--;) {
-        const Shape& shape = byType[tree.types[id]];
-        const uint32_t* words = tree.fields.data() + offsets[id];
-        uint32_t start = tree.starts[id], end = tree.ends[id];
-        unsigned which = 0;
-        if (shape.leftOut) [[unlikely]] {
-            unsigned bit = 0;
-            for (uint32_t i = 0; i < shape.fields; ++i) {
-                if (shape.leftOut >> i & 1)
-                    which |= (words[i] ? 1u : 0u) << bit++;
-            }
-        }
-        JSObject* like = shape.objects[which];
-        JSFinalObject* node = JSFinalObject::create(vm, like->structure());
-        PropertyOffset offset = 0;
-        node->putDirectOffset(vm, offset++, like->getDirect(0));
-        for (uint32_t i = 0; i < shape.fields; ++i) {
-            if ((shape.leftOut >> i & 1) && !words[i]) [[unlikely]]
-                continue;
-            JSValue value = maker.value(words[i], start, end);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (!value) [[unlikely]]
-                return outOfStep();
-            node->putDirectOffset(vm, offset++, value);
-        }
-        node->putDirectOffset(vm, offset++, jsNumber(start));
-        node->putDirectOffset(vm, offset++, jsNumber(end));
-        node->putDirectOffset(vm, offset + 1, jsNull());
-        JSArray* range;
-        {
-            ObjectInitializationScope initializationScope(vm);
-            range = JSArray::tryCreateUninitializedRestricted(initializationScope, rangeStructure, 2);
-            if (!range) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return nullptr;
-            }
-            range->initializeIndex(initializationScope, 0, jsNumber(start));
-            range->initializeIndex(initializationScope, 1, jsNumber(end));
-        }
-        node->putDirectOffset(vm, offset, range);
-        nodes->setIndexQuickly(vm, id, node);
-    }
-    for (uint32_t id = 1; id < count; ++id) {
-        if (tree.parents[id] >= count)
-            return outOfStep();
-        JSObject* node = asObject(nodes->getIndexQuickly(id));
-        node->putDirectOffset(vm, node->structure()->maxOffset(), nodes->getIndexQuickly(tree.parents[id]));
-    }
-    LintHost* host = LintHost::from(globalObject);
-    host->sourceCode.setTree(vm, host, nullptr, nodes, tree.starts, tree.ends, tree.parents);
-    return nodes;
-}
 
 bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
 {
@@ -611,7 +484,7 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std:
         return nullptr;
     }
     Structure* rangeStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32);
-    LintNodeMaker maker(globalObject, tree, nodes, host->text(), nullptr);
+    LintNodeMaker maker(globalObject, tree, nodes, host->text());
     // Where each node has `parent`.
     Vector<uint8_t> parentOffsets(count);
 
@@ -726,9 +599,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintVisitorKeys, (JSGlobalObject * globalObject, Call
     return JSValue::encode(keys);
 }
 
-// `listen(shapes, leftOut, knownStrings, words, length)` tells Rust what the rules listen for in the file that's being linted: the
+// `listen(words, length)` tells Rust what the rules listen for in the file that's being linted: the
 // first `length` of `words`, a `Uint32Array`, as `LISTEN` in src/lint/js_plugin/wire.rs describes them.
-// Without the first three, the nodes are as the layouts of the host say.
 // Returns `[calls, nodes]`. `calls`: a `Uint32Array`, see src/lint/js_plugin/calls.rs. `nodes`: those of the file by their number,
 // or `undefined` if the tree didn't come.
 JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -738,15 +610,9 @@ JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame
     auto outOfStep = [&] { return throwVMTypeError(globalObject, scope, "The calls are not as expected"_s); };
     constexpr uint32_t listen = 14;
 
-    JSArray* shapes = dynamicDowncast<JSArray>(callFrame->argument(0));
-    auto* leftOut = dynamicDowncast<JSUint32Array>(callFrame->argument(1));
-    JSArray* knownStrings = dynamicDowncast<JSArray>(callFrame->argument(2));
-    auto* words = dynamicDowncast<JSUint32Array>(callFrame->argument(3));
-    JSValue length = callFrame->argument(4);
+    auto* words = dynamicDowncast<JSUint32Array>(callFrame->argument(0));
+    JSValue length = callFrame->argument(1);
     LintHost* host = LintHost::from(globalObject);
-    bool usesLayouts = callFrame->argument(0).isUndefined();
-    if (!usesLayouts && (!shapes || !leftOut || leftOut->isDetached() || !knownStrings))
-        return outOfStep();
     if (!words || words->isDetached() || !length.isNumber() || !host->isLinting())
         return outOfStep();
     auto details = words->typedSpan().first(std::min<size_t>(words->length(), JSC::toUInt32(length.asNumber())));
@@ -767,8 +633,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame
     memcpy(calls->typedVector(), header + 2, callBytes);
     result->setIndexQuickly(vm, 0, calls);
     if (treeBytes) {
-        auto treeOfFile = bytes.subspan(8 + callBytes);
-        JSArray* nodes = usesLayouts ? makeLintNodes(globalObject, host, treeOfFile) : makeLintNodes(globalObject, shapes, leftOut, treeOfFile, host->text(), knownStrings);
+        JSArray* nodes = makeLintNodes(globalObject, host, bytes.subspan(8 + callBytes));
         RETURN_IF_EXCEPTION(scope, {});
         result->setIndexQuickly(vm, 1, nodes);
     }
@@ -841,8 +706,8 @@ struct LintCodePaths {
 
 } // namespace
 
-// `codePaths(shapes, origins, buffer)` returns `[codePaths, segments, events]`. The first two are indexed as in the message, which is
-// in `buffer`, or is asked for if that's `undefined`. `events`: a `Uint32Array` with the four words of each event.
+// `codePaths(shapes, origins)` asks Rust for the code paths of the file that's being linted and returns `[codePaths, segments, events]`.
+// The first two are indexed as in the message. `events`: a `Uint32Array` with the four words of each event.
 // A segment that never became current isn't part of any graph, so its index stays a hole.
 // `shapes` holds four templates from `shape`, for a CodePath, its `internal`, a CodePathSegment and its `internal`.
 // `origins` holds the strings for `codePath.origin`.
@@ -858,12 +723,11 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCodePaths, (JSGlobalObject * globalObject, CallFr
 
     JSArray* shapes = dynamicDowncast<JSArray>(callFrame->argument(0));
     JSArray* origins = dynamicDowncast<JSArray>(callFrame->argument(1));
-    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(2));
     if (!shapes || !origins || !LintHost::from(globalObject)->isLinting())
         return outOfStep();
     constexpr uint32_t codePathsOfFile = 11;
-    LintSpan answer = buffer ? LintSpan {} : Bun__Lint__ask(globalObject, codePathsOfFile, nullptr, 0);
-    std::span<const uint8_t> bytes = buffer ? buffer->impl()->span() : std::span<const uint8_t> { answer.ptr, answer.len };
+    LintSpan answer = Bun__Lint__ask(globalObject, codePathsOfFile, nullptr, 0);
+    std::span<const uint8_t> bytes { answer.ptr, answer.len };
 
     // How many properties each template has.
     constexpr std::array<PropertyOffset, 4> sizes { 5, 4, 7, 2 };
@@ -972,12 +836,12 @@ extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 4, "shape"_s, jsLintShape, ImplementationVisibility::Public));
-    object->putDirect(vm, Identifier::fromString(vm, "listen"_s), JSFunction::create(vm, globalObject, 5, "listen"_s, jsLintListen, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "listen"_s), JSFunction::create(vm, globalObject, 2, "listen"_s, jsLintListen, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "defineNodes"_s), JSFunction::create(vm, globalObject, 1, "defineNodes"_s, jsLintDefineNodes, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "typeId"_s), JSFunction::create(vm, globalObject, 1, "typeId"_s, jsLintTypeId, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "nodePrototype"_s), JSFunction::create(vm, globalObject, 1, "nodePrototype"_s, jsLintNodePrototype, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "visitorKeys"_s), JSFunction::create(vm, globalObject, 1, "visitorKeys"_s, jsLintVisitorKeys, ImplementationVisibility::Public));
-    object->putDirect(vm, Identifier::fromString(vm, "codePaths"_s), JSFunction::create(vm, globalObject, 3, "codePaths"_s, jsLintCodePaths, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "codePaths"_s), JSFunction::create(vm, globalObject, 2, "codePaths"_s, jsLintCodePaths, ImplementationVisibility::Public));
     addLintHostFunctions(globalObject, object);
     addLintAskFunctions(globalObject, object);
     addLintScopeFunctions(globalObject, object);

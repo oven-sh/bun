@@ -68,7 +68,7 @@ unsigned clampToText(double index, unsigned length)
     return static_cast<unsigned>(std::min<double>(index, length));
 }
 
-JSArray* createLines(JSGlobalObject* globalObject, LintHost* host, JSString* text)
+__attribute__((minsize)) JSArray* createLines(JSGlobalObject* globalObject, LintHost* host, JSString* text)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -125,7 +125,7 @@ double lengthOf(JSGlobalObject* globalObject, JSValue value)
 }
 
 // ESLint's `getInlineConfigNodes()`
-JSArray* inlineConfigNodesOf(JSGlobalObject* globalObject, LintHost* host)
+__attribute__((minsize)) JSArray* inlineConfigNodesOf(JSGlobalObject* globalObject, LintHost* host)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -324,7 +324,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeTokensAndComments, (JSGlobalObject * gl
 JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     LintHost* host = LintHost::from(globalObject);
-    return JSValue::encode(host->sourceCode.visitorKeys->getIndex(globalObject, host->isEspree() ? 1 : 0));
+    return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->isEspree()));
 }
 
 // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
@@ -369,7 +369,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeScopeManager, (JSGlobalObject * globalO
 // ───────────── methods ─────────────
 
 // `SourceCode.splitLines(text)`
-JSC_DEFINE_HOST_FUNCTION(jsLintSplitLines, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSplitLines, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -407,7 +407,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSplitLines, (JSGlobalObject * globalObject, CallF
 namespace {
 
 // `getText` for everything but a node or a token as it was made, with small numbers or nothing beside it.
-NEVER_INLINE EncodedJSValue getTextSlow(JSGlobalObject* globalObject, CallFrame* callFrame, LintHost* host)
+__attribute__((minsize)) NEVER_INLINE EncodedJSValue getTextSlow(JSGlobalObject* globalObject, CallFrame* callFrame, LintHost* host)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -486,7 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetInlineConfigNodes, (JSGlobalObject * globalObj
 }
 
 // `getDisableDirectives()`
-JSC_DEFINE_HOST_FUNCTION(jsLintGetDisableDirectives, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintGetDisableDirectives, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -559,7 +559,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetDisableDirectives, (JSGlobalObject * globalObj
 }
 
 // `getComments(node)`, which ESLint had until version 9.
-JSC_DEFINE_HOST_FUNCTION(jsLintGetComments, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintGetComments, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -684,7 +684,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetComments, (JSGlobalObject * globalObject, Call
 }
 
 // `getJSDocComment(node)`, which ESLint had until version 10.
-JSC_DEFINE_HOST_FUNCTION(jsLintGetJSDocComment, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintGetJSDocComment, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1055,7 +1055,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintIsGlobalReference, (JSGlobalObject * globalObject
 }
 
 // `markVariableAsUsed(name, refNode = this.ast)`
-JSC_DEFINE_HOST_FUNCTION(jsLintMarkVariableAsUsed, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintMarkVariableAsUsed, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1262,7 +1262,7 @@ const Property properties[] = {
 };
 
 // Gives `object`, which is new, the properties, and freezes it.
-void defineProperties(JSGlobalObject* globalObject, JSObject* object)
+__attribute__((minsize)) void defineProperties(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
     constexpr unsigned frozen = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
@@ -1276,7 +1276,7 @@ void defineProperties(JSGlobalObject* globalObject, JSObject* object)
     object->methodTable()->preventExtensions(object, globalObject);
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructSourceCode, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructSourceCode, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1331,8 +1331,8 @@ const Member members[] = {
 
 } // namespace
 
-// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions, visitorKeys]`.
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions]`.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSourceCode, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1350,11 +1350,6 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallF
             return throwVMTypeError(globalObject, scope, "Expected a function"_s);
         hook->set(vm, host, asObject(function));
     }
-    JSValue keys = hooks->getIndex(globalObject, at);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!isJSArray(keys))
-        return throwVMTypeError(globalObject, scope, "Expected visitor keys"_s);
-    state.visitorKeys.set(vm, host, asArray(keys));
 
     JSValue parent = tokenStore->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1374,7 +1369,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallF
     return JSValue::encode(constructor);
 }
 
-void LintSourceCodeState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintHost* host)
+__attribute__((minsize)) void LintSourceCodeState::finishCreation(VM& vm, JSGlobalObject* globalObject, LintHost* host)
 {
     auto set = [&](Identifier& name, ASCIILiteral text) { name = Identifier::fromString(vm, text); };
     range.initialize(vm, "range"_s);

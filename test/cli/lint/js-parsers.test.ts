@@ -723,6 +723,28 @@ rules = { "no-console" = "off" }
     );
 
     test(
+      "extglobs and brace ranges select the same files on both sides",
+      async () => {
+        const names = ["a/x", "ab/x", "c/x", "f1", "f3", "f4"];
+        const both = (names: string[]) => names.flatMap(name => [`globs/${name}.js`, `globs/${name}.vue`]);
+        const override = (patterns: string) => ({
+          "eslint.config.mjs": config,
+          ...Object.fromEntries(
+            both(names).map(it => [`tree/${it}`, it.endsWith(".js") ? "console.log(1);\n" : "<template />\n"]),
+          ),
+          "tree/globs/bunfig.toml": `[[lint.overrides]]\n${patterns}\nrules = { "no-console" = "off" }\n`,
+        });
+        const globs = `["+(a|b)/**", "f{1..3}.*"]`;
+        const args = ["--cwd", "tree/globs", "."];
+        expect(await reported(override(`files = ${globs}`), args)).toEqual(both(["c/x", "f4"]));
+        expect(await reported(override(`files = "**/*"\nexcludeFiles = ${globs}`), args)).toEqual(
+          both(["a/x", "ab/x", "f1", "f3"]),
+        );
+      },
+      timeout,
+    );
+
+    test(
       "a negated excludeFiles pattern excludes the same files on both sides",
       async () => {
         const negated = `[[lint.overrides]]\nfiles = "**/*"\nexcludeFiles = "!**/*.test.*"\nrules = { "no-console" = "off" }\n`;

@@ -526,6 +526,20 @@ options = { singleQuote = true, semi = true }
     expect(result.exitCode).toBe(0);
   });
 
+  test("patterns have Bun.Glob's syntax, including extglobs and brace ranges", async () => {
+    const names = ["a/x.js", "ab/x.js", "c/x.js", "f1.js", "f3.js", "f4.js"];
+    const sources = Object.fromEntries(names.map(name => [name, `a("b");\n`]));
+    const globs = `["+(a|b)/**", "f{1..3}.js"]`;
+    /** The files that the override applies to, which lose their semicolon. */
+    const matched = async (patterns: string) => {
+      const bunfig = `[[format.overrides]]\n${patterns}\noptions = { semi = false }\n`;
+      const { files } = await format({ "bunfig.toml": bunfig, ...sources });
+      return names.filter(name => files[name] === `a("b")\n`);
+    };
+    expect(await matched(`files = ${globs}`)).toEqual(["a/x.js", "ab/x.js", "f1.js", "f3.js"]);
+    expect(await matched(`files = "**/*.js"\nexcludeFiles = ${globs}`)).toEqual(["c/x.js", "f4.js"]);
+  });
+
   test("later overrides win, and command-line flags win over all of them", async () => {
     const more = `${table}
 [[format.overrides]]

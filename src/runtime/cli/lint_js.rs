@@ -12,17 +12,14 @@
 //! never posts a job. And nobody posts a job while holding a lock that linting a file takes. A thread with a VM does wait for
 //! its own JavaScript, which can need Bun's pool, on which nothing of `bun lint` runs.
 //!
-//! The program is `bun_lint::js_plugin::PROGRAM`: the body of a function that is given [`request`],
-//! [`again`] and [`decode`], and returns the function that [`ThreadVm::call`] calls.
+//! The program is `bun_lint::js_plugin::PROGRAM`: the body of a function that is given the native functions of
+//! src/jsc/bindings/Lint*.cpp, and returns the function that [`ThreadVm::call`] calls. These functions ask with [`Bun__Lint__ask`].
 
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
 use bun_core::strings;
-use bun_jsc::{
-    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Strong,
-    virtual_machine::VirtualMachine,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
 use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, PROGRAM, Serve, Vm, Work};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
@@ -44,8 +41,6 @@ pub(crate) struct LintVm {
     handle: Strong,
     /// Set while `handle` runs.
     call: Cell<Option<NonNull<Call<'static, 'static>>>>,
-    /// The last answer to [`request`].
-    answer: RefCell<Vec<u8>>,
     /// The answers to [`Bun__Lint__ask`] during this call.
     kept: RefCell<Kept>,
 }
@@ -100,45 +95,6 @@ fn message_of(global: &JSGlobalObject, error: JSValue) -> Vec<u8> {
     }
 }
 
-/// Copies the last answer into the `ArrayBuffer` `into`, if it fits.
-fn copy_answer(global: &JSGlobalObject, state: &LintVm, into: JSValue) -> JsResult<JSValue> {
-    let Some(mut buffer) = into.as_array_buffer(global) else {
-        return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
-    };
-    let answer = state.answer.borrow();
-    if let Some(start) = buffer.byte_slice_mut().get_mut(..answer.len()) {
-        start.copy_from_slice(&answer);
-    }
-    Ok(JSValue::js_number_from_uint64(answer.len() as u64))
-}
-
-/// Answers `kind` into `LintVm::answer`. Returns `None` if no file is being linted.
-fn ask(kind: u32, details: &[u8]) -> Option<&'static LintVm> {
-    let state = crate::jsc_hooks::lint_vm().get()?;
-    let mut call = state.call.get()?;
-    // SAFETY: on the stack of `ThreadVm::call`, which is below this frame and takes it out before
-    // it returns. `serve` runs no JavaScript, so this is the only reference.
-    let call = unsafe { call.as_mut() };
-    let mut answer = state.answer.borrow_mut();
-    answer.clear();
-    match kind {
-        0 => answer.extend_from_slice(call.content),
-        kind => (call.serve)(kind, details, &mut answer),
-    }
-    Some(&**state)
-}
-
-/// `request(kind, details, buffer)`
-#[bun_jsc::host_fn]
-fn request(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [kind, details, into] = frame.arguments_as_array::<3>();
-    let details = details.to_bun_string(global)?;
-    match ask(kind.to_int32() as u32, details.to_utf8().slice()) {
-        Some(state) => copy_answer(global, state, into),
-        None => Err(global.throw_invalid_arguments(format_args!("No file is being linted"))),
-    }
-}
-
 /// Bytes that stay the same, and in the same place, until the call that is running is over.
 #[repr(C)]
 struct LintSpan {
@@ -159,7 +115,8 @@ impl LintSpan {
 fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
     let state = crate::jsc_hooks::lint_vm().get()?;
     let mut call = state.call.get()?;
-    // SAFETY: as in `ask`.
+    // SAFETY: on the stack of `ThreadVm::call`, which is below this frame and takes it out before
+    // it returns. `serve` runs no JavaScript, so this is the only reference.
     let call = unsafe { call.as_mut() };
     state.kept.borrow_mut().is_lent = true;
     if kind == 0 {
@@ -186,7 +143,7 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
     Some(span)
 }
 
-/// What [`request`] answers, for src/jsc/bindings/LintHost.h, without a copy. `details` are bytes, so a new kind can take numbers
+/// Answers what the program asks, for src/jsc/bindings/LintHost.h, without a copy. `details` are bytes, so a kind can take numbers
 /// as they are. Every answer is kept until the call is over, so this is for tables, not for one small question per node.
 /// Null: no file is being linted.
 #[unsafe(no_mangle)]
@@ -207,33 +164,10 @@ extern "C" fn Bun__Lint__ask(
     })
 }
 
-/// `again(buffer)`
-#[bun_jsc::host_fn]
-fn again(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    match crate::jsc_hooks::lint_vm().get() {
-        Some(state) => copy_answer(global, state, frame.argument(0)),
-        None => Ok(JSValue::UNDEFINED),
-    }
-}
-
-/// `decode(buffer, start, end)`
-#[bun_jsc::host_fn]
-fn decode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [buffer, start, end] = frame.arguments_as_array::<3>();
-    let buffer = buffer.as_array_buffer(global);
-    let range = start.to_int32() as u32 as usize..end.to_int32() as u32 as usize;
-    match buffer.as_ref().and_then(|it| it.byte_slice().get(range)) {
-        Some(bytes) => jsc::bun_string_jsc::create_utf8_for_js(global, bytes),
-        None => {
-            Err(global.throw_invalid_arguments(format_args!("Expected a part of an ArrayBuffer")))
-        }
-    }
-}
-
 /// Runs the program in this thread's new VM.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
-    let mut source = b"(function (request, again, decode, native) {\n\
+    let mut source = b"(function (native) {\n\
         const require = process.getBuiltinModule(\"node:module\").createRequire(process.cwd() + \"/\");\n\
         const load = specifier => import(specifier);\n"
         .to_vec();
@@ -258,19 +192,16 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     if !exception.is_undefined() {
         return Err(message_of(global, exception));
     }
-    let functions = [
-        JSFunction::create(global, "request", __jsc_host_request, 3, Default::default()),
-        JSFunction::create(global, "again", __jsc_host_again, 1, Default::default()),
-        JSFunction::create(global, "decode", __jsc_host_decode, 3, Default::default()),
-        Bun__Lint__nodeFunctions(global),
-    ];
-    match program.call(global, JSValue::UNDEFINED, &functions) {
+    match program.call(
+        global,
+        JSValue::UNDEFINED,
+        &[Bun__Lint__nodeFunctions(global)],
+    ) {
         Ok(handle) => {
             bun_core::scoped_log!(lint_js, "a VM is made");
             Ok(LintVm {
                 handle: Strong::create(handle, global),
                 call: Cell::new(None),
-                answer: RefCell::new(Vec::new()),
                 kept: RefCell::default(),
             })
         }

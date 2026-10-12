@@ -554,7 +554,8 @@ fn problems_of(json: &Json, at: &[u8], own: &[(&[u8], Expected); 2]) -> Vec<Vec<
         at => [at, b".", key].concat(),
     };
     let properties = || own.iter().chain(&PROPERTIES);
-    if let Some((key, _)) = (entries.iter()).find(|it| !properties().any(|known| known.0 == it.0)) {
+    let is_known = |key: &[u8]| key == b"$globsOfBun" || properties().any(|known| known.0 == key);
+    if let Some((key, _)) = entries.iter().find(|it| !is_known(&it.0)) {
         return vec![[b"Unexpected top-level property \"", &field(key)[..], b"\""].concat()];
     }
     for &(key, expected) in properties() {
@@ -758,6 +759,8 @@ struct Criterion {
     ends_with_wildcard: bool,
     /// No pattern has a slash: it does not matter what they are relative to.
     is_by_name: bool,
+    /// The override comes from bunfig.toml, so its patterns are Bun's globs, as written.
+    is_of_bunfig: bool,
 }
 
 /// `ConfigArrayFactoryLoadingContext`
@@ -944,7 +947,8 @@ impl<'c> Legacy<'_, '_, 'c> {
         if files.is_empty() {
             return self.body(json, context);
         }
-        for pattern in files.iter().chain(&excluded) {
+        let is_of_bunfig = json.get(b"$globsOfBun").is_some();
+        for pattern in files.iter().chain(&excluded).filter(|_| !is_of_bunfig) {
             if paths::is_absolute_as(Style::Windows, pattern) || strings::contains(pattern, b"..") {
                 return Err(ConfigError::new(&[
                     b"Invalid override pattern (expected relative path not containing '..'): ",
@@ -952,13 +956,18 @@ impl<'c> Legacy<'_, '_, 'c> {
                 ]));
             }
         }
+        let read = |pattern: &[u8]| match is_of_bunfig {
+            true => Json::String(pattern.to_vec()),
+            false => override_pattern(pattern),
+        };
         let mut all = files.iter().chain(&excluded);
         let mut context = context.clone();
         context.criteria.push(Criterion {
             ends_with_wildcard: files.iter().any(|it| it.ends_with(b"*")),
             is_by_name: all.all(|it| !strings::contains_char(it, b'/')),
-            files: files.iter().map(|it| override_pattern(it)).collect(),
-            excluded: excluded.iter().map(|it| override_pattern(it)).collect(),
+            files: files.iter().map(|it| read(it)).collect(),
+            excluded: excluded.iter().map(|it| read(it)).collect(),
+            is_of_bunfig,
         });
         self.body(json, &context)
     }
@@ -1499,6 +1508,9 @@ impl<'c> Legacy<'_, '_, 'c> {
             // ESLint matches the name of a file that is outside, too.
             if !criteria.iter().all(|it| it.is_by_name) {
                 put(&mut flat, b"basePath", text(base_path));
+            }
+            if criteria.iter().any(|it| it.is_of_bunfig) {
+                put(&mut flat, b"$globsOfBun", Json::Bool(true));
             }
         }
         let mut read = self.reader.object(&flat)?;

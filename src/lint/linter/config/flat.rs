@@ -353,10 +353,10 @@ impl Reader<'_> {
         key: &str,
         items: &[Json],
     ) -> Result<Vec<Pattern>, ConfigError> {
-        // `$globsOfBun`, which an override of bunfig.toml has: it makes no file linted.
+        // Overrides from bunfig.toml are marked with `$globsOfBun`.
         let are_of_bun = json.get(b"$globsOfBun").is_some();
         let patterns = items.iter().map(|item| match item {
-            Json::String(pattern) if are_of_bun => Ok(Pattern::of_oxlint(pattern)),
+            Json::String(pattern) if are_of_bun => Ok(Pattern::of_bunfig(pattern)),
             Json::String(pattern) => Ok(Pattern::new(pattern)),
             // Which files it is for cannot be told. To lint fewer files than ESLint and find no problems is worse than not to lint.
             _ => {

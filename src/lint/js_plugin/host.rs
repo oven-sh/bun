@@ -229,7 +229,7 @@ impl<'e> Host<'e> {
         match asked {
             ask::START => {
                 self.state.lock().loading.realms += 1;
-                schema::write_start(&self.cwd, self.measures, details.is_empty(), out);
+                schema::write_start(&self.cwd, self.measures, out);
             }
             ask::LAYOUTS => schema::write_layouts(out),
             ask::LOADED => {

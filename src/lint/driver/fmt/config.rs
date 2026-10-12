@@ -775,8 +775,13 @@ impl<'c> Configs<'c> {
     ) -> Configs<'c> {
         let (is_like_oxfmt, reads_editorconfig) = (options.is_like_oxfmt, options.editorconfig);
         let named = options.config.clone();
-        // Use oxfmt's glob rules, where `excludeFiles` always matches against the path.
-        let strings = |all: &[Vec<u8>]| patterns_of(all.iter().map(|it| &it[..]), true);
+        // Patterns in bunfig.toml are Bun's globs. `is_oxfmt` below makes `excludeFiles` match against the path, like `files`.
+        let pattern = |text: &Vec<u8>| Pattern {
+            glob: bun_glob::Pattern::of_bunfig(text),
+            text: text[..].into(),
+            has_slash: strings::contains_char(text, b'/'),
+        };
+        let strings = |all: &[Vec<u8>]| all.iter().map(pattern).collect();
         let overrides = (options.overrides.iter())
             .map(|it| Override {
                 files: strings(&it.files),

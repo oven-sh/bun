@@ -210,11 +210,16 @@ impl Pattern {
 
     /// One element of oxc's `GlobSet::new`. A leading `./` is dropped, and a pattern without `/` matches in any directory.
     pub fn of_oxc_glob_set(written: &[u8]) -> Pattern {
-        let written = of_fast_glob(written);
+        Pattern::of_bunfig(&of_fast_glob(written))
+    }
+
+    /// A pattern from `overrides` in bunfig.toml. It has all of `Bun.Glob`'s syntax. A leading `./` is dropped, and a pattern
+    /// without `/` matches in any directory.
+    pub fn of_bunfig(written: &[u8]) -> Pattern {
         match written.strip_prefix(b"./") {
             Some(rest) => Pattern::new(rest),
-            None if strings::contains_char(&written, b'/') => Pattern::new(&written),
-            None => Pattern::new(&[b"**/", &written[..]].concat()),
+            None if strings::contains_char(written, b'/') => Pattern::new(written),
+            None => Pattern::new(&[b"**/", written].concat()),
         }
     }
 

@@ -45,7 +45,6 @@ struct LintSourceCodeState {
         visitor.append(program);
         visitor.append(scopeManager);
         visitor.append(parserOptions);
-        visitor.append(visitorKeys);
         visitor.append(lines);
         visitor.append(lineStartIndices);
         visitor.append(parserServices);
@@ -77,8 +76,6 @@ struct LintSourceCodeState {
     JSC::WriteBarrier<JSC::JSObject> program;
     JSC::WriteBarrier<JSC::JSObject> scopeManager;
     JSC::WriteBarrier<JSC::JSObject> parserOptions;
-    // ESLint's `visitorKeys`, for typescript-estree and for espree.
-    JSC::WriteBarrier<JSC::JSArray> visitorKeys;
 
     // Of the current file. Empty until a rule asks.
     JSC::WriteBarrier<JSC::JSArray> lines;

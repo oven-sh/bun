@@ -275,15 +275,15 @@ public:
         return has(variableShapes, 0) && has(definitionShapes, implicitGlobalVariable) && has(referenceShapes, 0) && has(referenceShapes, 1) && implicitShape.like;
     }
 
-    // `[scopeManager.scopes, scopes, variables, nodeToScope, declaredVariables, definitions, references]`, and room for two more.
-    // Empty if an exception was thrown.
+    // `[scopeManager.scopes, scopes, variables, nodeToScope, declaredVariables, definitions, references]`. All but the first and the two
+    // `WeakMap`s are indexed as in the message. Empty if an exception was thrown.
     JSValue make()
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         auto& message = m_message;
 
         // Everything below is reachable from `result` as soon as it exists.
-        JSArray* result = emptyArray(9);
+        JSArray* result = emptyArray(7);
         RETURN_IF_EXCEPTION(scope, {});
         auto cells = [&](unsigned at, uint32_t count) {
             JSArray* array = emptyArray(count);
@@ -787,9 +787,8 @@ public:
 
 } // namespace
 
-// `scopes(layout, buffer, nodes, names, strings, text, wantsFlags)` returns
-// `[scopeManager.scopes, scopes, variables, nodeToScope, declaredVariables, definitions, references, flags, explicit]`. The second,
-// the third, the sixth and the seventh are indexed as in the message, which is in `buffer`, or is asked for if that's `undefined`.
+// `scopes(layout, names, strings, wantsFlags)` asks Rust for the scopes of the file that's being linted, whose nodes have been made, and
+// returns `[scopeManager.scopes, globalScope, variableCount, nodeToScope, declaredVariables, flags, explicit]`.
 // `flags`: a `Uint32Array` with the flags of each reference, if `wantsFlags`. `explicit`: each variable that `/* global */` comments
 // name, followed by a list of where these comments start.
 // `layout`: `[scopes, variables, definitions, references, [implicit], [map, weakMap, globalSet]]`. Each of the first five is a list
@@ -812,21 +811,17 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
         return array;
     };
 
-    JSArray* layout = denseArray(callFrame->argument(0));
-    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(1));
-    JSArray* nodes = denseArray(callFrame->argument(2));
-    JSArray* names = denseArray(callFrame->argument(3));
-    JSArray* strings = denseArray(callFrame->argument(4));
-    JSValue textValue = callFrame->argument(5);
     LintHost* host = LintHost::from(globalObject);
-    if (!layout || layout->length() != 6 || !nodes || !names || !strings || strings->length() != stringCount || !textValue.isString() || !host->isLinting())
+    JSArray* layout = denseArray(callFrame->argument(0));
+    JSArray* names = denseArray(callFrame->argument(1));
+    JSArray* strings = denseArray(callFrame->argument(2));
+    JSArray* nodes = host->sourceCode.nodes.get();
+    if (!layout || layout->length() != 6 || !nodes || !names || !strings || strings->length() != stringCount || !host->isLinting())
         return outOfStep();
     constexpr uint32_t scopesOfFile = 9;
-    LintSpan answer = buffer ? LintSpan {} : Bun__Lint__ask(globalObject, scopesOfFile, nullptr, 0);
-    std::span<const uint8_t> bytes = buffer ? buffer->impl()->span() : std::span<const uint8_t> { answer.ptr, answer.len };
-    JSString* text = asString(textValue);
-    text->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    LintSpan answer = Bun__Lint__ask(globalObject, scopesOfFile, nullptr, 0);
+    std::span<const uint8_t> bytes { answer.ptr, answer.len };
+    JSString* text = host->text();
 
     LintScopes message;
     if (!message.read(bytes, nodes->length(), names->length(), text->length()))
@@ -883,19 +878,25 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
     RETURN_IF_EXCEPTION(scope, {});
     JSArray* made = asArray(result);
     JSArray* variables = asArray(made->getIndexQuickly(2));
-    host->scopes.globalScope.set(vm, host, asObject(asArray(made->getIndexQuickly(1))->getIndexQuickly(0)));
+    JSObject* globalScope = asObject(asArray(made->getIndexQuickly(1))->getIndexQuickly(0));
+    host->scopes.globalScope.set(vm, host, globalScope);
     host->scopes.nodeToScope.set(vm, host, uncheckedDowncast<JSWeakMap>(made->getIndexQuickly(3)));
     host->scopes.declaredVariables.set(vm, host, uncheckedDowncast<JSWeakMap>(made->getIndexQuickly(4)));
     host->scopes.variables.set(vm, host, variables);
     host->scopes.variableWords = message.variables;
     host->scopes.declaredCount = message.declaredCount;
 
-    if (callFrame->argument(6).toBoolean(globalObject)) {
+    // The program needs no more of the objects by their numbers.
+    made->setIndexQuickly(vm, 1, globalScope);
+    made->setIndexQuickly(vm, 2, jsNumber(variables->length()));
+    made->setIndexQuickly(vm, 5, jsUndefined());
+    made->setIndexQuickly(vm, 6, jsUndefined());
+    if (callFrame->argument(3).toBoolean(globalObject)) {
         auto* flags = JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypeUint32>(), message.referenceCount);
         RETURN_IF_EXCEPTION(scope, {});
         for (uint32_t i = 0; i < message.referenceCount; ++i)
             flags->typedVector()[i] = message.reference(i)[1];
-        made->setIndexQuickly(vm, 7, flags);
+        made->setIndexQuickly(vm, 5, flags);
     }
     MarkedArgumentBuffer explicitGlobals;
     for (uint32_t index : message.list(message.scope(0)[6])) {
@@ -912,7 +913,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintScopes, (JSGlobalObject * globalObject, CallFrame
     }
     JSArray* explicitList = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), explicitGlobals);
     RETURN_IF_EXCEPTION(scope, {});
-    made->setIndexQuickly(vm, 8, explicitList);
+    made->setIndexQuickly(vm, 6, explicitList);
     return JSValue::encode(result);
 }
 
@@ -955,7 +956,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSetScopeManager, (JSGlobalObject * globalObject, 
 void addLintScopeFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "scopes"_s), JSFunction::create(vm, globalObject, 7, "scopes"_s, jsLintScopes, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "scopes"_s), JSFunction::create(vm, globalObject, 4, "scopes"_s, jsLintScopes, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "usedVariables"_s), JSFunction::create(vm, globalObject, 0, "usedVariables"_s, jsLintUsedVariables, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "setScopeManager"_s), JSFunction::create(vm, globalObject, 1, "setScopeManager"_s, jsLintSetScopeManager, ImplementationVisibility::Public));
 }

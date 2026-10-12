@@ -746,15 +746,13 @@ impl<'l> Loader<'l> {
                 };
                 entries.push((key, strings_of(&it.excluded)));
             }
-            match shape {
-                Shape::Flat => entries.push((b"$globsOfBun", Json::Bool(true))),
-                Shape::Oxlint | Shape::Legacy => {}
-            }
+            // Tells each config reader to parse the patterns as Bun's globs instead of its own tool's.
+            entries.push((b"$globsOfBun", Json::Bool(true)));
             match shape {
                 _ if base_path == self.cwd() => {}
                 Shape::Flat => entries.push((b"basePath", text(self.cwd()))),
                 Shape::Oxlint => entries.push((b"$basePath", text(self.cwd()))),
-                // Those of the command line are from the working directory.
+                // ESLint 8 already resolves the command line's patterns from the working directory.
                 Shape::Legacy => {}
             }
             if !it.rules.is_empty() {
@@ -1644,7 +1642,8 @@ impl<'l> Loader<'l> {
             entries.push((b"rules", Json::Object(rules)));
         }
         if !options.overrides.is_empty() {
-            // In one whose pattern ends with `*`, they add nothing to what is linted: `isAdditionalTargetPath`.
+            // ESLint 8 also lints files that only an override matches, unless a pattern of it ends with `*`
+            // (`isAdditionalTargetPath`). Wrapping them in an override for `*` keeps them from adding files.
             let overrides = Json::Array(self.overrides(Shape::Legacy, self.cwd()));
             let for_all = vec![(&b"files"[..], strings_of(&[b"*".to_vec()]))];
             let for_all = object([for_all, vec![(b"overrides", overrides)]].concat());

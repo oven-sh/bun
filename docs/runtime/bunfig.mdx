@@ -466,7 +466,7 @@ excludeFiles = ["scripts/vendor/**"]
 rules = { "no-console" = "off" }
 ```
 
-Patterns are relative to `bunfig.toml`. A pattern without a slash matches the file name in any directory. Later overrides win over earlier ones, and all of them win over `[lint.rules]`.
+Patterns use the same syntax as [`Bun.Glob`](/runtime/glob) and are relative to `bunfig.toml`. A pattern without a slash matches the file name in any directory. Later overrides win over earlier ones, and all of them win over `[lint.rules]`.
 
 ### `lint.ignorePatterns`
 
@@ -723,7 +723,7 @@ excludeFiles = ["scripts/vendor/**"]
 options = { printWidth = 120, sortImports = false }
 ```
 
-- `files` and `excludeFiles` take a glob or an array of globs, relative to `bunfig.toml`. In `files`, a glob without a slash matches the file name in any directory.
+- `files` and `excludeFiles` take a glob or an array of globs, relative to `bunfig.toml`. They use the same syntax as [`Bun.Glob`](/runtime/glob). A glob without a slash matches the file name in any directory.
 - `options` takes the style options, `sortImports`, `sortTailwindcss`, `sortPackageJson`, `jsdoc`, and `parser`.
 
 ### Every other flag

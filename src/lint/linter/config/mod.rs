@@ -131,11 +131,20 @@ impl Pattern {
         }
     }
 
-    /// An element of `files` or `excludeFiles` of an override of oxlint. A `!` at its start makes it match what it would not
-    /// match without, and takes nothing back. oxlint lints a file for what it is called, not because an override is for it.
+    /// A `files` or `excludeFiles` pattern from an override in an `.oxlintrc.json`.
     fn of_oxlint(written: &[u8]) -> Pattern {
+        Pattern::of_override(bun_glob::Pattern::of_oxc_glob_set(written))
+    }
+
+    /// A `files` or `excludeFiles` pattern from `[[lint.overrides]]` in bunfig.toml.
+    fn of_bunfig(written: &[u8]) -> Pattern {
+        Pattern::of_override(bun_glob::Pattern::of_bunfig(written))
+    }
+
+    /// A leading `!` inverts the pattern. Unlike in ESLint, it never un-ignores a file. An override never makes a file linted.
+    fn of_override(matcher: bun_glob::Pattern) -> Pattern {
         Pattern {
-            matcher: bun_glob::Pattern::of_oxc_glob_set(written),
+            matcher,
             is_negated: false,
             is_inverted: false,
             is_comment: false,

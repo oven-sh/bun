@@ -881,11 +881,17 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       "three.json": `{ "extends": "./one.json" }`,
       "sub/keep.txt": "",
     });
-    const results = await Promise.all([check(itself), check(three)]);
+    // The file that closes the circle is extended again, and is reported once.
+    await Bun.write(join(String(three), "again.json"), `{ ${options}, "files": ["a.ts"], "extends": "./three.json" }`);
+    const results = await Promise.all([check(itself), check(three), check(three, ["-p", "again.json"])]);
     expect(results.map(it => it.stdout.split("\n"))).toEqual([
       [circularity + `<dir>/tsconfig.json -> <dir>/tsconfig.json`, bad],
       [
         circularity + `<dir>/tsconfig.json -> <dir>/one.json -> <dir>/two.json -> <dir>/three.json -> <dir>/one.json`,
+        bad,
+      ],
+      [
+        circularity + `<dir>/again.json -> <dir>/three.json -> <dir>/one.json -> <dir>/two.json -> <dir>/three.json`,
         bad,
       ],
     ]);

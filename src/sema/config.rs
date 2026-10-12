@@ -12,13 +12,13 @@ use crate::resolve::{
     supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, FxHashSet};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// A configuration file error: the code of TypeScript's message, and the message arguments.
@@ -208,6 +208,11 @@ pub struct ExtendedConfigCache {
     /// Those that met a cycle, which holds for one `load_overriding` only: what is made of the
     /// files of a cycle depends on where it was entered.
     in_cycle: RefCell<FxHashMap<Vec<u8>, Rc<ExtendedConfigCacheEntry>>>,
+    /// The files at which a cycle was closed during this `load_overriding`: TS18000 is reported
+    /// once for each. TypeScript keeps such a file, and what it keeps has no errors.
+    closed: RefCell<FxHashSet<Vec<u8>>>,
+    /// How often a cycle was met, or something kept that had met one was used.
+    cycles_met: Cell<usize>,
 }
 
 struct ExtendedConfigCacheEntry {
@@ -369,10 +374,14 @@ fn parse_config(
     let is_case_sensitive = host.is_case_sensitive();
     let resolved_path = to_path(path, is_case_sensitive).into_owned();
     if is_on_stack(stack, &resolved_path, is_case_sensitive) {
-        // typescript-go passes no argument, and prints `{0}`. TypeScript 6 prints the files.
-        let files = stack.iter().map(|it| &it[..]).chain([path]);
-        let files: Vec<_> = files.map(displayed_path).collect();
-        errors.push(ConfigError::new(18000, &[&files.join(&b" -> "[..])]));
+        let cache = extended_config_cache;
+        cache.cycles_met.set(cache.cycles_met.get() + 1);
+        if cache.closed.borrow_mut().insert(resolved_path) {
+            // typescript-go passes no argument, and prints `{0}`. TypeScript 6 prints the files.
+            let files = stack.iter().map(|it| &it[..]).chain([path]);
+            let files: Vec<_> = files.map(displayed_path).collect();
+            errors.push(ConfigError::new(18000, &[&files.join(&b" -> "[..])]));
+        }
         return None;
     }
     // `convertConfigFileToObject`
@@ -605,13 +614,18 @@ fn get_extended_config(
     }
     let cache = extended_config_cache;
     let known = cache.kept.borrow().get(&path).cloned();
-    let known = known.or_else(|| cache.in_cycle.borrow().get(&path).cloned());
+    let known = known.or_else(|| {
+        let known = cache.in_cycle.borrow().get(&path).cloned()?;
+        cache.cycles_met.set(cache.cycles_met.get() + 1);
+        Some(known)
+    });
     let entry = known.unwrap_or_else(|| {
         let mut errors = Vec::new();
+        let cycles_met = cache.cycles_met.get();
         let extended_config = parse_config(host, session, name, stack, cache, &mut errors);
         // typescript-go keeps these for the whole build, so there the options of a project depend
         // on which project was loaded first.
-        let is_in_cycle = errors.iter().any(|error| error.code == 18000);
+        let is_in_cycle = cache.cycles_met.get() != cycles_met;
         let entry = Rc::new(ExtendedConfigCacheEntry {
             extended_config,
             errors,
@@ -727,6 +741,7 @@ pub fn load_overriding(
     let mut errors = Vec::new();
     let cache = extended_config_cache;
     cache.in_cycle.borrow_mut().clear();
+    cache.closed.borrow_mut().clear();
     let raw = parse_config(host, session, path, &mut Vec::new(), cache, &mut errors);
     let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
         return Err(errors);

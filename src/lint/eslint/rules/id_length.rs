@@ -362,7 +362,16 @@ impl IdLength {
             StmtKind::Interface(it) => [Some(it.name()), None],
             StmtKind::TypeAlias(it) => [Some(it.name()), None],
             StmtKind::Enum(it) => [Some(it.name()), None],
-            StmtKind::ImportEquals(it) => [Some(it.name()), None],
+            StmtKind::ImportEquals(it) => {
+                // The `b` and the `c` of `import x = a.b.c`.
+                if let ImportEqualsTarget::Entity(target) = it.target() {
+                    for name in target.parts().skip(1) {
+                        self.check_ident(name, cx);
+                    }
+                }
+                [Some(it.name()), None]
+            }
+            StmtKind::ExportAsNamespace(_) => [statement.namespace_export_name(), None],
             StmtKind::ExportStar { alias, .. } => [alias, None],
             StmtKind::Import(it) => [it.default(), it.namespace()],
             StmtKind::Module(it) => {
@@ -437,6 +446,11 @@ impl IdLength {
                     self.check_ident(name, cx);
                 }
             }
+            TypeKind::Import { name, .. } => {
+                for name in name.parts() {
+                    self.check_ident(name, cx);
+                }
+            }
             TypeKind::Typeof { expr, .. } => {
                 let mut at = expr;
                 while let ExprKind::Dot { obj, name, .. } = at.kind() {
@@ -463,6 +477,7 @@ impl Rule for IdLength {
             StmtTag::TypeAlias,
             StmtTag::Enum,
             StmtTag::ImportEquals,
+            StmtTag::ExportAsNamespace,
             StmtTag::ExportStar,
             StmtTag::Import,
             StmtTag::Module,
@@ -518,13 +533,14 @@ impl Rule for IdLength {
                     StmtTag::TypeAlias,
                     StmtTag::Enum,
                     StmtTag::ImportEquals,
+                    StmtTag::ExportAsNamespace,
                     StmtTag::ExportStar,
                     StmtTag::Import,
                     StmtTag::Module,
                 ])
                 .members()
                 .enum_members()
-                .types(&[TypeTag::Tuple, TypeTag::Ref, TypeTag::Typeof, TypeTag::Predicate]);
+                .types(&[TypeTag::Import, TypeTag::Tuple, TypeTag::Ref, TypeTag::Typeof, TypeTag::Predicate]);
             if self.check_generic {
                 on = on.type_params();
             }
@@ -594,7 +610,7 @@ impl Rule for IdLength {
         }
         match (ty.tag(), cx.language().is_oxlint) {
             (TypeTag::Import, false) => self.check_import_type(ty, cx),
-            (TypeTag::Tuple | TypeTag::Ref | TypeTag::Typeof | TypeTag::Predicate, true) => {
+            (TypeTag::Import | TypeTag::Tuple | TypeTag::Ref | TypeTag::Typeof | TypeTag::Predicate, true) => {
                 self.check_type_as_oxlint(ty, cx);
             }
             _ => {}

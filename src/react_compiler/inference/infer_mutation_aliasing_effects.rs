@@ -184,6 +184,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
             func.instructions.len(),
             Default::default(),
         ),
+        function_value_id_cache: HashMap::default(),
         function_values: Vec::new(),
         function_signature_cache: HashMap::default(),
         aliasing_config_temp_cache: HashMap::default(),
@@ -891,7 +892,7 @@ enum MutationResult {
 
 struct Context {
     /// `None`: `EnvironmentConfig::effects_keep_their_place`
-    interned_effects: Option<HashMap<u64, Rc<AliasingEffect>>>,
+    interned_effects: Option<HashMap<EffectKey, Rc<AliasingEffect>>>,
     /// By index into `HirFunction::instructions`, for the blocks that can be visited again.
     instruction_signature_cache: Vec<Option<Vec<AliasingEffect>>>,
     /// The signature of the instruction at hand, in a block that is visited once.
@@ -902,9 +903,11 @@ struct Context {
     is_function_expression: bool,
     hoisted_context_declarations: HashMap<DeclarationId, Option<Place>>,
     non_mutating_spreads: HashSet<IdentifierId>,
-    /// Cache of ValueIds keyed by effect hash, ensuring stable allocation-site identity
+    /// Cache of ValueIds keyed by effect, ensuring stable allocation-site identity
     /// across fixpoint iterations. Mirrors TS `effectInstructionValueCache`.
-    effect_value_id_cache: HashMap<u64, ValueId>,
+    effect_value_id_cache: HashMap<ValueKey, ValueId>,
+    /// The same for `CreateFunction`, whose key has no fixed size.
+    function_value_id_cache: HashMap<EffectKey, ValueId>,
     /// Maps ValueId to FunctionId for function expressions, so we can look up
     /// locally-declared functions when processing Apply effects.
     function_values: Vec<Option<FunctionId>>,
@@ -927,11 +930,11 @@ impl Context {
     fn interned_effect(&mut self, effect: &AliasingEffect) -> Option<Rc<AliasingEffect>> {
         #[inline(never)]
         fn intern(
-            interned_effects: &mut HashMap<u64, Rc<AliasingEffect>>,
+            interned_effects: &mut HashMap<EffectKey, Rc<AliasingEffect>>,
             effect: &AliasingEffect,
         ) -> Rc<AliasingEffect> {
             let interned = interned_effects
-                .entry(hash_effect(effect))
+                .entry(effect_key(effect))
                 .or_insert_with(|| Rc::new(effect.clone()));
             Rc::clone(interned)
         }
@@ -966,17 +969,47 @@ impl Context {
     }
 
     /// Get or create a stable ValueId for a given effect, ensuring fixpoint convergence.
-    fn get_or_create_value_id(&mut self, effect: &AliasingEffect) -> ValueId {
-        self.value_id_of_key(hash_effect(effect))
-    }
-
-    fn value_id_of_key(&mut self, key: u64) -> ValueId {
+    fn value_id_of_key(&mut self, key: ValueKey) -> ValueId {
         *self.effect_value_id_cache.entry(key).or_insert_with(|| {
             let id = ValueId(self.next_value_id);
             self.next_value_id += 1;
             id
         })
     }
+
+    /// `value_id_of_key` for a `CreateFunction`.
+    fn value_id_of_function(&mut self, effect: &AliasingEffect) -> ValueId {
+        let ids = &mut self.function_value_id_cache;
+        *ids.entry(effect_key(effect)).or_insert_with(|| {
+            let id = ValueId(self.next_value_id);
+            self.next_value_id += 1;
+            id
+        })
+    }
+}
+
+/// An effect that makes a value, with all that [`effect_key`] has of it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ValueKey {
+    Create {
+        into: IdentifierId,
+        kind: u8,
+        reason: u8,
+    },
+    CreateFrom {
+        from: IdentifierId,
+        into: IdentifierId,
+    },
+    /// `Assign` of a frozen value.
+    AssignFrozen {
+        from: IdentifierId,
+        into: IdentifierId,
+    },
+    /// `Assign` of a global or a primitive.
+    AssignCopied {
+        from: IdentifierId,
+        into: IdentifierId,
+    },
 }
 
 fn function_of(function_values: &[Option<FunctionId>], value_id: ValueId) -> Option<FunctionId> {
@@ -987,133 +1020,102 @@ fn function_of(function_values: &[Option<FunctionId>], value_id: ValueId) -> Opt
 type Initialized = SmallVec<[IdentifierId; 8]>;
 
 // =============================================================================
-// Helper: hash_effect
+// Helper: effect_key
 // =============================================================================
 
-fn hash_effect(effect: &AliasingEffect) -> u64 {
-    use std::hash::Hasher;
-    let mut h = rustc_hash::FxHasher::default();
+/// What TS `hashEffect` makes a string of: effects with the same key are one effect.
+type EffectKey = SmallVec<[u32; 8]>;
+
+fn effect_key(effect: &AliasingEffect) -> EffectKey {
+    fn push_bytes(key: &mut EffectKey, bytes: &[u8]) {
+        key.push(bytes.len() as u32);
+        for word in bytes.chunks(4) {
+            let mut padded = [0; 4];
+            padded[..word.len()].copy_from_slice(word);
+            key.push(u32::from_le_bytes(padded));
+        }
+    }
+    fn push_error(key: &mut EffectKey, error: &CompilerDiagnostic) {
+        key.push(error.severity() as u32);
+        for position in
+            (error.primary_location()).map_or([None; 2], |loc| [loc.start.index, loc.end.index])
+        {
+            key.extend([u32::from(position.is_some()), position.unwrap_or(0)]);
+        }
+        push_bytes(key, error.reason.as_bytes());
+        push_bytes(key, error.description.as_deref().unwrap_or("").as_bytes());
+    }
+
+    let mut key = EffectKey::new();
     match effect {
         AliasingEffect::Apply(apply) => {
-            let into = &apply.into;
-            h.write_u8(0);
-            h.write_u32(apply.receiver.identifier.0);
-            h.write_u32(apply.function.identifier.0);
-            h.write_u8(apply.mutates_function as u8);
+            key.extend([
+                0,
+                apply.receiver.identifier.0,
+                apply.function.identifier.0,
+                u32::from(apply.mutates_function),
+                apply.into.identifier.0,
+            ]);
             for a in apply.args.iter() {
                 match a {
-                    PlaceOrSpreadOrHole::Hole => h.write_u8(0),
-                    PlaceOrSpreadOrHole::Place(p) => {
-                        h.write_u8(1);
-                        h.write_u32(p.identifier.0);
-                    }
-                    PlaceOrSpreadOrHole::Spread(s) => {
-                        h.write_u8(2);
-                        h.write_u32(s.place.identifier.0);
-                    }
+                    PlaceOrSpreadOrHole::Hole => key.push(0),
+                    PlaceOrSpreadOrHole::Place(p) => key.extend([1, p.identifier.0]),
+                    PlaceOrSpreadOrHole::Spread(s) => key.extend([2, s.place.identifier.0]),
                 }
             }
-            h.write_u32(into.identifier.0);
         }
         AliasingEffect::CreateFrom { from, into } => {
-            h.write_u8(1);
-            h.write_u32(from.identifier.0);
-            h.write_u32(into.identifier.0);
+            key.extend([1, from.identifier.0, into.identifier.0]);
         }
         AliasingEffect::ImmutableCapture { from, into } => {
-            h.write_u8(2);
-            h.write_u32(from.identifier.0);
-            h.write_u32(into.identifier.0);
+            key.extend([2, from.identifier.0, into.identifier.0]);
         }
         AliasingEffect::Assign { from, into } => {
-            h.write_u8(3);
-            h.write_u32(from.identifier.0);
-            h.write_u32(into.identifier.0);
+            key.extend([3, from.identifier.0, into.identifier.0]);
         }
         AliasingEffect::Alias { from, into } => {
-            h.write_u8(4);
-            h.write_u32(from.identifier.0);
-            h.write_u32(into.identifier.0);
+            key.extend([4, from.identifier.0, into.identifier.0]);
         }
         AliasingEffect::Capture { from, into } => {
-            h.write_u8(5);
-            h.write_u32(from.identifier.0);
-            h.write_u32(into.identifier.0);
+            key.extend([5, from.identifier.0, into.identifier.0]);
         }
         AliasingEffect::MaybeAlias { from, into } => {
-            h.write_u8(6);
-            h.write_u32(from.identifier.0);
-            h.write_u32(into.identifier.0);
+            key.extend([6, from.identifier.0, into.identifier.0]);
         }
         AliasingEffect::Create {
             into,
             value,
             reason,
-        } => {
-            h.write_u8(7);
-            h.write_u32(into.identifier.0);
-            h.write_u8(*value as u8);
-            h.write_u8(*reason as u8);
-        }
+        } => key.extend([7, into.identifier.0, *value as u32, *reason as u32]),
         AliasingEffect::Freeze { value, reason } => {
-            h.write_u8(8);
-            h.write_u32(value.identifier.0);
-            h.write_u8(*reason as u8);
+            key.extend([8, value.identifier.0, *reason as u32]);
         }
-        AliasingEffect::Impure { place, .. } => {
-            h.write_u8(9);
-            h.write_u32(place.identifier.0);
-        }
-        AliasingEffect::Render { place } => {
-            h.write_u8(10);
-            h.write_u32(place.identifier.0);
-        }
+        AliasingEffect::Impure { place, .. } => key.extend([9, place.identifier.0]),
+        AliasingEffect::Render { place } => key.extend([10, place.identifier.0]),
         AliasingEffect::MutateFrozen { place, error } => {
-            h.write_u8(11);
-            h.write_u32(place.identifier.0);
-            h.write(error.reason.as_bytes());
-            if let Some(d) = &error.description {
-                h.write(d.as_bytes());
-            }
+            key.extend([11, place.identifier.0]);
+            push_error(&mut key, error);
         }
         AliasingEffect::MutateGlobal { place, error } => {
-            h.write_u8(12);
-            h.write_u32(place.identifier.0);
-            h.write(error.reason.as_bytes());
-            if let Some(d) = &error.description {
-                h.write(d.as_bytes());
-            }
+            key.extend([12, place.identifier.0]);
+            push_error(&mut key, error);
         }
-        AliasingEffect::Mutate { value, .. } => {
-            h.write_u8(13);
-            h.write_u32(value.identifier.0);
-        }
-        AliasingEffect::MutateConditionally { value } => {
-            h.write_u8(14);
-            h.write_u32(value.identifier.0);
-        }
-        AliasingEffect::MutateTransitive { value } => {
-            h.write_u8(15);
-            h.write_u32(value.identifier.0);
-        }
+        AliasingEffect::Mutate { value, .. } => key.extend([13, value.identifier.0]),
+        AliasingEffect::MutateConditionally { value } => key.extend([14, value.identifier.0]),
+        AliasingEffect::MutateTransitive { value } => key.extend([15, value.identifier.0]),
         AliasingEffect::MutateTransitiveConditionally { value } => {
-            h.write_u8(16);
-            h.write_u32(value.identifier.0);
+            key.extend([16, value.identifier.0]);
         }
         AliasingEffect::CreateFunction {
             into,
             function_id,
             captures,
         } => {
-            h.write_u8(17);
-            h.write_u32(into.identifier.0);
-            h.write_u32(function_id.0);
-            for p in captures.iter() {
-                h.write_u32(p.identifier.0);
-            }
+            key.extend([17, into.identifier.0, function_id.0]);
+            key.extend(captures.iter().map(|p| p.identifier.0));
         }
     }
-    h.finish()
+    key
 }
 
 // =============================================================================
@@ -1681,7 +1683,11 @@ fn apply_effect(
                 "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
             )?;
             initialized.push(into.identifier);
-            let value_id = context.get_or_create_value_id(effect);
+            let value_id = context.value_id_of_key(ValueKey::Create {
+                into: into.identifier,
+                kind: kind as u8,
+                reason: reason as u8,
+            });
             state.initialize(
                 value_id,
                 AbstractValue {
@@ -1710,7 +1716,10 @@ fn apply_effect(
             )?;
             initialized.push(into.identifier);
             let from_value = state.kind(from.identifier);
-            let value_id = context.get_or_create_value_id(effect);
+            let value_id = context.value_id_of_key(ValueKey::CreateFrom {
+                from: from.identifier,
+                into: into.identifier,
+            });
             state.initialize(
                 value_id,
                 AbstractValue {
@@ -1814,7 +1823,7 @@ fn apply_effect(
                 }
             }
 
-            let value_id = context.get_or_create_value_id(effect);
+            let value_id = context.value_id_of_function(effect);
             // Track this value as a function expression so Apply can look it up
             let value_index = value_id.0 as usize;
             if context.function_values.len() <= value_index {
@@ -1919,15 +1928,10 @@ fn apply_effect(
                             into: into.clone(),
                         },
                     );
-                    let cache_key = {
-                        use std::hash::Hasher;
-                        let mut h = rustc_hash::FxHasher::default();
-                        h.write_u8(0xF0);
-                        h.write_u32(from.identifier.0);
-                        h.write_u32(into.identifier.0);
-                        h.finish()
-                    };
-                    let value_id = context.value_id_of_key(cache_key);
+                    let value_id = context.value_id_of_key(ValueKey::AssignFrozen {
+                        from: from.identifier,
+                        into: into.identifier,
+                    });
                     state.initialize(
                         value_id,
                         AbstractValue {
@@ -1938,15 +1942,10 @@ fn apply_effect(
                     state.define(into.identifier, value_id);
                 }
                 ValueKind::Global | ValueKind::Primitive => {
-                    let cache_key = {
-                        use std::hash::Hasher;
-                        let mut h = rustc_hash::FxHasher::default();
-                        h.write_u8(0xF1);
-                        h.write_u32(from.identifier.0);
-                        h.write_u32(into.identifier.0);
-                        h.finish()
-                    };
-                    let value_id = context.value_id_of_key(cache_key);
+                    let value_id = context.value_id_of_key(ValueKey::AssignCopied {
+                        from: from.identifier,
+                        into: into.identifier,
+                    });
                     state.initialize(
                         value_id,
                         AbstractValue {

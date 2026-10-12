@@ -78,7 +78,11 @@ fn can_become_variable_declaration<'a>(identifier: Node<'a>, patterns: &mut Patt
             Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Expr(_)) => {
                 match statement.parent() {
                     Node::File(_) | Node::Func(_) | Node::Case(_) => true,
-                    Node::Stmt(host) => matches!(host.kind(), StmtKind::Block(_)),
+                    // For oxlint the body of a namespace is such a list of statements too.
+                    Node::Stmt(host) => {
+                        matches!(host.kind(), StmtKind::Block(_))
+                            || host.tag() == StmtTag::Module && host.file().language().is_oxlint
+                    }
                     _ => false,
                 }
             }

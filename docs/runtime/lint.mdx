@@ -879,7 +879,7 @@ Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
 bun lint -c eslint.ci.config.js
 ```
 
-Bun runs `eslint.config.js` in a separate process. A TypeScript configuration file needs no extra package.
+Bun runs `eslint.config.js` in a separate process, where `process.argv` is the command line of `bun lint`. A TypeScript configuration file needs no extra package.
 
 ### `bunfig.toml`
 

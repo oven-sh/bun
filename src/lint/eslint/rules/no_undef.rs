@@ -28,14 +28,18 @@ impl Rule for NoUndef {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // oxlint says nothing about a name that can be that of a type.
+        // oxlint says nothing about a name that can be that of a type. And for oxc only an expression and the `a` of
+        // `export { a }` refer to a variable: not the `a` of `import b = a.c`, of `export as namespace a`, of `a is T`, of `<a:b />`.
         let is_oxlint = cx.language().is_oxlint;
+        let is_none_for_oxc = |it: Reference| it.expr().is_none() && !matches!(it.node(), Node::ExportSpec(_));
         let file = cx.file();
         // Whether a global variable of a name is one for a value, and for a type.
         let (for_value, for_type) = (1, 2);
         let mut globals: ByName<u8> = ByName::default();
         for reference in file.unresolved_references() {
-            if is_oxlint && reference.is_type() || !self.considers_typeof && has_typeof_operator(reference) {
+            if is_oxlint && (reference.is_type() || is_none_for_oxc(reference))
+                || !self.considers_typeof && has_typeof_operator(reference)
+            {
                 continue;
             }
             let name = reference.name();

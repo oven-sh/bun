@@ -259,7 +259,7 @@ impl Rules {
 
     fn finish(&mut self) {
         self.native = sorted(std::mem::take(&mut self.native));
-        self.not_run.sort_unstable();
+        bun_lint::utils::sort::sort_unstable(&mut self.not_run);
         self.not_run.dedup();
         bun_lint::utils::sort::sort_by(&mut self.javascript, |a, b| a.id.cmp(&b.id));
         self.javascript.dedup_by(|a, b| Arc::ptr_eq(a, b));

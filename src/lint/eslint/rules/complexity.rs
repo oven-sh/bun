@@ -60,7 +60,7 @@ impl Complexity {
         };
         let outermost = cx.file().funcs().filter(|it| it.has_body() && it.enclosing().is_none());
         let mut outermost: Vec<(Span, usize)> = outermost.map(inside).collect();
-        outermost.sort_unstable_by_key(|it| it.0.start);
+        utils::sort::sort_unstable_by_key(&mut outermost, |it| it.0.start);
         // The last that starts before what has been found.
         let mut at = 0;
         let mut around = Vec::with_capacity(found.len());

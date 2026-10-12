@@ -1226,13 +1226,13 @@ impl Alternative {
             return true;
         }
         match path.get(path_index as usize) {
-            Some(found) if first.is_ascii_alphanumeric() || first == b'.' => *found == first,
+            Some(found) if IS_PLAIN[first as usize] => *found == first,
             Some(_) if first == b'[' => {
                 let c = decode_rune_at(path, path_index as usize).0;
                 !matches!(match_class(glob, self.start, c), Some((false, _)))
             }
             Some(_) => true,
-            None => !(first.is_ascii_alphanumeric() || first == b'.'),
+            None => !IS_PLAIN[first as usize],
         }
     }
 

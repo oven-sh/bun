@@ -466,7 +466,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     #[inline(never)]
     fn unusual_jsx_identifier(&mut self) {
-        if !self.recovers() {
+        // For oxc the name is the text as it's written: `<X\u0065 />` doesn't refer to `Xe`. It rejects an escape in a keyword.
+        let is_escaped_keyword = self.lx.has_escape && self.token() != T::Identifier;
+        let is_as_written = self.options.dialect.oxc && !is_escaped_keyword;
+        if !self.recovers() && !(is_as_written && self.lx.has_escape) {
             return self.report();
         }
         let src = self.lx.src;
@@ -504,12 +507,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             end += len;
         }
-        if end > from {
+        if is_as_written {
+            let written = (self.lx.start as usize)..end;
+            text = src.get(written).unwrap_or_default().to_vec();
+        }
+        if end > from || is_as_written {
             self.lx.atom = self.atom(&text);
             self.lx.end = end as u32;
         }
         self.lx.token = T::Identifier;
-        if self.lx.has_escape {
+        if self.lx.has_escape && !is_as_written {
             self.error_at_token(17021, &[]);
         }
     }
@@ -617,7 +624,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         while self.eat(T::Dot) {
             let (name, name_pos) = match self.recovers() {
                 true => self.jsx_member_name(),
-                false => self.identifier_name(),
+                false => {
+                    if self.lx.has_escape && !self.options.dialect.oxc {
+                        self.report();
+                    }
+                    self.identifier_name()
+                }
             };
             let kind = ExprKind::Dot {
                 obj: expression,
@@ -653,7 +665,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let at = self.full_start();
             return (self.missing_identifier(0, 0).0, at);
         }
-        if self.lx.has_escape {
+        if self.lx.has_escape && !self.options.dialect.oxc {
             self.error_at_token(17021, &[]);
         }
         let name = (self.lx.atom, self.pos());

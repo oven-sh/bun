@@ -143,6 +143,7 @@ impl<'a> Checks<'a> {
             self.candidates.push(Candidate { node, when, step });
             self.errors.push(SyntaxError {
                 at,
+                end: 0,
                 message: message.into(),
             });
         }

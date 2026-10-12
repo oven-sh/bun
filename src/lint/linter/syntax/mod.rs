@@ -23,6 +23,8 @@ use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind};
 /// Why a parser throws, and where.
 struct SyntaxError {
     at: u32,
+    /// Where oxc's label ends, like [`Diagnostic::end`]: 0 is the end of the token at `at`. ESLint's parsers only have a place.
+    end: u32,
     message: Vec<u8>,
 }
 
@@ -96,14 +98,11 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
             diagnostic,
             SyntaxError {
                 at: diagnostic.map_or(0, |it| it.start),
+                end: diagnostic.map_or(0, |it| it.end),
                 message,
             },
         )
     });
-    // What oxc labels: see `Diagnostic::end`.
-    let end_of_parser = (of_parser.as_ref())
-        .filter(|_| !file.language().refuses_what_parser_refuses)
-        .map(|it| it.0.map_or(0, |diagnostic| diagnostic.end));
     let error = match (parser, of_parser) {
         (_, of_parser) if !file.language().refuses_what_parser_refuses => {
             let of_oxlint = || match file.path() {
@@ -128,9 +127,9 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         (_, of_parser) => of_parser.map(|it| it.1),
     }?;
     let at = file.position(error.at);
-    let end = end_of_parser.map(|end| {
+    let end = (!file.language().refuses_what_parser_refuses).then(|| {
         let rest = file.text().get(error.at as usize..).unwrap_or_default();
-        let end = file.position(match end {
+        let end = file.position(match error.end {
             Diagnostic::NO_LENGTH => error.at,
             0 => error.at + token_len(rest) as u32,
             end => end,

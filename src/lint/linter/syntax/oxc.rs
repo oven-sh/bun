@@ -38,6 +38,7 @@ fn error_of_grammar<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     }
     Some(SyntaxError {
         at: first.start,
+        end: first.end,
         message,
     })
 }
@@ -64,6 +65,7 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
             && loop_with_head(file, it.id().idx()).is_none();
         is_empty.then(|| SyntaxError {
             at: raw.start,
+            end: 0,
             message: b"A variable declaration list must have at least one variable declarator."
                 .to_vec(),
         })
@@ -78,6 +80,7 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
             let left = file.hir.stmts.get(left.idx())?;
             matches!(left.kind, StmtKind::Var(list) if list.len() != 1).then(|| SyntaxError {
                 at: left.start,
+                end: left.loc.end,
                 message: format!(
                     "Only a single variable declaration is allowed in a 'for...{word}' statement."
                 )
@@ -107,6 +110,7 @@ fn class_without_name<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         .min()?;
     Some(SyntaxError {
         at,
+        end: 0,
         message: b"A class declaration without the 'default' modifier must have a name.".to_vec(),
     })
 }
@@ -164,6 +168,7 @@ fn reserved_word<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let word = word.get(..token_len(word)).unwrap_or_default();
     Some(SyntaxError {
         at,
+        end: 0,
         message: [b"The keyword '", word, b"' is reserved"].concat(),
     })
 }
@@ -189,7 +194,8 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
             && (bound.var_stmt.get(*i)).is_some_and(|list| list.is_some() && !is_in_loop_head(*list))
     });
     lacking.map(|(_, it)| SyntaxError {
-        at: it.loc.end,
+        at: hir.pats.get(it.pat.idx()).map_or(it.loc.end, |pat| pat.pos),
+        end: 0,
         message: match it.kind {
             VarKind::Const => b"Missing initializer in const declaration".to_vec(),
             _ => b"Using declarations must have an initializer.".to_vec(),
@@ -231,7 +237,7 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
             }
         }
         // The first of the names that are there again: those of one name are side by side, in the order of the text.
-        names.sort_unstable_by_key(|it| (it.0.0, it.1));
+        crate::utils::sort::sort_unstable_by_key(&mut names, |it| (it.0.0, it.1));
         let is_first = |i: usize| i == 0 || names[i - 1].0 != names[i].0;
         let twice = (0..names.len().saturating_sub(1))
             .filter(|&i| names[i].0 == names[i + 1].0 && is_first(i))
@@ -252,6 +258,7 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let name = name.get(..token_len(name))?;
     Some(SyntaxError {
         at,
+        end: 0,
         message: [b"Identifier `", name, b"` has already been declared"].concat(),
     })
 }
@@ -269,6 +276,7 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     });
     Some(SyntaxError {
         at: declared.min()?,
+        end: 0,
         message: b"A 'declare' modifier cannot be used in an already ambient context.".to_vec(),
     })
 }
@@ -290,6 +298,7 @@ fn deferred_import<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let (at, message) = refused.min_by_key(|it| it.0)?;
     Some(SyntaxError {
         at,
+        end: 0,
         message: message.to_vec(),
     })
 }

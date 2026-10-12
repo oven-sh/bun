@@ -132,7 +132,7 @@ impl<'a> File<'a> {
         let mut all: Vec<(&'a [u8], Global)> = (variables.of_environments.iter())
             .map(|(name, setting)| (&**name, *setting))
             .collect();
-        all.sort_unstable_by_key(|it| it.0);
+        crate::utils::sort::sort_unstable_by_key(&mut all, |it| it.0);
         all
     }
 

@@ -66,7 +66,7 @@ impl<'a> Checks<'a, '_> {
         self.meta_properties();
         self.regular_expressions();
         self.functions();
-        self.defaults_that_suspend();
+        self.defaults_that_suspend(false);
         self.supers();
         self.private_names();
         self.jumps();
@@ -98,6 +98,7 @@ impl<'a> Checks<'a, '_> {
             self.assignment_targets();
         }
         self.regular_expressions();
+        self.defaults_that_suspend(true);
         self.jumps();
         self.labels();
     }
@@ -1094,17 +1095,30 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `checkYieldAwaitInDefaultParams`
-    fn defaults_that_suspend(&mut self) {
-        for (tag, message) in [
-            (ExprTag::Yield, "Yield expression cannot be a default value"),
-            (ExprTag::Await, "Await expression cannot be a default value"),
-        ] {
+    /// `checkYieldAwaitInDefaultParams`. `of_oxc`: in oxc's words. It labels the whole expression, and has the error for a
+    /// computed key in a parameter's type too.
+    fn defaults_that_suspend(&mut self, of_oxc: bool) {
+        let words = [
+            (ExprTag::Yield, "Yield", "yield"),
+            (ExprTag::Await, "Await", "await"),
+        ];
+        for (tag, of_acorn, word) in words {
             for it in self.exprs_of(tag) {
                 let first = (self.tops.outward(Node::Expr(it)))
                     .find(|it| matches!(it, Node::Param(_) | Node::Func(_)));
-                if matches!(first, Some(Node::Param(_))) {
-                    self.fail(it.span().start, message);
+                if !matches!(first, Some(Node::Param(_))) {
+                    continue;
+                }
+                let span = it.span();
+                match of_oxc {
+                    true => {
+                        let message = format!("{word} expression not allowed in formal parameter");
+                        self.fail_for(span, message.into_bytes());
+                    }
+                    false => {
+                        let message = format!("{of_acorn} expression cannot be a default value");
+                        self.fail(span.start, message);
+                    }
                 }
             }
         }

@@ -113,7 +113,8 @@ fn file_of(
     let mut file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
     let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);
-    if !how.dialect.oxc || how.dialect.script || !was_refused && html_opens.first.is_none() {
+    let may_be_script = html_opens.first.is_some() || scratch.has_top_level_await;
+    if !how.dialect.oxc || how.dialect.script || !was_refused && !may_be_script {
         return file;
     }
     // For oxc a file is a script if nothing in it says that it is a module, or if its name says so. Here only these are
@@ -158,7 +159,9 @@ fn file_of(
         ..how
     };
     let script = file_read_as(scratch, as_script, text, atoms, true);
-    if (!was_refused || !is_refused(&script)) && (is_script_by_name || !script.has_module_syntax) {
+    // `<!--` makes it a script whatever comes of that. `await (a)` is a call in a script, and `await a` makes it a module.
+    let is_script = !is_refused(&script) || !was_refused && html_opens.first.is_some();
+    if is_script && (is_script_by_name || !script.has_module_syntax) {
         return script;
     }
     // Atoms of its own are those of the last reading.

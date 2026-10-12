@@ -791,11 +791,18 @@ fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
     let mut end = at;
     while let [b, after @ ..] = rest
         && (b.is_ascii_alphanumeric()
-            || matches!(b, b'_' | b'$' | b'-')
+            || matches!(b, b'_' | b'$' | b'-' | b'\\')
             || (*b >= 0x80 && bun_core::strings::js_whitespace_len(rest) == 0))
     {
-        rest = after;
-        end += 1;
+        // `\u{61}`. Only oxc takes an escape here.
+        let in_braces = match (b, after) {
+            (b'\\', [b'u', b'{', ..]) => {
+                bun_core::strings::index_of_char_usize(after, b'}').map_or(0, |it| it + 1)
+            }
+            _ => 0,
+        };
+        rest = &after[in_braces..];
+        end += 1 + in_braces as u32;
     }
     end
 }

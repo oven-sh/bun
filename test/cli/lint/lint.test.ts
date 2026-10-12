@@ -434,6 +434,132 @@ describe.concurrent("bun lint", () => {
     expect(reported(eslint.stdout).sort()).toEqual(expected(jsx).sort());
   });
 
+  // Each row is what oxlint 1.87 prints. tsc, typescript-estree and Babel leave the await and yield context inside a type, so
+  // there `await (k)` is a call of `await`.
+  test("with .oxlintrc.json an expression in a type is in the await and yield context around the type", async () => {
+    const rows: [extension: string, code: string, found: string[]][] = [
+      ["ts", 'const k = "a"; export let x: { [await (k)]: number };', []],
+      [
+        "ts",
+        'const k = ["a"]; export let x: { [await [k]]: number };',
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @34+5"],
+      ],
+      [
+        "ts",
+        "export let x: { [await -1]: number };",
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @17+5"],
+      ],
+      [
+        "ts",
+        "export let x: { [await +1]: number };",
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @17+5"],
+      ],
+      [
+        "ts",
+        "export let x: { [await `a`]: number };",
+        ["unicorn(no-unnecessary-await): Unexpected `await` on a non-Promise value @17+5"],
+      ],
+      ["ts", 'const k = "a"; export const y = 1 as { [await (k)]: number };', []],
+      ["ts", 'const k = "a"; export type T = { [await (k)]: number };', []],
+      ["ts", 'const k = "a"; export class C { p: { [await (k)]: number } = null as any; }', []],
+      ["ts", 'const k = "a"; export enum E { A = await (k) }', []],
+      ["ts", 'const k = "a"; export namespace N { export const x = await (k); }', []],
+      ["ts", 'const k = "a"; const enum E { A = await (k) } export {};', []],
+      [
+        "ts",
+        'const k = "a"; export async function f(): Promise<{ [await (k)]: number }> { await k; return null as any; }',
+        [],
+      ],
+      [
+        "ts",
+        'const k = "a"; export async function f(a: any) { for (;;) { let z: { [await (k)]: number } = a; return z; } }',
+        ["eslint(no-await-in-loop): Unexpected `await` inside a loop. @70+5"],
+      ],
+      ["ts", 'const k = "a"; export function* g() { let x: { [yield (k)]: number } = null as any; yield x; }', []],
+      // A parameter's type is part of the parameter.
+      [
+        "ts",
+        'const k = "a"; export async function f(a: { [await (k)]: number }): Promise<void>;\nexport async function f(a: any) { await a; }',
+        ["error: await expression not allowed in formal parameter @45+9"],
+      ],
+      [
+        "ts",
+        'const k = "a"; export const f = async (a: { [await (k)]: number }) => a;',
+        ["error: await expression not allowed in formal parameter @45+9"],
+      ],
+      [
+        "ts",
+        'const k = "a"; export function* g(a: { [yield (k)]: number }) { yield a; }',
+        ["error: yield expression not allowed in formal parameter @40+9"],
+      ],
+      [
+        "js",
+        'const k = "a"; async function f(a = await (k)) {} f(); export {};',
+        ["error: await expression not allowed in formal parameter @36+9"],
+      ],
+      [
+        "js",
+        'const k = "a"; const f = async (a = await k) => {}; f(); export {};',
+        ["error: await expression not allowed in formal parameter @36+7"],
+      ],
+      // A declaration of TypeScript that is a statement by itself is outside the await context.
+      [
+        "ts",
+        'const k = "a"; type T = { [await (k)]: number }; export {};',
+        ["error: The keyword 'await' is reserved @27+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; interface T { [await (k)]: number } export {};',
+        ["error: The keyword 'await' is reserved @30+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; abstract class C { [await (k)]: number = 1 } export {};',
+        ["error: The keyword 'await' is reserved @35+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; export async function f() { interface T { [await (k)]: number } return 1 as T; }',
+        ["error: The keyword 'await' is reserved @58+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; declare let x: { [await (k)]: number }; export {};',
+        ["eslint(no-undef): 'await' is not defined. @33+5"],
+      ],
+      [
+        "ts",
+        'const k = "a"; declare class C { [await (k)]: number } export {};',
+        ["eslint(no-undef): 'await' is not defined. @34+5"],
+      ],
+      // Nothing says that these are modules, so `await (k)` is a call.
+      ["ts", 'const k = "a"; let x: { [await (k)]: number };', ["eslint(no-undef): 'await' is not defined. @25+5"]],
+      ["ts", "const k = 1; await (k);", ["eslint(no-undef): 'await' is not defined. @13+5"]],
+      ["js", "const k = 1; await (k);", ["eslint(no-undef): 'await' is not defined. @13+5"]],
+      ["ts", "const k = [1]; await [k];", ["eslint(no-undef): 'await' is not defined. @15+5"]],
+      // `await k` says so.
+      ["ts", "const k = 1; await (k); await k;", []],
+      ["ts", "const k = 1; await k; let x: { [await (k)]: number };", []],
+      ["mts", 'const k = "a"; let x: { [await (k)]: number };', []],
+    ];
+    const rules = { "no-undef": "error", "no-await-in-loop": "error", "unicorn/no-unnecessary-await": "error" };
+    const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+    const { raw } = await lint(
+      { ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules }), ...files },
+      ["-f", "json"],
+    );
+    type Diagnostic = { filename: string; code?: string; message: string; labels: { span: Record<string, number> }[] };
+    const found: Record<string, string[]> = Object.fromEntries(Object.keys(files).map(name => [name, []]));
+    for (const { filename, code, message, labels } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      const { offset, length } = labels[0].span;
+      found[filename].push(`${code ?? "error"}: ${message} @${offset}+${length}`);
+    }
+    expect(found).toEqual(
+      Object.fromEntries(rows.map(([extension, , expected], i) => [`a${i}.${extension}`, expected])),
+    );
+  });
+
   // Each row is what oxlint 1.87 does.
   test("with .oxlintrc.json a file is a script if nothing in it says that it is a module", async () => {
     const name = "var await = 1; f(await);\n";
@@ -1111,6 +1237,61 @@ describe.concurrent("bun lint", () => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
         expect(stdout).toMatch(/^a\.[jt]s:\d+:\d+: (?!Parsing error).* \[Error\]$/m);
         expect(exitCode).toBe(1);
+      });
+
+      // The message, and the offset and length of the first label, are what oxlint 1.87 prints.
+      test("the label of a parsing error is as long as oxlint's", async () => {
+        const waits = "only allowed within async functions and at the top levels of modules";
+        const rows: [extension: string, code: string, message: string, offset: number, length: number][] = [
+          ["cjs", 'import a from "a";', "Cannot use import statement outside a module", 0, 6],
+          ["cjs", "export const a = 1;", "Cannot use export statement outside a module", 0, 6],
+          ["cjs", "x = import.meta.url;", "Unexpected import.meta expression", 4, 11],
+          ["cts", "x = import.meta.url;", "Unexpected import.meta expression", 4, 11],
+          ["cjs", "await 1;", `\`await\` is ${waits}`, 0, 5],
+          ["cts", "await 1;", `\`await\` is ${waits}`, 0, 5],
+          ["cjs", "for await (const a of b) {}", `\`for await\` loops are ${waits}`, 4, 5],
+          ["js", "function f() { for await (const a of b) {} }", `\`for await\` loops are ${waits}`, 19, 5],
+          ["ts", "export {}; function yield() {}", "The keyword 'yield' is reserved", 20, 5],
+          ["ts", "export {}; class let {}", "The keyword 'let' is reserved", 17, 3],
+          ["ts", "export {}; static: for(;;){}", "The keyword 'static' is reserved", 11, 6],
+          ["ts", "export {}; let x = yield;", "The keyword 'yield' is reserved", 19, 5],
+          ["js", 'function f(a, a) { "use strict"; }', "Identifier `a` has already been declared", 11, 1],
+          ["ts", "export function f(a: number, a: number) {}", "Identifier `a` has already been declared", 18, 1],
+          ["mjs", "with (a) {}", "'with' statements are not allowed", 0, 4],
+          ["js", 'function f() { "use strict"; with (a) {} }', "'with' statements are not allowed", 29, 4],
+          ["ts", "const a: number;", "Missing initializer in const declaration", 6, 1],
+          ["ts", "export {}; { using a; }", "Using declarations must have an initializer.", 19, 1],
+          [
+            "ts",
+            "declare namespace N { declare const a: number; }",
+            "A 'declare' modifier cannot be used in an already ambient context.",
+            22,
+            7,
+          ],
+          ["js", 'import defer a from "b";', "Default imports are not allowed in a deferred import.", 7, 5],
+          ["js", 'import defer { a } from "b";', "Named imports are not allowed in a deferred import.", 7, 5],
+          ["js", "using a = b;", "'using' declarations are not allowed at the top level of a script", 0, 12],
+          [
+            "ts",
+            "export const a = 1; export = a;",
+            "An export assignment cannot be used in a module with other exported elements",
+            20,
+            11,
+          ],
+        ];
+        const files = Object.fromEntries(rows.map(([extension, code], i) => [`a${i}.${extension}`, code + "\n"]));
+        const { raw } = await lint({ ".oxlintrc.json": quiet, ...files }, ["-f", "json"]);
+        type Diagnostic = { filename: string; message: string; labels: { span: { offset: number; length: number } }[] };
+        const found = (JSON.parse(raw).diagnostics as Diagnostic[]).map(({ filename, message, labels: [first] }) => [
+          filename,
+          message,
+          first.span.offset,
+          first.span.length,
+        ]);
+        const byName = (a: unknown[], b: unknown[]) => String(a[0]).localeCompare(String(b[0]));
+        expect(found.sort(byName)).toEqual(
+          rows.map(([extension, , ...rest], i) => [`a${i}.${extension}`, ...rest]).sort(byName),
+        );
       });
 
       // oxlint 1.87.0: "Identifier `a` has already been declared", at the first of the two. The parser, which has the names in

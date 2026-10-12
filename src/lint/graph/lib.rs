@@ -470,7 +470,7 @@ impl<'h> Graph<'h> {
             }
             left.iter().count() + a.count() + right.iter().count() + b.count()
         };
-        listed.sort_by_key(distance);
+        bun_lint::utils::sort::sort_by_key(&mut listed, distance);
         listed.dedup();
         let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {

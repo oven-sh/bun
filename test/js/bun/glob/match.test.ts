@@ -2131,6 +2131,30 @@ describe("Glob.match", () => {
   });
 
   test.each([
+    ["**/*{.test,.spec,_test}*.{ts,js}", "src/button/button_test.ts", true],
+    ["**/*{.test,.spec,_test}*.{ts,js}", "src/button/button.spec.js", true],
+    ["**/*{.test,.spec,_test}*.{ts,js}", "src/button/button.ts", false],
+    ["*{_a,-b}", "x_a", true],
+    ["*{_a,-b}", "x-b", true],
+    ["*{_a,-b}", "x_b", false],
+    ["*{(,)}", "x(", true],
+    ["*{(,)}", "x)", true],
+    ["*{(,)}", "x", false],
+    ["*{],~, ,=}", "x]", true],
+    ["*{],~, ,=}", "x ", true],
+    ["*{],~, ,=}", "x=", true],
+    ["*{],~, ,=}", "x,", false],
+    ["*@(,|})", "x,", true],
+    ["*@(,|})", "x}", true],
+    ["*@(,|})", "x|", false],
+    ["*{|,#}", "x|", true],
+    ["**/{_a,b}/c", "x/_a/c", true],
+    ["**/{_a,b}/c", "x/a/c", false],
+  ])("alternatives can start with punctuation: %s with %s is %p", (pattern, path, expected) => {
+    expect(new Glob(pattern).match(path)).toBe(expected);
+  });
+
+  test.each([
     ["{a,b", "{a,b", true],
     ["{a,b", "a", false],
     ["a{", "a{", true],

@@ -189,6 +189,9 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     pub(crate) has_type_arguments_in_expressions: bool,
     /// In Flow: where the last expression statement starts.
     pub(crate) flow_statement_start: u32,
+    /// `TypeExcludesFlags`: the contexts that a type, the members of an enum and a namespace at the top level leave. oxc
+    /// stays in the await and yield context of the code around them.
+    pub(crate) cleared_in_types: u32,
     pub(crate) has_top_level_await: bool,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
@@ -327,6 +330,7 @@ pub(crate) fn run<'a>(
     f.comments = lx.comments;
     scratch.stacks = stacks;
     scratch.html_opens = lx.html_opens;
+    scratch.has_top_level_await = has_top_level_await;
     if let Some(why) = refusal {
         scratch.recycled = Some(f);
         return Err(Refused {
@@ -406,6 +410,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             is_flow,
             has_type_arguments_in_expressions: is_flow || !options.is_javascript,
             flow_statement_start: u32::MAX,
+            cleared_in_types: match options.dialect.oxc {
+                true => 0,
+                false => ctx::YIELD | ctx::AWAIT,
+            },
             has_top_level_await: false,
             has_await_in_statement: false,
             has_await_in_name: false,

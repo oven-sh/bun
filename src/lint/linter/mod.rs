@@ -77,7 +77,7 @@ use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
-use crate::rule::{Meta, Plugin, When};
+use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, Listeners, RuleEntry, each_bit};
 use crate::span::Span;
@@ -952,14 +952,10 @@ impl<S: RuleSet> Linter<S> {
                 Some(_) => true,
                 None if config.find_rule(&self.registry, name).is_some() => true,
                 None if config.named_rule(name).is_some() => true,
-                // One of a plugin that is skipped.
+                // It may be one of the rules that are on and were skipped.
                 None if slash.is_some() && config.has_skipped_rules => false,
-                None if slash
-                    .and_then(|it| Plugin::of_oxlint_prefix(&name[..it]))
-                    .is_some_and(Plugin::has_no_rules) =>
-                {
-                    false
-                }
+                // Every rule that's on ran, so a comment that silences nothing here silences nothing in oxlint either.
+                None if !config.has_skipped_rules => true,
                 None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
             }
         };

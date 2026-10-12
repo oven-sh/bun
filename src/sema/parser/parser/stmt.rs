@@ -532,6 +532,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
         }
         let saved = self.context;
+        // oxc's `parse_ts_declaration_statement` leaves the await context. `export` and `const enum` go another way.
+        if self.options.dialect.oxc
+            && !flags.intersects(Flags::EXPORT | Flags::CONST)
+            && (flags.intersects(Flags::AMBIENT | Flags::ABSTRACT)
+                || matches!(
+                    self.token(),
+                    T::Type | T::Interface | T::Enum | T::Module | T::Namespace | T::Global
+                ))
+        {
+            self.context &= !ctx::AWAIT;
+        }
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
             // `parseClassDeclarationOrExpression`: no `await` in it has the statement reparsed.
@@ -798,7 +809,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             false => self.missing_name(),
         };
         let has_members = self.expect(T::OpenBrace);
-        let saved = self.enter_context(0, ctx::YIELD | ctx::AWAIT);
+        let saved = self.enter_context(0, self.cleared_in_types);
         let members = self.s.enum_members.len();
         let lists = self.enter_list(ListKind::EnumMembers);
         while has_members
@@ -976,7 +987,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         // It stays in the context of the function around it.
         let saved = match self.has_context(ctx::TOP_LEVEL) {
-            true => self.enter_context(0, ctx::TOP_LEVEL | ctx::AWAIT | ctx::YIELD),
+            true => self.enter_context(0, ctx::TOP_LEVEL | self.cleared_in_types),
             false => self.context,
         };
         let list = self.statements_until_close_brace();

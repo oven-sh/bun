@@ -882,7 +882,9 @@ impl<'l> Loader<'l> {
     /// Whether a configuration file has been read besides that of the working directory. oxlint then does not say how many rules
     /// there are.
     pub(crate) fn has_nested_configurations(&self) -> bool {
-        self.by_file.lock().len() > 1
+        // The empty key is the built-in configuration, which `lacks_file` loads only to compare with.
+        let by_file = self.by_file.lock();
+        by_file.keys().filter(|it| !it.is_empty()).count() > 1
     }
 
     /// Writes `[[lint.overrides]]` as config objects in the given `shape`. The command line's rules and globals go last, as

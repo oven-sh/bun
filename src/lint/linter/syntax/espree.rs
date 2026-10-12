@@ -18,6 +18,7 @@ use crate::ast::{
 };
 use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
+use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
 use crate::utils::oxlint::{is_script, is_strict_mode};
 use bun_core::strings;
@@ -113,6 +114,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
     checks.typescript_syntax(true);
     checks.first.map(|it| SyntaxError {
         at: it.1.at,
+        end: Diagnostic::NO_LENGTH,
         message: b"Unexpected token".to_vec(),
     })
 }
@@ -151,25 +153,27 @@ pub(super) fn module_syntax_in_commonjs<'a>(
                 .get(start as usize..)
                 .is_some_and(|it| it.starts_with(b"import"))
             {
-                true => (start, "Cannot use import statement outside a module"),
-                false => (start, "Cannot use export statement outside a module"),
+                true => (start, 0, "Cannot use import statement outside a module"),
+                false => (start, 0, "Cannot use export statement outside a module"),
             }
         });
-    let meta = (file.exprs_of_kind(ExprTag::ImportMeta))
-        .map(|it| (it.span().start, "Unexpected import.meta expression"));
+    let meta = file.exprs_of_kind(ExprTag::ImportMeta).map(|it| {
+        let span = it.span();
+        (span.start, span.end, "Unexpected import.meta expression")
+    });
     let awaits = (file.exprs_of_kind(ExprTag::Await))
         .filter(|it| is_at_top_level(Node::Expr(*it)))
         .map(|it| {
             let message =
                 "`await` is only allowed within async functions and at the top levels of modules";
-            (it.span().start, message)
+            (it.span().start, 0, message)
         });
     let loops = (file.stmts_of_kind(StmtTag::ForOf))
         .filter(|it| matches!(it.kind(), StmtKind::ForOf { is_await: true, .. }))
         .filter(|it| is_at_top_level(Node::Stmt(*it)))
         .map(|it| {
             let message = "`for await` loops are only allowed within async functions and at the top levels of modules";
-            (skip_trivia(file.text(), it.span().start + 3), message)
+            (skip_trivia(file.text(), it.span().start + 3), 0, message)
         });
     let first = statement
         .into_iter()
@@ -179,7 +183,8 @@ pub(super) fn module_syntax_in_commonjs<'a>(
         .min_by_key(|it| it.0)?;
     Some(SyntaxError {
         at: first.0,
-        message: first.1.into(),
+        end: first.1,
+        message: first.2.into(),
     })
 }
 
@@ -431,6 +436,7 @@ pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let first = file.body().iter().find(is_using)?;
     (is_script(file) && !file.is_declaration_file()).then(|| SyntaxError {
         at: first.span().start,
+        end: first.span().end,
         message: b"'using' declarations are not allowed at the top level of a script".to_vec(),
     })
 }
@@ -447,6 +453,7 @@ pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Option
     };
     file.body().iter().any(exports).then(|| SyntaxError {
         at: assignment.span().start,
+        end: assignment.span().end,
         message: b"An export assignment cannot be used in a module with other exported elements"
             .to_vec(),
     })
@@ -466,6 +473,7 @@ pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Option<Sy
     let first = refused.map(|it| it.span().start).min()?;
     Some(SyntaxError {
         at: skip_trivia(file.text(), first + 3),
+        end: 0,
         message: b"`for await` loops are only allowed within async functions and at the top levels of modules"
             .to_vec(),
     })
@@ -483,6 +491,7 @@ pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Option<SyntaxError>
     let refused = file.stmts_of_kind(StmtTag::Block).filter(is_refused);
     Some(SyntaxError {
         at: refused.map(|it| it.span().start).min()?,
+        end: 0,
         message: b"'with' statements are not allowed".to_vec(),
     })
 }
@@ -497,7 +506,8 @@ pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
 pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     // Of TypeScript `early_errors_of_oxc` asks for these only. Of JavaScript it asks for one expression in ten, which the
     // rules are about to want by kind anyway.
-    let candidates = (!file.is_javascript()).then(|| Candidates::of_kinds(file, &[ExprTag::Regex]));
+    let kinds = [ExprTag::Regex, ExprTag::Await, ExprTag::Yield];
+    let candidates = (!file.is_javascript()).then(|| Candidates::of_kinds(file, &kinds));
     let mut checks = checks_of_oxc(file, candidates.as_ref());
     checks.early_errors_of_oxc();
     checks.first.map(|it| it.1)
@@ -541,14 +551,19 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     /// Of two errors that acorn would notice at one place, the one that is found first counts.
     fn fail(&mut self, at: u32, message: impl Into<Vec<u8>>) {
-        let message = message.into();
+        self.fail_for(Span::new(at, 0), message.into());
+    }
+
+    /// The same for an error that oxc labels up to `label.end`: see [`SyntaxError::end`].
+    fn fail_for(&mut self, label: Span, message: Vec<u8>) {
+        let Span { start: at, end } = label;
         if self.is_babel && !(REFUSED_BY_BABEL.iter()).any(|it| message.starts_with(it.as_bytes()))
         {
             return;
         }
         let noticed = self.noticed.max(at);
         if self.first.as_ref().is_none_or(|it| noticed < it.0) {
-            self.first = Some((noticed, SyntaxError { at, message }));
+            self.first = Some((noticed, SyntaxError { at, end, message }));
         }
     }
 

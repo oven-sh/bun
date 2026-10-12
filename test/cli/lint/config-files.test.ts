@@ -2538,6 +2538,218 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect((await lint(enables, [".", "--report-unused-disable-directives"])).problems).toEqual(["a.js:2:3 -"]);
   });
 
+  // Every row was run on oxlint 1.87. It matches one of its own rules by the text after the last `/` of the name, and reports
+  // every comment that silenced nothing, whatever the name is.
+  test("which names in a disable comment silence a built-in rule, and which comments are unused", async () => {
+    // `$` is the number of the line, to keep the names apart.
+    const rows: { file: string; bad: string; good: string; silence: string[]; nothing: string[] }[] = [
+      {
+        file: "debugger.js",
+        bad: "debugger;",
+        good: "f();",
+        silence: [
+          "no-debugger",
+          "eslint/no-debugger",
+          "typescript/no-debugger",
+          "@typescript-eslint/no-debugger",
+          "react/no-debugger",
+          "vitest/no-debugger",
+          "@stylistic/no-debugger",
+          "foo/no-debugger",
+          "a/b/no-debugger",
+          "foo/eslint/no-debugger",
+          "/no-debugger",
+        ],
+        nothing: ["eslint(no-debugger)", "xno-debugger", "no-debugger-x", "x-no-debugger", "NO-DEBUGGER", "no-debugge"],
+      },
+      {
+        file: "any.ts",
+        bad: "export let a$: any;",
+        good: "export let a$: number;",
+        silence: [
+          "no-explicit-any",
+          "typescript/no-explicit-any",
+          "@typescript-eslint/no-explicit-any",
+          "typescript-eslint/no-explicit-any",
+          "eslint/no-explicit-any",
+          "ts/no-explicit-any",
+          "react/no-explicit-any",
+        ],
+        nothing: [],
+      },
+      {
+        file: "hooks.jsx",
+        bad: "function f$() { useState(); } f$();",
+        good: "function f$() { g(); } f$();",
+        silence: [
+          "rules-of-hooks",
+          "react/rules-of-hooks",
+          "react-hooks/rules-of-hooks",
+          "react_hooks/rules-of-hooks",
+          "eslint/rules-of-hooks",
+          "foo/rules-of-hooks",
+        ],
+        nothing: [],
+      },
+      {
+        file: "focused.test.js",
+        bad: "it.only('a', () => {});",
+        good: "it('a', () => {});",
+        silence: ["no-focused-tests", "jest/no-focused-tests", "vitest/no-focused-tests", "foo/no-focused-tests"],
+        nothing: [],
+      },
+      {
+        file: "alt.jsx",
+        bad: "x = <area />;",
+        good: "x = <b />;",
+        silence: ["alt-text", "jsx-a11y/alt-text", "jsx_a11y/alt-text", "a11y/alt-text"],
+        nothing: [],
+      },
+      {
+        file: "img.jsx",
+        bad: "x = <img alt='a' />;",
+        good: "x = <b />;",
+        silence: [
+          "no-img-element",
+          "nextjs/no-img-element",
+          "@next/next/no-img-element",
+          "next/no-img-element",
+          "@next/no-img-element",
+        ],
+        nothing: [],
+      },
+      {
+        file: "require.js",
+        bad: "x = new require('a');",
+        good: "x = require('a');",
+        silence: ["no-new-require", "node/no-new-require", "n/no-new-require", "eslint/no-new-require"],
+        nothing: [],
+      },
+      // Two rules have this name. Either prefix silences both.
+      {
+        file: "import-namespace.ts",
+        bad: "import * as a$ from 'a'; a$();",
+        good: "import a$ from 'a'; a$();",
+        silence: ["no-namespace", "import/no-namespace", "typescript/no-namespace", "foo/no-namespace"],
+        nothing: [],
+      },
+      {
+        file: "namespace.ts",
+        bad: "export namespace N$ {}",
+        good: "export const N$ = 1;",
+        silence: ["no-namespace", "import/no-namespace", "@typescript-eslint/no-namespace", "foo/no-namespace"],
+        nothing: [],
+      },
+      // Rules that are off, rules of plugins that are off, and names that are no rule's.
+      {
+        file: "off.js",
+        bad: "",
+        good: "console.log(1);",
+        silence: [],
+        nothing: [
+          "no-console",
+          "eslint/no-console",
+          "foo/no-console",
+          "typescript/no-console",
+          "oxc/no-barrel-file",
+          "no-barrel-file",
+          "vitest/no-import-node-test",
+          "check-access",
+          "foo/check-access",
+          "jsdoc/check-access",
+          "jsdoc/require-param",
+          "vue/max-props",
+          "vue/no-export-in-script-setup",
+          "foo/no-alert",
+          "typescript/no-floating-promises",
+          "nope",
+          "foo/nope",
+          "eslint/nope",
+          "no-multiple-empty-lines",
+          "@stylistic/semi",
+          "prettier/prettier",
+        ],
+      },
+    ];
+    const comments = [
+      (name: string) => `// oxlint-disable-next-line ${name}\n`,
+      (name: string) => `/* eslint-disable-next-line ${name} */\n`,
+    ];
+    const files: Record<string, string> = {};
+    const expected: string[] = [];
+    for (const { file, bad, good, silence, nothing } of rows) {
+      let [text, line] = ["", 1];
+      const add = (name: string, code: string, outcome: "silenced" | "unused" | "reported") => {
+        for (const comment of comments) {
+          text += comment(name) + code.replaceAll("$", String(line)) + "\n";
+          if (outcome !== "silenced") expected.push(`${file}:${line} unused`);
+          if (outcome === "reported") expected.push(`${file}:${line + 1} reported`);
+          line += 2;
+        }
+      };
+      for (const name of silence) {
+        add(name, bad, "silenced");
+        add(name, good, "unused");
+      }
+      for (const name of nothing) {
+        if (bad) add(name, bad, "reported");
+        add(name, good, "unused");
+      }
+      files[file] = text;
+    }
+    const config = {
+      categories: { correctness: "off" },
+      plugins: ["typescript", "react", "import", "jest", "jsx-a11y", "nextjs", "node"],
+      rules: {
+        "no-debugger": "error",
+        "no-console": "off",
+        "typescript/no-explicit-any": "error",
+        "react/rules-of-hooks": "error",
+        "jest/no-focused-tests": "error",
+        "jsx-a11y/alt-text": "error",
+        "nextjs/no-img-element": "error",
+        "node/no-new-require": "error",
+        "import/no-namespace": "error",
+        "typescript/no-namespace": "error",
+      },
+    };
+    const { problems } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, [
+      ".",
+      "--report-unused-disable-directives",
+    ]);
+    const found = problems.map(it => it.replace(/:\d+ (.*)$/, (_, rule) => (rule === "-" ? " unused" : " reported")));
+    expect(found.sort()).toEqual(expected.sort());
+  });
+
+  // Each count is what oxlint 1.87 prints.
+  test("number_of_rules is there for a file outside the working directory, unless it has another configuration", async () => {
+    const rc = (rules: object) => JSON.stringify({ categories: { correctness: "off" }, rules });
+    const files = {
+      ".oxlintrc.json": rc({ "no-debugger": "error", "no-var": "error", "no-eval": "error" }),
+      "a.js": "debugger;\n",
+      "other/b.js": "debugger;\n",
+      "sub/.oxlintrc.json": rc({ "no-debugger": "error" }),
+      "sub/c.js": "debugger;\n",
+      "sub/in/d.js": "debugger;\n",
+    };
+    const count = async (cwd: string, args: (dir: string) => string[]) =>
+      JSON.parse((await lint(files, ["-f", "json"], { cwd, args })).raw).number_of_rules;
+    expect(
+      await Promise.all([
+        count("sub/in", dir => [join(dir, "sub", "c.js")]),
+        count("sub/in", dir => [join(dir, "sub")]),
+        count("sub/in", dir => ["d.js", join(dir, "sub", "c.js")]),
+        count("other", dir => [join(dir, "a.js"), "b.js"]),
+        count("other", dir => ["-c", join(dir, "sub", ".oxlintrc.json"), join(dir, "sub", "c.js")]),
+        count("sub/in", dir => ["-c", join(dir, ".oxlintrc.json"), join(dir, "other", "b.js")]),
+        count("other", dir => ["--disable-nested-config", join(dir, "sub", "c.js")]),
+        // These have two configuration files.
+        count("sub/in", dir => [join(dir, "other", "b.js")]),
+        count("other", dir => [join(dir, "a.js"), join(dir, "sub", "c.js")]),
+      ]),
+    ).toEqual([1, 1, 1, 3, 1, 3, 3, null, null]);
+  });
+
   test("a comment that disables a rule which does not run on the file is unused, as for oxlint", async () => {
     const { problems } = await lint(
       {
@@ -4584,7 +4796,7 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
     expect(exitCode).toBe(1);
   });
 
-  test("a comment that disables one of their rules is neither wrong nor unused, and stays", async () => {
+  test("a comment that disables one of their rules is neither wrong nor unused, and stays, if such a rule is on", async () => {
     const text = [
       "// oxlint-disable-next-line jsdoc/require-param",
       "a;",
@@ -4593,7 +4805,8 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
       "/* oxlint-disable vue/max-props */",
       "",
     ].join("\n");
-    const all = { "a.js": text, "b.vue": `<script>\n${text}</script>\n`, ".oxlintrc.json": JSON.stringify(quiet) };
+    const on = { ...quiet, plugins: ["jsdoc", "vue"], rules: { ...quiet.rules, "jsdoc/require-param": "warn" } };
+    const all = { "a.js": text, "b.vue": `<script>\n${text}</script>\n`, ".oxlintrc.json": JSON.stringify(on) };
     const { problems, raw } = await lint(all, ["--report-unused-disable-directives", "."]);
     expect(problems).toEqual(["a.js:3:47 -", "b.vue:4:47 -"]);
     expect(JSON.parse(raw).results[0].messages[0].message).toBe(

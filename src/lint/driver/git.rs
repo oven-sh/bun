@@ -9,6 +9,7 @@ use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_sema::util::FxHashSet;
+use std::borrow::Cow;
 
 /// Which files to ask git for.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -130,7 +131,9 @@ fn object_id(finished: &Finished) -> Option<&[u8]> {
 pub(crate) struct Files<'e> {
     only: &'e Only,
     environment: &'e Environment<'e>,
-    /// Absolute paths.
+    /// The root of the work tree. It comes from `getcwd`, so there are no links in it.
+    top: Vec<u8>,
+    /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
     /// Files with unstaged changes. Only filled in for a `--staged` run that writes files.
     partly_staged: FxHashSet<Vec<u8>>,
@@ -146,6 +149,7 @@ impl<'e> Files<'e> {
         let mut files = Files {
             only,
             environment,
+            top: Vec::new(),
             named: FxHashSet::default(),
             partly_staged: FxHashSet::default(),
         };
@@ -161,6 +165,7 @@ impl<'e> Files<'e> {
         let up =
             strings::last_index_of_char(printed, b'\n').map_or(printed, |at| &printed[at + 1..]);
         let top = paths::resolve(&environment.cwd, &paths::from_native(up));
+        files.top.clone_from(&top);
         match only {
             Only::Staged => {
                 files.named = files.diff(&top, &[b"--cached", IS_THERE])?;
@@ -260,15 +265,28 @@ impl<'e> Files<'e> {
         ))
     }
 
+    /// `path` (absolute) as the lists spell it. An argument can reach the work tree through a link: `/tmp/repo/a.js` on macOS,
+    /// or `$PWD/a.js` in a shell that got here through one. Only the directory is resolved, because a link to a file doesn't
+    /// count as that file. A path in `top` is taken as it is, so an ordinary run resolves nothing.
+    fn as_listed<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
+        if paths::inside(&self.top, path).is_some() {
+            return Cow::Borrowed(path);
+        }
+        match fs::real_path(paths::dirname(path)) {
+            Some(directory) => Cow::Owned(paths::join(&directory, paths::basename(path))),
+            None => Cow::Borrowed(path),
+        }
+    }
+
     /// Whether git listed the file at `path` (absolute). A symlink doesn't count, even if it points to a file.
     pub(crate) fn has(&self, path: &[u8]) -> bool {
-        self.named.contains(path)
+        self.named.contains(&*self.as_listed(path))
             && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
     }
 
     /// True if writing `path` and staging it again would also stage changes the user didn't stage.
     pub(crate) fn is_partly_staged(&self, path: &[u8]) -> bool {
-        self.partly_staged.contains(path)
+        self.partly_staged.contains(&*self.as_listed(path))
     }
 
     /// Message for a run with no files left. `verb` is what the run does to files, like "lint".
@@ -326,7 +344,8 @@ impl<'e> Files<'e> {
         }
         let mut input = Vec::new();
         for path in written {
-            input.extend_from_slice(&paths::relative(&self.environment.cwd, path));
+            let path = self.as_listed(path);
+            input.extend_from_slice(&paths::relative(&self.environment.cwd, &path));
             input.push(0);
         }
         let finished = self.git(&[b"update-index", b"-z", b"--stdin"], &input)?;

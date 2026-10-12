@@ -79,8 +79,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         {
             return word;
         }
-        // `TypeExcludesFlags`
-        let saved = self.enter_context(ctx::TYPE, ctx::YIELD | ctx::AWAIT);
+        let saved = self.enter_context(ctx::TYPE, self.cleared_in_types);
         let ty = self.type_in_context();
         self.context = saved;
         ty

@@ -357,8 +357,15 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if self.left_a_cycle && !is_module_exports {
             let ty = self.type_of_circular_symbol(sym, flags, value_declaration, Some(ty));
-            let stored = self.cycle_result();
-            let kept = self.p.symbol_types.insert(&self.task, sym, ty, stored);
+            let is_unassigned = matches!(value_declaration,
+                Some((file, Decl::Var(pat) | Decl::Param(pat)))
+                    if self.is_in_pattern_assigned_unknown(file, pat));
+            let kept = if is_unassigned {
+                ty
+            } else {
+                let stored = self.cycle_result();
+                self.p.symbol_types.insert(&self.task, sym, ty, stored)
+            };
             let first = declarations.first().copied();
             match value_declaration {
                 Some((_, Decl::Member(_))) if flags.intersects(SymFlags::ACCESSOR) => {
@@ -385,6 +392,9 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         match left {
+            // As in `resolve_type_of_pat`.
+            _ if matches!(value_declaration, Some((file, Decl::Var(pat) | Decl::Param(pat)))
+                if self.is_in_pattern_assigned_unknown(file, pat)) => {}
             // `getTypeOfEnumMember` assigns `links.resolvedType` whatever a nested call has
             // assigned.
             Ok(stored) if self.files().flags(sym).contains(SymFlags::ENUM_MEMBER) => {
@@ -701,6 +711,9 @@ impl<'p, 's> Checker<'p, 's> {
         if let PatParent::Param(p) = root_declaration(self.bound(file), pat)
             && self.is_parameter_of_context_sensitive_signature(file, p)
         {
+            return false;
+        }
+        if self.is_in_pattern_assigned_unknown(file, pat) {
             return false;
         }
         self.note_circular_before_parameter_symbol(file, pat);
@@ -2483,7 +2496,9 @@ impl<'p, 's> Checker<'p, 's> {
             // `isParameterOfContextSensitiveSignature`: `links.resolvedType` stays nil, for
             // `assignParameterType` or `assignBindingElementTypes`, which is in progress below.
             let mut assigned = self.assigned_parameters.iter();
-            if !assigned.any(|&at| self.stack.get(at) == Some(&query)) {
+            if !assigned.any(|&at| self.stack.get(at) == Some(&query))
+                && !self.is_in_pattern_assigned_unknown(file, pat)
+            {
                 self.note_circular_before_parameter_symbol(file, pat);
                 let stored = self.cycle_result();
                 // Overwrites the value of an inner evaluation above a `resolution_start` barrier,
@@ -2499,6 +2514,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getTypeOfVariableOrParameterOrProperty`: `links.resolvedType` is assigned only if it is nil, and the caller gets `t`.
         match left {
+            // `isParameterOfContextSensitiveSignature`: `links.resolvedType` stays nil, and
+            // `assignBindingElementTypes` assigns the type from that of the pattern.
+            _ if self.is_in_pattern_assigned_unknown(file, pat) => {}
             Ok(stored) => {
                 self.p
                     .pat_types
@@ -2507,6 +2525,15 @@ impl<'p, 's> Checker<'p, 's> {
             Err(open) => self.cache_provisionally(query, u64::from(ty.0), open),
         }
         ty
+    }
+
+    /// Whether `pat` is in the pattern of a parameter whose `links.resolvedType` is `unknown`
+    /// while `assignParameterType` computes the type of that pattern.
+    fn is_in_pattern_assigned_unknown(&self, file: FileId, pat: PatId) -> bool {
+        !self.assigned_unknown.is_empty() && {
+            let root = super::errors_names_and_exports::root_pattern(self.bound(file), pat);
+            root != pat && self.assigned_unknown.contains(&(file, root))
+        }
     }
 
     /// For a declaration whose name is a pattern, `getTypeForVariableLikeDeclaration` pushes no
@@ -2760,7 +2787,18 @@ impl<'p, 's> Checker<'p, 's> {
                     self.quick_initializers.push(resolutions);
                 }
                 let parent_ty = self.type_for_binding_element_parent(file, pat, parent);
+                // What `unknown` lacks is reported once, here: when `assignBindingElementTypes`
+                // comes, the parameter has the type of its pattern. tsgo reports it whatever
+                // resolution is in progress, and a cycle through the element drops nothing.
+                let is_of_unknown = self.assigned_unknown.contains(&(file, parent));
+                let reported = self.reported.len();
                 let ty = self.type_of_binding_element(file, pat, parent_ty, false);
+                if is_of_unknown {
+                    let owner = Some(Query::ParameterSymbol(file, parent));
+                    for diagnostic in self.take_reported_from(reported) {
+                        self.add_diagnostic_of(owner, diagnostic);
+                    }
+                }
                 if is_uncached {
                     self.quick_initializers.pop();
                 }
@@ -2796,6 +2834,9 @@ impl<'p, 's> Checker<'p, 's> {
             CheckMode::empty()
         };
         match bound.pat_parent[parent.idx()] {
+            PatParent::Param(_) if self.assigned_unknown.contains(&(file, parent)) => {
+                TypeId::UNKNOWN
+            }
             // Without the `undefined` that `?` adds. An annotated `undefined` stays.
             PatParent::Param(p)
                 if hir[p].ty.is_some() && hir[p].flags.contains(Flags::OPTIONAL) =>
@@ -3303,6 +3344,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `checkExpression` of what a `for (.. in ..)` iterates, for the type of its variable: not
+    /// `checkExpressionCached`, so the loops whose types are being computed stay in sight.
+    fn type_of_iterated_expr(&mut self, file: FileId, expr: ExprId) -> TypeId {
+        let resolutions = self.resolutions_below(self.stack.len());
+        self.quick_initializers.push(resolutions);
+        let ty = self.type_of_expr(file, expr);
+        self.quick_initializers.pop();
+        ty
+    }
+
     /// `getTypeForVariableLikeDeclaration`, followed by `widenTypeForVariableLikeDeclaration` if
     /// the variable has a name: a destructured value is not widened
     /// (`getTypeForBindingElementParent`).
@@ -3326,7 +3377,7 @@ impl<'p, 's> Checker<'p, 's> {
             match hir[parent].kind {
                 StmtKind::ForIn { left, expr, .. } if left == stmt => {
                     // The keys of a generic type are its own keys, restricted to strings.
-                    let object = self.type_of_expr(file, expr);
+                    let object = self.type_of_iterated_expr(file, expr);
                     let object = self.non_nullable_type_if_needed(object);
                     let keys = self.keyof(object);
                     if matches!(
@@ -3344,7 +3395,11 @@ impl<'p, 's> Checker<'p, 's> {
                     is_await,
                     ..
                 } if left == stmt => {
+                    // `checkRightHandSideOfForOf` checks the expression with `checkExpression`.
+                    let resolutions = self.resolutions_below(self.stack.len());
+                    self.quick_initializers.push(resolutions);
                     let element = self.check_right_hand_side_of_for_of(file, expr, is_await);
+                    self.quick_initializers.pop();
                     return if is_name {
                         self.widened_for_declaration(element, Some((file, decl.pat)))
                     } else {
@@ -3705,9 +3760,16 @@ impl<'p, 's> Checker<'p, 's> {
             // `assignParameterType`: if the contextual type is just `unknown`, the pattern
             // determines the type.
             if ty == TypeId::UNKNOWN && !matches!(hir[param.pat].kind, PatKind::Ident(_)) {
-                return self
-                    .implied_by_pattern(file, param.pat, IncludePatternInType::No, ReportErrors::No)
-                    .unwrap_or(ty);
+                // A default in the pattern that names another of its elements reads `unknown`.
+                self.assigned_unknown.push((file, param.pat));
+                let implied = self.implied_by_pattern(
+                    file,
+                    param.pat,
+                    IncludePatternInType::No,
+                    ReportErrors::No,
+                );
+                self.assigned_unknown.pop();
+                return implied.unwrap_or(ty);
             }
             if param.default.is_none() {
                 return if param.flags.contains(Flags::OPTIONAL) {

@@ -46,7 +46,8 @@ function changes(tool, theirs, always = {}) {
     const [before, after] = [environments[environment] ?? {}, theirs[environment] ?? {}];
     const list = [];
     for (const [name, writable] of Object.entries(after))
-      if (!Object.hasOwn(before, name) || Boolean(before[name]) !== Boolean(writable)) list.push([name, writable ? WRITABLE : 0]);
+      if (!Object.hasOwn(before, name) || Boolean(before[name]) !== Boolean(writable))
+        list.push([name, writable ? WRITABLE : 0]);
     for (const [name, writable] of Object.entries(before))
       if (!Object.hasOwn(after, name) && !(Object.hasOwn(always, name) && Boolean(always[name]) === Boolean(writable)))
         list.push([name, REMOVED]);
@@ -70,11 +71,19 @@ const changed8 = changes("eslint8", known8, always8);
 const crate = resolve(process.env.JAVASCRIPT_GLOBALS_DIR);
 const crateText = readFileSync(join(crate, "src/lib.rs"), "utf8");
 const maps = new Map();
-for (const [, name, body] of crateText.matchAll(/pub static (GLOBALS_\w+): phf::Map<&'static str, bool> = ::phf::Map \{([\s\S]*?)\n\};/g))
-  maps.set(name, Object.fromEntries([...body.matchAll(/\("([^"]+)", (true|false)\)/g)].map(it => [it[1], it[2] === "true"])));
+for (const [, name, body] of crateText.matchAll(
+  /pub static (GLOBALS_\w+): phf::Map<&'static str, bool> = ::phf::Map \{([\s\S]*?)\n\};/g,
+))
+  maps.set(
+    name,
+    Object.fromEntries([...body.matchAll(/\("([^"]+)", (true|false)\)/g)].map(it => [it[1], it[2] === "true"])),
+  );
 const [, index] = /pub static GLOBALS: Globals = Globals\(::phf::Map \{([\s\S]*?)\n\}\);/.exec(crateText);
-const environmentsOfOxlint = Object.fromEntries([...index.matchAll(/\("([^"]+)", &(GLOBALS_\w+)\)/g)].map(it => [it[1], maps.get(it[2])]));
-if (Object.keys(environmentsOfOxlint).length < 40 || Object.values(environmentsOfOxlint).includes(undefined)) throw new Error("cannot read the crate");
+const environmentsOfOxlint = Object.fromEntries(
+  [...index.matchAll(/\("([^"]+)", &(GLOBALS_\w+)\)/g)].map(it => [it[1], maps.get(it[2])]),
+);
+if (Object.keys(environmentsOfOxlint).length < 40 || Object.values(environmentsOfOxlint).includes(undefined))
+  throw new Error("cannot read the crate");
 const changedOfOxlint = changes("oxlint", environmentsOfOxlint);
 const versionOfCrate = /^version = "([^"]+)"/m.exec(readFileSync(join(crate, "Cargo.toml"), "utf8"))[1];
 

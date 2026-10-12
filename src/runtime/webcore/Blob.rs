@@ -4162,6 +4162,30 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
+            // truncate(2) of a dup name reaches the file behind the descriptor on FreeBSD fdescfs. An O_TRUNC open does not.
+            if let PathOrFileDescriptor::Path(path) = &file.pathlike
+                && bun_sys::path_opens_as_dup(path.slice())
+            {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                return Ok(
+                    match bun_sys::File::open(
+                        path.slice_z(&mut buf),
+                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                        options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION),
+                    ) {
+                        bun_sys::Result::Ok(opened) => {
+                            let _ = opened.close(); // close error is non-actionable
+                            JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0))
+                        }
+                        bun_sys::Result::Err(err) => JSPromise::rejected_promise(
+                            cx.global(),
+                            err.with_path(path.slice()).to_js(cx.global()),
+                        )
+                        .to_js(),
+                    },
+                );
+            }
+
             // TODO: make this async
             // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh

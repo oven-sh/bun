@@ -111,6 +111,18 @@ test("windowsEnv delete observes promotion from key coercion before the trap", (
   expect(edit).not.toHaveBeenCalled();
 });
 
+test("windowsEnv inspection follows shared writes and deletes after promotion", () => {
+  const { env, shared, promote } = createWindowsEnv();
+  expect(Bun.inspect(env)).toContain('KEY: "before"');
+  promote();
+  shared.KEY = "after";
+  expect(Bun.inspect(env)).toContain('KEY: "after"');
+  Reflect.deleteProperty(env, "KEY");
+  Reflect.set(env, "ADDED", "new");
+  expect(Bun.inspect(env)).not.toContain("KEY:");
+  expect(Bun.inspect(env)).toContain('ADDED: "new"');
+});
+
 test.if(isWindows)("process.env is case insensitive on windows", () => {
   const keys = Object.keys(process.env);
   // this should have at least one character that is lowercase

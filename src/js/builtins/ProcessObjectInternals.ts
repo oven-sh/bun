@@ -454,6 +454,9 @@ export function windowsEnv(
     return sharedEnv;
   };
   (internalEnv as any)[Bun.inspect.custom] = () => {
+    // Inspection reads the proxy target directly, bypassing its forwarding traps.
+    const env = shared();
+    if (env) return { ...env };
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];

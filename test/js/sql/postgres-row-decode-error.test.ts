@@ -21,8 +21,9 @@ import {
   pgRowDescription,
 } from "./wire-frames";
 
+type Rejection = { name: string; code?: string; message: string; hint?: string };
 /** One entry per query, in order: its rows, or the error it rejected with. */
-async function settle(queries: PromiseLike<any>[]) {
+async function settle(queries: PromiseLike<any>[]): Promise<(any[] | Rejection)[]> {
   return (await Promise.allSettled(queries)).map(result =>
     result.status === "fulfilled" ? [...result.value] : describeError(result.reason),
   );

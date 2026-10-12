@@ -24,7 +24,9 @@ public:
         | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero
         | JSC::OverridesGetOwnPropertyNames
         | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
-        | JSC::GetOwnPropertySlotIsImpureForPropertyAbsence;
+        | JSC::GetOwnPropertySlotIsImpureForPropertyAbsence
+        // SHARE_ENV entries live outside the object; cached deletes must still reach the store.
+        | JSC::ProhibitsPropertyCaching;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {

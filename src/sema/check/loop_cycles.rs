@@ -81,13 +81,17 @@ impl<'p, 's> Checker<'p, 's> {
         for (file, decl) in self.files().decls(sym) {
             let Decl::Member(m) = decl else { return false };
             let hir = self.hir(file);
-            let func = &hir[hir[m].func];
-            match hir[m].kind {
-                MemberKind::Getter if func.ret.is_none() => has_getter = true,
+            let member = &hir[m];
+            match member.kind {
+                MemberKind::Getter if hir[member.func].ret.is_none() => has_getter = true,
                 MemberKind::Setter
-                    if func
+                    if hir[member.func]
                         .effective_set_accessor_type_annotation_node(hir)
                         .is_none() => {}
+                // `accessor x = e`: a property with an initializer, which has no function.
+                MemberKind::Property if member.ty.is_none() && member.init.is_some() => {
+                    has_getter = true;
+                }
                 _ => return false,
             }
         }

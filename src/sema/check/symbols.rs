@@ -3851,6 +3851,10 @@ impl<'p, 's> Checker<'p, 's> {
                     ret
                 };
             }
+            SigData::WithReturn {
+                sig: of,
+                ret: TypeId::UNRESOLVED,
+            } if self.is_optional_call_signature_of(of) => return self.sig_return(sig),
             SigData::WithReturn { ret, .. } => return ret,
             SigData::Construct { .. } | SigData::DefaultConstruct { .. } => {
                 return self.sig_return(sig);

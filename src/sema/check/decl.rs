@@ -4845,7 +4845,9 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::WithReturn {
                 sig: of,
                 ret: TypeId::UNRESOLVED,
-            } => self.resolve_return_type(sig, |c| c.return_type_of_optional_call_signature(of)),
+            } if self.is_optional_call_signature_of(of) => {
+                self.resolve_return_type(sig, |c| c.return_type_of_optional_call_signature(of))
+            }
             SigData::Synth { ret, .. } | SigData::WithReturn { ret, .. } => ret,
             // `case sig.target != nil`
             SigData::Decl { file, func, mapper } if self.is_instantiating(mapper) => self
@@ -4869,6 +4871,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `resolvedReturnType`, so `sig_return` resolves it under an entry of its own. Only for the
     /// declared signature or an instantiation of it: the clone of any other gets its return type
     /// from `sig.target`, as `sig` does.
+    /// Whether `WithReturn { sig: of, ret: UNRESOLVED }` is the clone that `optional_call_signature`
+    /// makes, which is of a call signature. With a construct signature it is that of a mixin
+    /// whose return type was refused, and stays unresolved.
+    pub(super) fn is_optional_call_signature_of(&self, of: SigId) -> bool {
+        matches!(*self.types().sig(of), SigData::Decl { file, func, .. }
+        if !matches!(
+            self.hir(file)[func].kind,
+            FnKind::Constructor | FnKind::ConstructSignature | FnKind::ConstructorType
+        ))
+    }
+
     pub(super) fn optional_call_signature(&self, sig: SigId) -> SigId {
         if let SigData::Decl { file, func, mapper } = *self.types().sig(sig)
             && self.is_of_declared_signature(file, func, mapper)

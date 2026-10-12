@@ -5569,11 +5569,23 @@ impl<'p, 's> Checker<'p, 's> {
             let flags = self.files().flags(sym);
             let is_constant_variable =
                 flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST);
-            return if is_constant_variable && declared != self.auto_array_type {
-                Crossing::Yes
-            } else {
-                Crossing::No
-            };
+            if is_constant_variable && declared != self.auto_array_type {
+                return Crossing::Yes;
+            }
+            // `isParameterOrMutableLocalVariable(symbol) && isPastLastAssignment(symbol, e)`: the
+            // assignments are those of the file that declares it, and their position is compared
+            // with that of `e` in this file.
+            if let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) {
+                let symbol = self.bound(of).pat_symbol[pat.idx()];
+                if symbol.is_some() && self.is_parameter_or_mutable_local_variable(of, symbol) {
+                    let last = self.last_assignment_pos_of_global(of, symbol, pat);
+                    let pos = self.end_of_token_before(file, self.hir(file)[e].pos);
+                    if last == 0 || last < pos {
+                        return Crossing::Yes;
+                    }
+                }
+            }
+            return Crossing::No;
         }
         let flags = bound.symbols[s.idx()].flags;
         if flags.contains(SymFlags::CONST) && declared != self.auto_array_type {
@@ -5588,6 +5600,30 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             Crossing::No
         }
+    }
+
+    /// `lastAssignmentPos` of a `let` of `declare global { }` in `file`: `markNodeAssignments`
+    /// resolves each assigned name, so it finds the assignments of the file that the binder left
+    /// without a symbol.
+    fn last_assignment_pos_of_global(&self, file: FileId, symbol: SymbolId, pat: PatId) -> u32 {
+        self.ensure_assignments_marked(file, symbol);
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let name = bound.symbols[symbol.idx()].name;
+        let declaring_function = function_or_source_file_of(hir, hir.node(pat));
+        let mut last = self.last_assignment_pos(file, symbol);
+        for &(target, _) in bound.free_idents.iter() {
+            if matches!(hir[target].kind, ExprKind::Ident(it) if it == name)
+                && bound.get_assignment_target_kind(hir, target) != AssignmentKind::None
+            {
+                let referencing_function = function_or_source_file_of(hir, hir.node(target));
+                last = last.max(if referencing_function == declaring_function {
+                    self.extend_assignment_position(file, target, hir[pat].pos)
+                } else {
+                    u32::MAX
+                });
+            }
+        }
+        last
     }
 
     /// `start`: `initialType`. `Known`: `declared`. `of_name`: `flowContainer`, if `e` is a name.
@@ -7806,9 +7842,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The start of an evaluation of `getEffectsSignature`, for `assign_effects_signature`: `work`, `cycles`, and whether a query
     /// of the task had re-entered itself, which is recorded anew until then.
-    fn begin_effects_signature(&mut self) -> (u64, u64, bool) {
+    fn begin_effects_signature(&mut self) -> (u64, u64, u64, bool) {
         let closed_a_cycle = std::mem::take(&mut self.task.closed_a_cycle);
-        (self.work, self.cycles, closed_a_cycle)
+        (self.work, self.cycles, self.limits, closed_a_cycle)
     }
 
     /// `links.effectsSignature = signature` in `getEffectsSignature`: also from the incomplete type of a loop, and over what an
@@ -7818,13 +7854,15 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         node: ExprId,
         sig: Option<SigId>,
-        (work, cycles, closed_a_cycle): (u64, u64, bool),
+        (work, cycles, limits, closed_a_cycle): (u64, u64, u64, bool),
         required_resolution: bool,
     ) -> bool {
         let is_circular = self.task.closed_a_cycle;
         self.task.closed_a_cycle |= closed_a_cycle;
-        // Native stack or query depth ran out, or the resolution of the call has no result.
+        // Native stack or query depth ran out, a limit was hit that is reported from elsewhere,
+        // or the resolution of the call has no result.
         let is_cut_short = self.refused_at >= work && self.cycles != cycles
+            || self.limits != limits
             || required_resolution
                 && (self.p.resolved_effects_signatures)
                     .get(&self.task, &(file, node))

@@ -202,6 +202,10 @@ impl ExplicitFunctionReturnType {
             if is_oxlint && func.kind() == FnKind::Decl && let Some(name) = func.name() {
                 loc.end = name.span().end;
             }
+            // In place of the `=>`, at the two bytes that follow one byte after the parameters.
+            if is_oxlint && func.arrow_span() == Some(loc) && let Some(params) = func.params_span() {
+                loc = Span::new(params.end + 1, params.end + 3);
+            }
             cx.report(loc, MISSING_RETURN_TYPE);
         });
     }

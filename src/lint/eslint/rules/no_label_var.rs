@@ -22,7 +22,8 @@ impl Rule for NoLabelVar {
             return;
         };
         let variable = Node::Stmt(stmt).scope().resolve_name(label);
-        if variable.is_some() || cx.file().global(label.bytes()).is_some() {
+        // oxlint knows only what the file declares.
+        if variable.is_some() || !cx.language().is_oxlint && cx.file().global(label.bytes()).is_some() {
             // oxlint points at where the variable is declared.
             let declared = (variable.filter(|_| cx.language().is_oxlint))
                 .and_then(|it| it.declarations().next()?.name_span());

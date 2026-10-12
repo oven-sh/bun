@@ -6,9 +6,10 @@ pub struct NoUselessEmptyExport;
 const USELESS_EXPORT: Message =
     Message::new("uselessExport", "Empty export does nothing and can be removed.");
 
-/// `export {}`, with or without `from`.
+/// `export {}`, with or without `from`. For oxlint without: `export {} from "a"` asks for a module, as an `import` does.
 fn is_empty_export(stmt: Stmt) -> bool {
     matches!(stmt.kind(), StmtKind::ExportNamed(export) if export.items().is_empty())
+        && !(stmt.file().language().is_oxlint && stmt.module_specifier_span().is_some())
 }
 
 fn is_other_export_or_import(stmt: Stmt) -> bool {

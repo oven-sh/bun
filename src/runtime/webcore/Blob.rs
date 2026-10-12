@@ -157,8 +157,6 @@ pub(crate) trait BlobExt {
         cx: &bun_jsc::JsThread<'_>,
     );
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
-    /// `store_tag` is `structured_clone_store_tag(self)`, which is `None`
-    /// (nothing to write) for the stores the record cannot describe.
     fn _on_structured_clone_serialize<W: bun_io::Write>(
         &self,
         store_tag: store::SerializeTag,
@@ -742,8 +740,7 @@ impl BlobExt for Blob {
                 // on the wire and the receiver stats it locally, like v3.
                 writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
-                // Borrowed only after resolve_size(), which stats the file and
-                // writes the result into this same store.
+                // resolve_size() writes into this store: borrow the File only after it.
                 store.data.as_file().serialize(writer)?;
             }
         }
@@ -772,8 +769,7 @@ impl BlobExt for Blob {
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
         let Some(store_tag) = structured_clone_store_tag(self) else {
-            // CloneSerializer checks for a pending exception after this hook
-            // returns and fails the whole clone with it.
+            // CloneSerializer runs RETURN_IF_EXCEPTION right after this hook returns.
             let _ = global_this.throw_dom_exception(
                 bun_jsc::DOMExceptionCode::DataCloneError,
                 format_args!(
@@ -3768,9 +3764,7 @@ impl bun_io::Write for StructuredCloneWriter {
     }
 }
 
-/// `None` for an S3 store: the record has no form for the credentials and
-/// options of the S3Client it is bound to, and a clone that reopened the key
-/// under whatever the receiver's environment holds would not be a clone.
+/// `None` for an S3 store, whatever wraps it: the record cannot carry the client's credentials.
 fn structured_clone_store_tag(blob: &Blob) -> Option<store::SerializeTag> {
     let Some(store) = blob.store() else {
         return Some(store::SerializeTag::Empty);
@@ -3901,9 +3895,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }
-                    // No serializer writes one (`structured_clone_store_tag` refuses
-                    // S3 stores), so this is a crafted record; honoring it would hand
-                    // out an S3File signed with this process's environment credentials.
+                    // Crafted record: no serializer writes an `s3://` path.
                     if path.starts_with(b"s3://") {
                         return Err(crate::Error::InvalidValue);
                     }

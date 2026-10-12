@@ -85,8 +85,7 @@ pub(crate) trait S3Ext {
 
 pub(crate) trait FileExt {
     fn unlink(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
-    /// Body of a `SerializeTag::File` structured-clone record, read back by
-    /// `Blob::on_structured_clone_deserialize`.
+    /// Body of a `SerializeTag::File` structured-clone record.
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
 }
 
@@ -212,10 +211,7 @@ impl FileExt for File {
 
         match &self.pathlike {
             PathOrFileDescriptor::Fd(fd) => {
-                // Write the raw bytes of the FD wrapper. `bun_sys::Fd` is
-                // `#[repr(transparent)]` over an integer (`i32` posix /
-                // `u64` windows), so its native-endian byte image is
-                // exactly the inner field's `to_ne_bytes()`.
+                // `Fd` is `#[repr(transparent)]`; read back with `read_struct::<Fd>()`.
                 writer.write_all(&fd.0.to_ne_bytes())?;
             }
             PathOrFileDescriptor::Path(path) => {

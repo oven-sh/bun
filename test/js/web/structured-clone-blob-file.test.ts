@@ -364,12 +364,14 @@ describe("structuredClone with Blob and File", () => {
   });
 
   describe("S3File structured clone", () => {
-    // An S3File is bound to the credentials and options of the client that
+    // An S3 store is bound to the credentials and options of the client that
     // made it, and the Blob wire record has no form for those, so serializing
     // one is refused up front with a DataCloneError. Before that, the record
-    // went out under the wrong store tag: every reader failed with "Unable to
-    // deserialize data." and postMessage() lost the message instead of
-    // throwing. Nothing here performs S3 I/O; the endpoint is never contacted.
+    // went out under the Bytes tag with the body of a File record. Most
+    // readers failed with "Unable to deserialize data.", postMessage() lost
+    // the message instead of throwing, and a 5-byte slice parsed as a Blob of
+    // 5 wrong bytes. Each attempt also set the size of the source to 0.
+    // Nothing here performs S3 I/O; the endpoint is never contacted.
     const credentials = {
       accessKeyId: "test-access-key",
       secretAccessKey: "test-secret-key",
@@ -395,24 +397,47 @@ describe("structuredClone with Blob and File", () => {
     }
 
     test.each([
-      ["Bun.s3.file(key, options)", () => Bun.s3.file("key.txt", credentials)],
-      ["Bun.s3.file(s3:// url, options)", () => Bun.s3.file("s3://bucket/key.txt", credentials)],
-      ["new Bun.S3Client(options).file(key)", () => new Bun.S3Client(credentials).file("key.txt")],
-      ["Bun.S3Client.file(key, options)", () => Bun.S3Client.file("key.txt", credentials)],
-      ["Bun.file(s3:// url)", () => Bun.file("s3://bucket/key.txt")],
-      ["S3File.slice()", () => new Bun.S3Client(credentials).file("key.txt").slice(1, 3)],
-    ])("structuredClone() of %s throws a DataCloneError", (_name, make) => {
+      ["Bun.s3.file(key, options)", () => Bun.s3.file("key.txt", credentials), NaN],
+      ["Bun.s3.file(s3:// url, options)", () => Bun.s3.file("s3://bucket/key.txt", credentials), NaN],
+      ["new Bun.S3Client(options).file(key)", () => new Bun.S3Client(credentials).file("key.txt"), NaN],
+      ["Bun.S3Client.file(key, options)", () => Bun.S3Client.file("key.txt", credentials), NaN],
+      ["Bun.file(s3:// url)", () => Bun.file("s3://bucket/key.txt"), NaN],
+      ["S3File.slice()", () => new Bun.S3Client(credentials).file("key.txt").slice(1, 3), 2],
+      // Without the refusal, this window cloned with no error into a Blob of the bytes 00 00 00 00 01.
+      ["S3File.slice() of 5 bytes", () => new Bun.S3Client(credentials).file("key.txt").slice(0, 5), 5],
+    ])("structuredClone() of %s throws a DataCloneError", (_name, make, size) => {
       const file = make();
-      expect(Object.prototype.toString.call(file)).toBe("[object S3File]");
       const nameBefore = file.name;
+      expect({ tag: Object.prototype.toString.call(file), size: file.size }).toEqual({ tag: "[object S3File]", size });
 
       expect(thrownBy(() => structuredClone(file))).toEqual(dataCloneError);
 
-      // The refused clone leaves the source file usable.
-      expect({ tag: Object.prototype.toString.call(file), name: file.name }).toEqual({
+      // The refused clone leaves the source file as it was.
+      expect({ tag: Object.prototype.toString.call(file), name: file.name, size: file.size }).toEqual({
         tag: "[object S3File]",
         name: nameBefore,
+        size,
       });
+    });
+
+    test.each([
+      ["new Blob([s3file])", (s3file: Blob) => new Blob([s3file])],
+      ["new File([s3file], name)", (s3file: Blob) => new File([s3file], "n.txt")],
+      [
+        "formData.get() of an appended S3File",
+        (s3file: Blob) => {
+          const form = new FormData();
+          form.append("f", s3file);
+          return form.get("f") as Blob;
+        },
+      ],
+    ])("%s is not an S3File, shares its store, and is refused the same way", (_name, wrap) => {
+      const blob = wrap(Bun.s3.file("key.txt", credentials));
+      expect(Object.prototype.toString.call(blob)).not.toBe("[object S3File]");
+      expect(blob.size).toBeNaN();
+
+      expect(thrownBy(() => structuredClone(blob))).toEqual(dataCloneError);
+      expect(blob.size).toBeNaN();
     });
 
     test.each([
@@ -445,10 +470,10 @@ describe("structuredClone with Blob and File", () => {
         },
       ],
     ])("%s throws the DataCloneError at the sender", (_name, entryPoint) => {
-      expect(thrownBy(() => entryPoint(Bun.s3.file("key.txt", credentials)))).toEqual(dataCloneError);
-      expect(thrownBy(() => entryPoint({ files: [new Blob(["ok"]), Bun.s3.file("key.txt", credentials)] }))).toEqual(
-        dataCloneError,
-      );
+      const file = Bun.s3.file("key.txt", credentials);
+      expect(thrownBy(() => entryPoint(file))).toEqual(dataCloneError);
+      expect(thrownBy(() => entryPoint({ files: [new Blob(["ok"]), file] }))).toEqual(dataCloneError);
+      expect(file.size).toBeNaN();
     });
 
     test("serializing for storage is refused too; cross-process transfer degrades to {} like every Blob", () => {

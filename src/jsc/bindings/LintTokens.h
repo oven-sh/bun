@@ -169,6 +169,9 @@ void LintTokenState::visit(Visitor& visitor)
     visitor.append(tokensAndComments);
 }
 
+// The `loc` of what's from `start` to `end` of the current file, for tokens and for nodes. A node of espree has `EspreeToken`.
+JSC::JSObject* lintCreateLoc(JSC::VM&, LintHost*, LintLocShape::Kind, double start, double end);
+
 // `ast.comments` and `sourceCode.tokensAndComments` of the current file. They throw if there's none.
 JSC::EncodedJSValue lintComments(JSC::JSGlobalObject*);
 JSC::EncodedJSValue lintTokensAndComments(JSC::JSGlobalObject*);

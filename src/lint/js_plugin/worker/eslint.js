@@ -1,4 +1,4 @@
-// ───────────── ESLint's own `Linter` ─────────────
+// ------------- ESLint's own `Linter` -------------
 //
 // A file for which an `eslint.config.js` has a `language` other than JavaScript, or a parser that makes a tree of its own, is linted
 // by the `Linter` of the `eslint` that the project has installed. It is given a configuration that is made here, of what the other
@@ -267,13 +267,11 @@ function isAboutLayout({ ruleId, message }, aboutLayout) {
 // ESLint's `verifyText`, without the fixing, which the other side does. The message: `flags`, the id of the configuration, the length
 // of the path and of what it starts with that is the path of the file on disk, then the path, then the text.
 function lintWithEslint() {
-  const length = ask(MESSAGE);
-  const buffer = buffers[MESSAGE];
-  const [flags, id, pathLength, physicalLength] = new Uint32Array(buffer, 0, 4);
+  const [flags, id, pathLength, physicalLength] = messageWords(4);
   const configuration = eslintConfigurations.get(id);
   if (configuration === undefined) return NEEDS_ESLINT_CONFIGURATION;
   const { linter, configs, options } = configuration;
-  const name = decode(buffer, 16, 16 + pathLength);
+  const name = messageText(16, 16 + pathLength);
   const how = {
     allowInlineConfig: options.allowInlineConfig,
     filename: name,
@@ -282,11 +280,11 @@ function lintWithEslint() {
   // The rules about layout do not run here either.
   how.ruleFilter = ({ ruleId, severity }) =>
     !options.aboutLayout.has(ruleId) && (!options.onlyErrors || severity === 2);
-  if (physicalLength !== pathLength) how.physicalFilename = decode(buffer, 16, 16 + physicalLength);
+  if (physicalLength !== pathLength) how.physicalFilename = messageText(16, 16 + physicalLength);
   if ((flags & WITHOUT_FIXES) !== 0) how.disableFixes = true;
   // The `Linter` of ESLint 8 knows no `ruleFilter`: there they have run.
   const isKept = it => !isAboutLayout(it, options.aboutLayout);
-  const messages = linter.verify(decode(buffer, 16 + pathLength, length), configs, how).filter(isKept);
+  const messages = linter.verify(messageText(16 + pathLength), configs, how).filter(isKept);
   const suppressed = linter.getSuppressedMessages().filter(isKept);
   const config = configs.getConfig?.(name);
   return DONE + JSON.stringify([messages, suppressed, config === undefined ? [] : deprecatedRulesOf(config)]);

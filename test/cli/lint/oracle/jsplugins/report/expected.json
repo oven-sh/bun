@@ -39,7 +39,7 @@
  {
   "ruleId": "demo/errors-all",
   "severity": 2,
-  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a message and a messageId. Please only pass one.\",\"TypeError: context.report() called with a messageId of 'unknown' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"TypeError: context.report() called with a messageId of 'toString' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option that defines both a 'messageId' and an 'desc'. Please only pass one.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"undefined\",\"undefined\",\"report,0,function,false\"]",
+  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a message and a messageId. Please only pass one.\",\"TypeError: context.report() called with a messageId of 'unknown' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"TypeError: context.report() called with a messageId of 'toString' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option that defines both a 'messageId' and an 'desc'. Please only pass one.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown' which is not present in the 'messages' config: {\\n  \\\"known\\\": \\\"Known.\\\",\\n  \\\"withData\\\": \\\"With {{x}} and {{ y }}.\\\"\\n}\",\"undefined\",\"undefined\",\"Error: RuleFixer 1 0 constructor,insertTextAfter,insertTextAfterRange,insertTextBefore,insertTextBeforeRange,replaceText,replaceTextRange,remove,removeRange 0 false true {\\\"range\\\":[0,1],\\\"text\\\":\\\"\\\"} TypeError TypeError\",\"report,0,function,false\"]",
   "line": 1,
   "column": 1
  },
@@ -83,7 +83,7 @@
  {
   "ruleId": "demo/errors-none",
   "severity": 2,
-  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option with a messageId 'known', but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown', but no messages were present in the rule metadata.\",\"Error: Fixable rules must set the `meta.fixable` property to \\\"code\\\" or \\\"whitespace\\\".\",\"Error: Rules with suggestions must set the `meta.hasSuggestions` property to `true`.\",\"report,0,function,false\"]",
+  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option with a messageId 'known', but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown', but no messages were present in the rule metadata.\",\"Error: Fixable rules must set the `meta.fixable` property to \\\"code\\\" or \\\"whitespace\\\".\",\"Error: Rules with suggestions must set the `meta.hasSuggestions` property to `true`.\",\"Error: RuleFixer 1 0 constructor,insertTextAfter,insertTextAfterRange,insertTextBefore,insertTextBeforeRange,replaceText,replaceTextRange,remove,removeRange 0 false true {\\\"range\\\":[0,1],\\\"text\\\":\\\"\\\"} TypeError TypeError\",\"report,0,function,false\"]",
   "line": 1,
   "column": 1
  },
@@ -127,7 +127,7 @@
  {
   "ruleId": "demo/errors-old",
   "severity": 2,
-  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option with a messageId 'known', but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown', but no messages were present in the rule metadata.\",\"Error: Fixable rules must set the `meta.fixable` property to \\\"code\\\" or \\\"whitespace\\\".\",\"Error: Rules with suggestions must set the `meta.hasSuggestions` property to `true`. `meta.docs.suggestion` is ignored by ESLint.\",\"report,0,function,false\"]",
+  "message": "[\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be provided when reporting error if location is not provided\",\"Error: Node must be an object\",\"TypeError: Missing `message` property in report() call; add a message that describes the linting problem.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a messageId, but no messages were present in the rule metadata.\",\"Error: Fix has invalid range: {\\n  \\\"range\\\": [\\n    0,\\n    \\\"1\\\"\\n  ],\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix has invalid range: {\\n  \\\"text\\\": \\\"\\\"\\n}\",\"Error: Fix objects must not be overlapped in a report.\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: 'text' must be a string\",\"TypeError: context.report() called with a suggest option that doesn't have either a `desc` or `messageId`\",\"TypeError: context.report() called with a suggest option without a fix function. See: {\\n  \\\"desc\\\": \\\"d\\\"\\n}\",\"TypeError: context.report() called with a suggest option with a messageId 'known', but no messages were present in the rule metadata.\",\"TypeError: context.report() called with a suggest option with a messageId 'unknown', but no messages were present in the rule metadata.\",\"Error: Fixable rules must set the `meta.fixable` property to \\\"code\\\" or \\\"whitespace\\\".\",\"Error: Rules with suggestions must set the `meta.hasSuggestions` property to `true`. `meta.docs.suggestion` is ignored by ESLint.\",\"Error: RuleFixer 1 0 constructor,insertTextAfter,insertTextAfterRange,insertTextBefore,insertTextBeforeRange,replaceText,replaceTextRange,remove,removeRange 0 false true {\\\"range\\\":[0,1],\\\"text\\\":\\\"\\\"} TypeError TypeError\",\"report,0,function,false\"]",
   "line": 1,
   "column": 1
  },
@@ -169,6 +169,24 @@
   "ruleId": "demo/results",
   "severity": 2,
   "message": "ExpressionStatement \"\\\"é\\\";\"",
+  "line": 2,
+  "column": 1,
+  "endLine": 2,
+  "endColumn": 5
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "a loc that is 0",
+  "line": 2,
+  "column": 1,
+  "endLine": 2,
+  "endColumn": 5
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "a loc that is empty",
   "line": 2,
   "column": 1,
   "endLine": 2,
@@ -777,6 +795,76 @@
   "column": 1,
   "suggestions": [
    {
+    "desc": "After a hole.",
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 148,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "Data of all kinds.",
+    "data": {
+     "n": 1,
+     "b": true,
+     "nothing": null,
+     "list": [
+      1,
+      "2"
+     ],
+     "deep": {
+      "a": {}
+     }
+    },
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 149,
+  "column": 1,
+  "suggestions": [
+   {
+    "desc": "Empty data.",
+    "data": {},
+    "fix": {
+     "range": [
+      0,
+      2
+     ],
+     "text": ""
+    }
+   }
+  ]
+ },
+ {
+  "ruleId": "demo/results",
+  "severity": 2,
+  "message": "suggest",
+  "line": 150,
+  "column": 1,
+  "suggestions": [
+   {
     "desc": "Second.",
     "fix": {
      "range": [
@@ -802,7 +890,7 @@
   "ruleId": "demo/results",
   "severity": 2,
   "message": "inner",
-  "line": 148,
+  "line": 151,
   "column": 1,
   "fix": {
    "range": [
@@ -816,7 +904,7 @@
   "ruleId": "demo/results",
   "severity": 2,
   "message": "outer",
-  "line": 148,
+  "line": 151,
   "column": 1,
   "fix": {
    "range": [

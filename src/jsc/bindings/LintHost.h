@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include "LintNodes.h"
 #include "LintReport.h"
 #include "LintScopes.h"
 #include "LintSourceCode.h"
@@ -79,14 +80,40 @@ public:
     Position positionOf(double index);
     // `{ line, column }`
     JSC::JSObject* createPosition(JSC::VM&, double index);
-    // `{ start: { line, column }, end: { line, column } }`
-    JSC::JSObject* createLoc(JSC::VM&, double start, double end);
     JSC::Structure* positionStructure() const { return m_positionStructure.get(); }
     JSC::Structure* locStructure() const { return m_locStructure.get(); }
-    // Whether `value` is an object with the Structure of what these two make, so that its properties are at the offsets 0 and 1.
-    bool isPosition(JSC::JSValue value) const { return value.isCell() && value.asCell()->structure() == m_positionStructure.get(); }
-    bool isLoc(JSC::JSValue value) const { return value.isCell() && value.asCell()->structure() == m_locStructure.get(); }
+    // `loc.start` and `loc.end`, if `loc` is as `lintCreateLoc` has made it. If not it has to be asked.
+    bool readLoc(JSC::JSValue loc, JSC::JSValue& start, JSC::JSValue& end) const
+    {
+        if (!loc.isCell())
+            return false;
+        JSC::Structure* structure = loc.asCell()->structure();
+        for (auto& shape : tokens.locShapes) {
+            if (shape.structure.get() != structure)
+                continue;
+            start = asObject(loc)->getDirect(shape.isReversed ? 1 : 0);
+            end = asObject(loc)->getDirect(shape.isReversed ? 0 : 1);
+            return true;
+        }
+        return false;
+    }
+    // The same for `position.line` and `position.column`, also of what `createPosition` has made.
+    bool readPosition(JSC::JSValue position, JSC::JSValue& line, JSC::JSValue& column) const
+    {
+        if (!position.isCell())
+            return false;
+        JSC::Structure* structure = position.asCell()->structure();
+        for (auto& shape : tokens.locShapes) {
+            if (shape.positionStructure.get() != structure)
+                continue;
+            line = asObject(position)->getDirect(shape.isReversed ? 1 : 0);
+            column = asObject(position)->getDirect(shape.isReversed ? 0 : 1);
+            return true;
+        }
+        return false;
+    }
 
+    LintNodeState nodes;
     LintReportState report;
     LintScopeState scopes;
     LintSourceCodeState sourceCode;

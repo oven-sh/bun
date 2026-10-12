@@ -18,6 +18,7 @@ const errors = meta => ({
       const fix = fixer => fixer.remove(node);
       const report = (...args) => say(() => context.report(...args));
       const said = [
+        report(),
         report({ message: "no place" }),
         report({ node: 5, message: "a number" }),
         report({ node }),
@@ -36,12 +37,37 @@ const errors = meta => ({
         }),
         report({ node, message: "m", fix: fixer => fixer.replaceText(node, 5) }),
         report({ node, message: "m", fix: fixer => fixer.insertTextAfterRange([0, 1]) }),
+        report({ node, message: "m", fix: fixer => fixer.insertTextBefore(null, 5) }),
         report({ node, message: "m", suggest: [{ fix }] }),
         report({ node, message: "m", suggest: [{ desc: "d" }] }),
         report({ node, message: "m", suggest: [{ desc: "d", messageId: "known", fix }] }),
         report({ node, message: "m", suggest: [{ messageId: "unknown", fix }] }),
         report({ node, message: "m", fix }),
         report({ node, message: "m", suggest: [{ desc: "d", fix }] }),
+        // What a fixer is.
+        report({
+          node,
+          message: "m",
+          fix(fixer) {
+            const prototype = Object.getPrototypeOf(fixer);
+            const { remove, removeRange } = fixer;
+            throw new Error(
+              [
+                fixer.constructor.name,
+                fixer.constructor.length,
+                Object.keys(fixer).length,
+                Object.getOwnPropertyNames(prototype),
+                Object.keys(prototype).length,
+                Object.isFrozen(fixer),
+                Object.isExtensible(fixer),
+                // Only the methods that take a node need to be called on a fixer.
+                JSON.stringify(removeRange([0, 1])),
+                say(() => remove(node)).split(":")[0],
+                say(() => remove.call(Object.create(fixer), node)).split(":")[0],
+              ].join(" "),
+            );
+          },
+        }),
         [context.report.name, context.report.length, typeof context.report, "prototype" in context.report].join(),
       ];
       context.report({ loc: { line: 1, column: 0 }, message: JSON.stringify(said) });
@@ -90,6 +116,8 @@ const results = {
         report({ loc: { start: at(), end: { line, column: 3 } }, message: "start and end" });
         report({ loc: { start: at() }, message: "only start" });
         report({ node: first, loc: at(), message: "node and loc" });
+        report({ node: second, loc: 0, message: "a loc that is 0" });
+        report({ node: second, loc: "", message: "a loc that is empty" });
 
         for (const fix of [
           fixer => fixer.insertTextAfter(second, "A"),
@@ -139,6 +167,16 @@ const results = {
           [{ messageId: "known", fix }],
           [{ messageId: "withData", data: { x: "X", y: "Y" }, fix }],
           [{ desc: "No fix.", fix: () => null }],
+          // A hole.
+          [, { desc: "After a hole.", fix }],
+          [
+            {
+              desc: "Data of all kinds.",
+              data: { n: 1, b: true, nothing: null, gone: undefined, list: [1, "2"], deep: { a: {} } },
+              fix,
+            },
+          ],
+          [{ desc: "Empty data.", data: {}, fix }],
           [
             { desc: "No fix.", fix: () => null },
             { desc: "Second.", fix },

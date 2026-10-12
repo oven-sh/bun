@@ -7,6 +7,7 @@
 #include "LintSourceCode.h"
 
 #include "LintHost.h"
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSBigInt.h>
@@ -170,7 +171,7 @@ JSValue acquireScope(JSGlobalObject* globalObject, LintHost* host, JSValue node,
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LintSourceCodeState& state = host->sourceCode;
-    if (!node.isCell())
+    if (!canBeHeldWeakly(node))
         return {};
     auto* scopes = dynamicDowncast<JSArray>(host->scopes.nodeToScope->get(node.asCell()));
     if (!scopes) [[likely]]
@@ -203,7 +204,8 @@ JSValue scopeOf(JSGlobalObject* globalObject, LintHost* host, JSValue currentNod
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintSourceCodeState& state = host->sourceCode;
-    if (currentNode.isCell()) [[likely]] {
+    // A WeakMap can only be asked about what can be a key. A string is a cell too.
+    if (canBeHeldWeakly(currentNode)) [[likely]] {
         JSValue cached = state.scopeCache->get(currentNode.asCell());
         if (!cached.isUndefined())
             return cached;
@@ -266,28 +268,30 @@ const Vector<uint32_t>& lastDescendantsOf(LintSourceCodeState& state)
 } // namespace
 
 // ───────────── properties ─────────────
+//
+// To a plugin they are plain data properties of a frozen object, as with ESLint. Each is computed when it's read.
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeText, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeText, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     return JSValue::encode(LintHost::from(globalObject)->text());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeHasBOM, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeHasBOM, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     return JSValue::encode(jsBoolean(LintHost::from(globalObject)->hasBOM()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeAst, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeAst, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     return JSValue::encode(callHook(globalObject, LintHost::from(globalObject)->sourceCode.program));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeLines, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeLines, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     return JSValue::encode(linesOf(globalObject, LintHost::from(globalObject)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeLineStartIndices, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeLineStartIndices, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -312,12 +316,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeLineStartIndices, (JSGlobalObject * glo
     return JSValue::encode(indices);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeTokensAndComments, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeTokensAndComments, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     return lintTokensAndComments(globalObject);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeVisitorKeys, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     LintHost* host = LintHost::from(globalObject);
     return JSValue::encode(host->sourceCode.visitorKeys->getIndex(globalObject, host->isEspree() ? 1 : 0));
@@ -325,7 +329,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeVisitorKeys, (JSGlobalObject * globalOb
 
 // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
 // nodes of TypeScript's own tree to put in them.
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeParserServices, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -354,17 +358,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeParserServices, (JSGlobalObject * globa
     return JSValue::encode(services);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeScopeManager, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeScopeManager, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
 {
     LintHost* host = LintHost::from(globalObject);
     if (JSObject* manager = host->scopes.manager.get()) [[likely]]
         return JSValue::encode(manager);
     return JSValue::encode(callHook(globalObject, host->sourceCode.scopeManager));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsLintSourceCodeIsESTree, (JSGlobalObject*, CallFrame*))
-{
-    return JSValue::encode(jsBoolean(true));
 }
 
 // ───────────── methods ─────────────
@@ -469,6 +468,11 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetText, (JSGlobalObject * globalObject, CallFram
         return JSValue::encode(from < to ? jsSubstringOfResolved(vm, text, static_cast<unsigned>(from), static_cast<unsigned>(to - from)) : jsEmptyString(vm));
     }
     return getTextSlow(globalObject, callFrame, host);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsLintGetLines, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(linesOf(globalObject, LintHost::from(globalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsLintGetAllComments, (JSGlobalObject * globalObject, CallFrame*))
@@ -838,9 +842,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetIndexFromLoc, (JSGlobalObject * globalObject, 
     LintSourceCodeState& state = host->sourceCode;
     JSValue loc = callFrame->argument(0);
     JSValue lineValue, columnValue;
-    if (host->isPosition(loc)) [[likely]] {
-        lineValue = asObject(loc)->getDirect(0);
-        columnValue = asObject(loc)->getDirect(1);
+    if (host->readPosition(loc, lineValue, columnValue)) [[likely]] {
         if (!lineValue.isNumber())
             columnValue = {};
     } else if (loc.isObject() && !loc.isCallable()) {
@@ -983,7 +985,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintGetDeclaredVariables, (JSGlobalObject * globalObj
     ensureScopes(globalObject, host);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue node = callFrame->argument(0);
-    JSValue variables = node.isCell() ? host->scopes.declaredVariables->get(node.asCell()) : jsUndefined();
+    JSValue variables = canBeHeldWeakly(node) ? host->scopes.declaredVariables->get(node.asCell()) : jsUndefined();
     if (!variables.isUndefined())
         return JSValue::encode(variables);
     RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr)));
@@ -1003,6 +1005,9 @@ JSC_DEFINE_HOST_FUNCTION(jsLintIsGlobalReference, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
     bool isIdentifier = isText(globalObject, type, "Identifier"_s);
     RETURN_IF_EXCEPTION(scope, {});
+    // ESLint keeps the answer in a WeakMap.
+    if (!canBeHeldWeakly(node))
+        return throwVMTypeError(globalObject, scope, "WeakMap keys must be objects or non-registered symbols"_s);
     if (!isIdentifier)
         return JSValue::encode(jsBoolean(false));
 
@@ -1156,7 +1161,9 @@ JSValue computeLoc(JSGlobalObject* globalObject, LintHost* host, JSValue nodeOrT
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
-    JSObject* loc = host->createLoc(vm, indices[0], indices[1]);
+    auto kind = host->isOxlint() ? LintLocShape::Oxlint : host->isEspree() ? LintLocShape::EspreeToken
+                                                                           : LintLocShape::TypeScript;
+    JSObject* loc = lintCreateLoc(vm, host, kind, indices[0], indices[1]);
     defineLoc(globalObject, host, nodeOrToken, loc);
     RETURN_IF_EXCEPTION(scope, {});
     return loc;
@@ -1216,7 +1223,7 @@ public:
     {
         Structure* structure = Structure::create(vm, globalObject, tokenStore, TypeInfo(InternalFunctionType, StructureFlags), info());
         auto* constructor = new (NotNull, allocateCell<LintSourceCodeConstructor>(vm)) LintSourceCodeConstructor(vm, structure);
-        constructor->finishCreation(vm, 0, "SourceCode"_s, PropertyAdditionMode::WithoutStructureTransition);
+        constructor->finishCreation(vm, 2, "SourceCode"_s, PropertyAdditionMode::WithoutStructureTransition);
         constructor->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
         return constructor;
     }
@@ -1236,60 +1243,87 @@ JSC_DEFINE_HOST_FUNCTION(callSourceCode, (JSGlobalObject * globalObject, CallFra
     return throwVMTypeError(globalObject, scope, "Cannot call a class constructor SourceCode without |new|"_s);
 }
 
+// In ESLint's order.
+struct Property {
+    ASCIILiteral name;
+    GetValueFunc getter;
+};
+const Property properties[] = {
+    { "isESTree"_s, nullptr },
+    { "hasBOM"_s, jsLintSourceCodeHasBOM },
+    { "text"_s, jsLintSourceCodeText },
+    { "ast"_s, jsLintSourceCodeAst },
+    { "parserServices"_s, jsLintSourceCodeParserServices },
+    { "scopeManager"_s, jsLintSourceCodeScopeManager },
+    { "visitorKeys"_s, jsLintSourceCodeVisitorKeys },
+    { "tokensAndComments"_s, jsLintSourceCodeTokensAndComments },
+    { "lines"_s, jsLintSourceCodeLines },
+    { "lineStartIndices"_s, jsLintSourceCodeLineStartIndices },
+};
+
+// Gives `object`, which is new, the properties, and freezes it.
+void defineProperties(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    constexpr unsigned frozen = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+    for (auto& property : properties) {
+        Identifier name = Identifier::fromString(vm, property.name);
+        if (property.getter)
+            object->putDirectCustomAccessor(vm, name, CustomGetterSetter::create(vm, property.getter, nullptr), frozen | PropertyAttribute::CustomValue);
+        else
+            object->putDirect(vm, name, jsBoolean(true), frozen);
+    }
+    object->methodTable()->preventExtensions(object, globalObject);
+}
+
 JSC_DEFINE_HOST_FUNCTION(constructSourceCode, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    LintHost* host = LintHost::from(globalObject);
-    LintSourceCodeState& state = host->sourceCode;
-    Structure* structure = state.instanceStructure.get();
+    LintSourceCodeState& state = LintHost::from(globalObject)->sourceCode;
+    JSObject* like = state.instance.get();
     JSObject* newTarget = asObject(callFrame->newTarget());
-    if (newTarget != state.constructor.get()) {
-        structure = InternalFunction::createSubclassStructure(globalObject, newTarget, structure);
+    if (newTarget != state.constructor.get()) [[unlikely]] {
+        Structure* structure = InternalFunction::createSubclassStructure(globalObject, newTarget, globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, asObject(like->getPrototypeDirect()), JSFinalObject::defaultInlineCapacity));
         RETURN_IF_EXCEPTION(scope, {});
+        JSObject* object = constructEmptyObject(vm, structure);
+        defineProperties(globalObject, object);
+        return JSValue::encode(object);
     }
-    return JSValue::encode(constructEmptyObject(vm, structure));
+    // Nothing in it is about a file.
+    JSFinalObject* object = JSFinalObject::create(vm, like->structure());
+    for (PropertyOffset offset = 0; offset < static_cast<PropertyOffset>(std::size(properties)); ++offset)
+        object->putDirectOffset(vm, offset, like->getDirect(offset));
+    return JSValue::encode(object);
 }
 
 struct Member {
     ASCIILiteral name;
-    // Of a method. A getter has none.
-    int length;
+    unsigned length;
     NativeFunction function;
 };
 
-constexpr int getter = -1;
-
+// In the order of ESLint's class, then what ESLint doesn't have any more.
 const Member members[] = {
-    { "text"_s, getter, jsLintSourceCodeText },
-    { "hasBOM"_s, getter, jsLintSourceCodeHasBOM },
-    { "ast"_s, getter, jsLintSourceCodeAst },
-    { "lines"_s, getter, jsLintSourceCodeLines },
-    { "lineStartIndices"_s, getter, jsLintSourceCodeLineStartIndices },
-    { "tokensAndComments"_s, getter, jsLintSourceCodeTokensAndComments },
-    { "visitorKeys"_s, getter, jsLintSourceCodeVisitorKeys },
-    { "parserServices"_s, getter, jsLintSourceCodeParserServices },
-    { "scopeManager"_s, getter, jsLintSourceCodeScopeManager },
-    { "isESTree"_s, getter, jsLintSourceCodeIsESTree },
     { "getText"_s, 3, jsLintGetText },
-    { "getLines"_s, 0, jsLintSourceCodeLines },
+    { "getLines"_s, 0, jsLintGetLines },
     { "getAllComments"_s, 0, jsLintGetAllComments },
-    { "getInlineConfigNodes"_s, 0, jsLintGetInlineConfigNodes },
-    { "getDisableDirectives"_s, 0, jsLintGetDisableDirectives },
     { "getNodeByRangeIndex"_s, 1, jsLintGetNodeByRangeIndex },
     { "isSpaceBetween"_s, 2, jsLintIsSpaceBetween },
-    { "getComments"_s, 1, jsLintGetComments },
-    { "getJSDocComment"_s, 1, jsLintGetJSDocComment },
     { "getLocFromIndex"_s, 1, jsLintGetLocFromIndex },
     { "getIndexFromLoc"_s, 1, jsLintGetIndexFromLoc },
-    { "getLoc"_s, 1, jsLintGetLoc },
-    { "getRange"_s, 1, jsLintGetRange },
-    { "getParent"_s, 1, jsLintGetParent },
-    { "getAncestors"_s, 1, jsLintGetAncestors },
     { "getScope"_s, 1, jsLintGetScope },
     { "getDeclaredVariables"_s, 1, jsLintGetDeclaredVariables },
+    { "getAncestors"_s, 1, jsLintGetAncestors },
     { "isGlobalReference"_s, 1, jsLintIsGlobalReference },
+    { "getLoc"_s, 1, jsLintGetLoc },
+    { "getRange"_s, 1, jsLintGetRange },
     { "markVariableAsUsed"_s, 1, jsLintMarkVariableAsUsed },
+    { "getInlineConfigNodes"_s, 0, jsLintGetInlineConfigNodes },
+    { "getDisableDirectives"_s, 0, jsLintGetDisableDirectives },
+    { "getParent"_s, 1, jsLintGetParent },
+    { "getComments"_s, 1, jsLintGetComments },
+    { "getJSDocComment"_s, 1, jsLintGetJSDocComment },
     { "isSpaceBetweenTokens"_s, 2, jsLintIsSpaceBetweenTokens },
     { "getTokenOrCommentBefore"_s, 2, jsLintGetTokenOrCommentBefore },
     { "getTokenOrCommentAfter"_s, 2, jsLintGetTokenOrCommentAfter },
@@ -1297,8 +1331,7 @@ const Member members[] = {
 
 } // namespace
 
-// `sourceCode(TokenStore, hooks, scripted)` returns the class. `hooks` is `[program, scopeManager, parserOptions, visitorKeys]`.
-// The methods that `scripted` has, if it's an object, are taken from it.
+// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions, visitorKeys]`.
 JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1307,7 +1340,6 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallF
     LintSourceCodeState& state = host->sourceCode;
     JSObject* tokenStore = callFrame->argument(0).getObject();
     JSArray* hooks = dynamicDowncast<JSArray>(callFrame->argument(1));
-    JSObject* scripted = callFrame->argument(2).getObject();
     if (!tokenStore || !hooks)
         return throwVMTypeError(globalObject, scope, "Expected a class and hooks"_s);
     unsigned at = 0;
@@ -1333,22 +1365,12 @@ JSC_DEFINE_HOST_FUNCTION(jsLintSourceCode, (JSGlobalObject * globalObject, CallF
     constructor->putDirect(vm, Identifier::fromString(vm, "splitLines"_s), JSFunction::create(vm, globalObject, 1, "splitLines"_s, jsLintSplitLines, ImplementationVisibility::Public), static_cast<unsigned>(PropertyAttribute::DontEnum));
     prototype->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     for (auto& member : members) {
-        Identifier name = Identifier::fromString(vm, member.name);
-        JSValue method;
-        if (scripted) {
-            method = scripted->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        if (method && !method.isUndefined())
-            prototype->putDirect(vm, name, method, static_cast<unsigned>(PropertyAttribute::DontEnum));
-        else if (member.length == getter) {
-            JSFunction* function = JSFunction::create(vm, globalObject, 0, makeString("get "_s, member.name), member.function, ImplementationVisibility::Public);
-            prototype->putDirectAccessor(globalObject, name, GetterSetter::create(vm, globalObject, function, nullptr), PropertyAttribute::Accessor | PropertyAttribute::DontEnum);
-        } else
-            prototype->putDirect(vm, name, JSFunction::create(vm, globalObject, member.length, member.name, member.function, ImplementationVisibility::Public), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        prototype->putDirect(vm, Identifier::fromString(vm, member.name), JSFunction::create(vm, globalObject, member.length, member.name, member.function, ImplementationVisibility::Public), static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
     state.constructor.set(vm, host, constructor);
-    state.instanceStructure.set(vm, host, globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, JSFinalObject::defaultInlineCapacity));
+    JSObject* instance = constructEmptyObject(globalObject, prototype, std::size(properties));
+    defineProperties(globalObject, instance);
+    state.instance.set(vm, host, instance);
     return JSValue::encode(constructor);
 }
 
@@ -1421,7 +1443,7 @@ void LintSourceCodeState::endFile()
 void addLintSourceCodeFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     VM& vm = globalObject->vm();
-    native->putDirect(vm, Identifier::fromString(vm, "sourceCode"_s), JSFunction::create(vm, globalObject, 3, "sourceCode"_s, jsLintSourceCode, ImplementationVisibility::Public));
+    native->putDirect(vm, Identifier::fromString(vm, "sourceCode"_s), JSFunction::create(vm, globalObject, 2, "sourceCode"_s, jsLintSourceCode, ImplementationVisibility::Public));
     LintHost* host = LintHost::from(globalObject);
     host->sourceCode.locGetter.set(vm, host, JSFunction::create(vm, globalObject, 0, "get loc"_s, jsLintLocGetter, ImplementationVisibility::Public));
     native->putDirect(vm, Identifier::fromString(vm, "locGetter"_s), host->sourceCode.locGetter.get());

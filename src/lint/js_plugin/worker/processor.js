@@ -1,4 +1,4 @@
-// ───────────── processors ─────────────
+// ------------- processors -------------
 //
 // ESLint's `processor`: it takes blocks of code out of a file, and maps what is reported about them back. Only the object
 // itself is loaded. The other side lints the blocks.
@@ -40,13 +40,11 @@ async function loadProcessor([id, location]) {
 
 // The message: the id of the processor and the length of the path, then the path, then `rest`.
 function readForProcessor() {
-  const length = ask(MESSAGE);
-  const buffer = buffers[MESSAGE];
-  const [id, pathLength] = new Uint32Array(buffer, 0, 2);
+  const [id, pathLength] = messageWords(2);
   return {
     processor: processors.get(id),
-    name: decode(buffer, 8, 8 + pathLength),
-    rest: decode(buffer, 8 + pathLength, length),
+    name: messageText(8, 8 + pathLength),
+    rest: messageText(8 + pathLength),
   };
 }
 

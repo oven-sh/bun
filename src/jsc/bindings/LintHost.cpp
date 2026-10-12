@@ -55,6 +55,7 @@ void LintHost::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->scopes.visit(visitor);
     thisObject->sourceCode.visit(visitor);
     Locker locker { thisObject->cellLock() };
+    thisObject->nodes.visit(visitor);
     thisObject->tokens.visit(visitor);
 }
 
@@ -136,14 +137,6 @@ JSObject* LintHost::createPosition(VM& vm, double index)
     position->putDirectOffset(vm, 0, jsNumber(line));
     position->putDirectOffset(vm, 1, jsNumber(column));
     return position;
-}
-
-JSObject* LintHost::createLoc(VM& vm, double start, double end)
-{
-    JSFinalObject* loc = JSFinalObject::create(vm, m_locStructure.get());
-    loc->putDirectOffset(vm, 0, createPosition(vm, start));
-    loc->putDirectOffset(vm, 1, createPosition(vm, end));
-    return loc;
 }
 
 // `beginFile(text, flags)`

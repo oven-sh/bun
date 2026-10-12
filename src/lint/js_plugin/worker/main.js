@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// ───────────── the program ─────────────
+// ------------- the program -------------
 //
 // It is the body of a function of `require`, `load`, which is `import()`, and of what it asks the other side with:
 // - `request(kind, details, buffer)` asks for something, writes the answer into `buffer` and returns its length. If that
@@ -31,11 +31,12 @@
 // It returns `handle`, which the other side calls. See `wire.rs` for what is said. All of it is synchronous but for loading
 // a plugin.
 
-const { pathToFileURL } = require("node:url");
+// The program is ASCII, so that it's parsed as one byte per character. It loads no module that it may not need: each costs millions
+// of instructions in every realm.
+const { pathToFileURL } = Bun;
 const nodeModule = require("node:module");
 const { createRequire } = nodeModule;
 const nodePath = require("node:path");
-const { statSync } = require("node:fs");
 
 // Rules ask which modules are built in, to tell them from packages. They mean Node.js, where `undici` and `ws` are packages. The
 // same is in `evaluate-start.js`.
@@ -74,7 +75,7 @@ const CODE_PATHS = 11;
 // By what was asked for: the last answer, which the next one overwrites.
 const buffers = [];
 // Native code reads what it needs where the other side has it, without a copy in one of `buffers`.
-const readsInPlace = process.env.BUN_LINT_IN_PLACE === "1";
+const readsInPlace = process.env.BUN_LINT_IN_PLACE !== "0";
 
 // Asks for something. The answer is in `buffers[kind]`. Returns its length.
 function ask(kind, details = "") {
@@ -88,13 +89,28 @@ function ask(kind, details = "") {
 const revive = (_, value) =>
   Array.isArray(value?.$regexp) ? new RegExp(...value.$regexp) : value?.$number === "NaN" ? NaN : value;
 
+// The first `count` words of the message that is being handled.
+function messageWords(count) {
+  if (readsInPlace) return native.askWords(MESSAGE, "", count);
+  ask(MESSAGE);
+  return new Uint32Array(buffers[MESSAGE], 0, count);
+}
+
+// The text that the bytes from `start` to `end` of it are in UTF-8. Without `end`: to where it ends.
+function messageText(start, end) {
+  if (readsInPlace) return native.askText(MESSAGE, "", start, end);
+  const length = ask(MESSAGE);
+  return decode(buffers[MESSAGE], start, end ?? length);
+}
+
 function askForJson(kind, details) {
-  const length = ask(kind, details);
-  const json = decode(buffers[kind], 0, length);
+  // `ask` can replace the buffer.
+  const length = readsInPlace ? 0 : ask(kind, details);
+  const json = readsInPlace ? native.askText(kind, details) : decode(buffers[kind], 0, length);
   return json.includes('"$regexp"') || json.includes('"$number"') ? JSON.parse(json, revive) : JSON.parse(json);
 }
 
-// ───────────── plugins ─────────────
+// ------------- plugins -------------
 
 let cwd = "";
 // The rules of the plugins that are loaded: `{ plugin, name }`, by the number that the other side knows them by.
@@ -303,8 +319,18 @@ async function loadPlugin([location, position, firstRule]) {
   return { name, rules: described };
 }
 
-// ───────────── ESLint's `context` ─────────────
+// ------------- ESLint's `context` -------------
 
+// The text of the file, without the byte order mark.
+let text = "";
+// ESLint's `SourceCode`: src/jsc/bindings/LintSourceCode.cpp. What a `sourceCode` says is about the file that is being linted.
+const SourceCode = native.sourceCode(native.TokenStore, [
+  program,
+  scopeManager,
+  () => fileSettings.languageOptions.parserOptions,
+  visitorKeys,
+]);
+let sourceCode = new SourceCode();
 let filename = "";
 // The file on the disk, if `filename` is that of a block which a processor has found in it.
 let physicalFilename = "";
@@ -489,7 +515,7 @@ function configure(id, position) {
   return entry;
 }
 
-// ───────────── listeners ─────────────
+// ------------- listeners -------------
 
 // In the order of the event kinds in `code_path/estree.rs`.
 const codePathEventNames = [
@@ -511,7 +537,8 @@ function describeKey(key) {
   let known = listenedKeys.get(key);
   if (known !== undefined) return known;
   const isExit = key.endsWith(":exit");
-  const type = typeIds.get(isExit ? key.slice(0, -5) : key);
+  const name = isExit ? key.slice(0, -5) : key;
+  const type = usesLayouts ? native.typeId(name) : typeIds.get(name);
   const event = codePathEventNames.indexOf(key);
   if (type !== undefined) known = { kind: isExit ? 1 : 0, number: type, error: null };
   else if (event !== -1) known = { kind: 3, number: event, error: null };
@@ -572,7 +599,9 @@ function listen(keys, wantsTree) {
     listenWords[1 + 2 * i] = keys[i].kind;
     listenWords[2 + 2 * i] = keys[i].number;
   }
-  const [calls, made] = native.listen(shapes[fileDialect], leftOutBits[fileDialect], knownStrings, listenWords, length);
+  const [calls, made] = usesLayouts
+    ? native.listen(undefined, undefined, undefined, listenWords, length)
+    : native.listen(shapes[fileDialect], leftOutBits[fileDialect], knownStrings, listenWords, length);
   if (made !== undefined) {
     nodes = made;
     native.defineTokenLists(nodes[0]);
@@ -607,7 +636,7 @@ function traverse() {
   }
 }
 
-// ───────────── code paths ─────────────
+// ------------- code paths -------------
 
 // `codePath.origin`, in the order of `Origin` in `code_path/estree.rs`.
 const codePathOrigins = ["program", "function", "class-field-initializer", "class-static-block"];
@@ -775,7 +804,7 @@ function openCodePaths() {
   return emitAt;
 }
 
-// ───────────── a file ─────────────
+// ------------- a file -------------
 
 function reset() {
   native.endFile();
@@ -790,13 +819,12 @@ function reset() {
 
 // Returns the positions of the plugins that are missing, if any are, or `NEEDS_SETTINGS`.
 function lint() {
-  const length = ask(MESSAGE);
-  const buffer = buffers[MESSAGE];
-  const [flags, plugins, settingsId, count, pathLength, physicalLength] = new Uint32Array(buffer, 0, 6);
+  const [flags, plugins, settingsId, count, pathLength, physicalLength] = messageWords(6);
+  const words = messageWords(6 + plugins + count);
   // Only the plugins that have a rule which runs on the file, and which no module exports.
-  const missing = Array.from(new Uint32Array(buffer, 24, plugins)).filter(position => !loadedPlugins.has(position));
+  const missing = Array.from(words.subarray(6, 6 + plugins)).filter(position => !loadedPlugins.has(position));
   if (missing.length > 0) return missing;
-  const ids = new Uint32Array(buffer, 24 + 4 * plugins, count);
+  const ids = words.subarray(6 + plugins);
   fileSettings = allSettings.get(settingsId);
   if (fileSettings === undefined) {
     if ((flags & 8) !== 0) return NEEDS_SETTINGS;
@@ -810,12 +838,10 @@ function lint() {
   if (unloaded.size > 0) return [...unloaded];
   const pathStart = 24 + 4 * (plugins + count);
   fileDialect = (flags >> 2) & 1;
-  filename = nativePath(decode(buffer, pathStart, pathStart + pathLength), nodePath);
+  filename = nativePath(messageText(pathStart, pathStart + pathLength), nodePath);
   physicalFilename =
-    physicalLength === pathLength
-      ? filename
-      : nativePath(decode(buffer, pathStart, pathStart + physicalLength), nodePath);
-  text = decode(buffer, pathStart + pathLength, length);
+    physicalLength === pathLength ? filename : nativePath(messageText(pathStart, pathStart + physicalLength), nodePath);
+  text = messageText(pathStart + pathLength);
   native.beginFile(text, flags);
   for (let position = 0; position < count; position++) {
     const entry = entries[position];
@@ -874,7 +900,7 @@ function runAfterHooks() {
 
 let hasStarted = false;
 
-// ───────────── what is loaded ─────────────
+// ------------- what is loaded -------------
 
 let measuresLoading = false;
 // The time that it took to load plugins and processors and that the other side has not been told.
@@ -883,6 +909,7 @@ let loadingTime = 0;
 const countedModules = new Set();
 
 function reportLoading() {
+  const { statSync } = require("node:fs");
   let bytes = 0;
   const before = countedModules.size;
   for (const file of Object.keys(require.cache)) {
@@ -891,15 +918,20 @@ function reportLoading() {
     bytes += statSync(file, { throwIfNoEntry: false })?.size ?? 0;
   }
   const modules = countedModules.size - before;
-  if (modules > 0 || loadingTime > 0) ask(LOADED, JSON.stringify([modules, bytes, loadingTime]));
+  if (modules > 0 || loadingTime > 0) {
+    const details = JSON.stringify([modules, bytes, loadingTime]);
+    if (readsInPlace) native.askText(LOADED, details);
+    else ask(LOADED, details);
+  }
   loadingTime = 0;
 }
 
 function start() {
-  const { cwd: directory, measures, types, strings } = askForJson(START);
+  const { cwd: directory, measures, types, strings } = askForJson(START, usesLayouts ? "lean" : "");
   cwd = directory;
   measuresLoading = measures;
-  defineTypes(types, strings);
+  if (usesLayouts) defineNodes();
+  else defineTypes(types, strings);
   hasStarted = true;
 }
 

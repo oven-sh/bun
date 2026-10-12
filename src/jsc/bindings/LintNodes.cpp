@@ -126,6 +126,7 @@ public:
         , m_text(text)
         , m_textLength(text->length())
         , m_knownStrings(knownStrings)
+        , m_host(LintHost::from(globalObject))
         , m_pattern(Identifier::fromString(m_vm, "pattern"_s))
         , m_flags(Identifier::fromString(m_vm, "flags"_s))
         , m_cooked(Identifier::fromString(m_vm, "cooked"_s))
@@ -165,7 +166,7 @@ public:
             return from < 0x80000000 ? slice(from, to) : sliceOfExtra(from - 0x80000000, to);
         }
         case 4:
-            return m_knownStrings->tryGetIndexQuickly(number);
+            return m_knownStrings ? m_knownStrings->tryGetIndexQuickly(number) : JSValue(m_host->nodes.knownString(m_vm, m_host, number));
         case 5:
             return jsNumber(number);
         case 6: {
@@ -286,7 +287,9 @@ private:
     JSArray* m_nodes;
     JSString* m_text;
     uint32_t m_textLength;
+    // Null: those of the host.
     JSArray* m_knownStrings;
+    LintHost* m_host;
     JSString* m_extraText { nullptr };
     Identifier m_pattern, m_flags, m_cooked, m_raw;
 };
@@ -417,8 +420,315 @@ static JSArray* makeLintNodes(JSGlobalObject* globalObject, JSArray* shapes, JSU
     return nodes;
 }
 
+bool LintNodeState::load(JSGlobalObject* globalObject, LintHost* host)
+{
+    constexpr uint32_t layouts = 15;
+    LintSpan answer = Bun__Lint__ask(globalObject, layouts, nullptr, 0);
+    if (answer.len < 12 || reinterpret_cast<uintptr_t>(answer.ptr) % 4)
+        return false;
+    Vector<uint32_t> words;
+    words.fill(0, (answer.len + 3) / 4);
+    memcpy(words.mutableSpan().data(), answer.ptr, answer.len);
+    uint32_t typeCount = words[0], stringCount = words[1], wordCount = words[2];
+    if (typeCount > 256 || wordCount > answer.len / 4 || stringCount > wordCount)
+        return false;
+    std::span<const Latin1Character> names { reinterpret_cast<const Latin1Character*>(words.span().data() + wordCount), answer.len - size_t(wordCount) * 4 };
+    auto isName = [&](uint32_t reference) { return (reference >> 8) + (reference & 255) <= names.size(); };
+
+    std::array<Vector<Layout>, dialects> byDialect;
+    Vector<uint32_t> typeNames;
+    uint32_t structureCount = 0;
+    size_t at = 3, end = wordCount - stringCount;
+    for (uint32_t type = 0; type < typeCount; ++type) {
+        if (at >= end || !isName(words[at]))
+            return false;
+        typeNames.append(words[at++]);
+        for (auto& list : byDialect) {
+            if (end - at < 4)
+                return false;
+            Layout layout { words[at], words[at + 1], words[at + 2], {}, structureCount };
+            size_t length = size_t(words[at + 3]) * 2;
+            at += 4;
+            if (layout.fieldCount > 32 || length > end - at || length / 2 > JSFinalObject::maxInlineCapacity || std::popcount(layout.leftOut) > 4)
+                return false;
+            layout.properties = words.span().subspan(at, length);
+            bool hasParent = false;
+            for (size_t i = 0; i < length; i += 2) {
+                uint32_t what = layout.properties[i + 1];
+                if (!isName(layout.properties[i]) || (what >= layout.fieldCount && (what < What::Type || what > What::Parent)))
+                    return false;
+                hasParent |= what == What::Parent;
+            }
+            if (!hasParent)
+                return false;
+            at += length;
+            structureCount += 1u << std::popcount(layout.leftOut);
+            list.append(layout);
+        }
+    }
+    if (at != end)
+        return false;
+    for (uint32_t reference : words.span().subspan(end, stringCount)) {
+        if (!isName(reference))
+            return false;
+    }
+
+    // The collector can be looking at the host.
+    Locker locker { host->cellLock() };
+    m_words = WTF::move(words);
+    m_names = names;
+    m_knownStringNames = m_words.span().subspan(end, stringCount);
+    m_typeNameReferences = WTF::move(typeNames);
+    m_layouts = WTF::move(byDialect);
+    m_structures.grow(structureCount);
+    m_typeNames.grow(typeCount);
+    m_knownStrings.grow(stringCount);
+    m_prototypes.grow(size_t(typeCount) * dialects);
+    return true;
+}
+
+JSString* LintNodeState::typeName(VM& vm, LintHost* host, uint8_t type)
+{
+    auto& slot = m_typeNames[type];
+    if (!slot) [[unlikely]]
+        slot.set(vm, host, jsOwnedString(vm, AtomString(name(m_typeNameReferences[type]))));
+    return slot.get();
+}
+
+JSString* LintNodeState::knownString(VM& vm, LintHost* host, uint32_t index)
+{
+    if (index >= m_knownStrings.size()) [[unlikely]]
+        return nullptr;
+    auto& slot = m_knownStrings[index];
+    if (!slot) [[unlikely]]
+        slot.set(vm, host, jsOwnedString(vm, AtomString(name(m_knownStringNames[index]))));
+    return slot.get();
+}
+
+JSObject* LintNodeState::prototype(VM& vm, JSGlobalObject* globalObject, LintHost* host, bool isEspree, uint8_t type)
+{
+    auto& slot = m_prototypes[size_t(type) * dialects + isEspree];
+    if (!slot)
+        slot.set(vm, host, constructEmptyObject(globalObject, nodePrototype.get()));
+    return slot.get();
+}
+
+Structure* LintNodeState::makeStructure(VM& vm, JSGlobalObject* globalObject, LintHost* host, bool isEspree, uint8_t type, unsigned which)
+{
+    const Layout& layout = m_layouts[isEspree][type];
+    // Whether the nodes with this Structure have the property that `what` is in.
+    auto has = [&](uint32_t what) {
+        if (what >= What::Type || !(layout.leftOut >> what & 1))
+            return true;
+        return (which >> std::popcount(layout.leftOut & ((1u << what) - 1)) & 1) != 0;
+    };
+    unsigned count = 0;
+    for (size_t i = 0; i < layout.properties.size(); i += 2)
+        count += has(layout.properties[i + 1]);
+    Structure* structure = JSFinalObject::createStructure(vm, globalObject, prototype(vm, globalObject, host, isEspree, type), count);
+    for (size_t i = 0; i < layout.properties.size(); i += 2) {
+        if (!has(layout.properties[i + 1]))
+            continue;
+        PropertyOffset offset;
+        structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, AtomString(name(layout.properties[i]))), 0, offset);
+    }
+    RELEASE_ASSERT(structure->maxOffset() == static_cast<PropertyOffset>(count) - 1);
+    m_structures[layout.firstStructure + which].set(vm, host, structure);
+    return structure;
+}
+
+JSObject* LintNodeState::visitorKeys(JSGlobalObject* globalObject, LintHost* host, bool isEspree)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSObject* made = m_visitorKeys[isEspree].get())
+        return made;
+    JSObject* all = constructEmptyObject(globalObject);
+    m_visitorKeys[isEspree].set(vm, host, all);
+    for (size_t type = 0; type < typeCount(); ++type) {
+        const Layout& layout = m_layouts[isEspree][type];
+        MarkedArgumentBuffer keys;
+        // In the order of the fields, which is the order of the traversal.
+        for (uint32_t field = 0; field < layout.fieldCount; ++field) {
+            if (!(layout.visitorKeys >> field & 1))
+                continue;
+            for (size_t i = 0; i < layout.properties.size(); i += 2) {
+                if (layout.properties[i + 1] == field)
+                    keys.append(jsOwnedString(vm, AtomString(name(layout.properties[i]))));
+            }
+        }
+        JSArray* list = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        all->putDirect(vm, Identifier::fromString(vm, AtomString(name(m_typeNameReferences[type]))), list);
+    }
+    return all;
+}
+
+std::optional<uint8_t> LintNodeState::typeNamed(const String& wanted) const
+{
+    for (size_t type = 0; type < m_typeNameReferences.size(); ++type) {
+        if (wanted == StringView(name(m_typeNameReferences[type])))
+            return static_cast<uint8_t>(type);
+    }
+    return std::nullopt;
+}
+
+// The nodes of the tree in `bytes`, by their number, as the layouts of the host say. Null: an exception was thrown. Rust keeps `bytes`
+// until the file is done.
+static JSArray* makeLintNodes(JSGlobalObject* globalObject, LintHost* host, std::span<const uint8_t> bytes)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto outOfStep = [&]() -> JSArray* {
+        throwTypeError(globalObject, scope, "The tree is not as expected"_s);
+        return nullptr;
+    };
+    using What = LintNodeState::What;
+
+    LintNodeState& state = host->nodes;
+    LintTree tree;
+    if (!state.isLoaded() || !tree.read(bytes))
+        return outOfStep();
+    uint32_t count = tree.count;
+    bool isEspree = host->isEspree();
+
+    // Where the words of each node start.
+    Vector<uint32_t> offsets(count);
+    uint64_t at = 0;
+    for (uint32_t id = 0; id < count; ++id) {
+        uint8_t type = tree.types[id];
+        if (type >= state.typeCount() || tree.parents[id] >= count)
+            return outOfStep();
+        offsets[id] = static_cast<uint32_t>(at);
+        at += state.layout(isEspree, type).fieldCount;
+    }
+    if (at > tree.fields.size())
+        return outOfStep();
+
+    JSArray* nodes = tryCreateFilledLintArray(vm, globalObject, count);
+    if (!nodes) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    Structure* rangeStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32);
+    LintNodeMaker maker(globalObject, tree, nodes, host->text(), nullptr);
+    // Where each node has `parent`.
+    Vector<uint8_t> parentOffsets(count);
+
+    // What is in a node has a higher number.
+    for (uint32_t id = count; id--;) {
+        uint8_t type = tree.types[id];
+        const auto& layout = state.layout(isEspree, type);
+        const uint32_t* words = tree.fields.data() + offsets[id];
+        uint32_t start = tree.starts[id], end = tree.ends[id];
+        unsigned which = 0;
+        if (layout.leftOut) [[unlikely]] {
+            unsigned bit = 0;
+            for (uint32_t i = 0; i < layout.fieldCount; ++i) {
+                if (layout.leftOut >> i & 1)
+                    which |= (words[i] ? 1u : 0u) << bit++;
+            }
+        }
+        JSFinalObject* node = JSFinalObject::create(vm, state.structure(vm, globalObject, host, isEspree, type, which));
+        nodes->setIndexQuickly(vm, id, node);
+        PropertyOffset offset = 0;
+        for (size_t i = 1; i < layout.properties.size(); i += 2) {
+            uint32_t what = layout.properties[i];
+            JSValue value;
+            if (what < What::Type) [[likely]] {
+                if ((layout.leftOut >> what & 1) && !words[what]) [[unlikely]]
+                    continue;
+                value = maker.value(words[what], start, end);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (!value) [[unlikely]]
+                    return outOfStep();
+            } else if (what == What::Type)
+                value = state.typeName(vm, host, type);
+            else if (what == What::Start)
+                value = jsNumber(start);
+            else if (what == What::End)
+                value = jsNumber(end);
+            else if (what == What::Parent) {
+                parentOffsets[id] = static_cast<uint8_t>(offset);
+                value = jsNull();
+            } else {
+                ObjectInitializationScope initializationScope(vm);
+                JSArray* range = JSArray::tryCreateUninitializedRestricted(initializationScope, rangeStructure, 2);
+                if (!range) [[unlikely]] {
+                    throwOutOfMemoryError(globalObject, scope);
+                    return nullptr;
+                }
+                range->initializeIndex(initializationScope, 0, jsNumber(start));
+                range->initializeIndex(initializationScope, 1, jsNumber(end));
+                value = range;
+            }
+            node->putDirectOffset(vm, offset++, value);
+        }
+    }
+    for (uint32_t id = 1; id < count; ++id)
+        asObject(nodes->getIndexQuickly(id))->putDirectOffset(vm, parentOffsets[id], nodes->getIndexQuickly(tree.parents[id]));
+    host->sourceCode.setTree(vm, host, nullptr, nodes, tree.starts, tree.ends, tree.parents);
+    return nodes;
+}
+
+// `defineNodes(prototype)`: all nodes inherit from `prototype`. It's called once, while something is handled.
+JSC_DEFINE_HOST_FUNCTION(jsLintDefineNodes, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    JSObject* prototype = callFrame->argument(0).getObject();
+    if (!prototype || host->nodes.isLoaded() || !host->nodes.load(globalObject, host))
+        return throwVMTypeError(globalObject, scope, "The layouts are not as expected"_s);
+    host->nodes.nodePrototype.set(vm, host, prototype);
+    return JSValue::encode(jsUndefined());
+}
+
+// `typeId(name)`: the number of the type of nodes that is called `name`, or `undefined`.
+JSC_DEFINE_HOST_FUNCTION(jsLintTypeId, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue name = callFrame->argument(0);
+    if (!name.isString())
+        return JSValue::encode(jsUndefined());
+    auto text = asString(name)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto type = LintHost::from(globalObject)->nodes.typeNamed(text.data);
+    return JSValue::encode(type ? jsNumber(*type) : jsUndefined());
+}
+
+// `nodePrototype(name)`: what the nodes of the type `name` inherit from in the tree of typescript-estree.
+JSC_DEFINE_HOST_FUNCTION(jsLintNodePrototype, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    JSValue name = callFrame->argument(0);
+    if (!name.isString() || !host->nodes.nodePrototype)
+        return throwVMTypeError(globalObject, scope, "Expected the name of a type"_s);
+    auto text = asString(name)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto type = host->nodes.typeNamed(text.data);
+    if (!type)
+        return throwVMTypeError(globalObject, scope, "Expected the name of a type"_s);
+    return JSValue::encode(host->nodes.prototype(vm, globalObject, host, false, *type));
+}
+
+// `visitorKeys(isEspree)`: ESLint's `visitorKeys`. The same object each time.
+JSC_DEFINE_HOST_FUNCTION(jsLintVisitorKeys, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LintHost* host = LintHost::from(globalObject);
+    JSObject* keys = host->nodes.visitorKeys(globalObject, host, callFrame->argument(0).toBoolean(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(keys);
+}
+
 // `listen(shapes, leftOut, knownStrings, words, length)` tells Rust what the rules listen for in the file that's being linted: the
 // first `length` of `words`, a `Uint32Array`, as `LISTEN` in src/lint/js_plugin/wire.rs describes them.
+// Without the first three, the nodes are as the layouts of the host say.
 // Returns `[calls, nodes]`. `calls`: a `Uint32Array`, see src/lint/js_plugin/calls.rs. `nodes`: those of the file by their number,
 // or `undefined` if the tree didn't come.
 JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -434,7 +744,10 @@ JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame
     auto* words = dynamicDowncast<JSUint32Array>(callFrame->argument(3));
     JSValue length = callFrame->argument(4);
     LintHost* host = LintHost::from(globalObject);
-    if (!shapes || !leftOut || leftOut->isDetached() || !knownStrings || !words || words->isDetached() || !length.isNumber() || !host->isLinting())
+    bool usesLayouts = callFrame->argument(0).isUndefined();
+    if (!usesLayouts && (!shapes || !leftOut || leftOut->isDetached() || !knownStrings))
+        return outOfStep();
+    if (!words || words->isDetached() || !length.isNumber() || !host->isLinting())
         return outOfStep();
     auto details = words->typedSpan().first(std::min<size_t>(words->length(), JSC::toUInt32(length.asNumber())));
     LintSpan answer = Bun__Lint__ask(globalObject, listen, reinterpret_cast<const uint8_t*>(details.data()), details.size_bytes());
@@ -454,7 +767,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintListen, (JSGlobalObject * globalObject, CallFrame
     memcpy(calls->typedVector(), header + 2, callBytes);
     result->setIndexQuickly(vm, 0, calls);
     if (treeBytes) {
-        JSArray* nodes = makeLintNodes(globalObject, shapes, leftOut, bytes.subspan(8 + callBytes), host->text(), knownStrings);
+        auto treeOfFile = bytes.subspan(8 + callBytes);
+        JSArray* nodes = usesLayouts ? makeLintNodes(globalObject, host, treeOfFile) : makeLintNodes(globalObject, shapes, leftOut, treeOfFile, host->text(), knownStrings);
         RETURN_IF_EXCEPTION(scope, {});
         result->setIndexQuickly(vm, 1, nodes);
     }
@@ -647,6 +961,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintCodePaths, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(result);
 }
 
+// LintAsk.cpp
+void addLintAskFunctions(JSGlobalObject*, JSObject* native);
 // LintScopes.cpp
 void addLintScopeFunctions(JSGlobalObject*, JSObject* native);
 
@@ -657,8 +973,13 @@ extern "C" EncodedJSValue Bun__Lint__nodeFunctions(JSGlobalObject* globalObject)
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "shape"_s), JSFunction::create(vm, globalObject, 4, "shape"_s, jsLintShape, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "listen"_s), JSFunction::create(vm, globalObject, 5, "listen"_s, jsLintListen, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "defineNodes"_s), JSFunction::create(vm, globalObject, 1, "defineNodes"_s, jsLintDefineNodes, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "typeId"_s), JSFunction::create(vm, globalObject, 1, "typeId"_s, jsLintTypeId, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "nodePrototype"_s), JSFunction::create(vm, globalObject, 1, "nodePrototype"_s, jsLintNodePrototype, ImplementationVisibility::Public));
+    object->putDirect(vm, Identifier::fromString(vm, "visitorKeys"_s), JSFunction::create(vm, globalObject, 1, "visitorKeys"_s, jsLintVisitorKeys, ImplementationVisibility::Public));
     object->putDirect(vm, Identifier::fromString(vm, "codePaths"_s), JSFunction::create(vm, globalObject, 3, "codePaths"_s, jsLintCodePaths, ImplementationVisibility::Public));
     addLintHostFunctions(globalObject, object);
+    addLintAskFunctions(globalObject, object);
     addLintScopeFunctions(globalObject, object);
     return JSValue::encode(object);
 }

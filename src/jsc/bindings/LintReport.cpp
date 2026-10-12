@@ -802,9 +802,10 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
             }
         } else {
             // ESLint's `normalizeReportLoc`: a `loc` without a `start` is the start. The `loc` of a node is taken as it is.
-            bool isPlain = host->isLoc(loc);
-            start = isPlain ? asObject(loc)->getDirect(0) : loc.get(globalObject, state.start);
-            RETURN_IF_EXCEPTION(scope, );
+            if (JSValue end; !host->readLoc(loc, start, end)) [[unlikely]] {
+                start = loc.get(globalObject, state.start);
+                RETURN_IF_EXCEPTION(scope, );
+            }
             if (isOfNode || start.toBoolean(globalObject)) [[likely]]
                 hasEnd = true;
             else
@@ -840,10 +841,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
     // `position.line` and `position.column + 1`
     auto read = [&](JSValue position, JSValue& line, JSValue& column) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (host->isPosition(position)) [[likely]] {
-            line = asObject(position)->getDirect(0);
-            column = asObject(position)->getDirect(1);
-        } else {
+        if (!host->readPosition(position, line, column)) [[unlikely]] {
             line = position.get(globalObject, state.line);
             RETURN_IF_EXCEPTION(scope, );
             column = position.get(globalObject, state.column);
@@ -856,8 +854,11 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
         read(start, line, column);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasEnd) [[likely]] {
-            JSValue end = host->isLoc(loc) ? asObject(loc)->getDirect(1) : loc.get(globalObject, state.end);
-            RETURN_IF_EXCEPTION(scope, {});
+            JSValue end;
+            if (JSValue again; !host->readLoc(loc, again, end)) [[unlikely]] {
+                end = loc.get(globalObject, state.end);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
             if (end.toBoolean(globalObject)) {
                 read(end, endLine, endColumn);
                 RETURN_IF_EXCEPTION(scope, {});

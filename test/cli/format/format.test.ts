@@ -1160,7 +1160,7 @@ exports.format = async (text, options) => {
       // What the file takes from the rest of the worker, with the paths of another system.
       const run = (system: string, path: string, config: string | null) => `(() => {
         const nodePath = require("node:path").${system};
-        const [MESSAGE, DONE, FAILED, NOT_INSTALLED, cwd, seen] = [0, "0", "1", "5", "/", []];
+        const [DONE, FAILED, NOT_INSTALLED, cwd, seen] = ["0", "1", "5", "/", []];
         let loadingTime = 0;
         const prettier = {
           resolveConfig: async (file, { config }) => void seen.push(file, config ?? null),
@@ -1169,8 +1169,8 @@ exports.format = async (text, options) => {
         const createRequire = () => Object.assign(() => prettier, { resolve() {} });
         const json = Buffer.from(${JSON.stringify(JSON.stringify({ ...head, path, config }))});
         const message = new Uint8Array([...new Uint8Array(new Uint32Array([json.length]).buffer), ...json, 120]);
-        const [buffers, ask] = [[message.buffer], () => message.length];
-        const decode = (buffer, from, to) => Buffer.from(buffer, from, to - from).toString();
+        const messageWords = count => new Uint32Array(message.buffer, 0, count);
+        const messageText = (from, to = message.length) => Buffer.from(message.buffer, from, to - from).toString();
         ${readFileSync(join(worker, "paths.js"), "utf8")}
         ${readFileSync(join(worker, "prettier.js"), "utf8")}
         return formatWithPrettier().then(result => [result, ...seen]);

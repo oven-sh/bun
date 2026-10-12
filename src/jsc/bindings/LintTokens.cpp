@@ -663,7 +663,9 @@ bool passesFilter(JSGlobalObject* globalObject, const Options& options, JSObject
 
 // ───────────── `loc` ─────────────
 
-JSObject* createLoc(VM& vm, LintHost* host, LintLocShape::Kind kind, double start, double end)
+} // namespace
+
+JSObject* lintCreateLoc(VM& vm, LintHost* host, LintLocShape::Kind kind, double start, double end)
 {
     const LintLocShape& shape = host->tokens.locShapes[kind];
     JSFinalObject* loc = createObject(vm, shape.structure.get());
@@ -677,6 +679,8 @@ JSObject* createLoc(VM& vm, LintHost* host, LintLocShape::Kind kind, double star
     return loc;
 }
 
+namespace {
+
 // From the `range` of `token`, and the lines of the current file. So it's wrong for a token of an earlier file.
 JSObject* locOf(JSGlobalObject* globalObject, LintHost* host, JSObject* token, LintLocShape::Kind kind)
 {
@@ -688,7 +692,7 @@ JSObject* locOf(JSGlobalObject* globalObject, LintHost* host, JSObject* token, L
     RETURN_IF_EXCEPTION(scope, nullptr);
     double end = numberIn(globalObject, range, 1, "token"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    return createLoc(vm, host, kind, start, end);
+    return lintCreateLoc(vm, host, kind, start, end);
 }
 
 // Makes the property `name`, which has been computed just now, the plain data property that it has looked like all along.

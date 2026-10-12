@@ -3015,14 +3015,17 @@ describe.concurrent("scopes in JavaScript plugins", () => {
 });
 
 test.concurrent(
-  "context.sourceCode answers as in ESLint: text, lines, locations, indices, ancestors, directive comments, and what bad input throws",
+  "context.sourceCode is laid out and answers as in ESLint: text, lines, locations, indices, ancestors, scopes, directive comments, bad input",
   async () => {
     const oracle = join(import.meta.dir, "oracle", "jsplugins", "source-code");
     const { texts } = require(join(oracle, "plugin.cjs"));
     const files = {
       "plugin.cjs": readFileSync(join(oracle, "plugin.cjs"), "utf8"),
       "eslint.config.cjs": `const demo = require("./plugin.cjs");
-        module.exports = [{ plugins: { demo }, rules: { "demo/all": "error" } }];`,
+        module.exports = [
+          { files: ["**/*.js", "**/*.ts"], plugins: { demo }, rules: { "demo/all": "error" } },
+          { files: ["**/*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+        ];`,
       ...texts,
     };
     const { raw, exitCode } = await lint(files, ["-f", "json", ...Object.keys(texts)]);
@@ -3032,7 +3035,7 @@ test.concurrent(
         JSON.parse(result.messages.find((it: any) => it.ruleId === "demo/all").message),
       ]),
     );
-    // Recorded with ESLint 10.12.0 by record.mjs in that directory.
+    // Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.
     expect(said).toEqual(JSON.parse(readFileSync(join(oracle, "expected.json"), "utf8")));
     expect(exitCode).toBe(1);
   },

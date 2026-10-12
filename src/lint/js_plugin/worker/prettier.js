@@ -1,4 +1,4 @@
-// ───────────── the project's own Prettier ─────────────
+// ------------- the project's own Prettier -------------
 //
 // `bun format` hands a file in a language that only a plugin of Prettier reads to the `prettier` that the project has installed.
 // Prettier reads the configuration file itself, so what it has for the plugin counts. The other side says which file that is.
@@ -31,13 +31,11 @@ function prettierFrom(directory) {
 // that the command line sets, `precedence`: `--config-precedence`, `looksAtStdin`: the text is standard input, with `--check` or
 // `--list-different`.
 async function formatWithPrettier() {
-  const length = ask(MESSAGE);
-  const buffer = buffers[MESSAGE];
-  const [headLength] = new Uint32Array(buffer, 0, 1);
+  const [headLength] = messageWords(1);
   const { path, config, usesConfig, editorconfig, flags, precedence, looksAtStdin } = JSON.parse(
-    decode(buffer, 4, 4 + headLength),
+    messageText(4, 4 + headLength),
   );
-  const text = decode(buffer, 4 + headLength, length);
+  const text = messageText(4 + headLength);
   const prettier = prettierFrom(cwd);
   if (prettier === null) return NOT_INSTALLED;
   // As Prettier's command line has them, which plugins see.

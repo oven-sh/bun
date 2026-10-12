@@ -12,6 +12,20 @@ const at = node => (node ? `${node.type}[${node.range}]` : node);
 const position = it => (typeof it === "object" ? `${it.line}:${it.column}` : it);
 const place = loc => `${position(loc.start)}-${position(loc.end)}`;
 
+// What only ESLint's `Linter` calls, which Bun doesn't have, and what ESLint had in earlier versions, which Bun still has.
+const notInBoth = new Set([
+  "applyLanguageOptions",
+  "applyInlineConfig",
+  "finalize",
+  "traverse",
+  "getParent",
+  "getComments",
+  "getJSDocComment",
+  "isSpaceBetweenTokens",
+  "getTokenOrCommentBefore",
+  "getTokenOrCommentAfter",
+]);
+
 function nodesOf(sourceCode) {
   const nodes = [];
   const visit = node => {
@@ -34,6 +48,16 @@ const all = {
       const directives = sourceCode.getDisableDirectives();
       const said = {
         text,
+        layout: {
+          keys: Object.keys(sourceCode),
+          isFrozen: Object.isFrozen(sourceCode),
+          hasBOM: Object.getOwnPropertyDescriptor(sourceCode, "hasBOM"),
+          methods: Object.getOwnPropertyNames(Object.getPrototypeOf(sourceCode)).filter(name => !notInBoth.has(name)),
+          classes: [sourceCode.constructor, Object.getPrototypeOf(sourceCode.constructor)].map(
+            it => `${it.name}/${it.length}`,
+          ),
+          loc: [program.loc, program.loc.start].map(it => `${it.constructor.name} ${Object.keys(it)}`),
+        },
         hasBOM: sourceCode.hasBOM,
         isESTree: sourceCode.isESTree,
         lines,
@@ -95,6 +119,31 @@ const all = {
           say(() => sourceCode.getScope()),
           say(() => sourceCode.isGlobalReference(null)),
         ],
+        scopes: nodes.map(node => {
+          const scope = sourceCode.getScope(node);
+          return [
+            `${scope.type}@${at(scope.block)}`,
+            sourceCode.getScope(node) === scope,
+            sourceCode
+              .getDeclaredVariables(node)
+              .map(it => it.name)
+              .join(),
+            sourceCode.isGlobalReference(node),
+          ].join(" ");
+        }),
+        used: ["a", "f", "inner", "named", "undeclared", "Array"].map(name =>
+          [
+            name,
+            sourceCode.markVariableAsUsed(name),
+            ...nodes.map(node => Number(sourceCode.markVariableAsUsed(name, node))),
+          ].join(" "),
+        ),
+        marked: sourceCode.scopeManager.scopes.map(scope =>
+          scope.variables
+            .filter(it => it.eslintUsed)
+            .map(it => it.name)
+            .join(),
+        ),
         inlineConfigNodes: sourceCode.getInlineConfigNodes().map(at),
         problems: directives.problems.map(it => [it.ruleId, it.message, place(it.loc)]),
         directives: directives.directives.map(it => [it.type, at(it.node), it.value, it.justification]),
@@ -111,6 +160,14 @@ module.exports = {
       '﻿a;\r\n"é"; b;\r"€"; c; // \u{1F600}\n"\u{1F600}"; d; /* \u{1F600}\r\n */ "\u{1F600}\u{1F600}"; e; f(g, [h]);\n\r\n',
     "empty.js": "",
     "one-line.js": "function f(a) { return a + 1; }",
+    "types.ts": "type A = { b: string };\nlet x: A | undefined = f<A>(y as A)!; // c\nenum E { a = 1 }\n",
+    "scopes.js": [
+      "import a, { b as c } from 'm';",
+      "var f = function named(x) { let inner = x; { const inner = Array; } return named; };",
+      "class C { static { var s; } m([p] = [], ...rest) { try { undeclared; } catch (e) { for (let i of p) i; } } }",
+      "label: switch (a) { case 1: let d; }",
+      "export default () => f;",
+    ].join("\n"),
     "directives.js": [
       "/* eslint-disable no-undef, no-var -- because \u{1F600} */ a;",
       "/* eslint-enable */ // eslint-disable-line a -- b -- c",

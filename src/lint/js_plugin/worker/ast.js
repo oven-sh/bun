@@ -1,4 +1,4 @@
-// ───────────── the syntax tree ─────────────
+// ------------- the syntax tree -------------
 //
 // What `native.listen` needs to make the nodes of a file from the arrays that `ast.rs` describes: src/jsc/bindings/LintNodes.cpp.
 // A node is an object with the fields of its type as its own properties, as a parser makes it: rules go through
@@ -57,6 +57,30 @@ const deprecated = {
   },
 };
 
+function defineDeprecated(prototype, name) {
+  for (const [key, get] of Object.entries(deprecated[name] ?? {})) {
+    Object.defineProperty(prototype, key, {
+      get() {
+        return get(this, this);
+      },
+      set(value) {
+        Object.defineProperty(this, key, { value, writable: true, enumerable: true, configurable: true });
+      },
+      configurable: true,
+    });
+  }
+}
+
+// Native code knows which properties the nodes of each type have, and makes a Structure when the first node needs it.
+const usesLayouts = process.env.BUN_LINT_NATIVE_TYPES === "1";
+
+function defineNodes() {
+  native.defineNodes(Node.prototype);
+  for (const name of Object.keys(deprecated)) defineDeprecated(native.nodePrototype(name), name);
+  for (const dialect of [0, 1])
+    Object.defineProperty(visitorKeys, dialect, { get: () => native.visitorKeys(dialect === 1) });
+}
+
 // `types`: for each type `[name, [[field, flags], ..]]`. See `write_start` in `schema.rs`.
 function defineTypes(types, strings) {
   knownStrings = strings;
@@ -77,18 +101,7 @@ function defineTypes(types, strings) {
       shapes[dialect][id] =
         some.length === 0 ? shapeWith(0) : Array.from({ length: 1 << some.length }, (_, it) => shapeWith(it));
       for (const field of some) leftOutBits[dialect][id] |= 1 << names.indexOf(field);
-      if (dialect === 1) continue;
-      for (const [key, get] of Object.entries(deprecated[name] ?? {})) {
-        Object.defineProperty(prototype, key, {
-          get() {
-            return get(this, this);
-          },
-          set(value) {
-            Object.defineProperty(this, key, { value, writable: true, enumerable: true, configurable: true });
-          },
-          configurable: true,
-        });
-      }
+      if (dialect === 0) defineDeprecated(prototype, name);
     }
   });
 }

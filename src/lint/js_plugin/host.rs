@@ -229,8 +229,9 @@ impl<'e> Host<'e> {
         match asked {
             ask::START => {
                 self.state.lock().loading.realms += 1;
-                schema::write_start(&self.cwd, self.measures, out);
+                schema::write_start(&self.cwd, self.measures, details.is_empty(), out);
             }
+            ask::LAYOUTS => schema::write_layouts(out),
             ask::LOADED => {
                 let parts = crate::json::parse(details);
                 if let Some(

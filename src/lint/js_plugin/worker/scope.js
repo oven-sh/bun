@@ -1,4 +1,4 @@
-// ───────────── scopes ─────────────
+// ------------- scopes -------------
 //
 // ESLint's `sourceCode.scopeManager`. `scopes.rs` sends the final answer as arrays of numbers, and `native.scopes`
 // (src/jsc/bindings/LintScopes.cpp) builds all the objects of a file in one call. What is here are the classes of `eslint-scope` and
@@ -17,6 +17,11 @@ function usedVariables() {
 }
 
 const namesIn = text => text.split(/\s+/u);
+// `make()`, which is only called the first time. Many files are linted without a rule that asks for scopes.
+const once = make => {
+  let made;
+  return () => (made ??= make());
+};
 
 // The numbers of `Field` in LintScopes.cpp, by the name of the property. Any other property has the value of the template.
 const scopeFields = Object.fromEntries(
@@ -61,9 +66,9 @@ function variableShapes(type, libType, base, libKeys, constants) {
   }).flat();
 }
 
-// ───────────── `eslint-scope` ─────────────
+// ------------- `eslint-scope` -------------
 
-const eslintScopeLayout = (() => {
+const eslintScopeLayout = once(() => {
   class Scope {
     resolve(ident) {
       assert(ident.type === "Identifier", "Target should be identifier.");
@@ -243,9 +248,9 @@ const eslintScopeLayout = (() => {
       [new Map(), new WeakMap(), new Map()],
     ],
   };
-})();
+});
 
-// ───────────── `@typescript-eslint/scope-manager` ─────────────
+// ------------- `@typescript-eslint/scope-manager` -------------
 
 // The `set` of the global scope. The libraries of TypeScript can define thousands of variables, and most files ask for a few names.
 // The others are made when something goes through all of them.
@@ -285,7 +290,7 @@ class GlobalSet extends Map {
   }
 }
 
-const typescriptLayout = (() => {
+const typescriptLayout = once(() => {
   class ScopeBase {
     isVariableScope() {
       return this.variableScope === this;
@@ -424,7 +429,7 @@ const typescriptLayout = (() => {
       [new Map(), new WeakMap(), new GlobalSet()],
     ],
   };
-})();
+});
 
 // A variable that the libraries of TypeScript define, and that nothing in the file or in the configuration mentions.
 function libVariable(name) {
@@ -432,7 +437,7 @@ function libVariable(name) {
   if (variable === undefined) {
     const flags = fileSettings.libs[name];
     variable = {
-      __proto__: typescriptLayout.ImplicitLibVariable.prototype,
+      __proto__: typescriptLayout().ImplicitLibVariable.prototype,
       $id: scopeData.variableCount + scopeData.libVariables.size + 1,
       defs: [],
       eslintUsed: false,
@@ -457,7 +462,7 @@ function addLibVariables() {
   if (scopeData.hasAllLibVariables) return;
   scopeData.hasAllLibVariables = true;
   const { globalScope } = scopeData.manager;
-  const isOfLib = it => it instanceof typescriptLayout.ImplicitLibVariable;
+  const isOfLib = it => it instanceof typescriptLayout().ImplicitLibVariable;
   const mentioned = new Map(scopeData.mentionedGlobals.map(it => [it.name, it]));
   // A name that the file declares as well is only among the others.
   const ofLibs = Object.keys(fileSettings.libs).map(name => mentioned.get(name) ?? libVariable(name));
@@ -471,7 +476,7 @@ function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
   program();
   const buffer = readsInPlace ? undefined : (ask(SCOPES), buffers[SCOPES]);
-  const layout = fileDialect === 1 ? eslintScopeLayout : typescriptLayout;
+  const layout = fileDialect === 1 ? eslintScopeLayout() : typescriptLayout();
   const names =
     globalNames.get(fileSettings) ?? globalNames.set(fileSettings, Object.keys(fileSettings.globals)).get(fileSettings);
   const made = native.scopes(layout.forNative, buffer, nodes, names, scopeStrings, text, fileDialect === 0);

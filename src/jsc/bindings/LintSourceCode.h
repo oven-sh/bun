@@ -34,7 +34,7 @@ struct LintSourceCodeState {
         visitor.append(locGetter);
         visitor.append(scopeCache);
         visitor.append(constructor);
-        visitor.append(instanceStructure);
+        visitor.append(instance);
         visitor.append(servicesStructure);
         visitor.append(problemStructure);
         visitor.append(directiveStructure);
@@ -63,7 +63,8 @@ struct LintSourceCodeState {
     // By node: what `getScope` has found.
     JSC::WriteBarrier<JSC::JSWeakMap> scopeCache;
     JSC::WriteBarrier<JSC::JSObject> constructor;
-    JSC::WriteBarrier<JSC::Structure> instanceStructure;
+    // A `sourceCode` that no plugin gets. The others are made like it.
+    JSC::WriteBarrier<JSC::JSObject> instance;
     JSC::WriteBarrier<JSC::Structure> servicesStructure;
     // `{ ruleId, message, loc }`, `{ type, node, value, justification }` and `{ problems, directives }`
     JSC::WriteBarrier<JSC::Structure> problemStructure;

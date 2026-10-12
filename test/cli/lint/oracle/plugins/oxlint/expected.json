@@ -7741,5 +7741,38 @@
   "p57.ts:1:19+1 eslint(accessor-pairs)",
   "p60.ts:1:16+1 eslint(accessor-pairs)",
   "p61.ts:1:16+1 eslint(accessor-pairs)"
+ ],
+ "prefer-for-of/parentheses-and-assignments": [
+  "d.ts:10:6+32 typescript(prefer-for-of)",
+  "d.ts:12:6+30 typescript(prefer-for-of)",
+  "d.ts:13:6+33 typescript(prefer-for-of)",
+  "d.ts:14:6+33 typescript(prefer-for-of)",
+  "d.ts:18:6+30 typescript(prefer-for-of)",
+  "d.ts:1:6+30 typescript(prefer-for-of)",
+  "d.ts:21:6+30 typescript(prefer-for-of)",
+  "d.ts:22:6+30 typescript(prefer-for-of)",
+  "d.ts:23:6+30 typescript(prefer-for-of)",
+  "d.ts:25:6+30 typescript(prefer-for-of)",
+  "d.ts:26:6+30 typescript(prefer-for-of)",
+  "d.ts:31:6+30 typescript(prefer-for-of)",
+  "d.ts:34:6+30 typescript(prefer-for-of)",
+  "d.ts:35:6+30 typescript(prefer-for-of)",
+  "d.ts:40:6+30 typescript(prefer-for-of)",
+  "d.ts:44:6+30 typescript(prefer-for-of)",
+  "d.ts:45:6+30 typescript(prefer-for-of)",
+  "d.ts:46:6+30 typescript(prefer-for-of)",
+  "d.ts:47:6+30 typescript(prefer-for-of)",
+  "d.ts:48:6+30 typescript(prefer-for-of)",
+  "d.ts:49:6+30 typescript(prefer-for-of)",
+  "d.ts:50:6+30 typescript(prefer-for-of)"
+ ],
+ "consistent-generic-constructors/wrapped": [
+  "c.ts:1:8+13 typescript(consistent-generic-constructors)",
+  "c.ts:2:8+13 typescript(consistent-generic-constructors)",
+  "c.ts:3:8+13 typescript(consistent-generic-constructors)",
+  "c.ts:4:8+13 typescript(consistent-generic-constructors)",
+  "c.ts:6:8+13 typescript(consistent-generic-constructors)",
+  "c.ts:8:12+13 typescript(consistent-generic-constructors)",
+  "c.ts:9:13+13 typescript(consistent-generic-constructors)"
  ]
 }

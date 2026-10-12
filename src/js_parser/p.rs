@@ -5342,9 +5342,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
-                    self.symbols[ref_.inner_index() as usize].set_has_redeclaration(true);
 
                     let existing_kind = self.symbols[symbol_idx].kind;
+                    // An import that TypeScript lets a local replace is a type. It has no value to share.
+                    if existing_kind != js_ast::symbol::Kind::Import {
+                        self.symbols[ref_.inner_index() as usize].set_has_redeclaration(true);
+                    }
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);

@@ -5017,6 +5017,25 @@ describe("bundler", () => {
     stdout: "mid B C\nentry A e,f",
   });
 
+  // In TypeScript a local can have the name of an imported type. That import
+  // is no declaration of the variable, so the local still binds.
+  itElides("LocalNamedLikeATypeImport", {
+    variants: ["esm", "esmMinify"],
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Config, Lazy } from "./types";
+        const { Config } = await import("./config");
+        console.log(Config.name);
+        const Lazy = require("./lazy");
+        console.log(Lazy.a);
+      `,
+      "/types.ts": `export interface Config { name: string } export interface Lazy { a: string }`,
+      "/config.ts": `export const Config = { name: "config" }; export const other = "DROPPED";`,
+      "/lazy.ts": `export const a = "lazy a"; export const b = "DROPPED";`,
+    },
+    stdout: "config\nlazy a",
+  });
+
   // A pattern that assigns a parameter of a sloppy function writes `arguments`.
   // `module.exports` keeps the bundle a CommonJS file, which runs sloppy.
   itElides("ParameterAssignedByPatternReadThroughArguments", {

@@ -708,40 +708,263 @@ test.concurrent.each([
   30_000,
 );
 
-// The worker setup runs when the worker's script loads node:cluster. A script that never does has no
-// handler for the disconnect request, so the primary still has to close that worker's channel itself.
-test.concurrent(
-  "primary worker.disconnect() disconnects a worker whose script never loads node:cluster",
-  async () => {
-    const result = await runDisconnectFixture({
+// Starts a worker script that never loads node:cluster. Prints { primary: events } once the worker has both
+// disconnected and exited, so that a row does not depend on the order of those two events.
+const scriptWorkerPrimary = ({ exec = "worker.js", execArgv = "[]" } = {}) => `
+const cluster = require("node:cluster");
+const path = require("node:path");
+cluster.setupPrimary({ exec: path.join(__dirname, ${JSON.stringify(exec)}), execArgv: ${execArgv} });
+const events = [];
+const worker = cluster.fork();
+worker.on("online", () => events.push("online, state " + worker.state));
+let pending = 2;
+const done = () => {
+  if (--pending === 0) console.log(JSON.stringify({ primary: events }));
+};
+worker.once("disconnect", done);
+worker.once("exit", (code, signal) => {
+  events.push("exit " + code + " " + signal);
+  done();
+});
+`;
+const printWorkerAtExit = (what: string) =>
+  `process.on("exit", () => require("node:fs").writeSync(1, JSON.stringify({ worker: ${what} }) + "\\n"));`;
+
+// Node.js sets a worker up before any user code (initializeClusterIPC in lib/internal/process/pre_execution.js),
+// so a worker does not have to load node:cluster to be one.
+describe.concurrent("a worker that never loads node:cluster", () => {
+  test.each([
+    {
+      name: "comes online, gets the job that the primary sends on 'online', and honors disconnect()",
+      files: {
+        "main.js": `${scriptWorkerPrimary()}
+  worker.once("online", () => worker.send(21));
+  worker.on("message", message => {
+    events.push("message " + message);
+    // A "ready" with no 'online' before it: no job was sent, so there is no answer to wait for.
+    if (message === 42 || worker.state === "none") worker.disconnect();
+  });`,
+        "worker.js": `
+  const events = [];
+  process.on("message", n => process.send(n * 2));
+  process.on("disconnect", () => events.push("disconnect"));
+  ${printWorkerAtExit("events")}
+  process.send("ready");`,
+      },
+      expected: {
+        worker: ["disconnect"],
+        primary: ["online, state online", "message ready", "message 42", "exit 0 null"],
+      },
+    },
+    {
+      name: "is set up before a --require preload and the entry: no NODE_UNIQUE_ID, one 'message' and one 'disconnect' listener",
+      files: {
+        "main.js": `${scriptWorkerPrimary({ execArgv: `["--require", path.join(__dirname, "preload.js")]` })}
+  worker.once("message", seen => {
+    events.push(...seen);
+    worker.disconnect();
+  });`,
+        "preload.js": `
+  globalThis.snapshot = where =>
+    where + ": NODE_UNIQUE_ID " + process.env.NODE_UNIQUE_ID + ", listeners " + process.listenerCount("message") + " " + process.listenerCount("disconnect");
+  globalThis.seen = [snapshot("preload")];`,
+        "worker.js": `
+  seen.push(snapshot("entry"));
+  process.send(seen);`,
+      },
+      expected: {
+        primary: [
+          "online, state online",
+          "preload: NODE_UNIQUE_ID undefined, listeners 1 1",
+          "entry: NODE_UNIQUE_ID undefined, listeners 1 1",
+          "exit 0 null",
+        ],
+      },
+    },
+    {
+      name: "stays alive while it is connected, with nothing left to do",
+      files: {
+        "main.js": `${scriptWorkerPrimary()}
+  worker.once("online", () => worker.disconnect());`,
+        "worker.js": printWorkerAtExit(`"connected at exit: " + process.connected`),
+      },
+      expected: {
+        worker: "connected at exit: false",
+        primary: ["online, state online", "exit 0 null"],
+      },
+    },
+    {
+      name: "exits at once when its channel closes without a disconnect request",
+      files: {
+        "main.js": `${scriptWorkerPrimary()}
+  worker.once("message", () => worker.process.disconnect());`,
+        "worker.js": `
+  const events = [];
+  process.on("disconnect", () => events.push("a listener that the script added"));
+  process.on("exit", code => events.push("exit " + code));
+  ${printWorkerAtExit("events")}
+  process.send("ready");`,
+      },
+      expected: {
+        worker: ["exit 0"],
+        primary: ["online, state online", "exit 0 null"],
+      },
+    },
+    {
+      name: "has worker threads that are not workers",
+      files: {
+        "main.js": `${scriptWorkerPrimary()}
+  worker.once("message", seen => {
+    events.push(seen);
+    worker.disconnect();
+  });`,
+        "worker.js": `
+  const { Worker } = require("node:worker_threads");
+  new Worker(require("node:path").join(__dirname, "thread.js")).once("message", seen => process.send(seen));`,
+        "thread.js": `
+  const { parentPort } = require("node:worker_threads");
+  parentPort.postMessage("thread: NODE_UNIQUE_ID " + process.env.NODE_UNIQUE_ID + ", isPrimary " + require("node:cluster").isPrimary);`,
+      },
+      expected: {
+        primary: ["online, state online", "thread: NODE_UNIQUE_ID undefined, isPrimary true", "exit 0 null"],
+      },
+    },
+    {
+      name: "is not set up again when it loads node:cluster later",
+      files: {
+        "main.js": `${scriptWorkerPrimary()}
+  worker.on("message", message => {
+    events.push("message " + message);
+    if (message !== "first") worker.disconnect();
+  });`,
+        "worker.js": `
+  process.send("first");
+  setImmediate(() => {
+    const cluster = require("node:cluster");
+    process.send("worker id " + cluster.worker.id + ", isWorker " + cluster.isWorker);
+  });`,
+      },
+      expected: {
+        primary: ["online, state online", "message first", "message worker id 1, isWorker true", "exit 0 null"],
+      },
+    },
+    {
+      name: "still gets a message sent right after fork() when its ESM graph loads first",
+      files: {
+        "main.js": `${scriptWorkerPrimary({ exec: "worker.mjs" })}
+  worker.send("early");
+  worker.once("message", message => {
+    events.push("message " + message);
+    worker.disconnect();
+  });`,
+        "worker.mjs": `import "./a.mjs";\nprocess.on("message", message => process.send("got " + message));`,
+        "a.mjs": `import "./b.mjs";`,
+        "b.mjs": `import "./c.mjs";`,
+        "c.mjs": `export {};`,
+      },
+      expected: {
+        primary: ["online, state online", "message got early", "exit 0 null"],
+      },
+    },
+  ])(
+    "$name",
+    async ({ files, expected }) => {
+      expect(await runDisconnectFixture(files)).toEqual({ ...expected, exitCode: 0 });
+    },
+    30_000,
+  );
+});
+
+test.concurrent.each([
+  {
+    name: "fork(), send() and disconnect() in one tick deliver 'online' and every message",
+    files: {
       "main.js": `
-        const cluster = require("node:cluster");
-        cluster.setupPrimary({ exec: require("node:path").join(__dirname, "worker.js") });
-        const worker = cluster.fork();
-        worker.once("message", () => worker.disconnect());
-        let pending = 2;
-        let exit;
-        const done = () => {
-          if (--pending === 0) console.log(JSON.stringify({ primary: { exit } }));
-        };
-        worker.once("disconnect", done);
-        worker.once("exit", (code, signal) => {
-          exit = { code, signal };
-          done();
-        });
-      `,
+const cluster = require("node:cluster");
+const N = 50;
+if (cluster.isPrimary) {
+  const events = [];
+  const worker = cluster.fork();
+  worker.on("online", () => events.push("worker online"));
+  cluster.on("online", () => events.push("cluster online"));
+  // 64 KiB each, so most of them are still queued behind the socket buffer at disconnect().
+  const payload = Buffer.alloc(64 * 1024, "z").toString();
+  let acked = 0;
+  for (let i = 0; i < N; i++) worker.send({ i, payload }, err => { if (!err) acked++; });
+  worker.disconnect();
+  let pending = 2;
+  let exit;
+  const done = () => {
+    if (--pending === 0) console.log(JSON.stringify({ primary: { events, acked, exit } }));
+  };
+  worker.once("disconnect", done);
+  worker.once("exit", (code, signal) => {
+    exit = { code, signal };
+    done();
+  });
+} else {
+  let received = 0;
+  const events = [];
+  process.on("message", () => received++);
+  process.on("disconnect", () => events.push("disconnect after " + received + " messages"));
+  ${printWorkerAtExit("events")}
+}`,
+    },
+    expected: {
+      worker: ["disconnect after 50 messages"],
+      primary: { events: ["worker online", "cluster online"], acked: 50, exit: { code: 0, signal: null } },
+    },
+  },
+  {
+    name: "a process that sets NODE_UNIQUE_ID at run time is not set up as a worker, and its http server listens",
+    files: {
+      "main.js": `
+const child = require("node:child_process").fork(require("node:path").join(__dirname, "child.js"));
+const messages = [];
+child.on("message", message => {
+  messages.push(message);
+  if (message === "listening") child.disconnect();
+});
+child.once("exit", code => console.log(JSON.stringify({ primary: { messages, code } })));`,
+      "child.js": `
+process.env.NODE_UNIQUE_ID = "7";
+const cluster = require("node:cluster");
+process.send("isWorker " + cluster.isWorker + ", worker " + (cluster.worker === null ? null : "set") + ", NODE_UNIQUE_ID " + process.env.NODE_UNIQUE_ID);
+require("node:http").createServer().listen(0, function () {
+  process.send("listening");
+  this.close();
+});`,
+    },
+    expected: {
+      primary: { messages: ["isWorker true, worker null, NODE_UNIQUE_ID 7", "listening"], code: 0 },
+    },
+  },
+  {
+    name: "a process that a worker starts with Bun.spawn({ ipc }) and no env option is not set up as a worker",
+    files: {
+      "main.js": `${scriptWorkerPrimary()}
+worker.once("message", seen => {
+  events.push(seen);
+  worker.disconnect();
+});`,
       "worker.js": `
-        const events = [];
-        process.on("disconnect", () => events.push("disconnect"));
-        process.on("exit", () => require("node:fs").writeSync(1, JSON.stringify({ worker: events }) + "\\n"));
-        process.send("ready");
-      `,
-    });
-    expect(result).toEqual({
-      worker: ["disconnect"],
-      primary: { exit: { code: 0, signal: null } },
-      exitCode: 0,
-    });
+const messages = [];
+const child = Bun.spawn({
+  cmd: [process.execPath, require("node:path").join(__dirname, "child.js")],
+  stdio: ["ignore", "inherit", "inherit"],
+  ipc: message => messages.push(message),
+});
+child.exited.then(code => process.send("child: " + JSON.stringify(messages) + ", exit " + code));`,
+      "child.js": `process.send("from the child");`,
+    },
+    expected: {
+      primary: ["online, state online", 'child: ["from the child"], exit 0', "exit 0 null"],
+    },
+  },
+])(
+  "$name",
+  async ({ files, expected }) => {
+    expect(await runDisconnectFixture(files)).toEqual({ ...expected, exitCode: 0 });
   },
   30_000,
 );
